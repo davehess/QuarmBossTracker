@@ -8,6 +8,8 @@ const {
   GatewayIntentBits,
   Collection,
   Events,
+  REST,
+  Routes,
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -39,9 +41,37 @@ client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Logged in as ${readyClient.user.tag}`);
   console.log(`Monitoring ${bosses.length} bosses across ${[...new Set(bosses.map(b => b.zone))].length} zones`);
 
+  // Auto-register slash commands on every startup — guild-scoped so they appear instantly.
+  // No need to run deploy-commands.js separately.
+  await registerCommands();
+
   // Start spawn notification loop
   startSpawnChecker(readyClient);
 });
+
+// ── Auto-register slash commands ─────────────────────────────────────────────
+async function registerCommands() {
+  const guildId = process.env.DISCORD_GUILD_ID;
+  const clientId = process.env.DISCORD_CLIENT_ID;
+
+  if (!guildId || !clientId) {
+    console.warn('⚠️  DISCORD_GUILD_ID or DISCORD_CLIENT_ID not set — skipping command registration');
+    return;
+  }
+
+  const commandData = [...client.commands.values()].map((c) => c.data.toJSON());
+  const rest = new REST().setToken(process.env.DISCORD_TOKEN);
+
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(clientId, guildId),
+      { body: commandData }
+    );
+    console.log(`✅ Registered ${commandData.length} slash commands to guild ${guildId}`);
+  } catch (err) {
+    console.error('❌ Failed to register slash commands:', err?.message || err);
+  }
+}
 
 // ── Interaction handler ──────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -110,26 +140,23 @@ async function handleBoardKillButton(interaction) {
   const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id);
   const embed = buildKillEmbed(boss, stateEntry, interaction.user.id);
 
-  // Reply publicly so the channel sees the kill recorded
   await interaction.reply({ embeds: [embed] });
 }
 
 // ── Spawn notification loop ──────────────────────────────────────────────────
-// Tracks which bosses we've already sent alerts for to avoid duplicates
-const alertedSoon = new Set();   // bossId -> alerted for <30min warning
-const alertedSpawned = new Set(); // bossId -> alerted for spawn
+const alertedSoon = new Set();
+const alertedSpawned = new Set();
 
 function startSpawnChecker(readyClient) {
-  const threadId = process.env.TIMER_CHANNEL_ID;
-  if (!threadId) {
+  const channelId = process.env.TIMER_CHANNEL_ID;
+  if (!channelId) {
     console.warn('⚠️  TIMER_CHANNEL_ID not set — spawn notifications disabled');
     return;
   }
 
-  // Check every 5 minutes
   setInterval(async () => {
     try {
-      const channel = await readyClient.channels.fetch(threadId);
+      const channel = await readyClient.channels.fetch(channelId);
       if (!channel) return;
 
       const state = getAllState();
@@ -141,22 +168,19 @@ function startSpawnChecker(readyClient) {
 
         const remaining = entry.nextSpawn - now;
 
-        // Spawned notification (only once)
         if (remaining <= 0 && !alertedSpawned.has(boss.id)) {
           alertedSpawned.add(boss.id);
-          alertedSoon.delete(boss.id); // clean up pre-spawn alert state
+          alertedSoon.delete(boss.id);
           await channel.send({ embeds: [buildSpawnedEmbed(boss)] });
           console.log(`Spawned: ${boss.name}`);
           continue;
         }
 
-        // Re-arm alerts if a new kill is recorded after the spawn alert
         if (remaining > 30 * 60 * 1000) {
           alertedSpawned.delete(boss.id);
           alertedSoon.delete(boss.id);
         }
 
-        // 30-minute warning (only once per spawn cycle)
         if (remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
           alertedSoon.add(boss.id);
           await channel.send({ embeds: [buildSpawnAlertEmbed(boss)] });
