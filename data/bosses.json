@@ -1,0 +1,464 @@
+[
+  {
+    "id": "emperor_ssraeshza",
+    "name": "Emperor Ssraeshza",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162065"
+  },
+  {
+    "id": "ssraeshzian_blood_golem",
+    "name": "Ssraeshzian Blood Golem",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162493"
+  },
+  {
+    "id": "high_priest_ssraeshza",
+    "name": "High Priest of Ssraeshza",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162076"
+  },
+  {
+    "id": "arch_lich_rhagzadune",
+    "name": "Arch Lich Rhag`Zadune",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162030"
+  },
+  {
+    "id": "vyzhDra_exiled",
+    "name": "Vyzh`dra the Exiled",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162039"
+  },
+  {
+    "id": "vyzhDra_cursed",
+    "name": "Vyzh`dra the Cursed",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162042"
+  },
+  {
+    "id": "xerkizh_creator",
+    "name": "Xerkizh The Creator",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162190"
+  },
+  {
+    "id": "rhag_zhezum",
+    "name": "Rhag`Zhezum",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162178"
+  },
+  {
+    "id": "rhag_mozdezh",
+    "name": "Rhag`Mozdezh",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162192"
+  },
+  {
+    "id": "rhozth_ssrakezh",
+    "name": "Rhozth Ssrakezh",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162258"
+  },
+  {
+    "id": "rhozth_ssravizh",
+    "name": "Rhozth Ssravizh",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162089"
+  },
+  {
+    "id": "blood_ssraeshza",
+    "name": "Blood of Ssraeshza",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 18,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162189"
+  },
+  {
+    "id": "heriz_malignant",
+    "name": "Heriz the Malignant",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162123"
+  },
+  {
+    "id": "yasiz_devourer",
+    "name": "Yasiz the Devourer",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162124"
+  },
+  {
+    "id": "zlakas_slayer",
+    "name": "Zlakas the Slayer",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162125"
+  },
+  {
+    "id": "nilasz_devourer",
+    "name": "Nilasz the Devourer",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162126"
+  },
+  {
+    "id": "skzik_tormentor",
+    "name": "Skzik the Tormentor",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162127"
+  },
+  {
+    "id": "grziz_tormentor",
+    "name": "Grziz the Tormentor",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162128"
+  },
+  {
+    "id": "slakiz_malignant",
+    "name": "Slakiz the Malignant",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162129"
+  },
+  {
+    "id": "klazaz_slayer",
+    "name": "Klazaz the Slayer",
+    "zone": "Ssraeshza Temple",
+    "timerHours": 16,
+    "pqdiUrl": "https://www.pqdi.cc/npc/162130"
+  },
+  {
+    "id": "lord_inquisitor_seru",
+    "name": "Lord Inquisitor Seru",
+    "zone": "Sanctus Seru",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/159000"
+  },
+  {
+    "id": "praesertum_matpa",
+    "name": "Praesertum Matpa",
+    "zone": "Sanctus Seru",
+    "timerHours": 18,
+    "pqdiUrl": "https://www.pqdi.cc/npc/159035"
+  },
+  {
+    "id": "praesertum_bikun",
+    "name": "Praesertum Bikun",
+    "zone": "Sanctus Seru",
+    "timerHours": 18,
+    "pqdiUrl": "https://www.pqdi.cc/npc/159052"
+  },
+  {
+    "id": "praesertum_rhugol",
+    "name": "Praesertum Rhugol",
+    "zone": "Sanctus Seru",
+    "timerHours": 18,
+    "pqdiUrl": "https://www.pqdi.cc/npc/159054"
+  },
+  {
+    "id": "praesertum_vantorus",
+    "name": "Praesertum Vantorus",
+    "zone": "Sanctus Seru",
+    "timerHours": 18,
+    "pqdiUrl": "https://www.pqdi.cc/npc/159055"
+  },
+  {
+    "id": "grieg_veneficus",
+    "name": "Grieg Veneficus",
+    "zone": "Grieg's End",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/163156"
+  },
+  {
+    "id": "servitor_luclin",
+    "name": "Servitor of Luclin",
+    "zone": "Grieg's End",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/163273"
+  },
+  {
+    "id": "praetorian_myral",
+    "name": "Praetorian Myral",
+    "zone": "Grieg's End",
+    "timerHours": 18,
+    "pqdiUrl": "https://www.pqdi.cc/npc/163058"
+  },
+  {
+    "id": "lcea_katta",
+    "name": "Lcea Katta",
+    "zone": "Katta Castellum",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/160375"
+  },
+  {
+    "id": "thought_horror_overfiend",
+    "name": "Thought Horror Overfiend",
+    "zone": "The Deep",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/164078"
+  },
+  {
+    "id": "burrower_beast",
+    "name": "The Burrower Beast",
+    "zone": "The Deep",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/164098"
+  },
+  {
+    "id": "burrower_parasite",
+    "name": "A Burrower Parasite",
+    "zone": "The Deep",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/164011"
+  },
+  {
+    "id": "insanity_crawler",
+    "name": "The Insanity Crawler",
+    "zone": "Akheva Ruins",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/179001"
+  },
+  {
+    "id": "shei_vinitras",
+    "name": "Shei Vinitras",
+    "zone": "Akheva Ruins",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/179017"
+  },
+  {
+    "id": "itraer_vius",
+    "name": "The Itraer Vius",
+    "zone": "Akheva Ruins",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/179037"
+  },
+  {
+    "id": "va_dyn",
+    "name": "The Va`Dyn",
+    "zone": "Akheva Ruins",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/179178"
+  },
+  {
+    "id": "netherbian_swarmlord",
+    "name": "Netherbian Swarmlord",
+    "zone": "The Umbral Plains",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/176000"
+  },
+  {
+    "id": "rumblecrush",
+    "name": "Rumblecrush",
+    "zone": "The Umbral Plains",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/176002"
+  },
+  {
+    "id": "doomshade",
+    "name": "Doomshade",
+    "zone": "The Umbral Plains",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/176017"
+  },
+  {
+    "id": "zelnithak",
+    "name": "Zelnithak",
+    "zone": "The Umbral Plains",
+    "timerHours": 66.05,
+    "pqdiUrl": "https://www.pqdi.cc/npc/176089"
+  },
+  {
+    "id": "aten_ha_ra",
+    "name": "Aten Ha Ra",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158436"
+  },
+  {
+    "id": "kaas_thox_xi_aten_ha_ra",
+    "name": "Kaas Thox Xi Aten Ha Ra",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158437"
+  },
+  {
+    "id": "va_xi_aten_ha_ra",
+    "name": "Va Xi Aten Ha Ra",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158440"
+  },
+  {
+    "id": "thall_va_kelun",
+    "name": "Thall Va Kelun",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158439"
+  },
+  {
+    "id": "diabo_xi_va_temariel",
+    "name": "Diabo Xi Va Temariel",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158441"
+  },
+  {
+    "id": "thall_xundraux_diabo",
+    "name": "Thall Xundraux Diabo",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158442"
+  },
+  {
+    "id": "diabo_xi_xin_thall",
+    "name": "Diabo Xi Xin Thall",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158443"
+  },
+  {
+    "id": "kaas_thox_xi_ans_dyek",
+    "name": "Kaas Thox Xi Ans Dyek",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158444"
+  },
+  {
+    "id": "va_dyn_khar",
+    "name": "Va Dyn Khar",
+    "zone": "Vex Thal",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/158081"
+  },
+  {
+    "id": "lord_nagafen",
+    "name": "Lord Nagafen",
+    "zone": "Nagafen's Lair",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/32040"
+  },
+  {
+    "id": "lady_vox",
+    "name": "Lady Vox",
+    "zone": "Permafrost Caverns",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/73057"
+  },
+  {
+    "id": "cazic_thule",
+    "name": "Cazic Thule",
+    "zone": "Plane of Fear",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/72600"
+  },
+  {
+    "id": "innoruuk",
+    "name": "Innoruuk",
+    "zone": "Plane of Hate",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/76600"
+  },
+  {
+    "id": "trakanon",
+    "name": "Trakanon",
+    "zone": "Ruins of Sebilis",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/89154"
+  },
+  {
+    "id": "venril_sathir",
+    "name": "Venril Sathir",
+    "zone": "Karnor's Castle",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/102010"
+  },
+  {
+    "id": "king_tormax",
+    "name": "King Tormax",
+    "zone": "Kael Drakkel",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/113215"
+  },
+  {
+    "id": "avatar_of_war",
+    "name": "The Avatar of War",
+    "zone": "Kael Drakkel",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/113244"
+  },
+  {
+    "id": "derakor_vindicator",
+    "name": "Derakor the Vindicator",
+    "zone": "Kael Drakkel",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/113118"
+  },
+  {
+    "id": "dain_frostreaver",
+    "name": "Dain Frostreaver IV",
+    "zone": "Icewell Keep",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/129003"
+  },
+  {
+    "id": "lord_yelinak",
+    "name": "Lord Yelinak",
+    "zone": "Skyshrine",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/114618"
+  },
+  {
+    "id": "wuoshi",
+    "name": "Wuoshi",
+    "zone": "The Wakening Land",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/119112"
+  },
+  {
+    "id": "phara_dar",
+    "name": "Phara Dar",
+    "zone": "Veeshan's Peak",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/108510"
+  },
+  {
+    "id": "lord_vyemm",
+    "name": "Lord Vyemm",
+    "zone": "Temple of Veeshan",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/124003"
+  },
+  {
+    "id": "aaryonar",
+    "name": "Aaryonar",
+    "zone": "Temple of Veeshan",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/124010"
+  },
+  {
+    "id": "lendiniara_keeper",
+    "name": "Lendiniara the Keeper",
+    "zone": "Temple of Veeshan",
+    "timerHours": 162,
+    "pqdiUrl": "https://www.pqdi.cc/npc/124020"
+  },
+  {
+    "id": "master_yael",
+    "name": "Master Yael",
+    "zone": "The Hole",
+    "timerHours": 66,
+    "pqdiUrl": "https://www.pqdi.cc/npc/39138"
+  }
+]

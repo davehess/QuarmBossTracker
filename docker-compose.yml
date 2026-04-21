@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  quarm-bot:
+    build: .
+    container_name: quarm-raid-timer-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist state.json outside the container so kills survive image rebuilds
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
