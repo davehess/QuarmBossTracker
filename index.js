@@ -58,6 +58,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
+  // Button interactions — boss board kill buttons
+  if (interaction.isButton()) {
+    if (interaction.customId.startsWith('kill:')) {
+      await handleBoardKillButton(interaction);
+    }
+    return;
+  }
+
   // Slash commands
   if (!interaction.isChatInputCommand()) return;
 
@@ -76,6 +84,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 });
+
+// ── Board button handler ─────────────────────────────────────────────────────
+async function handleBoardKillButton(interaction) {
+  const bossId = interaction.customId.replace('kill:', '');
+  const boss = bosses.find((b) => b.id === bossId);
+
+  if (!boss) {
+    return interaction.reply({ content: '❌ Unknown boss on this button.', ephemeral: true });
+  }
+
+  // Role check
+  const allowedRole = process.env.ALLOWED_ROLE_NAME || 'Pack Member';
+  const hasRole = interaction.member.roles.cache.some((r) => r.name === allowedRole);
+  if (!hasRole) {
+    return interaction.reply({
+      content: `❌ You need the **${allowedRole}** role to record kills.`,
+      ephemeral: true,
+    });
+  }
+
+  const { recordKill } = require('./utils/state');
+  const { buildKillEmbed } = require('./utils/embeds');
+
+  const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id);
+  const embed = buildKillEmbed(boss, stateEntry, interaction.user.id);
+
+  // Reply publicly so the channel sees the kill recorded
+  await interaction.reply({ embeds: [embed] });
+}
 
 // ── Spawn notification loop ──────────────────────────────────────────────────
 // Tracks which bosses we've already sent alerts for to avoid duplicates

@@ -6,8 +6,14 @@ const bosses = require('../data/bosses.json');
 const { recordKill } = require('../utils/state');
 const { buildKillEmbed } = require('../utils/embeds');
 
-// Build autocomplete choices list (Discord max is 25 visible but handles search filtering)
-const bossChoices = bosses.map((b) => ({ name: `${b.name} (${b.zone})`, value: b.id }));
+// Build searchable index: maps every nickname and the boss name itself -> boss id
+// Used for autocomplete matching
+const bossChoices = bosses.map((b) => ({
+  name: `${b.emoji ? b.emoji + ' ' : ''}${b.name} (${b.zone})`,
+  value: b.id,
+  // searchable terms: full name + all nicknames, all lowercased
+  terms: [b.name.toLowerCase(), ...(b.nicknames || []).map((n) => n.toLowerCase())],
+}));
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,7 +22,7 @@ module.exports = {
     .addStringOption((option) =>
       option
         .setName('boss')
-        .setDescription('Which boss was killed?')
+        .setDescription('Which boss was killed? (try nicknames like "naggy", "emp", "ahr")')
         .setRequired(true)
         .setAutocomplete(true)
     )
@@ -27,12 +33,13 @@ module.exports = {
         .setRequired(false)
     ),
 
-  // Handle autocomplete — filters boss list as the user types
+  // Handle autocomplete — matches on boss name AND all nicknames
   async autocomplete(interaction) {
-    const focused = interaction.options.getFocused().toLowerCase();
+    const focused = interaction.options.getFocused().toLowerCase().trim();
     const filtered = bossChoices
-      .filter((c) => c.name.toLowerCase().includes(focused))
-      .slice(0, 25);
+      .filter((c) => !focused || c.terms.some((t) => t.includes(focused)) || c.name.toLowerCase().includes(focused))
+      .slice(0, 25)
+      .map(({ name, value }) => ({ name, value })); // strip internal `terms` field
     await interaction.respond(filtered);
   },
 
