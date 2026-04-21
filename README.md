@@ -148,17 +148,17 @@ Show current spawn timer status for all bosses.
 | `DISCORD_TOKEN` | Bot token from Discord Developer Portal |
 | `DISCORD_CLIENT_ID` | Application ID from Discord Developer Portal |
 | `DISCORD_GUILD_ID` | Your Discord server ID (right-click server → Copy ID) |
-| `TIMER_THREAD_ID` | Channel/thread ID where spawn alerts are posted |
+| `TIMER_CHANNEL_ID` | Channel ID where spawn alerts are posted (e.g. `#raid-mobs`) |
 | `ALLOWED_ROLE_NAME` | Role name that can use /kill and /unkill (default: `Pack Member`) |
 
 ---
 
-## Finding Your Thread ID
+## Finding Your Channel ID
 
 1. In Discord, enable **Developer Mode**: User Settings → Advanced → Developer Mode
-2. Right-click the thread you want alerts posted to
+2. Right-click the `#raid-mobs` channel
 3. Click **Copy Channel ID**
-4. Paste that into `TIMER_THREAD_ID` in your `.env`
+4. Paste that into `TIMER_CHANNEL_ID` in your `.env`
 
 ---
 

@@ -120,9 +120,9 @@ const alertedSoon = new Set();   // bossId -> alerted for <30min warning
 const alertedSpawned = new Set(); // bossId -> alerted for spawn
 
 function startSpawnChecker(readyClient) {
-  const threadId = process.env.TIMER_THREAD_ID;
+  const threadId = process.env.TIMER_CHANNEL_ID;
   if (!threadId) {
-    console.warn('⚠️  TIMER_THREAD_ID not set — spawn notifications disabled');
+    console.warn('⚠️  TIMER_CHANNEL_ID not set — spawn notifications disabled');
     return;
   }
 
