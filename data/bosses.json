@@ -19,6 +19,16 @@
     "emoji": "🐲",
     "pqdiUrl": "https://www.pqdi.cc/npc/73057"
   },
+    {
+    "id": "phinigel_autropos",
+    "name": "Phinigel Autropos",
+    "zone": "Kedge Keep",
+    "expansion": "Classic",
+    "timerHours": 18,
+    "nicknames": ["phinny"],
+    "emoji": "🐟",
+    "pqdiUrl": "https://www.pqdi.cc/npc/64001"
+  },
   {
     "id": "cazic_thule",
     "name": "Cazic Thule",
@@ -180,6 +190,26 @@
     "pqdiUrl": "https://www.pqdi.cc/npc/108512"
   },
   {
+    "id": "velketor_the_sorcerer",
+    "name": "Velketor the Sorcerer",
+    "zone": "Velketor's Labyrinth",
+    "expansion": "Velious",
+    "timerHours": 66,
+    "nicknames": ["velk","velks"],
+    "emoji": "🧙",
+    "pqdiUrl": "https://www.pqdi.cc/npc/112025"
+  },
+    {
+    "id": "lord_doljonijiarnimorinar",
+    "name": "Lord Doljonijiarnimorinar",
+    "zone": "Velketor's Labyrinth",
+    "expansion": "Velious",
+    "timerHours": 72,
+    "nicknames": ["bob","lordbob","lord bob","dolj","doli"],
+    "emoji": "🪓",
+    "pqdiUrl": "https://www.pqdi.cc/npc/112025"
+  },
+    {
     "id": "king_tormax",
     "name": "King Tormax",
     "zone": "Kael Drakkel",
