@@ -1,40 +1,64 @@
 // utils/state.js — Full state persistence
+// New schema supports per-expansion thread boards, summary card, and zone cards in threads.
 
 const fs   = require('fs');
 const path = require('path');
 
 const STATE_FILE = path.join(__dirname, '../data/state.json');
 
-// State schema:
+// Schema:
 // {
-//   bosses: {
-//     [bossId]: { killedAt, nextSpawn, killedBy, zoneCardMessageId }
+//   bosses: { [bossId]: { killedAt, nextSpawn, killedBy } },
+//
+//   // Per-expansion board: button panels live in each thread
+//   expansionBoards: {
+//     [expansion]: { messageIds: [string, ...] }
 //   },
-//   board: { messages: [{ messageId, panelIndex }] },
-//   zoneCards: {
-//     [zone]: { messageId }   // the single consolidated kill card per zone
+//
+//   // "." placeholder messages in the main channel (one per expansion + summary)
+//   channelSlots: {
+//     summary:  string,           // messageId of top-of-channel summary card
+//     [expansion]: string         // messageId of "." placeholder for each expansion
 //   },
-//   dailyKills: [{ bossId, killedAt, killedBy }],
-//   announceMessageIds: [string]
+//
+//   // Zone kill cards: live in the expansion thread, not the main channel
+//   zoneCards: { [zone]: { messageId: string, threadId: string } },
+//
+//   dailyKills:        [{ bossId, killedAt, killedBy }],
+//   announceMessageIds: [string],
 // }
+
+function _empty() {
+  return {
+    bosses:          {},
+    expansionBoards: {},
+    channelSlots:    {},
+    zoneCards:       {},
+    dailyKills:      [],
+    announceMessageIds: [],
+  };
+}
 
 function loadState() {
   if (!fs.existsSync(STATE_FILE)) {
-    const empty = { bosses: {}, board: { messages: [] }, zoneCards: {}, dailyKills: [], announceMessageIds: [] };
-    fs.writeFileSync(STATE_FILE, JSON.stringify(empty, null, 2), 'utf8');
-    return empty;
+    const e = _empty();
+    fs.writeFileSync(STATE_FILE, JSON.stringify(e, null, 2), 'utf8');
+    return e;
   }
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    if (!raw.bosses && !raw.board) return { bosses: raw, board: { messages: [] }, zoneCards: {}, dailyKills: [], announceMessageIds: [] };
-    if (!raw.board)               raw.board = { messages: [] };
-    if (!raw.bosses)              raw.bosses = {};
-    if (!raw.zoneCards)           raw.zoneCards = {};
-    if (!raw.dailyKills)          raw.dailyKills = [];
-    if (!raw.announceMessageIds)  raw.announceMessageIds = [];
-    return raw;
+    // Migrate old formats
+    if (!raw.bosses && !raw.board) return { ..._empty(), bosses: raw };
+    const s = _empty();
+    s.bosses             = raw.bosses             || {};
+    s.expansionBoards    = raw.expansionBoards     || {};
+    s.channelSlots       = raw.channelSlots        || {};
+    s.zoneCards          = raw.zoneCards           || {};
+    s.dailyKills         = raw.dailyKills          || [];
+    s.announceMessageIds = raw.announceMessageIds  || [];
+    return s;
   } catch {
-    return { bosses: {}, board: { messages: [] }, zoneCards: {}, dailyKills: [], announceMessageIds: [] };
+    return _empty();
   }
 }
 
@@ -42,24 +66,26 @@ function saveState(state) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
 }
 
-// ── Boss kill tracking ────────────────────────────────────────────────────────
+// ── Boss kills ────────────────────────────────────────────────────────────────
 
 function recordKill(bossId, timerHours, killedBy) {
-  const state     = loadState();
-  const killedAt  = Date.now();
-  const nextSpawn = killedAt + timerHours * 60 * 60 * 1000;
-  state.bosses[bossId] = { killedAt, nextSpawn, killedBy, zoneCardMessageId: null };
+  const state    = loadState();
+  const killedAt = Date.now();
+  const nextSpawn = killedAt + timerHours * 3600000;
+  state.bosses[bossId] = { killedAt, nextSpawn, killedBy };
   state.dailyKills.push({ bossId, killedAt, killedBy });
   saveState(state);
   return state.bosses[bossId];
 }
 
-function setZoneCardMessageId(bossId, messageId) {
+function overrideTimer(bossId, nextSpawn) {
   const state = loadState();
   if (state.bosses[bossId]) {
-    state.bosses[bossId].zoneCardMessageId = messageId;
+    state.bosses[bossId].nextSpawn = nextSpawn;
     saveState(state);
+    return true;
   }
+  return false;
 }
 
 function clearKill(bossId) {
@@ -68,94 +94,60 @@ function clearKill(bossId) {
   saveState(state);
 }
 
-function getBossState(bossId) {
-  return loadState().bosses[bossId] || null;
+function getBossState(bossId)  { return loadState().bosses[bossId] || null; }
+function getAllState()          { return loadState().bosses; }
+
+// ── Expansion boards (per-thread) ────────────────────────────────────────────
+
+function getExpansionBoard(expansion) {
+  return loadState().expansionBoards[expansion] || null;
 }
 
-function getAllState() {
-  return loadState().bosses;
-}
-
-// ── Zone card tracking ────────────────────────────────────────────────────────
-// One message per zone containing all current kills in that zone
-
-function getZoneCard(zone) {
-  return loadState().zoneCards[zone] || null;
-}
-
-function setZoneCard(zone, messageId) {
+function saveExpansionBoard(expansion, messageIds) {
   const state = loadState();
-  state.zoneCards[zone] = { messageId };
+  if (!state.expansionBoards) state.expansionBoards = {};
+  state.expansionBoards[expansion] = { messageIds };
   saveState(state);
 }
 
-function clearZoneCard(zone) {
-  const state = loadState();
-  delete state.zoneCards[zone];
-  saveState(state);
-}
+// ── Channel slots (summary + "." placeholders) ────────────────────────────────
 
-function getAllZoneCards() {
-  return loadState().zoneCards;
-}
+function getChannelSlots()         { return loadState().channelSlots || {}; }
+function getSummaryMessageId()     { return loadState().channelSlots?.summary || null; }
+function setSummaryMessageId(id)   { const s = loadState(); s.channelSlots = s.channelSlots || {}; s.channelSlots.summary = id; saveState(s); }
+function getChannelPlaceholder(expansion)      { return loadState().channelSlots?.[expansion] || null; }
+function setChannelPlaceholder(expansion, id)  { const s = loadState(); s.channelSlots = s.channelSlots || {}; s.channelSlots[expansion] = id; saveState(s); }
 
-// ── Board message tracking ────────────────────────────────────────────────────
+// ── Zone cards (live in expansion threads) ────────────────────────────────────
 
-function getBoardMessages() {
-  return loadState().board.messages || [];
-}
+function getZoneCard(zone)                     { return loadState().zoneCards[zone] || null; }
+function setZoneCard(zone, messageId, threadId){ const s = loadState(); s.zoneCards[zone] = { messageId, threadId }; saveState(s); }
+function clearZoneCard(zone)                   { const s = loadState(); delete s.zoneCards[zone]; saveState(s); }
+function getAllZoneCards()                      { return loadState().zoneCards; }
 
-function saveBoardMessages(messages) {
-  const state = loadState();
-  state.board.messages = messages;
-  saveState(state);
-}
+// ── Daily kills ───────────────────────────────────────────────────────────────
 
-// ── Daily kills log ───────────────────────────────────────────────────────────
+function getDailyKills()  { return loadState().dailyKills || []; }
+function resetDailyKills(){ const s = loadState(); s.dailyKills = []; saveState(s); }
 
-function getDailyKills() {
-  return loadState().dailyKills || [];
-}
+// ── Announce IDs ──────────────────────────────────────────────────────────────
 
-function resetDailyKills() {
-  const state = loadState();
-  state.dailyKills = [];
-  saveState(state);
-}
+function addAnnounceMessageId(id)    { const s = loadState(); s.announceMessageIds.push(id); saveState(s); }
+function getAnnounceMessageIds()     { return loadState().announceMessageIds || []; }
+function removeAnnounceMessageId(id) { const s = loadState(); s.announceMessageIds = s.announceMessageIds.filter(x => x !== id); saveState(s); }
+function clearAnnounceMessageIds()   { const s = loadState(); s.announceMessageIds = []; saveState(s); }
 
-// ── Announce message IDs ──────────────────────────────────────────────────────
-
-function addAnnounceMessageId(messageId) {
-  const state = loadState();
-  state.announceMessageIds.push(messageId);
-  saveState(state);
-}
-
-function getAnnounceMessageIds() {
-  return loadState().announceMessageIds || [];
-}
-
-function clearAnnounceMessageIds() {
-  const state = loadState();
-  state.announceMessageIds = [];
-  saveState(state);
-}
+// Legacy compat (old code may call these)
+function getBoardMessages()          { return []; }
+function saveBoardMessages()         {}
 
 module.exports = {
-  recordKill,
-  setZoneCardMessageId,
-  clearKill,
-  getBossState,
-  getAllState,
-  getZoneCard,
-  setZoneCard,
-  clearZoneCard,
-  getAllZoneCards,
-  getBoardMessages,
-  saveBoardMessages,
-  getDailyKills,
-  resetDailyKills,
-  addAnnounceMessageId,
-  getAnnounceMessageIds,
-  clearAnnounceMessageIds,
+  recordKill, overrideTimer, clearKill, getBossState, getAllState,
+  getExpansionBoard, saveExpansionBoard,
+  getChannelSlots, getSummaryMessageId, setSummaryMessageId,
+  getChannelPlaceholder, setChannelPlaceholder,
+  getZoneCard, setZoneCard, clearZoneCard, getAllZoneCards,
+  getDailyKills, resetDailyKills,
+  addAnnounceMessageId, getAnnounceMessageIds, removeAnnounceMessageId, clearAnnounceMessageIds,
+  getBoardMessages, saveBoardMessages,
 };

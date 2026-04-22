@@ -1,229 +1,131 @@
-// utils/board.js
-// Compact table-style board — one message per expansion chunk, max 5 ActionRows × 5 buttons.
-// Each zone group starts on a NEW ROW for visual separation (Discord's natural line break).
-// 10 total reserved slots: 6 active + 4 PoP placeholders.
+// utils/board.js — Per-expansion board panels (live in threads, not main channel)
 
 const {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
 } = require('discord.js');
+const { EXPANSION_ORDER, EXPANSION_META } = require('./config');
 
-const EXPANSION_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin'];
-
-const EXPANSION_META = {
-  Classic: { label: '⚔️ Classic EverQuest', color: 0xaa6622 },
-  Kunark:  { label: '🦎 Ruins of Kunark',    color: 0x228822 },
-  Velious: { label: '❄️ Scars of Velious',   color: 0x2255aa },
-  Luclin:  { label: '🌙 Shadows of Luclin',  color: 0x882299 },
-};
-
-const POP_PLACEHOLDERS = [
-  { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
-  { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
-  { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
-  { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
-  { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
-];
-
-const TOTAL_RESERVED_SLOTS = 14; // 9 active + 5 PoP reserved
-const ZONE_COLS   = 3;
-const MAX_ROWS    = 5;  // Discord hard limit per message
+const ZONE_COLS      = 3;
+const MAX_ROWS       = 5;
 const BUTTONS_PER_ROW = 5;
 
 /**
- * Build ALL board panels including PoP placeholders.
- * Always returns exactly TOTAL_RESERVED_SLOTS panels.
+ * Build panels for ONE expansion only.
+ * Returns array of { type, expansion, label, payload }
  */
-function buildBoardPanels(bosses, killState = {}) {
-  const now = Date.now();
+function buildExpansionPanels(expansion, bosses, killState = {}) {
+  const now  = Date.now();
+  const meta = EXPANSION_META[expansion] || { label: expansion, color: 0x555555 };
 
-  const byExpansion = {};
-  for (const exp of EXPANSION_ORDER) byExpansion[exp] = {};
+  // Collect zones for this expansion
+  const byZone = {};
   for (const boss of bosses) {
-    const exp = boss.expansion || 'Luclin';
-    if (!byExpansion[exp]) byExpansion[exp] = {};
-    if (!byExpansion[exp][boss.zone]) byExpansion[exp][boss.zone] = [];
-    byExpansion[exp][boss.zone].push(boss);
+    if ((boss.expansion || 'Luclin') !== expansion) continue;
+    if (!byZone[boss.zone]) byZone[boss.zone] = [];
+    byZone[boss.zone].push(boss);
   }
 
-  const panels = [];
-
-  for (const exp of EXPANSION_ORDER) {
-    const zones = Object.entries(byExpansion[exp]);
-    if (zones.length === 0) continue;
-
-    const meta       = EXPANSION_META[exp];
-    const zoneChunks = splitZonesIntoChunks(zones, MAX_ROWS, BUTTONS_PER_ROW);
-
-    zoneChunks.forEach((chunk, chunkIdx) => {
-      const totalChunks = zoneChunks.length;
-      const partLabel   = totalChunks > 1
-        ? `${meta.label} (${chunkIdx + 1}/${totalChunks})`
-        : meta.label;
-
-      const embed      = buildExpansionEmbed(meta.color, partLabel, chunk, killState, now, totalChunks, chunkIdx);
-      const components = buildButtonRowsForChunk(chunk, killState, now);
-
-      panels.push({
-        type: 'expansion',
-        expansion: exp,
-        label: partLabel,
-        payload: { embeds: [embed], components },
-      });
-    });
-  }
-
-  // Pad with PoP reserved placeholders to reach TOTAL_RESERVED_SLOTS
-  const needed = TOTAL_RESERVED_SLOTS - panels.length;
-  for (let i = 0; i < Math.min(needed, POP_PLACEHOLDERS.length); i++) {
-    const ph = POP_PLACEHOLDERS[i];
-    panels.push({
-      type: 'reserved',
-      expansion: 'PoP',
-      label: ph.label,
+  const zones = Object.entries(byZone);
+  if (zones.length === 0) {
+    // Reserved placeholder panel
+    return [{
+      type: 'reserved', expansion, label: `${meta.label} — Reserved`,
       payload: {
-        embeds: [
-          new EmbedBuilder()
-            .setColor(ph.color)
-            .setTitle(ph.label)
-            .setDescription('~Reserved for Planes of Power~\n\nThis board slot will be activated when PoP content is added.')
-        ],
+        embeds: [new EmbedBuilder().setColor(meta.color).setTitle(meta.label)
+          .setDescription('~Reserved — no bosses configured yet~')],
         components: [],
       },
-    });
+    }];
   }
 
-  return panels;
+  const chunks = splitZonesIntoChunks(zones, MAX_ROWS, BUTTONS_PER_ROW);
+  return chunks.map((chunk, idx) => {
+    const partLabel = chunks.length > 1 ? `${meta.label} (${idx+1}/${chunks.length})` : meta.label;
+    return {
+      type: 'expansion', expansion, label: partLabel,
+      payload: {
+        embeds: [buildExpansionEmbed(meta.color, partLabel, chunk, killState, now, chunks.length, idx)],
+        components: buildButtonRowsForChunk(chunk, killState, now),
+      },
+    };
+  });
+}
+
+/**
+ * Build panels for ALL expansions (used by cleanup / initial setup).
+ */
+function buildAllExpansionPanels(bosses, killState = {}) {
+  const result = {};
+  for (const exp of EXPANSION_ORDER) {
+    result[exp] = buildExpansionPanels(exp, bosses, killState);
+  }
+  return result;
 }
 
 function buildExpansionEmbed(color, title, chunk, killState, now, totalChunks, chunkIdx) {
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(title)
-    .setDescription(
-      'Click a boss to record a kill • Click 💀 to undo' +
-      (totalChunks > 1 ? ` • Part ${chunkIdx + 1}/${totalChunks}` : '')
-    );
+    .setDescription('Click a boss to record a kill • Click 💀 to undo' +
+      (totalChunks > 1 ? ` • Part ${chunkIdx+1}/${totalChunks}` : ''));
 
   for (let i = 0; i < chunk.length; i += ZONE_COLS) {
     const row = chunk.slice(i, i + ZONE_COLS);
     for (const [zone, zoneBosses] of row) {
       const lines = zoneBosses.map((boss) => {
         const entry = killState[boss.id];
-        const onCooldown = entry && entry.nextSpawn > now;
-        if (onCooldown) {
+        const onCD  = entry && entry.nextSpawn > now;
+        if (onCD) {
           const d = new Date(entry.killedAt);
-          return `💀 ~~${boss.name}~~ (${d.getMonth() + 1}/${d.getDate()})`;
+          return `💀 ~~${boss.name}~~ (${d.getMonth()+1}/${d.getDate()})`;
         }
         return `${boss.emoji || '•'} ${boss.name}`;
       });
-      embed.addFields({
-        name:   `📍 ${zone}`,
-        value:  lines.join('\n').slice(0, 1024) || '\u200b',
-        inline: true,
-      });
+      embed.addFields({ name: `📍 ${zone}`, value: lines.join('\n').slice(0, 1024) || '\u200b', inline: true });
     }
     const rem = row.length % ZONE_COLS;
-    if (rem !== 0) {
-      for (let p = 0; p < ZONE_COLS - rem; p++) {
-        embed.addFields({ name: '\u200b', value: '\u200b', inline: true });
-      }
-    }
+    if (rem !== 0) for (let p = 0; p < ZONE_COLS - rem; p++) embed.addFields({ name: '\u200b', value: '\u200b', inline: true });
   }
-
   return embed;
 }
 
-/**
- * Split zones into chunks where each chunk fits in MAX_ROWS ActionRows.
- *
- * Each zone gets its own row (starting on a new ActionRow).
- * A zone with N bosses occupies ceil(N / BUTTONS_PER_ROW) rows.
- * Zones are never split across chunks.
- */
-function splitZonesIntoChunks(zones, maxRows, buttonsPerRow) {
-  const chunks = [];
-  let current  = [];
-  let rowsUsed = 0;
-
-  for (const [zone, zoneBosses] of zones) {
-    // Each zone starts on its own row; calculate rows needed
-    const zoneRows = Math.ceil(zoneBosses.length / buttonsPerRow);
-
-    if (current.length > 0 && rowsUsed + zoneRows > maxRows) {
-      chunks.push(current);
-      current  = [];
-      rowsUsed = 0;
-    }
-
-    current.push([zone, zoneBosses]);
-    rowsUsed += zoneRows;
+function splitZonesIntoChunks(zones, maxRows, bpr) {
+  const chunks = []; let cur = [], rows = 0;
+  for (const [zone, zb] of zones) {
+    const zr = Math.ceil(zb.length / bpr);
+    if (cur.length > 0 && rows + zr > maxRows) { chunks.push(cur); cur = []; rows = 0; }
+    cur.push([zone, zb]); rows += zr;
   }
-
-  if (current.length > 0) chunks.push(current);
+  if (cur.length) chunks.push(cur);
   return chunks;
 }
 
-/**
- * Build ActionRows for a zone chunk.
- * Each zone starts on a new ActionRow — this creates the natural "newline"
- * visual separation in Discord without needing separator buttons.
- * Bosses within a zone fill left-to-right, wrapping to the next row if needed.
- */
 function buildButtonRowsForChunk(zoneChunk, killState, now) {
   const rows = [];
-
-  for (const [zone, zoneBosses] of zoneChunk) {
+  for (const [, zoneBosses] of zoneChunk) {
     if (rows.length >= MAX_ROWS) break;
-
-    // Start each zone on a fresh row
-    let currentRow = new ActionRowBuilder();
-    let count      = 0;
-
+    let cr = new ActionRowBuilder(), c = 0;
     for (const boss of zoneBosses) {
-      if (count === BUTTONS_PER_ROW) {
-        // Row full — push and start a new one (if still within limit)
-        rows.push(currentRow);
-        if (rows.length >= MAX_ROWS) break;
-        currentRow = new ActionRowBuilder();
-        count      = 0;
-      }
-
-      currentRow.addComponents(makeBossButton(boss, killState, now));
-      count++;
+      if (c === BUTTONS_PER_ROW) { rows.push(cr); if (rows.length >= MAX_ROWS) break; cr = new ActionRowBuilder(); c = 0; }
+      cr.addComponents(makeBossButton(boss, killState, now)); c++;
     }
-
-    // Push the last (possibly partial) row for this zone
-    if (count > 0 && rows.length < MAX_ROWS) {
-      rows.push(currentRow);
-    }
+    if (c > 0 && rows.length < MAX_ROWS) rows.push(cr);
   }
-
   return rows;
 }
 
 function makeBossButton(boss, killState, now) {
-  const entry        = killState[boss.id];
-  const isOnCooldown = entry && entry.nextSpawn > now;
-  if (isOnCooldown) {
+  const entry = killState[boss.id];
+  const onCD  = entry && entry.nextSpawn > now;
+  if (onCD) {
     const d = new Date(entry.killedAt);
-    return new ButtonBuilder()
-      .setCustomId(`kill:${boss.id}`)
-      .setLabel(`💀 ${boss.name} (${d.getMonth() + 1}/${d.getDate()})`.slice(0, 80))
+    return new ButtonBuilder().setCustomId(`kill:${boss.id}`)
+      .setLabel(`💀 ${boss.name} (${d.getMonth()+1}/${d.getDate()})`.slice(0, 80))
       .setStyle(ButtonStyle.Secondary);
   }
-  return new ButtonBuilder()
-    .setCustomId(`kill:${boss.id}`)
+  return new ButtonBuilder().setCustomId(`kill:${boss.id}`)
     .setLabel(`${boss.emoji || ''} ${boss.name}`.trim().slice(0, 80))
     .setStyle(ButtonStyle.Danger);
 }
 
-module.exports = {
-  buildBoardPanels,
-  makeBossButton,
-  EXPANSION_ORDER,
-  EXPANSION_META,
-  TOTAL_RESERVED_SLOTS,
-};
+module.exports = { buildExpansionPanels, buildAllExpansionPanels, makeBossButton, EXPANSION_ORDER, EXPANSION_META };

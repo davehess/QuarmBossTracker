@@ -1,10 +1,11 @@
-// commands/kill.js — Record a kill and update/create the zone kill card
+// commands/kill.js
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { recordKill, getAllState, getZoneCard, setZoneCard, getBoardMessages } = require('../utils/state');
-const { buildZoneKillCard } = require('../utils/embeds');
-const { buildBoardPanels } = require('../utils/board');
+const { recordKill, getAllState, getZoneCard, setZoneCard } = require('../utils/state');
+const { postKillUpdate } = require('../utils/killops');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
+const { getThreadId, getBossExpansion } = require('../utils/config');
+const { buildZoneKillCard } = require('../utils/embeds');
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
@@ -30,11 +31,10 @@ module.exports = {
       value: b.id,
       terms: [b.name.toLowerCase(), ...(b.nicknames || []).map((n) => n.toLowerCase())],
     }));
-    const filtered = choices
-      .filter((c) => !focused || c.terms.some((t) => t.includes(focused)) || c.name.toLowerCase().includes(focused))
-      .slice(0, 25)
-      .map(({ name, value }) => ({ name, value }));
-    await interaction.respond(filtered);
+    await interaction.respond(
+      choices.filter((c) => !focused || c.terms.some((t) => t.includes(focused)) || c.name.toLowerCase().includes(focused))
+        .slice(0, 25).map(({ name, value }) => ({ name, value }))
+    );
   },
 
   async execute(interaction) {
@@ -51,65 +51,54 @@ module.exports = {
     // Record kill in state
     recordKill(bossId, boss.timerHours, interaction.user.id);
 
-    // Gather all currently-killed bosses in the same zone (for the zone card)
-    await updateZoneCard(interaction, boss, bosses, note);
+    // Determine which thread this boss belongs in
+    const expansion = getBossExpansion(boss);
+    const threadId  = getThreadId(expansion);
 
-    // Refresh board buttons in background
-    refreshBoard(interaction.client, interaction.channelId).catch(() => {});
+    // Build zone kill card content
+    const killState    = getAllState();
+    const now          = Date.now();
+    const zoneBosses   = bosses.filter((b) => b.zone === boss.zone);
+    const killedInZone = zoneBosses
+      .filter((b) => killState[b.id] && killState[b.id].nextSpawn > now)
+      .map((b) => ({ boss: b, entry: killState[b.id], killedBy: killState[b.id].killedBy }));
+
+    const embed = buildZoneKillCard(boss.zone, killedInZone);
+    if (note) embed.addFields({ name: 'Note', value: note, inline: false });
+
+    // Post/update zone card in thread (or main channel if no thread configured)
+    const targetChannelId = threadId || process.env.TIMER_CHANNEL_ID;
+    const existing = getZoneCard(boss.zone);
+
+    if (existing && existing.messageId) {
+      try {
+        const targetCh = await interaction.client.channels.fetch(existing.threadId || targetChannelId);
+        const msg = await targetCh.messages.fetch(existing.messageId);
+        await msg.edit({ embeds: [embed] });
+        // Acknowledge kill silently if in a thread; publicly if in main channel
+        const inThread = interaction.channelId !== process.env.TIMER_CHANNEL_ID;
+        await interaction.reply({
+          flags: inThread ? undefined : MessageFlags.Ephemeral,
+          content: `✅ **${boss.name}** kill recorded — zone card updated${threadId ? ' in thread' : ''}.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        // Run board + summary updates
+        await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId);
+        return;
+      } catch { /* card gone — post new */ }
+    }
+
+    // Post new zone card
+    if (threadId) {
+      const thread = await interaction.client.channels.fetch(threadId);
+      const sent   = await thread.send({ embeds: [embed] });
+      setZoneCard(boss.zone, sent.id, threadId);
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ **${boss.name}** kill recorded in <#${threadId}>.` });
+    } else {
+      const { resource } = await interaction.reply({ embeds: [embed], withResponse: true });
+      setZoneCard(boss.zone, resource.message.id, null);
+    }
+
+    await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId);
   },
 };
-
-/**
- * Create or edit-in-place the zone kill card for this boss's zone.
- * The card shows ALL currently killed bosses in the zone in one embed.
- */
-async function updateZoneCard(interaction, triggeredBoss, bosses, note) {
-  const killState   = getAllState();
-  const now         = Date.now();
-  const zoneBosses  = bosses.filter((b) => b.zone === triggeredBoss.zone);
-
-  const killedInZone = zoneBosses
-    .filter((b) => killState[b.id] && killState[b.id].nextSpawn > now)
-    .map((b) => ({ boss: b, entry: killState[b.id], killedBy: killState[b.id].killedBy }));
-
-  const embed = buildZoneKillCard(triggeredBoss.zone, killedInZone);
-  if (note) embed.addFields({ name: 'Note', value: note, inline: false });
-
-  const existing = getZoneCard(triggeredBoss.zone);
-
-  if (existing) {
-    // Try to edit the existing zone card
-    try {
-      const msg = await interaction.channel.messages.fetch(existing.messageId);
-      await msg.edit({ embeds: [embed] });
-      // Acknowledge kill silently (no new message spam)
-      await interaction.reply({
-        flags: MessageFlags.Ephemeral,
-        content: `✅ **${triggeredBoss.name}** kill recorded — zone card updated.`,
-      });
-      return;
-    } catch {
-      // Message was deleted — fall through to post a new card
-    }
-  }
-
-  // Post new zone card
-  const { resource } = await interaction.reply({ embeds: [embed], withResponse: true });
-  setZoneCard(triggeredBoss.zone, resource.message.id);
-}
-
-async function refreshBoard(discordClient, channelId) {
-  const boardIds = getBoardMessages();
-  if (!boardIds.length) return;
-  const channel   = await discordClient.channels.fetch(channelId);
-  const bosses    = getBosses();
-  const killState = getAllState();
-  const panels    = buildBoardPanels(bosses, killState);
-  if (panels.length !== boardIds.length) return;
-  for (let i = 0; i < boardIds.length; i++) {
-    try {
-      const msg = await channel.messages.fetch(boardIds[i].messageId);
-      await msg.edit(panels[i].payload);
-    } catch (_) {}
-  }
-}
