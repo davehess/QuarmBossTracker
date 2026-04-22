@@ -1,24 +1,21 @@
 // commands/board.js
-// Post or refresh the full board layout:
-//
-// Main channel slot order (edited in place, never re-posted if already exist):
-//   Slot 1: 📊 Active Cooldowns  (all expansions)
-//   Slot 2: 🌅 Spawning Tomorrow
-//   Slots 3-7: "⚔️ Classic → #classic-thread" placeholders
+// Channel slot order (each slot is ALWAYS edited in place, NEVER re-posted if it exists):
+//   Slot 1: 📊 Active Cooldowns
+//   Slot 2: 🌅 Spawning in Next 24 Hours
+//   Slot 3: "." (reserved placeholder, third RaidBosses line)
+//   Slots 4-8: Expansion → Thread links (Classic, Kunark, Velious, Luclin, PoP)
+//              These are posted ONCE and then only edited, never re-posted.
 //
 // Each expansion thread (top to bottom):
-//   1. Active Cooldowns card for that expansion   ← new
-//   2. Zone kill cards (posted on /kill)
-//   3. Board panels (buttons)
+//   1. Active Cooldowns card for that expansion (edited in place)
+//   2. Zone kill cards (posted as kills happen)
+//   3. Board panels with kill buttons (edited in place)
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { EXPANSION_ORDER, getThreadId } = require('../utils/config');
+const { postOrUpdateExpansionBoard } = require('../utils/killops');
 const {
-  postOrUpdateExpansionBoard,
-  refreshSummaryCard, refreshSpawningTomorrowCard, refreshThreadCooldownCard,
-} = require('../utils/killops');
-const {
-  getChannelSlots, getSummaryMessageId, setSummaryMessageId,
+  getSummaryMessageId, setSummaryMessageId,
   getSpawningTomorrowId, setSpawningTomorrowId,
   getChannelPlaceholder, setChannelPlaceholder,
   getThreadCooldownId, setThreadCooldownId,
@@ -37,23 +34,29 @@ function getBosses() {
   return require('../data/bosses.json');
 }
 
-async function ensureSlot(channel, currentId, payload, setter) {
-  if (currentId) {
+/**
+ * Edit a message in place if it exists, or post once and save the ID.
+ * This is the core of "never duplicate" — always try edit first.
+ */
+async function editOrPost(channel, storedId, payload, onNewId) {
+  if (storedId) {
     try {
-      const m = await channel.messages.fetch(currentId);
+      const m = await channel.messages.fetch(storedId);
       await m.edit(payload);
-      return currentId;
-    } catch { /* message gone — fall through to post */ }
+      return storedId;
+    } catch {
+      // Message was deleted — fall through to post once
+    }
   }
   const m = await channel.send(payload);
-  setter(m.id);
+  onNewId(m.id);
   return m.id;
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('board')
-    .setDescription('Post or refresh all expansion boards in their threads, and update main channel slots'),
+    .setDescription('Post or refresh all expansion boards in threads and update main channel slots'),
 
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member)) {
@@ -68,67 +71,67 @@ module.exports = {
     const killState = getAllState();
     const results   = [];
 
-    // ── MAIN CHANNEL SLOTS (in order) ────────────────────────────────────────
+    // ── MAIN CHANNEL — strict slot order ─────────────────────────────────────
 
-    // Slot 1: Active Cooldowns summary
-    await ensureSlot(
-      channel,
-      getSummaryMessageId(),
+    // Slot 1: Active Cooldowns
+    await editOrPost(
+      channel, getSummaryMessageId(),
       { embeds: [buildSummaryCard(bosses, killState)] },
       setSummaryMessageId
     );
-    results.push('✅ Main channel: Active Cooldowns card');
+    results.push('✅ Slot 1: Active Cooldowns');
 
     // Slot 2: Spawning Tomorrow
-    await ensureSlot(
-      channel,
-      getSpawningTomorrowId(),
+    await editOrPost(
+      channel, getSpawningTomorrowId(),
       { embeds: [buildSpawningTomorrowCard(bosses, killState)] },
       setSpawningTomorrowId
     );
-    results.push('✅ Main channel: Spawning Tomorrow card');
+    results.push('✅ Slot 2: Spawning Tomorrow');
 
-    // Slots 3-7: Expansion → Thread placeholders
+    // Slot 3: "." placeholder (third RaidBosses line, reserved)
+    // We use the 'dot' key in channelSlots
+    const dotId = getChannelPlaceholder('dot');
+    await editOrPost(
+      channel, dotId,
+      { content: '.', embeds: [], components: [] },
+      (id) => setChannelPlaceholder('dot', id)
+    );
+    results.push('✅ Slot 3: "." placeholder');
+
+    // Slots 4-8: Expansion → Thread links (ONLY posted once per expansion, then edited)
     for (const exp of EXPANSION_ORDER) {
       const threadId = getThreadId(exp);
       const label    = EXP_LABELS[exp] || exp;
       const content  = threadId ? `${label} → <#${threadId}>` : `${label} → *(no thread configured)*`;
-      await ensureSlot(
+      await editOrPost(
         channel,
         getChannelPlaceholder(exp),
         { content, embeds: [], components: [] },
         (id) => setChannelPlaceholder(exp, id)
       );
-      results.push(`✅ Main channel: ${label} placeholder`);
+      results.push(`✅ ${label} link`);
     }
 
     // ── EXPANSION THREADS ─────────────────────────────────────────────────────
     for (const exp of EXPANSION_ORDER) {
       const threadId = getThreadId(exp);
-      if (!threadId) { results.push(`⬜ ${exp} thread — not configured`); continue; }
+      if (!threadId) { results.push(`⬜ ${exp} — no thread configured`); continue; }
 
       try {
         const thread = await client.channels.fetch(threadId);
 
-        // Thread slot 1: Active Cooldowns for this expansion
+        // Thread slot 1: Active Cooldowns for this expansion (top of thread, edited in place)
         const cooldownEmbed = buildExpansionCooldownCard(exp, bosses, killState);
-        const storedCooldownId = getThreadCooldownId(exp);
-        if (storedCooldownId) {
-          try {
-            const m = await thread.messages.fetch(storedCooldownId);
-            await m.edit({ embeds: [cooldownEmbed] });
-          } catch {
-            const m = await thread.send({ embeds: [cooldownEmbed] });
-            setThreadCooldownId(exp, m.id);
-          }
-        } else {
-          const m = await thread.send({ embeds: [cooldownEmbed] });
-          setThreadCooldownId(exp, m.id);
-        }
+        await editOrPost(
+          thread, getThreadCooldownId(exp),
+          { embeds: [cooldownEmbed] },
+          (id) => setThreadCooldownId(exp, id)
+        );
 
-        // Thread slots 2+: Board panels (kill buttons)
+        // Thread slot 2+: Board panels with kill buttons
         const boardResult = await postOrUpdateExpansionBoard(client, exp, threadId, bosses);
-        results.push(`${boardResult.ok ? '✅' : '❌'} ${exp} thread — cooldowns + board (${boardResult.action || boardResult.reason})`);
+        results.push(`${boardResult.ok ? '✅' : '❌'} ${exp} thread (${boardResult.action || boardResult.reason})`);
       } catch (err) {
         results.push(`❌ ${exp} thread — ${err?.message}`);
       }

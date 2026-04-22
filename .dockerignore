@@ -1,0 +1,12 @@
+# Never bake state.json into the image — it must come from the mounted volume
+data/state.json
+
+# Don't include dev artifacts in the image
+.env
+.env.*
+!.env.example
+*.log
+node_modules
+.git
+.gitignore
+README.md

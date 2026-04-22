@@ -1,3 +1,15 @@
-node_modules/
-.env
+# Never commit state — it contains live Discord message IDs and kill timers
 data/state.json
+data/state.json.tmp
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
