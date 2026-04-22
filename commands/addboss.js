@@ -11,7 +11,6 @@ const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 const BOSSES_FILE = path.join(__dirname, '../data/bosses.json');
 
 // Maps PQDI body type strings → emoji
-// Source: EQ body types matched to best-fit emoji
 const BODY_TYPE_EMOJI = {
   'dragon':            '🐉',
   'giant dragon':      '🐉',
@@ -49,22 +48,77 @@ const BODY_TYPE_EMOJI = {
   'shadow':            '🌑',
   'burrower':          '🪱',
   'summon':            '✨',
+  'magical':           '✨',
   'muramite':          '👹',
   'demon':             '👹',
   'god':               '⚡',
   'unknown':           '🐉',
 };
 
+// PQDI raw data expansion numbers → our expansion strings
+// Source: pqdi.cc/zones lists zones by expansion
+const EXPANSION_NUM_MAP = {
+  0: 'Classic',
+  1: 'Kunark',
+  2: 'Velious',
+  3: 'Luclin',
+  4: 'PoP',
+};
+
+// Zone name → expansion (authoritative list from pqdi.cc/zones)
+// Used as fallback if numeric expansion field isn't found
+const ZONE_EXPANSION_MAP = {
+  // Classic
+  "nagafen's lair": 'Classic', 'permafrost caverns': 'Classic',
+  'kedge keep': 'Classic', 'plane of fear': 'Classic', 'plane of hate': 'Classic',
+  'plane of sky': 'Classic', 'castle of mistmoore': 'Classic',
+  'estate of unrest': 'Classic', 'crushbone': 'Classic',
+  'accursed temple of cazic thule': 'Classic', 'kithicor forest': 'Classic',
+  // Kunark
+  'ruins of sebilis': 'Kunark', "karnor's castle": 'Kunark',
+  'the hole': 'Kunark', "veeshan's peak": 'Kunark', 'chardok': 'Kunark',
+  'skyfire mountains': 'Kunark', 'emerald jungle': 'Kunark',
+  'timorous deep': 'Kunark', 'howling stones': 'Kunark',
+  'city of mist': 'Kunark', 'the city of mist': 'Kunark', 'veksar': 'Kunark',
+  // Velious
+  "velketor's labyrinth": 'Velious', 'kael drakkel': 'Velious',
+  'icewell keep': 'Velious', 'skyshrine': 'Velious', 'iceclad ocean': 'Velious',
+  'cobalt scar': 'Velious', 'western wastes': 'Velious',
+  'dragon necropolis': 'Velious', 'the wakening land': 'Velious',
+  "sleeper's tomb": 'Velious', 'temple of veeshan': 'Velious',
+  'plane of growth': 'Velious', 'plane of mischief': 'Velious',
+  'great divide': 'Velious', 'the great divide': 'Velious',
+  'eastern wastes': 'Velious', 'crystal caverns': 'Velious',
+  'tower of frozen shadow': 'Velious',
+  // Luclin
+  'ssraeshza temple': 'Luclin', 'sanctus seru': 'Luclin',
+  "grieg's end": 'Luclin', 'katta castellum': 'Luclin',
+  'the deep': 'Luclin', 'akheva ruins': 'Luclin',
+  'the umbral plains': 'Luclin', 'vex thal': 'Luclin',
+  'acrylia caverns': 'Luclin', "the maiden's eye": 'Luclin',
+  'the fungus grove': 'Luclin', 'paludal caverns': 'Luclin',
+  'echo caverns': 'Luclin', 'twilight': 'Luclin',
+  'the grey': 'Luclin', 'grimling forest': 'Luclin',
+  'the tenebrous mountains': 'Luclin', 'the dawnshroud peaks': 'Luclin',
+  'scarlet desert': 'Luclin', 'shadeweaver\'s thicket': 'Luclin',
+  // PoP
+  'plane of knowledge': 'PoP', 'plane of time': 'PoP',
+  'plane of air': 'PoP', 'plane of earth': 'PoP',
+  'plane of fire': 'PoP', 'plane of water': 'PoP',
+  'plane of disease': 'PoP', 'plane of nightmare': 'PoP',
+  'plane of justice': 'PoP', 'plane of innovation': 'PoP',
+  'halls of honor': 'PoP', 'bastion of thunder': 'PoP',
+  'plane of tactics': 'PoP', 'drunder': 'PoP',
+};
+
 function bodyTypeToEmoji(bodyType) {
   if (!bodyType) return '🐉';
   const lower = bodyType.toLowerCase().trim();
-  // Exact match first
   if (BODY_TYPE_EMOJI[lower]) return BODY_TYPE_EMOJI[lower];
-  // Partial match
   for (const [key, emoji] of Object.entries(BODY_TYPE_EMOJI)) {
     if (lower.includes(key)) return emoji;
   }
-  return '🐉'; // default fallback
+  return '🐉';
 }
 
 function fetchUrl(url) {
@@ -77,59 +131,70 @@ function fetchUrl(url) {
   });
 }
 
-/**
- * Parse a PQDI NPC page and extract boss fields.
- * Returns { name, zone, timerHours, bodyType, expansion } or throws.
- */
-function parsePqdiPage(html, url) {
-  // Name: <title>NAME :: NPC :: PQDI</title> or <h1>NAME</h1>
+function parsePqdiPage(html) {
+  // Name from title tag
   const titleMatch = html.match(/<title>([^:]+)\s*::/);
   const name = titleMatch ? titleMatch[1].trim() : null;
   if (!name) throw new Error('Could not parse boss name from PQDI page');
 
-  // Instance Spawn Timer: extract hours from "X days and Y hours" or "Z hours"
-  let timerHours = 66; // sensible default
-  const timerMatch = html.match(/Instance Spawn Timer[^:]*:\s*([^<\n]+)/i);
+  // Instance Spawn Timer from Quick Facts section
+  let timerHours = 66;
+  const timerMatch = html.match(/Instance Spawn Timer[^:]*:\s*([^<\n\*]+)/i);
   if (timerMatch) {
     const timerText = timerMatch[1].trim();
     let hours = 0;
-    const weeks  = timerText.match(/(\d+)\s*week/i);
-    const days   = timerText.match(/(\d+)\s*day/i);
-    const hrs    = timerText.match(/(\d+)\s*hour/i);
-    const mins   = timerText.match(/(\d+)\s*minute/i);
-    if (weeks)  hours += parseInt(weeks[1])  * 168;
-    if (days)   hours += parseInt(days[1])   * 24;
-    if (hrs)    hours += parseInt(hrs[1]);
-    if (mins)   hours += parseInt(mins[1])   / 60;
+    const weeks = timerText.match(/(\d+)\s*week/i);
+    const days  = timerText.match(/(\d+)\s*day/i);
+    const hrs   = timerText.match(/(\d+)\s*hour/i);
+    const mins  = timerText.match(/(\d+)\s*minute/i);
+    if (weeks) hours += parseInt(weeks[1]) * 168;
+    if (days)  hours += parseInt(days[1])  * 24;
+    if (hrs)   hours += parseInt(hrs[1]);
+    if (mins)  hours += parseInt(mins[1])  / 60;
     if (hours > 0) timerHours = Math.round(hours * 100) / 100;
   }
+  // Also check instance_spawn_timer_override in raw data (ms → hours)
+  const overrideMatch = html.match(/instance_spawn_timer_override[^:]*:\s*(\d+)/i);
+  if (overrideMatch) {
+    const ms = parseInt(overrideMatch[1]);
+    if (ms > 0) {
+      const overrideHours = Math.round((ms / 1000 / 3600) * 100) / 100;
+      timerHours = overrideHours;
+    }
+  }
 
-  // Zone: "Zone: <a href="/zone/...">ZONENAME</a>"
+  // Zone from Quick Facts
   const zoneMatch = html.match(/Zone:\s*<a[^>]+>([^<]+)<\/a>/i);
   const zone = zoneMatch ? zoneMatch[1].trim() : 'Unknown';
 
-  // Expansion: look for "Expansion: XXXX" or "Luclin", "Velious" etc near top
-  const expMatch = html.match(/Expansion:\s*([A-Za-z\s]+?)(?:<|\n|$)/i);
-  let expansion = 'Classic';
-  if (expMatch) {
-    const raw = expMatch[1].trim().toLowerCase();
-    if (raw.includes('luclin'))  expansion = 'Luclin';
-    else if (raw.includes('velious')) expansion = 'Velious';
-    else if (raw.includes('kunark'))  expansion = 'Kunark';
-    else if (raw.includes('planes') || raw.includes('pop')) expansion = 'PoP';
-    else expansion = 'Classic';
-  } else {
-    // Infer from zone name
-    const luclinZones = ['ssraeshza','sanctus seru','vex thal','umbral','akheva','grieg','katta','the deep','acrylia','maiden'];
-    const veliousZones = ['kael','icewell','skyshrine','wakening','veeshan','western wastes','cobalt','sleeper','velketor'];
-    const kunarkZones  = ['sebilis','karnor','howling stones','timorous','veeshan\'s peak','skyfire','emerald jungle','the hole'];
-    const zl = zone.toLowerCase();
-    if (luclinZones.some(z => zl.includes(z)))  expansion = 'Luclin';
-    else if (veliousZones.some(z => zl.includes(z))) expansion = 'Velious';
-    else if (kunarkZones.some(z => zl.includes(z)))  expansion = 'Kunark';
+  // Expansion — use the numeric field from raw data (most reliable)
+  // expansion: 0 = Classic, 1 = Kunark, 2 = Velious, 3 = Luclin, 4 = PoP
+  const expNumMatch = html.match(/\*\*expansion:\*\*\s*(\d+)|expansion:\s*(\d+)/i);
+  let expansion = null;
+  if (expNumMatch) {
+    const num = parseInt(expNumMatch[1] || expNumMatch[2]);
+    expansion = EXPANSION_NUM_MAP[num] || null;
   }
 
-  // Body Type: "Giant (body type)" or "Dragon (body type)"
+  // Fallback: check Expansion: label in Quick Facts
+  if (!expansion) {
+    const expLabelMatch = html.match(/Expansion:\s*([A-Za-z\s]+?)(?:<|\n|:|\*|$)/i);
+    if (expLabelMatch) {
+      const raw = expLabelMatch[1].trim().toLowerCase();
+      if (raw.includes('luclin'))        expansion = 'Luclin';
+      else if (raw.includes('velious'))  expansion = 'Velious';
+      else if (raw.includes('kunark'))   expansion = 'Kunark';
+      else if (raw.includes('planes') || raw.includes('pop')) expansion = 'PoP';
+      else if (raw.includes('classic') || raw.includes('vanilla')) expansion = 'Classic';
+    }
+  }
+
+  // Final fallback: zone-name lookup (authoritative — from pqdi.cc/zones)
+  if (!expansion) {
+    expansion = ZONE_EXPANSION_MAP[zone.toLowerCase()] || 'Classic';
+  }
+
+  // Body type — look for "(body type)" pattern
   const bodyMatch = html.match(/([A-Za-z\s]+)\s*\(body type\)/i);
   const bodyType = bodyMatch ? bodyMatch[1].trim() : null;
 
@@ -175,7 +240,7 @@ module.exports = {
     let parsed;
     try {
       const html = await fetchUrl(url);
-      parsed = parsePqdiPage(html, url);
+      parsed = parsePqdiPage(html);
     } catch (err) {
       return interaction.editReply(`❌ Failed to fetch/parse PQDI page: ${err.message}`);
     }
@@ -184,41 +249,22 @@ module.exports = {
     const emoji = bodyTypeToEmoji(bodyType);
     const id    = toSnakeId(name);
 
-    // Load current bosses
     let bosses = [];
-    try {
-      bosses = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8'));
-    } catch {
-      bosses = [];
-    }
+    try { bosses = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8')); } catch { bosses = []; }
 
-    // Check for duplicate
     const existing = bosses.find(b => b.id === id || b.pqdiUrl === url);
     if (existing) {
       return interaction.editReply(
-        `⚠️ **${existing.name}** is already in bosses.json (id: \`${existing.id}\`).\nNo changes made.`
+        `⚠️ **${existing.name}** is already in bosses.json (id: \`${existing.id}\`, expansion: ${existing.expansion}).\nNo changes made.`
       );
     }
 
-    const newBoss = {
-      id,
-      name,
-      zone,
-      expansion,
-      timerHours,
-      nicknames: [id.replace(/_/g, ' ')],
-      emoji,
-      pqdiUrl: url,
-    };
-
+    const newBoss = { id, name, zone, expansion, timerHours, nicknames: [id.replace(/_/g, ' ')], emoji, pqdiUrl: url };
     bosses.push(newBoss);
     fs.writeFileSync(BOSSES_FILE, JSON.stringify(bosses, null, 2), 'utf8');
-
-    // Trigger board refresh — re-require bosses to pick up the new file
-    // (clear require cache so index.js gets fresh data on next interaction)
     delete require.cache[require.resolve('../data/bosses.json')];
 
-    // Refresh board in the raid-mobs channel
+    // Refresh board
     const channelId = process.env.TIMER_CHANNEL_ID;
     let boardRefreshed = false;
     if (channelId) {
@@ -240,14 +286,12 @@ module.exports = {
           }
           boardRefreshed = true;
         } else if (boardIds.length > 0) {
-          // Panel count changed (new zone/expansion) — append new panels
           const newIds = [...boardIds];
           for (let i = boardIds.length; i < panels.length; i++) {
             const sent = await channel.send(panels[i].payload);
             newIds.push({ messageId: sent.id, panelIndex: i });
           }
-          // Edit existing panels
-          for (let i = 0; i < boardIds.length; i++) {
+          for (let i = 0; i < Math.min(boardIds.length, panels.length); i++) {
             try {
               const msg = await channel.messages.fetch(boardIds[i].messageId);
               await msg.edit(panels[i].payload);
@@ -263,7 +307,8 @@ module.exports = {
 
     await interaction.editReply(
       `✅ **${name}** added to bosses.json!\n` +
-      `• Zone: ${zone} (${expansion})\n` +
+      `• Zone: ${zone}\n` +
+      `• Expansion: **${expansion}**\n` +
       `• Timer: ${timerHours}h\n` +
       `• Body type: ${bodyType || 'unknown'} → ${emoji}\n` +
       `• PQDI: ${url}\n` +

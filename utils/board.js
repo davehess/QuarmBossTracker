@@ -1,6 +1,7 @@
 // utils/board.js
-// Compact table-style board — one message per expansion chunk, max 25 buttons.
-// 10 total reserved slots: 6 active (Classic/Kunark/Velious×2/Luclin×2) + 4 PoP placeholders.
+// Compact table-style board — one message per expansion chunk, max 5 ActionRows × 5 buttons.
+// Each zone group starts on a NEW ROW for visual separation (Discord's natural line break).
+// 10 total reserved slots: 6 active + 4 PoP placeholders.
 
 const {
   ActionRowBuilder,
@@ -18,17 +19,18 @@ const EXPANSION_META = {
   Luclin:  { label: '🌙 Shadows of Luclin',  color: 0x882299 },
 };
 
-// Reserved PoP placeholder panels (always posted, cannot have buttons yet)
 const POP_PLACEHOLDERS = [
+  { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
   { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
   { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
   { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
   { label: '🔥 Planes of Power — Reserved', color: 0x8b0000 },
 ];
 
-const TOTAL_RESERVED_SLOTS = 10;
+const TOTAL_RESERVED_SLOTS = 14; // 9 active + 5 PoP reserved
 const ZONE_COLS   = 3;
-const MAX_BUTTONS = 25;
+const MAX_ROWS    = 5;  // Discord hard limit per message
+const BUTTONS_PER_ROW = 5;
 
 /**
  * Build ALL board panels including PoP placeholders.
@@ -53,7 +55,7 @@ function buildBoardPanels(bosses, killState = {}) {
     if (zones.length === 0) continue;
 
     const meta       = EXPANSION_META[exp];
-    const zoneChunks = splitZonesIntoChunks(zones, MAX_BUTTONS);
+    const zoneChunks = splitZonesIntoChunks(zones, MAX_ROWS, BUTTONS_PER_ROW);
 
     zoneChunks.forEach((chunk, chunkIdx) => {
       const totalChunks = zoneChunks.length;
@@ -61,7 +63,7 @@ function buildBoardPanels(bosses, killState = {}) {
         ? `${meta.label} (${chunkIdx + 1}/${totalChunks})`
         : meta.label;
 
-      const embed = buildExpansionEmbed(meta.color, partLabel, chunk, killState, now, totalChunks, chunkIdx);
+      const embed      = buildExpansionEmbed(meta.color, partLabel, chunk, killState, now, totalChunks, chunkIdx);
       const components = buildButtonRowsForChunk(chunk, killState, now);
 
       panels.push({
@@ -134,59 +136,76 @@ function buildExpansionEmbed(color, title, chunk, killState, now, totalChunks, c
   return embed;
 }
 
-function splitZonesIntoChunks(zones, maxButtons) {
+/**
+ * Split zones into chunks where each chunk fits in MAX_ROWS ActionRows.
+ *
+ * Each zone gets its own row (starting on a new ActionRow).
+ * A zone with N bosses occupies ceil(N / BUTTONS_PER_ROW) rows.
+ * Zones are never split across chunks.
+ */
+function splitZonesIntoChunks(zones, maxRows, buttonsPerRow) {
   const chunks = [];
   let current  = [];
-  let count    = 0;
+  let rowsUsed = 0;
 
   for (const [zone, zoneBosses] of zones) {
-    const sep  = current.length > 0 ? 1 : 0;
-    const cost = sep + zoneBosses.length;
-    if (current.length > 0 && count + cost > maxButtons) {
+    // Each zone starts on its own row; calculate rows needed
+    const zoneRows = Math.ceil(zoneBosses.length / buttonsPerRow);
+
+    if (current.length > 0 && rowsUsed + zoneRows > maxRows) {
       chunks.push(current);
-      current = [];
-      count   = 0;
+      current  = [];
+      rowsUsed = 0;
     }
+
     current.push([zone, zoneBosses]);
-    count += (current.length > 1 ? 1 : 0) + zoneBosses.length;
+    rowsUsed += zoneRows;
   }
+
   if (current.length > 0) chunks.push(current);
   return chunks;
 }
 
+/**
+ * Build ActionRows for a zone chunk.
+ * Each zone starts on a new ActionRow — this creates the natural "newline"
+ * visual separation in Discord without needing separator buttons.
+ * Bosses within a zone fill left-to-right, wrapping to the next row if needed.
+ */
 function buildButtonRowsForChunk(zoneChunk, killState, now) {
-  const allButtons = [];
-  for (let zi = 0; zi < zoneChunk.length; zi++) {
-    const [zone, zoneBosses] = zoneChunk[zi];
-    if (zi > 0) allButtons.push(makeSeparator(`— ${zone} —`));
-    for (const boss of zoneBosses) allButtons.push(makeBossButton(boss, killState, now));
-  }
-  return packIntoRows(allButtons, 5);
-}
+  const rows = [];
 
-function packIntoRows(buttons, maxRows) {
-  const rows   = [];
-  let current  = new ActionRowBuilder();
-  let rowCount = 0;
+  for (const [zone, zoneBosses] of zoneChunk) {
+    if (rows.length >= MAX_ROWS) break;
 
-  for (const btn of buttons) {
-    const isSep = btn.data?.disabled === true;
-    if (isSep && rowCount === 4) continue; // don't orphan separators at end of row
-    current.addComponents(btn);
-    rowCount++;
-    if (rowCount === 5) {
-      rows.push(current);
-      if (rows.length === maxRows) break;
-      current  = new ActionRowBuilder();
-      rowCount = 0;
+    // Start each zone on a fresh row
+    let currentRow = new ActionRowBuilder();
+    let count      = 0;
+
+    for (const boss of zoneBosses) {
+      if (count === BUTTONS_PER_ROW) {
+        // Row full — push and start a new one (if still within limit)
+        rows.push(currentRow);
+        if (rows.length >= MAX_ROWS) break;
+        currentRow = new ActionRowBuilder();
+        count      = 0;
+      }
+
+      currentRow.addComponents(makeBossButton(boss, killState, now));
+      count++;
+    }
+
+    // Push the last (possibly partial) row for this zone
+    if (count > 0 && rows.length < MAX_ROWS) {
+      rows.push(currentRow);
     }
   }
-  if (rowCount > 0 && rows.length < maxRows) rows.push(current);
+
   return rows;
 }
 
 function makeBossButton(boss, killState, now) {
-  const entry       = killState[boss.id];
+  const entry        = killState[boss.id];
   const isOnCooldown = entry && entry.nextSpawn > now;
   if (isOnCooldown) {
     const d = new Date(entry.killedAt);
@@ -199,15 +218,6 @@ function makeBossButton(boss, killState, now) {
     .setCustomId(`kill:${boss.id}`)
     .setLabel(`${boss.emoji || ''} ${boss.name}`.trim().slice(0, 80))
     .setStyle(ButtonStyle.Danger);
-}
-
-function makeSeparator(label) {
-  const safeId = label.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 70);
-  return new ButtonBuilder()
-    .setCustomId(`sep_${safeId}`)
-    .setLabel(label.slice(0, 80))
-    .setStyle(ButtonStyle.Secondary)
-    .setDisabled(true);
 }
 
 module.exports = {

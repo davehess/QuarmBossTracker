@@ -46,7 +46,7 @@ module.exports = {
     saveBoardMessages(newIds);
 
     await interaction.editReply(
-      `✅ Boss board posted! ${newIds.length} slots (${newIds.length - 4} active + 4 PoP reserved).\nRun /board again to update in place.`
+      `✅ Boss board posted! ${newIds.length} slots (${newIds.length - 4} active + 5 PoP reserved).\nRun /board again to update in place.`
     );
   },
 };
