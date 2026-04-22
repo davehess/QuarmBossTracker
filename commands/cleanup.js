@@ -1,38 +1,57 @@
 // commands/cleanup.js
-// /cleanup — Moves old board messages to their threads, replaces them with "." in main channel.
-// Also handles re-anchoring state after a redeploy.
+// Replaces old board embeds with "." in main channel, then rebuilds all slots
+// in the correct order and posts boards in threads.
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { EXPANSION_ORDER, getThreadId, EXPANSION_META } = require('../utils/config');
-const { postOrUpdateExpansionBoard, refreshSummaryCard } = require('../utils/killops');
+const { postOrUpdateExpansionBoard } = require('../utils/killops');
 const {
-  getChannelSlots, setChannelPlaceholder, setSummaryMessageId, getSummaryMessageId,
+  getSummaryMessageId, setSummaryMessageId,
+  getSpawningTomorrowId, setSpawningTomorrowId,
+  getChannelPlaceholder, setChannelPlaceholder,
+  getThreadCooldownId, setThreadCooldownId,
   getAllState,
 } = require('../utils/state');
-const { buildSummaryCard } = require('../utils/embeds');
+const { buildSummaryCard, buildSpawningTomorrowCard, buildExpansionCooldownCard } = require('../utils/embeds');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 
-const BOARD_EMBED_TITLES = new Set([
-  '⚔️ Classic EverQuest', '🦎 Ruins of Kunark', '❄️ Scars of Velious', '🌙 Shadows of Luclin', '🔥 Planes of Power',
-  // part variants
-  '⚔️ Classic EverQuest (1/2)', '🦎 Ruins of Kunark (1/2)', '❄️ Scars of Velious (1/3)',
+// Embed titles that belong to old board messages (pre-thread architecture)
+const OLD_BOARD_TITLES = new Set([
+  '⚔️ Classic EverQuest', '🦎 Ruins of Kunark', '❄️ Scars of Velious',
+  '🌙 Shadows of Luclin', '🔥 Planes of Power',
+  '⚔️ Classic EverQuest (1/2)', '⚔️ Classic EverQuest (2/2)',
+  '🦎 Ruins of Kunark (1/2)', '🦎 Ruins of Kunark (2/2)',
+  '❄️ Scars of Velious (1/2)', '❄️ Scars of Velious (2/2)', '❄️ Scars of Velious (1/3)',
+  '❄️ Scars of Velious (2/3)', '❄️ Scars of Velious (3/3)',
+  '🌙 Shadows of Luclin (1/2)', '🌙 Shadows of Luclin (2/2)',
   '🌙 Shadows of Luclin (1/3)', '🌙 Shadows of Luclin (2/3)', '🌙 Shadows of Luclin (3/3)',
+  '🔥 Planes of Power — Reserved',
 ]);
 
-function isBoardMessage(msg) {
-  return msg.embeds.some((e) => BOARD_EMBED_TITLES.has(e.title)) ||
-    (msg.content === '.' && msg.components.length === 0);
-}
+const EXP_LABELS = {
+  Classic: '⚔️ Classic', Kunark: '🦎 Kunark', Velious: '❄️ Velious',
+  Luclin: '🌙 Luclin', PoP: '🔥 Planes of Power',
+};
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
   return require('../data/bosses.json');
 }
 
+async function ensureSlot(channel, currentId, payload, setter) {
+  if (currentId) {
+    try { const m = await channel.messages.fetch(currentId); await m.edit(payload); return currentId; }
+    catch { /* gone */ }
+  }
+  const m = await channel.send(payload);
+  setter(m.id);
+  return m.id;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('cleanup')
-    .setDescription('Move old board content to threads and tidy up the main channel'),
+    .setDescription('Migrate old board to threads: replace old panels with ".", rebuild all slots'),
 
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member)) {
@@ -41,13 +60,14 @@ module.exports = {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const channel = interaction.channel;
-    const client  = interaction.client;
-    const botId   = client.user.id;
-    const bosses  = getBosses();
-    const results = [];
+    const channel   = interaction.channel;
+    const client    = interaction.client;
+    const botId     = client.user.id;
+    const bosses    = getBosses();
+    const killState = getAllState();
+    const results   = [];
 
-    // Fetch last 500 messages from main channel
+    // ── Step 1: Replace old board embed messages with "." ─────────────────────
     let allMessages = [];
     let lastId = null;
     for (let i = 0; i < 10; i++) {
@@ -59,60 +79,74 @@ module.exports = {
       lastId = batch.last().id;
     }
 
-    const botMsgs = allMessages
-      .filter((m) => m.author.id === botId)
-      .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-    // Find old board messages (have board embed titles) and replace with "."
+    const botMsgs = allMessages.filter((m) => m.author.id === botId);
     let replaced = 0;
     for (const msg of botMsgs) {
-      if (msg.embeds.some((e) => BOARD_EMBED_TITLES.has(e.title)) && msg.content !== '.') {
-        try {
-          await msg.edit({ content: '.', embeds: [], components: [] });
-          replaced++;
-        } catch (err) { console.warn(`cleanup: could not replace msg ${msg.id}:`, err?.message); }
+      if (msg.embeds.some((e) => OLD_BOARD_TITLES.has(e.title)) && msg.content !== '.') {
+        try { await msg.edit({ content: '.', embeds: [], components: [] }); replaced++; }
+        catch (err) { console.warn(`cleanup: could not replace ${msg.id}:`, err?.message); }
       }
     }
-    results.push(`🧹 Replaced ${replaced} old board messages with "."`);
+    results.push(`🧹 Replaced ${replaced} old board message(s) with "."`);
 
-    // Post/update expansion boards in their threads
-    for (const exp of EXPANSION_ORDER) {
-      const threadId = getThreadId(exp);
-      if (!threadId) { results.push(`⬜ ${exp} — no thread`); continue; }
-      const res = await postOrUpdateExpansionBoard(client, exp, threadId, bosses);
-      results.push(`${res.ok ? '✅' : '❌'} ${exp} board — ${res.action || res.reason}`);
-    }
+    // ── Step 2: Main channel slots in correct order ───────────────────────────
 
-    // Ensure summary card exists and is up to date
-    const killState  = getAllState();
-    const summaryEmbed = buildSummaryCard(bosses, killState);
-    const summaryId    = getSummaryMessageId();
-    if (summaryId) {
-      try { const m = await channel.messages.fetch(summaryId); await m.edit({ embeds: [summaryEmbed] }); results.push('✅ Summary card updated'); }
-      catch {
-        const m = await channel.send({ embeds: [summaryEmbed] }); setSummaryMessageId(m.id); results.push('✅ Summary card posted');
-      }
-    } else {
-      const m = await channel.send({ embeds: [summaryEmbed] }); setSummaryMessageId(m.id); results.push('✅ Summary card posted');
-    }
+    // Slot 1: Active Cooldowns
+    await ensureSlot(
+      channel, getSummaryMessageId(),
+      { embeds: [buildSummaryCard(bosses, killState)] },
+      setSummaryMessageId
+    );
+    results.push('✅ Slot 1: Active Cooldowns');
 
-    // Ensure "expansion → thread" placeholders exist
-    const EXP_LABELS = { Classic: '⚔️ Classic', Kunark: '🦎 Kunark', Velious: '❄️ Velious', Luclin: '🌙 Luclin', PoP: '🔥 Planes of Power' };
-    const slots = getChannelSlots();
+    // Slot 2: Spawning Tomorrow
+    await ensureSlot(
+      channel, getSpawningTomorrowId(),
+      { embeds: [buildSpawningTomorrowCard(bosses, killState)] },
+      setSpawningTomorrowId
+    );
+    results.push('✅ Slot 2: Spawning Tomorrow');
+
+    // Slots 3-7: Expansion thread links
     for (const exp of EXPANSION_ORDER) {
       const threadId = getThreadId(exp);
       const label    = EXP_LABELS[exp] || exp;
-      const link     = threadId ? `<#${threadId}>` : '*(no thread configured)*';
-      const existing = slots[exp];
-      if (existing) {
-        try { const m = await channel.messages.fetch(existing); await m.edit({ content: `${label} → ${link}`, embeds: [], components: [] }); continue; }
-        catch { /* gone */ }
-      }
-      const m = await channel.send({ content: `${label} → ${link}` });
-      setChannelPlaceholder(exp, m.id);
+      const content  = threadId ? `${label} → <#${threadId}>` : `${label} → *(no thread configured)*`;
+      await ensureSlot(
+        channel, getChannelPlaceholder(exp),
+        { content, embeds: [], components: [] },
+        (id) => setChannelPlaceholder(exp, id)
+      );
+      results.push(`✅ Slot: ${label} placeholder`);
     }
 
-    results.push('✅ Channel slot placeholders updated');
+    // ── Step 3: Each expansion thread ─────────────────────────────────────────
+    for (const exp of EXPANSION_ORDER) {
+      const threadId = getThreadId(exp);
+      if (!threadId) { results.push(`⬜ ${exp} — no thread`); continue; }
+
+      try {
+        const thread = await client.channels.fetch(threadId);
+
+        // Thread slot 1: Active Cooldowns card for this expansion
+        const cooldownEmbed   = buildExpansionCooldownCard(exp, bosses, killState);
+        const storedCooldownId = getThreadCooldownId(exp);
+        if (storedCooldownId) {
+          try { const m = await thread.messages.fetch(storedCooldownId); await m.edit({ embeds: [cooldownEmbed] }); }
+          catch { const m = await thread.send({ embeds: [cooldownEmbed] }); setThreadCooldownId(exp, m.id); }
+        } else {
+          const m = await thread.send({ embeds: [cooldownEmbed] });
+          setThreadCooldownId(exp, m.id);
+        }
+
+        // Thread: Board panels (buttons)
+        const boardResult = await postOrUpdateExpansionBoard(client, exp, threadId, bosses);
+        results.push(`${boardResult.ok ? '✅' : '❌'} ${exp} thread — cooldowns + board (${boardResult.action || boardResult.reason})`);
+      } catch (err) {
+        results.push(`❌ ${exp} thread error — ${err?.message}`);
+      }
+    }
+
     await interaction.editReply(results.join('\n'));
   },
 };
