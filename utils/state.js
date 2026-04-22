@@ -1,7 +1,7 @@
 // utils/state.js
-// Persists kill/spawn state and board message IDs to a JSON file
+// Persists kill/spawn state, board message IDs, and announce message IDs.
 
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 
 const STATE_FILE = path.join(__dirname, '../data/state.json');
@@ -10,36 +10,37 @@ const STATE_FILE = path.join(__dirname, '../data/state.json');
 // {
 //   bosses: {
 //     [bossId]: {
-//       killedAt: number,       // ms timestamp
-//       nextSpawn: number,      // ms timestamp
-//       killedBy: string,       // Discord user ID
-//       killMessageId: string,  // ID of the kill embed message in #raid-mobs
+//       killedAt:      number,   // ms timestamp of kill
+//       nextSpawn:     number,   // ms timestamp of next spawn
+//       killedBy:      string,   // Discord user ID
+//       killMessageId: string,   // message ID of kill embed in #raid-mobs
 //     }
 //   },
 //   board: {
-//     messages: [               // ordered list of board message IDs
-//       { messageId: string, type: 'header'|'zone', label: string }
-//     ]
-//   }
+//     messages: [{ messageId, panelIndex }]
+//   },
+//   dailyKills: [              // kills recorded today (midnight reset)
+//     { bossId, killedAt, killedBy }
+//   ],
+//   announceMessageIds: [string]  // /announce message IDs to archive at midnight
 // }
 
 function loadState() {
   if (!fs.existsSync(STATE_FILE)) {
-    const empty = { bosses: {}, board: { messages: [] } };
+    const empty = { bosses: {}, board: { messages: [] }, dailyKills: [], announceMessageIds: [] };
     fs.writeFileSync(STATE_FILE, JSON.stringify(empty, null, 2), 'utf8');
     return empty;
   }
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    // Migrate old flat format (pre-board-tracking) gracefully
-    if (!raw.bosses && !raw.board) {
-      return { bosses: raw, board: { messages: [] } };
-    }
-    if (!raw.board) raw.board = { messages: [] };
-    if (!raw.bosses) raw.bosses = {};
+    if (!raw.bosses && !raw.board) return { bosses: raw, board: { messages: [] }, dailyKills: [], announceMessageIds: [] };
+    if (!raw.board)               raw.board = { messages: [] };
+    if (!raw.bosses)              raw.bosses = {};
+    if (!raw.dailyKills)          raw.dailyKills = [];
+    if (!raw.announceMessageIds)  raw.announceMessageIds = [];
     return raw;
   } catch {
-    return { bosses: {}, board: { messages: [] } };
+    return { bosses: {}, board: { messages: [] }, dailyKills: [], announceMessageIds: [] };
   }
 }
 
@@ -47,11 +48,18 @@ function saveState(state) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
 }
 
+// ── Boss kill tracking ────────────────────────────────────────────────────────
+
 function recordKill(bossId, timerHours, killedBy, killMessageId = null) {
-  const state = loadState();
-  const killedAt = Date.now();
+  const state     = loadState();
+  const killedAt  = Date.now();
   const nextSpawn = killedAt + timerHours * 60 * 60 * 1000;
+
   state.bosses[bossId] = { killedAt, nextSpawn, killedBy, killMessageId };
+
+  // Also push to daily kills log
+  state.dailyKills.push({ bossId, killedAt, killedBy });
+
   saveState(state);
   return state.bosses[bossId];
 }
@@ -71,8 +79,7 @@ function clearKill(bossId) {
 }
 
 function getBossState(bossId) {
-  const state = loadState();
-  return state.bosses[bossId] || null;
+  return loadState().bosses[bossId] || null;
 }
 
 function getAllState() {
@@ -91,6 +98,36 @@ function saveBoardMessages(messages) {
   saveState(state);
 }
 
+// ── Daily kills log ───────────────────────────────────────────────────────────
+
+function getDailyKills() {
+  return loadState().dailyKills || [];
+}
+
+function resetDailyKills() {
+  const state = loadState();
+  state.dailyKills = [];
+  saveState(state);
+}
+
+// ── Announce message IDs ──────────────────────────────────────────────────────
+
+function addAnnounceMessageId(messageId) {
+  const state = loadState();
+  state.announceMessageIds.push(messageId);
+  saveState(state);
+}
+
+function getAnnounceMessageIds() {
+  return loadState().announceMessageIds || [];
+}
+
+function clearAnnounceMessageIds() {
+  const state = loadState();
+  state.announceMessageIds = [];
+  saveState(state);
+}
+
 module.exports = {
   recordKill,
   setKillMessageId,
@@ -99,4 +136,9 @@ module.exports = {
   getAllState,
   getBoardMessages,
   saveBoardMessages,
+  getDailyKills,
+  resetDailyKills,
+  addAnnounceMessageId,
+  getAnnounceMessageIds,
+  clearAnnounceMessageIds,
 };

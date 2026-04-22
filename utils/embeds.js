@@ -5,35 +5,32 @@ const { EmbedBuilder } = require('discord.js');
 const { discordRelativeTime, discordAbsoluteTime, statusEmoji } = require('./timer');
 
 /**
- * Build a single-boss kill confirmation embed
+ * Build a single-boss kill confirmation embed with clickable PQDI link
  */
 function buildKillEmbed(boss, stateEntry, killedBy) {
   const nextSpawnMs = stateEntry.nextSpawn;
   const embed = new EmbedBuilder()
     .setColor(0xcc2200)
     .setTitle(`☠️ ${boss.name} killed`)
-    .setDescription(`Recorded by <@${killedBy}>`)
-    .addFields(
-      { name: 'Zone', value: boss.zone, inline: true },
-      { name: 'Timer', value: `${boss.timerHours}h`, inline: true },
-      { name: 'Next spawn', value: discordAbsoluteTime(nextSpawnMs), inline: false },
-      { name: 'That is', value: discordRelativeTime(nextSpawnMs), inline: false },
+    .setDescription(
+      `Recorded by <@${killedBy}>\n[View on PQDI.cc](${boss.pqdiUrl})`
     )
-    .setFooter({ text: `PQDI: ${boss.pqdiUrl}` })
+    .addFields(
+      { name: 'Zone',       value: boss.zone,                        inline: true  },
+      { name: 'Timer',      value: `${boss.timerHours}h`,            inline: true  },
+      { name: 'Next spawn', value: discordAbsoluteTime(nextSpawnMs), inline: false },
+      { name: 'That is',    value: discordRelativeTime(nextSpawnMs), inline: false },
+    )
     .setTimestamp();
   return embed;
 }
 
 /**
  * Build a full status embed grouped by zone
- * @param {Array} bosses - boss definitions array
- * @param {Object} state - full state map from state.js
- * @param {string|null} filterZone - optional zone name to filter to
  */
 function buildStatusEmbed(bosses, state, filterZone = null) {
   const now = Date.now();
 
-  // Group bosses by zone
   const byZone = {};
   for (const boss of bosses) {
     if (filterZone && boss.zone !== filterZone) continue;
@@ -51,9 +48,7 @@ function buildStatusEmbed(bosses, state, filterZone = null) {
   for (const [zone, zoneBosses] of Object.entries(byZone)) {
     const lines = zoneBosses.map((boss) => {
       const entry = state[boss.id];
-      if (!entry) {
-        return `⬜ **${boss.name}** — unknown`;
-      }
+      if (!entry) return `⬜ **${boss.name}** — unknown`;
       const remaining = entry.nextSpawn - now;
       const emoji = statusEmoji(entry.nextSpawn);
       if (remaining <= 0) {
@@ -62,7 +57,6 @@ function buildStatusEmbed(bosses, state, filterZone = null) {
       return `${emoji} **${boss.name}** — ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`;
     });
 
-    // Discord field value max is 1024 chars; chunk if needed
     const chunks = chunkLines(lines, 1000);
     chunks.forEach((chunk, i) => {
       embed.addFields({
@@ -83,7 +77,7 @@ function buildSpawnAlertEmbed(boss) {
   return new EmbedBuilder()
     .setColor(0xffaa00)
     .setTitle(`⚠️ ${boss.name} spawning soon!`)
-    .setDescription(`**Zone:** ${boss.zone}\n**Spawns:** in less than 30 minutes`)
+    .setDescription(`**Zone:** ${boss.zone}\n**Spawns:** in less than 30 minutes\n[View on PQDI.cc](${boss.pqdiUrl})`)
     .setTimestamp();
 }
 
@@ -94,13 +88,41 @@ function buildSpawnedEmbed(boss) {
   return new EmbedBuilder()
     .setColor(0x00ff00)
     .setTitle(`🟢 ${boss.name} has spawned!`)
-    .setDescription(`**Zone:** ${boss.zone}\nReady to pull!`)
+    .setDescription(`**Zone:** ${boss.zone}\nReady to pull!\n[View on PQDI.cc](${boss.pqdiUrl})`)
     .setTimestamp();
 }
 
 /**
- * Split an array of lines into chunks under maxLen chars each
+ * Build the midnight daily summary embed
  */
+function buildDailySummaryEmbed(killedToday, availableNow, bosses) {
+  const embed = new EmbedBuilder()
+    .setColor(0x4b0082)
+    .setTitle('📅 Daily Raid Summary')
+    .setDescription(`Summary for ${new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' })}`)
+    .setTimestamp();
+
+  if (killedToday.length === 0) {
+    embed.addFields({ name: '☠️ Killed Today', value: 'No kills recorded today.', inline: false });
+  } else {
+    const lines = killedToday.map((entry) => {
+      const boss = bosses.find((b) => b.id === entry.bossId);
+      if (!boss) return `• Unknown (${entry.bossId})`;
+      return `• **${boss.name}** (${boss.zone}) — killed <t:${Math.floor(entry.killedAt / 1000)}:t> by <@${entry.killedBy}>`;
+    });
+    embed.addFields({ name: `☠️ Killed Today (${killedToday.length})`, value: lines.join('\n').slice(0, 1020), inline: false });
+  }
+
+  if (availableNow.length === 0) {
+    embed.addFields({ name: '🟢 Available Now', value: 'No bosses currently available.', inline: false });
+  } else {
+    const lines = availableNow.map((boss) => `• **${boss.name}** (${boss.zone})`);
+    embed.addFields({ name: `🟢 Available Now (${availableNow.length})`, value: lines.join('\n').slice(0, 1020), inline: false });
+  }
+
+  return embed;
+}
+
 function chunkLines(lines, maxLen) {
   const chunks = [];
   let current = '';
@@ -121,4 +143,5 @@ module.exports = {
   buildStatusEmbed,
   buildSpawnAlertEmbed,
   buildSpawnedEmbed,
+  buildDailySummaryEmbed,
 };

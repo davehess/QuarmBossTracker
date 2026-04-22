@@ -6,104 +6,73 @@ A Discord bot for tracking Project Quarm instanced raid boss spawn timers. Data 
 
 ## Features
 
-- `/kill <boss>` — Record a boss kill and start the respawn countdown. Supports nicknames (e.g. `naggy`, `emp`, `ahr`, `kt`)
-- `/unkill <boss>` — Clear an incorrect kill record
-- `/timers` — View all current spawn timers, filterable by zone and status
-- `/board` — Post or refresh the clickable boss button board in `#raid-mobs`
-- **In-place board updates** — `/board` edits its existing messages rather than posting new ones, keeping the channel clean
-- **Skull buttons** — Killed bosses show as `💀 Boss Name (Died M/D)` in grey until they respawn, then reset automatically
-- **Kill archive** — When a boss respawns, the original kill embed is moved to a Historic Kills thread and deleted from `#raid-mobs`
-- **Spawn notifications** — Auto-posts to `#raid-mobs` at 30 minutes out and again when a boss spawns
-- Autocomplete search on boss name and all common nicknames
-- Persistent state survives bot restarts
+- `/kill <boss>` — Record a kill, start the respawn timer, update the board button to show a skull
+- `/unkill <boss>` — Clear a kill record, delete the kill message, reset the board button
+- `/timers` — View all current spawn timers as a Discord embed, filterable by zone and status
+- `/board` — Post or in-place refresh the clickable boss button board; smart-diffs new bosses from `bosses.json`
+- `/cleanup` — Scan the channel for duplicate board posts, keep the earliest set, delete the rest
+- `/announce <boss> <time>` — Post a tagged raid announcement with a kill button; archived to Historic Kills at midnight
+- **Toggle kill on board** — Clicking a skull/grey button (already killed boss) acts as `/unkill`, clears the kill and deletes the message
+- **Midnight EST summary** — Posts daily kill log and available-now list to the Historic Kills thread; archives `/announce` messages
+- **Clickable PQDI links** — All kill, alert, and spawn embeds link directly to the boss on PQDI.cc
+- **Multi-role support** — `ALLOWED_ROLE_NAMES` accepts a comma-delimited list of roles
 - Slash commands auto-register on startup — no manual deploy step needed
-- Role-gated commands (`@Pack Member` by default, configurable)
+- Persistent state survives restarts
 
 ---
 
 ## Setup: Discord Developer Portal
 
-Before deploying, you need a bot application.
-
 1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
 2. Click **New Application** → name it (e.g. "Quarm Timer Bot")
 3. Go to **Bot** tab → click **Reset Token** → copy your **Bot Token**
-4. On the same Bot page, scroll to **Privileged Gateway Intents** — enable **Server Members Intent**
-5. Go to **General Information** → copy your **Application ID** (this is your `DISCORD_CLIENT_ID`)
+4. On the Bot page, enable **Server Members Intent** under Privileged Gateway Intents
+5. Go to **General Information** → copy your **Application ID** (`DISCORD_CLIENT_ID`)
 6. Go to **OAuth2 → URL Generator**:
-   - Under **Scopes** check BOTH: `bot` **and** `applications.commands`
-   - Under **Bot Permissions** check: `Send Messages`, `Embed Links`, `Read Message History`, `Manage Messages`
-7. Copy the generated URL at the bottom and paste it in your browser to invite the bot to your server
+   - **Scopes:** `bot` and `applications.commands` (both required)
+   - **Bot Permissions:** `Send Messages`, `Embed Links`, `Read Message History`, `Manage Messages`
+7. Copy the generated URL and invite the bot to your server
 
-> ⚠️ **`applications.commands` scope is required** for slash commands to appear. If you invited the bot without it, kick it and re-invite using a URL generated with both scopes checked.
+> ⚠️ `applications.commands` scope is required for slash commands to appear. If you invited the bot without it, kick it and re-invite with a URL that includes both scopes.
 >
-> ⚠️ **`Manage Messages` permission is required** so the bot can delete the original kill embed from `#raid-mobs` when archiving to the history thread.
-
-Slash commands are **registered automatically** every time the bot starts — no need to run any separate script.
+> ⚠️ `Manage Messages` is required to delete kill embeds when archiving and to delete `/announce` messages at midnight.
 
 ---
 
-## Option A: Deploy to Railway (Recommended for hosted)
+## Deployment
 
-Railway is free for small bots and stays online 24/7.
+### Option A: Railway (recommended for hosted)
 
-1. Push this project to a GitHub repository
+1. Push this project to GitHub
 2. Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
 3. Select your repo
-4. Go to your project → **Variables** tab and add all values from `.env.example`:
-   - `DISCORD_TOKEN`
-   - `DISCORD_CLIENT_ID`
-   - `DISCORD_GUILD_ID`
-   - `TIMER_CHANNEL_ID`
-   - `HISTORIC_KILLS_THREAD_ID`
-   - `ALLOWED_ROLE_NAME`
-5. Railway will auto-detect Node.js and deploy
+4. Go to **Variables** and add all values from `.env.example`
+5. Add a **Volume** at mount path `/app/data` to persist `state.json` across deploys
 
-**Persistent state on Railway:** Railway's free tier doesn't have persistent disk by default, so `state.json` (kill records, board message IDs) will reset on redeploy. To avoid this, add a Railway Volume:
-- Go to your service → **Volumes** → Add volume → mount path `/app/data`
-
----
-
-## Option B: Docker (Self-hosted)
-
-### Quick start
+### Option B: Docker (self-hosted)
 
 ```bash
-# 1. Clone / copy this project
-git clone <your-repo> quarm-bot
-cd quarm-bot
-
-# 2. Set up environment
 cp .env.example .env
 # Edit .env with your values
 nano .env
 
-# 3. Build and start
 docker-compose up -d
-
-# 4. View logs
 docker-compose logs -f
 ```
 
-The `docker-compose.yml` mounts `./data` as a volume so `state.json` persists across container rebuilds.
+The `docker-compose.yml` mounts `./data` so state persists across rebuilds.
 
-### Updating the bot
-
+To update:
 ```bash
-git pull
-docker-compose down
-docker-compose up -d --build
+git pull && docker-compose down && docker-compose up -d --build
 ```
 
----
-
-## Option C: Run locally (development)
+### Option C: Local / development
 
 ```bash
 npm install
 cp .env.example .env
-# fill in .env
-
+# Fill in .env
 npm start
 ```
 
@@ -112,49 +81,71 @@ npm start
 ## Slash Commands Reference
 
 ### `/board`
-Post the clickable boss kill board in the current channel. On subsequent calls, **edits the existing messages in place** — no new messages are created. Run this once in `#raid-mobs` to set it up; the board will stay current automatically after that.
+Post the clickable boss kill board. On subsequent calls, **edits existing messages in place** — no spam. Automatically picks up new bosses added to `bosses.json` without resetting kill state.
+
+### `/cleanup`
+Scan the channel for duplicate board posts (e.g. after a redeploy posted a second board). Keeps the **earliest** board set, deletes all later duplicates, and updates state so future `/board` calls edit the correct messages.
 
 ### `/kill`
-Record a boss as killed. Starts the respawn countdown, updates the board button to show a skull, and posts a kill embed in the channel.
+Record a boss kill. Starts the timer, updates the board button to `💀 Boss Name (Died M/D)`, and posts a kill embed with a clickable PQDI link.
 
 | Option | Required | Description |
 |--------|----------|-------------|
-| `boss` | Yes | Autocomplete — type full name, partial name, or a nickname (e.g. `naggy`, `emp`, `ahr`) |
-| `note` | No | Optional note (e.g. "partial loot", "contested") |
+| `boss` | ✅ | Autocomplete — full name, partial, or nickname (e.g. `naggy`, `emp`, `ahr`, `kt`) |
+| `note` | ❌ | Optional note (e.g. "partial loot", "contested") |
 
 ### `/unkill`
-Clear a kill record. Use if someone recorded the wrong boss or the wrong time. Resets the board button back to normal.
+Clear a kill record. Deletes the kill message from `#raid-mobs` and resets the board button to red.
 
 | Option | Required | Description |
 |--------|----------|-------------|
-| `boss` | Yes | Autocomplete — type to search |
+| `boss` | ✅ | Autocomplete — type to search |
 
 ### `/timers`
-Show current spawn timer status for all bosses as a Discord embed.
+Show all current spawn timers as a Discord embed.
 
 | Option | Required | Description |
 |--------|----------|-------------|
-| `zone` | No | Filter to a specific zone |
-| `filter` | No | `all`, `spawned` (up now), `soon` (within 2h), `unknown` (never recorded) |
+| `zone`   | ❌ | Filter to a specific zone |
+| `filter` | ❌ | `all`, `spawned`, `soon` (within 2h), `unknown` |
+
+### `/announce`
+Announce a planned raid takedown. Tags all allowed roles, includes a kill button, and archives to Historic Kills at midnight.
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `boss` | ✅ | Autocomplete — same as /kill |
+| `time` | ✅ | When (e.g. `"9:00 PM EST"`, `"in 30 minutes"`) |
+| `note` | ❌ | Optional extra info |
 
 ---
 
 ## Boss Board Behavior
 
-When a member with the `@Pack Member` role clicks a boss button on the board:
+**Clicking a normal (red) button:**
+1. Records the kill, posts a kill embed in `#raid-mobs` with a PQDI link
+2. Turns the button grey with `💀 Boss Name (Died M/D)`
+3. At 30 minutes before respawn: posts a warning in `#raid-mobs`
+4. On respawn: archives kill embed to Historic Kills thread, deletes it from `#raid-mobs`, posts spawn notification, resets button to red
 
-1. A kill embed is posted in `#raid-mobs` showing who killed it and when it will respawn
-2. The button immediately changes to `💀 Boss Name (Died M/D)` and turns grey
-3. The bot checks every 5 minutes; at 30 minutes before respawn it posts a warning in `#raid-mobs`
-4. When the timer expires:
-   - The kill embed is copied to the **Historic Kills thread** with a timestamp header
-   - The original kill embed is deleted from `#raid-mobs`
-   - A "has spawned!" notification is posted in `#raid-mobs`
-   - The board button resets to its normal red state
+**Clicking a skull (grey) button — killed boss:**
+1. Acts as `/unkill` — clears the kill record
+2. Deletes the kill embed from `#raid-mobs`
+3. Resets the button back to normal red immediately
 
 ---
 
-## Status Legend (in `/timers` output)
+## Midnight EST Tasks
+
+Every night at midnight Eastern time the bot automatically:
+
+1. **Posts a daily summary** to the Historic Kills thread listing all bosses killed that day and all bosses currently available
+2. **Archives all `/announce` messages** from `#raid-mobs` to the Historic Kills thread (buttons stripped), then deletes the originals
+3. **Resets the daily kill log** for the next day
+
+---
+
+## Status Legend (`/timers`)
 
 | Icon | Meaning |
 |------|---------|
@@ -171,46 +162,47 @@ When a member with the `@Pack Member` role clicks a boss button on the board:
 |----------|----------|-------------|
 | `DISCORD_TOKEN` | ✅ | Bot token from Discord Developer Portal |
 | `DISCORD_CLIENT_ID` | ✅ | Application ID from Discord Developer Portal |
-| `DISCORD_GUILD_ID` | ✅ | Your Discord server ID (right-click server → Copy ID) |
-| `TIMER_CHANNEL_ID` | ✅ | Channel ID for `#raid-mobs` — spawn alerts and board posts go here |
-| `HISTORIC_KILLS_THREAD_ID` | ✅ | Thread ID for the Historic Kills thread — kill embeds are archived here on respawn |
-| `ALLOWED_ROLE_NAME` | ✅ | Exact role name that can use `/kill`, `/unkill`, and `/board` (default: `Pack Member`) |
+| `DISCORD_GUILD_ID` | ✅ | Server ID (right-click server → Copy Server ID) |
+| `TIMER_CHANNEL_ID` | ✅ | `#raid-mobs` channel ID |
+| `HISTORIC_KILLS_THREAD_ID` | ✅ | Historic Kills thread ID — kill embeds, daily summary, and announcements are archived here |
+| `ALLOWED_ROLE_NAMES` | ✅ | Comma-delimited role names (e.g. `Pack Member,Officer,Guild Leader`) |
 
 ---
 
 ## Finding Discord IDs
 
-1. Enable **Developer Mode** in Discord: User Settings → Advanced → Developer Mode
-2. Right-click any server, channel, or thread and choose **Copy Channel ID** (or **Copy Server ID** for the server)
+Enable Developer Mode: User Settings → Advanced → Developer Mode, then right-click anything to copy its ID.
 
 | What you need | How to get it |
 |---------------|---------------|
-| `DISCORD_GUILD_ID` | Right-click your server name → Copy Server ID |
+| `DISCORD_GUILD_ID` | Right-click server name → Copy Server ID |
 | `TIMER_CHANNEL_ID` | Right-click `#raid-mobs` → Copy Channel ID |
-| `HISTORIC_KILLS_THREAD_ID` | Right-click your Historic Kills thread inside `#raid-mobs` → Copy Channel ID |
+| `HISTORIC_KILLS_THREAD_ID` | Right-click Historic Kills thread → Copy Channel ID |
 
 ---
 
 ## Boss Data
 
-All spawn timers are sourced from [pqdi.cc/instances](https://www.pqdi.cc/instances). The bot covers all instanced Luclin raid bosses plus out-of-era Classic/Kunark/Velious content, organized by expansion.
+Timers sourced from [pqdi.cc/instances](https://www.pqdi.cc/instances). Covers all instanced Luclin raid bosses and out-of-era Classic/Kunark/Velious content.
 
-To add or edit bosses, modify `data/bosses.json`. Each entry:
+To add or modify bosses, edit `data/bosses.json`:
 
 ```json
 {
   "id": "unique_snake_case_id",
   "name": "Boss Name",
   "zone": "Zone Name",
-  "expansion": "Classic",
-  "timerHours": 162,
-  "nicknames": ["naggy", "nag"],
-  "emoji": "🐉",
+  "expansion": "Luclin",
+  "timerHours": 66,
+  "nicknames": ["nick", "abbreviation"],
+  "emoji": "🐍",
   "pqdiUrl": "https://www.pqdi.cc/npc/XXXXX"
 }
 ```
 
-Valid values for `expansion`: `Classic`, `Kunark`, `Velious`, `Luclin`
+Valid `expansion` values: `Classic`, `Kunark`, `Velious`, `Luclin`
+
+After editing `bosses.json`, run `/board` — it will detect new bosses and add them without resetting kill state.
 
 ---
 
@@ -218,36 +210,39 @@ Valid values for `expansion`: `Classic`, `Kunark`, `Velious`, `Luclin`
 
 ```
 quarm-bot/
-├── index.js                Main bot entry, spawn checker, button handler, command auto-register
-├── deploy-commands.js      Legacy manual command registration (not needed — auto-registers on start)
+├── index.js                  Main entry: spawn checker, button handler, midnight tasks, auto-register
+├── deploy-commands.js        Legacy manual registration (not needed — auto-runs on start)
 ├── package.json
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
 ├── commands/
-│   ├── board.js            /board — post or in-place refresh the boss button board
-│   ├── kill.js             /kill  — record a kill, update board, store kill message ID
-│   ├── unkill.js           /unkill — clear a kill record and reset board button
-│   └── timers.js           /timers — show all current spawn timers as an embed
+│   ├── announce.js           /announce — tagged raid announcement with kill button
+│   ├── board.js              /board    — post or in-place refresh boss button board
+│   ├── cleanup.js            /cleanup  — remove duplicate board posts, keep earliest
+│   ├── kill.js               /kill     — record kill, update board, store message ID
+│   ├── unkill.js             /unkill   — clear kill, delete message, reset board button
+│   └── timers.js             /timers   — show all spawn timers as embed
 ├── data/
-│   ├── bosses.json         Boss definitions: name, zone, expansion, timer, nicknames, emoji
-│   └── state.json          Live state: kill records + board message IDs (auto-created, gitignored)
+│   ├── bosses.json           Boss definitions (name, zone, expansion, timer, nicknames, emoji)
+│   └── state.json            Live state: kills, board IDs, daily log, announce IDs (gitignored)
 └── utils/
-    ├── board.js            Board panel builder — constructs button rows with skull/normal states
-    ├── timer.js            Spawn time calculation and Discord timestamp formatting
-    ├── state.js            State persistence: kill records, killMessageId, board message IDs
-    └── embeds.js           Discord embed builders for kill, spawn alert, and spawned notifications
+    ├── board.js              Board panel builder — expansion headers, button rows, skull states
+    ├── embeds.js             Discord embed builders (kill, alert, spawned, daily summary)
+    ├── roles.js              Multi-role parser and membership checker
+    ├── state.js              Full state persistence: kills, board, dailyKills, announceMessageIds
+    └── timer.js              Spawn time calculation, Discord timestamp formatting
 ```
 
 ---
 
-## Permissions the Bot Needs in `#raid-mobs`
+## Required Permissions in `#raid-mobs`
 
 | Permission | Why |
 |------------|-----|
-| Send Messages | Post kill embeds, spawn alerts, board messages |
-| Embed Links | Render rich embeds |
-| Read Message History | Fetch existing board messages to edit in place |
-| Manage Messages | Delete original kill embeds when archiving to history thread |
+| Send Messages | Post kill embeds, spawn alerts, board messages, announcements |
+| Embed Links | Render rich embeds with clickable links |
+| Read Message History | Fetch board/kill/announce messages to edit or delete |
+| Manage Messages | Delete kill embeds on archive; delete announce messages at midnight |
 
-The bot also needs **Send Messages** permission in the Historic Kills thread to post archived kill records there.
+The bot also needs **Send Messages** in the Historic Kills thread to post summaries and archived records.
