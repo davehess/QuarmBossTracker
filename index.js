@@ -9,6 +9,7 @@ const {
   Events,
   REST,
   Routes,
+  MessageFlags,
 } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
@@ -21,7 +22,12 @@ const {
 const { buildKillEmbed, buildSpawnAlertEmbed, buildSpawnedEmbed, buildDailySummaryEmbed } = require('./utils/embeds');
 const { buildBoardPanels } = require('./utils/board');
 const { hasAllowedRole, allowedRolesList } = require('./utils/roles');
-const bosses = require('./data/bosses.json');
+
+function getBosses() {
+  // Always re-read from disk so /addboss changes are reflected without restart
+  delete require.cache[require.resolve('./data/bosses.json')];
+  return require('./data/bosses.json');
+}
 
 // ── Client ────────────────────────────────────────────────────────────────────
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -41,7 +47,9 @@ fs.readdirSync(commandsPath)
 
 // ── Ready ─────────────────────────────────────────────────────────────────────
 client.once(Events.ClientReady, async (readyClient) => {
+  const bosses = getBosses();
   console.log(`✅ Logged in as ${readyClient.user.tag}`);
+  console.log(`Monitoring ${bosses.length} bosses`);
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
@@ -51,10 +59,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 async function registerCommands() {
   const guildId  = process.env.DISCORD_GUILD_ID;
   const clientId = process.env.DISCORD_CLIENT_ID;
-  if (!guildId || !clientId) {
-    console.warn('⚠️  Missing DISCORD_GUILD_ID or DISCORD_CLIENT_ID');
-    return;
-  }
+  if (!guildId || !clientId) { console.warn('⚠️  Missing DISCORD_GUILD_ID or DISCORD_CLIENT_ID'); return; }
   const rest = new REST().setToken(process.env.DISCORD_TOKEN);
   try {
     const data = [...client.commands.values()].map((c) => c.data.toJSON());
@@ -69,9 +74,7 @@ async function registerCommands() {
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isAutocomplete()) {
     const cmd = client.commands.get(interaction.commandName);
-    if (cmd?.autocomplete) {
-      try { await cmd.autocomplete(interaction); } catch (e) { console.error(e); }
-    }
+    if (cmd?.autocomplete) { try { await cmd.autocomplete(interaction); } catch (e) { console.error(e); } }
     return;
   }
 
@@ -87,81 +90,64 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await cmd.execute(interaction);
   } catch (err) {
     console.error(`/${interaction.commandName} error:`, err);
-    const msg = { content: '❌ An error occurred.', ephemeral: true };
-    interaction.replied || interaction.deferred
-      ? await interaction.followUp(msg)
-      : await interaction.reply(msg);
+    const msg = { flags: MessageFlags.Ephemeral, content: '❌ An error occurred.' };
+    interaction.replied || interaction.deferred ? await interaction.followUp(msg) : await interaction.reply(msg);
   }
 });
 
-// ── Board button handler — toggle kill/unkill ─────────────────────────────────
+// ── Board button handler — toggle kill / unkill ───────────────────────────────
 async function handleBoardButton(interaction) {
   const bossId = interaction.customId.replace('kill:', '');
+  const bosses = getBosses();
   const boss   = bosses.find((b) => b.id === bossId);
-  if (!boss) return interaction.reply({ content: '❌ Unknown boss.', ephemeral: true });
+  if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
 
   if (!hasAllowedRole(interaction.member)) {
-    return interaction.reply({
-      content: `❌ You need one of these roles: ${allowedRolesList()}`,
-      ephemeral: true,
-    });
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
   }
 
   const existing = getAllState()[bossId];
   const now      = Date.now();
 
-  // ── Boss already on cooldown → /unkill behaviour ──────────────────────────
+  // ── Already killed → unkill ───────────────────────────────────────────────
   if (existing && existing.nextSpawn > now) {
-    // Delete the kill message from the channel
     if (existing.killMessageId) {
       try {
         const killMsg = await interaction.channel.messages.fetch(existing.killMessageId);
         await killMsg.delete();
       } catch (_) {}
     }
-
     clearKill(bossId);
-
-    await interaction.reply({
-      content: `↩️ Kill record cleared for **${boss.name}** by <@${interaction.user.id}>`,
-      ephemeral: false,
-    });
-
-    await refreshBoardButtons(interaction.client, interaction.channelId);
+    await interaction.reply({ content: `↩️ Kill record cleared for **${boss.name}** by <@${interaction.user.id}>` });
+    await refreshBoard(interaction.client, interaction.channelId);
     return;
   }
 
-  // ── Normal kill recording ─────────────────────────────────────────────────
+  // ── Record kill ───────────────────────────────────────────────────────────
   const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id, null);
   const embed      = buildKillEmbed(boss, stateEntry, interaction.user.id);
-  const reply      = await interaction.reply({ embeds: [embed], fetchReply: true });
-  setKillMessageId(bossId, reply.id);
-
-  await refreshBoardButtons(interaction.client, interaction.channelId);
+  const { resource } = await interaction.reply({ embeds: [embed], withResponse: true });
+  setKillMessageId(bossId, resource.message.id);
+  await refreshBoard(interaction.client, interaction.channelId);
 }
 
-// ── Refresh board button states in place ──────────────────────────────────────
-async function refreshBoardButtons(discordClient, channelId) {
+// ── Refresh full board in place (embed + buttons) ─────────────────────────────
+async function refreshBoard(discordClient, channelId) {
   try {
     const boardMsgIds = getBoardMessages();
     if (!boardMsgIds.length) return;
     const channel   = await discordClient.channels.fetch(channelId);
+    const bosses    = getBosses();
     const killState = getAllState();
-    const allPanels = buildBoardPanels(bosses, killState);
-    if (allPanels.length !== boardMsgIds.length) return;
+    const panels    = buildBoardPanels(bosses, killState);
+    if (panels.length !== boardMsgIds.length) return;
     for (let i = 0; i < boardMsgIds.length; i++) {
-      const panel = allPanels[i];
-      if (panel.type !== 'zone') continue;
       try {
         const msg = await channel.messages.fetch(boardMsgIds[i].messageId);
-        await msg.edit({ components: panel.payload.components });
-      } catch (err) {
-        console.warn(`Board refresh failed for panel ${i}:`, err?.message);
-      }
+        await msg.edit(panels[i].payload);
+      } catch (err) { console.warn(`Board refresh failed panel ${i}:`, err?.message); }
     }
-  } catch (err) {
-    console.error('refreshBoardButtons error:', err);
-  }
+  } catch (err) { console.error('refreshBoard error:', err); }
 }
 
 // ── Spawn checker (every 5 minutes) ──────────────────────────────────────────
@@ -169,20 +155,15 @@ const alertedSoon    = new Set();
 const alertedSpawned = new Set();
 
 function startSpawnChecker(readyClient) {
-  const channelId      = process.env.TIMER_CHANNEL_ID;
+  const channelId       = process.env.TIMER_CHANNEL_ID;
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
-
-  if (!channelId) {
-    console.warn('⚠️  TIMER_CHANNEL_ID not set');
-    return;
-  }
+  if (!channelId) { console.warn('⚠️  TIMER_CHANNEL_ID not set'); return; }
 
   setInterval(async () => {
     try {
+      const bosses        = getBosses();
       const channel       = await readyClient.channels.fetch(channelId);
-      const historyThread = historyThreadId
-        ? await readyClient.channels.fetch(historyThreadId).catch(() => null)
-        : null;
+      const historyThread = historyThreadId ? await readyClient.channels.fetch(historyThreadId).catch(() => null) : null;
       const state = getAllState();
       const now   = Date.now();
 
@@ -191,75 +172,51 @@ function startSpawnChecker(readyClient) {
         if (!entry) continue;
         const remaining = entry.nextSpawn - now;
 
-        // Spawned
         if (remaining <= 0 && !alertedSpawned.has(boss.id)) {
           alertedSpawned.add(boss.id);
           alertedSoon.delete(boss.id);
-
           if (entry.killMessageId) await archiveKillMessage(channel, historyThread, boss, entry);
           await channel.send({ embeds: [buildSpawnedEmbed(boss)] });
           clearKill(boss.id);
-          await refreshBoardButtons(readyClient, channelId);
+          await refreshBoard(readyClient, channelId);
           console.log(`Spawned: ${boss.name}`);
           continue;
         }
-
-        if (remaining > 30 * 60 * 1000) {
-          alertedSpawned.delete(boss.id);
-          alertedSoon.delete(boss.id);
-        }
-
-        // 30-min warning
+        if (remaining > 30 * 60 * 1000) { alertedSpawned.delete(boss.id); alertedSoon.delete(boss.id); }
         if (remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
           alertedSoon.add(boss.id);
           await channel.send({ embeds: [buildSpawnAlertEmbed(boss)] });
           console.log(`30min warning: ${boss.name}`);
         }
       }
-    } catch (err) {
-      console.error('Spawn checker error:', err);
-    }
+    } catch (err) { console.error('Spawn checker error:', err); }
   }, 5 * 60 * 1000);
 
   console.log('Spawn checker started');
 }
 
-// ── Archive kill embed to history thread ──────────────────────────────────────
 async function archiveKillMessage(channel, historyThread, boss, entry) {
   try {
     const originalMsg = await channel.messages.fetch(entry.killMessageId).catch(() => null);
     if (!originalMsg) return;
     if (historyThread) {
-      const spawnedAt = new Date().toLocaleString('en-US', {
-        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-        timeZoneName: 'short', timeZone: 'America/New_York',
-      });
-      await historyThread.send({
-        content: `📦 **${boss.name}** has respawned — archiving kill record (spawned ${spawnedAt})`,
-        embeds: originalMsg.embeds,
-      });
+      const spawnedAt = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short', timeZone: 'America/New_York' });
+      await historyThread.send({ content: `📦 **${boss.name}** respawned — archiving kill record (${spawnedAt})`, embeds: originalMsg.embeds });
     }
-    await originalMsg.delete().catch((e) => console.warn(`Delete failed for ${boss.name}:`, e?.message));
-  } catch (err) {
-    console.error(`archiveKillMessage error (${boss.name}):`, err);
-  }
+    await originalMsg.delete().catch((e) => console.warn(`Delete failed (${boss.name}):`, e?.message));
+  } catch (err) { console.error(`archiveKillMessage error (${boss.name}):`, err); }
 }
 
-// ── Midnight EST summary + announce archival ──────────────────────────────────
+// ── Midnight EST summary ──────────────────────────────────────────────────────
 function scheduleMidnightSummary(readyClient) {
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
   const channelId       = process.env.TIMER_CHANNEL_ID;
-
-  if (!historyThreadId) {
-    console.warn('⚠️  HISTORIC_KILLS_THREAD_ID not set — midnight summary disabled');
-    return;
-  }
+  if (!historyThreadId) { console.warn('⚠️  HISTORIC_KILLS_THREAD_ID not set — midnight summary disabled'); return; }
 
   function msUntilMidnightEST() {
     const now = new Date();
     const est = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const midnight = new Date(est);
-    midnight.setHours(24, 0, 0, 0);
+    const midnight = new Date(est); midnight.setHours(24, 0, 0, 0);
     return midnight - est;
   }
 
@@ -267,60 +224,34 @@ function scheduleMidnightSummary(readyClient) {
     console.log('Running midnight tasks...');
     try {
       const historyThread = await readyClient.channels.fetch(historyThreadId).catch(() => null);
-      const channel       = channelId
-        ? await readyClient.channels.fetch(channelId).catch(() => null)
-        : null;
+      const channel       = channelId ? await readyClient.channels.fetch(channelId).catch(() => null) : null;
+      if (!historyThread) { console.warn('Could not fetch historic kills thread'); return; }
 
-      if (!historyThread) {
-        console.warn('Could not fetch historic kills thread for midnight summary');
-        return;
-      }
-
-      // 1. Post daily summary
+      const bosses       = getBosses();
       const dailyKills   = getDailyKills();
       const killState    = getAllState();
-      const availableNow = bosses.filter((b) => {
-        const entry = killState[b.id];
-        return !entry || entry.nextSpawn <= Date.now();
-      });
+      const availableNow = bosses.filter((b) => { const e = killState[b.id]; return !e || e.nextSpawn <= Date.now(); });
+      await historyThread.send({ embeds: [buildDailySummaryEmbed(dailyKills, availableNow, bosses)] });
 
-      const summaryEmbed = buildDailySummaryEmbed(dailyKills, availableNow, bosses);
-      await historyThread.send({ embeds: [summaryEmbed] });
-
-      // 2. Archive /announce messages to history thread and delete from main channel
       if (channel) {
-        const announceIds = getAnnounceMessageIds();
-        for (const msgId of announceIds) {
+        for (const msgId of getAnnounceMessageIds()) {
           try {
             const msg = await channel.messages.fetch(msgId);
-            await historyThread.send({
-              content: `📋 **Archived announcement** from ${new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })}`,
-              embeds:     msg.embeds,
-              components: [], // strip buttons on archive
-            });
+            await historyThread.send({ content: `📋 **Archived announcement** (${new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })})`, embeds: msg.embeds, components: [] });
             await msg.delete();
-          } catch (err) {
-            console.warn(`Could not archive announce message ${msgId}:`, err?.message);
-          }
+          } catch (err) { console.warn(`Could not archive announce ${msgId}:`, err?.message); }
         }
       }
 
-      // 3. Reset daily state
       resetDailyKills();
       clearAnnounceMessageIds();
-
       console.log('Midnight tasks complete');
-    } catch (err) {
-      console.error('Midnight task error:', err);
-    }
-
-    // Schedule next midnight
+    } catch (err) { console.error('Midnight task error:', err); }
     setTimeout(runMidnightTasks, msUntilMidnightEST());
   }
 
-  // First run: wait until next midnight EST
   const delay = msUntilMidnightEST();
-  console.log(`Midnight summary scheduled in ${Math.round(delay / 1000 / 60)} minutes`);
+  console.log(`Midnight summary in ${Math.round(delay / 1000 / 60)} min`);
   setTimeout(runMidnightTasks, delay);
 }
 

@@ -1,6 +1,5 @@
 // commands/unkill.js
-
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const bosses = require('../data/bosses.json');
 const { clearKill, getBossState, getBoardMessages, getAllState } = require('../utils/state');
 const { buildBoardPanels } = require('../utils/board');
@@ -18,30 +17,27 @@ module.exports = {
 
   async autocomplete(interaction) {
     const focused  = interaction.options.getFocused().toLowerCase();
-    const filtered = bossChoices
-      .filter((c) => c.name.toLowerCase().includes(focused))
-      .slice(0, 25);
+    const filtered = bossChoices.filter((c) => c.name.toLowerCase().includes(focused)).slice(0, 25);
     await interaction.respond(filtered);
   },
 
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member)) {
       return interaction.reply({
+        flags: MessageFlags.Ephemeral,
         content: `❌ You need one of these roles to clear kills: ${allowedRolesList()}`,
-        ephemeral: true,
       });
     }
 
     const bossId  = interaction.options.getString('boss');
     const boss    = bosses.find((b) => b.id === bossId);
-    if (!boss) return interaction.reply({ content: '❌ Unknown boss.', ephemeral: true });
+    if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
 
     const existing = getBossState(bossId);
     if (!existing) {
-      return interaction.reply({ content: `⬜ **${boss.name}** has no recorded kill.`, ephemeral: true });
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `⬜ **${boss.name}** has no recorded kill.` });
     }
 
-    // Delete the kill message from the channel if it exists
     if (existing.killMessageId) {
       try {
         const msg = await interaction.channel.messages.fetch(existing.killMessageId);
@@ -59,19 +55,19 @@ module.exports = {
 
     await interaction.reply({ embeds: [embed] });
 
-    // Refresh board buttons
     try {
       const boardMsgIds = getBoardMessages();
       if (!boardMsgIds.length) return;
       const killState = getAllState();
-      const allPanels = buildBoardPanels(bosses, killState);
+      const freshBosses = require('../data/bosses.json');
+      const allPanels = buildBoardPanels(freshBosses, killState);
       if (allPanels.length !== boardMsgIds.length) return;
       for (let i = 0; i < boardMsgIds.length; i++) {
         const panel = allPanels[i];
-        if (panel.type !== 'zone') continue;
+        if (panel.type !== 'expansion') continue;
         try {
           const msg = await interaction.channel.messages.fetch(boardMsgIds[i].messageId);
-          await msg.edit({ components: panel.payload.components });
+          await msg.edit(panel.payload);
         } catch (_) {}
       }
     } catch (err) {

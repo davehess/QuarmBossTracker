@@ -1,6 +1,5 @@
 // commands/kill.js
-
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const bosses = require('../data/bosses.json');
 const { recordKill, setKillMessageId, getBoardMessages, getAllState } = require('../utils/state');
 const { buildKillEmbed } = require('../utils/embeds');
@@ -36,8 +35,8 @@ module.exports = {
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member)) {
       return interaction.reply({
+        flags: MessageFlags.Ephemeral,
         content: `❌ You need one of these roles to record kills: ${allowedRolesList()}`,
-        ephemeral: true,
       });
     }
 
@@ -46,17 +45,16 @@ module.exports = {
     const boss   = bosses.find((b) => b.id === bossId);
 
     if (!boss) {
-      return interaction.reply({ content: '❌ Unknown boss.', ephemeral: true });
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
     }
 
     const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id, null);
     const embed      = buildKillEmbed(boss, stateEntry, interaction.user.id);
     if (note) embed.addFields({ name: 'Note', value: note, inline: false });
 
-    const reply = await interaction.reply({ embeds: [embed], fetchReply: true });
-    setKillMessageId(bossId, reply.id);
+    const { resource } = await interaction.reply({ embeds: [embed], withResponse: true });
+    setKillMessageId(bossId, resource.message.id);
 
-    // Refresh board buttons
     await refreshBoard(interaction.channel);
   },
 };
@@ -66,14 +64,15 @@ async function refreshBoard(channel) {
     const boardMsgIds = getBoardMessages();
     if (!boardMsgIds.length) return;
     const killState = getAllState();
-    const allPanels = buildBoardPanels(bosses, killState);
+    const freshBosses = require('../data/bosses.json');
+    const allPanels = buildBoardPanels(freshBosses, killState);
     if (allPanels.length !== boardMsgIds.length) return;
     for (let i = 0; i < boardMsgIds.length; i++) {
       const panel = allPanels[i];
-      if (panel.type !== 'zone') continue;
+      if (panel.type !== 'expansion') continue;
       try {
         const msg = await channel.messages.fetch(boardMsgIds[i].messageId);
-        await msg.edit({ components: panel.payload.components });
+        await msg.edit(panel.payload);
       } catch (_) {}
     }
   } catch (err) {
