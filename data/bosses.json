@@ -27,7 +27,37 @@
     "timerHours": 162,
     "nicknames": ["ct", "cazic", "faceless"],
     "emoji": "😱",
-    "pqdiUrl": "https://www.pqdi.cc/npc/72600"
+    "pqdiUrl": "https://www.pqdi.cc/npc/72003"
+  },
+    {
+    "id": "fright",
+    "name": "Fright",
+    "zone": "Plane of Fear",
+    "expansion": "Classic",
+    "timerHours": 18,
+    "nicknames": ["fright"],
+    "emoji": "😱",
+    "pqdiUrl": "https://www.pqdi.cc/npc/72004"
+  },
+    {
+    "id": "dread",
+    "name": "Dread",
+    "zone": "Plane of Fear",
+    "expansion": "Classic",
+    "timerHours": 18,
+    "nicknames": ["dread"],
+    "emoji": "😱",
+    "pqdiUrl": "https://www.pqdi.cc/npc/72000"
+  },
+      {
+    "id": "terror",
+    "name": "Terror",
+    "zone": "Plane of Fear",
+    "expansion": "Classic",
+    "timerHours": 18,
+    "nicknames": ["terror"],
+    "emoji": "😱",
+    "pqdiUrl": "https://www.pqdi.cc/npc/72002"
   },
   {
     "id": "innoruuk",
@@ -38,6 +68,26 @@
     "nicknames": ["inny", "innoruuk", "prince of hate"],
     "emoji": "😈",
     "pqdiUrl": "https://www.pqdi.cc/npc/76600"
+  },
+  {
+    "id": "lord_of_ire",
+    "name": "Lord of Ire",
+    "zone": "Plane of Hate",
+    "expansion": "Classic",
+    "timerHours": 66,
+    "nicknames": ["ire"],
+    "emoji": "🛡️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/76325"
+  },
+    {
+    "id": "ashenbone_broodmaster",
+    "name": "Ashenbone Broodmaster",
+    "zone": "Plane of Hate",
+    "expansion": "Classic",
+    "timerHours": 66,
+    "nicknames": ["broodmaster"],
+    "emoji": "🐲",
+    "pqdiUrl": "https://www.pqdi.cc/npc/76051"
   },
   {
     "id": "trakanon",
@@ -80,6 +130,56 @@
     "pqdiUrl": "https://www.pqdi.cc/npc/108510"
   },
   {
+    "id": "nexona",
+    "name": "Nexona",
+    "zone": "Veeshan's Peak",
+    "expansion": "Kunark",
+    "timerHours": 66,
+    "nicknames": ["nexona"],
+    "emoji": "🏔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/108513"
+  },
+  {
+    "id": "hoshkar",
+    "name": "Hoshkar",
+    "zone": "Veeshan's Peak",
+    "expansion": "Kunark",
+    "timerHours": 66,
+    "nicknames": ["hoshkar"],
+    "emoji": "🏔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/108517"
+  },
+  {
+    "id": "silverwing",
+    "name": "Silverwing",
+    "zone": "Veeshan's Peak",
+    "expansion": "Kunark",
+    "timerHours": 66,
+    "nicknames": ["silverwing"],
+    "emoji": "🏔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/108509"
+  },
+  {
+    "id": "xygoz",
+    "name": "Xygoz",
+    "zone": "Veeshan's Peak",
+    "expansion": "Kunark",
+    "timerHours": 66,
+    "nicknames": ["xygoz"],
+    "emoji": "🏔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/108511"
+  },
+  {
+    "id": "druushk",
+    "name": "Druushk",
+    "zone": "Veeshan's Peak",
+    "expansion": "Kunark",
+    "timerHours": 66,
+    "nicknames": ["druushk"],
+    "emoji": "🏔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/108512"
+  },
+  {
     "id": "king_tormax",
     "name": "King Tormax",
     "zone": "Kael Drakkel",
@@ -118,6 +218,16 @@
     "nicknames": ["dain", "frostreaver"],
     "emoji": "❄️",
     "pqdiUrl": "https://www.pqdi.cc/npc/129003"
+  },
+  {
+    "id": "royal_scribe_kaavin",
+    "name": "Royal Scribe Kaavin",
+    "zone": "Icewell Keep",
+    "expansion": "Velious",
+    "timerHours": 66,
+    "nicknames": ["scribe", "kaavin"],
+    "emoji": "❄️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/129021"
   },
   {
     "id": "lord_yelinak",
@@ -167,6 +277,26 @@
     "timerHours": 162,
     "nicknames": ["lendi", "keeper", "lendiniara"],
     "emoji": "🛕",
+    "pqdiUrl": "https://www.pqdi.cc/npc/124020"
+  },
+      {
+    "id": "dozekar_the_cursed",
+    "name": "Dozekar the Cursed",
+    "zone": "Temple of Veeshan",
+    "expansion": "Velious",
+    "timerHours": 66,
+    "nicknames": ["doze","dozekar"],
+    "emoji": "😢",
+    "pqdiUrl": "https://www.pqdi.cc/npc/124002"
+  },
+    {
+    "id": "vulak_aerr",
+    "name": "Vulak`Aerr",
+    "zone": "Temple of Veeshan",
+    "expansion": "Velious",
+    "timerHours": 162,
+    "nicknames": ["vulak"],
+    "emoji": "🤴",
     "pqdiUrl": "https://www.pqdi.cc/npc/124020"
   },
   {
