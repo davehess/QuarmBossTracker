@@ -425,6 +425,54 @@
     "pqdiUrl": "https://www.pqdi.cc/npc/112026"
   },
   {
+    "id": "tunare",
+    "name": "Tunare",
+    "zone": "Plane of Growth",
+    "expansion": "Velious",
+    "timerHours": 162,
+    "nicknames": [
+      "tunare","naggatomommy"
+    ],
+    "emoji": "👑",
+    "pqdiUrl": "https://www.pqdi.cc/npc/127002"
+  },
+    {
+    "id": "grahl_strongback",
+    "name": "Grahl Strongback",
+    "zone": "Plane of Growth",
+    "expansion": "Velious",
+    "timerHours": 30,
+    "nicknames": [
+      "grahl", "strongback"
+    ],
+    "emoji": "👑",
+    "pqdiUrl": "https://www.pqdi.cc/npc/127022"
+  },
+      {
+    "id": "sarik_the_fang",
+    "name": "Sarik the Fang",
+    "zone": "Plane of Growth",
+    "expansion": "Velious",
+    "timerHours": 30,
+    "nicknames": [
+      "sarik", "fang"
+    ],
+    "emoji": "🐺",
+    "pqdiUrl": "https://www.pqdi.cc/npc/127017"
+  },
+      {
+    "id": "galiel_spirithoof",
+    "name": "Galiel Spirithoof",
+    "zone": "Plane of Growth",
+    "expansion": "Velious",
+    "timerHours": 30,
+    "nicknames": [
+      "galiel", "unicorn", "spirithoof"
+    ],
+    "emoji": "🦄",
+    "pqdiUrl": "https://www.pqdi.cc/npc/127023"
+  },
+    {
     "id": "king_tormax",
     "name": "King Tormax",
     "zone": "Kael Drakkel",
