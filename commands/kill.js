@@ -3,15 +3,12 @@
 
 const { SlashCommandBuilder } = require('discord.js');
 const bosses = require('../data/bosses.json');
-const { recordKill } = require('../utils/state');
+const { recordKill, setKillMessageId } = require('../utils/state');
 const { buildKillEmbed } = require('../utils/embeds');
 
-// Build searchable index: maps every nickname and the boss name itself -> boss id
-// Used for autocomplete matching
 const bossChoices = bosses.map((b) => ({
   name: `${b.emoji ? b.emoji + ' ' : ''}${b.name} (${b.zone})`,
   value: b.id,
-  // searchable terms: full name + all nicknames, all lowercased
   terms: [b.name.toLowerCase(), ...(b.nicknames || []).map((n) => n.toLowerCase())],
 }));
 
@@ -33,18 +30,16 @@ module.exports = {
         .setRequired(false)
     ),
 
-  // Handle autocomplete — matches on boss name AND all nicknames
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase().trim();
     const filtered = bossChoices
       .filter((c) => !focused || c.terms.some((t) => t.includes(focused)) || c.name.toLowerCase().includes(focused))
       .slice(0, 25)
-      .map(({ name, value }) => ({ name, value })); // strip internal `terms` field
+      .map(({ name, value }) => ({ name, value }));
     await interaction.respond(filtered);
   },
 
   async execute(interaction) {
-    // Check role permission
     const allowedRole = process.env.ALLOWED_ROLE_NAME || 'Pack Member';
     const hasRole = interaction.member.roles.cache.some(
       (r) => r.name === allowedRole
@@ -57,8 +52,8 @@ module.exports = {
     }
 
     const bossId = interaction.options.getString('boss');
-    const note = interaction.options.getString('note');
-    const boss = bosses.find((b) => b.id === bossId);
+    const note   = interaction.options.getString('note');
+    const boss   = bosses.find((b) => b.id === bossId);
 
     if (!boss) {
       return interaction.reply({
@@ -67,13 +62,40 @@ module.exports = {
       });
     }
 
-    const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id);
+    const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id, null);
     const embed = buildKillEmbed(boss, stateEntry, interaction.user.id);
 
-    if (note) {
-      embed.addFields({ name: 'Note', value: note, inline: false });
-    }
+    if (note) embed.addFields({ name: 'Note', value: note, inline: false });
 
-    await interaction.reply({ embeds: [embed] });
+    // fetchReply: true lets us grab the message ID to store for later archiving
+    const reply = await interaction.reply({ embeds: [embed], fetchReply: true });
+    setKillMessageId(bossId, reply.id);
+
+    // Refresh board buttons so this boss shows skull immediately
+    try {
+      const { getBoardMessages } = require('../utils/state');
+      const { buildBoardPanels }  = require('../utils/board');
+      const { getAllState }        = require('../utils/state');
+
+      const boardMsgIds = getBoardMessages();
+      if (boardMsgIds.length) {
+        const channel   = interaction.channel;
+        const killState = getAllState();
+        const allPanels = buildBoardPanels(bosses, killState);
+
+        if (allPanels.length === boardMsgIds.length) {
+          for (let i = 0; i < boardMsgIds.length; i++) {
+            const panel = allPanels[i];
+            if (panel.type !== 'zone') continue;
+            try {
+              const msg = await channel.messages.fetch(boardMsgIds[i].messageId);
+              await msg.edit({ components: panel.payload.components });
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Could not refresh board after /kill:', err?.message);
+    }
   },
 };

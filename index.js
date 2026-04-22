@@ -11,120 +11,97 @@ const {
   REST,
   Routes,
 } = require('discord.js');
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 
-const { getAllState } = require('./utils/state');
-const { buildSpawnAlertEmbed, buildSpawnedEmbed } = require('./utils/embeds');
+const { getAllState, recordKill, setKillMessageId, clearKill, getBoardMessages } = require('./utils/state');
+const { buildKillEmbed, buildSpawnAlertEmbed, buildSpawnedEmbed }                = require('./utils/embeds');
+const { buildBoardPanels }                                                        = require('./utils/board');
 const bosses = require('./data/bosses.json');
 
-// ── Bot client setup ────────────────────────────────────────────────────────
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
+// ── Bot client setup ──────────────────────────────────────────────────────────
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// ── Load commands ───────────────────────────────────────────────────────────
+// ── Load commands ─────────────────────────────────────────────────────────────
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'));
+fs.readdirSync(commandsPath)
+  .filter((f) => f.endsWith('.js'))
+  .forEach((file) => {
+    const cmd = require(path.join(commandsPath, file));
+    if (cmd.data && cmd.execute) {
+      client.commands.set(cmd.data.name, cmd);
+      console.log(`Loaded command: /${cmd.data.name}`);
+    }
+  });
 
-for (const file of commandFiles) {
-  const command = require(path.join(commandsPath, file));
-  if (command.data && command.execute) {
-    client.commands.set(command.data.name, command);
-    console.log(`Loaded command: /${command.data.name}`);
-  }
-}
-
-// ── Ready ────────────────────────────────────────────────────────────────────
+// ── Ready ─────────────────────────────────────────────────────────────────────
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Logged in as ${readyClient.user.tag}`);
   console.log(`Monitoring ${bosses.length} bosses across ${[...new Set(bosses.map(b => b.zone))].length} zones`);
-
-  // Auto-register slash commands on every startup — guild-scoped so they appear instantly.
-  // No need to run deploy-commands.js separately.
   await registerCommands();
-
-  // Start spawn notification loop
   startSpawnChecker(readyClient);
 });
 
-// ── Auto-register slash commands ─────────────────────────────────────────────
+// ── Auto-register slash commands ──────────────────────────────────────────────
 async function registerCommands() {
-  const guildId = process.env.DISCORD_GUILD_ID;
+  const guildId  = process.env.DISCORD_GUILD_ID;
   const clientId = process.env.DISCORD_CLIENT_ID;
-
   if (!guildId || !clientId) {
     console.warn('⚠️  DISCORD_GUILD_ID or DISCORD_CLIENT_ID not set — skipping command registration');
     return;
   }
-
   const commandData = [...client.commands.values()].map((c) => c.data.toJSON());
   const rest = new REST().setToken(process.env.DISCORD_TOKEN);
-
   try {
-    await rest.put(
-      Routes.applicationGuildCommands(clientId, guildId),
-      { body: commandData }
-    );
+    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commandData });
     console.log(`✅ Registered ${commandData.length} slash commands to guild ${guildId}`);
   } catch (err) {
     console.error('❌ Failed to register slash commands:', err?.message || err);
   }
 }
 
-// ── Interaction handler ──────────────────────────────────────────────────────
+// ── Interaction handler ───────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Autocomplete
   if (interaction.isAutocomplete()) {
-    const command = client.commands.get(interaction.commandName);
-    if (command?.autocomplete) {
-      try {
-        await command.autocomplete(interaction);
-      } catch (err) {
-        console.error(`Autocomplete error for ${interaction.commandName}:`, err);
-      }
+    const cmd = client.commands.get(interaction.commandName);
+    if (cmd?.autocomplete) {
+      try { await cmd.autocomplete(interaction); }
+      catch (err) { console.error(`Autocomplete error:`, err); }
     }
     return;
   }
 
-  // Button interactions — boss board kill buttons
   if (interaction.isButton()) {
-    if (interaction.customId.startsWith('kill:')) {
-      await handleBoardKillButton(interaction);
-    }
+    if (interaction.customId.startsWith('kill:')) await handleBoardKillButton(interaction);
     return;
   }
 
-  // Slash commands
   if (!interaction.isChatInputCommand()) return;
 
-  const command = client.commands.get(interaction.commandName);
-  if (!command) return;
+  const cmd = client.commands.get(interaction.commandName);
+  if (!cmd) return;
 
   try {
-    await command.execute(interaction);
+    await cmd.execute(interaction);
   } catch (err) {
     console.error(`Error executing /${interaction.commandName}:`, err);
-    const msg = { content: '❌ An error occurred running that command.', ephemeral: true };
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(msg);
-    } else {
-      await interaction.reply(msg);
-    }
+    const msg = { content: '❌ An error occurred.', ephemeral: true };
+    interaction.replied || interaction.deferred
+      ? await interaction.followUp(msg)
+      : await interaction.reply(msg);
   }
 });
 
-// ── Board button handler ─────────────────────────────────────────────────────
+// ── Board button handler ──────────────────────────────────────────────────────
 async function handleBoardKillButton(interaction) {
   const bossId = interaction.customId.replace('kill:', '');
-  const boss = bosses.find((b) => b.id === bossId);
+  const boss   = bosses.find((b) => b.id === bossId);
 
   if (!boss) {
     return interaction.reply({ content: '❌ Unknown boss on this button.', ephemeral: true });
   }
 
-  // Role check
   const allowedRole = process.env.ALLOWED_ROLE_NAME || 'Pack Member';
   const hasRole = interaction.member.roles.cache.some((r) => r.name === allowedRole);
   if (!hasRole) {
@@ -134,24 +111,62 @@ async function handleBoardKillButton(interaction) {
     });
   }
 
-  const { recordKill } = require('./utils/state');
-  const { buildKillEmbed } = require('./utils/embeds');
-
-  const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id);
+  // Record the kill (without killMessageId yet — we get that after reply)
+  const stateEntry = recordKill(bossId, boss.timerHours, interaction.user.id, null);
   const embed = buildKillEmbed(boss, stateEntry, interaction.user.id);
 
-  await interaction.reply({ embeds: [embed] });
+  // Post the kill embed publicly
+  const reply = await interaction.reply({ embeds: [embed], fetchReply: true });
+
+  // Now store the message ID so the spawn checker can archive it later
+  setKillMessageId(bossId, reply.id);
+
+  // Update the board buttons in place (turn this boss grey/skull)
+  await refreshBoardButtons(interaction.client, interaction.channelId);
 }
 
-// ── Spawn notification loop ──────────────────────────────────────────────────
-const alertedSoon = new Set();
+// ── Refresh board button labels/styles in place ───────────────────────────────
+// Called after a kill or after a spawn so the board always reflects current state.
+async function refreshBoardButtons(discordClient, channelId) {
+  try {
+    const boardMsgIds = getBoardMessages();
+    if (!boardMsgIds.length) return;
+
+    const channel    = await discordClient.channels.fetch(channelId);
+    const killState  = getAllState();
+    const allPanels  = buildBoardPanels(bosses, killState);
+
+    if (allPanels.length !== boardMsgIds.length) return; // mismatch — board needs full repost
+
+    for (let i = 0; i < boardMsgIds.length; i++) {
+      const panel = allPanels[i];
+      if (panel.type !== 'zone') continue; // only zone panels have buttons
+      try {
+        const msg = await channel.messages.fetch(boardMsgIds[i].messageId);
+        await msg.edit({ components: panel.payload.components });
+      } catch (err) {
+        console.warn(`Could not refresh board panel ${i}:`, err?.message);
+      }
+    }
+  } catch (err) {
+    console.error('refreshBoardButtons error:', err);
+  }
+}
+
+// ── Spawn notification loop ───────────────────────────────────────────────────
+const alertedSoon    = new Set();
 const alertedSpawned = new Set();
 
 function startSpawnChecker(readyClient) {
-  const channelId = process.env.TIMER_CHANNEL_ID;
+  const channelId      = process.env.TIMER_CHANNEL_ID;
+  const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
+
   if (!channelId) {
     console.warn('⚠️  TIMER_CHANNEL_ID not set — spawn notifications disabled');
     return;
+  }
+  if (!historyThreadId) {
+    console.warn('⚠️  HISTORIC_KILLS_THREAD_ID not set — kill archive disabled (original messages will not be moved)');
   }
 
   setInterval(async () => {
@@ -159,8 +174,12 @@ function startSpawnChecker(readyClient) {
       const channel = await readyClient.channels.fetch(channelId);
       if (!channel) return;
 
+      const historyThread = historyThreadId
+        ? await readyClient.channels.fetch(historyThreadId).catch(() => null)
+        : null;
+
       const state = getAllState();
-      const now = Date.now();
+      const now   = Date.now();
 
       for (const boss of bosses) {
         const entry = state[boss.id];
@@ -168,19 +187,36 @@ function startSpawnChecker(readyClient) {
 
         const remaining = entry.nextSpawn - now;
 
+        // ── Boss has spawned ──────────────────────────────────────────────────
         if (remaining <= 0 && !alertedSpawned.has(boss.id)) {
           alertedSpawned.add(boss.id);
           alertedSoon.delete(boss.id);
+
+          // 1. Archive the kill embed to the history thread, then delete original
+          if (entry.killMessageId) {
+            await archiveKillMessage(channel, historyThread, boss, entry);
+          }
+
+          // 2. Post spawned notification in main channel
           await channel.send({ embeds: [buildSpawnedEmbed(boss)] });
           console.log(`Spawned: ${boss.name}`);
+
+          // 3. Clear kill record so the boss is back to "unknown"
+          clearKill(boss.id);
+
+          // 4. Reset board button back to normal red
+          await refreshBoardButtons(readyClient, channelId);
+
           continue;
         }
 
+        // Re-arm for next kill cycle
         if (remaining > 30 * 60 * 1000) {
           alertedSpawned.delete(boss.id);
           alertedSoon.delete(boss.id);
         }
 
+        // ── 30-minute warning ─────────────────────────────────────────────────
         if (remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
           alertedSoon.add(boss.id);
           await channel.send({ embeds: [buildSpawnAlertEmbed(boss)] });
@@ -195,5 +231,33 @@ function startSpawnChecker(readyClient) {
   console.log('Spawn notification loop started (checking every 5 minutes)');
 }
 
-// ── Login ────────────────────────────────────────────────────────────────────
+// ── Archive kill message to history thread ────────────────────────────────────
+async function archiveKillMessage(channel, historyThread, boss, entry) {
+  try {
+    // Fetch the original kill embed message
+    const originalMsg = await channel.messages.fetch(entry.killMessageId).catch(() => null);
+    if (!originalMsg) return;
+
+    if (historyThread) {
+      // Re-post the embed into the history thread with a timestamp header
+      const spawnedAt = new Date().toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        timeZoneName: 'short', timeZone: 'America/New_York',
+      });
+      await historyThread.send({
+        content: `📦 **${boss.name}** has respawned — archiving kill record (spawned ${spawnedAt})`,
+        embeds: originalMsg.embeds,
+      });
+    }
+
+    // Delete the original kill message from #raid-mobs
+    await originalMsg.delete().catch((err) => {
+      console.warn(`Could not delete kill message for ${boss.name}:`, err?.message);
+    });
+  } catch (err) {
+    console.error(`archiveKillMessage error for ${boss.name}:`, err);
+  }
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
 client.login(process.env.DISCORD_TOKEN);
