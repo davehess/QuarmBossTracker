@@ -173,24 +173,29 @@ function buildSpawnedEmbed(boss) {
     .setTimestamp();
 }
 
-function buildDailySummaryEmbed(killedToday, availableNow, bosses) {
-  const embed = new EmbedBuilder().setColor(0x4b0082).setTitle('📅 Daily Raid Summary')
-    .setDescription(new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }))
+function buildDailySummaryEmbed(killedToday, availableNow, bosses, dateLabel) {
+  // dateLabel: e.g. "April 24, 2026" — used as "Killed <dateLabel>" header when archiving
+  const isArchive = !!dateLabel;
+  const displayDate = dateLabel || new Date().toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric',
+  });
+  const embed = new EmbedBuilder()
+    .setColor(0x4b0082)
+    .setTitle('📅 Daily Raid Summary')
+    .setDescription(displayDate)
     .setTimestamp();
+
   if (killedToday.length === 0) {
-    embed.addFields({ name: '☠️ Killed Today', value: 'No kills recorded today.', inline: false });
+    embed.addFields({ name: isArchive ? `☠️ Killed ${dateLabel}` : '☠️ Killed Today', value: 'No kills recorded.', inline: false });
   } else {
     const lines = killedToday.map((e) => {
       const boss = bosses.find((b) => b.id === e.bossId);
       return `• **${boss?.name || e.bossId}** (${boss?.zone || '?'}) — <t:${Math.floor(e.killedAt/1000)}:t> by <@${e.killedBy}>`;
     });
-    embed.addFields({ name: `☠️ Killed Today (${killedToday.length})`, value: lines.join('\n').slice(0, 1020), inline: false });
+    const headerName = isArchive ? `☠️ Killed ${dateLabel} (${killedToday.length})` : `☠️ Killed Today (${killedToday.length})`;
+    embed.addFields({ name: headerName, value: lines.join('\n').slice(0, 1020), inline: false });
   }
-  if (availableNow.length === 0) {
-    embed.addFields({ name: '🟢 Available Now', value: 'No bosses currently available.', inline: false });
-  } else {
-    embed.addFields({ name: `🟢 Available Now (${availableNow.length})`, value: availableNow.map((b) => `• **${b.name}** (${b.zone})`).join('\n').slice(0, 1020), inline: false });
-  }
+  // Note: "Available Now" intentionally omitted per request — keep summary concise
   return embed;
 }
 

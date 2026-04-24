@@ -107,12 +107,14 @@ async function refreshThreadCooldownCard(discordClient, expansion, threadId, bos
 }
 
 // ── Main channel summary (all expansions) ─────────────────────────────────────
+// Always posts to TIMER_CHANNEL_ID only — never to threads
 async function refreshSummaryCard(discordClient, channelId, bosses) {
-  if (!channelId) return;
+  const targetId = process.env.TIMER_CHANNEL_ID || channelId;
+  if (!targetId) return;
   try {
     const killState = getAllState();
     const embed     = buildSummaryCard(bosses, killState);
-    const channel   = await discordClient.channels.fetch(channelId);
+    const channel   = await discordClient.channels.fetch(targetId);
     const id        = getSummaryMessageId();
     if (id) {
       try { const m = await channel.messages.fetch(id); await m.edit({ embeds: [embed] }); return; } catch {}
@@ -123,12 +125,14 @@ async function refreshSummaryCard(discordClient, channelId, bosses) {
 }
 
 // ── Main channel: Spawning Tomorrow ──────────────────────────────────────────
+// Always posts to TIMER_CHANNEL_ID only
 async function refreshSpawningTomorrowCard(discordClient, channelId, bosses) {
-  if (!channelId) return;
+  const targetId = process.env.TIMER_CHANNEL_ID || channelId;
+  if (!targetId) return;
   try {
     const killState = getAllState();
     const embed     = buildSpawningTomorrowCard(bosses, killState);
-    const channel   = await discordClient.channels.fetch(channelId);
+    const channel   = await discordClient.channels.fetch(targetId);
     const id        = getSpawningTomorrowId();
     if (id) {
       try { const m = await channel.messages.fetch(id); await m.edit({ embeds: [embed] }); return; } catch {}

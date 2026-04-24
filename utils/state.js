@@ -122,11 +122,18 @@ function saveExpansionBoard(expansion, ids) {
 
 function getChannelSlots()   { return loadState().channelSlots || {}; }
 
-function getSummaryMessageId()  { return loadState().channelSlots?.summary || null; }
-function setSummaryMessageId(id){ _setSlot('summary', id); }
+// Slot IDs: prefer env vars (hardcoded once, survive redeploys) then fall back to state
+function getSummaryMessageId()  { return process.env.SUMMARY_MESSAGE_ID || loadState().channelSlots?.summary || null; }
+function setSummaryMessageId(id){ if (!process.env.SUMMARY_MESSAGE_ID) _setSlot('summary', id); }
 
-function getSpawningTomorrowId()   { return loadState().channelSlots?.spawningTomorrow || null; }
-function setSpawningTomorrowId(id) { _setSlot('spawningTomorrow', id); }
+function getSpawningTomorrowId()   { return process.env.SPAWNING_TOMORROW_MESSAGE_ID || loadState().channelSlots?.spawningTomorrow || null; }
+function setSpawningTomorrowId(id) { if (!process.env.SPAWNING_TOMORROW_MESSAGE_ID) _setSlot('spawningTomorrow', id); }
+
+function getDailySummaryMessageId()   { return process.env.DAILY_SUMMARY_MESSAGE_ID || loadState().channelSlots?.dailySummary || null; }
+function setDailySummaryMessageId(id) { if (!process.env.DAILY_SUMMARY_MESSAGE_ID) _setSlot('dailySummary', id); }
+
+function getThreadLinksMessageId()   { return process.env.THREAD_LINKS_MESSAGE_ID || loadState().channelSlots?.threadLinks || null; }
+function setThreadLinksMessageId(id) { if (!process.env.THREAD_LINKS_MESSAGE_ID) _setSlot('threadLinks', id); }
 
 function getChannelPlaceholder(expansion)     { return loadState().channelSlots?.[expansion] || null; }
 function setChannelPlaceholder(expansion, id) { _setSlot(expansion, id); }
@@ -156,6 +163,21 @@ function getAnnounceMessageIds()     { return loadState().announceMessageIds || 
 function removeAnnounceMessageId(id) { const s = loadState(); s.announceMessageIds = s.announceMessageIds.filter(x => x !== id); saveState(s); }
 function clearAnnounceMessageIds()   { const s = loadState(); s.announceMessageIds = []; saveState(s); }
 
+// ── Spawn alert message tracking (for in-place update to spawned, delete at midnight) ──
+function getSpawnAlertMessageId(bossId)      { return loadState().channelSlots?.[`alert_${bossId}`] || null; }
+function setSpawnAlertMessageId(bossId, id)  { _setSlot(`alert_${bossId}`, id); }
+function clearSpawnAlertMessageId(bossId)    {
+  const s = loadState();
+  delete s.channelSlots[`alert_${bossId}`];
+  saveState(s);
+}
+function getAllSpawnAlertMessageIds() {
+  const slots = loadState().channelSlots || {};
+  return Object.entries(slots)
+    .filter(([k]) => k.startsWith('alert_'))
+    .map(([k, v]) => ({ bossId: k.replace('alert_', ''), messageId: v }));
+}
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -166,10 +188,15 @@ module.exports = {
   getChannelSlots,
   getSummaryMessageId, setSummaryMessageId,
   getSpawningTomorrowId, setSpawningTomorrowId,
+  getDailySummaryMessageId, setDailySummaryMessageId,
+  getThreadLinksMessageId, setThreadLinksMessageId,
   getChannelPlaceholder, setChannelPlaceholder,
   getThreadCooldownId, setThreadCooldownId,
   getZoneCard, setZoneCard, clearZoneCard, getAllZoneCards,
   getDailyKills, resetDailyKills,
   addAnnounceMessageId, getAnnounceMessageIds, removeAnnounceMessageId, clearAnnounceMessageIds,
+  getSpawnAlertMessageId, setSpawnAlertMessageId, clearSpawnAlertMessageId, getAllSpawnAlertMessageIds,
+  getDailySummaryMessageId, setDailySummaryMessageId,
+  getThreadLinksMessageId, setThreadLinksMessageId,
   getBoardMessages, saveBoardMessages,
 };

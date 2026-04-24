@@ -137,29 +137,41 @@ function parsePqdiPage(html) {
   const name = titleMatch ? titleMatch[1].trim() : null;
   if (!name) throw new Error('Could not parse boss name from PQDI page');
 
-  // Instance Spawn Timer from Quick Facts section
+  // Instance Spawn Timer — prefer the human-readable Quick Facts text.
+  // Only fall back to instance_spawn_timer_override (stored in SECONDS on PQDI) if
+  // the human-readable text is absent or parsed as 0.
   let timerHours = 66;
+
+  function parseTimerText(text) {
+    let h = 0;
+    const weeks = text.match(/(\d+)\s*week/i);
+    const days  = text.match(/(\d+)\s*day/i);
+    const hrs   = text.match(/(\d+)\s*hour/i);
+    const mins  = text.match(/(\d+)\s*minute/i);
+    if (weeks) h += parseInt(weeks[1]) * 168;
+    if (days)  h += parseInt(days[1])  * 24;
+    if (hrs)   h += parseInt(hrs[1]);
+    if (mins)  h += parseInt(mins[1])  / 60;
+    return Math.round(h * 100) / 100;
+  }
+
+  // 1. Try Quick Facts human-readable text first (most reliable)
   const timerMatch = html.match(/Instance Spawn Timer[^:]*:\s*([^<\n\*]+)/i);
   if (timerMatch) {
-    const timerText = timerMatch[1].trim();
-    let hours = 0;
-    const weeks = timerText.match(/(\d+)\s*week/i);
-    const days  = timerText.match(/(\d+)\s*day/i);
-    const hrs   = timerText.match(/(\d+)\s*hour/i);
-    const mins  = timerText.match(/(\d+)\s*minute/i);
-    if (weeks) hours += parseInt(weeks[1]) * 168;
-    if (days)  hours += parseInt(days[1])  * 24;
-    if (hrs)   hours += parseInt(hrs[1]);
-    if (mins)  hours += parseInt(mins[1])  / 60;
-    if (hours > 0) timerHours = Math.round(hours * 100) / 100;
+    const parsed = parseTimerText(timerMatch[1].trim());
+    if (parsed > 0) timerHours = parsed;
   }
-  // Also check instance_spawn_timer_override in raw data (ms → hours)
-  const overrideMatch = html.match(/instance_spawn_timer_override[^:]*:\s*(\d+)/i);
-  if (overrideMatch) {
-    const ms = parseInt(overrideMatch[1]);
-    if (ms > 0) {
-      const overrideHours = Math.round((ms / 1000 / 3600) * 100) / 100;
-      timerHours = overrideHours;
+
+  // 2. Only use instance_spawn_timer_override if still at default (66h)
+  //    PQDI stores this field in SECONDS (not ms). A value of 259200 = 72h, 583200 = 162h.
+  if (timerHours === 66) {
+    const overrideMatch = html.match(/instance_spawn_timer_override["'\s]*[=:]\s*(\d+)/i);
+    if (overrideMatch) {
+      const seconds = parseInt(overrideMatch[1]);
+      // Sanity check: PQDI override values are typically 3600–700000 seconds
+      if (seconds >= 3600 && seconds <= 700000) {
+        timerHours = Math.round((seconds / 3600) * 100) / 100;
+      }
     }
   }
 
@@ -264,45 +276,19 @@ module.exports = {
     fs.writeFileSync(BOSSES_FILE, JSON.stringify(bosses, null, 2), 'utf8');
     delete require.cache[require.resolve('../data/bosses.json')];
 
-    // Refresh board
-    const channelId = process.env.TIMER_CHANNEL_ID;
+    // Refresh the expansion thread board for this boss's expansion
+    const { postOrUpdateExpansionBoard } = require('../utils/killops');
+    const { getThreadId } = require('../utils/config');
     let boardRefreshed = false;
-    if (channelId) {
-      try {
-        const { getAllState, getBoardMessages, saveBoardMessages } = require('../utils/state');
-        const { buildBoardPanels } = require('../utils/board');
+    try {
+      const threadId = getThreadId(expansion);
+      if (threadId) {
         const freshBosses = require('../data/bosses.json');
-        const channel     = await interaction.client.channels.fetch(channelId);
-        const killState   = getAllState();
-        const panels      = buildBoardPanels(freshBosses, killState);
-        const boardIds    = getBoardMessages();
-
-        if (boardIds.length === panels.length) {
-          for (let i = 0; i < panels.length; i++) {
-            try {
-              const msg = await channel.messages.fetch(boardIds[i].messageId);
-              await msg.edit(panels[i].payload);
-            } catch (_) {}
-          }
-          boardRefreshed = true;
-        } else if (boardIds.length > 0) {
-          const newIds = [...boardIds];
-          for (let i = boardIds.length; i < panels.length; i++) {
-            const sent = await channel.send(panels[i].payload);
-            newIds.push({ messageId: sent.id, panelIndex: i });
-          }
-          for (let i = 0; i < Math.min(boardIds.length, panels.length); i++) {
-            try {
-              const msg = await channel.messages.fetch(boardIds[i].messageId);
-              await msg.edit(panels[i].payload);
-            } catch (_) {}
-          }
-          saveBoardMessages(newIds);
-          boardRefreshed = true;
-        }
-      } catch (err) {
-        console.warn('addboss board refresh failed:', err?.message);
+        const result = await postOrUpdateExpansionBoard(interaction.client, expansion, threadId, freshBosses);
+        boardRefreshed = result.ok;
       }
+    } catch (err) {
+      console.warn('addboss board refresh failed:', err?.message);
     }
 
     await interaction.editReply(

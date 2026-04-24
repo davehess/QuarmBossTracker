@@ -431,48 +431,53 @@
     "expansion": "Velious",
     "timerHours": 162,
     "nicknames": [
-      "tunare","naggatomommy"
+      "tunare",
+      "naggatomommy"
     ],
     "emoji": "👑",
     "pqdiUrl": "https://www.pqdi.cc/npc/127002"
   },
-    {
+  {
     "id": "grahl_strongback",
     "name": "Grahl Strongback",
     "zone": "Plane of Growth",
     "expansion": "Velious",
     "timerHours": 30,
     "nicknames": [
-      "grahl", "strongback"
+      "grahl",
+      "strongback"
     ],
     "emoji": "👑",
     "pqdiUrl": "https://www.pqdi.cc/npc/127022"
   },
-      {
+  {
     "id": "sarik_the_fang",
     "name": "Sarik the Fang",
     "zone": "Plane of Growth",
     "expansion": "Velious",
     "timerHours": 30,
     "nicknames": [
-      "sarik", "fang"
+      "sarik",
+      "fang"
     ],
     "emoji": "🐺",
     "pqdiUrl": "https://www.pqdi.cc/npc/127017"
   },
-      {
+  {
     "id": "galiel_spirithoof",
     "name": "Galiel Spirithoof",
     "zone": "Plane of Growth",
     "expansion": "Velious",
     "timerHours": 30,
     "nicknames": [
-      "galiel", "unicorn", "spirithoof"
+      "galiel",
+      "unicorn",
+      "spirithoof"
     ],
     "emoji": "🦄",
     "pqdiUrl": "https://www.pqdi.cc/npc/127023"
   },
-    {
+  {
     "id": "king_tormax",
     "name": "King Tormax",
     "zone": "Kael Drakkel",
@@ -579,7 +584,7 @@
     "emoji": "🦅",
     "pqdiUrl": "https://www.pqdi.cc/npc/110005"
   },
-    {
+  {
     "id": "lodizal",
     "name": "Lodizal",
     "zone": "Iceclad Ocean",
@@ -1245,18 +1250,33 @@
     "pqdiUrl": "https://www.pqdi.cc/npc/158436"
   },
   {
-    "id": "kaas_thox_xi_aten_ha_ra",
-    "name": "Kaas Thox Xi Aten Ha Ra",
+    "id": "kaas_thox_xi_aten_ha_ra_north",
+    "name": "Kaas Thox Xi Aten Ha Ra (North)",
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
     "nicknames": [
-      "ktxahr",
-      "kaas aten",
-      "kaas ahr"
+      "ktxahr north",
+      "kaas north",
+      "aten north",
+      "ktxahr"
     ],
     "emoji": "✨",
     "pqdiUrl": "https://www.pqdi.cc/npc/158437"
+  },
+  {
+    "id": "kaas_thox_xi_aten_ha_ra_south",
+    "name": "Kaas Thox Xi Aten Ha Ra (South)",
+    "zone": "Vex Thal",
+    "expansion": "Luclin",
+    "timerHours": 162,
+    "nicknames": [
+      "ktxahr south",
+      "kaas south",
+      "aten south"
+    ],
+    "emoji": "✨",
+    "pqdiUrl": "https://www.pqdi.cc/npc/158464"
   },
   {
     "id": "va_xi_aten_ha_ra",
@@ -1350,5 +1370,57 @@
     ],
     "emoji": "💫",
     "pqdiUrl": "https://www.pqdi.cc/npc/158081"
+  },
+  {
+    "id": "diabo_xi_xin",
+    "name": "Diabo Xi Xin",
+    "zone": "Vex Thal",
+    "expansion": "Luclin",
+    "timerHours": 162,
+    "nicknames": [
+      "diabo xin",
+      "dxx"
+    ],
+    "emoji": "🌀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/158445"
+  },
+  {
+    "id": "diabo_xi_va",
+    "name": "Diabo Xi Va",
+    "zone": "Vex Thal",
+    "expansion": "Luclin",
+    "timerHours": 162,
+    "nicknames": [
+      "diabo va",
+      "dxv"
+    ],
+    "emoji": "🌀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/158446"
+  },
+  {
+    "id": "thall_va_xakra_south",
+    "name": "Thall Va Xakra (South)",
+    "zone": "Vex Thal",
+    "expansion": "Luclin",
+    "timerHours": 162,
+    "nicknames": [
+      "xakra south",
+      "tvx south"
+    ],
+    "emoji": "🌀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/158465"
+  },
+  {
+    "id": "thall_va_xakra_north",
+    "name": "Thall Va Xakra (North)",
+    "zone": "Vex Thal",
+    "expansion": "Luclin",
+    "timerHours": 162,
+    "nicknames": [
+      "xakra north",
+      "tvx north"
+    ],
+    "emoji": "🌀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/158136"
   }
 ]
