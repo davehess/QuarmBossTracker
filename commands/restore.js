@@ -1,12 +1,19 @@
-// commands/restore.js
-// /restore <message_link>
+// commands/restore.js — v0.9.3
+// /restore <links...>
 //
-// Restores kill state from any of these bot-posted message types:
-//   📊 Active Cooldowns          — main channel summary (boss name, zone, next spawn time)
-//   🌙 Luclin — Active Cooldowns — expansion thread cooldown card (same format)
-//   📅 Daily Raid Summary        — parses "Killed Today" list + reconstructs nextSpawn
+// Accepts 1–10 space/newline-separated Discord message links.
+// Supported embed types:
+//   📊 Active Cooldowns          — main channel (nextSpawn is authoritative)
+//   <Expansion> — Active Cooldowns — thread cooldown card (same)
+//   📅 Daily Raid Summary        — reconstruct nextSpawn = killedAt + timerHours
 //
-// After restoring state, refreshes all boards, cooldown cards, summary and spawning cards.
+// Multi-message merging:
+//   All entries are collected, grouped by bossId.
+//   For each boss the LATEST nextSpawn across all sources wins — so you can paste
+//   the entire week of daily summaries plus a cooldowns card and get a complete picture.
+//   Entries whose nextSpawn has already passed are skipped (boss is available now).
+//
+// After writing state, refreshes every board, cooldown card, summary card.
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
@@ -30,13 +37,14 @@ function parseMessageLink(link) {
   return { guildId: m[1], channelId: m[2], messageId: m[3] };
 }
 
-/**
- * Find a boss in bosses.json by name and optionally zone.
- * Tries: exact name+zone → exact name → nickname → partial name.
- */
+/** Extract all message links from a string (handles spaces, newlines, commas) */
+function extractLinks(input) {
+  return (input.match(/https?:\/\/discord(?:app)?\.com\/channels\/\d+\/\d+\/\d+/g) || []);
+}
+
 function findBoss(bosses, bossName, zone) {
-  const nl = bossName.toLowerCase();
-  const zl = (zone || '').toLowerCase();
+  const nl = bossName.toLowerCase().trim();
+  const zl = (zone || '').toLowerCase().trim();
   return (
     bosses.find((b) => b.name.toLowerCase() === nl && b.zone.toLowerCase() === zl) ||
     bosses.find((b) => b.name.toLowerCase() === nl) ||
@@ -46,14 +54,11 @@ function findBoss(bosses, bossName, zone) {
   );
 }
 
-/**
- * Parse a Discord <t:unix:?> tag or date string into ms timestamp.
- */
-function parseNextSpawnMs(text) {
+/** Parse Discord <t:unix:?> tag or readable date string → ms, or null */
+function parseTimeMs(text) {
+  if (!text) return null;
   const discord = text.match(/<t:(\d+)(?::[A-Za-z])?>/);
   if (discord) return parseInt(discord[1]) * 1000;
-
-  // "April 29, 2026 10:35 AM" style
   const human = text.match(/([A-Z][a-z]+ \d{1,2},? \d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
   if (human) {
     const d = new Date(`${human[1]} ${human[2]} EST`);
@@ -63,88 +68,57 @@ function parseNextSpawnMs(text) {
 }
 
 /**
- * Parse "📊 Active Cooldowns" or "<Expansion> — Active Cooldowns" embed.
- * Returns array of { bossName, zone, nextSpawnMs }
- *
- * Each field value looks like:
- *   🐉 **Lord Nagafen** (Nagafen's Lair) — <t:1745900100:F>  <t:1745900100:R>
- *   🐉 **Lord Nagafen** (Nagafen's Lair) — April 29, 2026 10:35 AM  in 5 days
+ * Parse Active Cooldowns embed (main channel or thread).
+ * Lines: emoji **Boss Name** (Zone) — <t:unix:F>  <t:unix:R>
+ * Returns [{bossName, zone, nextSpawnMs}]
  */
 function parseCooldownEmbed(embed) {
   const entries = [];
   for (const field of (embed.fields || [])) {
     for (const line of field.value.split('\n')) {
-      // Match: (anything) **Boss Name** (Zone) — timestamp...
       const m = line.match(/\*\*([^*]+)\*\*\s*\(([^)]+)\)\s*[—–-]\s*(.+)/);
       if (!m) continue;
-      const bossName   = m[1].trim();
-      const zone       = m[2].trim();
-      const nextSpawnMs = parseNextSpawnMs(m[3].trim());
-      entries.push({ bossName, zone, nextSpawnMs });
+      const nextSpawnMs = parseTimeMs(m[3].trim());
+      entries.push({ bossName: m[1].trim(), zone: m[2].trim(), nextSpawnMs });
     }
   }
   return entries;
 }
 
 /**
- * Parse "📅 Daily Raid Summary" embed.
- * Looks at the "Killed Today" field and reconstructs nextSpawn = killedAt + timerHours.
- *
- * Each line in the field:
- *   • **Lord Nagafen** (Nagafen's Lair) — <t:unix:t> by <@userId>
- *   • **Lord Nagafen** (Nagafen's Lair) — 10:30 AM by @Username
+ * Parse Daily Raid Summary embed.
+ * Killed field lines: • **Boss Name** (Zone) — <t:unix:t> by <@id>
+ * Returns [{bossName, zone, killedAt}]
  */
-function parseDailySummaryEmbed(embed, bosses) {
+function parseDailySummaryEmbed(embed) {
   const entries = [];
-  const killedField = (embed.fields || []).find((f) =>
-    f.name.includes('Killed Today') || f.name.includes('Killed ')
+  const killedField = (embed.fields || []).find(
+    (f) => f.name.startsWith('☠️ Killed')
   );
   if (!killedField) return entries;
 
   for (const line of killedField.value.split('\n')) {
-    // Match: • **Boss Name** (Zone) — <t:unix:t> by ...
-    //    or: • **Boss Name** (Zone) — time by ...
-    const m = line.match(/[•·-]?\s*\*\*([^*]+)\*\*\s*\(([^)]+)\)\s*[—–-]\s*(<t:\d+[^>]*>|[\d:]+\s*[AP]M)\s*by/i);
+    // • **Boss Name** (Zone) — <t:unix:t> by ...
+    const m = line.match(/[•·\-]?\s*\*\*([^*]+)\*\*\s*\(([^)]+)\)\s*[—–-]\s*(<t:\d+[^>]*>|[\d:]+\s*[AP]M)\s*by/i);
     if (!m) continue;
-
-    const bossName  = m[1].trim();
-    const zone      = m[2].trim();
-    const timeStr   = m[3].trim();
-
-    // Parse the kill time
-    let killedAt = null;
-    const discordTs = timeStr.match(/<t:(\d+)/);
-    if (discordTs) {
-      killedAt = parseInt(discordTs[1]) * 1000;
-    } else {
-      // Try to parse "10:30 AM" as today's date
-      const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' });
-      const d = new Date(`${today} ${timeStr} EST`);
-      if (!isNaN(d)) killedAt = d.getTime();
-    }
-
-    if (killedAt) entries.push({ bossName, zone, killedAt });
+    const killedAt = parseTimeMs(m[3].trim());
+    if (!killedAt) continue;
+    entries.push({ bossName: m[1].trim(), zone: m[2].trim(), killedAt });
   }
   return entries;
 }
 
-/**
- * Write kill entries directly to state.json atomically.
- * Merges with existing state — does not wipe other data.
- */
-function writeKillsToState(killEntries) {
+/** Write a map of { bossId → {killedAt, nextSpawn} } to state.json atomically */
+function writeKillsToState(killMap) {
   const fs   = require('fs');
   const path = require('path');
   const f    = path.join(__dirname, '../data/state.json');
-
   let raw;
   try { raw = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { raw = {}; }
   if (!raw.bosses) raw.bosses = {};
-
-  for (const { bossId, killedAt, nextSpawn } of killEntries) {
-    raw.bosses[bossId] = { killedAt, nextSpawn, killedBy: 'restored' };
+  for (const [bossId, entry] of Object.entries(killMap)) {
+    raw.bosses[bossId] = { killedAt: entry.killedAt, nextSpawn: entry.nextSpawn, killedBy: 'restored' };
   }
-
   const tmp = f + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(raw, null, 2), 'utf8');
   fs.renameSync(tmp, f);
@@ -153,112 +127,113 @@ function writeKillsToState(killEntries) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('restore')
-    .setDescription('Restore kill state from any Active Cooldowns or Daily Summary message link')
+    .setDescription('Restore kill state from one or more Active Cooldowns / Daily Summary message links')
     .addStringOption((opt) =>
-      opt.setName('message_link')
-        .setDescription('Discord message link — right-click any Active Cooldowns or Daily Summary → Copy Message Link')
+      opt.setName('links')
+        .setDescription('One or more Discord message links (space/newline separated)')
         .setRequired(true)
     ),
 
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member)) {
-      return interaction.reply({
-        flags: MessageFlags.Ephemeral,
-        content: `❌ You need one of these roles: ${allowedRolesList()}`,
-      });
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
     }
 
-    const link   = interaction.options.getString('message_link').trim();
-    const parsed = parseMessageLink(link);
+    const input = interaction.options.getString('links').trim();
+    const links = extractLinks(input);
 
-    if (!parsed) {
-      return interaction.reply({
-        flags: MessageFlags.Ephemeral,
-        content: '❌ Invalid message link. Right-click the message → Copy Message Link.',
-      });
+    if (links.length === 0) {
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ No valid Discord message links found. Right-click a message → Copy Message Link.' });
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    // Fetch the message
-    let refMsg;
-    try {
-      const refChannel = await interaction.client.channels.fetch(parsed.channelId);
-      refMsg = await refChannel.messages.fetch(parsed.messageId);
-    } catch (err) {
-      return interaction.editReply(`❌ Could not fetch that message: ${err?.message}`);
-    }
-
     const bosses = getBosses();
     const now    = Date.now();
 
-    // Determine which embed type this is
-    const embed = refMsg.embeds[0];
-    if (!embed) {
-      return interaction.editReply('❌ That message has no embed. Link to an Active Cooldowns or Daily Raid Summary message.');
-    }
+    // Accumulated kill map: bossId → {killedAt, nextSpawn}
+    // When the same boss appears in multiple sources, LATEST nextSpawn wins.
+    const killMap    = {};
+    const sourceLog  = [];
+    const notFound   = new Set();
+    let   parseErrors = 0;
 
-    const title = embed.title || '';
-    let   rawEntries     = [];   // { bossName, zone, nextSpawnMs? killedAt? }
-    let   sourceType     = '';
+    // Process each link
+    for (const link of links) {
+      const parsed = parseMessageLink(link);
+      if (!parsed) { parseErrors++; continue; }
 
-    if (title === '📊 Active Cooldowns' || title.endsWith('— Active Cooldowns')) {
-      // Main channel summary OR expansion thread cooldown card
-      sourceType  = title === '📊 Active Cooldowns' ? 'main Active Cooldowns' : `"${title}"`;
-      rawEntries  = parseCooldownEmbed(embed).map((e) => ({ ...e, source: 'cooldown' }));
-    } else if (title === '📅 Daily Raid Summary') {
-      sourceType  = 'Daily Raid Summary';
-      rawEntries  = parseDailySummaryEmbed(embed, bosses).map((e) => ({ ...e, source: 'daily' }));
-    } else {
-      return interaction.editReply(
-        `❌ Unrecognised embed type: "${title}"\n` +
-        `Supported: "📊 Active Cooldowns", any "<Expansion> — Active Cooldowns", "📅 Daily Raid Summary".`
-      );
-    }
+      let refMsg;
+      try {
+        const ch = await interaction.client.channels.fetch(parsed.channelId);
+        refMsg   = await ch.messages.fetch(parsed.messageId);
+      } catch (err) {
+        sourceLog.push(`❌ Could not fetch \`${parsed.messageId}\`: ${err?.message}`);
+        continue;
+      }
 
-    if (rawEntries.length === 0) {
-      return interaction.editReply(`⚠️ Found the "${title}" embed but could not parse any boss entries from it.`);
-    }
+      const embed = refMsg.embeds[0];
+      if (!embed) { sourceLog.push(`⚠️ Message \`${parsed.messageId}\` has no embed — skipped`); continue; }
 
-    // Resolve entries to bosses + compute nextSpawn
-    const killsToWrite = [];
-    const restored     = [];
-    const alreadyGone  = [];
-    const notFound     = [];
+      const title = embed.title || '';
 
-    for (const entry of rawEntries) {
-      const boss = findBoss(bosses, entry.bossName, entry.zone);
-      if (!boss) { notFound.push(`${entry.bossName} (${entry.zone || '?'})`); continue; }
+      // ── Active Cooldowns (main or thread) ──────────────────────────────
+      if (title === '📊 Active Cooldowns' || title.endsWith('— Active Cooldowns')) {
+        const entries = parseCooldownEmbed(embed);
+        let found = 0, skipped = 0;
 
-      if (entry.source === 'cooldown') {
-        // nextSpawnMs is the authoritative spawn time
-        if (!entry.nextSpawnMs || entry.nextSpawnMs <= now) {
-          alreadyGone.push(boss.name); continue;
+        for (const { bossName, zone, nextSpawnMs } of entries) {
+          const boss = findBoss(bosses, bossName, zone);
+          if (!boss) { notFound.add(`${bossName} (${zone})`); continue; }
+
+          if (!nextSpawnMs || nextSpawnMs <= now) { skipped++; continue; }
+
+          const killedAt = nextSpawnMs - boss.timerHours * 3600000;
+          // Latest nextSpawn wins across all sources
+          if (!killMap[boss.id] || nextSpawnMs > killMap[boss.id].nextSpawn) {
+            killMap[boss.id] = { killedAt, nextSpawn: nextSpawnMs };
+            found++;
+          }
         }
-        const killedAt = entry.nextSpawnMs - boss.timerHours * 3600000;
-        killsToWrite.push({ bossId: boss.id, killedAt, nextSpawn: entry.nextSpawnMs });
-        restored.push(`${boss.emoji || '•'} **${boss.name}** → <t:${Math.floor(entry.nextSpawnMs / 1000)}:F>`);
+        sourceLog.push(`✅ "${title}" — ${found} active, ${skipped} expired`);
 
-      } else if (entry.source === 'daily') {
-        // killedAt is the kill time from the summary; reconstruct nextSpawn
-        const nextSpawn = entry.killedAt + boss.timerHours * 3600000;
-        if (nextSpawn <= now) { alreadyGone.push(boss.name); continue; }
-        killsToWrite.push({ bossId: boss.id, killedAt: entry.killedAt, nextSpawn });
-        restored.push(`${boss.emoji || '•'} **${boss.name}** → <t:${Math.floor(nextSpawn / 1000)}:F>`);
+      // ── Daily Raid Summary ──────────────────────────────────────────────
+      } else if (title === '📅 Daily Raid Summary') {
+        const entries = parseDailySummaryEmbed(embed);
+        let found = 0, skipped = 0;
+
+        for (const { bossName, zone, killedAt } of entries) {
+          const boss = findBoss(bosses, bossName, zone);
+          if (!boss) { notFound.add(`${bossName} (${zone})`); continue; }
+
+          const nextSpawn = killedAt + boss.timerHours * 3600000;
+          if (nextSpawn <= now) { skipped++; continue; }
+
+          // Latest nextSpawn wins
+          if (!killMap[boss.id] || nextSpawn > killMap[boss.id].nextSpawn) {
+            killMap[boss.id] = { killedAt, nextSpawn };
+            found++;
+          }
+        }
+        sourceLog.push(`✅ "Daily Summary" (${new Date(refMsg.createdTimestamp).toLocaleDateString('en-US', {timeZone:'America/New_York', month:'short', day:'numeric'})}) — ${found} still active, ${skipped} expired`);
+
+      } else {
+        sourceLog.push(`⚠️ Unrecognised embed type: "${title}" — skipped`);
       }
     }
 
-    if (killsToWrite.length === 0) {
-      const lines = ['⚠️ No active cooldowns to restore from this message.'];
-      if (alreadyGone.length) lines.push(`All ${alreadyGone.length} boss timer(s) have already expired.`);
-      if (notFound.length) lines.push(`Could not match: ${notFound.join(', ')}`);
-      return interaction.editReply(lines.join('\n'));
+    const killCount = Object.keys(killMap).length;
+
+    if (killCount === 0) {
+      const lines = ['⚠️ No active cooldowns to restore across all provided messages.', '', ...sourceLog];
+      if (notFound.size) lines.push(`\nNot matched: ${[...notFound].join(', ')}`);
+      return interaction.editReply(lines.join('\n').slice(0, 2000));
     }
 
-    // Write to state.json
-    writeKillsToState(killsToWrite);
+    // Write to state
+    writeKillsToState(killMap);
 
-    // Refresh everything
+    // Refresh all cards and boards
     const mainChannelId = process.env.TIMER_CHANNEL_ID;
     const freshBosses   = getBosses();
 
@@ -276,15 +251,23 @@ module.exports = {
     }
 
     // Build reply
-    const lines = [`✅ **State restored from ${sourceType}**\n`];
-    if (restored.length > 0) {
-      lines.push(`**Restored (${restored.length} active cooldown${restored.length !== 1 ? 's' : ''}):**`);
-      lines.push(...restored);
-    }
-    if (alreadyGone.length > 0) lines.push(`\n⏰ **Expired (${alreadyGone.length}):** ${alreadyGone.join(', ')}`);
-    if (notFound.length > 0)    lines.push(`\n❓ **Not matched (${notFound.length}):** ${notFound.join(', ')}`);
-    lines.push('\nAll boards and cards refreshed.');
+    const restoredLines = Object.entries(killMap).map(([bossId, { nextSpawn }]) => {
+      const boss = freshBosses.find((b) => b.id === bossId);
+      return `${boss?.emoji || '•'} **${boss?.name || bossId}** → <t:${Math.floor(nextSpawn / 1000)}:F>`;
+    });
 
-    await interaction.editReply(lines.join('\n').slice(0, 2000));
+    const reply = [
+      `✅ **Restored ${killCount} active cooldown${killCount !== 1 ? 's' : ''} from ${links.length} message${links.length !== 1 ? 's' : ''}**`,
+      '',
+      '**Sources processed:**',
+      ...sourceLog,
+      '',
+      `**Active cooldowns restored (${killCount}):**`,
+      ...restoredLines,
+    ];
+    if (notFound.size) reply.push(`\n❓ Not matched in bosses.json: ${[...notFound].join(', ')}`);
+    reply.push('\nAll boards and cards refreshed.');
+
+    await interaction.editReply(reply.join('\n').slice(0, 2000));
   },
 };
