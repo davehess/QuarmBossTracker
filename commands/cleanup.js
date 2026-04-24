@@ -1,44 +1,61 @@
 // commands/cleanup.js
-// Prunes duplicate boards in channel and threads — keeps earliest, removes newer ones.
-// Rebuilds all main channel slots in correct order.
+// Rule: the EARLIEST bot messages are always the canonical ones.
+//
+// Main channel:
+//   - Old-format board embeds (pre-thread era) → DELETE them
+//   - The 4 anchored slots (Active Cooldowns, Spawning Tomorrow, Daily Summary, Thread Links)
+//     are identified by env-var message IDs or state → EDITED IN PLACE with current content
+//   - Any duplicate anchor-slot messages posted later → DELETE
+//
+// Each expansion thread:
+//   - Find all board sets → keep the EARLIEST, DELETE all newer ones
+//   - Edit the earliest set in place with current state
+//   - Thread cooldown card (top) → EDITED IN PLACE
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { EXPANSION_ORDER, getThreadId, EXPANSION_META } = require('../utils/config');
 const { postOrUpdateExpansionBoard } = require('../utils/killops');
 const {
-  getSummaryMessageId, setSummaryMessageId,
-  getSpawningTomorrowId, setSpawningTomorrowId,
+  getSummaryMessageId,     setSummaryMessageId,
+  getSpawningTomorrowId,   setSpawningTomorrowId,
   getDailySummaryMessageId, setDailySummaryMessageId,
   getThreadLinksMessageId, setThreadLinksMessageId,
-  getThreadCooldownId, setThreadCooldownId,
-  getExpansionBoard, saveExpansionBoard,
+  getThreadCooldownId,     setThreadCooldownId,
+  saveExpansionBoard,
   getAllState,
 } = require('../utils/state');
-const { buildSummaryCard, buildSpawningTomorrowCard, buildExpansionCooldownCard, buildDailySummaryEmbed } = require('../utils/embeds');
+const {
+  buildSummaryCard, buildSpawningTomorrowCard,
+  buildExpansionCooldownCard, buildDailySummaryEmbed,
+} = require('../utils/embeds');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
+const { buildExpansionPanels } = require('../utils/board');
 
 const EXP_LABELS = {
   Classic: '⚔️ Classic', Kunark: '🦎 Kunark', Velious: '❄️ Velious',
   Luclin: '🌙 Luclin', PoP: '🔥 Planes of Power',
 };
 
-// Embed titles that identify old board-format messages to replace with "."
+// Old-format board embed titles (from before the thread architecture)
 const OLD_BOARD_TITLES = new Set([
   '⚔️ Classic EverQuest', '🦎 Ruins of Kunark', '❄️ Scars of Velious',
   '🌙 Shadows of Luclin', '🔥 Planes of Power', '🔥 Planes of Power — Reserved',
   '⚔️ Classic EverQuest (1/2)', '🦎 Ruins of Kunark (1/2)',
-  '❄️ Scars of Velious (1/2)', '❄️ Scars of Velious (2/2)', '❄️ Scars of Velious (1/3)',
-  '❄️ Scars of Velious (2/3)', '❄️ Scars of Velious (3/3)',
+  '❄️ Scars of Velious (1/2)', '❄️ Scars of Velious (2/2)',
+  '❄️ Scars of Velious (1/3)', '❄️ Scars of Velious (2/3)', '❄️ Scars of Velious (3/3)',
   '🌙 Shadows of Luclin (1/2)', '🌙 Shadows of Luclin (2/2)',
   '🌙 Shadows of Luclin (1/3)', '🌙 Shadows of Luclin (2/3)', '🌙 Shadows of Luclin (3/3)',
 ]);
+
+// Titles that identify our canonical main-channel slot messages
+const SLOT_TITLES = new Set(['📊 Active Cooldowns', '🌅 Spawning in the Next 24 Hours', '📅 Daily Raid Summary']);
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
   return require('../data/bosses.json');
 }
 
-/** Fetch all bot messages from a channel (up to 500) sorted oldest first */
+/** Fetch all bot messages oldest-first, up to 500 */
 async function fetchBotMessages(channel, botId) {
   let all = [], lastId = null;
   for (let i = 0; i < 10; i++) {
@@ -49,66 +66,75 @@ async function fetchBotMessages(channel, botId) {
     all = all.concat([...batch.values()]);
     lastId = batch.last().id;
   }
-  return all.filter((m) => m.author.id === botId).sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  return all
+    .filter((m) => m.author.id === botId)
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 }
 
 /**
- * Find duplicate board panel sets in a channel/thread.
- * A "board set" starts with a message containing the expansion's anchor title.
- * Keeps the EARLIEST set, deletes or replaces subsequent duplicates.
+ * Find all board sets for an expansion in a message list.
+ * A "set" starts when a message has an embed whose title matches the expansion anchor.
+ * Collects panelCount consecutive bot messages as one set.
+ * Returns array of sets (each set = array of Message objects).
  */
-async function pruneDuplicateBoardsInThread(thread, botId, expansion, bosses, killState) {
-  const meta = EXPANSION_META[expansion];
-  if (!meta) return { kept: 0, removed: 0 };
-
-  const botMsgs  = await fetchBotMessages(thread, botId);
-  const anchorTitle = meta.label;
-
-  // Find all messages that start a board set for this expansion
-  const boardStarts = botMsgs.filter((m) =>
-    m.embeds.some((e) => e.title === anchorTitle || (e.title && e.title.startsWith(anchorTitle)))
-  );
-
-  if (boardStarts.length <= 1) return { kept: boardStarts.length, removed: 0 };
-
-  // Keep earliest (index 0), delete/blank everything from index 1+
-  let removed = 0;
-  for (let i = 1; i < boardStarts.length; i++) {
-    try { await boardStarts[i].delete(); removed++; }
-    catch { try { await boardStarts[i].edit({ content: '.', embeds: [], components: [] }); removed++; } catch {} }
+function findBoardSets(botMsgs, anchorTitle, panelCount) {
+  const sets = [];
+  let i = 0;
+  while (i < botMsgs.length) {
+    const msg = botMsgs[i];
+    const isAnchor = msg.embeds.some(
+      (e) => e.title && (e.title === anchorTitle || e.title.startsWith(anchorTitle + ' ('))
+    );
+    if (isAnchor) {
+      const setMsgs = botMsgs.slice(i, i + panelCount);
+      if (setMsgs.length === panelCount) {
+        sets.push(setMsgs);
+        i += panelCount;
+        continue;
+      }
+    }
+    i++;
   }
-
-  // Update stored board IDs to the earliest set
-  const stored = getExpansionBoard(expansion);
-  if (!stored || stored.messageIds[0] !== boardStarts[0].id) {
-    // Re-scan the earliest board's consecutive messages
-    const startIdx = botMsgs.indexOf(boardStarts[0]);
-    const panels   = require('../utils/board').buildExpansionPanels(expansion, bosses, killState);
-    const ids      = botMsgs.slice(startIdx, startIdx + panels.length).map((m) => m.id);
-    if (ids.length === panels.length) saveExpansionBoard(expansion, ids);
-  }
-
-  return { kept: 1, removed };
+  return sets;
 }
 
+/**
+ * Edit storedId in place if it exists and is accessible.
+ * If not, post new and call onNewId(id).
+ * Never silently fails — always returns the final message ID.
+ */
 async function editOrPost(channel, storedId, payload, onNewId) {
   if (storedId) {
-    try { const m = await channel.messages.fetch(storedId); await m.edit(payload); return storedId; }
-    catch {}
+    try {
+      const m = await channel.messages.fetch(storedId);
+      await m.edit(payload);
+      return storedId;
+    } catch { /* message gone — post once */ }
   }
   const m = await channel.send(payload);
   if (onNewId) onNewId(m.id);
   return m.id;
 }
 
+/**
+ * Delete a Discord message, catching any error silently.
+ */
+async function tryDelete(msg, reason) {
+  try { await msg.delete(); return true; }
+  catch { return false; }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('cleanup')
-    .setDescription('Prune duplicate boards, rebuild channel slots and thread boards'),
+    .setDescription('Anchor earliest board posts, delete duplicates, update all cards in place'),
 
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member)) {
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+      return interaction.reply({
+        flags: MessageFlags.Ephemeral,
+        content: `❌ You need one of these roles: ${allowedRolesList()}`,
+      });
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -123,62 +149,114 @@ module.exports = {
     if (!mainChannelId) return interaction.editReply('❌ TIMER_CHANNEL_ID not set');
     const mainChannel = await client.channels.fetch(mainChannelId);
 
-    // ── Step 1: Replace old board embed messages in MAIN CHANNEL with "." ─────
+    // ── MAIN CHANNEL ──────────────────────────────────────────────────────────
+
     const mainBotMsgs = await fetchBotMessages(mainChannel, botId);
-    let replaced = 0;
+
+    // Delete old-format board embeds (they should not be in the main channel at all)
+    let deletedOld = 0;
     for (const msg of mainBotMsgs) {
-      if (msg.embeds.some((e) => OLD_BOARD_TITLES.has(e.title)) && msg.content !== '.') {
-        try { await msg.edit({ content: '.', embeds: [], components: [] }); replaced++; } catch {}
+      if (msg.embeds.some((e) => OLD_BOARD_TITLES.has(e.title))) {
+        if (await tryDelete(msg)) deletedOld++;
       }
     }
-    results.push(`🧹 Replaced ${replaced} old board panel(s) in main channel with "."`);
+    if (deletedOld > 0) results.push(`🗑️ Deleted ${deletedOld} old-format board message(s) from main channel`);
 
-    // ── Step 2: Main channel slots (strict order) ─────────────────────────────
+    // Identify the canonical slot message IDs (from env or state)
+    const canonicalIds = {
+      summary:         getSummaryMessageId(),
+      spawning:        getSpawningTomorrowId(),
+      dailySummary:    getDailySummaryMessageId(),
+      threadLinks:     getThreadLinksMessageId(),
+    };
 
-    // Slot 1: Active Cooldowns
+    // Find duplicate slot messages: if we see a 2nd Active Cooldowns / Spawning etc,
+    // delete the newer one (keep earliest canonical)
+    const seenTitles = new Set();
+    for (const msg of mainBotMsgs) {
+      for (const embed of msg.embeds) {
+        if (SLOT_TITLES.has(embed.title)) {
+          if (seenTitles.has(embed.title)) {
+            // This is a duplicate — delete it unless it's the canonical ID
+            const isCanonical = Object.values(canonicalIds).includes(msg.id);
+            if (!isCanonical) {
+              if (await tryDelete(msg)) results.push(`🗑️ Deleted duplicate "${embed.title}"`);
+            }
+          } else {
+            seenTitles.add(embed.title);
+          }
+          break;
+        }
+      }
+    }
+
+    // Edit the 4 canonical slot messages in place
     await editOrPost(mainChannel, getSummaryMessageId(),
       { embeds: [buildSummaryCard(bosses, killState)] }, setSummaryMessageId);
-    results.push('✅ Slot 1: Active Cooldowns');
+    results.push('✅ Slot 1: Active Cooldowns updated');
 
-    // Slot 2: Spawning Tomorrow
     await editOrPost(mainChannel, getSpawningTomorrowId(),
       { embeds: [buildSpawningTomorrowCard(bosses, killState)] }, setSpawningTomorrowId);
-    results.push('✅ Slot 2: Spawning Tomorrow');
+    results.push('✅ Slot 2: Spawning Tomorrow updated');
 
-    // Slot 3: Daily Summary
     await editOrPost(mainChannel, getDailySummaryMessageId(),
       { embeds: [buildDailySummaryEmbed([], [], bosses)] }, setDailySummaryMessageId);
-    results.push('✅ Slot 3: Daily Summary');
+    results.push('✅ Slot 3: Daily Summary updated');
 
-    // Slot 4: Thread links — single message
     const threadLinksContent = EXPANSION_ORDER.map((exp) => {
       const threadId = getThreadId(exp);
-      return threadId ? `${EXP_LABELS[exp]} → <#${threadId}>` : `${EXP_LABELS[exp]} → *(no thread)*`;
+      return threadId
+        ? `${EXP_LABELS[exp]} → <#${threadId}>`
+        : `${EXP_LABELS[exp]} → *(no thread)*`;
     }).join('\n');
     await editOrPost(mainChannel, getThreadLinksMessageId(),
       { content: threadLinksContent, embeds: [], components: [] }, setThreadLinksMessageId);
-    results.push('✅ Slot 4: Thread links (single message)');
+    results.push('✅ Slot 4: Thread links updated');
 
-    // ── Step 3: Expansion threads — prune duplicates, rebuild boards ──────────
+    // ── EXPANSION THREADS ─────────────────────────────────────────────────────
+
     for (const exp of EXPANSION_ORDER) {
       const threadId = getThreadId(exp);
-      if (!threadId) { results.push(`⬜ ${exp} — no thread`); continue; }
+      if (!threadId) { results.push(`⬜ ${exp} — no thread configured`); continue; }
 
       try {
-        const thread = await client.channels.fetch(threadId);
+        const thread  = await client.channels.fetch(threadId);
+        const botMsgs = await fetchBotMessages(thread, botId);
+        const meta    = EXPANSION_META[exp];
+        const panels  = buildExpansionPanels(exp, bosses, killState);
 
-        // Prune duplicate boards
-        const pruneResult = await pruneDuplicateBoardsInThread(thread, botId, exp, bosses, killState);
-        if (pruneResult.removed > 0) results.push(`🧹 ${exp}: removed ${pruneResult.removed} duplicate board panel(s)`);
+        // Find all board sets for this expansion in the thread
+        const boardSets = findBoardSets(botMsgs, meta.label, panels.length);
 
-        // Thread slot 1: Active Cooldowns card
-        await editOrPost(thread, getThreadCooldownId(exp),
+        if (boardSets.length === 0) {
+          results.push(`⬜ ${exp}: no board found in thread — will post fresh`);
+        } else {
+          // Keep EARLIEST set (index 0), DELETE all later duplicate sets
+          let deletedPanels = 0;
+          for (let si = 1; si < boardSets.length; si++) {
+            for (const msg of boardSets[si]) {
+              if (await tryDelete(msg)) deletedPanels++;
+            }
+          }
+          if (deletedPanels > 0) results.push(`🗑️ ${exp}: deleted ${deletedPanels} duplicate panel(s)`);
+
+          // Anchor state to the earliest set
+          const earliestIds = boardSets[0].map((m) => m.id);
+          saveExpansionBoard(exp, earliestIds);
+          results.push(`📌 ${exp}: anchored to ${earliestIds[0].slice(-6)}…`);
+        }
+
+        // Update the thread cooldown card (top of thread, edited in place)
+        await editOrPost(
+          thread, getThreadCooldownId(exp),
           { embeds: [buildExpansionCooldownCard(exp, bosses, killState)] },
-          (id) => setThreadCooldownId(exp, id));
+          (id) => setThreadCooldownId(exp, id)
+        );
 
-        // Thread slot 2+: Board panels (buttons)
+        // Edit the anchored board set (or post fresh if none existed)
         const boardResult = await postOrUpdateExpansionBoard(client, exp, threadId, bosses);
-        results.push(`${boardResult.ok ? '✅' : '❌'} ${exp} board (${boardResult.action || boardResult.reason})`);
+        results.push(`${boardResult.ok ? '✅' : '❌'} ${exp}: board ${boardResult.action || boardResult.reason}`);
+
       } catch (err) {
         results.push(`❌ ${exp}: ${err?.message}`);
       }

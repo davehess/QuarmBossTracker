@@ -138,8 +138,14 @@ function setThreadLinksMessageId(id) { if (!process.env.THREAD_LINKS_MESSAGE_ID)
 function getChannelPlaceholder(expansion)     { return loadState().channelSlots?.[expansion] || null; }
 function setChannelPlaceholder(expansion, id) { _setSlot(expansion, id); }
 
-function getThreadCooldownId(expansion)      { return loadState().channelSlots?.[`tc_${expansion}`] || null; }
-function setThreadCooldownId(expansion, id)  { _setSlot(`tc_${expansion}`, id); }
+function getThreadCooldownId(expansion) {
+  const envKey = expansion.toUpperCase() + '_COOLDOWN_ID';
+  return process.env[envKey] || loadState().channelSlots?.['tc_' + expansion] || null;
+}
+function setThreadCooldownId(expansion, id) {
+  const envKey = expansion.toUpperCase() + '_COOLDOWN_ID';
+  if (!process.env[envKey]) _setSlot('tc_' + expansion, id);
+}
 
 function _setSlot(key, id) {
   const s = loadState();
