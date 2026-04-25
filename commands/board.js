@@ -90,13 +90,33 @@ module.exports = {
       { embeds: [buildDailySummaryEmbed([], [], bosses)] }, setDailySummaryMessageId);
     results.push('✅ Slot 3: Daily Summary');
 
-    // Slot 4: Thread links — ONE message containing all expansion links
+    // Slot 4: Thread links — ONE message containing all expansion links.
+    // 3-tier lookup: env var → state.json → channel scan → post fresh only if all fail.
     const threadLinksContent = EXPANSION_ORDER.map((exp) => {
       const threadId = getThreadId(exp);
       const label    = EXP_LABELS[exp] || exp;
       return threadId ? `${label} → <#${threadId}>` : `${label} → *(no thread)*`;
     }).join('\n');
-    await editOrPost(mainChannel, getThreadLinksMessageId(),
+
+    let threadLinksMsgId = getThreadLinksMessageId();
+    if (!threadLinksMsgId) {
+      // Scan the last 30 messages for the bot's plain-text thread-link post
+      try {
+        const msgs     = await mainChannel.messages.fetch({ limit: 30 });
+        const existing = msgs.find(m =>
+          m.author.id === client.user.id &&
+          m.embeds.length === 0 &&
+          m.components.length === 0 &&
+          m.content.includes('Classic') &&
+          m.content.includes('→')
+        );
+        if (existing) {
+          threadLinksMsgId = existing.id;
+          setThreadLinksMessageId(existing.id); // persist so we don't scan next time
+        }
+      } catch { /* scan failed — will post fresh below */ }
+    }
+    await editOrPost(mainChannel, threadLinksMsgId,
       { content: threadLinksContent, embeds: [], components: [] }, setThreadLinksMessageId);
     results.push('✅ Slot 4: Thread links (single message)');
 

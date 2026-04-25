@@ -42,8 +42,17 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
 fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js')).forEach((file) => {
-  const cmd = require(path.join(commandsPath, file));
-  if (cmd.data && cmd.execute) { client.commands.set(cmd.data.name, cmd); console.log(`Loaded: /${cmd.data.name}`); }
+  try {
+    const cmd = require(path.join(commandsPath, file));
+    if (cmd.data && cmd.execute) {
+      client.commands.set(cmd.data.name, cmd);
+      console.log(`Loaded: /${cmd.data.name}`);
+    } else {
+      console.warn(`Skipped ${file} — missing data or execute`);
+    }
+  } catch (err) {
+    console.error(`Failed to load ${file}:`, err.message);
+  }
 });
 
 // ── Ready ──────────────────────────────────────────────────────────────────
