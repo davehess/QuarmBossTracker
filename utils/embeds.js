@@ -2,6 +2,7 @@
 
 const { EmbedBuilder } = require('discord.js');
 const { discordRelativeTime, discordAbsoluteTime, statusEmoji } = require('./timer');
+const { getDefaultTz } = require('./timezone');
 
 const EXP_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP'];
 const EXP_EMOJI = { Classic: '⚔️', Kunark: '🦎', Velious: '❄️', Luclin: '🌙', PoP: '🔥' };
@@ -177,7 +178,7 @@ function buildDailySummaryEmbed(killedToday, availableNow, bosses, dateLabel) {
   // dateLabel: e.g. "April 24, 2026" — used as "Killed <dateLabel>" header when archiving
   const isArchive = !!dateLabel;
   const displayDate = dateLabel || new Date().toLocaleDateString('en-US', {
-    timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric',
+    timeZone: getDefaultTz(), weekday: 'long', month: 'long', day: 'numeric',
   });
   const embed = new EmbedBuilder()
     .setColor(0x4b0082)

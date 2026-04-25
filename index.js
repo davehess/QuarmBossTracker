@@ -15,7 +15,11 @@ const {
   getAnnounceMessageIds, removeAnnounceMessageId, clearAnnounceMessageIds,
   getSpawnAlertMessageId, setSpawnAlertMessageId, clearSpawnAlertMessageId, getAllSpawnAlertMessageIds,
   getDailySummaryMessageId, setDailySummaryMessageId,
+  getAnnounce, removeAnnounce, getAnnounceByThreadId,
+  updateAnnounceTargets, updateAnnounceEasterEgg, getAllAnnounces,
+  getAllPvpKills, getQuake, saveQuake, clearQuake,
 } = require('./utils/state');
+const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
 const {
   buildZoneKillCard, buildSpawnAlertEmbed, buildSpawnedEmbed,
   buildDailySummaryEmbed,
@@ -69,8 +73,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
   if (interaction.isButton()) {
-    if (interaction.customId.startsWith('kill:'))    { await handleBoardButton(interaction); return; }
-    if (interaction.customId === 'cancel_announce')  { await handleCancelAnnounce(interaction); return; }
+    if (interaction.customId.startsWith('kill:'))               { await handleBoardButton(interaction); return; }
+    if (interaction.customId === 'cancel_announce')             { await handleCancelAnnounce(interaction); return; }
+    if (interaction.customId.startsWith('cancel_event_thread:')){ await handleCancelEventThread(interaction); return; }
+    if (interaction.customId.startsWith('remove_target:'))      { await handleRemoveTargetButton(interaction); return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
@@ -86,12 +92,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 // ── Board button handler ────────────────────────────────────────────────────
 async function handleBoardButton(interaction) {
-  const bossId   = interaction.customId.replace('kill:', '');
-  const bosses   = getBosses();
-  const boss     = bosses.find((b) => b.id === bossId);
-  if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+  const bossId = interaction.customId.replace('kill:', '');
+  const bosses = getBosses();
+  const boss   = bosses.find((b) => b.id === bossId);
+
+  // Synchronous checks first — still within the 3-second window
+  if (!boss)
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  // Defer immediately so Discord doesn't time out while we do async work
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const killState  = getAllState();
   const existing   = killState[bossId];
@@ -117,7 +129,7 @@ async function handleBoardButton(interaction) {
         }
       } catch { clearZoneCard(boss.zone); }
     }
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: `↩️ Kill record cleared for **${boss.name}**.` });
+    await interaction.editReply(`↩️ Kill record cleared for **${boss.name}**.`);
   } else {
     // Kill
     recordKill(bossId, boss.timerHours, interaction.user.id);
@@ -141,7 +153,7 @@ async function handleBoardButton(interaction) {
       const s = await t.send({ embeds: [embed] });
       setZoneCard(boss.zone, s.id, threadId);
     }
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ **${boss.name}** kill recorded.` });
+    await interaction.editReply(`✅ **${boss.name}** kill recorded.`);
   }
   await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
 }
@@ -150,6 +162,7 @@ async function handleBoardButton(interaction) {
 async function handleCancelAnnounce(interaction) {
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
   const origMsg         = interaction.message;
   try {
@@ -159,10 +172,130 @@ async function handleCancelAnnounce(interaction) {
     }
     await origMsg.delete();
     removeAnnounceMessageId(origMsg.id);
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: '✅ Announcement cancelled and archived.' });
+    await interaction.editReply('✅ Announcement cancelled and archived.');
   } catch (err) {
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not archive.' });
+    await interaction.editReply('❌ Could not archive.');
   }
+}
+
+// ── Cancel event from announce thread button ───────────────────────────────
+async function handleCancelEventThread(interaction) {
+  if (!hasAllowedRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  const announceMessageId = interaction.customId.replace('cancel_event_thread:', '');
+  const announce          = getAnnounce(announceMessageId);
+  if (!announce)
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not find the announce record for this event.' });
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  // Delete Discord event
+  if (announce.eventId) {
+    try {
+      const event = await interaction.guild.scheduledEvents.fetch(announce.eventId);
+      await event.delete();
+    } catch (err) { console.warn('cancel_event_thread: could not delete event:', err?.message); }
+  }
+
+  // Check for meaningful conversation in the thread (more than bot messages)
+  const thread = interaction.channel;
+  let hasConversation = false;
+  try {
+    const msgs = await thread.messages.fetch({ limit: 50 });
+    hasConversation = msgs.some(m => !m.author.bot);
+  } catch { /* assume no conversation */ }
+
+  // Archive or delete the thread
+  try {
+    if (hasConversation) {
+      await thread.setArchived(true, 'Raid event cancelled');
+    } else {
+      await thread.delete('Raid event cancelled — no conversation');
+    }
+  } catch (err) { console.warn('cancel_event_thread: could not close thread:', err?.message); }
+
+  // Update the original announce message to show cancelled
+  try {
+    const ch  = await interaction.client.channels.fetch(announce.channelId);
+    const msg = await ch.messages.fetch(announceMessageId);
+    const { EmbedBuilder } = require('discord.js');
+    const updated = EmbedBuilder.from(msg.embeds[0])
+      .setTitle(`~~${msg.embeds[0].title}~~ ❌ CANCELLED`)
+      .setColor(0x555555);
+    await msg.edit({ embeds: [updated], components: [] });
+  } catch (err) { console.warn('cancel_event_thread: could not update announce msg:', err?.message); }
+
+  // Archive to historic kills thread
+  const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
+  if (historyThreadId) {
+    try {
+      const histThread = await interaction.client.channels.fetch(historyThreadId);
+      await histThread.send({ content: `📋 **Cancelled raid event** (by <@${interaction.user.id}>)` });
+    } catch { /* non-critical */ }
+  }
+
+  removeAnnounce(announceMessageId);
+  removeAnnounceMessageId(announceMessageId);
+
+  if (!hasConversation) {
+    // Thread was deleted — can't editReply into a deleted thread
+    return;
+  }
+  await interaction.editReply('✅ Event cancelled and thread archived.');
+}
+
+// ── Remove-target button from thread control panel ─────────────────────────
+async function handleRemoveTargetButton(interaction) {
+  if (!hasAllowedRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  const targetId = interaction.customId.replace('remove_target:', '');
+  const announce = getAnnounceByThreadId(interaction.channel.id);
+  if (!announce)
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not find announce data for this thread.' });
+
+  // Delegate to the removetarget command logic by faking the interaction
+  // (reuse the state + easter egg logic via direct state calls)
+  const {
+    buildControlPanelEmbed, buildTargetButtons, buildCancelRow, EASTER_EGG_CHAIN,
+  } = require('./commands/announce');
+  const bosses = getBosses();
+
+  let targets = [...(announce.targets || [])].filter(t => t !== targetId);
+  updateAnnounceTargets(announce.messageId, targets);
+
+  let extra = '';
+  const hasRealTargets = targets.some(t => !t.startsWith('_'));
+  if (!hasRealTargets) {
+    const level   = announce.easterEggLevel || 0;
+    const nextEgg = EASTER_EGG_CHAIN[level];
+    if (nextEgg) {
+      targets = targets.filter(t => EASTER_EGG_CHAIN.findIndex(e => e.id === t) === -1);
+      targets.push(nextEgg.id);
+      updateAnnounceTargets(announce.messageId, targets);
+      updateAnnounceEasterEgg(announce.messageId, level + 1);
+      if (nextEgg.quote) await interaction.channel.send({ content: `> ${nextEgg.quote}` });
+      if (announce.eventId) {
+        try {
+          const ev = await interaction.guild.scheduledEvents.fetch(announce.eventId);
+          await ev.edit({ name: `Pack Takedown: ${nextEgg.name}` });
+        } catch { /* non-critical */ }
+      }
+      extra = ` Added **${nextEgg.name}**. 😈`;
+    }
+  }
+
+  // Refresh the control panel in this message
+  try {
+    const freshAnnounce  = { ...getAnnounce(announce.messageId), messageId: announce.messageId };
+    const cpEmbed        = buildControlPanelEmbed(freshAnnounce.targets, bosses, freshAnnounce.zone, freshAnnounce.plannedTimeStr);
+    const targetRows     = buildTargetButtons(freshAnnounce.targets, bosses);
+    const cancelRow      = buildCancelRow(announce.messageId);
+    await interaction.message.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+  } catch (err) { console.warn('remove_target button: could not refresh panel:', err?.message); }
+
+  await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Target removed.${extra}` });
 }
 
 // ── Spawn checker ──────────────────────────────────────────────────────────
@@ -228,6 +361,7 @@ function startSpawnChecker(readyClient) {
           console.log(`⚠️ 30min warning: ${boss.name}`);
         }
       }
+      await checkQuakeAlert(readyClient).catch(console.warn);
     } catch (err) { console.error('Spawn checker error:', err); }
   }, 5 * 60 * 1000);
   console.log('Spawn checker started');
@@ -240,7 +374,7 @@ async function archiveZoneCardEntry(readyClient, spawnedBoss, bosses, state, his
     const ch      = await readyClient.channels.fetch(zoneCard.threadId || process.env.TIMER_CHANNEL_ID);
     const cardMsg = await ch.messages.fetch(zoneCard.messageId);
     if (historyThread) {
-      const ts = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short', timeZone: 'America/New_York' });
+      const ts = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short', timeZone: getDefaultTz() });
       await historyThread.send({ content: `📦 **${spawnedBoss.name}** (${spawnedBoss.zone}) respawned at ${ts}`, embeds: cardMsg.embeds });
     }
     const now          = Date.now();
@@ -261,8 +395,7 @@ function scheduleMidnightSummary(readyClient) {
   if (!historyThreadId) { console.warn('⚠️ HISTORIC_KILLS_THREAD_ID not set'); return; }
 
   function msUntilMidnightEST() {
-    const est = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const m = new Date(est); m.setHours(24, 0, 0, 0); return m - est;
+    return msUntilMidnightInTz(getDefaultTz());
   }
 
   async function runMidnightTasks() {
@@ -272,14 +405,20 @@ function scheduleMidnightSummary(readyClient) {
       const channel       = channelId ? await readyClient.channels.fetch(channelId).catch(() => null) : null;
       if (!historyThread) { console.warn('Cannot fetch historic kills thread'); return; }
 
-      const bosses       = getBosses();
-      const dailyKills   = getDailyKills();
-      const killState    = getAllState();
+      const bosses     = getBosses();
+      const killState  = getAllState();
+      // Deduplicate daily kills — keep first occurrence of each boss per day
+      const seenBosses = new Set();
+      const dailyKills = getDailyKills().filter(e => {
+        if (seenBosses.has(e.bossId)) return false;
+        seenBosses.add(e.bossId);
+        return true;
+      });
       const now          = Date.now();
       const availableNow = bosses.filter((b) => { const e = killState[b.id]; return !e || e.nextSpawn <= now; });
 
       // Format date for "Killed <Date>" header
-      const dateStr = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' });
+      const dateStr = new Date().toLocaleDateString('en-US', { timeZone: getDefaultTz(), month: 'long', day: 'numeric', year: 'numeric' });
       const summaryEmbed = buildDailySummaryEmbed(dailyKills, availableNow, bosses, dateStr);
 
       // Update the fixed daily summary slot in main channel (edit in place)
@@ -326,6 +465,13 @@ function scheduleMidnightSummary(readyClient) {
 
       resetDailyKills();
       clearAnnounceMessageIds();
+
+      // ── Archive passed announce threads ─────────────────────────────────
+      await archivePassedAnnounceThreads(readyClient);
+
+      // ── PVP midnight post ────────────────────────────────────────────────
+      await postPvpMidnightSummary(readyClient);
+
       console.log('✅ Midnight tasks complete');
     } catch (err) { console.error('Midnight task error:', err); }
     setTimeout(runMidnightTasks, msUntilMidnightEST());
@@ -334,6 +480,124 @@ function scheduleMidnightSummary(readyClient) {
   const delay = msUntilMidnightEST();
   console.log(`🕛 Midnight scheduled in ${Math.round(delay / 1000 / 60)} min`);
   setTimeout(runMidnightTasks, delay);
+}
+
+// ── Archive passed announce threads at midnight ────────────────────────────
+async function archivePassedAnnounceThreads(readyClient) {
+  const archiveChannelId = process.env.ARCHIVE_CHANNEL_ID;
+  const announces        = getAllAnnounces();
+  const now              = Date.now();
+
+  for (const [msgId, data] of Object.entries(announces)) {
+    if (!data.plannedTimeMs || data.plannedTimeMs > now) continue; // not yet passed
+
+    // Post summary to Archive channel if configured
+    if (archiveChannelId) {
+      try {
+        const { EmbedBuilder } = require('discord.js');
+        const archiveCh = await readyClient.channels.fetch(archiveChannelId);
+        const targetNames = (data.targets || [])
+          .filter(t => !t.startsWith('_'))
+          .map(tid => {
+            delete require.cache[require.resolve('./data/bosses.json')];
+            const b = require('./data/bosses.json').find(b => b.id === tid);
+            return b ? `${b.emoji || '⚔️'} ${b.name}` : tid;
+          });
+
+        const embed = new EmbedBuilder()
+          .setColor(0x555555)
+          .setTitle(`📦 Archived Raid Event — ${data.zone || 'Unknown'}`)
+          .addFields(
+            { name: 'Planned Time', value: data.plannedTimeStr || 'Unknown', inline: true },
+            { name: 'Organizer',    value: data.organizer ? `<@${data.organizer}>` : 'Unknown', inline: true },
+            { name: 'Targets',      value: targetNames.length ? targetNames.join(', ') : 'None', inline: false },
+          )
+          .setTimestamp();
+        await archiveCh.send({ embeds: [embed] });
+      } catch (err) { console.warn(`archivePassedAnnounceThreads: could not post to archive channel:`, err?.message); }
+    }
+
+    // Archive/delete the announce thread
+    if (data.threadId) {
+      try {
+        const thread = await readyClient.channels.fetch(data.threadId);
+        if (thread && !thread.archived) {
+          await thread.setArchived(true, 'Raid event passed midnight');
+        }
+      } catch (err) { console.warn(`archivePassedAnnounceThreads: could not archive thread ${data.threadId}:`, err?.message); }
+    }
+
+    // Remove from active announces
+    removeAnnounce(msgId);
+    removeAnnounceMessageId(msgId);
+  }
+}
+
+// ── PVP midnight summary ────────────────────────────────────────────────────
+async function postPvpMidnightSummary(readyClient) {
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  if (!pvpTargetId) return;
+  try {
+    const kills     = getAllPvpKills();
+    const now       = Date.now();
+    const in24h     = now + 24 * 3600000;
+    const spawning  = Object.values(kills).filter(e => e.nextSpawn > now && e.nextSpawn <= in24h);
+    if (spawning.length === 0) return; // nothing to post
+
+    const { EmbedBuilder } = require('discord.js');
+    const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
+    const lines = spawning
+      .sort((a, b) => a.nextSpawn - b.nextSpawn)
+      .map(e => `• **${e.name}** — ${discordAbsoluteTime(e.nextSpawn)} (${discordRelativeTime(e.nextSpawn)})`);
+
+    const embed = new EmbedBuilder()
+      .setColor(0xcc0000)
+      .setTitle('🗡️ PVP Mobs Spawning Today')
+      .setDescription(lines.join('\n'))
+      .setTimestamp();
+
+    const ch = await readyClient.channels.fetch(pvpTargetId);
+    await ch.send({ embeds: [embed] });
+  } catch (err) { console.warn('PVP midnight summary error:', err?.message); }
+}
+
+// ── Quake alert checker (runs inside spawn checker interval) ───────────────
+async function checkQuakeAlert(readyClient) {
+  const quake = getQuake();
+  if (!quake || quake.alertPosted) return;
+
+  const remaining = quake.scheduledTime - Date.now();
+  if (remaining > 60 * 60 * 1000) return; // more than 1h away — wait
+  if (remaining <= 0) { clearQuake(); return; } // already passed
+
+  // Post 1-hour warning
+  const { EmbedBuilder } = require('discord.js');
+  const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
+  const { formatInDefaultTz } = require('./utils/timezone');
+
+  const embed = new EmbedBuilder()
+    .setColor(0xff4500)
+    .setTitle('⚠️ Quake in ~1 Hour — PVP Mobs Reset Soon!')
+    .setDescription(
+      `An EverQuest quake is approaching.\nAll PVP mob respawn timers will reset ${discordRelativeTime(quake.scheduledTime)}.`
+    )
+    .addFields({ name: 'Quake Time', value: `${discordAbsoluteTime(quake.scheduledTime)} (${discordRelativeTime(quake.scheduledTime)})`, inline: false })
+    .setTimestamp();
+
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  const pvpRoleName = process.env.PVP_ROLE || 'PVP';
+
+  try {
+    const guild   = readyClient.guilds.cache.first();
+    const roleObj = guild?.roles.cache.find(r => r.name === pvpRoleName);
+    const mention = roleObj ? `<@&${roleObj.id}>` : null;
+
+    if (pvpTargetId) {
+      const ch = await readyClient.channels.fetch(pvpTargetId);
+      const m  = await ch.send({ content: mention || undefined, embeds: [embed] });
+      saveQuake({ ...quake, alertPosted: true, alertMessageId: m.id });
+    }
+  } catch (err) { console.warn('Quake alert error:', err?.message); }
 }
 
 client.login(process.env.DISCORD_TOKEN);
