@@ -18,6 +18,7 @@ const {
   getAnnounce, removeAnnounce, getAnnounceByThreadId,
   updateAnnounceTargets, updateAnnounceEasterEgg, getAllAnnounces,
   getAllPvpKills, getQuake, saveQuake, clearQuake,
+  addPvpAlertHowler,
 } = require('./utils/state');
 const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
 const {
@@ -86,6 +87,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'cancel_announce')             { await handleCancelAnnounce(interaction); return; }
     if (interaction.customId.startsWith('cancel_event_thread:')){ await handleCancelEventThread(interaction); return; }
     if (interaction.customId.startsWith('remove_target:'))      { await handleRemoveTargetButton(interaction); return; }
+    if (interaction.customId === 'pvprole_toggle')              { await handlePvpRoleToggle(interaction, false); return; }
+    if (interaction.customId === 'pvprole_toggle_silent')       { await handlePvpRoleToggle(interaction, true); return; }
+    if (interaction.customId.startsWith('pvpalert_howl:'))      { await handlePvpAlertHowl(interaction); return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
@@ -305,6 +309,64 @@ async function handleRemoveTargetButton(interaction) {
   } catch (err) { console.warn('remove_target button: could not refresh panel:', err?.message); }
 
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Target removed.${extra}` });
+}
+
+// ── PVP role toggle button ─────────────────────────────────────────────────
+async function handlePvpRoleToggle(interaction, silent) {
+  const { buildAnnouncementEmbed, buildRoleRow, getPvpRole, getPvpRoleName } = require('./commands/pvprole');
+  const member  = interaction.member;
+  const pvpRole = await getPvpRole(interaction.guild);
+
+  if (!pvpRole)
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Could not find a role named **${getPvpRoleName()}**.` });
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const hasRole = member.roles.cache.has(pvpRole.id);
+  if (hasRole) {
+    await member.roles.remove(pvpRole);
+    await interaction.editReply(`↩️ Your **${pvpRole.name}** role has been removed. You can rejoin anytime.`);
+  } else {
+    await member.roles.add(pvpRole);
+    if (!silent) {
+      const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+      const ch = pvpTargetId
+        ? await interaction.client.channels.fetch(pvpTargetId).catch(() => null)
+        : null;
+      await (ch || interaction.channel).send({
+        content: `<@&${pvpRole.id}>`,
+        embeds: [buildAnnouncementEmbed(member)],
+        components: [buildRoleRow()],
+      });
+    }
+    await interaction.editReply(`✅ You now have the **${pvpRole.name}** role! ${silent ? '(quietly added)' : 'AWROOOOOO!'}`);
+  }
+}
+
+// ── PVP alert howl button ──────────────────────────────────────────────────
+async function handlePvpAlertHowl(interaction) {
+  const messageId = interaction.customId.replace('pvpalert_howl:', '');
+  const howlers   = addPvpAlertHowler(messageId, interaction.user.id);
+
+  // Build Oxford comma mention list
+  const mentions = howlers.map(id => `<@${id}>`);
+  let howlLine;
+  if (mentions.length === 1) {
+    howlLine = `${mentions[0]} howls back!`;
+  } else if (mentions.length === 2) {
+    howlLine = `${mentions[0]} and ${mentions[1]} howl back!`;
+  } else {
+    howlLine = `${mentions.slice(0, -1).join(', ')}, and ${mentions[mentions.length - 1]} howl back!`;
+  }
+
+  // Replace/append howlers line without touching the original alert content
+  const origMsg     = interaction.message;
+  const baseContent = origMsg.content.split('\n').filter(l => !l.includes('howls back!')).join('\n');
+  try {
+    await origMsg.edit({ content: `${baseContent}\n${howlLine}`, components: origMsg.components });
+  } catch (err) { console.warn('pvpalert_howl: could not edit message:', err?.message); }
+
+  await interaction.reply({ flags: MessageFlags.Ephemeral, content: '🐺 AWROOOOOO!' });
 }
 
 // ── Spawn checker ──────────────────────────────────────────────────────────

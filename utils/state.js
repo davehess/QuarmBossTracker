@@ -10,9 +10,7 @@ function _empty() {
   return {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
-    announces: {},   // { [announceMessageId]: { eventId, threadId, channelId, targets, zone, plannedTimeMs, plannedTimeStr, organizer, easterEggLevel } }
-    pvpKills: {},    // { [mobKey]: { name, killedAt, nextSpawn, timerHours, killedBy } }
-    quake: null,     // { scheduledTime, eventId, alertPosted, alertMessageId }
+    announces: {}, pvpKills: {}, quake: null, pvpAlerts: {},
   };
 }
 
@@ -44,7 +42,7 @@ function loadState() {
 
   // Migrate old format: if the file was just a flat { bossId: {...} } map (no top-level keys)
   // Detection: has no known top-level keys at all
-  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'announces', 'pvpKills', 'quake', 'board'];
+  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'announces', 'pvpKills', 'quake', 'pvpAlerts', 'board'];
   const hasKnownKey = knownKeys.some((k) => k in raw);
   if (!hasKnownKey && Object.keys(raw).length > 0) {
     // Old format: the whole object IS the bosses map
@@ -63,6 +61,7 @@ function loadState() {
   if (raw.announces)          s.announces          = raw.announces;
   if (raw.pvpKills)           s.pvpKills           = raw.pvpKills;
   if (raw.quake !== undefined) s.quake             = raw.quake;
+  if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -259,6 +258,23 @@ function applyQuakeToAllPvpKills(quakeTimeMs) {
   saveState(s);
 }
 
+// ── PVP alert howlers ─────────────────────────────────────────────────────────
+function getPvpAlertHowlers(messageId) { return loadState().pvpAlerts?.[messageId]?.howlers || []; }
+function addPvpAlertHowler(messageId, userId) {
+  const s = loadState();
+  if (!s.pvpAlerts) s.pvpAlerts = {};
+  if (!s.pvpAlerts[messageId]) s.pvpAlerts[messageId] = { howlers: [] };
+  if (!s.pvpAlerts[messageId].howlers.includes(userId))
+    s.pvpAlerts[messageId].howlers.push(userId);
+  saveState(s);
+  return s.pvpAlerts[messageId].howlers;
+}
+function clearPvpAlert(messageId) {
+  const s = loadState();
+  if (s.pvpAlerts) delete s.pvpAlerts[messageId];
+  saveState(s);
+}
+
 // ── Quake state ───────────────────────────────────────────────────────────────
 function getQuake()              { return loadState().quake || null; }
 function saveQuake(data)         { const s = loadState(); s.quake = data; saveState(s); }
@@ -289,4 +305,5 @@ module.exports = {
   getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceTime, updateAnnounceEasterEgg,
   recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey,
   getQuake, saveQuake, clearQuake,
+  getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
 };
