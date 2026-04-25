@@ -92,12 +92,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 // ── Board button handler ────────────────────────────────────────────────────
 async function handleBoardButton(interaction) {
-  const bossId   = interaction.customId.replace('kill:', '');
-  const bosses   = getBosses();
-  const boss     = bosses.find((b) => b.id === bossId);
-  if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+  const bossId = interaction.customId.replace('kill:', '');
+  const bosses = getBosses();
+  const boss   = bosses.find((b) => b.id === bossId);
+
+  // Synchronous checks first — still within the 3-second window
+  if (!boss)
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  // Defer immediately so Discord doesn't time out while we do async work
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const killState  = getAllState();
   const existing   = killState[bossId];
@@ -123,7 +129,7 @@ async function handleBoardButton(interaction) {
         }
       } catch { clearZoneCard(boss.zone); }
     }
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: `↩️ Kill record cleared for **${boss.name}**.` });
+    await interaction.editReply(`↩️ Kill record cleared for **${boss.name}**.`);
   } else {
     // Kill
     recordKill(bossId, boss.timerHours, interaction.user.id);
@@ -147,7 +153,7 @@ async function handleBoardButton(interaction) {
       const s = await t.send({ embeds: [embed] });
       setZoneCard(boss.zone, s.id, threadId);
     }
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ **${boss.name}** kill recorded.` });
+    await interaction.editReply(`✅ **${boss.name}** kill recorded.`);
   }
   await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
 }
@@ -156,6 +162,7 @@ async function handleBoardButton(interaction) {
 async function handleCancelAnnounce(interaction) {
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
   const origMsg         = interaction.message;
   try {
@@ -165,9 +172,9 @@ async function handleCancelAnnounce(interaction) {
     }
     await origMsg.delete();
     removeAnnounceMessageId(origMsg.id);
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: '✅ Announcement cancelled and archived.' });
+    await interaction.editReply('✅ Announcement cancelled and archived.');
   } catch (err) {
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not archive.' });
+    await interaction.editReply('❌ Could not archive.');
   }
 }
 
@@ -398,9 +405,15 @@ function scheduleMidnightSummary(readyClient) {
       const channel       = channelId ? await readyClient.channels.fetch(channelId).catch(() => null) : null;
       if (!historyThread) { console.warn('Cannot fetch historic kills thread'); return; }
 
-      const bosses       = getBosses();
-      const dailyKills   = getDailyKills();
-      const killState    = getAllState();
+      const bosses     = getBosses();
+      const killState  = getAllState();
+      // Deduplicate daily kills — keep first occurrence of each boss per day
+      const seenBosses = new Set();
+      const dailyKills = getDailyKills().filter(e => {
+        if (seenBosses.has(e.bossId)) return false;
+        seenBosses.add(e.bossId);
+        return true;
+      });
       const now          = Date.now();
       const availableNow = bosses.filter((b) => { const e = killState[b.id]; return !e || e.nextSpawn <= now; });
 
@@ -453,6 +466,9 @@ function scheduleMidnightSummary(readyClient) {
       resetDailyKills();
       clearAnnounceMessageIds();
 
+      // ── Archive passed announce threads ─────────────────────────────────
+      await archivePassedAnnounceThreads(readyClient);
+
       // ── PVP midnight post ────────────────────────────────────────────────
       await postPvpMidnightSummary(readyClient);
 
@@ -464,6 +480,57 @@ function scheduleMidnightSummary(readyClient) {
   const delay = msUntilMidnightEST();
   console.log(`🕛 Midnight scheduled in ${Math.round(delay / 1000 / 60)} min`);
   setTimeout(runMidnightTasks, delay);
+}
+
+// ── Archive passed announce threads at midnight ────────────────────────────
+async function archivePassedAnnounceThreads(readyClient) {
+  const archiveChannelId = process.env.ARCHIVE_CHANNEL_ID;
+  const announces        = getAllAnnounces();
+  const now              = Date.now();
+
+  for (const [msgId, data] of Object.entries(announces)) {
+    if (!data.plannedTimeMs || data.plannedTimeMs > now) continue; // not yet passed
+
+    // Post summary to Archive channel if configured
+    if (archiveChannelId) {
+      try {
+        const { EmbedBuilder } = require('discord.js');
+        const archiveCh = await readyClient.channels.fetch(archiveChannelId);
+        const targetNames = (data.targets || [])
+          .filter(t => !t.startsWith('_'))
+          .map(tid => {
+            delete require.cache[require.resolve('./data/bosses.json')];
+            const b = require('./data/bosses.json').find(b => b.id === tid);
+            return b ? `${b.emoji || '⚔️'} ${b.name}` : tid;
+          });
+
+        const embed = new EmbedBuilder()
+          .setColor(0x555555)
+          .setTitle(`📦 Archived Raid Event — ${data.zone || 'Unknown'}`)
+          .addFields(
+            { name: 'Planned Time', value: data.plannedTimeStr || 'Unknown', inline: true },
+            { name: 'Organizer',    value: data.organizer ? `<@${data.organizer}>` : 'Unknown', inline: true },
+            { name: 'Targets',      value: targetNames.length ? targetNames.join(', ') : 'None', inline: false },
+          )
+          .setTimestamp();
+        await archiveCh.send({ embeds: [embed] });
+      } catch (err) { console.warn(`archivePassedAnnounceThreads: could not post to archive channel:`, err?.message); }
+    }
+
+    // Archive/delete the announce thread
+    if (data.threadId) {
+      try {
+        const thread = await readyClient.channels.fetch(data.threadId);
+        if (thread && !thread.archived) {
+          await thread.setArchived(true, 'Raid event passed midnight');
+        }
+      } catch (err) { console.warn(`archivePassedAnnounceThreads: could not archive thread ${data.threadId}:`, err?.message); }
+    }
+
+    // Remove from active announces
+    removeAnnounce(msgId);
+    removeAnnounceMessageId(msgId);
+  }
 }
 
 // ── PVP midnight summary ────────────────────────────────────────────────────
