@@ -33,13 +33,14 @@ function formatDuration(ms) {
  * Format a Date into a readable timestamp string
  */
 function formatTimestamp(date) {
+  const { getDefaultTz } = require('./timezone');
   return new Date(date).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     timeZoneName: 'short',
-    timeZone: 'America/New_York',
+    timeZone: getDefaultTz(),
   });
 }
 

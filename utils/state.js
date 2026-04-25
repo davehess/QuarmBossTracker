@@ -10,6 +10,9 @@ function _empty() {
   return {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
+    announces: {},   // { [announceMessageId]: { eventId, threadId, channelId, targets, zone, plannedTimeMs, plannedTimeStr, organizer, easterEggLevel } }
+    pvpKills: {},    // { [mobKey]: { name, killedAt, nextSpawn, timerHours, killedBy } }
+    quake: null,     // { scheduledTime, eventId, alertPosted, alertMessageId }
   };
 }
 
@@ -41,7 +44,7 @@ function loadState() {
 
   // Migrate old format: if the file was just a flat { bossId: {...} } map (no top-level keys)
   // Detection: has no known top-level keys at all
-  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'board'];
+  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'announces', 'pvpKills', 'quake', 'board'];
   const hasKnownKey = knownKeys.some((k) => k in raw);
   if (!hasKnownKey && Object.keys(raw).length > 0) {
     // Old format: the whole object IS the bosses map
@@ -57,6 +60,9 @@ function loadState() {
   if (raw.zoneCards)          s.zoneCards          = raw.zoneCards;
   if (raw.dailyKills)         s.dailyKills         = raw.dailyKills;
   if (raw.announceMessageIds) s.announceMessageIds = raw.announceMessageIds;
+  if (raw.announces)          s.announces          = raw.announces;
+  if (raw.pvpKills)           s.pvpKills           = raw.pvpKills;
+  if (raw.quake !== undefined) s.quake             = raw.quake;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -184,6 +190,80 @@ function getAllSpawnAlertMessageIds() {
     .map(([k, v]) => ({ bossId: k.replace('alert_', ''), messageId: v }));
 }
 
+// ── Announce events (full data) ───────────────────────────────────────────────
+function saveAnnounce(msgId, data) {
+  const s = loadState();
+  s.announces[msgId] = data;
+  if (!s.announceMessageIds.includes(msgId)) s.announceMessageIds.push(msgId);
+  saveState(s);
+}
+function getAnnounce(msgId)    { return loadState().announces[msgId] || null; }
+function removeAnnounce(msgId) {
+  const s = loadState();
+  delete s.announces[msgId];
+  s.announceMessageIds = s.announceMessageIds.filter(id => id !== msgId);
+  saveState(s);
+}
+function getAllAnnounces()      { return loadState().announces || {}; }
+function getAnnounceByThreadId(threadId) {
+  const announces = loadState().announces || {};
+  const entry = Object.entries(announces).find(([, d]) => d.threadId === threadId);
+  return entry ? { messageId: entry[0], ...entry[1] } : null;
+}
+function updateAnnounceTargets(msgId, targets) {
+  const s = loadState();
+  if (!s.announces[msgId]) return false;
+  s.announces[msgId].targets = targets;
+  saveState(s);
+  return true;
+}
+function updateAnnounceTime(msgId, plannedTimeMs, plannedTimeStr) {
+  const s = loadState();
+  if (!s.announces[msgId]) return false;
+  s.announces[msgId].plannedTimeMs  = plannedTimeMs;
+  s.announces[msgId].plannedTimeStr = plannedTimeStr;
+  saveState(s);
+  return true;
+}
+function updateAnnounceEasterEgg(msgId, level) {
+  const s = loadState();
+  if (!s.announces[msgId]) return false;
+  s.announces[msgId].easterEggLevel = level;
+  saveState(s);
+  return true;
+}
+
+// ── PVP kills ─────────────────────────────────────────────────────────────────
+function pvpMobKey(name) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_'); }
+function recordPvpKill(name, timerHours, killedBy) {
+  const s = loadState();
+  const key = pvpMobKey(name);
+  const killedAt = Date.now();
+  s.pvpKills[key] = { name, killedAt, nextSpawn: killedAt + timerHours * 3600000, timerHours, killedBy };
+  saveState(s);
+}
+function clearPvpKill(key) {
+  const s = loadState();
+  delete s.pvpKills[key];
+  saveState(s);
+}
+function getAllPvpKills() { return loadState().pvpKills || {}; }
+
+// Update all PVP respawn times to a specific future moment (quake reset)
+function applyQuakeToAllPvpKills(quakeTimeMs) {
+  const s = loadState();
+  for (const key of Object.keys(s.pvpKills)) {
+    s.pvpKills[key].nextSpawn = quakeTimeMs;
+    s.pvpKills[key].killedAt  = quakeTimeMs - s.pvpKills[key].timerHours * 3600000;
+  }
+  saveState(s);
+}
+
+// ── Quake state ───────────────────────────────────────────────────────────────
+function getQuake()              { return loadState().quake || null; }
+function saveQuake(data)         { const s = loadState(); s.quake = data; saveState(s); }
+function clearQuake()            { const s = loadState(); s.quake = null; saveState(s); }
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -205,4 +285,8 @@ module.exports = {
   getDailySummaryMessageId, setDailySummaryMessageId,
   getThreadLinksMessageId, setThreadLinksMessageId,
   getBoardMessages, saveBoardMessages,
+  saveAnnounce, getAnnounce, removeAnnounce, getAllAnnounces,
+  getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceTime, updateAnnounceEasterEgg,
+  recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey,
+  getQuake, saveQuake, clearQuake,
 };
