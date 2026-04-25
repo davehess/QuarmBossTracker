@@ -142,9 +142,9 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('announce')
     .setDescription('Announce a planned raid with a thread, event, and target tracking.')
+    .addStringOption(opt => opt.setName('time').setDescription('When? e.g. "8:30 PM", "Thursday 8:30pm", "tomorrow 9pm"').setRequired(true))
     .addStringOption(opt => opt.setName('boss').setDescription('Specific boss target').setRequired(false).setAutocomplete(true))
     .addStringOption(opt => opt.setName('zone').setDescription('Zone/area for a multi-target announcement').setRequired(false).setAutocomplete(true))
-    .addStringOption(opt => opt.setName('time').setDescription('When? e.g. "8:30 PM", "Thursday 8:30pm", "tomorrow 9pm"').setRequired(true))
     .addStringOption(opt => opt.setName('note').setDescription('Optional extra info').setRequired(false)),
 
   async autocomplete(interaction) {
