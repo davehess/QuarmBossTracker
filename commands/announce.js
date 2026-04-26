@@ -49,6 +49,11 @@ function fetchUrl(url) {
   });
 }
 
+function decodeHtml(str) {
+  return str.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
+
 function scrapePqdiDetails(html) {
   const fields = [];
   const hpMatch = html.match(/hp[\"'\s]*[=:]\s*(\d+)/i) || html.match(/Max HP[^<]*<[^>]+>(\d[\d,]+)/i);
@@ -82,7 +87,7 @@ function scrapePqdiDetails(html) {
   }
   const items = [...html.matchAll(/href="\/item\/(\d+)"[^>]*>([^<]+)<\/a>\s*([\d.]+)%/gi)];
   if (items.length) {
-    fields.push({ name: `📦 Drops (${items.length} items)`, value: items.slice(0,15).map(m => `[${m[2].trim()}](https://www.pqdi.cc/item/${m[1]}) — ${m[3]}%`).join('\n').slice(0,1020), inline: false });
+    fields.push({ name: `📦 Drops (${items.length} items)`, value: items.slice(0,15).map(m => `[${decodeHtml(m[2].trim())}](https://www.pqdi.cc/item/${m[1]}) — ${m[3]}%`).join('\n').slice(0,1020), inline: false });
   }
   return fields;
 }
@@ -142,8 +147,8 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('announce')
     .setDescription('Announce a planned raid with a thread, event, and target tracking.')
-    .addStringOption(opt => opt.setName('time').setDescription('When? e.g. "8:30 PM", "Thursday 8:30pm", "tomorrow 9pm"').setRequired(true))
     .addStringOption(opt => opt.setName('boss').setDescription('Specific boss target').setRequired(false).setAutocomplete(true))
+    .addStringOption(opt => opt.setName('time').setDescription('When? e.g. "8:30 PM", "Thursday 8:30pm", "tomorrow 9pm"').setRequired(false))
     .addStringOption(opt => opt.setName('zone').setDescription('Zone/area for a multi-target announcement').setRequired(false).setAutocomplete(true))
     .addStringOption(opt => opt.setName('note').setDescription('Optional extra info').setRequired(false)),
 
@@ -163,9 +168,10 @@ module.exports = {
           .slice(0, 25).map(({ name, value }) => ({ name, value }))
       );
     } else if (option.name === 'zone') {
-      const zones = [...new Set(bosses.map(b => b.zone))].sort();
+      delete require.cache[require.resolve('../data/zones.json')];
+      const allZones = require('../data/zones.json').map(z => z.name).sort();
       await interaction.respond(
-        zones.filter(z => !focused || z.toLowerCase().includes(focused))
+        allZones.filter(z => !focused || z.toLowerCase().includes(focused))
           .slice(0, 25).map(z => ({ name: z, value: z }))
       );
     }
@@ -182,7 +188,9 @@ module.exports = {
     const note    = interaction.options.getString('note');
 
     if (!bossId && !zone)
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Provide either `boss` or `zone`.' });
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Provide a `boss` or `zone`.' });
+    if (!timeStr)
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ `time` is required — e.g. `"8:30 PM"`, `"Thursday 9pm"`, `"tomorrow 8pm"`.' });
 
     const boss = bossId ? bosses.find(b => b.id === bossId) : null;
     if (bossId && !boss)
@@ -312,9 +320,21 @@ module.exports = {
       const cpEmbed = buildControlPanelEmbed(targets, bosses, announceZone, plannedTimeStr);
       const targetRows = buildTargetButtons(targets, bosses);
       const cancelRow  = buildCancelRow(annMsg.id);
+
+      // Kill button — mirrors the one on the announce message so the thread is self-contained
+      const firstTargetId = targets[0] || zoneBosses[0]?.id;
+      const killRow = firstTargetId
+        ? new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`kill:${firstTargetId}`)
+              .setLabel(`${boss?.emoji || '⚔️'} Kill ${announceName}`)
+              .setStyle(ButtonStyle.Danger)
+          )
+        : null;
+
       await raidThread.send({
         embeds: [cpEmbed],
-        components: [...targetRows, cancelRow],
+        components: [...(killRow ? [killRow] : []), ...targetRows, cancelRow],
       });
     }
 
