@@ -173,6 +173,6 @@ function shortTimestampInTz(date, tz) {
 }
 
 module.exports = {
-  getDefaultTz, msUntilMidnightInTz, parseUserTime,
+  getDefaultTz, msUntilMidnightInTz, nowPartsInTz, parseUserTime,
   formatInDefaultTz, shortTimestampInTz, localToUTC,
 };

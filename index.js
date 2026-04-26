@@ -40,6 +40,7 @@ function getBosses() {
 
 // ── Client ─────────────────────────────────────────────────────────────────
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+client.on('error', (err) => console.error('[discord] Client error:', err?.message || err));
 
 // ── Load commands ──────────────────────────────────────────────────────────
 client.commands = new Collection();
@@ -105,8 +106,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await maybeShowWelcome(interaction);
   } catch (err) {
     console.error(`/${interaction.commandName} error:`, err);
-    const msg = { flags: MessageFlags.Ephemeral, content: '❌ An error occurred.' };
-    interaction.replied || interaction.deferred ? await interaction.followUp(msg) : await interaction.reply(msg);
+    try {
+      const msg = { flags: MessageFlags.Ephemeral, content: '❌ An error occurred.' };
+      interaction.replied || interaction.deferred
+        ? await interaction.followUp(msg)
+        : await interaction.reply(msg);
+    } catch {} // Swallow — interaction token may have expired (10062)
   }
 });
 
