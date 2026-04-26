@@ -53,8 +53,8 @@ module.exports = {
 
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase();
-    delete require.cache[require.resolve('../data/bosses.json')];
-    const zones = [...new Set(require('../data/bosses.json').map(b => b.zone))].sort();
+    delete require.cache[require.resolve('../data/zones.json')];
+    const zones = require('../data/zones.json').map(z => z.name).sort();
     const matches = zones.filter(z => z.toLowerCase().includes(focused)).slice(0, 25);
     await interaction.respond(matches.map(z => ({ name: z, value: z })));
   },

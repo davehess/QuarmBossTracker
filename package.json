@@ -1,6 +1,6 @@
 {
   "name": "quarm-raid-timer-bot",
-  "version": "0.9.6.1",
+  "version": "0.9.6.2",
   "description": "Discord bot for tracking Project Quarm instanced raid boss spawn timers",
   "main": "index.js",
   "scripts": {
