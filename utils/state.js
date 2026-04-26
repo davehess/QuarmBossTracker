@@ -11,6 +11,7 @@ function _empty() {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, quake: null, pvpAlerts: {},
+    seenWelcome: [],
   };
 }
 
@@ -62,6 +63,7 @@ function loadState() {
   if (raw.pvpKills)           s.pvpKills           = raw.pvpKills;
   if (raw.quake !== undefined) s.quake             = raw.quake;
   if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
+  if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -280,6 +282,14 @@ function getQuake()              { return loadState().quake || null; }
 function saveQuake(data)         { const s = loadState(); s.quake = data; saveState(s); }
 function clearQuake()            { const s = loadState(); s.quake = null; saveState(s); }
 
+// ── Welcome card seen tracking ────────────────────────────────────────────────
+function hasSeenWelcome(userId) { return (loadState().seenWelcome || []).includes(userId); }
+function markWelcomeSeen(userId) {
+  const s = loadState();
+  if (!s.seenWelcome) s.seenWelcome = [];
+  if (!s.seenWelcome.includes(userId)) { s.seenWelcome.push(userId); saveState(s); }
+}
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -301,6 +311,7 @@ module.exports = {
   getDailySummaryMessageId, setDailySummaryMessageId,
   getThreadLinksMessageId, setThreadLinksMessageId,
   getBoardMessages, saveBoardMessages,
+  hasSeenWelcome, markWelcomeSeen,
   saveAnnounce, getAnnounce, removeAnnounce, getAllAnnounces,
   getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceTime, updateAnnounceEasterEgg,
   recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey,

@@ -19,6 +19,7 @@ const {
   updateAnnounceTargets, updateAnnounceEasterEgg, getAllAnnounces,
   getAllPvpKills, getQuake, saveQuake, clearQuake,
   addPvpAlertHowler,
+  hasSeenWelcome, markWelcomeSeen,
 } = require('./utils/state');
 const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
 const {
@@ -90,13 +91,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'pvprole_toggle')              { await handlePvpRoleToggle(interaction, false); return; }
     if (interaction.customId === 'pvprole_toggle_silent')       { await handlePvpRoleToggle(interaction, true); return; }
     if (interaction.customId.startsWith('pvpalert_howl:'))      { await handlePvpAlertHowl(interaction); return; }
+    if (interaction.customId === 'welcome_pvp')                 { await handleWelcomePvp(interaction); return; }
+    if (interaction.customId === 'welcome_organizer')           { await handleWelcomeOrganizer(interaction); return; }
+    if (interaction.customId === 'welcome_attendee')            { await handleWelcomeAttendee(interaction); return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
   const cmd = client.commands.get(interaction.commandName);
   if (!cmd) return;
-  try { await cmd.execute(interaction); }
-  catch (err) {
+  try {
+    await cmd.execute(interaction);
+    await maybeShowWelcome(interaction);
+  } catch (err) {
     console.error(`/${interaction.commandName} error:`, err);
     const msg = { flags: MessageFlags.Ephemeral, content: '❌ An error occurred.' };
     interaction.replied || interaction.deferred ? await interaction.followUp(msg) : await interaction.reply(msg);
@@ -309,6 +315,98 @@ async function handleRemoveTargetButton(interaction) {
   } catch (err) { console.warn('remove_target button: could not refresh panel:', err?.message); }
 
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Target removed.${extra}` });
+}
+
+// ── Welcome card ──────────────────────────────────────────────────────────
+const { EmbedBuilder: _EB, ActionRowBuilder: _ARB, ButtonBuilder: _BB, ButtonStyle: _BS } = require('discord.js');
+
+function buildWelcomeEmbed() {
+  return new _EB()
+    .setColor(0x5865f2)
+    .setTitle('🐺 Welcome to the Wolf Pack Raid Tracker!')
+    .setDescription(
+      'This bot keeps the pack coordinated across three pillars. Hit a button below to tell us how you\'d like to run with the pack.'
+    )
+    .addFields(
+      {
+        name: '⚔️ Accountability',
+        value: 'When you kill a boss, click its button on the board. That logs the kill and starts the respawn countdown — accurate tracking means the whole pack knows when to be ready.',
+        inline: false,
+      },
+      {
+        name: '⏰ Timing',
+        value: 'The board and the **Spawning in the Next 24 Hours** card show exactly when each boss is back up. Never miss a window because no one wrote it down.',
+        inline: false,
+      },
+      {
+        name: '📣 Coordination',
+        value: 'Use `/announce` to schedule a group takedown — it creates a thread, a Discord event, and rallies the pack. Use `/pvpalert` to howl for backup right now.',
+        inline: false,
+      },
+    )
+    .setFooter({ text: 'You can always run /raidbosshelp for a full command reference.' });
+}
+
+function buildWelcomeRow() {
+  return new _ARB().addComponents(
+    new _BB().setCustomId('welcome_pvp').setLabel('🐺 Count me in for PVP').setStyle(_BS.Danger),
+    new _BB().setCustomId('welcome_organizer').setLabel('📣 I want to help organize').setStyle(_BS.Primary),
+    new _BB().setCustomId('welcome_attendee').setLabel('🎯 Just here to attend').setStyle(_BS.Secondary),
+  );
+}
+
+async function maybeShowWelcome(interaction) {
+  if (hasSeenWelcome(interaction.user.id)) return;
+  markWelcomeSeen(interaction.user.id);
+  try {
+    await interaction.followUp({
+      flags: MessageFlags.Ephemeral,
+      embeds: [buildWelcomeEmbed()],
+      components: [buildWelcomeRow()],
+    });
+  } catch { /* non-critical — don't let a failed welcome break anything */ }
+}
+
+async function handleWelcomePvp(interaction) {
+  const { getPvpRole, getPvpRoleName, buildAnnouncementEmbed, buildRoleRow } = require('./commands/pvprole');
+  const pvpRole = await getPvpRole(interaction.guild);
+  if (!pvpRole) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ No role named **${getPvpRoleName()}** found — ask an admin to create it.` });
+  }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const hasRole = interaction.member.roles.cache.has(pvpRole.id);
+  if (!hasRole) {
+    await interaction.member.roles.add(pvpRole);
+    const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+    const ch = pvpTargetId ? await interaction.client.channels.fetch(pvpTargetId).catch(() => null) : null;
+    await (ch || interaction.channel).send({
+      content: `<@&${pvpRole.id}>`,
+      embeds: [buildAnnouncementEmbed(interaction.member)],
+      components: [buildRoleRow()],
+    });
+  }
+  await interaction.editReply(`🐺 AWROOOOOO! You${hasRole ? ' already have' : ' now have'} the **${pvpRole.name}** role. The pack awaits.`);
+}
+
+async function handleWelcomeOrganizer(interaction) {
+  const roleList = (process.env.ALLOWED_ROLE_NAMES || '').split(',').map(r => `**${r.trim()}**`).filter(Boolean).join(', ');
+  await interaction.reply({
+    flags: MessageFlags.Ephemeral,
+    content: [
+      `📣 **Raid organizer — here's what to know:**`,
+      `Use \`/announce\` to schedule a takedown with a thread, Discord event, and role pings.`,
+      `Use \`/addtarget\`, \`/adjusttime\`, and \`/adjustdate\` inside the raid thread to update the plan.`,
+      `Kill tracking (board buttons + \`/kill\`) requires one of these roles: ${roleList || 'check with an officer'}.`,
+      `Run \`/raidbosshelp\` for the full command reference.`,
+    ].join('\n'),
+  });
+}
+
+async function handleWelcomeAttendee(interaction) {
+  await interaction.reply({
+    flags: MessageFlags.Ephemeral,
+    content: `🎯 You're all set! Keep an eye on Discord events and announcements in raid channels. When you're ready to track kills or join PVP, just run this command again or use \`/pvprole\` anytime.`,
+  });
 }
 
 // ── PVP role toggle button ─────────────────────────────────────────────────
