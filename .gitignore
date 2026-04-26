@@ -1,6 +1,8 @@
-# Never commit state — it contains live Discord message IDs and kill timers
+# Never commit live data — contains Discord message IDs, kill timers, and parse history
 data/state.json
 data/state.json.tmp
+data/parses.json
+data/parses.json.tmp
 
 # Environment
 .env

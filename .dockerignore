@@ -1,5 +1,6 @@
-# Never bake state.json into the image — it must come from the mounted volume
+# Never bake live data into the image — must come from the mounted volume
 data/state.json
+data/parses.json
 
 # Don't include dev artifacts in the image
 .env
