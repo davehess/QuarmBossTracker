@@ -2,6 +2,15 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { loadParses } = require('./parse');
 
+// "Eye of <Player>" mobs are Mage-summoned dummies used for AoE damage testing.
+// Damage against them inflates numbers and must never appear on scoreboards.
+function isEyeMob(bossId, bosses) {
+  const boss = bosses.find(b => b.id === bossId);
+  const name = (boss?.name || bossId).replace(/_/g, ' ').toLowerCase();
+  return name.includes('eye of ');
+}
+
+
 function fmt(n) { return n.toLocaleString('en-US'); }
 
 function buildScoreboardEmbed(bossName, bossEmoji, entries, parseCount) {
@@ -98,6 +107,10 @@ module.exports = {
     const bosses = require('../data/bosses.json');
     const boss   = bosses.find(b => b.id === bossId);
 
+    if (isEyeMob(bossId, bosses)) {
+      return interaction.editReply('❌ Eye of <Player> mobs are excluded from scoreboards.');
+    }
+
     const allParses = loadParses();
     let killList    = allParses[bossId] || [];
 
@@ -153,4 +166,6 @@ module.exports = {
 
     await interaction.editReply({ embeds: [embed] });
   },
+
+  isEyeMob,
 };
