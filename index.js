@@ -20,6 +20,7 @@ const {
   getAllPvpKills, getQuake, saveQuake, clearQuake,
   addPvpAlertHowler,
   hasSeenWelcome, markWelcomeSeen,
+  getRaidSession, clearRaidSession,
 } = require('./utils/state');
 const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
 const {
@@ -641,6 +642,9 @@ function scheduleMidnightSummary(readyClient) {
       // ── PVP midnight post ────────────────────────────────────────────────
       await postPvpMidnightSummary(readyClient);
 
+      // ── Archive raid night parse thread ──────────────────────────────────
+      await archiveRaidSession(readyClient);
+
       console.log('✅ Midnight tasks complete');
     } catch (err) { console.error('Midnight task error:', err); }
     setTimeout(runMidnightTasks, msUntilMidnightEST());
@@ -700,6 +704,37 @@ async function archivePassedAnnounceThreads(readyClient) {
     removeAnnounce(msgId);
     removeAnnounceMessageId(msgId);
   }
+}
+
+// ── Archive raid night parse thread at midnight ───────────────────────────────
+async function archiveRaidSession(readyClient) {
+  const session = getRaidSession();
+  if (!session) return;
+
+  const archiveChannelId = process.env.RAID_MOBS_ARCHIVE_CHANNEL_ID;
+  try {
+    const thread = await readyClient.channels.fetch(session.threadId).catch(() => null);
+    if (thread) {
+      // Post archive notice in the thread itself
+      await thread.send({ content: `📦 **Archived** — ${session.label}. Parses saved to history.` }).catch(() => {});
+      // Archive (lock) the Discord thread
+      await thread.setArchived(true, 'Raid night ended at midnight').catch(() => {});
+    }
+
+    // Post a link in the archive channel if configured
+    if (archiveChannelId) {
+      const archiveCh = await readyClient.channels.fetch(archiveChannelId).catch(() => null);
+      if (archiveCh && thread) {
+        await archiveCh.send({
+          content: `📋 **${session.label}** parse thread archived → <#${session.threadId}>`,
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('[raidnight] archiveRaidSession error:', err?.message);
+  }
+
+  clearRaidSession();
 }
 
 // ── PVP midnight summary ────────────────────────────────────────────────────

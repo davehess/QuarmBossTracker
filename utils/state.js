@@ -11,7 +11,7 @@ function _empty() {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, quake: null, pvpAlerts: {},
-    seenWelcome: [],
+    seenWelcome: [], raidSession: null,
   };
 }
 
@@ -290,6 +290,12 @@ function markWelcomeSeen(userId) {
   if (!s.seenWelcome.includes(userId)) { s.seenWelcome.push(userId); saveState(s); }
 }
 
+// ── Raid session ──────────────────────────────────────────────────────────────
+// { date, threadId, channelId, summaryMessageId, openedAt }
+function getRaidSession()       { return loadState().raidSession || null; }
+function saveRaidSession(data)  { const s = loadState(); s.raidSession = data; saveState(s); }
+function clearRaidSession()     { const s = loadState(); s.raidSession = null; saveState(s); }
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -317,4 +323,5 @@ module.exports = {
   recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
+  getRaidSession, saveRaidSession, clearRaidSession,
 };

@@ -132,9 +132,13 @@ module.exports = {
     const bossName = boss?.name || parsed.bossName;
     const embed    = buildParseEmbed(bossName, parsed, boss?.emoji);
     await interaction.editReply({ embeds: [embed] });
+
+    // Auto-append to active raid night thread (fire-and-forget)
+    const { appendParseToSession } = require('./raidnight');
+    appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
   },
 
-  // Exported for use by future /parsestats command
   parseEQLog,
   loadParses,
+  buildParseEmbed,
 };
