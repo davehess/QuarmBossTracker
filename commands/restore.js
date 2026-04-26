@@ -127,11 +127,11 @@ function writeKillsToState(killMap) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('restore')
-    .setDescription('Restore kill state from one or more Active Cooldowns / Daily Summary message links')
+    .setDescription('Restore kill state from message links, or auto-restore from last 7 daily summaries')
     .addStringOption((opt) =>
       opt.setName('links')
-        .setDescription('One or more Discord message links (space/newline separated)')
-        .setRequired(true)
+        .setDescription('Discord message links (space/newline separated) — omit to auto-restore from last 7 summaries')
+        .setRequired(false)
     ),
 
   async execute(interaction) {
@@ -139,14 +139,38 @@ module.exports = {
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
     }
 
-    const input = interaction.options.getString('links').trim();
-    const links = extractLinks(input);
-
-    if (links.length === 0) {
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ No valid Discord message links found. Right-click a message → Copy Message Link.' });
-    }
+    const input = interaction.options.getString('links')?.trim() || '';
+    let links   = extractLinks(input);
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    // ── Auto mode: no links provided — pull last 7 daily summaries from Historic Kills thread ──
+    if (links.length === 0) {
+      const histThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
+      if (!histThreadId) {
+        return interaction.editReply('❌ No links provided and HISTORIC_KILLS_THREAD_ID is not set.');
+      }
+      try {
+        const histThread = await interaction.client.channels.fetch(histThreadId);
+        // Fetch recent messages, filter to daily summary embeds, take last 7
+        const fetched = await histThread.messages.fetch({ limit: 100 });
+        const summaryMsgs = [...fetched.values()]
+          .filter(m => m.embeds[0]?.title === '📅 Daily Raid Summary')
+          .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+          .slice(0, 7);
+
+        if (summaryMsgs.length === 0) {
+          return interaction.editReply('❌ No Daily Raid Summary messages found in the Historic Kills thread.');
+        }
+
+        // Build synthetic links so the existing processing loop handles them
+        links = summaryMsgs.map(m =>
+          `https://discord.com/channels/${m.guildId}/${m.channelId}/${m.id}`
+        );
+      } catch (err) {
+        return interaction.editReply(`❌ Could not fetch Historic Kills thread: ${err?.message}`);
+      }
+    }
 
     const bosses = getBosses();
     const now    = Date.now();
