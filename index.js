@@ -769,4 +769,13 @@ async function checkQuakeAlert(readyClient) {
   } catch (err) { console.warn('Quake alert error:', err?.message); }
 }
 
+// ── Health check server ───────────────────────────────────────────────────────
+// Railway's proxy times out idle connections (including Discord's WebSocket) if
+// there is no HTTP listener. This tiny server satisfies the health check.
+const http = require('http');
+http.createServer((_, res) => { res.writeHead(200); res.end('OK'); })
+  .listen(process.env.PORT || 3000, () =>
+    console.log(`[health] HTTP check on :${process.env.PORT || 3000}`)
+  );
+
 client.login(process.env.DISCORD_TOKEN);
