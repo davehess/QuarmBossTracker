@@ -1422,5 +1422,35 @@
     ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158136"
+  },
+  {
+    "id": "an_escaped_burrower",
+    "name": "An Escaped Burrower",
+    "zone": "Acrylia Caverns",
+    "expansion": "Luclin",
+    "timerHours": 66,
+    "nicknames": ["escaped burrower", "escaped"],
+    "emoji": "🪲",
+    "pqdiUrl": "https://www.pqdi.cc/npc/154017"
+  },
+  {
+    "id": "a_summoned_burrower",
+    "name": "A Summoned Burrower",
+    "zone": "Acrylia Caverns",
+    "expansion": "Luclin",
+    "timerHours": 66,
+    "nicknames": ["summoned burrower", "summoned"],
+    "emoji": "🪲",
+    "pqdiUrl": "https://www.pqdi.cc/npc/154015"
+  },
+  {
+    "id": "a_restless_burrower",
+    "name": "A Restless Burrower",
+    "zone": "Acrylia Caverns",
+    "expansion": "Luclin",
+    "timerHours": 66,
+    "nicknames": ["restless burrower", "restless"],
+    "emoji": "🪲",
+    "pqdiUrl": "https://www.pqdi.cc/npc/154016"
   }
 ]
