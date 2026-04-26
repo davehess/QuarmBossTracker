@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 0.9.3  
+**Version:** 0.9.6  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -362,6 +362,15 @@ The kill/unkill toggle logic is in `handleBoardButton()` in `index.js`. It dupli
 ---
 
 ## Deployment Notes
+
+### Git / Merge Convention
+Railway shows the merge commit message as the deployment name. Always merge to `main` with a descriptive `-m` flag:
+```bash
+git merge <branch> -m "v0.9.7 — brief description of main feature"
+git push -u origin main
+```
+Never use `--no-edit` for merges — it produces "Merge branch '...'" which is meaningless in Railway's deploy history.
+Also bump `CLAUDE.md` version header and `package.json` version before merging.
 
 ### Railway
 - Deploy from GitHub, add env vars under Variables tab
