@@ -22,9 +22,9 @@ async function getPvpTarget(client) {
 function buildAnnouncementEmbed(member) {
   return new EmbedBuilder()
     .setColor(0xcc0000)
-    .setTitle('🐺 A wolf joins the bloodthirsty!')
-    .setDescription(`**${member.displayName}** is a bloodthirsty wolf! AWROOOOOO!`)
-    .setThumbnail(member.user.displayAvatarURL())
+    .setTitle('🐺 A wolf joins the Bloodthirsty!')
+    .setDescription(`**${member.displayName}** is a Bloodthirsty wolf! AWROOOOOO!`)
+    .setThumbnail(member.displayAvatarURL())
     .setTimestamp();
 }
 
