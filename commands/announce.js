@@ -64,14 +64,17 @@ function scrapePqdiDetails(html) {
   const ac = html.match(/ac[\"'\s]*[=:]\s*(\d+)/i);
   if (ac) fields.push({ name: '🛡️ AC', value: ac[1], inline: true });
   const seesInvis = /see_invis[\"'\s]*[=:]\s*1/i.test(html) || /Sees Invisible/i.test(html);
-  const seesIVU   = /see_hide[\"'\s]*[=:]\s*1/i.test(html) || /Sees IVU/i.test(html);
-  fields.push({ name: '👁️ Detection', value: [seesInvis && 'See Invis', seesIVU && 'See IVU'].filter(Boolean).join(', ') || 'No', inline: true });
-  const resists = [];
-  for (const [key, label] of [['mr','Magic'],['fr','Fire'],['cr','Cold'],['pr','Poison'],['dr','Disease']]) {
+  const seesIVU   = /see_hide[\"'\s]*[=:]\s*1/i.test(html)   || /Sees IVU/i.test(html);
+  const detectionVal = [seesInvis && 'See Invis', seesIVU && 'See IVU'].filter(Boolean).join(', ') || '⚠️ Not confirmed — verify before pull';
+  fields.push({ name: '👁️ Detection', value: detectionVal, inline: true });
+
+  // Always show all resist values — zero resists are just as strategically important as high ones
+  const resistParts = [];
+  for (const [key, label] of [['mr','MR'],['fr','FR'],['cr','CR'],['pr','PR'],['dr','DR']]) {
     const m = html.match(new RegExp(`${key}[\"'\\s]*[=:]\\s*(-?\\d+)`, 'i'));
-    if (m && m[1] !== '0') resists.push(`${label}: ${m[1]}`);
+    resistParts.push(`${label}: **${m ? m[1] : '?'}**`);
   }
-  if (resists.length) fields.push({ name: '🧪 Resists', value: resists.join(' | '), inline: false });
+  fields.push({ name: '🧪 Resists', value: resistParts.join('  '), inline: false });
   const specials = [];
   if (/Rampage/i.test(html))    specials.push('Rampage');
   if (/Flurry/i.test(html))     specials.push('Flurry');
