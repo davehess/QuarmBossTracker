@@ -52,6 +52,8 @@ module.exports = {
             '`/pvpunkill <mob>` — Remove a PVP mob kill record',
             '`/quake [time]` — Set a quake time ("now" or a time string) to reset all PVP mob timers',
             '  Quake posts a 1-hour notice to the PVP channel and creates a Discord event.',
+            '`/pvprole [silent]` — Toggle your @PVP role on or off; omit `silent` to announce in PVP channel',
+            '`/pvpalert <zone>` — Ping @PVP and howl for the pack in a zone; others click 🐺 Howl! to join',
           ].join('\n'),
           inline: false,
         },
