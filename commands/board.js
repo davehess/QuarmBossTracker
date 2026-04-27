@@ -51,6 +51,66 @@ async function editOrPost(channel, storedId, payload, onNewId) {
   return m.id;
 }
 
+async function runBoard(client) {
+  const bosses    = getBosses();
+  const killState = getAllState();
+  const results   = [];
+
+  const mainChannelId = process.env.TIMER_CHANNEL_ID;
+  if (!mainChannelId) { console.warn('[board] TIMER_CHANNEL_ID not set'); return results; }
+  const mainChannel = await client.channels.fetch(mainChannelId);
+
+  await editOrPost(mainChannel, getSummaryMessageId(),
+    { embeds: [buildSummaryCard(bosses, killState)] }, setSummaryMessageId);
+  results.push('✅ Slot 1: Active Cooldowns');
+
+  await editOrPost(mainChannel, getSpawningTomorrowId(),
+    { embeds: [buildSpawningTomorrowCard(bosses, killState)] }, setSpawningTomorrowId);
+  results.push('✅ Slot 2: Spawning Tomorrow');
+
+  await editOrPost(mainChannel, getDailySummaryMessageId(),
+    { embeds: [buildDailySummaryEmbed([], [], bosses)] }, setDailySummaryMessageId);
+  results.push('✅ Slot 3: Daily Summary');
+
+  const threadLinksContent = EXPANSION_ORDER.map((exp) => {
+    const threadId = getThreadId(exp);
+    const label    = EXP_LABELS[exp] || exp;
+    return threadId ? `${label} → <#${threadId}>` : `${label} → *(no thread)*`;
+  }).join('\n');
+
+  let threadLinksMsgId = getThreadLinksMessageId();
+  if (!threadLinksMsgId) {
+    try {
+      const msgs     = await mainChannel.messages.fetch({ limit: 30 });
+      const existing = msgs.find(m =>
+        m.author.id === client.user.id && m.embeds.length === 0 &&
+        m.components.length === 0 && m.content.includes('Classic') && m.content.includes('→')
+      );
+      if (existing) { threadLinksMsgId = existing.id; setThreadLinksMessageId(existing.id); }
+    } catch {}
+  }
+  await editOrPost(mainChannel, threadLinksMsgId,
+    { content: threadLinksContent, embeds: [], components: [] }, setThreadLinksMessageId);
+  results.push('✅ Slot 4: Thread links (single message)');
+
+  for (const exp of EXPANSION_ORDER) {
+    const threadId = getThreadId(exp);
+    if (!threadId) { results.push(`⬜ ${exp} — no thread`); continue; }
+    try {
+      const thread = await client.channels.fetch(threadId);
+      await editOrPost(thread, getThreadCooldownId(exp),
+        { embeds: [buildExpansionCooldownCard(exp, bosses, killState)] },
+        (id) => setThreadCooldownId(exp, id));
+      const boardResult = await postOrUpdateExpansionBoard(client, exp, threadId, bosses);
+      results.push(`${boardResult.ok ? '✅' : '❌'} ${exp} thread (${boardResult.action || boardResult.reason})`);
+    } catch (err) {
+      results.push(`❌ ${exp} thread — ${err?.message}`);
+    }
+  }
+
+  return results;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('board')
@@ -60,86 +120,10 @@ module.exports = {
     if (!hasAllowedRole(interaction.member)) {
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
     }
-
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const client    = interaction.client;
-    const bosses    = getBosses();
-    const killState = getAllState();
-    const results   = [];
-
-    // Always work on the MAIN CHANNEL regardless of where /board was called from
-    const mainChannelId = process.env.TIMER_CHANNEL_ID;
-    if (!mainChannelId) return interaction.editReply('❌ TIMER_CHANNEL_ID not set in .env');
-    const mainChannel = await client.channels.fetch(mainChannelId);
-
-    // ── MAIN CHANNEL SLOTS (strict order, edit-only for existing IDs) ─────────
-
-    // Slot 1: Active Cooldowns
-    await editOrPost(mainChannel, getSummaryMessageId(),
-      { embeds: [buildSummaryCard(bosses, killState)] }, setSummaryMessageId);
-    results.push('✅ Slot 1: Active Cooldowns');
-
-    // Slot 2: Spawning Tomorrow
-    await editOrPost(mainChannel, getSpawningTomorrowId(),
-      { embeds: [buildSpawningTomorrowCard(bosses, killState)] }, setSpawningTomorrowId);
-    results.push('✅ Slot 2: Spawning Tomorrow');
-
-    // Slot 3: Daily Summary placeholder (initially empty-ish, updated at midnight)
-    await editOrPost(mainChannel, getDailySummaryMessageId(),
-      { embeds: [buildDailySummaryEmbed([], [], bosses)] }, setDailySummaryMessageId);
-    results.push('✅ Slot 3: Daily Summary');
-
-    // Slot 4: Thread links — ONE message containing all expansion links.
-    // 3-tier lookup: env var → state.json → channel scan → post fresh only if all fail.
-    const threadLinksContent = EXPANSION_ORDER.map((exp) => {
-      const threadId = getThreadId(exp);
-      const label    = EXP_LABELS[exp] || exp;
-      return threadId ? `${label} → <#${threadId}>` : `${label} → *(no thread)*`;
-    }).join('\n');
-
-    let threadLinksMsgId = getThreadLinksMessageId();
-    if (!threadLinksMsgId) {
-      // Scan the last 30 messages for the bot's plain-text thread-link post
-      try {
-        const msgs     = await mainChannel.messages.fetch({ limit: 30 });
-        const existing = msgs.find(m =>
-          m.author.id === client.user.id &&
-          m.embeds.length === 0 &&
-          m.components.length === 0 &&
-          m.content.includes('Classic') &&
-          m.content.includes('→')
-        );
-        if (existing) {
-          threadLinksMsgId = existing.id;
-          setThreadLinksMessageId(existing.id); // persist so we don't scan next time
-        }
-      } catch { /* scan failed — will post fresh below */ }
-    }
-    await editOrPost(mainChannel, threadLinksMsgId,
-      { content: threadLinksContent, embeds: [], components: [] }, setThreadLinksMessageId);
-    results.push('✅ Slot 4: Thread links (single message)');
-
-    // ── EXPANSION THREADS ─────────────────────────────────────────────────────
-    for (const exp of EXPANSION_ORDER) {
-      const threadId = getThreadId(exp);
-      if (!threadId) { results.push(`⬜ ${exp} — no thread`); continue; }
-      try {
-        const thread = await client.channels.fetch(threadId);
-
-        // Thread slot 1: Active Cooldowns for this expansion (top, edited in place)
-        await editOrPost(thread, getThreadCooldownId(exp),
-          { embeds: [buildExpansionCooldownCard(exp, bosses, killState)] },
-          (id) => setThreadCooldownId(exp, id));
-
-        // Thread slot 2+: Board panels with kill buttons
-        const boardResult = await postOrUpdateExpansionBoard(client, exp, threadId, bosses);
-        results.push(`${boardResult.ok ? '✅' : '❌'} ${exp} thread (${boardResult.action || boardResult.reason})`);
-      } catch (err) {
-        results.push(`❌ ${exp} thread — ${err?.message}`);
-      }
-    }
-
-    await interaction.editReply(results.join('\n'));
+    const results = await runBoard(interaction.client);
+    await interaction.editReply(results.join('\n') || '✅ Done');
   },
+
+  runBoard,
 };

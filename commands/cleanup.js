@@ -156,26 +156,14 @@ function stripAvailableNow(originalEmbed) {
   return e;
 }
 
-module.exports = {
-  data: new SlashCommandBuilder()
-    .setName('cleanup')
-    .setDescription('Delete transient/duplicate messages, anchor earliest boards, update all cards'),
+async function runCleanup(client) {
+  const botId     = client.user.id;
+  const bosses    = getBosses();
+  const killState = getAllState();
+  const results   = [];
 
-  async execute(interaction) {
-    if (!hasAllowedRole(interaction.member)) {
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
-    }
-
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const client    = interaction.client;
-    const botId     = client.user.id;
-    const bosses    = getBosses();
-    const killState = getAllState();
-    const results   = [];
-
-    const mainChannelId = process.env.TIMER_CHANNEL_ID;
-    if (!mainChannelId) return interaction.editReply('❌ TIMER_CHANNEL_ID not set');
+  const mainChannelId = process.env.TIMER_CHANNEL_ID;
+  if (!mainChannelId) { console.warn('[cleanup] TIMER_CHANNEL_ID not set'); return results; }
     const mainChannel = await client.channels.fetch(mainChannelId);
 
     // ══════════════════════════════════════════════════════════════
@@ -394,6 +382,22 @@ module.exports = {
       }
     }
 
-    await interaction.editReply(results.join('\n').slice(0, 2000));
+  return results;
+}
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('cleanup')
+    .setDescription('Delete transient/duplicate messages, anchor earliest boards, update all cards'),
+
+  async execute(interaction) {
+    if (!hasAllowedRole(interaction.member)) {
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const results = await runCleanup(interaction.client);
+    await interaction.editReply(results.join('\n').slice(0, 2000) || '✅ Done');
   },
+
+  runCleanup,
 };

@@ -65,7 +65,29 @@ client.once(Events.ClientReady, async (readyClient) => {
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
+  runStartupSequence(readyClient).catch(err => console.error('[startup] sequence error:', err?.message));
 });
+
+async function runStartupSequence(client) {
+  const { runAutoRestore } = require('./commands/restore');
+  const { runBoard }       = require('./commands/board');
+  const { runCleanup }     = require('./commands/cleanup');
+
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+
+  console.log('[startup] Running /restore (auto mode)…');
+  await runAutoRestore(client).catch(err => console.error('[startup/restore]', err?.message));
+
+  await delay(60_000);
+  console.log('[startup] Running /board…');
+  await runBoard(client).catch(err => console.error('[startup/board]', err?.message));
+
+  await delay(60_000);
+  console.log('[startup] Running /cleanup…');
+  await runCleanup(client).catch(err => console.error('[startup/cleanup]', err?.message));
+
+  console.log('[startup] Startup sequence complete.');
+}
 
 async function registerCommands() {
   const guildId = process.env.DISCORD_GUILD_ID, clientId = process.env.DISCORD_CLIENT_ID;

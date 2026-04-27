@@ -124,6 +124,86 @@ function writeKillsToState(killMap) {
   fs.renameSync(tmp, f);
 }
 
+async function runAutoRestore(client) {
+  const histThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
+  if (!histThreadId) { console.warn('[startup/restore] HISTORIC_KILLS_THREAD_ID not set — skipping'); return; }
+
+  let links;
+  try {
+    const histThread  = await client.channels.fetch(histThreadId);
+    const fetched     = await histThread.messages.fetch({ limit: 100 });
+    const summaryMsgs = [...fetched.values()]
+      .filter(m => m.embeds[0]?.title === '📅 Daily Raid Summary')
+      .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+      .slice(0, 7);
+    if (summaryMsgs.length === 0) { console.log('[startup/restore] No Daily Raid Summary messages found'); return; }
+    links = summaryMsgs.map(m =>
+      `https://discord.com/channels/${m.guildId}/${m.channelId}/${m.id}`
+    );
+  } catch (err) {
+    console.error('[startup/restore] Could not fetch Historic Kills thread:', err?.message);
+    return;
+  }
+
+  const bosses  = getBosses();
+  const now     = Date.now();
+  const killMap = {};
+
+  for (const link of links) {
+    const parsed = parseMessageLink(link);
+    if (!parsed) continue;
+    let refMsg;
+    try {
+      const ch = await client.channels.fetch(parsed.channelId);
+      refMsg   = await ch.messages.fetch(parsed.messageId);
+    } catch { continue; }
+
+    const embed = refMsg.embeds[0];
+    if (!embed) continue;
+    const title = embed.title || '';
+
+    if (title === '📅 Daily Raid Summary') {
+      for (const { bossName, zone, killedAt } of parseDailySummaryEmbed(embed)) {
+        const boss = findBoss(bosses, bossName, zone);
+        if (!boss) continue;
+        const nextSpawn = killedAt + boss.timerHours * 3600000;
+        if (nextSpawn <= now) continue;
+        if (!killMap[boss.id] || nextSpawn > killMap[boss.id].nextSpawn)
+          killMap[boss.id] = { killedAt, nextSpawn };
+      }
+    } else if (title === '📊 Active Cooldowns' || title.endsWith('— Active Cooldowns')) {
+      for (const { bossName, zone, nextSpawnMs } of parseCooldownEmbed(embed)) {
+        const boss = findBoss(bosses, bossName, zone);
+        if (!boss || !nextSpawnMs || nextSpawnMs <= now) continue;
+        const killedAt = nextSpawnMs - boss.timerHours * 3600000;
+        if (!killMap[boss.id] || nextSpawnMs > killMap[boss.id].nextSpawn)
+          killMap[boss.id] = { killedAt, nextSpawn: nextSpawnMs };
+      }
+    }
+  }
+
+  const killCount = Object.keys(killMap).length;
+  if (killCount === 0) { console.log('[startup/restore] No active cooldowns to restore'); return; }
+
+  writeKillsToState(killMap);
+  console.log(`[startup/restore] Restored ${killCount} active cooldown(s)`);
+
+  const freshBosses   = getBosses();
+  const mainChannelId = process.env.TIMER_CHANNEL_ID;
+  await Promise.allSettled(
+    EXPANSION_ORDER.map(async (exp) => {
+      const threadId = getThreadId(exp);
+      if (!threadId) return;
+      await postOrUpdateExpansionBoard(client, exp, threadId, freshBosses).catch(console.warn);
+      await refreshThreadCooldownCard(client, exp, threadId, freshBosses).catch(console.warn);
+    })
+  );
+  if (mainChannelId) {
+    await refreshSummaryCard(client, mainChannelId, freshBosses).catch(console.warn);
+    await refreshSpawningTomorrowCard(client, mainChannelId, freshBosses).catch(console.warn);
+  }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('restore')
@@ -294,4 +374,6 @@ module.exports = {
 
     await interaction.editReply(reply.join('\n').slice(0, 2000));
   },
+
+  runAutoRestore,
 };
