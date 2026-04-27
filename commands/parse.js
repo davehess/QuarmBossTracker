@@ -19,27 +19,36 @@ function saveParses(data) {
 
 // Parses EQLogParser "Send to EQ" format:
 // "High Priest of Ssraeshza in 42s, 53.12K Damage @1.26K, 1. Statlander +Pets = 4.59K@148 in 31s | ..."
+// Total damage may use K or M suffix; individual damage may be raw (e.g. 204@68 for tiny contributors).
+function kmToInt(num, suffix) {
+  const n = parseFloat(num);
+  if (suffix === 'M') return Math.round(n * 1_000_000);
+  if (suffix === 'K') return Math.round(n * 1_000);
+  return Math.round(n);
+}
+
 function parseEQLog(str) {
-  const headerMatch = str.match(/^(.+?)\s+in\s+(\d+)s,\s*([\d.]+)K\s+Damage\s+@([\d.]+)K/);
+  const headerMatch = str.match(/^(.+?)\s+in\s+(\d+)s,\s*([\d.]+)([KM])\s+Damage\s+@([\d.]+)([KM])/);
   if (!headerMatch) return null;
 
   const bossName    = headerMatch[1].trim();
   const duration    = parseInt(headerMatch[2]);
-  const totalDamage = Math.round(parseFloat(headerMatch[3]) * 1000);
-  const totalDps    = Math.round(parseFloat(headerMatch[4]) * 1000);
+  const totalDamage = kmToInt(headerMatch[3], headerMatch[4]);
+  const totalDps    = kmToInt(headerMatch[5], headerMatch[6]);
 
-  const playerRx = /(\d+)\.\s+(.+?)\s+=\s+([\d.]+)K@(\d+)\s+in\s+(\d+)s/g;
+  // Handles K-suffixed damage (78.22K@216) and raw numbers (204@68)
+  const playerRx = /(\d+)\.\s+(.+?)\s+=\s+([\d.]+)(K)?@(\d+)\s+in\s+(\d+)s/g;
   const players  = [];
   let m;
   while ((m = playerRx.exec(str)) !== null) {
-    const raw    = m[2].trim();
+    const raw     = m[2].trim();
     const hasPets = raw.includes('+Pets');
-    const name   = raw.replace(/\s*\+Pets/g, '').trim();
+    const name    = raw.replace(/\s*\+Pets/g, '').trim();
     players.push({
       rank: parseInt(m[1]), name, hasPets,
-      damage:   Math.round(parseFloat(m[3]) * 1000),
-      dps:      parseInt(m[4]),
-      duration: parseInt(m[5]),
+      damage:   kmToInt(m[3], m[4]),
+      dps:      parseInt(m[5]),
+      duration: parseInt(m[6]),
     });
   }
 
