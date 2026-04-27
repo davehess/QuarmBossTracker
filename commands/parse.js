@@ -76,19 +76,102 @@ function buildParseEmbed(bossName, parsed, bossEmoji) {
   return new EmbedBuilder()
     .setColor(0xe74c3c)
     .setTitle(title)
-    .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)} DPS`)
+    .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)}/s raid DPS`)
     .addFields({ name: 'DPS Rankings', value: '```\n' + table + '\n```', inline: false })
     .setTimestamp();
 }
 
-function findBossFromName(parsedName, bosses) {
-  const nl = parsedName.toLowerCase().trim();
-  return (
-    bosses.find(b => b.name.toLowerCase() === nl) ||
-    bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl)) ||
-    bosses.find(b => b.name.toLowerCase().includes(nl) || nl.includes(b.name.toLowerCase())) ||
-    null
-  );
+/**
+ * Post a compact JSON embed to PARSES_LOG_THREAD_ID so parse data survives volume wipes.
+ * Fire-and-forget — caller should .catch(() => {}).
+ */
+async function logParseToDiscord(client, bossId, parseEntry) {
+  const threadId = process.env.PARSES_LOG_THREAD_ID;
+  if (!threadId) return;
+  const thread = await client.channels.fetch(threadId);
+  const data = {
+    bossId,
+    ts:  parseEntry.timestamp,
+    dur: parseEntry.duration,
+    dmg: parseEntry.totalDamage,
+    dps: parseEntry.totalDps,
+    by:  parseEntry.submittedByName,
+    p:   parseEntry.players.map(({ name, hasPets, damage, dps, duration }) => ({
+      n: name, ...(hasPets ? { hp: 1 } : {}), d: damage, dps, dur: duration,
+    })),
+  };
+  await thread.send({
+    embeds: [new EmbedBuilder()
+      .setTitle('📊 Parse Log')
+      .setColor(0x2f3136)
+      .setDescription(JSON.stringify(data))
+    ]
+  });
+}
+
+/**
+ * Rebuild parses.json by fetching all '📊 Parse Log' embeds from PARSES_LOG_THREAD_ID.
+ * Merges with whatever is already on the volume (union, dedup by timestamp).
+ * Called on startup so Discord is the authoritative source of truth.
+ */
+async function loadParsesFromDiscord(client) {
+  const threadId = process.env.PARSES_LOG_THREAD_ID;
+  if (!threadId) { console.log('[parses] PARSES_LOG_THREAD_ID not set — skipping Discord recovery'); return; }
+
+  try {
+    const thread = await client.channels.fetch(threadId);
+
+    // Fetch up to 1000 messages (10 pages × 100)
+    const allMsgs = [];
+    let lastId = null;
+    for (let i = 0; i < 10; i++) {
+      const opts = { limit: 100 };
+      if (lastId) opts.before = lastId;
+      const batch = await thread.messages.fetch(opts);
+      if (batch.size === 0) break;
+      allMsgs.push(...batch.values());
+      lastId = batch.last().id;
+    }
+
+    // Parse log embeds → { bossId → [entry, ...] }
+    const fromDiscord = {};
+    for (const msg of allMsgs) {
+      const embed = msg.embeds[0];
+      if (!embed || embed.title !== '📊 Parse Log') continue;
+      try {
+        const data = JSON.parse(embed.description);
+        if (!data.bossId || !data.ts) continue;
+        if (!fromDiscord[data.bossId]) fromDiscord[data.bossId] = [];
+        fromDiscord[data.bossId].push({
+          timestamp:       data.ts,
+          submittedByName: data.by || 'unknown',
+          duration:        data.dur,
+          totalDamage:     data.dmg,
+          totalDps:        data.dps,
+          players: (data.p || []).map(p => ({
+            name: p.n, hasPets: !!(p.hp), damage: p.d, dps: p.dps, duration: p.dur,
+          })),
+        });
+      } catch {}
+    }
+
+    // Merge with existing volume data, dedup by (bossId, timestamp)
+    const existing = loadParses();
+    const merged   = { ...existing };
+    for (const [bossId, kills] of Object.entries(fromDiscord)) {
+      const knownTs = new Set((merged[bossId] || []).map(k => k.timestamp));
+      if (!merged[bossId]) merged[bossId] = [];
+      for (const k of kills) {
+        if (!knownTs.has(k.timestamp)) { merged[bossId].push(k); knownTs.add(k.timestamp); }
+      }
+    }
+
+    saveParses(merged);
+    const total = Object.values(merged).reduce((s, v) => s + v.length, 0);
+    console.log(`[parses] Loaded ${total} parses from Discord + volume`);
+  } catch (err) {
+    console.error('[parses] Failed to load from Discord:', err?.message);
+  }
 }
 
 module.exports = {
@@ -96,13 +179,13 @@ module.exports = {
     .setName('parse')
     .setDescription('Submit an EQLogParser DPS parse for a boss fight.')
     .addStringOption(opt =>
+      opt.setName('boss').setDescription('Boss that was killed').setRequired(true).setAutocomplete(true)
+    )
+    .addStringOption(opt =>
       opt.setName('data')
         .setDescription('Paste the EQLogParser "Send to EQ" output')
         .setRequired(true)
         .setMaxLength(6000)
-    )
-    .addStringOption(opt =>
-      opt.setName('boss').setDescription('Boss override if auto-detection fails').setRequired(false).setAutocomplete(true)
     ),
 
   async autocomplete(interaction) {
@@ -120,31 +203,21 @@ module.exports = {
   },
 
   async execute(interaction) {
-    const rawData     = interaction.options.getString('data');
-    const bossOverride = interaction.options.getString('boss');
+    const bossId  = interaction.options.getString('boss');
+    const rawData = interaction.options.getString('data');
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     delete require.cache[require.resolve('../data/bosses.json')];
     const bosses = require('../data/bosses.json');
+    const boss   = bosses.find(b => b.id === bossId);
 
     const parsed = parseEQLog(rawData);
     if (!parsed) {
       return interaction.editReply('❌ Could not parse that input. Paste the EQLogParser "Send to EQ" output directly (e.g. "Boss Name in 397s, 1.54M Damage @3.87K, 1. Player = 78.22K@216 in 362s | ...")');
     }
 
-    // Boss detection: explicit override → auto-detect from parse header
-    let boss   = bossOverride ? bosses.find(b => b.id === bossOverride) : findBossFromName(parsed.bossName, bosses);
-    let bossId = boss?.id;
-
-    if (!boss) {
-      return interaction.editReply(`❌ Could not match "**${parsed.bossName}**" to any boss. Use the \`boss\` option to select manually.`);
-    }
-
-    // Persist this parse
-    const parses = loadParses();
-    if (!parses[bossId]) parses[bossId] = [];
-    parses[bossId].push({
+    const parseEntry = {
       timestamp:        Date.now(),
       submittedBy:      interaction.user.id,
       submittedByName:  interaction.member?.displayName || interaction.user.username,
@@ -152,19 +225,31 @@ module.exports = {
       totalDamage:      parsed.totalDamage,
       totalDps:         parsed.totalDps,
       players:          parsed.players,
-    });
+    };
+
+    const parses = loadParses();
+    if (!parses[bossId]) parses[bossId] = [];
+    parses[bossId].push(parseEntry);
     saveParses(parses);
 
-    const bossName = boss.name;
-    const embed    = buildParseEmbed(bossName, parsed, boss.emoji);
+    const bossName = boss?.name || parsed.bossName;
+    const embed    = buildParseEmbed(bossName, parsed, boss?.emoji);
     await interaction.editReply({ embeds: [embed] });
+
+    // Log to Discord thread for persistence (fire-and-forget)
+    logParseToDiscord(interaction.client, bossId, parseEntry).catch(err =>
+      console.warn('[parse] Discord log failed:', err?.message)
+    );
 
     // Auto-append to active raid night thread (fire-and-forget)
     const { appendParseToSession } = require('./raidnight');
-    appendParseToSession(interaction.client, bossId, parsed, bossName, boss.emoji).catch(() => {});
+    appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
   },
 
   parseEQLog,
   loadParses,
+  saveParses,
   buildParseEmbed,
+  logParseToDiscord,
+  loadParsesFromDiscord,
 };

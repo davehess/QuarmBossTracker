@@ -53,8 +53,15 @@ function mergeKillGroup(group) {
 
 function fmt(n) { return n.toLocaleString('en-US'); }
 
-function buildScoreboardEmbed(bossName, bossEmoji, entries, killCount) {
-  const isSingle = killCount === 1;
+function buildScoreboardEmbed(bossName, bossEmoji, entries, killList) {
+  const killCount  = killList.length;
+  const isSingle   = killCount === 1;
+
+  // Raidwide DPS per session
+  const raidDpsArr = killList.map(k => k.duration > 0 ? Math.round(k.totalDamage / k.duration) : 0);
+  const avgRaidDps = Math.round(raidDpsArr.reduce((s, v) => s + v, 0) / killCount);
+  const lastKill   = killList[killList.length - 1];
+  const lastRaidDps = raidDpsArr[raidDpsArr.length - 1];
 
   // Single kill: rank by damage. Historical: rank by avg DPS.
   const sorted = isSingle
@@ -87,6 +94,16 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, killCount) {
   const divider = '─'.repeat(hdr.length);
   const table   = [hdr, divider, ...rows].join('\n');
 
+  // Description: raidwide DPS summary
+  let desc;
+  if (isSingle) {
+    desc = `Fight: **${lastKill.duration}s** · Raid DPS: **${fmt(lastRaidDps)}/s** · Total: **${fmt(lastKill.totalDamage)}** dmg`;
+  } else {
+    const pct  = avgRaidDps > 0 ? Math.round((lastRaidDps - avgRaidDps) / avgRaidDps * 100) : 0;
+    const sign = pct >= 0 ? '+' : '';
+    desc = `**${killCount} kills** · Avg Raid DPS: **${fmt(avgRaidDps)}/s** · Latest: **${fmt(lastRaidDps)}/s** (${sign}${pct}% vs avg)`;
+  }
+
   const faTargets = sorted
     .filter(p => p.appearances >= Math.ceil(killCount / 2))
     .slice(0, 3)
@@ -97,7 +114,7 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, killCount) {
   const embed = new EmbedBuilder()
     .setColor(0xe67e22)
     .setTitle(title)
-    .setDescription(`Across **${killCount}** logged kill${killCount !== 1 ? 's' : ''}`)
+    .setDescription(desc)
     .addFields({ name: 'Top DPS', value: '```\n' + table + '\n```', inline: false });
 
   if (faTargets && !isSingle) {
@@ -207,7 +224,7 @@ module.exports = {
       }));
 
     const bossName = boss?.name || bossId;
-    const embed    = buildScoreboardEmbed(bossName, boss?.emoji, entries, killCount);
+    const embed    = buildScoreboardEmbed(bossName, boss?.emoji, entries, killList);
 
     if (last && allParses[bossId]?.length > last) {
       embed.setFooter({ text: `Showing last ${last} of ${allParses[bossId].length} logged kills` });

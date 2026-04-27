@@ -69,11 +69,15 @@ client.once(Events.ClientReady, async (readyClient) => {
 });
 
 async function runStartupSequence(client) {
-  const { runAutoRestore } = require('./commands/restore');
-  const { runBoard }       = require('./commands/board');
-  const { runCleanup }     = require('./commands/cleanup');
+  const { loadParsesFromDiscord } = require('./commands/parse');
+  const { runAutoRestore }        = require('./commands/restore');
+  const { runBoard }              = require('./commands/board');
+  const { runCleanup }            = require('./commands/cleanup');
 
   const delay = ms => new Promise(r => setTimeout(r, ms));
+
+  console.log('[startup] Loading parses from Discord…');
+  await loadParsesFromDiscord(client).catch(err => console.error('[startup/parses]', err?.message));
 
   console.log('[startup] Running /restore (auto mode)…');
   await runAutoRestore(client).catch(err => console.error('[startup/restore]', err?.message));
