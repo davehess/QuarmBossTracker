@@ -10,11 +10,51 @@ function isEyeMob(bossId, bosses) {
   return name.includes('eye of ');
 }
 
+/**
+ * Group kill submissions by session: submissions within 30 minutes of each other
+ * are treated as multiple people logging the same fight.
+ */
+function groupKillsBySession(killList, windowMs = 30 * 60 * 1000) {
+  const sorted = [...killList].sort((a, b) => a.timestamp - b.timestamp);
+  const groups = [];
+  for (const kill of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && kill.timestamp - last[0].timestamp <= windowMs) {
+      last.push(kill);
+    } else {
+      groups.push([kill]);
+    }
+  }
+  return groups;
+}
+
+/**
+ * Merge a session group into a single canonical kill.
+ * For each player, take the submission with the highest damage.
+ * DPS is recalculated from damage / player's own duration.
+ */
+function mergeKillGroup(group) {
+  const canonical = group.reduce((best, k) => k.totalDamage > best.totalDamage ? k : best, group[0]);
+  const playerMap = new Map();
+  for (const kill of group) {
+    for (const p of kill.players) {
+      const key = p.name.toLowerCase();
+      const existing = playerMap.get(key);
+      if (!existing || p.damage > existing.damage) playerMap.set(key, { ...p });
+    }
+  }
+  const players = [...playerMap.values()].map(p => ({
+    ...p,
+    dps: p.duration > 0 ? Math.round(p.damage / p.duration) : p.dps,
+  }));
+  return { timestamp: canonical.timestamp, duration: canonical.duration, totalDamage: canonical.totalDamage, players };
+}
+
 
 function fmt(n) { return n.toLocaleString('en-US'); }
 
-function buildScoreboardEmbed(bossName, bossEmoji, entries, parseCount) {
-  // entries: sorted array of { name, hasPets, appearances, avgDps, avgDamage, bestDps, survivalRate }
+function buildScoreboardEmbed(bossName, bossEmoji, entries, killCount) {
+  // entries: sorted array of { name, hasPets, appearances, avgDps, avgDamage, bestDps }
   const rows = entries.slice(0, 15).map((p, i) => {
     const rank     = String(i + 1).padStart(2);
     const name     = (p.name + (p.hasPets ? ' +P' : '')).padEnd(20);
@@ -30,7 +70,7 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, parseCount) {
 
   // Flag top 3 consistent performers as Feral Avatar candidates
   const faTargets = entries
-    .filter(p => p.appearances >= Math.ceil(parseCount / 2))
+    .filter(p => p.appearances >= Math.ceil(killCount / 2))
     .slice(0, 3)
     .map(p => `**${p.name}**`)
     .join(', ');
@@ -39,7 +79,7 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, parseCount) {
   const embed = new EmbedBuilder()
     .setColor(0xe67e22)
     .setTitle(title)
-    .setDescription(`Across **${parseCount}** logged kill${parseCount !== 1 ? 's' : ''}`)
+    .setDescription(`Across **${killCount}** logged kill${killCount !== 1 ? 's' : ''}`)
     .addFields({ name: 'Top DPS', value: '```\n' + table + '\n```', inline: false });
 
   if (faTargets) {
@@ -101,7 +141,7 @@ module.exports = {
     const bossId = interaction.options.getString('boss');
     const last   = interaction.options.getInteger('last') || null;
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply();
 
     delete require.cache[require.resolve('../data/bosses.json')];
     const bosses = require('../data/bosses.json');
@@ -112,39 +152,32 @@ module.exports = {
     }
 
     const allParses = loadParses();
-    let killList    = allParses[bossId] || [];
+    let rawKills = allParses[bossId] || [];
 
-    if (killList.length === 0) {
+    if (rawKills.length === 0) {
       return interaction.editReply(`❌ No parses stored for **${boss?.name || bossId}** yet. Use \`/parse\` after a kill.`);
     }
 
-    // Sort by timestamp, optionally slice to last N
-    killList = [...killList].sort((a, b) => a.timestamp - b.timestamp);
-    if (last) killList = killList.slice(-last);
+    // Group submissions by session (30-min window), merge to max-damage per player
+    rawKills = [...rawKills].sort((a, b) => a.timestamp - b.timestamp);
+    if (last) rawKills = rawKills.slice(-last);
+    const killList  = groupKillsBySession(rawKills).map(mergeKillGroup);
+    const killCount = killList.length;
 
-    const parseCount = killList.length;
-
-    // Aggregate per player
-    const players = new Map(); // name → { appearances, totalDps, bestDps, hasPets, totalDamage, totalDuration, fightDurations }
+    // Aggregate per player across merged kills
+    const players = new Map();
     for (const kill of killList) {
       for (const p of kill.players) {
         const key = p.name.toLowerCase();
         if (!players.has(key)) {
-          players.set(key, {
-            name: p.name, hasPets: p.hasPets,
-            appearances: 0, totalDps: 0, bestDps: 0,
-            totalDamage: 0, totalDuration: 0,
-            fightDurations: [],
-          });
+          players.set(key, { name: p.name, hasPets: p.hasPets, appearances: 0, totalDps: 0, bestDps: 0, totalDamage: 0 });
         }
         const agg = players.get(key);
         agg.appearances++;
         agg.totalDps    += p.dps;
         agg.bestDps      = Math.max(agg.bestDps, p.dps);
         agg.totalDamage += p.damage;
-        agg.totalDuration += p.duration;
         agg.hasPets      = agg.hasPets || p.hasPets;
-        agg.fightDurations.push({ playerDur: p.duration, fightDur: kill.duration });
       }
     }
 
@@ -157,9 +190,8 @@ module.exports = {
       .sort((a, b) => b.avgDps - a.avgDps);
 
     const bossName = boss?.name || bossId;
-    const embed    = buildScoreboardEmbed(bossName, boss?.emoji, entries, parseCount);
+    const embed    = buildScoreboardEmbed(bossName, boss?.emoji, entries, killCount);
 
-    // Note if filtered
     if (last && allParses[bossId]?.length > last) {
       embed.setFooter({ text: `Showing last ${last} of ${allParses[bossId].length} logged kills` });
     }

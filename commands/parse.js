@@ -81,18 +81,28 @@ function buildParseEmbed(bossName, parsed, bossEmoji) {
     .setTimestamp();
 }
 
+function findBossFromName(parsedName, bosses) {
+  const nl = parsedName.toLowerCase().trim();
+  return (
+    bosses.find(b => b.name.toLowerCase() === nl) ||
+    bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl)) ||
+    bosses.find(b => b.name.toLowerCase().includes(nl) || nl.includes(b.name.toLowerCase())) ||
+    null
+  );
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('parse')
     .setDescription('Submit an EQLogParser DPS parse for a boss fight.')
     .addStringOption(opt =>
-      opt.setName('boss').setDescription('Boss that was killed').setRequired(true).setAutocomplete(true)
-    )
-    .addStringOption(opt =>
       opt.setName('data')
         .setDescription('Paste the EQLogParser "Send to EQ" output')
         .setRequired(true)
         .setMaxLength(6000)
+    )
+    .addStringOption(opt =>
+      opt.setName('boss').setDescription('Boss override if auto-detection fails').setRequired(false).setAutocomplete(true)
     ),
 
   async autocomplete(interaction) {
@@ -110,18 +120,25 @@ module.exports = {
   },
 
   async execute(interaction) {
-    const bossId  = interaction.options.getString('boss');
-    const rawData = interaction.options.getString('data');
+    const rawData     = interaction.options.getString('data');
+    const bossOverride = interaction.options.getString('boss');
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     delete require.cache[require.resolve('../data/bosses.json')];
     const bosses = require('../data/bosses.json');
-    const boss   = bosses.find(b => b.id === bossId);
 
     const parsed = parseEQLog(rawData);
     if (!parsed) {
-      return interaction.editReply('❌ Could not parse that input. Paste the EQLogParser "Send to EQ" output directly (e.g. "Boss Name in 42s, 53.12K Damage @1.26K, 1. Player = 4.59K@148 in 31s | ...")');
+      return interaction.editReply('❌ Could not parse that input. Paste the EQLogParser "Send to EQ" output directly (e.g. "Boss Name in 397s, 1.54M Damage @3.87K, 1. Player = 78.22K@216 in 362s | ...")');
+    }
+
+    // Boss detection: explicit override → auto-detect from parse header
+    let boss   = bossOverride ? bosses.find(b => b.id === bossOverride) : findBossFromName(parsed.bossName, bosses);
+    let bossId = boss?.id;
+
+    if (!boss) {
+      return interaction.editReply(`❌ Could not match "**${parsed.bossName}**" to any boss. Use the \`boss\` option to select manually.`);
     }
 
     // Persist this parse
@@ -138,13 +155,13 @@ module.exports = {
     });
     saveParses(parses);
 
-    const bossName = boss?.name || parsed.bossName;
-    const embed    = buildParseEmbed(bossName, parsed, boss?.emoji);
+    const bossName = boss.name;
+    const embed    = buildParseEmbed(bossName, parsed, boss.emoji);
     await interaction.editReply({ embeds: [embed] });
 
     // Auto-append to active raid night thread (fire-and-forget)
     const { appendParseToSession } = require('./raidnight');
-    appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
+    appendParseToSession(interaction.client, bossId, parsed, bossName, boss.emoji).catch(() => {});
   },
 
   parseEQLog,
