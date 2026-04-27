@@ -119,19 +119,35 @@ module.exports = {
       targetChannel = await interaction.client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null);
     }
     if (!targetChannel) {
-      // Off night or no RAID_CHAT_CHANNEL_ID — use the main timer channel
       targetChannel = await interaction.client.channels.fetch(process.env.TIMER_CHANNEL_ID).catch(() => null);
     }
     if (!targetChannel) {
       return interaction.editReply('❌ Could not find a channel to post in. Check RAID_CHAT_CHANNEL_ID / TIMER_CHANNEL_ID.');
     }
 
-    // Create thread
-    const thread = await targetChannel.threads.create({
-      name: threadName,
-      autoArchiveDuration: 1440, // 24h
-      reason: 'Raid night parse scoreboard',
-    });
+    // Create thread — if RAID_CHAT_CHANNEL_ID lacks permission, fall back to TIMER_CHANNEL_ID
+    let thread;
+    try {
+      thread = await targetChannel.threads.create({
+        name: threadName,
+        autoArchiveDuration: 1440,
+        reason: 'Raid night parse scoreboard',
+      });
+    } catch (err) {
+      if (targetChannel.id !== process.env.TIMER_CHANNEL_ID) {
+        console.warn(`[raidnight] Could not create thread in ${targetChannel.id} (${err?.message}), falling back to TIMER_CHANNEL_ID`);
+        const fallback = await interaction.client.channels.fetch(process.env.TIMER_CHANNEL_ID).catch(() => null);
+        if (!fallback) return interaction.editReply(`❌ Could not create thread: ${err?.message}`);
+        targetChannel = fallback;
+        thread = await targetChannel.threads.create({
+          name: threadName,
+          autoArchiveDuration: 1440,
+          reason: 'Raid night parse scoreboard',
+        });
+      } else {
+        return interaction.editReply(`❌ Could not create thread: ${err?.message}`);
+      }
+    }
 
     // Post summary as first message (will be edited in place as parses come in)
     const summaryMsg = await thread.send({ embeds: [summaryEmbed] });
