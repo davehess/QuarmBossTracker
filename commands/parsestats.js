@@ -54,22 +54,40 @@ function mergeKillGroup(group) {
 function fmt(n) { return n.toLocaleString('en-US'); }
 
 function buildScoreboardEmbed(bossName, bossEmoji, entries, killCount) {
-  // entries: sorted array of { name, hasPets, appearances, avgDps, avgDamage, bestDps }
-  const rows = entries.slice(0, 15).map((p, i) => {
-    const rank     = String(i + 1).padStart(2);
-    const name     = (p.name + (p.hasPets ? ' +P' : '')).padEnd(20);
-    const avgDps   = (fmt(p.avgDps) + '/s').padStart(8);
-    const best     = (fmt(p.bestDps) + '/s').padStart(8);
-    const seen     = String(p.appearances).padStart(2) + 'x';
-    return `${rank}. ${name} ${avgDps}  best ${best}  ${seen}`;
-  });
+  const isSingle = killCount === 1;
 
-  const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Avg DPS'.padStart(8)}  ${'Best'.padStart(13)}  Seen`;
+  // Single kill: rank by damage. Historical: rank by avg DPS.
+  const sorted = isSingle
+    ? [...entries].sort((a, b) => b.avgDamage - a.avgDamage)
+    : [...entries].sort((a, b) => b.avgDps - a.avgDps);
+
+  let rows, hdr;
+  if (isSingle) {
+    rows = sorted.slice(0, 15).map((p, i) => {
+      const rank = String(i + 1).padStart(2);
+      const name = (p.name + (p.hasPets ? ' +P' : '')).padEnd(20);
+      const dmg  = fmt(p.avgDamage).padStart(9);
+      const dps  = (fmt(p.avgDps) + '/s').padStart(7);
+      return `${rank}. ${name} ${dmg}  ${dps}`;
+    });
+    hdr = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(9)}  ${'DPS'.padStart(7)}`;
+  } else {
+    rows = sorted.slice(0, 15).map((p, i) => {
+      const rank   = String(i + 1).padStart(2);
+      const name   = (p.name + (p.hasPets ? ' +P' : '')).padEnd(20);
+      const avgDps = (fmt(p.avgDps) + '/s').padStart(7);
+      const best   = (fmt(p.bestDps) + '/s').padStart(7);
+      const dmg    = fmt(p.avgDamage).padStart(9);
+      const seen   = String(p.appearances).padStart(2) + 'x';
+      return `${rank}. ${name} ${avgDps}  ${best}  ${dmg}  ${seen}`;
+    });
+    hdr = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Avg DPS'.padStart(7)}  ${'Best'.padStart(7)}  ${'Avg Dmg'.padStart(9)}  Seen`;
+  }
+
   const divider = '─'.repeat(hdr.length);
   const table   = [hdr, divider, ...rows].join('\n');
 
-  // Flag top 3 consistent performers as Feral Avatar candidates
-  const faTargets = entries
+  const faTargets = sorted
     .filter(p => p.appearances >= Math.ceil(killCount / 2))
     .slice(0, 3)
     .map(p => `**${p.name}**`)
@@ -82,7 +100,7 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, killCount) {
     .setDescription(`Across **${killCount}** logged kill${killCount !== 1 ? 's' : ''}`)
     .addFields({ name: 'Top DPS', value: '```\n' + table + '\n```', inline: false });
 
-  if (faTargets) {
+  if (faTargets && !isSingle) {
     embed.addFields({
       name: '🐾 Feral Avatar Candidates',
       value: `${faTargets} — consistent top performers present in ≥50% of kills`,
@@ -186,8 +204,7 @@ module.exports = {
         ...p,
         avgDps:    Math.round(p.totalDps / p.appearances),
         avgDamage: Math.round(p.totalDamage / p.appearances),
-      }))
-      .sort((a, b) => b.avgDps - a.avgDps);
+      }));
 
     const bossName = boss?.name || bossId;
     const embed    = buildScoreboardEmbed(bossName, boss?.emoji, entries, killCount);
