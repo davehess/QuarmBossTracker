@@ -82,6 +82,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (cmd?.autocomplete) { try { await cmd.autocomplete(interaction); } catch (e) { console.error(e); } }
     return;
   }
+  if (interaction.isStringSelectMenu() && interaction.customId === 'parseConfirm') {
+    const { handleParseConfirm } = require('./commands/parse');
+    await handleParseConfirm(interaction).catch(console.error);
+    return;
+  }
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('kill:'))               { await handleBoardButton(interaction); return; }
     if (interaction.customId === 'cancel_announce')             { await handleCancelAnnounce(interaction); return; }
@@ -543,6 +548,12 @@ function scheduleMidnightSummary(readyClient) {
       // ── PVP midnight post ────────────────────────────────────────────────
       await postPvpMidnightSummary(readyClient);
 
+      // ── Archive raid night parse thread ──────────────────────────────────
+      await archiveRaidSession(readyClient);
+
+      // ── Consolidate nightly parses ───────────────────────────────────────
+      await consolidateNightlyParses(readyClient).catch(console.error);
+
       console.log('✅ Midnight tasks complete');
     } catch (err) { console.error('Midnight task error:', err); }
     setTimeout(runMidnightTasks, msUntilMidnightEST());
@@ -670,5 +681,125 @@ async function checkQuakeAlert(readyClient) {
     }
   } catch (err) { console.warn('Quake alert error:', err?.message); }
 }
+
+// ── Nightly parse consolidation ────────────────────────────────────────────────
+async function consolidateNightlyParses(client) {
+  const { loadParses, saveParses, logParseToDiscord } = require('./commands/parse');
+  const { groupKillsBySession, mergeKillGroup }        = require('./commands/parsestats');
+
+  const allParses = loadParses();
+  const now       = Date.now();
+  const since24h  = now - 24 * 60 * 60 * 1000;
+
+  let consolidated = false;
+
+  for (const [bossId, kills] of Object.entries(allParses)) {
+    // Only look at kills from the last 24 hours
+    const recent = kills.filter(k => k.timestamp >= since24h);
+    if (recent.length === 0) continue;
+
+    // Group by 10-minute session windows
+    const groups = groupKillsBySession(recent, 10 * 60 * 1000);
+
+    const newKills = [...kills.filter(k => k.timestamp < since24h)]; // keep older kills untouched
+
+    for (const group of groups) {
+      if (group.length <= 1) {
+        // Single submission — keep as-is
+        newKills.push(...group);
+        continue;
+      }
+
+      // Multiple submissions in same session window — merge them
+      const merged = mergeKillGroup(group);
+
+      // Delete individual Discord log messages for entries in this group
+      const logThreadId = process.env.PARSES_LOG_THREAD_ID;
+      if (logThreadId) {
+        const logThread = await client.channels.fetch(logThreadId).catch(() => null);
+        if (logThread) {
+          for (const entry of group) {
+            if (entry.discordMsgId) {
+              try {
+                const msg = await logThread.messages.fetch(entry.discordMsgId);
+                await msg.delete();
+              } catch {}
+            }
+          }
+        }
+      }
+
+      // Use one of the existing entries as the base for the merged parse entry
+      const canonical = group.reduce((best, k) => k.totalDamage > best.totalDamage ? k : best, group[0]);
+      const mergedEntry = {
+        timestamp:       merged.timestamp,
+        submittedBy:     canonical.submittedBy || null,
+        submittedByName: canonical.submittedByName || 'consolidated',
+        duration:        merged.duration,
+        totalDamage:     merged.totalDamage,
+        totalDps:        merged.duration > 0 ? Math.round(merged.totalDamage / merged.duration) : 0,
+        players:         merged.players,
+        discordMsgId:    null, // will be set after logging
+      };
+
+      // Post ONE consolidated log entry
+      const msg = await logParseToDiscord(client, bossId, mergedEntry).catch(() => null);
+      if (msg?.id) mergedEntry.discordMsgId = msg.id;
+
+      newKills.push(mergedEntry);
+      consolidated = true;
+    }
+
+    allParses[bossId] = newKills;
+  }
+
+  if (consolidated) {
+    saveParses(allParses);
+    console.log('[consolidate] Nightly parse consolidation complete');
+  } else {
+    console.log('[consolidate] No parse groups to consolidate');
+  }
+}
+
+// ── Archive raid night parse thread at midnight ───────────────────────────────
+async function archiveRaidSession(readyClient) {
+  const { getRaidSession, clearRaidSession } = require('./utils/state');
+  const session = getRaidSession();
+  if (!session) return;
+
+  const archiveChannelId = process.env.RAID_MOBS_ARCHIVE_CHANNEL_ID;
+  try {
+    const thread = await readyClient.channels.fetch(session.threadId).catch(() => null);
+    if (thread) {
+      // Post archive notice in the thread itself
+      await thread.send({ content: `📦 **Archived** — ${session.label}. Parses saved to history.` }).catch(() => {});
+      // Archive (lock) the Discord thread
+      await thread.setArchived(true, 'Raid night ended at midnight').catch(() => {});
+    }
+
+    // Post a link in the archive channel if configured
+    if (archiveChannelId) {
+      const archiveCh = await readyClient.channels.fetch(archiveChannelId).catch(() => null);
+      if (archiveCh && thread) {
+        await archiveCh.send({
+          content: `📋 **${session.label}** parse thread archived → <#${session.threadId}>`,
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('[raidnight] archiveRaidSession error:', err?.message);
+  }
+
+  clearRaidSession();
+}
+
+// ── Health check server ───────────────────────────────────────────────────────
+// Railway's proxy times out idle connections (including Discord's WebSocket) if
+// there is no HTTP listener. This tiny server satisfies the health check.
+const http = require('http');
+http.createServer((_, res) => { res.writeHead(200); res.end('OK'); })
+  .listen(process.env.PORT || 3000, () =>
+    console.log(`[health] HTTP check on :${process.env.PORT || 3000}`)
+  );
 
 client.login(process.env.DISCORD_TOKEN);
