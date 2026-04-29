@@ -20,8 +20,22 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('pvpkill')
     .setDescription('Record a PVP mob kill and start its respawn timer.')
-    .addStringOption(opt => opt.setName('mob').setDescription('Mob name').setRequired(true))
+    .addStringOption(opt => opt.setName('mob').setDescription('Mob name').setRequired(true).setAutocomplete(true))
     .addNumberOption(opt => opt.setName('timer_hours').setDescription(`Respawn timer in hours (default: ${DEFAULT_TIMER_HOURS})`).setRequired(false).setMinValue(0.1)),
+
+  async autocomplete(interaction) {
+    const focused = interaction.options.getFocused().toLowerCase();
+    delete require.cache[require.resolve('../data/bosses.json')];
+    const bosses = require('../data/bosses.json');
+    const matches = bosses
+      .filter(b =>
+        b.name.toLowerCase().includes(focused) ||
+        (b.nicknames || []).some(n => n.toLowerCase().includes(focused))
+      )
+      .slice(0, 25)
+      .map(b => ({ name: b.name, value: b.name }));
+    await interaction.respond(matches);
+  },
 
   async execute(interaction) {
     if (!hasAllowedRole(interaction.member))
