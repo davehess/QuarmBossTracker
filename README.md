@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 0.9.6 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.0.1 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -39,6 +39,14 @@ One thread per expansion. Each thread contains:
 
 Receives midnight daily summaries, zone kill cards when bosses respawn, and archived `/announce` messages.
 
+### Onboarding Thread — `ONBOARDING_THREAD_ID`
+
+Hosts the public Quick Start instructions and the encrypted opt-out registry (salted SHA-256 hashes — no plaintext user IDs).
+
+### Parse Logs Thread — `PARSES_LOG_THREAD_ID`
+
+Every `/parse` submission is archived here as a JSON embed. This is the **source of truth** for parse data and survives Railway volume wipes — the bot rebuilds `parses.json` from this thread on every startup.
+
 ---
 
 ## Commands
@@ -55,32 +63,45 @@ Receives midnight daily summaries, zone kill cards when bosses respawn, and arch
 | `/cleanup` | Remove duplicate/stale messages, re-anchor boards to earliest copies |
 | `/restore <links...>` | Rebuild kill state from any Active Cooldowns or Daily Summary message links |
 
+### Parse Tracking
+
+| Command | Description |
+|---------|-------------|
+| `/parse <data>` | Submit an EQLogParser "Send to EQ" DPS parse — boss auto-detected from the header |
+| `/parseboss <boss> <data>` | Submit a parse with explicit boss selection |
+| `/parsestats <boss>` | DPS scoreboard and raidwide metrics for a boss across all stored kills |
+| `/parseaoe <data>` | Submit an AoE parse combining damage within a 5-minute window (max damage per player) |
+| `/parsenight [public]` | Full-night DPS summary across every kill tonight |
+| `/raidnight` | Open tonight's raid parse thread with a live rolling scoreboard |
+
+EQLogParser "Send to EQ" format:
+```
+<Boss> in <N>s, <X>K/<X>M Damage @<X>K, 1. Player = <X>K@<X> in <X>s | ...
+```
+
 ### Raid Announcements
 
 | Command | Description |
 |---------|-------------|
 | `/announce time:<when> [boss:<name>] [zone:<zone>] [note:<text>]` | Create a raid announcement, a thread, and a Discord event |
 | `/addtarget <boss>` | Add a boss to the active announce thread's target list |
-| `/removetarget <boss>` | Remove a boss from the target list (triggers easter egg chain when all real targets removed) |
+| `/removetarget <boss>` | Remove a boss from the target list |
 | `/adjusttime <time>` | Update the raid time in the announce thread and Discord event |
 | `/adjustdate <date>` | Update the raid date (e.g. `"Friday"`, `"4/30"`) |
 
-**Time formats accepted by `/announce` and `/adjusttime`:** `"8:30 PM"`, `"Thursday 9pm"`, `"tomorrow 8pm"`, `"8:30 PM EST"`, `"in 2 hours"`
+**Time formats:** `"8:30 PM"`, `"Thursday 9pm"`, `"tomorrow 8pm"`, `"8:30 PM EST"`, `"in 2 hours"`
 
-The announce thread contains a live control panel showing current targets and time. Use the **Cancel Event** button in the thread to cancel the Discord event and archive or delete the thread.
+The announce thread contains a live control panel. Use the **Cancel Event** button to cancel and archive.
 
 ### PVP Tracking
 
 | Command | Description |
 |---------|-------------|
 | `/pvpkill <mob> [timer_hours]` | Record a PVP mob kill with an optional respawn timer (default: `PVP_DEFAULT_TIMER_HOURS`) |
-| `/pvpunkill <mob>` | Remove a PVP kill record (autocomplete) |
-| `/quake [time]` | Schedule a quake (`"now"`, `"9pm"`, `"in 2 hours"`) — resets all PVP mob timers, creates a Discord event, pings @PVP |
+| `/pvpunkill <mob>` | Remove a PVP kill record |
+| `/quake [time]` | Schedule a quake (`"now"`, `"9pm"`, `"in 2 hours"`) — resets all PVP mob timers, creates a Discord event |
 | `/pvprole [silent]` | Toggle your @PVP role; without `silent`, posts a wolf announcement to the PVP channel |
-| `/pvpalert <zone>` | Ping @PVP with a howl message for the zone; other users click 🐺 Howl! to join the call |
-
-PVP mob timers midnight summary posts to the PVP channel showing what's spawning that day.
-Quake posts a 1-hour warning to the PVP channel when the scheduled time approaches.
+| `/pvpalert <zone>` | Ping @PVP with a howl message; other users click 🐺 Howl! to join |
 
 ### Boss Management
 
@@ -88,7 +109,24 @@ Quake posts a 1-hour warning to the PVP channel when the scheduled time approach
 |---------|-------------|
 | `/addboss <pqdi_url>` | Scrape a PQDI.cc NPC page, add to `bosses.json`, refresh the board |
 | `/removeboss <boss>` | Remove a boss, clear its kill state, refresh the board |
-| `/raidbosshelp` | Show all commands and usage (ephemeral) |
+
+### Help & Onboarding
+
+| Command | Description |
+|---------|-------------|
+| `/raidbosshelp` | Full command reference (ephemeral) |
+| `/onboarding` | Show the Wolf Pack welcome message again, or toggle your opt-out preference |
+
+---
+
+## Onboarding System
+
+When a new member joins, the bot sends them a welcome message (DM, or falls back to the onboarding thread) covering the three pillars of coordination: accountability, timing, and announcements. Buttons let them indicate intent (PVP, organizer, or attendee) and see tailored follow-up.
+
+- **Opt out:** Click "Don't show me this again" in the welcome message. The bot records a salted SHA-256 hash of the user ID — no plaintext IDs are stored anywhere.
+- **Opt back in / view again:** Run `/onboarding` at any time.
+- **Version tracking:** The opt-out includes the bot version. If a new version ships new commands, opted-out users receive a brief "what's new" notice.
+- **Registry:** Stored as an embed in `ONBOARDING_THREAD_ID` and reloaded on every startup.
 
 ---
 
@@ -103,11 +141,11 @@ Quake posts a 1-hour warning to the PVP channel when the scheduled time approach
    - Bot Permissions: `Send Messages`, `Embed Links`, `Read Message History`, `Manage Messages`, `Manage Events`, `Manage Roles`
 6. Copy the generated URL and invite the bot to your server
 
-> Both `bot` and `applications.commands` scopes are required for slash commands to appear.
->
 > `Manage Events` is required for Discord Scheduled Events created by `/announce` and `/quake`.
 >
 > `Manage Roles` is required for `/pvprole` to add and remove the @PVP role.
+>
+> **Server Members Intent** is required for the member-join onboarding messages.
 
 ---
 
@@ -146,12 +184,14 @@ npm start
 
 1. Create 5 expansion threads inside `#raid-mobs`: Classic, Kunark, Velious, Luclin, PoP
 2. Create a Historic Kills thread inside `#raid-mobs`
-3. Optionally create a PVP channel or thread
-4. Add all thread/channel IDs to your env vars
-5. Deploy the bot
-6. Run `/board` — creates all 4 main-channel slots and posts boards in each thread
-7. Right-click each anchored message → Copy ID → add to env vars (prevents re-posting on redeploy)
-8. Run `/board` again to confirm everything edits in place (no new messages posted)
+3. Create a Parse Logs thread (e.g. "Parse Logs") — paste its ID into `PARSES_LOG_THREAD_ID`
+4. Create an Onboarding thread (e.g. "Getting Started") — paste its ID into `ONBOARDING_THREAD_ID`
+5. Optionally create a PVP channel or thread
+6. Add all thread/channel IDs to your env vars
+7. Deploy the bot
+8. Run `/board` — creates all 4 main-channel slots and posts boards in each thread
+9. Right-click each anchored message → Copy ID → add to env vars (prevents re-posting on redeploy)
+10. Run `/board` again to confirm everything edits in place (no new messages posted)
 
 ### Recovery After State Loss
 
@@ -159,7 +199,7 @@ npm start
 /restore <link1> [<link2> ...]
 ```
 
-Paste links to any combination of Active Cooldowns cards (main channel or thread) and Daily Raid Summary messages. The most recent `nextSpawn` per boss wins. Paste a full week of daily summaries at once — stale timers are skipped automatically.
+Paste links to any combination of Active Cooldowns cards and Daily Raid Summary messages. The most recent `nextSpawn` per boss wins. Parse data is recovered automatically from the Parse Logs thread on startup.
 
 ---
 
@@ -179,6 +219,8 @@ Paste links to any combination of Active Cooldowns cards (main channel or thread
 | `LUCLIN_THREAD_ID` | Luclin expansion thread ID |
 | `POP_THREAD_ID` | PoP expansion thread ID |
 | `HISTORIC_KILLS_THREAD_ID` | Historic Kills thread ID |
+| `PARSES_LOG_THREAD_ID` | Parse Logs thread ID (parse data source of truth) |
+| `ONBOARDING_THREAD_ID` | Onboarding thread ID (quick-start instructions + opt-out registry) |
 | `ALLOWED_ROLE_NAMES` | Comma-delimited role names (e.g. `Pack Member,Officer,Guild Leader`) |
 
 ### Hardcoded Slot Anchors (recommended — paste once, survive any redeploy)
@@ -194,7 +236,7 @@ Paste links to any combination of Active Cooldowns cards (main channel or thread
 | `VELIOUS_BOARD_IDS` | Velious board IDs |
 | `LUCLIN_BOARD_IDS` | Luclin board IDs |
 | `POP_BOARD_IDS` | PoP board IDs |
-| `CLASSIC_COOLDOWN_ID` | Active Cooldowns card message at top of Classic thread |
+| `CLASSIC_COOLDOWN_ID` | Active Cooldowns card at top of Classic thread |
 | `KUNARK_COOLDOWN_ID` | Kunark cooldown card ID |
 | `VELIOUS_COOLDOWN_ID` | Velious cooldown card ID |
 | `LUCLIN_COOLDOWN_ID` | Luclin cooldown card ID |
@@ -204,8 +246,10 @@ Paste links to any combination of Active Cooldowns cards (main channel or thread
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFAULT_TIMEZONE` | `America/New_York` | IANA timezone for time parsing and midnight tasks (e.g. `America/Chicago`) |
+| `DEFAULT_TIMEZONE` | `America/New_York` | IANA timezone for time parsing and midnight tasks |
 | `ARCHIVE_CHANNEL_ID` | — | Channel to receive archived raid event summaries |
+| `BOSS_OUTPUT_CHANNEL_ID` | — | Channel where `bosses.json` is posted after `/addboss` or `/removeboss` |
+| `RAID_CHAT_CHANNEL_ID` | — | Channel for `/raidnight` threads on raid nights (falls back to `TIMER_CHANNEL_ID`) |
 | `PVP_CHANNEL_ID` | — | Channel for PVP announcements and alerts |
 | `PVP_THREAD_ID` | — | Thread for PVP (takes priority over `PVP_CHANNEL_ID`) |
 | `PVP_ROLE` | `PVP` | Name of the Discord role to ping for PVP commands |
@@ -233,7 +277,9 @@ Run at midnight in `DEFAULT_TIMEZONE` (default: Eastern):
 4. Archive all passed announce threads
 5. Delete stale spawn alert messages
 6. Post PVP mob spawning-today summary to the PVP channel (if any spawn within 24h)
-7. Reset the daily kill log
+7. Archive the raid night parse thread
+8. Consolidate multi-user parse submissions within 10-minute windows (max damage per player)
+9. Reset the daily kill log
 
 ---
 
@@ -260,7 +306,7 @@ Valid `expansion` values: `Classic`, `Kunark`, `Velious`, `Luclin`, `PoP`
 
 Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take effect immediately without a restart.
 
-> `/addboss` and `/removeboss` write to `bosses.json` on the running container only. With Docker, sync back with: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json` then commit.
+> With Docker, sync back after `/addboss`: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json`
 
 ---
 
@@ -269,7 +315,7 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ```
 quarm-raid-timer-bot/
 ├── index.js                   Entry point: client, interaction router, spawn checker, midnight tasks
-├── package.json               version 0.9.6
+├── package.json               version 1.0.1
 ├── Dockerfile
 ├── docker-compose.yml
 ├── railway.toml
@@ -290,11 +336,18 @@ quarm-raid-timer-bot/
 │   ├── removetarget.js        /removetarget
 │   ├── addboss.js             /addboss
 │   ├── removeboss.js          /removeboss
+│   ├── parse.js               /parse
+│   ├── parseboss.js           /parseboss
+│   ├── parsestats.js          /parsestats
+│   ├── parseaoe.js            /parseaoe
+│   ├── parsenight.js          /parsenight
+│   ├── raidnight.js           /raidnight
 │   ├── pvpkill.js             /pvpkill
 │   ├── pvpunkill.js           /pvpunkill
 │   ├── quake.js               /quake
 │   ├── pvprole.js             /pvprole
 │   ├── pvpalert.js            /pvpalert
+│   ├── onboarding.js          /onboarding
 │   └── raidbosshelp.js        /raidbosshelp
 │
 ├── utils/
@@ -305,7 +358,8 @@ quarm-raid-timer-bot/
 │   ├── killops.js             postKillUpdate(), postOrUpdateExpansionBoard(), refresh*Card()
 │   ├── roles.js               hasAllowedRole(), getAllowedRoles()
 │   ├── timer.js               calcNextSpawn(), discordRelativeTime(), discordAbsoluteTime()
-│   └── timezone.js            getDefaultTz(), msUntilMidnightInTz(), parseUserTime(), localToUTC()
+│   ├── timezone.js            getDefaultTz(), msUntilMidnightInTz(), parseUserTime(), localToUTC()
+│   └── onboarding.js          Opt-out registry, SHA-256 hashing, welcome/organizer/attendee embeds
 │
 └── data/
     ├── bosses.json            109 bosses — hot-reloaded; never baked into Docker image
@@ -318,10 +372,10 @@ quarm-raid-timer-bot/
 
 | Permission | Why |
 |------------|-----|
-| Send Messages | Kill cards, spawn alerts, boards, PVP alerts |
+| Send Messages | Kill cards, spawn alerts, boards, PVP alerts, onboarding messages |
 | Embed Links | Rich embeds with PQDI links |
 | Read Message History | Fetch messages to edit in place |
 | Manage Messages | Delete kill cards on respawn; clean up at midnight |
 | Manage Events | Create/delete Discord Scheduled Events for `/announce` and `/quake` |
 | Manage Roles | Add/remove @PVP role via `/pvprole` |
-| Create Public Threads | Create announce threads from `/announce` |
+| Create Public Threads | Create announce and raid-night threads |

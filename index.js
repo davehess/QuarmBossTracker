@@ -37,7 +37,7 @@ function getBosses() {
 }
 
 // ── Client ─────────────────────────────────────────────────────────────────
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
 // ── Load commands ──────────────────────────────────────────────────────────
 client.commands = new Collection();
@@ -62,7 +62,26 @@ client.once(Events.ClientReady, async (readyClient) => {
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
+  runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 });
+
+async function runStartupSequence(readyClient) {
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+  const { loadOnboardingData, postOrUpdateInstructions } = require('./utils/onboarding');
+  const { loadParsesFromDiscord }  = require('./commands/parse');
+  const { runAutoRestore }         = require('./commands/restore');
+  const { runBoard }               = require('./commands/board');
+  const { runCleanup }             = require('./commands/cleanup');
+
+  await loadOnboardingData(readyClient).catch(err => console.warn('[startup] loadOnboardingData:', err?.message));
+  await postOrUpdateInstructions(readyClient).catch(err => console.warn('[startup] postOrUpdateInstructions:', err?.message));
+  await loadParsesFromDiscord(readyClient).catch(err => console.warn('[startup] loadParsesFromDiscord:', err?.message));
+  await runAutoRestore(readyClient).catch(err => console.warn('[startup] runAutoRestore:', err?.message));
+  await delay(60_000);
+  await runBoard(readyClient).catch(err => console.warn('[startup] runBoard:', err?.message));
+  await delay(60_000);
+  await runCleanup(readyClient).catch(err => console.warn('[startup] runCleanup:', err?.message));
+}
 
 async function registerCommands() {
   const guildId = process.env.DISCORD_GUILD_ID, clientId = process.env.DISCORD_CLIENT_ID;
@@ -95,6 +114,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'pvprole_toggle')              { await handlePvpRoleToggle(interaction, false); return; }
     if (interaction.customId === 'pvprole_toggle_silent')       { await handlePvpRoleToggle(interaction, true); return; }
     if (interaction.customId.startsWith('pvpalert_howl:'))      { await handlePvpAlertHowl(interaction); return; }
+    if (interaction.customId === 'onb_pvp')                     { await handleOnbPvp(interaction); return; }
+    if (interaction.customId === 'onb_organizer')               { await handleOnbOrganizer(interaction); return; }
+    if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
+    if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
+    if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
@@ -373,6 +397,114 @@ async function handlePvpAlertHowl(interaction) {
 
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: '🐺 AWROOOOOO!' });
 }
+
+// ── Onboarding button handlers ────────────────────────────────────────────────
+async function handleOnbPvp(interaction) {
+  const { buildAnnouncementEmbed, buildRoleRow, getPvpRole, getPvpRoleName } = require('./commands/pvprole');
+  try {
+    const roleName = getPvpRoleName();
+    const guild    = interaction.guild || await interaction.client.guilds.fetch(process.env.DISCORD_GUILD_ID);
+    const role     = await getPvpRole(guild);
+    const member   = await guild.members.fetch(interaction.user.id);
+    if (role) {
+      if (member.roles.cache.has(role.id)) {
+        await member.roles.remove(role);
+        await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Removed **@${roleName}** from your roles.` });
+      } else {
+        await member.roles.add(role);
+        await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Added **@${roleName}** to your roles! You'll be pinged for PVP alerts and quake events.` });
+      }
+    } else {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Could not find the **@${roleName}** role. Ask an officer to set it up.` });
+    }
+  } catch (err) {
+    console.warn('onb_pvp:', err?.message);
+    await interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not update your role.' }).catch(() => {});
+  }
+}
+
+async function handleOnbOrganizer(interaction) {
+  const { buildOrganizerEmbed } = require('./utils/onboarding');
+  await interaction.reply({ embeds: [buildOrganizerEmbed()], flags: MessageFlags.Ephemeral });
+}
+
+async function handleOnbAttend(interaction) {
+  const { buildAttendeeEmbed } = require('./utils/onboarding');
+  await interaction.reply({ embeds: [buildAttendeeEmbed()], flags: MessageFlags.Ephemeral });
+}
+
+async function handleOnbIgnore(interaction) {
+  const version = interaction.customId.replace('onb_ignore:', '');
+  const { setOptedOut, saveOnboardingData } = require('./utils/onboarding');
+  setOptedOut(interaction.user.id, version);
+  await saveOnboardingData(interaction.client);
+  await interaction.reply({
+    flags:   MessageFlags.Ephemeral,
+    content: `🔕 Got it — you won't see the welcome message on future joins.\nRun \`/onboarding\` any time to see it again or to opt back in.`,
+  });
+}
+
+async function handleOnbShowAgain(interaction) {
+  const pkg = require('./package.json');
+  const { removeOptOut, saveOnboardingData, buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
+  removeOptOut(interaction.user.id);
+  await saveOnboardingData(interaction.client);
+  await interaction.reply({
+    embeds:     [buildWelcomeEmbed()],
+    components: buildWelcomeComponents(pkg.version),
+    flags:      MessageFlags.Ephemeral,
+  });
+}
+
+// ── New member onboarding ─────────────────────────────────────────────────────
+client.on(Events.GuildMemberAdd, async (member) => {
+  const pkg = require('./package.json');
+  const {
+    isOptedOut, getOptedOutVersion, changesSince,
+    buildWelcomeEmbed, buildWelcomeComponents,
+  } = require('./utils/onboarding');
+
+  const userId  = member.user.id;
+  const version = pkg.version;
+
+  // If opted out — check whether there are new features since they last checked
+  if (isOptedOut(userId)) {
+    const optedAt = getOptedOutVersion(userId);
+    const changes = optedAt ? changesSince(optedAt) : [];
+    if (changes.length > 0) {
+      try {
+        await member.send(
+          `👋 Welcome back! Since you last opted out of onboarding (v${optedAt}), there are new features:\n\n` +
+          changes.join('\n') +
+          `\n\nRun \`/onboarding\` in the server to see the full welcome or opt back in.`
+        );
+      } catch {}
+    }
+    return;
+  }
+
+  // Not opted out — send the welcome message via DM
+  try {
+    await member.send({
+      embeds:     [buildWelcomeEmbed()],
+      components: buildWelcomeComponents(version),
+    });
+  } catch {
+    // DMs disabled — fall back to posting in the onboarding thread with a mention
+    const threadId = process.env.ONBOARDING_THREAD_ID;
+    if (!threadId) return;
+    try {
+      const thread = await member.client.channels.fetch(threadId);
+      await thread.send({
+        content:    `👋 Welcome, ${member}! Here's how to get started:`,
+        embeds:     [buildWelcomeEmbed()],
+        components: buildWelcomeComponents(version),
+      });
+    } catch (err) {
+      console.warn('[onboarding] GuildMemberAdd fallback failed:', err?.message);
+    }
+  }
+});
 
 // ── Spawn checker ──────────────────────────────────────────────────────────
 const alertedSoon = new Set(), alertedSpawned = new Set();
