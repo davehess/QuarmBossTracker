@@ -1,7 +1,7 @@
 // commands/removeboss.js
 // /removeboss <boss name or PQDI URL> — Remove a boss from bosses.json and refresh the board.
 
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags, AttachmentBuilder } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
@@ -100,46 +100,28 @@ module.exports = {
 
     await interaction.reply({ embeds: [embed] });
 
-    // Refresh board
-    const channelId = process.env.TIMER_CHANNEL_ID;
-    if (!channelId) return;
+    // Refresh board for the boss's expansion
     try {
-      const { getAllState, getBoardMessages, saveBoardMessages } = require('../utils/state');
-      const { buildBoardPanels } = require('../utils/board');
+      const { postOrUpdateExpansionBoard } = require('../utils/killops');
+      const { getThreadId } = require('../utils/config');
       const freshBosses = require('../data/bosses.json');
-      const channel     = await interaction.client.channels.fetch(channelId);
-      const killState   = getAllState();
-      const panels      = buildBoardPanels(freshBosses, killState);
-      const boardIds    = getBoardMessages();
-
-      if (boardIds.length === panels.length) {
-        for (let i = 0; i < panels.length; i++) {
-          try {
-            const msg = await channel.messages.fetch(boardIds[i].messageId);
-            await msg.edit(panels[i].payload);
-          } catch (_) {}
-        }
-      } else if (panels.length < boardIds.length) {
-        // Panel count shrank — edit what we can, leave extras as-is (or could delete)
-        for (let i = 0; i < panels.length; i++) {
-          try {
-            const msg = await channel.messages.fetch(boardIds[i].messageId);
-            await msg.edit(panels[i].payload);
-          } catch (_) {}
-        }
-        // Update stored IDs to only track the active panels
-        saveBoardMessages(boardIds.slice(0, panels.length));
-      } else {
-        // Panel count grew (shouldn't happen on remove) — append
-        const newIds = [...boardIds];
-        for (let i = boardIds.length; i < panels.length; i++) {
-          const sent = await channel.send(panels[i].payload);
-          newIds.push({ messageId: sent.id, panelIndex: i });
-        }
-        saveBoardMessages(newIds);
+      const threadId = getThreadId(boss.expansion);
+      if (threadId) {
+        await postOrUpdateExpansionBoard(interaction.client, boss.expansion, threadId, freshBosses);
       }
     } catch (err) {
       console.warn('removeboss board refresh failed:', err?.message);
+    }
+
+    // Post bosses.json to BOSS_OUTPUT_CHANNEL_ID if configured
+    if (process.env.BOSS_OUTPUT_CHANNEL_ID) {
+      try {
+        const freshBosses = require('../data/bosses.json');
+        const outputCh = await interaction.client.channels.fetch(process.env.BOSS_OUTPUT_CHANNEL_ID);
+        const buf = Buffer.from(fs.readFileSync(BOSSES_FILE, 'utf8'), 'utf8');
+        const att = new AttachmentBuilder(buf, { name: 'bosses.json' });
+        await outputCh.send({ content: `📋 bosses.json updated — ${freshBosses.length} bosses`, files: [att] });
+      } catch {}
     }
   },
 };

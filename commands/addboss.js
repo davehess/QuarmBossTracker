@@ -2,7 +2,7 @@
 // /addboss <pqdi_url> — Scrapes a PQDI NPC page, extracts boss data,
 // appends to bosses.json, and triggers a board refresh.
 
-const { SlashCommandBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags, AttachmentBuilder } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
 const https = require('https');
@@ -291,6 +291,8 @@ module.exports = {
       console.warn('addboss board refresh failed:', err?.message);
     }
 
+    const freshBosses = require('../data/bosses.json');
+
     await interaction.editReply(
       `✅ **${name}** added to bosses.json!\n` +
       `• Zone: ${zone}\n` +
@@ -300,5 +302,15 @@ module.exports = {
       `• PQDI: ${url}\n` +
       (boardRefreshed ? '• Board updated in place.' : '• Run `/board` to update the board.')
     );
+
+    // Post bosses.json to BOSS_OUTPUT_CHANNEL_ID if configured
+    if (process.env.BOSS_OUTPUT_CHANNEL_ID) {
+      try {
+        const outputCh = await interaction.client.channels.fetch(process.env.BOSS_OUTPUT_CHANNEL_ID);
+        const buf = Buffer.from(fs.readFileSync(BOSSES_FILE, 'utf8'), 'utf8');
+        const att = new AttachmentBuilder(buf, { name: 'bosses.json' });
+        await outputCh.send({ content: `📋 bosses.json updated — ${freshBosses.length} bosses`, files: [att] });
+      } catch {}
+    }
   },
 };

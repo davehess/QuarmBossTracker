@@ -1,8 +1,12 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 0.9.6  
+**Version:** 1.0.1  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
+
+## Versioning Rule
+
+On every revision, increment the **patch** version (`Z` in `x.y.z`) in both `package.json` and `README.md` unless a specific minor (`y`) or major (`x`) bump is requested. Update `CLAUDE.md` version header to match.
 
 ---
 

@@ -1,5 +1,8 @@
 // commands/parse.js — Submit an EQLogParser DPS parse for a boss fight.
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const {
+  SlashCommandBuilder, EmbedBuilder, MessageFlags,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ActionRowBuilder,
+} = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
 
@@ -56,6 +59,49 @@ function parseEQLog(str) {
   return { bossName, duration, totalDamage, totalDps, players };
 }
 
+// Boss matching: exact > nickname > partial (by closest name length, tie: longer name wins)
+function findBossFromName(parsedName, bosses) {
+  const nl = parsedName.toLowerCase().trim();
+  const exact = bosses.find(b => b.name.toLowerCase() === nl);
+  if (exact) return exact;
+  const nick = bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl));
+  if (nick) return nick;
+  const partials = bosses
+    .filter(b => { const bn = b.name.toLowerCase(); return bn.includes(nl) || nl.includes(bn); })
+    .sort((a, b) => {
+      const da = Math.abs(a.name.length - nl.length);
+      const db = Math.abs(b.name.length - nl.length);
+      return da !== db ? da - db : b.name.length - a.name.length;
+    });
+  return partials[0] || null;
+}
+
+// Returns { exact: boss } | { partial: boss } | { candidates: [boss,...] } | { none: true }
+function findBossWithQuality(parsedName, bosses) {
+  const nl = parsedName.toLowerCase().trim();
+  const exact = bosses.find(b => b.name.toLowerCase() === nl);
+  if (exact) return { exact };
+  const nick = bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl));
+  if (nick) return { exact: nick };
+
+  // Build all partials with score
+  const partials = bosses
+    .filter(b => { const bn = b.name.toLowerCase(); return bn.includes(nl) || nl.includes(bn); })
+    .map(b => ({ boss: b, diff: Math.abs(b.name.length - nl.length) }))
+    .sort((a, b) => a.diff !== b.diff ? a.diff - b.diff : b.boss.name.length - a.boss.name.length);
+
+  if (partials.length === 0) return { none: true };
+  if (partials.length === 1) return { partial: partials[0].boss };
+
+  // If the best score is significantly better than second, treat as single partial
+  const best = partials[0].diff;
+  const similar = partials.filter(p => p.diff <= best + 3); // within 3 chars of best
+  if (similar.length === 1) return { partial: similar[0].boss };
+
+  // Multiple similar candidates — return top 5 for select menu
+  return { candidates: similar.slice(0, 5).map(p => p.boss) };
+}
+
 function fmt(n) { return n.toLocaleString('en-US'); }
 
 function buildParseEmbed(bossName, parsed, bossEmoji) {
@@ -83,11 +129,11 @@ function buildParseEmbed(bossName, parsed, bossEmoji) {
 
 /**
  * Post a compact JSON embed to PARSES_LOG_THREAD_ID so parse data survives volume wipes.
- * Fire-and-forget — caller should .catch(() => {}).
+ * Returns the sent message object (or null).
  */
 async function logParseToDiscord(client, bossId, parseEntry) {
   const threadId = process.env.PARSES_LOG_THREAD_ID;
-  if (!threadId) return;
+  if (!threadId) return null;
   const thread = await client.channels.fetch(threadId);
   const data = {
     bossId,
@@ -100,13 +146,14 @@ async function logParseToDiscord(client, bossId, parseEntry) {
       n: name, ...(hasPets ? { hp: 1 } : {}), d: damage, dps, dur: duration,
     })),
   };
-  await thread.send({
+  const msg = await thread.send({
     embeds: [new EmbedBuilder()
       .setTitle('📊 Parse Log')
       .setColor(0x2f3136)
       .setDescription(JSON.stringify(data))
     ]
   });
+  return msg;
 }
 
 /**
@@ -121,10 +168,10 @@ async function loadParsesFromDiscord(client) {
   try {
     const thread = await client.channels.fetch(threadId);
 
-    // Fetch up to 1000 messages (10 pages × 100)
+    // Fetch up to 2000 messages (20 pages × 100)
     const allMsgs = [];
     let lastId = null;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
       const opts = { limit: 100 };
       if (lastId) opts.before = lastId;
       const batch = await thread.messages.fetch(opts);
@@ -148,6 +195,7 @@ async function loadParsesFromDiscord(client) {
           duration:        data.dur,
           totalDamage:     data.dmg,
           totalDps:        data.dps,
+          discordMsgId:    msg.id,
           players: (data.p || []).map(p => ({
             name: p.n, hasPets: !!(p.hp), damage: p.d, dps: p.dps, duration: p.dur,
           })),
@@ -174,13 +222,100 @@ async function loadParsesFromDiscord(client) {
   }
 }
 
+// ── Pending parses (for select-menu confirm flow) ──────────────────────────────
+const pendingParses = new Map(); // userId → { parsed, rawData, ts }
+
+// Expire entries after 2 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 60 * 1000;
+  for (const [userId, entry] of pendingParses.entries()) {
+    if (entry.ts < cutoff) pendingParses.delete(userId);
+  }
+}, 30_000);
+
+// ── Shared finish-parse logic ─────────────────────────────────────────────────
+async function finishParse(interaction, bossId, boss, parsed) {
+  delete require.cache[require.resolve('../data/bosses.json')];
+  const bosses = require('../data/bosses.json');
+
+  const parseEntry = {
+    timestamp:        Date.now(),
+    submittedBy:      interaction.user.id,
+    submittedByName:  interaction.member?.displayName || interaction.user.username,
+    duration:         parsed.duration,
+    totalDamage:      parsed.totalDamage,
+    totalDps:         parsed.totalDps,
+    players:          parsed.players,
+    discordMsgId:     null, // filled after logging
+  };
+
+  const parses = loadParses();
+  if (!parses[bossId]) parses[bossId] = [];
+  parses[bossId].push(parseEntry);
+  saveParses(parses);
+
+  const bossName = boss?.name || parsed.bossName;
+  const embed    = buildParseEmbed(bossName, parsed, boss?.emoji);
+
+  // Log to Discord thread for persistence (fire-and-forget, but capture msg id)
+  logParseToDiscord(interaction.client, bossId, parseEntry).then(msg => {
+    if (msg?.id) {
+      // Update the stored entry with the discord message id
+      const p2 = loadParses();
+      if (p2[bossId]) {
+        const idx = p2[bossId].findIndex(e => e.timestamp === parseEntry.timestamp && e.submittedBy === parseEntry.submittedBy);
+        if (idx !== -1) { p2[bossId][idx].discordMsgId = msg.id; saveParses(p2); }
+      }
+    }
+  }).catch(err => console.warn('[parse] Discord log failed:', err?.message));
+
+  // Auto-kill boss if not already on cooldown
+  const { getBossState, recordKill } = require('../utils/state');
+  const { postKillUpdate } = require('../utils/killops');
+  const bossState = getBossState(bossId);
+  const now = Date.now();
+  if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
+    const freshBoss = bosses.find(b => b.id === bossId);
+    if (freshBoss) {
+      recordKill(bossId, freshBoss.timerHours, interaction.user.id);
+      postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
+    }
+  } else {
+    try {
+      await interaction.followUp({
+        flags: MessageFlags.Ephemeral,
+        content: `ℹ️ **${bossName}** is already marked as killed — timer running.`,
+      });
+    } catch {}
+  }
+
+  // Auto-append to active raid night thread (fire-and-forget)
+  const { appendParseToSession } = require('./raidnight');
+  appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
+
+  return embed;
+}
+
+// ── Select-menu confirm handler ────────────────────────────────────────────────
+async function handleParseConfirm(interaction) {
+  const pending = pendingParses.get(interaction.user.id);
+  if (!pending) {
+    return interaction.update({ content: '❌ Session expired. Run /parse again.', components: [] });
+  }
+  pendingParses.delete(interaction.user.id);
+  const bossId = interaction.values[0];
+  delete require.cache[require.resolve('../data/bosses.json')];
+  const bosses = require('../data/bosses.json');
+  const boss = bosses.find(b => b.id === bossId);
+  await interaction.update({ content: `✅ Using **${boss?.name || bossId}**...`, components: [] });
+  const embed = await finishParse(interaction, bossId, boss, pending.parsed);
+  await interaction.followUp({ flags: MessageFlags.Ephemeral, embeds: [embed] }).catch(() => {});
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('parse')
     .setDescription('Submit an EQLogParser DPS parse for a boss fight.')
-    .addStringOption(opt =>
-      opt.setName('boss').setDescription('Boss that was killed').setRequired(true).setAutocomplete(true)
-    )
     .addStringOption(opt =>
       opt.setName('data')
         .setDescription('Paste the EQLogParser "Send to EQ" output')
@@ -188,68 +323,68 @@ module.exports = {
         .setMaxLength(6000)
     ),
 
-  async autocomplete(interaction) {
-    const focused = interaction.options.getFocused().toLowerCase();
-    delete require.cache[require.resolve('../data/bosses.json')];
-    const bosses = require('../data/bosses.json');
-    const matches = bosses
-      .filter(b =>
-        b.name.toLowerCase().includes(focused) ||
-        (b.nicknames || []).some(n => n.toLowerCase().includes(focused))
-      )
-      .slice(0, 25)
-      .map(b => ({ name: b.name, value: b.id }));
-    await interaction.respond(matches);
-  },
-
   async execute(interaction) {
-    const bossId  = interaction.options.getString('boss');
     const rawData = interaction.options.getString('data');
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     delete require.cache[require.resolve('../data/bosses.json')];
     const bosses = require('../data/bosses.json');
-    const boss   = bosses.find(b => b.id === bossId);
 
     const parsed = parseEQLog(rawData);
     if (!parsed) {
       return interaction.editReply('❌ Could not parse that input. Paste the EQLogParser "Send to EQ" output directly (e.g. "Boss Name in 397s, 1.54M Damage @3.87K, 1. Player = 78.22K@216 in 362s | ...")');
     }
 
-    const parseEntry = {
-      timestamp:        Date.now(),
-      submittedBy:      interaction.user.id,
-      submittedByName:  interaction.member?.displayName || interaction.user.username,
-      duration:         parsed.duration,
-      totalDamage:      parsed.totalDamage,
-      totalDps:         parsed.totalDps,
-      players:          parsed.players,
-    };
+    const result = findBossWithQuality(parsed.bossName, bosses);
 
-    const parses = loadParses();
-    if (!parses[bossId]) parses[bossId] = [];
-    parses[bossId].push(parseEntry);
-    saveParses(parses);
+    if (result.none) {
+      return interaction.editReply(`❌ Could not identify boss "**${parsed.bossName}**". Use \`/parseboss\` to specify manually.`);
+    }
 
-    const bossName = boss?.name || parsed.bossName;
-    const embed    = buildParseEmbed(bossName, parsed, boss?.emoji);
-    await interaction.editReply({ embeds: [embed] });
+    if (result.exact) {
+      const embed = await finishParse(interaction, result.exact.id, result.exact, parsed);
+      return interaction.editReply({ embeds: [embed] });
+    }
 
-    // Log to Discord thread for persistence (fire-and-forget)
-    logParseToDiscord(interaction.client, bossId, parseEntry).catch(err =>
-      console.warn('[parse] Discord log failed:', err?.message)
-    );
+    if (result.partial) {
+      const embed = await finishParse(interaction, result.partial.id, result.partial, parsed);
+      return interaction.editReply({
+        content: `ℹ️ Auto-matched to **${result.partial.name}** — use /parseboss to override`,
+        embeds: [embed],
+      });
+    }
 
-    // Auto-append to active raid night thread (fire-and-forget)
-    const { appendParseToSession } = require('./raidnight');
-    appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
+    // Multiple candidates — show select menu
+    if (result.candidates) {
+      pendingParses.set(interaction.user.id, { parsed, rawData, ts: Date.now() });
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId('parseConfirm')
+        .setPlaceholder('Select the correct boss…')
+        .addOptions(result.candidates.map(b =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(b.name)
+            .setDescription(`${b.zone} — ${b.expansion}`)
+            .setValue(b.id)
+        ));
+      const row = new ActionRowBuilder().addComponents(select);
+
+      return interaction.editReply({
+        content: `❓ Multiple bosses could match "**${parsed.bossName}**". Which one?`,
+        components: [row],
+      });
+    }
   },
 
   parseEQLog,
+  findBossFromName,
   loadParses,
   saveParses,
   buildParseEmbed,
   logParseToDiscord,
   loadParsesFromDiscord,
+  pendingParses,
+  handleParseConfirm,
+  finishParse,
 };

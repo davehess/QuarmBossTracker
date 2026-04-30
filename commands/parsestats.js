@@ -196,7 +196,7 @@ module.exports = {
     // Group submissions by session (30-min window), merge to max-damage per player
     rawKills = [...rawKills].sort((a, b) => a.timestamp - b.timestamp);
     if (last) rawKills = rawKills.slice(-last);
-    const killList  = groupKillsBySession(rawKills).map(mergeKillGroup);
+    const killList  = groupKillsBySession(rawKills, 10 * 60 * 1000).map(mergeKillGroup);
     const killCount = killList.length;
 
     // Aggregate per player across merged kills
@@ -234,4 +234,6 @@ module.exports = {
   },
 
   isEyeMob,
+  groupKillsBySession,
+  mergeKillGroup,
 };
