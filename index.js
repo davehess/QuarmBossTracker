@@ -123,6 +123,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
+    if (interaction.customId.startsWith('parse_breakdown:')) {
+      const { handleParseBreakdown } = require('./commands/parse');
+      await handleParseBreakdown(interaction).catch(console.error);
+      return;
+    }
     return;
   }
   if (!interaction.isChatInputCommand()) return;

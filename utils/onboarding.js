@@ -32,6 +32,13 @@ const CHANGELOGS = {
   '1.0.3': [
     '`/parse` and `/parseaoe` now automatically post results to active raid/event threads',
   ],
+  '1.1.0': [
+    'Parse embeds now show a **Top Classes** breakdown (damage, DPS, avg combat seconds) using roster class data',
+    '`/rosterimport <file>` — import the OpenDKP roster JSON export to update the character database (Officers only)',
+    '`/who <name>` — look up a character\'s class and main/alt status (ephemeral)',
+    '`/whoall <name>` — view a character\'s full family tree (main + alts) (ephemeral)',
+    'Every parse message now has a **📊 Full Breakdown** button for a private class + player breakdown',
+  ],
 };
 
 // ── Hashing ───────────────────────────────────────────────────────────────────

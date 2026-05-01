@@ -1,6 +1,6 @@
 // commands/parsenight.js — Full-night DPS summary from a Combined EQLogParser string.
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { parseEQLog, buildParseEmbed } = require('./parse');
+const { parseEQLog, buildParseEmbed, storeBreakdown, buildParseComponents, postParseToAnnounceThreads } = require('./parse');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -49,6 +49,13 @@ module.exports = {
       );
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    const key        = storeBreakdown('Full Night', parsed, '⚔️');
+    const components = buildParseComponents(key);
+
+    await interaction.editReply({ embeds: [embed], components });
+
+    if (isPublic) {
+      postParseToAnnounceThreads(interaction.client, embed, components).catch(() => {});
+    }
   },
 };

@@ -2,6 +2,7 @@
 const {
   SlashCommandBuilder, EmbedBuilder, MessageFlags,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ActionRowBuilder,
+  ButtonBuilder, ButtonStyle,
 } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
@@ -108,6 +109,123 @@ function findBossWithQuality(parsedName, bosses) {
 
 function fmt(n) { return n.toLocaleString('en-US'); }
 
+// ── Class data ────────────────────────────────────────────────────────────────
+const CLASS_EMOJI = {
+  'Warrior':       '⚔️',
+  'Cleric':        '💊',
+  'Paladin':       '🛡️',
+  'Ranger':        '🏹',
+  'Shadow Knight': '🖤',
+  'Druid':         '🌿',
+  'Monk':          '👊',
+  'Bard':          '🎵',
+  'Rogue':         '🗡️',
+  'Shaman':        '🔮',
+  'Necromancer':   '💀',
+  'Wizard':        '⚡',
+  'Magician':      '🔥',
+  'Enchanter':     '🌀',
+  'Beastlord':     '🐾',
+  'Berserker':     '🪓',
+};
+
+function aggregateByClass(players) {
+  const { getCharacter } = require('../utils/roster');
+  const classMap = new Map();
+  for (const p of players) {
+    const char = getCharacter(p.name);
+    const cls  = char?.class || 'Unknown';
+    if (!classMap.has(cls)) {
+      classMap.set(cls, { class: cls, emoji: CLASS_EMOJI[cls] || '❓', totalDamage: 0, totalDps: 0, count: 0, totalDuration: 0 });
+    }
+    const agg = classMap.get(cls);
+    agg.totalDamage   += p.damage;
+    agg.totalDps      += p.dps;
+    agg.count++;
+    agg.totalDuration += p.duration;
+  }
+  return [...classMap.values()]
+    .map(c => ({ ...c, avgDps: Math.round(c.totalDps / c.count), avgDuration: Math.round(c.totalDuration / c.count) }))
+    .sort((a, b) => b.totalDamage - a.totalDamage);
+}
+
+// ── Breakdown button store ────────────────────────────────────────────────────
+const pendingBreakdowns = new Map(); // key → { bossName, parsed, bossEmoji, ts }
+
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 60 * 60 * 1000; // 2 hours
+  for (const [k, v] of pendingBreakdowns) if (v.ts < cutoff) pendingBreakdowns.delete(k);
+}, 60_000);
+
+function storeBreakdown(bossName, parsed, bossEmoji) {
+  const key = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  pendingBreakdowns.set(key, { bossName, parsed, bossEmoji, ts: Date.now() });
+  return key;
+}
+
+function buildParseComponents(key) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`parse_breakdown:${key}`)
+        .setLabel('📊 Full Breakdown')
+        .setStyle(ButtonStyle.Secondary)
+    ),
+  ];
+}
+
+async function handleParseBreakdown(interaction) {
+  const key  = interaction.customId.split(':')[1];
+  const data = pendingBreakdowns.get(key);
+  if (!data) {
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      content: '❌ This breakdown has expired (2-hour limit). Resubmit the parse to regenerate.',
+    });
+  }
+
+  const { bossName, parsed, bossEmoji } = data;
+  const classes = aggregateByClass(parsed.players);
+
+  // All-classes field (inline markdown, no code block — emojis break monospace alignment)
+  const classLines = classes.map((c, i) =>
+    `**${i + 1}.** ${c.emoji} **${c.class}** — ${fmt(c.totalDamage)} dmg · ${fmt(c.avgDps)}/s avg · ${c.count} player${c.count !== 1 ? 's' : ''} · ${c.avgDuration}s combat`
+  );
+  let classValue = '';
+  for (const line of classLines) {
+    if ((classValue + line + '\n').length > 1020) { classValue += '*…more classes not shown*'; break; }
+    classValue += line + '\n';
+  }
+  classValue = classValue.trimEnd() || '*No roster data — run `/rosterimport` to enable class tracking*';
+
+  // All-players table (code block, dynamic trimming)
+  const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(7)}  ${'DPS'.padStart(7)}  Time`;
+  const divider = '─'.repeat(hdr.length);
+  let rows = parsed.players.map(p => {
+    const rank = String(p.rank).padStart(2);
+    const name = (p.name + (p.hasPets ? ' +P' : '')).slice(0, 20).padEnd(20);
+    const dmg  = fmt(p.damage).padStart(7);
+    const dps  = (p.dps + '/s').padStart(7);
+    const dur  = (p.duration + 's').padStart(4);
+    return `${rank}. ${name} ${dmg}  ${dps}  ${dur}`;
+  });
+  const wrap = r => '```\n' + [hdr, divider, ...r].join('\n') + '\n```';
+  while (rows.length > 0 && wrap(rows).length > 1024) rows.pop();
+
+  const title = ['📊', bossEmoji, bossName].filter(Boolean).join(' ');
+  const embed = new EmbedBuilder()
+    .setColor(0xe74c3c)
+    .setTitle(`${title} — Full Breakdown`)
+    .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)}/s raid DPS`)
+    .addFields(
+      { name: `📊 All Classes (${classes.length})`, value: classValue, inline: false },
+      { name: `👥 All Players (${parsed.players.length})`, value: wrap(rows), inline: false },
+    )
+    .setTimestamp();
+
+  return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
+}
+
 function buildParseEmbed(bossName, parsed, bossEmoji) {
   const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(7)}  ${'DPS'.padStart(7)}  Time`;
   const divider = '─'.repeat(hdr.length);
@@ -126,12 +244,22 @@ function buildParseEmbed(bossName, parsed, bossEmoji) {
   const wrap = (r) => '```\n' + [hdr, divider, ...r].join('\n') + '\n```';
   while (rows.length > 0 && wrap(rows).length > 1024) rows.pop();
 
+  // Top-5 class breakdown (inline markdown — cleaner than a code block for 5 lines)
+  const classes = aggregateByClass(parsed.players);
+  const classLines = classes.slice(0, 5).map((c, i) =>
+    `**${i + 1}.** ${c.emoji} **${c.class}** — ${fmt(c.totalDamage)} dmg · ${fmt(c.avgDps)}/s avg · ${c.avgDuration}s combat`
+  );
+  const classValue = classLines.join('\n') || '*No roster data — run `/rosterimport` to enable*';
+
   const title = ['📊', bossEmoji, bossName].filter(Boolean).join(' ');
   return new EmbedBuilder()
     .setColor(0xe74c3c)
     .setTitle(title)
     .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)}/s raid DPS`)
-    .addFields({ name: 'DPS Rankings', value: wrap(rows), inline: false })
+    .addFields(
+      { name: '🏆 Top Classes', value: classValue, inline: false },
+      { name: 'DPS Rankings',   value: wrap(rows),  inline: false },
+    )
     .setTimestamp();
 }
 
@@ -231,14 +359,15 @@ async function loadParsesFromDiscord(client) {
 }
 
 // ── Post parse embed to all active announce threads ──────────────────────────
-async function postParseToAnnounceThreads(client, embed) {
+async function postParseToAnnounceThreads(client, embed, components) {
   const { getAllAnnounces } = require('../utils/state');
   const announces = Object.values(getAllAnnounces());
+  const payload = { embeds: [embed], ...(components ? { components } : {}) };
   for (const ann of announces) {
     if (!ann.threadId) continue;
     try {
       const thread = await client.channels.fetch(ann.threadId).catch(() => null);
-      if (thread) await thread.send({ embeds: [embed] });
+      if (thread) await thread.send(payload);
     } catch (err) {
       console.warn('[parse] Could not post to announce thread:', err?.message);
     }
@@ -277,8 +406,10 @@ async function finishParse(interaction, bossId, boss, parsed) {
   parses[bossId].push(parseEntry);
   saveParses(parses);
 
-  const bossName = boss?.name || parsed.bossName;
-  const embed    = buildParseEmbed(bossName, parsed, boss?.emoji);
+  const bossName   = boss?.name || parsed.bossName;
+  const embed      = buildParseEmbed(bossName, parsed, boss?.emoji);
+  const bdKey      = storeBreakdown(bossName, parsed, boss?.emoji);
+  const components = buildParseComponents(bdKey);
 
   // Log to Discord thread for persistence (fire-and-forget, but capture msg id)
   logParseToDiscord(interaction.client, bossId, parseEntry).then(msg => {
@@ -317,10 +448,10 @@ async function finishParse(interaction, bossId, boss, parsed) {
   appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
 
   // Post to any active announce/event threads (fire-and-forget)
-  postParseToAnnounceThreads(interaction.client, embed).catch(() => {});
+  postParseToAnnounceThreads(interaction.client, embed, components).catch(() => {});
 
   // Post publicly in the channel where the command was run
-  interaction.channel.send({ embeds: [embed] }).catch(err =>
+  interaction.channel.send({ embeds: [embed], components }).catch(err =>
     console.warn('[parse] public channel send failed:', err?.message)
   );
 
@@ -415,4 +546,9 @@ module.exports = {
   handleParseConfirm,
   finishParse,
   postParseToAnnounceThreads,
+  aggregateByClass,
+  storeBreakdown,
+  buildParseComponents,
+  handleParseBreakdown,
+  CLASS_EMOJI,
 };

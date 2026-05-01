@@ -2,7 +2,7 @@
 // Contributes to a 5-minute rolling window, merged by max damage per player.
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
-const { parseEQLog, buildParseEmbed, postParseToAnnounceThreads } = require('./parse');
+const { parseEQLog, buildParseEmbed, postParseToAnnounceThreads, storeBreakdown, buildParseComponents } = require('./parse');
 
 const AOE_WINDOW_MS = 5 * 60 * 1000;
 let aoeWindow = []; // { timestamp, players }
@@ -62,7 +62,10 @@ module.exports = {
     const embed = buildParseEmbed('AOE Phase', mergedParsed, '💥');
     embed.setFooter({ text: `Rolling 5-min window · ${aoeWindow.length} submission(s) merged` });
 
-    await interaction.editReply({ embeds: [embed] });
+    const key        = storeBreakdown('AOE Phase', mergedParsed, '💥');
+    const components = buildParseComponents(key);
+
+    await interaction.editReply({ embeds: [embed], components });
 
     // Post to raid night thread if active
     try {
@@ -71,6 +74,6 @@ module.exports = {
     } catch {}
 
     // Post to any active announce/event threads (fire-and-forget)
-    postParseToAnnounceThreads(interaction.client, embed).catch(() => {});
+    postParseToAnnounceThreads(interaction.client, embed, components).catch(() => {});
   },
 };
