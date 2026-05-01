@@ -71,6 +71,7 @@ async function runStartupSequence(readyClient) {
   const delay = ms => new Promise(r => setTimeout(r, ms));
   const { loadOnboardingData, postOrUpdateInstructions } = require('./utils/onboarding');
   const { loadParsesFromDiscord }  = require('./commands/parse');
+  const { loadRosterFromDiscord }  = require('./utils/roster');
   const { runAutoRestore }         = require('./commands/restore');
   const { runBoard }               = require('./commands/board');
   const { runCleanup }             = require('./commands/cleanup');
@@ -78,6 +79,7 @@ async function runStartupSequence(readyClient) {
   await loadOnboardingData(readyClient).catch(err => console.warn('[startup] loadOnboardingData:', err?.message));
   await postOrUpdateInstructions(readyClient).catch(err => console.warn('[startup] postOrUpdateInstructions:', err?.message));
   await loadParsesFromDiscord(readyClient).catch(err => console.warn('[startup] loadParsesFromDiscord:', err?.message));
+  await loadRosterFromDiscord(readyClient).catch(err => console.warn('[startup] loadRosterFromDiscord:', err?.message));
   await runAutoRestore(readyClient).catch(err => console.warn('[startup] runAutoRestore:', err?.message));
   await delay(60_000);
   await runBoard(readyClient).catch(err => console.warn('[startup] runBoard:', err?.message));
