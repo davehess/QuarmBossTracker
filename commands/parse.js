@@ -20,9 +20,10 @@ function saveParses(data) {
   fs.renameSync(tmp, PARSES_FILE);
 }
 
-// Parses EQLogParser "Send to EQ" format:
+// Parses EQLogParser "Send to EQ" single-mob format:
 // "High Priest of Ssraeshza in 42s, 53.12K Damage @1.26K, 1. Statlander +Pets = 4.59K@148 in 31s | ..."
-// Total damage may use K or M suffix; individual damage may be raw (e.g. 204@68 for tiny contributors).
+// Also handles "Combined (N): <boss> in ..." multi-mob format from EQLogParser.
+// Total damage may use K or M suffix; individual DPS may be raw integer or K-suffixed float.
 function kmToInt(num, suffix) {
   const n = parseFloat(num);
   if (suffix === 'M') return Math.round(n * 1_000_000);
@@ -31,7 +32,10 @@ function kmToInt(num, suffix) {
 }
 
 function parseEQLog(str) {
-  const headerMatch = str.match(/^(.+?)\s+in\s+(\d+)s,\s*([\d.]+)([KM])\s+Damage\s+@([\d.]+)([KM])/);
+  // Strip "Combined (N): " prefix from EQLogParser combined multi-mob format
+  const cleaned = str.replace(/^Combined\s*\(\d+\):\s*/, '');
+
+  const headerMatch = cleaned.match(/^(.+?)\s+in\s+(\d+)s,\s*([\d.]+)([KM])\s+Damage\s+@([\d.]+)([KM])/);
   if (!headerMatch) return null;
 
   const bossName    = headerMatch[1].trim();
@@ -39,19 +43,19 @@ function parseEQLog(str) {
   const totalDamage = kmToInt(headerMatch[3], headerMatch[4]);
   const totalDps    = kmToInt(headerMatch[5], headerMatch[6]);
 
-  // Handles K-suffixed damage (78.22K@216) and raw numbers (204@68)
-  const playerRx = /(\d+)\.\s+(.+?)\s+=\s+([\d.]+)(K)?@(\d+)\s+in\s+(\d+)s/g;
+  // Handles K-suffixed damage (78.22K@216 or 231.20K@5.78K) and raw numbers (204@68)
+  const playerRx = /(\d+)\.\s+(.+?)\s+=\s+([\d.]+)(K)?@([\d.]+)(K)?\s+in\s+(\d+)s/g;
   const players  = [];
   let m;
-  while ((m = playerRx.exec(str)) !== null) {
+  while ((m = playerRx.exec(cleaned)) !== null) {
     const raw     = m[2].trim();
     const hasPets = raw.includes('+Pets');
     const name    = raw.replace(/\s*\+Pets/g, '').trim();
     players.push({
       rank: parseInt(m[1]), name, hasPets,
       damage:   kmToInt(m[3], m[4]),
-      dps:      parseInt(m[5]),
-      duration: parseInt(m[6]),
+      dps:      kmToInt(m[5], m[6]),
+      duration: parseInt(m[7]),
     });
   }
 
@@ -105,25 +109,29 @@ function findBossWithQuality(parsedName, bosses) {
 function fmt(n) { return n.toLocaleString('en-US'); }
 
 function buildParseEmbed(bossName, parsed, bossEmoji) {
-  const rows = parsed.players.slice(0, 15).map((p) => {
-    const rank  = String(p.rank).padStart(2);
-    const name  = (p.name + (p.hasPets ? ' +P' : '')).padEnd(20);
-    const dmg   = fmt(p.damage).padStart(7);
-    const dps   = (p.dps + '/s').padStart(7);
-    const dur   = (p.duration + 's').padStart(4);
+  const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(7)}  ${'DPS'.padStart(7)}  Time`;
+  const divider = '─'.repeat(hdr.length);
+
+  // Build rows (up to 20), truncating names to 20 chars so padEnd doesn't overflow
+  let rows = parsed.players.slice(0, 20).map((p) => {
+    const rank = String(p.rank).padStart(2);
+    const name = (p.name + (p.hasPets ? ' +P' : '')).slice(0, 20).padEnd(20);
+    const dmg  = fmt(p.damage).padStart(7);
+    const dps  = (p.dps + '/s').padStart(7);
+    const dur  = (p.duration + 's').padStart(4);
     return `${rank}. ${name} ${dmg}  ${dps}  ${dur}`;
   });
 
-  const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(7)}  ${'DPS'.padStart(7)}  Time`;
-  const divider = '─'.repeat(hdr.length);
-  const table   = [hdr, divider, ...rows].join('\n');
+  // Trim rows until the wrapped code block fits Discord's 1024-char field limit
+  const wrap = (r) => '```\n' + [hdr, divider, ...r].join('\n') + '\n```';
+  while (rows.length > 0 && wrap(rows).length > 1024) rows.pop();
 
   const title = ['📊', bossEmoji, bossName].filter(Boolean).join(' ');
   return new EmbedBuilder()
     .setColor(0xe74c3c)
     .setTitle(title)
     .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)}/s raid DPS`)
-    .addFields({ name: 'DPS Rankings', value: '```\n' + table + '\n```', inline: false })
+    .addFields({ name: 'DPS Rankings', value: wrap(rows), inline: false })
     .setTimestamp();
 }
 

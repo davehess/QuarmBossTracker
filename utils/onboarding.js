@@ -25,6 +25,10 @@ const CHANGELOGS = {
   '1.0.1': [
     '`/onboarding` — show the welcome message again, or toggle your opt-out preference',
   ],
+  '1.0.2': [
+    '`/parsenight <data>` — submit a Combined EQLogParser string for a full-night DPS summary',
+    '`/parseaoe <data>` — now accepts the Combined (N): multi-mob format in addition to single-mob parses',
+  ],
 };
 
 // ── Hashing ───────────────────────────────────────────────────────────────────
