@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.1.4 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.1.5 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -97,8 +97,9 @@ The announce thread contains a live control panel. Use the **Cancel Event** butt
 
 | Command | Description |
 |---------|-------------|
-| `/pvpkill <mob> [timer_hours]` | Record a PVP mob kill with an optional respawn timer (default: `PVP_DEFAULT_TIMER_HOURS`) |
-| `/pvpunkill <mob>` | Remove a PVP kill record |
+| `/pvpkill <mob>` | Record a PVP mob kill — timer pulled from bosses.json, card posted to `PVP_KILLS_THREAD_ID` |
+| `/pvpspawn <mob>` | Clear a PVP mob timer when it spawns; ephemeral reply with "Alert PVP" button to rally the pack |
+| `/pvpunkill <mob>` | Remove a PVP kill record without sending an alert |
 | `/quake [time]` | Schedule a quake (`"now"`, `"9pm"`, `"in 2 hours"`) — resets all PVP mob timers, creates a Discord event |
 | `/pvprole [silent]` | Toggle your @PVP role; without `silent`, posts a wolf announcement to the PVP channel |
 | `/pvpalert <zone>` | Ping @PVP with a howl message; other users click 🐺 Howl! to join |
@@ -250,10 +251,10 @@ Paste links to any combination of Active Cooldowns cards and Daily Raid Summary 
 | `ARCHIVE_CHANNEL_ID` | — | Channel to receive archived raid event summaries |
 | `BOSS_OUTPUT_CHANNEL_ID` | — | Channel where `bosses.json` is posted after `/addboss` or `/removeboss` |
 | `RAID_CHAT_CHANNEL_ID` | — | Channel for `/raidnight` threads on raid nights (falls back to `TIMER_CHANNEL_ID`) |
-| `PVP_CHANNEL_ID` | — | Channel for PVP announcements and alerts |
-| `PVP_THREAD_ID` | — | Thread for PVP (takes priority over `PVP_CHANNEL_ID`) |
-| `PVP_ROLE` | `PVP` | Name of the Discord role to ping for PVP commands |
-| `PVP_DEFAULT_TIMER_HOURS` | `72` | Default respawn timer for `/pvpkill` |
+| `PVP_KILLS_THREAD_ID` | — | Thread where `/pvpkill` posts kill cards and timers are tracked |
+| `PVP_CHANNEL_ID` | — | Channel for PVP alerts, quake alerts, and spawn notifications |
+| `PVP_THREAD_ID` | — | Thread for PVP alerts (takes priority over `PVP_CHANNEL_ID`) |
+| `PVP_ROLE` | `PVP` | Name of the Discord role to ping for PVP alerts and spawn notifications |
 
 ---
 

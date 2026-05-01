@@ -236,12 +236,17 @@ function updateAnnounceEasterEgg(msgId, level) {
 
 // ── PVP kills ─────────────────────────────────────────────────────────────────
 function pvpMobKey(name) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_'); }
-function recordPvpKill(name, timerHours, killedBy) {
+function recordPvpKill(name, timerHours, killedBy, bossId = null) {
   const s = loadState();
-  const key = pvpMobKey(name);
+  const key = bossId || pvpMobKey(name);
   const killedAt = Date.now();
-  s.pvpKills[key] = { name, killedAt, nextSpawn: killedAt + timerHours * 3600000, timerHours, killedBy };
+  s.pvpKills[key] = { name, killedAt, nextSpawn: killedAt + timerHours * 3600000, timerHours, killedBy, bossId: key, threadMessageId: null };
   saveState(s);
+  return key;
+}
+function setPvpKillThreadMessageId(key, messageId) {
+  const s = loadState();
+  if (s.pvpKills[key]) { s.pvpKills[key].threadMessageId = messageId; saveState(s); }
 }
 function clearPvpKill(key) {
   const s = loadState();
@@ -320,7 +325,7 @@ module.exports = {
   hasSeenWelcome, markWelcomeSeen,
   saveAnnounce, getAnnounce, removeAnnounce, getAllAnnounces,
   getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceTime, updateAnnounceEasterEgg,
-  recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey,
+  recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey, setPvpKillThreadMessageId,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getRaidSession, saveRaidSession, clearRaidSession,

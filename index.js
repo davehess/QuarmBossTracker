@@ -17,7 +17,7 @@ const {
   getDailySummaryMessageId, setDailySummaryMessageId,
   getAnnounce, removeAnnounce, getAnnounceByThreadId,
   updateAnnounceTargets, updateAnnounceEasterEgg, getAllAnnounces,
-  getAllPvpKills, getQuake, saveQuake, clearQuake,
+  getAllPvpKills, clearPvpKill, getQuake, saveQuake, clearQuake,
   addPvpAlertHowler,
   hasSeenWelcome, markWelcomeSeen,
   getRaidSession, clearRaidSession,
@@ -118,6 +118,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'pvprole_toggle')              { await handlePvpRoleToggle(interaction, false); return; }
     if (interaction.customId === 'pvprole_toggle_silent')       { await handlePvpRoleToggle(interaction, true); return; }
     if (interaction.customId.startsWith('pvpalert_howl:'))      { await handlePvpAlertHowl(interaction); return; }
+    if (interaction.customId.startsWith('pvp_spawn_alert:'))    { await handlePvpSpawnAlert(interaction); return; }
     if (interaction.customId === 'onb_pvp')                     { await handleOnbPvp(interaction); return; }
     if (interaction.customId === 'onb_organizer')               { await handleOnbOrganizer(interaction); return; }
     if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
@@ -505,6 +506,35 @@ async function handlePvpAlertHowl(interaction) {
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: '🐺 AWROOOOOO!' });
 }
 
+// ── PVP spawn alert button ─────────────────────────────────────────────────
+async function handlePvpSpawnAlert(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const bossId = interaction.customId.replace('pvp_spawn_alert:', '');
+  delete require.cache[require.resolve('./data/bosses.json')];
+  const bosses = require('./data/bosses.json');
+  const boss   = bosses.find(b => b.id === bossId);
+
+  const name = boss?.name || bossId;
+  const zone = boss?.zone || 'Unknown Zone';
+
+  const pvpRoleName = process.env.PVP_ROLE || 'PVP';
+  const pvpRole     = interaction.guild.roles.cache.find(r => r.name === pvpRoleName);
+  const mention     = pvpRole ? `<@&${pvpRole.id}> ` : '';
+
+  const { buildHowlRow } = require('./commands/pvpalert');
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  const ch = pvpTargetId
+    ? await interaction.client.channels.fetch(pvpTargetId).catch(() => interaction.channel)
+    : interaction.channel;
+
+  const content = `${mention}🟢 **${name}** (${zone}) has spawned — who's going?`;
+  const sent = await ch.send({ content });
+  await sent.edit({ content, components: [buildHowlRow(sent.id)] });
+
+  await interaction.editReply(`✅ PVP alert posted for **${name}**!`);
+}
+
 // ── Onboarding button handlers ────────────────────────────────────────────────
 async function handleOnbPvp(interaction) {
   const { buildAnnouncementEmbed, buildRoleRow, getPvpRole, getPvpRoleName } = require('./commands/pvprole');
@@ -615,6 +645,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
 // ── Spawn checker ──────────────────────────────────────────────────────────
 const alertedSoon = new Set(), alertedSpawned = new Set();
+const pvpAlertedSpawned = new Set();
 
 function startSpawnChecker(readyClient) {
   const channelId = process.env.TIMER_CHANNEL_ID;
@@ -677,6 +708,7 @@ function startSpawnChecker(readyClient) {
         }
       }
       await checkQuakeAlert(readyClient).catch(console.warn);
+      await checkPvpSpawns(readyClient, now).catch(console.warn);
     } catch (err) { console.error('Spawn checker error:', err); }
   }, 5 * 60 * 1000);
   console.log('Spawn checker started');
@@ -701,6 +733,58 @@ async function archiveZoneCardEntry(readyClient, spawnedBoss, bosses, state, his
       await cardMsg.delete(); clearZoneCard(spawnedBoss.zone);
     }
   } catch (err) { console.warn(`archiveZoneCardEntry (${spawnedBoss.name}):`, err?.message); }
+}
+
+// ── PVP spawn checker ──────────────────────────────────────────────────────
+async function checkPvpSpawns(readyClient, now) {
+  const kills          = getAllPvpKills();
+  const killsThreadId  = process.env.PVP_KILLS_THREAD_ID;
+  const pvpAlertId     = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+
+  for (const [key, entry] of Object.entries(kills)) {
+    const remaining = entry.nextSpawn - now;
+
+    if (remaining > 0) { pvpAlertedSpawned.delete(key); continue; }
+    if (pvpAlertedSpawned.has(key)) continue;
+    pvpAlertedSpawned.add(key);
+
+    // Delete kill card from kills thread
+    if (killsThreadId && entry.threadMessageId) {
+      try {
+        const thread = await readyClient.channels.fetch(killsThreadId);
+        const msg    = await thread.messages.fetch(entry.threadMessageId);
+        await msg.delete();
+      } catch { /* already gone */ }
+    }
+
+    // Alert in PVP channel/thread
+    if (pvpAlertId) {
+      try {
+        const pvpRoleName = process.env.PVP_ROLE || 'PVP';
+        const guild       = readyClient.guilds.cache.first();
+        const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
+        const mention     = pvpRole ? `<@&${pvpRole.id}> ` : '';
+        const ch          = await readyClient.channels.fetch(pvpAlertId);
+
+        const { EmbedBuilder } = require('discord.js');
+        await ch.send({
+          content: `${mention}🟢 **${entry.name}** has respawned!`,
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x57f287)
+              .setTitle(`🟢 PVP Mob Spawned — ${entry.name}`)
+              .setDescription('The mob has respawned and is available. Use `/pvpkill` to start a new timer after you engage.')
+              .setTimestamp(),
+          ],
+        });
+      } catch (err) {
+        console.warn('[pvp] Could not post spawn alert:', err?.message);
+      }
+    }
+
+    clearPvpKill(key);
+    console.log(`🟢 PVP Spawned: ${entry.name}`);
+  }
 }
 
 // ── Midnight tasks ─────────────────────────────────────────────────────────
