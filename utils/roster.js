@@ -86,7 +86,7 @@ function _memberLines(roster) {
   return roster.map(m => {
     const base = `**${m.n}** *(${m.r} ${m.c})*`;
     if (!m.a || m.a.length === 0) return base;
-    return base + '\n' + m.a.map(a => `  \\| ${a.n}`).join('\n');
+    return base + '\n' + m.a.map(a => `  \\| ${a.n} *(${a.r} ${a.c})*`).join('\n');
   });
 }
 
