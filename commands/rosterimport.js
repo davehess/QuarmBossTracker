@@ -58,7 +58,7 @@ module.exports = {
       return interaction.editReply('❌ Could not parse the file as JSON. Make sure it is the raw OpenDKP character export.');
     }
 
-    const { active, inactive } = processOpenDkpExport(rawArray);
+    const { active, inactive, unknowns } = processOpenDkpExport(rawArray);
 
     if (active.length === 0 && inactive.length === 0) {
       return interaction.editReply('❌ No characters found in the export. Verify the file is the OpenDKP character list.');
@@ -83,10 +83,16 @@ module.exports = {
     const { mainCount: activeMains,   altCount: activeAlts   } = rosterCounts(active);
     const { mainCount: inactiveMains, altCount: inactiveAlts } = rosterCounts(inactive);
 
-    await interaction.editReply(
+    let reply =
       `✅ Roster imported from \`${attachment.name}\`\n` +
       `**Active:** ${activeMains} mains · ${activeAlts} alts\n` +
-      `**Inactive:** ${inactiveMains} mains · ${inactiveAlts} alts`
-    );
+      `**Inactive:** ${inactiveMains} mains · ${inactiveAlts} alts`;
+
+    if (unknowns.length > 0) {
+      const names = unknowns.map(u => `**${u.Name}**`).join(', ');
+      reply += `\n\n⚠️ **${unknowns.length} active character(s) with UNKNOWN fields — please resolve in OpenDKP:**\n${names}`;
+    }
+
+    await interaction.editReply(reply);
   },
 };

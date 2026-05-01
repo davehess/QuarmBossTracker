@@ -1,20 +1,23 @@
 // utils/roster.js — Character roster loaded from OpenDKP export.
-// Stored as compact JSON in ROSTER_ACTIVE_THREAD_ID / ROSTER_INACTIVE_THREAD_ID.
-// Main data model: { n, r, c, a: [{n,r,c}] }
-// Standalone alt model: { n, r, c, a: [], _alt: true }
+// Family grouping: ParentId===0 → family root; ParentId===X → member of X's family.
+// Main within a family: highest rank in RANK_PRIORITY (Officer > Pack Leader > ...).
+// Alts: Rank==='Raid Alt' members of a family that are not the main.
+// Standalone alts: Raid Alt with ParentId===0 and no family members, or orphaned alts.
+// Data model: main entry { n, r, c, a: [{n,r,c}] }; standalone alt { n,r,c,a:[],_alt:true }
 
 const { EmbedBuilder } = require('discord.js');
 
-const ACTIVE_TITLE   = '📋 Active Roster';
-const INACTIVE_TITLE = '📋 Inactive Roster';
-
+const ACTIVE_TITLE           = '📋 Active Roster';
+const INACTIVE_TITLE         = '📋 Inactive Roster';
 const ACTIVE_MEMBERS_TITLE   = '📋 Active Roster — Members';
 const INACTIVE_MEMBERS_TITLE = '📋 Inactive Roster — Members';
-
-const ACTIVE_DATA_TITLE   = '📋 Active Roster — Data';
-const INACTIVE_DATA_TITLE = '📋 Inactive Roster — Data';
+const ACTIVE_DATA_TITLE      = '📋 Active Roster — Data';
+const INACTIVE_DATA_TITLE    = '📋 Inactive Roster — Data';
 
 const CHUNK_LIMIT = 3500;
+
+const RANK_PRIORITY = ['Officer', 'Pack Leader', 'Raid Pack', 'Recruit', 'Member', 'Inactive'];
+const ALT_RANK      = 'Raid Alt';
 
 let _active   = [];
 let _inactive = [];
@@ -57,66 +60,81 @@ function getActiveRoster()   { return _active; }
 function getInactiveRoster() { return _inactive; }
 
 // ── OpenDKP import ────────────────────────────────────────────────────────────
-// Alt detection: checks Rank, Status, Type, MemberType fields for 'Raid Alts'.
-// AssociatedId used as secondary: non-(-1/0/null) value pointing to a main's CharacterId.
-// Standalone alts (status-based, no AssociatedId link) stored with _alt: true.
+// Groups characters into families via ParentId. Main = highest-priority rank in family.
+// Returns { active, inactive, unknowns } where unknowns = active chars with UNKNOWN fields.
 function processOpenDkpExport(rawArray) {
   const all = rawArray.filter(c => !c.Deleted);
 
-  const ALT_VALUES  = new Set(['Raid Alts', 'Raid Alt', 'Alt', 'Alts']);
-  const getAltField = c => c.Rank ?? c.Status ?? c.Type ?? c.MemberType ?? '';
-  const isByStatus  = c => ALT_VALUES.has(getAltField(c));
+  // Active chars with UNKNOWN Race, Class, or Rank — report to officer after import
+  const unknowns = all.filter(c =>
+    c.Active === 1 && (c.Race === 'UNKNOWN' || c.Class === 'UNKNOWN' || c.Rank === 'UNKNOWN')
+  );
 
-  const statusMains = all.filter(c => !isByStatus(c));
-  const statusAlts  = all.filter(c =>  isByStatus(c));
+  // Build families: rootId (CharacterId with ParentId===0) → [all members including root]
+  const families = new Map();
+  const orphans  = []; // ParentId points to a char not in the export
 
-  // Also treat as alt if AssociatedId points to a non-alt character
-  const mainById = new Map(statusMains.map(m => [m.CharacterId, m]));
-  const isLinkedAlt = c => {
-    const pid = c.AssociatedId;
-    return pid != null && pid !== -1 && pid !== 0 && mainById.has(pid);
-  };
-
-  const linkedNonStatusAlts = statusMains.filter(isLinkedAlt);
-  const finalMains    = statusMains.filter(m => !isLinkedAlt(m));
-  const finalMainById = new Map(finalMains.map(m => [m.CharacterId, m]));
-  const finalAlts     = [...statusAlts, ...linkedNonStatusAlts];
-
-  // Group alts under their mains via AssociatedId
-  const byParent    = new Map();
-  const standalone  = [];
-  for (const a of finalAlts) {
-    const pid = a.AssociatedId;
-    if (pid != null && pid !== -1 && pid !== 0 && finalMainById.has(pid)) {
-      if (!byParent.has(pid)) byParent.set(pid, []);
-      byParent.get(pid).push(a);
+  for (const c of all) {
+    if (c.ParentId === 0) {
+      if (!families.has(c.CharacterId)) families.set(c.CharacterId, []);
+      families.get(c.CharacterId).push(c);
+    }
+  }
+  for (const c of all) {
+    if (c.ParentId === 0) continue;
+    if (families.has(c.ParentId)) {
+      families.get(c.ParentId).push(c);
     } else {
-      standalone.push(a);
+      orphans.push(c); // parent not in export
     }
   }
 
   const active = [], inactive = [];
-  for (const m of finalMains) {
-    const entry = {
-      n: m.Name, r: m.Race, c: m.Class,
-      a: (byParent.get(m.CharacterId) || []).map(a => ({ n: a.Name, r: a.Race, c: a.Class })),
-    };
-    (m.Active === 1 ? active : inactive).push(entry);
-  }
-  for (const a of standalone) {
-    const entry = { n: a.Name, r: a.Race, c: a.Class, a: [], _alt: true };
-    (a.Active === 1 ? active : inactive).push(entry);
+  const addTo = (entry, isActive) => (isActive ? active : inactive).push(entry);
+
+  for (const [, members] of families) {
+    // Find main by rank priority (skip UNKNOWN rank)
+    let main = null;
+    for (const rank of RANK_PRIORITY) {
+      main = members.find(m => m.Rank === rank);
+      if (main) break;
+    }
+
+    if (!main) {
+      // No main found — all Raid Alts, store as standalone
+      for (const c of members) {
+        if (c.Rank === ALT_RANK) addTo({ n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.Active === 1);
+      }
+      continue;
+    }
+
+    const alts = members.filter(m => m !== main && m.Rank === ALT_RANK);
+    addTo(
+      { n: main.Name, r: main.Race, c: main.Class, a: alts.map(a => ({ n: a.Name, r: a.Race, c: a.Class })) },
+      main.Active === 1
+    );
   }
 
-  return { active, inactive };
+  // Orphaned characters (parent not found in export)
+  for (const c of orphans) {
+    if (c.Rank === ALT_RANK) {
+      addTo({ n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.Active === 1);
+    } else if (RANK_PRIORITY.includes(c.Rank)) {
+      addTo({ n: c.Name, r: c.Race, c: c.Class, a: [] }, c.Active === 1);
+    }
+    // UNKNOWN rank orphans: already in unknowns list, skip display
+  }
+
+  return { active, inactive, unknowns };
 }
 
-// ── Human-readable member pages ───────────────────────────────────────────────
+// ── Display helpers ───────────────────────────────────────────────────────────
 function _groupByClass(chars) {
   const map = new Map();
   for (const c of chars) {
-    if (!map.has(c.c)) map.set(c.c, []);
-    map.get(c.c).push(c);
+    const cls = c.c || 'Unknown';
+    if (!map.has(cls)) map.set(cls, []);
+    map.get(cls).push(c);
   }
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
@@ -127,67 +145,43 @@ function _rosterCounts(roster) {
   return { mainCount, altCount };
 }
 
-// Returns array of line strings for chunking into Discord embeds.
-// Format: Mains section (sorted by class), then Alts section (sorted by class + main ref).
-function _memberLines(roster) {
+// One description string per class. Mains classes then Alts classes.
+// Each string becomes its own Discord message.
+function _buildMemberEmbeds(roster) {
   const mains = roster
     .filter(m => !m._alt)
-    .sort((a, b) => a.c.localeCompare(b.c) || a.n.localeCompare(b.n));
+    .sort((a, b) => (a.c || '').localeCompare(b.c || '') || a.n.localeCompare(b.n));
 
-  // Linked alts (embedded in mains' a:[])
   const linkedAlts = [];
   for (const m of mains) {
     for (const a of (m.a || [])) linkedAlts.push({ n: a.n, r: a.r, c: a.c, _main: m.n });
   }
-  // Standalone alts (_alt: true, no known main)
   const standaloneAlts = roster
     .filter(m => m._alt)
     .map(a => ({ n: a.n, r: a.r, c: a.c, _main: null }));
-
   const allAlts = [...linkedAlts, ...standaloneAlts]
-    .sort((a, b) => a.c.localeCompare(b.c) || a.n.localeCompare(b.n));
+    .sort((a, b) => (a.c || '').localeCompare(b.c || '') || a.n.localeCompare(b.n));
 
-  const lines = [];
+  const descs = [];
 
-  // Mains
-  lines.push(`**— Mains (${mains.length}) —**`);
   for (const [cls, chars] of _groupByClass(mains)) {
-    lines.push(`**${cls}**`);
+    const lines = [`**— Mains: ${cls} (${chars.length}) —**`];
     for (const m of chars) lines.push(`${m.n} *(${m.r})*`);
+    descs.push(lines.join('\n'));
   }
 
-  // Alts
-  if (allAlts.length > 0) {
-    lines.push('');
-    lines.push(`**— Alts (${allAlts.length}) —**`);
-    for (const [cls, chars] of _groupByClass(allAlts)) {
-      lines.push(`**${cls}**`);
-      for (const a of chars) {
-        const ref = a._main ? ` · *${a._main}*` : '';
-        lines.push(`${a.n} *(${a.r})*${ref}`);
-      }
+  for (const [cls, chars] of _groupByClass(allAlts)) {
+    const lines = [`**— Alts: ${cls} (${chars.length}) —**`];
+    for (const a of chars) {
+      lines.push(`${a.n} *(${a.r})*${a._main ? ` · *${a._main}*` : ''}`);
     }
+    descs.push(lines.join('\n'));
   }
 
-  return lines;
+  return descs;
 }
 
-function _chunkText(lines, limit = 3500) {
-  const chunks = [];
-  let cur = [], curLen = 0;
-  for (const line of lines) {
-    const len = line.length + 1;
-    if (curLen + len > limit && cur.length > 0) {
-      chunks.push(cur.join('\n')); cur = [line]; curLen = len;
-    } else {
-      cur.push(line); curLen += len;
-    }
-  }
-  if (cur.length > 0) chunks.push(cur.join('\n'));
-  return chunks;
-}
-
-// ── Discord persistence ───────────────────────────────────────────────────────
+// ── JSON storage helpers ──────────────────────────────────────────────────────
 function _chunkJson(roster) {
   const chunks = [];
   let cur = [], curLen = 2;
@@ -203,6 +197,7 @@ function _chunkJson(roster) {
   return chunks;
 }
 
+// ── Discord persistence ───────────────────────────────────────────────────────
 async function saveRosterToThread(client, roster, threadId, headerTitle, membersTitle, dataTitle, importerName, importedAt) {
   if (!threadId) return;
   try {
@@ -219,29 +214,29 @@ async function saveRosterToThread(client, roster, threadId, headerTitle, members
     const { mainCount, altCount } = _rosterCounts(roster);
     const importTs = importedAt ? `<t:${Math.floor(importedAt.getTime() / 1000)}:F>` : 'unknown';
 
-    // 1. Header embed
+    // 1. Header
     await thread.send({ embeds: [
       new EmbedBuilder()
         .setTitle(headerTitle)
         .setColor(0x5865f2)
         .setDescription('Character roster for Wolf Pack EQ. Imported from OpenDKP.')
         .addFields(
-          { name: 'Mains',         value: String(mainCount), inline: true },
-          { name: 'Alts',          value: String(altCount),  inline: true },
+          { name: 'Mains', value: String(mainCount), inline: true },
+          { name: 'Alts',  value: String(altCount),  inline: true },
           { name: 'Last Imported', value: `By **${importerName || 'unknown'}** on ${importTs}`, inline: false },
         )
         .setTimestamp(importedAt || undefined),
     ]});
 
-    // 2. Human-readable member pages
-    const pages = _chunkText(_memberLines(roster));
-    for (let i = 0; i < pages.length; i++) {
+    // 2. One message per class (mains then alts)
+    const classDescs = _buildMemberEmbeds(roster);
+    for (let i = 0; i < classDescs.length; i++) {
       await thread.send({ embeds: [
         new EmbedBuilder()
           .setTitle(membersTitle)
           .setColor(0x5865f2)
-          .setDescription(pages[i])
-          .setFooter({ text: `page ${i + 1}/${pages.length}` }),
+          .setDescription(classDescs[i])
+          .setFooter({ text: `${i + 1}/${classDescs.length}` }),
       ]});
     }
 
@@ -293,12 +288,10 @@ async function loadRosterFromDiscord(client) {
   _inactive = await loadThread(inactiveId, INACTIVE_DATA_TITLE);
   _buildLookup();
 
-  const all = [..._active, ..._inactive];
-  const { mainCount, altCount } = _rosterCounts(all);
+  const { mainCount, altCount } = _rosterCounts([..._active, ..._inactive]);
   console.log(`[roster] Loaded ${mainCount} mains, ${altCount} alts`);
 }
 
-// Exported for use in rosterimport.js confirmation message
 function rosterCounts(roster) { return _rosterCounts(roster); }
 
 module.exports = {
