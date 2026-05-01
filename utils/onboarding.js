@@ -29,6 +29,9 @@ const CHANGELOGS = {
     '`/parsenight <data>` — submit a Combined EQLogParser string for a full-night DPS summary',
     '`/parseaoe <data>` — now accepts the Combined (N): multi-mob format in addition to single-mob parses',
   ],
+  '1.0.3': [
+    '`/parse` and `/parseaoe` now automatically post results to active raid/event threads',
+  ],
 };
 
 // ── Hashing ───────────────────────────────────────────────────────────────────

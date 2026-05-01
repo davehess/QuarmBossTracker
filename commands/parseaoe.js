@@ -2,7 +2,7 @@
 // Contributes to a 5-minute rolling window, merged by max damage per player.
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
-const { parseEQLog, buildParseEmbed } = require('./parse');
+const { parseEQLog, buildParseEmbed, postParseToAnnounceThreads } = require('./parse');
 
 const AOE_WINDOW_MS = 5 * 60 * 1000;
 let aoeWindow = []; // { timestamp, players }
@@ -69,5 +69,8 @@ module.exports = {
       const { appendParseToSession } = require('./raidnight');
       await appendParseToSession(interaction.client, 'aoe_parse', mergedParsed, 'AOE Phase', '💥');
     } catch {}
+
+    // Post to any active announce/event threads (fire-and-forget)
+    postParseToAnnounceThreads(interaction.client, embed).catch(() => {});
   },
 };

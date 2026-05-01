@@ -230,6 +230,21 @@ async function loadParsesFromDiscord(client) {
   }
 }
 
+// ── Post parse embed to all active announce threads ──────────────────────────
+async function postParseToAnnounceThreads(client, embed) {
+  const { getAllAnnounces } = require('../utils/state');
+  const announces = Object.values(getAllAnnounces());
+  for (const ann of announces) {
+    if (!ann.threadId) continue;
+    try {
+      const thread = await client.channels.fetch(ann.threadId).catch(() => null);
+      if (thread) await thread.send({ embeds: [embed] });
+    } catch (err) {
+      console.warn('[parse] Could not post to announce thread:', err?.message);
+    }
+  }
+}
+
 // ── Pending parses (for select-menu confirm flow) ──────────────────────────────
 const pendingParses = new Map(); // userId → { parsed, rawData, ts }
 
@@ -300,6 +315,9 @@ async function finishParse(interaction, bossId, boss, parsed) {
   // Auto-append to active raid night thread (fire-and-forget)
   const { appendParseToSession } = require('./raidnight');
   appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
+
+  // Post to any active announce/event threads (fire-and-forget)
+  postParseToAnnounceThreads(interaction.client, embed).catch(() => {});
 
   return embed;
 }
@@ -395,4 +413,5 @@ module.exports = {
   pendingParses,
   handleParseConfirm,
   finishParse,
+  postParseToAnnounceThreads,
 };
