@@ -104,28 +104,12 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, killList) {
     desc = `**${killCount} kills** · Avg Raid DPS: **${fmt(avgRaidDps)}/s** · Latest: **${fmt(lastRaidDps)}/s** (${sign}${pct}% vs avg)`;
   }
 
-  const faTargets = sorted
-    .filter(p => p.appearances >= Math.ceil(killCount / 2))
-    .slice(0, 3)
-    .map(p => `**${p.name}**`)
-    .join(', ');
-
   const title = ['📈', bossEmoji, bossName, '— DPS Scoreboard'].filter(Boolean).join(' ');
-  const embed = new EmbedBuilder()
+  return new EmbedBuilder()
     .setColor(0xe67e22)
     .setTitle(title)
     .setDescription(desc)
     .addFields({ name: 'Top DPS', value: '```\n' + table + '\n```', inline: false });
-
-  if (faTargets && !isSingle) {
-    embed.addFields({
-      name: '🐾 Feral Avatar Candidates',
-      value: `${faTargets} — consistent top performers present in ≥50% of kills`,
-      inline: false,
-    });
-  }
-
-  return embed;
 }
 
 module.exports = {

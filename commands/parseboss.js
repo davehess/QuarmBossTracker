@@ -51,7 +51,7 @@ module.exports = {
       return interaction.editReply('❌ Could not parse that input. Paste the EQLogParser "Send to EQ" output directly (e.g. "Boss Name in 397s, 1.54M Damage @3.87K, 1. Player = 78.22K@216 in 362s | ...")');
     }
 
-    const embed = await finishParse(interaction, bossId, boss, parsed);
-    return interaction.editReply({ embeds: [embed] });
+    await finishParse(interaction, bossId, boss, parsed);
+    return interaction.editReply({ content: '✅ Parse submitted!' });
   },
 };

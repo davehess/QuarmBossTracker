@@ -319,6 +319,11 @@ async function finishParse(interaction, bossId, boss, parsed) {
   // Post to any active announce/event threads (fire-and-forget)
   postParseToAnnounceThreads(interaction.client, embed).catch(() => {});
 
+  // Post publicly in the channel where the command was run
+  interaction.channel.send({ embeds: [embed] }).catch(err =>
+    console.warn('[parse] public channel send failed:', err?.message)
+  );
+
   return embed;
 }
 
@@ -334,8 +339,7 @@ async function handleParseConfirm(interaction) {
   const bosses = require('../data/bosses.json');
   const boss = bosses.find(b => b.id === bossId);
   await interaction.update({ content: `✅ Using **${boss?.name || bossId}**...`, components: [] });
-  const embed = await finishParse(interaction, bossId, boss, pending.parsed);
-  await interaction.followUp({ flags: MessageFlags.Ephemeral, embeds: [embed] }).catch(() => {});
+  await finishParse(interaction, bossId, boss, pending.parsed);
 }
 
 module.exports = {
@@ -369,16 +373,13 @@ module.exports = {
     }
 
     if (result.exact) {
-      const embed = await finishParse(interaction, result.exact.id, result.exact, parsed);
-      return interaction.editReply({ embeds: [embed] });
+      await finishParse(interaction, result.exact.id, result.exact, parsed);
+      return interaction.editReply({ content: '✅ Parse submitted!' });
     }
 
     if (result.partial) {
-      const embed = await finishParse(interaction, result.partial.id, result.partial, parsed);
-      return interaction.editReply({
-        content: `ℹ️ Auto-matched to **${result.partial.name}** — use /parseboss to override`,
-        embeds: [embed],
-      });
+      await finishParse(interaction, result.partial.id, result.partial, parsed);
+      return interaction.editReply({ content: `✅ Parse submitted! (auto-matched to **${result.partial.name}** — use /parseboss to override)` });
     }
 
     // Multiple candidates — show select menu

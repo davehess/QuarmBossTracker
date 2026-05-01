@@ -21,7 +21,7 @@ module.exports = {
   async execute(interaction) {
     const rawData = interaction.options.getString('data');
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply();
 
     const parsed = parseEQLog(rawData);
     if (!parsed) {
