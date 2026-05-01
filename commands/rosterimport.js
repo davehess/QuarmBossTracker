@@ -7,7 +7,7 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole } = require('../utils/roles');
 const {
   processOpenDkpExport, saveRosterToThread, loadRosterFromDiscord,
-  ACTIVE_TITLE, INACTIVE_TITLE,
+  ACTIVE_TITLE, INACTIVE_TITLE, ACTIVE_DATA_TITLE, INACTIVE_DATA_TITLE,
 } = require('../utils/roster');
 
 function fetchUrl(url) {
@@ -70,8 +70,11 @@ module.exports = {
       return interaction.editReply('❌ `ROSTER_ACTIVE_THREAD_ID` and/or `ROSTER_INACTIVE_THREAD_ID` are not set in environment variables.');
     }
 
-    await saveRosterToThread(interaction.client, active,   activeId,   ACTIVE_TITLE);
-    await saveRosterToThread(interaction.client, inactive, inactiveId, INACTIVE_TITLE);
+    const importerName = interaction.member?.displayName || interaction.user.username;
+    const importedAt   = new Date();
+
+    await saveRosterToThread(interaction.client, active,   activeId,   ACTIVE_TITLE,   ACTIVE_DATA_TITLE,   importerName, importedAt);
+    await saveRosterToThread(interaction.client, inactive, inactiveId, INACTIVE_TITLE, INACTIVE_DATA_TITLE, importerName, importedAt);
 
     // Reload in-memory lookup
     await loadRosterFromDiscord(interaction.client);

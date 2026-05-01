@@ -5,9 +5,15 @@
 
 const { EmbedBuilder } = require('discord.js');
 
+// Header embed titles (human-readable, first message in each thread)
 const ACTIVE_TITLE   = '📋 Active Roster';
 const INACTIVE_TITLE = '📋 Inactive Roster';
-const CHUNK_LIMIT    = 3500; // chars per embed description
+
+// Data embed titles (compact JSON chunks — not meant to be read directly)
+const ACTIVE_DATA_TITLE   = '📋 Active Roster — Data';
+const INACTIVE_DATA_TITLE = '📋 Inactive Roster — Data';
+
+const CHUNK_LIMIT = 3500; // chars per embed description
 
 // In-memory state
 let _active   = []; // [{ n, r, c, a: [{n,r,c}] }]
@@ -39,10 +45,7 @@ function getFamily(name) {
   return { main, alts: main.alts };
 }
 
-function getAllNames() {
-  return [..._lookup.keys()];
-}
-
+function getAllNames()        { return [..._lookup.keys()]; }
 function getActiveRoster()   { return _active; }
 function getInactiveRoster() { return _inactive; }
 
@@ -50,8 +53,8 @@ function getInactiveRoster() { return _inactive; }
 // Accepts the raw OpenDKP JSON array. Returns { active, inactive } in compact format.
 // Relationship: AssociatedId === -1 → main; AssociatedId = main's CharacterId → alt.
 function processOpenDkpExport(rawArray) {
-  const all   = rawArray.filter(c => !c.Deleted);
-  const mains = all.filter(c => c.AssociatedId === -1);
+  const all      = rawArray.filter(c => !c.Deleted);
+  const mains    = all.filter(c => c.AssociatedId === -1);
   const byParent = new Map();
   for (const a of all.filter(c => c.AssociatedId !== -1)) {
     if (!byParent.has(a.AssociatedId)) byParent.set(a.AssociatedId, []);
@@ -85,27 +88,48 @@ function _chunk(roster) {
   return chunks;
 }
 
-async function saveRosterToThread(client, roster, threadId, title) {
+// importerName: display name of the Discord user who ran /rosterimport
+// importedAt: Date object
+async function saveRosterToThread(client, roster, threadId, headerTitle, dataTitle, importerName, importedAt) {
   if (!threadId) return;
   try {
     const thread = await client.channels.fetch(threadId);
 
-    // Delete previous roster messages from this bot
+    // Delete all previous bot messages (header + data)
     const msgs = await thread.messages.fetch({ limit: 100 });
     for (const msg of msgs.values()) {
-      if (msg.author.id === client.user.id && msg.embeds[0]?.title === title) {
-        await msg.delete().catch(() => {});
-      }
+      if (msg.author.id !== client.user.id) continue;
+      const t = msg.embeds[0]?.title;
+      if (t === headerTitle || t === dataTitle) await msg.delete().catch(() => {});
     }
 
+    const totalAlts = roster.reduce((s, m) => s + (m.a?.length || 0), 0);
+    const importTs  = importedAt
+      ? `<t:${Math.floor(importedAt.getTime() / 1000)}:F>`
+      : 'unknown';
+
+    // Post header first so it's the first message in the thread
+    const header = new EmbedBuilder()
+      .setTitle(headerTitle)
+      .setColor(0x5865f2)
+      .setDescription('Character roster for Wolf Pack EQ. Imported from OpenDKP.')
+      .addFields(
+        { name: 'Mains',        value: String(roster.length), inline: true },
+        { name: 'Alts',         value: String(totalAlts),     inline: true },
+        { name: 'Last Imported', value: `By **${importerName || 'unknown'}** on ${importTs}`, inline: false },
+      )
+      .setTimestamp(importedAt || undefined);
+    await thread.send({ embeds: [header] });
+
+    // Post JSON data chunks after the header
     const chunks = _chunk(roster);
     for (let i = 0; i < chunks.length; i++) {
       const embed = new EmbedBuilder()
-        .setTitle(title)
+        .setTitle(dataTitle)
         .setColor(0x2b2d31)
         .setDescription(JSON.stringify(chunks[i]))
-        .setTimestamp()
-        .setFooter({ text: `${roster.length} mains · chunk ${i + 1}/${chunks.length}` });
+        .setFooter({ text: `chunk ${i + 1}/${chunks.length} · imported by ${importerName || 'unknown'}` })
+        .setTimestamp(importedAt || undefined);
       await thread.send({ embeds: [embed] });
     }
   } catch (err) {
@@ -122,15 +146,15 @@ async function loadRosterFromDiscord(client) {
     return;
   }
 
-  async function loadThread(threadId, title) {
+  async function loadThread(threadId, dataTitle) {
     if (!threadId) return [];
     try {
-      const thread = await client.channels.fetch(threadId);
-      const msgs   = await thread.messages.fetch({ limit: 100 });
+      const thread  = await client.channels.fetch(threadId);
+      const msgs    = await thread.messages.fetch({ limit: 100 });
       const entries = [];
       for (const msg of msgs.values()) {
         if (msg.author.id !== client.user.id) continue;
-        if (msg.embeds[0]?.title !== title) continue;
+        if (msg.embeds[0]?.title !== dataTitle) continue;
         try { entries.push(...JSON.parse(msg.embeds[0].description)); } catch {}
       }
       return entries;
@@ -140,8 +164,8 @@ async function loadRosterFromDiscord(client) {
     }
   }
 
-  _active   = await loadThread(activeId,   ACTIVE_TITLE);
-  _inactive = await loadThread(inactiveId, INACTIVE_TITLE);
+  _active   = await loadThread(activeId,   ACTIVE_DATA_TITLE);
+  _inactive = await loadThread(inactiveId, INACTIVE_DATA_TITLE);
   _buildLookup();
 
   const totalAlts = [..._active, ..._inactive].reduce((s, m) => s + (m.a?.length || 0), 0);
@@ -159,4 +183,6 @@ module.exports = {
   getInactiveRoster,
   ACTIVE_TITLE,
   INACTIVE_TITLE,
+  ACTIVE_DATA_TITLE,
+  INACTIVE_DATA_TITLE,
 };
