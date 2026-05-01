@@ -6,7 +6,7 @@ const https = require('https');
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole } = require('../utils/roles');
 const {
-  processOpenDkpExport, saveRosterToThread, loadRosterFromDiscord,
+  processOpenDkpExport, saveRosterToThread, loadRosterFromDiscord, rosterCounts,
   ACTIVE_TITLE, INACTIVE_TITLE, ACTIVE_MEMBERS_TITLE, INACTIVE_MEMBERS_TITLE,
   ACTIVE_DATA_TITLE, INACTIVE_DATA_TITLE,
 } = require('../utils/roster');
@@ -80,13 +80,13 @@ module.exports = {
     // Reload in-memory lookup
     await loadRosterFromDiscord(interaction.client);
 
-    const activeAlts   = active.reduce((s, m) => s + (m.a?.length || 0), 0);
-    const inactiveAlts = inactive.reduce((s, m) => s + (m.a?.length || 0), 0);
+    const { mainCount: activeMains,   altCount: activeAlts   } = rosterCounts(active);
+    const { mainCount: inactiveMains, altCount: inactiveAlts } = rosterCounts(inactive);
 
     await interaction.editReply(
       `✅ Roster imported from \`${attachment.name}\`\n` +
-      `**Active:** ${active.length} mains · ${activeAlts} alts\n` +
-      `**Inactive:** ${inactive.length} mains · ${inactiveAlts} alts`
+      `**Active:** ${activeMains} mains · ${activeAlts} alts\n` +
+      `**Inactive:** ${inactiveMains} mains · ${inactiveAlts} alts`
     );
   },
 };

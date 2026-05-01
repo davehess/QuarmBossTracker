@@ -22,7 +22,8 @@ module.exports = {
       .slice(0, 25)
       .map(n => {
         const c = getCharacter(n);
-        const label = c ? `${c.name} (${c.race} ${c.class}${c.isAlt ? ` · Alt of ${c.mainName}` : ''})` : n;
+        const altSuffix = c?.isAlt ? (c.mainName ? ` · Alt of ${c.mainName}` : ' · Alt') : '';
+        const label = c ? `${c.name} (${c.race} ${c.class}${altSuffix})` : n;
         return { name: label.slice(0, 100), value: c?.name || n };
       });
     await interaction.respond(matches);
@@ -39,7 +40,9 @@ module.exports = {
       });
     }
 
-    const status = char.isAlt ? `Alt of **${char.mainName}**` : 'Main';
+    const status = char.isAlt
+      ? (char.mainName ? `Alt of **${char.mainName}**` : 'Alt *(main not linked)*')
+      : 'Main';
     const active = char.active ? '' : ' *(inactive)*';
     return interaction.reply({
       flags: MessageFlags.Ephemeral,
