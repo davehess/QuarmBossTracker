@@ -25,7 +25,7 @@ module.exports = {
 
     const parsed = parseEQLog(rawData);
     if (!parsed) {
-      return interaction.editReply('❌ Could not parse that input. Paste the EQLogParser "Send to EQ" output directly.');
+      return interaction.editReply('❌ Could not parse that input. Paste the EQLogParser "Send to EQ" or "Combined (N):" output (e.g. "Combined (55): Boss in 162s, 737.8K Damage @4.55K, 1. Player = 231.20K@5.78K in 40s | ...")');
     }
 
     const now = Date.now();
