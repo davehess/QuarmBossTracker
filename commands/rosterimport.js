@@ -7,7 +7,8 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole } = require('../utils/roles');
 const {
   processOpenDkpExport, saveRosterToThread, loadRosterFromDiscord,
-  ACTIVE_TITLE, INACTIVE_TITLE, ACTIVE_DATA_TITLE, INACTIVE_DATA_TITLE,
+  ACTIVE_TITLE, INACTIVE_TITLE, ACTIVE_MEMBERS_TITLE, INACTIVE_MEMBERS_TITLE,
+  ACTIVE_DATA_TITLE, INACTIVE_DATA_TITLE,
 } = require('../utils/roster');
 
 function fetchUrl(url) {
@@ -73,8 +74,8 @@ module.exports = {
     const importerName = interaction.member?.displayName || interaction.user.username;
     const importedAt   = new Date();
 
-    await saveRosterToThread(interaction.client, active,   activeId,   ACTIVE_TITLE,   ACTIVE_DATA_TITLE,   importerName, importedAt);
-    await saveRosterToThread(interaction.client, inactive, inactiveId, INACTIVE_TITLE, INACTIVE_DATA_TITLE, importerName, importedAt);
+    await saveRosterToThread(interaction.client, active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   importerName, importedAt);
+    await saveRosterToThread(interaction.client, inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, importerName, importedAt);
 
     // Reload in-memory lookup
     await loadRosterFromDiscord(interaction.client);
