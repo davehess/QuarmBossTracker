@@ -21,6 +21,7 @@ const {
   addPvpAlertHowler,
   hasSeenWelcome, markWelcomeSeen,
   getRaidSession, clearRaidSession,
+  clearRaidNight,
 } = require('./utils/state');
 const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
 const {
@@ -864,6 +865,7 @@ function scheduleMidnightSummary(readyClient) {
 
       resetDailyKills();
       clearAnnounceMessageIds();
+      clearRaidNight();
 
       // ── Archive passed announce threads ─────────────────────────────────
       await archivePassedAnnounceThreads(readyClient);

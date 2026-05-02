@@ -11,7 +11,7 @@ function _empty() {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, quake: null, pvpAlerts: {},
-    seenWelcome: [], raidSession: null,
+    seenWelcome: [], raidSession: null, raidNight: null,
   };
 }
 
@@ -64,6 +64,7 @@ function loadState() {
   if (raw.quake !== undefined) s.quake             = raw.quake;
   if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
   if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
+  if (raw.raidNight)          s.raidNight          = raw.raidNight;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -301,6 +302,12 @@ function getRaidSession()       { return loadState().raidSession || null; }
 function saveRaidSession(data)  { const s = loadState(); s.raidSession = data; saveState(s); }
 function clearRaidSession()     { const s = loadState(); s.raidSession = null; saveState(s); }
 
+// ── Raid night (DKP tick tracking) ───────────────────────────────────────────
+// { date, raidId, name, poolId, ticks: { 1:{ tickId, description, postedAt, count }, ... } }
+function getRaidNight()        { return loadState().raidNight || null; }
+function saveRaidNight(data)   { const s = loadState(); s.raidNight = data; saveState(s); }
+function clearRaidNight()      { const s = loadState(); s.raidNight = null; saveState(s); }
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -329,4 +336,5 @@ module.exports = {
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getRaidSession, saveRaidSession, clearRaidSession,
+  getRaidNight, saveRaidNight, clearRaidNight,
 };
