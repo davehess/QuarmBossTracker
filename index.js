@@ -31,7 +31,7 @@ const {
 const {
   postKillUpdate, postOrUpdateExpansionBoard,
 } = require('./utils/killops');
-const { hasAllowedRole, allowedRolesList } = require('./utils/roles');
+const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('./utils/roles');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion } = require('./utils/config');
 
 function getBosses() {
@@ -219,8 +219,8 @@ async function handleBoardButton(interaction) {
 
 // ── Cancel announce button ─────────────────────────────────────────────────
 async function handleCancelAnnounce(interaction) {
-  if (!hasAllowedRole(interaction.member))
-    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Only officers can cancel events. Roles required: ${officerRolesList()}` });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
   const origMsg         = interaction.message;

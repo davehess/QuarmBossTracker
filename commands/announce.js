@@ -12,7 +12,7 @@ const {
 } = require('discord.js');
 const https = require('https');
 const { addAnnounceMessageId, saveAnnounce } = require('../utils/state');
-const { hasAllowedRole, allowedRolesList, getAllowedRoles } = require('../utils/roles');
+const { hasOfficerRole, officerRolesList, getAllowedRoles } = require('../utils/roles');
 const { parseUserTime, getDefaultTz, formatInDefaultTz } = require('../utils/timezone');
 
 // ── Easter-egg boss chain ─────────────────────────────────────────────────────
@@ -216,8 +216,8 @@ module.exports = {
   },
 
   async execute(interaction) {
-    if (!hasAllowedRole(interaction.member))
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+    if (!hasOfficerRole(interaction.member))
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${officerRolesList()}` });
 
     const bosses  = getBosses();
     const bossId  = interaction.options.getString('boss');

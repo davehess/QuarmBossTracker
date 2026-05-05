@@ -1,8 +1,7 @@
-// commands/feedback.js — Submit officer feedback, bug reports, or feature requests.
+// commands/feedback.js — Submit feedback, bug reports, or feature requests (open to all).
 // Posts a formatted embed to FEEDBACK_THREAD_ID for the guild leader to review.
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
-const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 
 const CATEGORY_COLORS = {
   kill:        0xe74c3c,
@@ -58,9 +57,6 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    if (!hasAllowedRole(interaction.member))
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
-
     const message    = interaction.options.getString('message');
     const command    = interaction.options.getString('command');
     const screenshot = interaction.options.getAttachment('screenshot');
