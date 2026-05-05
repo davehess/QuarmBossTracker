@@ -56,23 +56,58 @@ function decodeHtml(str) {
 
 function scrapePqdiDetails(html) {
   const fields = [];
-  const hpMatch = html.match(/hp[\"'\s]*[=:]\s*(\d+)/i) || html.match(/Max HP[^<]*<[^>]+>(\d[\d,]+)/i);
-  if (hpMatch) fields.push({ name: '❤️ HP', value: parseInt(hpMatch[1]).toLocaleString(), inline: true });
-  const minHit = html.match(/min_dmg[\"'\s]*[=:]\s*(\d+)/i);
-  const maxHit = html.match(/max_dmg[\"'\s]*[=:]\s*(\d+)/i);
-  if (minHit && maxHit) fields.push({ name: '⚔️ Hit Range', value: `${minHit[1]}–${maxHit[1]}`, inline: true });
-  const ac = html.match(/ac[\"'\s]*[=:]\s*(\d+)/i);
-  if (ac) fields.push({ name: '🛡️ AC', value: ac[1], inline: true });
-  const seesInvis = /see_invis[\"'\s]*[=:]\s*1/i.test(html) || /Sees Invisible/i.test(html);
-  const seesIVU   = /see_hide[\"'\s]*[=:]\s*1/i.test(html)   || /Sees IVU/i.test(html);
+
+  // Try multiple regex patterns for a stat — handles **field:** value (markdown bold),
+  // "field": value (JSON), and plain field: value formats.
+  function tryStat(...patterns) {
+    for (const pat of patterns) {
+      const m = html.match(pat);
+      if (m) return m[1];
+    }
+    return null;
+  }
+
+  const hp = tryStat(
+    /\*\*hp:\*\*\s*(\d[\d,]*)/i,
+    /\*\*hp:\s*(\d[\d,]*)\*\*/i,
+    /"hp"\s*:\s*(\d+)/i,
+    /Max HP[^<]*<[^>]+>(\d[\d,]+)/i,
+    /\bhp["'\s]*[=:]\s*(\d+)/i,
+  );
+  if (hp) fields.push({ name: '❤️ HP', value: parseInt(hp.replace(/,/g, '')).toLocaleString(), inline: true });
+
+  const minHit = tryStat(/\*\*min_dmg:\*\*\s*(\d+)/i, /\*\*min_dmg:\s*(\d+)\*\*/i, /"min_dmg"\s*:\s*(\d+)/i, /min_dmg["'\s]*[=:]\s*(\d+)/i);
+  const maxHit = tryStat(/\*\*max_dmg:\*\*\s*(\d+)/i, /\*\*max_dmg:\s*(\d+)\*\*/i, /"max_dmg"\s*:\s*(\d+)/i, /max_dmg["'\s]*[=:]\s*(\d+)/i);
+  if (minHit && maxHit) fields.push({ name: '⚔️ Hit Range', value: `${minHit}–${maxHit}`, inline: true });
+
+  const ac = tryStat(/\*\*ac:\*\*\s*(\d+)/i, /\*\*ac:\s*(\d+)\*\*/i, /"ac"\s*:\s*(\d+)/i, /\bac["'\s]*[=:]\s*(\d+)/i);
+  if (ac) fields.push({ name: '🛡️ AC', value: ac, inline: true });
+
+  const seesInvis = /see_invis["'\s]*[=:]\s*1/i.test(html) || /Sees Invisible/i.test(html);
+  const seesIVU   = /see_hide["'\s]*[=:]\s*1/i.test(html)  || /Sees IVU/i.test(html);
   const detectionVal = [seesInvis && 'See Invis', seesIVU && 'See IVU'].filter(Boolean).join(', ') || '⚠️ Not confirmed — verify before pull';
   fields.push({ name: '👁️ Detection', value: detectionVal, inline: true });
 
-  // Always show all resist values — zero resists are just as strategically important as high ones
+  // Always show all resist values — zero is as strategically important as high ones
   const resistParts = [];
-  for (const [key, label] of [['mr','MR'],['fr','FR'],['cr','CR'],['pr','PR'],['dr','DR']]) {
-    const m = html.match(new RegExp(`${key}[\"'\\s]*[=:]\\s*(-?\\d+)`, 'i'));
-    resistParts.push(`${label}: **${m ? m[1] : '?'}**`);
+  for (const [aliases, label] of [
+    [['MR', 'mr', 'magic_resist'],   'MR'],
+    [['FR', 'fr', 'fire_resist'],    'FR'],
+    [['CR', 'cr', 'cold_resist'],    'CR'],
+    [['PR', 'pr', 'poison_resist'],  'PR'],
+    [['DR', 'dr', 'disease_resist'], 'DR'],
+  ]) {
+    let val = null;
+    for (const alias of aliases) {
+      val = tryStat(
+        new RegExp(`\\*\\*${alias}:\\*\\*\\s*(-?\\d+)`, 'i'),
+        new RegExp(`\\*\\*${alias}:\\s*(-?\\d+)\\*\\*`, 'i'),
+        new RegExp(`"${alias}"\\s*:\\s*(-?\\d+)`, 'i'),
+        new RegExp(`(?<![a-zA-Z_])${alias}["'\\s]*[=:]\\s*(-?\\d+)`, 'i'),
+      );
+      if (val !== null) break;
+    }
+    resistParts.push(`${label}: **${val ?? '?'}**`);
   }
   fields.push({ name: '🧪 Resists', value: resistParts.join('  '), inline: false });
   const specials = [];
