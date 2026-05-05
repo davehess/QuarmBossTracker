@@ -311,7 +311,7 @@ module.exports = {
         privacyLevel: 2,
         entityType:   3,
         entityMetadata: { location: threadUrl || announceZone },
-        description: `${announceZone}\nPlanned by ${interaction.user.username}${note ? '\n' + note : ''}`,
+        description: `${announceZone}\nPlanned by ${interaction.member?.displayName || interaction.user.username}${note ? '\n' + note : ''}`,
       });
       eventId  = event.id;
       eventUrl = `https://discord.com/events/${interaction.guildId}/${event.id}`;
