@@ -38,14 +38,20 @@ module.exports = {
       return interaction.editReply(`❌ Could not read feedback thread: ${err?.message}`);
     }
 
-    // Filter to bot-posted feedback embeds (identified by "📬 Feedback" title prefix)
+    // Filter to open feedback embeds — exclude anything marked Implemented or Not Implementing
+    function isClosed(m) {
+      const statusField = m.embeds[0]?.fields?.find(f => f.name === 'Status');
+      if (!statusField) return false;
+      return statusField.value.startsWith('✅') || statusField.value.startsWith('❌');
+    }
+
     const entries = [...messages.values()]
-      .filter(m => m.author.bot && m.embeds.length > 0 && m.embeds[0].title?.startsWith('📬 Feedback'))
+      .filter(m => m.author.bot && m.embeds.length > 0 && m.embeds[0].title?.startsWith('📬 Feedback') && !isClosed(m))
       .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
       .slice(0, limit);
 
     if (!entries.length)
-      return interaction.editReply('No feedback entries found in the thread.');
+      return interaction.editReply('No open feedback entries. (Implemented/Not Implementing items are hidden — check the thread directly if needed.)');
 
     const lines = entries.map(m => {
       const embed      = m.embeds[0];

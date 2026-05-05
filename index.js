@@ -120,7 +120,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'pvprole_toggle_silent')       { await handlePvpRoleToggle(interaction, true); return; }
     if (interaction.customId.startsWith('pvpalert_howl:'))      { await handlePvpAlertHowl(interaction); return; }
     if (interaction.customId.startsWith('pvp_spawn_alert:'))    { await handlePvpSpawnAlert(interaction); return; }
-    if (interaction.customId === 'onb_pvp')                     { await handleOnbPvp(interaction); return; }
+    if (interaction.customId === 'fb_recv')                      { await handleFeedbackRecv(interaction); return; }
+    if (interaction.customId === 'fb_impl')                      { await handleFeedbackClose(interaction, true); return; }
+    if (interaction.customId === 'fb_nope')                      { await handleFeedbackClose(interaction, false); return; }
+    if (interaction.customId === 'onb_pvp')                      { await handleOnbPvp(interaction); return; }
     if (interaction.customId === 'onb_organizer')               { await handleOnbOrganizer(interaction); return; }
     if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
@@ -235,6 +238,67 @@ async function handleCancelAnnounce(interaction) {
   } catch (err) {
     await interaction.editReply('❌ Could not archive.');
   }
+}
+
+// ── Feedback button handlers ──────────────────────────────────────────────
+const { EmbedBuilder: _EB2, ActionRowBuilder: _ARB2, ButtonBuilder: _BB2, ButtonStyle: _BS2 } = require('discord.js');
+
+function _feedbackAckRow() {
+  return new _ARB2().addComponents(
+    new _BB2().setCustomId('fb_impl').setLabel('✅ Implemented').setStyle(_BS2.Success),
+    new _BB2().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(_BS2.Danger),
+  );
+}
+
+async function handleFeedbackRecv(interaction) {
+  const { hasOfficerRole, officerRolesList: orl } = require('./utils/roles');
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Officers only. Roles required: ${orl()}` });
+
+  await interaction.deferUpdate();
+  const msg   = interaction.message;
+  const embed = msg.embeds[0];
+  if (!embed) return;
+
+  // Extract submitter user ID from footer (stored as "uid:<id>")
+  const footerText = embed.footer?.text || '';
+  const uidMatch   = footerText.match(/uid:(\d+)/);
+  const userId     = uidMatch?.[1];
+
+  // DM the submitter
+  if (userId) {
+    try {
+      const user = await interaction.client.users.fetch(userId);
+      await user.send(`📬 Your feedback (**${embed.title?.replace('📬 Feedback — ', '') || 'General'}**) has been received by leadership. Thank you!`);
+    } catch { /* DMs may be closed */ }
+  }
+
+  const reviewer = interaction.member?.displayName || interaction.user.username;
+  const updated  = _EB2.from(embed)
+    .setFields(...(embed.fields || []).filter(f => f.name !== 'Status'), { name: 'Status', value: `📬 Acknowledged by ${reviewer}`, inline: false });
+
+  await msg.edit({ embeds: [updated], components: [_feedbackAckRow()] });
+}
+
+async function handleFeedbackClose(interaction, implemented) {
+  const { hasOfficerRole, officerRolesList: orl } = require('./utils/roles');
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Officers only. Roles required: ${orl()}` });
+
+  await interaction.deferUpdate();
+  const msg    = interaction.message;
+  const embed  = msg.embeds[0];
+  if (!embed) return;
+
+  const reviewer = interaction.member?.displayName || interaction.user.username;
+  const statusVal = implemented
+    ? `✅ Implemented by ${reviewer}`
+    : `❌ Not implementing (${reviewer})`;
+
+  const updated = _EB2.from(embed)
+    .setFields(...(embed.fields || []).filter(f => f.name !== 'Status'), { name: 'Status', value: statusVal, inline: false });
+
+  await msg.edit({ embeds: [updated], components: [] });
 }
 
 // ── Cancel event from announce thread button ───────────────────────────────
@@ -389,9 +453,9 @@ function buildWelcomeEmbed() {
 
 function buildWelcomeRow() {
   return new _ARB().addComponents(
-    new _BB().setCustomId('welcome_pvp').setLabel('🐺 Count me in for PVP').setStyle(_BS.Danger),
-    new _BB().setCustomId('welcome_organizer').setLabel('📣 I want to help organize').setStyle(_BS.Primary),
-    new _BB().setCustomId('welcome_attendee').setLabel('🎯 Just here to attend').setStyle(_BS.Secondary),
+    new _BB().setCustomId('onb_pvp').setLabel('🐺 Count me in for PVP').setStyle(_BS.Danger),
+    new _BB().setCustomId('onb_organizer').setLabel('📣 I want to help organize').setStyle(_BS.Primary),
+    new _BB().setCustomId('onb_attend').setLabel('🔕 Dismiss until next update').setStyle(_BS.Secondary),
   );
 }
 

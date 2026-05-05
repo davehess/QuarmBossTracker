@@ -1,7 +1,7 @@
 // commands/feedback.js — Submit feedback, bug reports, or feature requests (open to all).
 // Posts a formatted embed to FEEDBACK_THREAD_ID for the guild leader to review.
 
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 
 const CATEGORY_COLORS = {
   kill:        0xe74c3c,
@@ -77,6 +77,7 @@ module.exports = {
       .setTitle(`📬 Feedback — ${label}`)
       .setDescription(message)
       .addFields({ name: 'Submitted by', value: submitter, inline: true })
+      .setFooter({ text: `uid:${interaction.user.id}` })
       .setTimestamp();
 
     if (screenshot) {
@@ -88,9 +89,14 @@ module.exports = {
       }
     }
 
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(ButtonStyle.Danger),
+    );
+
     try {
       const thread = await interaction.client.channels.fetch(threadId);
-      await thread.send({ embeds: [embed] });
+      await thread.send({ embeds: [embed], components: [row] });
       return interaction.editReply(`✅ Feedback submitted to <#${threadId}>. Thank you!`);
     } catch (err) {
       console.error('[feedback] Failed to post:', err);
