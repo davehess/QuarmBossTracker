@@ -238,14 +238,16 @@ function updateAnnounceEasterEgg(msgId, level) {
 
 // ── PVP kills ─────────────────────────────────────────────────────────────────
 function pvpMobKey(name) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_'); }
-function recordPvpKill(name, timerHours, killedBy, bossId = null) {
+function recordPvpKill(name, timerHours, killedBy, bossId = null, timerUnknown = false) {
   const s = loadState();
   const key = bossId || pvpMobKey(name);
   const killedAt      = Date.now();
   const baseMs        = timerHours * 3600000;
-  const nextSpawn     = killedAt + baseMs * 0.8;   // earliest (-20%)
-  const nextSpawnLatest = killedAt + baseMs * 1.2; // latest   (+20%)
-  s.pvpKills[key] = { name, killedAt, nextSpawn, nextSpawnLatest, timerHours, killedBy, bossId: key, threadMessageId: null };
+  const nextSpawn     = timerUnknown ? null : (killedAt + baseMs * 0.8);
+  const nextSpawnLatest = timerUnknown ? null : (killedAt + baseMs * 1.2);
+  const entry = { name, killedAt, nextSpawn, nextSpawnLatest, timerHours, killedBy, bossId: key, threadMessageId: null };
+  if (timerUnknown) entry.timerUnknown = true;
+  s.pvpKills[key] = entry;
   saveState(s);
   return key;
 }
@@ -313,11 +315,13 @@ function saveRaidNight(data)   { const s = loadState(); s.raidNight = data; save
 function clearRaidNight()      { const s = loadState(); s.raidNight = null; saveState(s); }
 
 // ── Live kill tracking (exact timers, no variance) ───────────────────────────
-function recordLiveKill(bossId, bossName, timerHours, killedBy) {
+function recordLiveKill(bossId, bossName, timerHours, killedBy, timerUnknown = false) {
   const s = loadState();
   const killedAt  = Date.now();
-  const nextSpawn = killedAt + timerHours * 3600000;
-  s.liveKills[bossId] = { bossId, name: bossName, killedAt, nextSpawn, timerHours, killedBy, channelMessageId: null };
+  const nextSpawn = timerUnknown ? null : (killedAt + timerHours * 3600000);
+  const entry = { bossId, name: bossName, killedAt, nextSpawn, timerHours, killedBy, channelMessageId: null };
+  if (timerUnknown) entry.timerUnknown = true;
+  s.liveKills[bossId] = entry;
   saveState(s);
 }
 

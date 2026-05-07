@@ -130,6 +130,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
+    if (interaction.customId.startsWith('mark_avail:'))         { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('parse_breakdown:')) {
       const { handleParseBreakdown } = require('./commands/parse');
       await handleParseBreakdown(interaction).catch(console.error);
@@ -602,6 +603,32 @@ async function handlePvpSpawnAlert(interaction) {
   await interaction.editReply(`✅ PVP alert posted for **${name}**!`);
 }
 
+// ── Mark mob available (timer-unknown kills) ───────────────────────────────────
+async function handleMarkAvail(interaction) {
+  if (!hasAllowedRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  // customId: mark_avail:live:<key>  or  mark_avail:pvp:<key>
+  const [, type, ...rest] = interaction.customId.split(':');
+  const key = rest.join(':');
+
+  if (type === 'live') {
+    const { clearLiveKill } = require('./utils/state');
+    clearLiveKill(key);
+  } else if (type === 'pvp') {
+    clearPvpKill(key);
+  }
+
+  const { EmbedBuilder: EB } = require('discord.js');
+  const availEmbed = new EB()
+    .setColor(0x57f287)
+    .setTitle('✅ Mob is Available')
+    .setDescription(`Marked available by <@${interaction.user.id}>. Use the appropriate kill command to start a new timer.`)
+    .setTimestamp();
+
+  await interaction.update({ embeds: [availEmbed], components: [] });
+}
+
 // ── Onboarding button handlers ────────────────────────────────────────────────
 async function handleOnbPvp(interaction) {
   const { buildAnnouncementEmbed, buildRoleRow, getPvpRole, getPvpRoleName } = require('./commands/pvprole');
@@ -813,6 +840,8 @@ async function checkPvpSpawns(readyClient, now) {
   const pvpAlertId    = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
 
   for (const [key, entry] of Object.entries(kills)) {
+    if (entry.timerUnknown) continue;
+
     const earliest  = entry.nextSpawn;
     const latest    = entry.nextSpawnLatest || (earliest * 1.5); // fallback for old entries
     const toEarliest = earliest - now;
@@ -898,6 +927,8 @@ async function checkLiveSpawns(readyClient, now) {
   const channelId = process.env.LIVE_CHANNEL_ID;
 
   for (const [key, entry] of Object.entries(kills)) {
+    if (entry.timerUnknown) continue;
+
     const toSpawn = entry.nextSpawn - now;
 
     if (toSpawn > SOON_WARN_MS) {
