@@ -8,7 +8,7 @@ const { discordAbsoluteTime, discordRelativeTime } = require('../utils/timer');
 const { refreshHateBoard } = require('../utils/hateBoard');
 
 const HATE_TIMER_HOURS = 72;
-const { HATE_SPOTS } = require('../data/hate-spots');
+const { HATE_SPOTS, VALID_HATE_SPOTS } = require('../data/hate-spots');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,7 +16,7 @@ module.exports = {
     .setDescription('Record a Plane of Hate mini-boss kill (PVP server). 72h ±20% variance. (Pack Member+)')
     .addIntegerOption(opt =>
       opt.setName('position')
-        .setDescription('Spawn point number (1–12)')
+        .setDescription('Spawn point number (1, 2, 3, 5, 7, 8, 9, 10, 11, 12)')
         .setRequired(true)
         .setMinValue(1)
         .setMaxValue(12)
@@ -35,7 +35,7 @@ module.exports = {
     const timerUnknown = interaction.options.getBoolean('timer_unknown') ?? false;
     const spot         = HATE_SPOTS[position];
     if (!spot)
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Invalid position. Use 1–12.` });
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Invalid position. Valid spots: 1, 2, 3, 5, 7, 8, 9, 10, 11, 12.` });
 
     const key      = `hate_pvp_${position}`;
     const spotName = `Hate Mini — ${spot.label}`;

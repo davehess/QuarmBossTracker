@@ -55,9 +55,9 @@ function buildHateBoardRows(type, now) {
   const kills = type === 'live' ? getAllLiveKills() : getAllPvpKills();
   const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
 
-  // 12 buttons across 3 rows of 4
+  // 10 valid spots grouped by area across 3 rows
   const rows = [];
-  const chunks = [[1,2,3,4],[5,6,7,8],[9,10,11,12]];
+  const chunks = [[1,2,3],[5,7,8,9],[10,11,12]];
   for (const chunk of chunks) {
     const row = new ActionRowBuilder();
     for (const n of chunk) {

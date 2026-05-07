@@ -13,17 +13,15 @@ function buildFloor1Embed() {
     .setTitle('🗺️ Plane of Hate — Floor 1 Map')
     .setDescription(
       '**🏛️ Organ Hall**\n' +
-      '• #1 — Upper (upstairs)\n' +
-      '• #2 — West\n\n' +
+      '• [#1 — Upper (upstairs)](https://www.pqdi.cc/spawngroup/76326/21449682)\n' +
+      '• [#2 — West](https://www.pqdi.cc/spawngroup/76326/21449685)\n\n' +
       '**🏢 East Building**\n' +
-      '• #3 — Upper (upstairs)\n' +
-      '• #4 — Lower\n\n' +
+      '• [#3 — Upper (upstairs)](https://www.pqdi.cc/spawngroup/76326/363944)\n\n' +
       '**⛪ Church**\n' +
-      '• #5 — Middle Upper (2nd floor interior)\n' +
-      '• #6 — Pathing (roaming)\n' +
-      '• #7 — South Lower (downstairs)\n' +
-      '• #8 — South Upper (2nd floor)\n' +
-      '• #9 — West Upper'
+      '• [#5 — Middle Upper (2nd floor interior)](https://www.pqdi.cc/spawngroup/76326/21449631)\n' +
+      '• [#7 — South Lower (downstairs)](https://www.pqdi.cc/spawngroup/76326/21449632)\n' +
+      '• [#8 — South Upper (2nd floor)](https://www.pqdi.cc/spawngroup/76326/21449632)\n' +
+      '• [#9 — West Upper](https://www.pqdi.cc/spawngroup/76326/21449667)'
     );
 }
 
@@ -33,9 +31,9 @@ function buildFloor2Embed() {
     .setTitle('🗺️ Plane of Hate — Second Floor Map')
     .setDescription(
       '**⬆️ Second Floor Spawns**\n' +
-      '• #10 — North Spawn\n' +
-      '• #11 — East Spawn\n' +
-      '• #12 — South Spawn'
+      '• [#10 — North Spawn](https://www.pqdi.cc/spawngroup/76326/21449679)\n' +
+      '• [#11 — East Spawn](https://www.pqdi.cc/spawngroup/76326/368076)\n' +
+      '• [#12 — South Spawn](https://www.pqdi.cc/spawngroup/76326/21449686)'
     );
 }
 
