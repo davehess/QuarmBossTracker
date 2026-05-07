@@ -11,7 +11,7 @@ function _empty() {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, liveKills: {}, quake: null, pvpAlerts: {},
-    seenWelcome: [], raidSession: null, raidNight: null,
+    seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {},
   };
 }
 
@@ -43,7 +43,7 @@ function loadState() {
 
   // Migrate old format: if the file was just a flat { bossId: {...} } map (no top-level keys)
   // Detection: has no known top-level keys at all
-  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'announces', 'pvpKills', 'liveKills', 'quake', 'pvpAlerts', 'board'];
+  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'announces', 'pvpKills', 'liveKills', 'quake', 'pvpAlerts', 'board', 'hateBoards'];
   const hasKnownKey = knownKeys.some((k) => k in raw);
   if (!hasKnownKey && Object.keys(raw).length > 0) {
     // Old format: the whole object IS the bosses map
@@ -66,6 +66,7 @@ function loadState() {
   if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
   if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
   if (raw.raidNight)          s.raidNight          = raw.raidNight;
+  if (raw.hateBoards)         s.hateBoards         = raw.hateBoards;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -333,6 +334,39 @@ function setLiveKillMessageId(bossId, messageId) {
 function clearLiveKill(bossId)  { const s = loadState(); delete s.liveKills[bossId]; saveState(s); }
 function getAllLiveKills()       { return loadState().liveKills || {}; }
 
+// ── Hate board message IDs ────────────────────────────────────────────────────
+// type = 'live' | 'pvp'
+function getHateBoardMessageId(type) {
+  const envKey = type === 'live' ? 'LIVE_HATE_BOARD_ID' : 'PVP_HATE_BOARD_ID';
+  return process.env[envKey] || loadState().hateBoards?.[type] || null;
+}
+function setHateBoardMessageId(type, id) {
+  const envKey = type === 'live' ? 'LIVE_HATE_BOARD_ID' : 'PVP_HATE_BOARD_ID';
+  if (process.env[envKey]) return;
+  const s = loadState();
+  s.hateBoards[type] = id;
+  saveState(s);
+}
+
+// Mark a live kill entry as timer-unknown (from hate board "Unknown" button)
+function setLiveKillTimerUnknown(key) {
+  const s = loadState();
+  if (!s.liveKills[key]) return;
+  s.liveKills[key].timerUnknown = true;
+  s.liveKills[key].nextSpawn = null;
+  saveState(s);
+}
+
+// Mark a PVP kill entry as timer-unknown
+function setPvpKillTimerUnknown(key) {
+  const s = loadState();
+  if (!s.pvpKills[key]) return;
+  s.pvpKills[key].timerUnknown = true;
+  s.pvpKills[key].nextSpawn = null;
+  s.pvpKills[key].nextSpawnLatest = null;
+  saveState(s);
+}
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -359,6 +393,8 @@ module.exports = {
   getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceTime, updateAnnounceEasterEgg,
   recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey, setPvpKillThreadMessageId,
   recordLiveKill, setLiveKillMessageId, clearLiveKill, getAllLiveKills,
+  getHateBoardMessageId, setHateBoardMessageId,
+  setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getRaidSession, saveRaidSession, clearRaidSession,

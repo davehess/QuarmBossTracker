@@ -23,6 +23,8 @@ const {
   getRaidSession, clearRaidSession,
   clearRaidNight,
   getAllLiveKills, clearLiveKill,
+  setLiveKillTimerUnknown, setPvpKillTimerUnknown,
+  getHateBoardMessageId, setHateBoardMessageId,
 } = require('./utils/state');
 const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
 const {
@@ -131,6 +133,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))         { await handleMarkAvail(interaction); return; }
+    if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
+    if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
     if (interaction.customId.startsWith('parse_breakdown:')) {
       const { handleParseBreakdown } = require('./commands/parse');
       await handleParseBreakdown(interaction).catch(console.error);
@@ -627,6 +631,106 @@ async function handleMarkAvail(interaction) {
     .setTimestamp();
 
   await interaction.update({ embeds: [availEmbed], components: [] });
+}
+
+// ── Hate board kill button ────────────────────────────────────────────────────
+// customId: hate_kill:<type>:<n>   type = live | pvp, n = 1-12
+async function handleHateKillButton(interaction) {
+  if (!hasAllowedRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  const parts = interaction.customId.split(':'); // ['hate_kill', type, n]
+  const type  = parts[1];
+  const n     = parseInt(parts[2], 10);
+
+  const { HATE_SPOTS } = require('./data/hate-spots');
+  const { recordLiveKill, recordPvpKill } = require('./utils/state');
+  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
+
+  const spot = HATE_SPOTS[n];
+  if (!spot)
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Unknown spot #${n}.` });
+
+  const HATE_TIMER_HOURS = 72;
+  const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
+  const key = keyPrefix + n;
+  const kills = type === 'live' ? getAllLiveKills() : getAllPvpKills();
+  const existing = kills[key];
+  const now = Date.now();
+
+  let replyContent;
+
+  if (existing && (existing.timerUnknown || (existing.nextSpawn && existing.nextSpawn > now))) {
+    // Unkill — clear the entry
+    if (type === 'live') clearLiveKill(key);
+    else clearPvpKill(key);
+    replyContent = `↩️ **${spot.label}** cleared — marked as available.`;
+    await refreshHateBoard(interaction.client, type);
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: replyContent });
+  }
+
+  // Kill — record with normal timer
+  const spotName = `Hate Mini — ${spot.label}`;
+  if (type === 'live') {
+    recordLiveKill(key, spotName, HATE_TIMER_HOURS, interaction.user.id, false);
+  } else {
+    recordPvpKill(spotName, HATE_TIMER_HOURS, interaction.user.id, key, false);
+  }
+  await refreshHateBoard(interaction.client, type);
+
+  // Build ephemeral reply with timer info + "Mark Timer Unknown" button
+  const entry = type === 'live' ? getAllLiveKills()[key] : getAllPvpKills()[key];
+  let desc;
+  if (type === 'live') {
+    desc = `Next spawn: ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`;
+  } else {
+    desc = `Earliest: ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})\nLatest: ${discordAbsoluteTime(entry.nextSpawnLatest)} (${discordRelativeTime(entry.nextSpawnLatest)})`;
+  }
+
+  const killEmbed = new EB()
+    .setColor(type === 'live' ? 0x9b59b6 : 0xcc0000)
+    .setTitle(`☠️ Kill recorded — ${spot.label}`)
+    .setDescription(desc)
+    .setTimestamp();
+
+  const unknownRow = new ARB().addComponents(
+    new BB()
+      .setCustomId(`hate_unknown:${type}:${n}`)
+      .setLabel('❓ Timer Unknown')
+      .setStyle(BS.Secondary)
+  );
+
+  await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [killEmbed], components: [unknownRow] });
+}
+
+// ── Hate board "Timer Unknown" button ─────────────────────────────────────────
+// customId: hate_unknown:<type>:<n>
+async function handleHateUnknownButton(interaction) {
+  const parts = interaction.customId.split(':');
+  const type  = parts[1];
+  const n     = parseInt(parts[2], 10);
+
+  const { HATE_SPOTS } = require('./data/hate-spots');
+  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { EmbedBuilder: EB } = require('discord.js');
+
+  const spot = HATE_SPOTS[n];
+  const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
+  const key = keyPrefix + n;
+
+  if (type === 'live') setLiveKillTimerUnknown(key);
+  else setPvpKillTimerUnknown(key);
+
+  await refreshHateBoard(interaction.client, type);
+
+  const doneEmbed = new EB()
+    .setColor(0x808080)
+    .setTitle(`❓ Timer Unknown — ${spot?.label || `Spot #${n}`}`)
+    .setDescription('Marked as killed with unknown timer. The board shows ❓ for this spot.\nClick the board button again to clear it when the mob is available.')
+    .setTimestamp();
+
+  await interaction.update({ embeds: [doneEmbed], components: [] });
 }
 
 // ── Onboarding button handlers ────────────────────────────────────────────────

@@ -5,6 +5,7 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 const { recordLiveKill, getAllLiveKills, setLiveKillMessageId } = require('../utils/state');
 const { discordAbsoluteTime, discordRelativeTime } = require('../utils/timer');
+const { refreshHateBoard } = require('../utils/hateBoard');
 
 const HATE_TIMER_HOURS = 72;
 const { HATE_SPOTS } = require('../data/hate-spots');
@@ -98,6 +99,7 @@ module.exports = {
       } catch (err) { console.warn('[livehatekill]', err?.message); }
     }
 
+    refreshHateBoard(interaction.client, 'live').catch(err => console.warn('[livehatekill] refreshHateBoard:', err?.message));
     await interaction.reply({ flags: MessageFlags.Ephemeral, content: replyText });
   },
 };
