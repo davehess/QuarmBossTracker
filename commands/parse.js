@@ -150,16 +150,12 @@ function aggregateByClass(players) {
 }
 
 // ── Breakdown button store ────────────────────────────────────────────────────
-const pendingBreakdowns = new Map(); // key → { bossName, parsed, bossEmoji, ts }
+// Key format: "<bossId>|<timestamp>" — decodable from parses.json on cache miss.
+const pendingBreakdowns = new Map(); // key → { bossName, parsed, bossEmoji }
 
-setInterval(() => {
-  const cutoff = Date.now() - 2 * 60 * 60 * 1000; // 2 hours
-  for (const [k, v] of pendingBreakdowns) if (v.ts < cutoff) pendingBreakdowns.delete(k);
-}, 60_000);
-
-function storeBreakdown(bossName, parsed, bossEmoji) {
-  const key = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  pendingBreakdowns.set(key, { bossName, parsed, bossEmoji, ts: Date.now() });
+function storeBreakdown(bossName, parsed, bossEmoji, bossId, timestamp) {
+  const key = `${bossId || '_'}|${timestamp || Date.now()}`;
+  pendingBreakdowns.set(key, { bossName, parsed, bossEmoji });
   return key;
 }
 
@@ -176,11 +172,35 @@ function buildParseComponents(key) {
 
 async function handleParseBreakdown(interaction) {
   const key  = interaction.customId.split(':')[1];
-  const data = pendingBreakdowns.get(key);
+  let data   = pendingBreakdowns.get(key);
+
+  // Cache miss — reconstruct from parses.json using bossId|timestamp key
+  if (!data) {
+    const [bossId, tsStr] = key.split('|');
+    const ts = parseInt(tsStr, 10);
+    if (bossId && !isNaN(ts)) {
+      const allParses = loadParses();
+      const entry = (allParses[bossId] || []).find(e => e.timestamp === ts);
+      if (entry) {
+        delete require.cache[require.resolve('../data/bosses.json')];
+        const bosses = require('../data/bosses.json');
+        const boss   = bosses.find(b => b.id === bossId);
+        const parsed = {
+          bossName:    boss?.name || bossId,
+          duration:    entry.duration,
+          totalDamage: entry.totalDamage,
+          totalDps:    entry.totalDps,
+          players:     entry.players,
+        };
+        data = { bossName: parsed.bossName, parsed, bossEmoji: boss?.emoji };
+      }
+    }
+  }
+
   if (!data) {
     return interaction.reply({
       flags: MessageFlags.Ephemeral,
-      content: '❌ This breakdown has expired (2-hour limit). Resubmit the parse to regenerate.',
+      content: '❌ Parse not found. If this is a very old parse, run `/parseboss` to look it up directly.',
     });
   }
 
@@ -408,7 +428,7 @@ async function finishParse(interaction, bossId, boss, parsed) {
 
   const bossName   = boss?.name || parsed.bossName;
   const embed      = buildParseEmbed(bossName, parsed, boss?.emoji);
-  const bdKey      = storeBreakdown(bossName, parsed, boss?.emoji);
+  const bdKey      = storeBreakdown(bossName, parsed, boss?.emoji, bossId, parseEntry.timestamp);
   const components = buildParseComponents(bdKey);
 
   // Log to Discord thread for persistence (fire-and-forget, but capture msg id)
