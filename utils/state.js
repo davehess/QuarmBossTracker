@@ -240,8 +240,11 @@ function pvpMobKey(name) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_')
 function recordPvpKill(name, timerHours, killedBy, bossId = null) {
   const s = loadState();
   const key = bossId || pvpMobKey(name);
-  const killedAt = Date.now();
-  s.pvpKills[key] = { name, killedAt, nextSpawn: killedAt + timerHours * 3600000, timerHours, killedBy, bossId: key, threadMessageId: null };
+  const killedAt      = Date.now();
+  const baseMs        = timerHours * 3600000;
+  const nextSpawn     = killedAt + baseMs * 0.8;   // earliest (-20%)
+  const nextSpawnLatest = killedAt + baseMs * 1.2; // latest   (+20%)
+  s.pvpKills[key] = { name, killedAt, nextSpawn, nextSpawnLatest, timerHours, killedBy, bossId: key, threadMessageId: null };
   saveState(s);
   return key;
 }

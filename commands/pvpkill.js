@@ -55,10 +55,15 @@ module.exports = {
       .setColor(0xcc0000)
       .setTitle(`🗡️ PVP Kill — ${boss.name}`)
       .addFields(
-        { name: 'Zone',       value: boss.zone,                                                                            inline: true },
-        { name: 'Killed by',  value: `<@${interaction.user.id}>`,                                                          inline: true },
-        { name: 'Timer',      value: `${boss.timerHours}h`,                                                                inline: true },
-        { name: 'Next Spawn', value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,   inline: false },
+        { name: 'Zone',      value: boss.zone,                   inline: true },
+        { name: 'Killed by', value: `<@${interaction.user.id}>`, inline: true },
+        { name: 'Base Timer', value: `${boss.timerHours}h (±20%)`, inline: true },
+        { name: '⏰ Earliest Spawn',
+          value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
+          inline: false },
+        { name: '⏳ Latest Spawn',
+          value: `${discordAbsoluteTime(entry.nextSpawnLatest)} (${discordRelativeTime(entry.nextSpawnLatest)}) — guaranteed by this time`,
+          inline: false },
       )
       .setTimestamp();
 
@@ -75,7 +80,7 @@ module.exports = {
 
     await interaction.reply({
       flags: MessageFlags.Ephemeral,
-      content: `✅ PVP kill recorded for **${boss.name}** — spawns ${discordRelativeTime(entry.nextSpawn)}.`,
+      content: `✅ PVP kill recorded for **${boss.name}**.\nEarliest spawn: ${discordRelativeTime(entry.nextSpawn)} · Latest: ${discordRelativeTime(entry.nextSpawnLatest)}`,
     });
   },
 };

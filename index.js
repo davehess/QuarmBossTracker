@@ -710,7 +710,8 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
 // ── Spawn checker ──────────────────────────────────────────────────────────
 const alertedSoon = new Set(), alertedSpawned = new Set();
-const pvpAlertedSpawned = new Set();
+const pvpAlertedSoon = new Set(), pvpAlertedSpawned = new Set();
+const PVP_SOON_MS = 30 * 60 * 1000; // 30-minute warning before earliest spawn
 
 function startSpawnChecker(readyClient) {
   const channelId = process.env.TIMER_CHANNEL_ID;
@@ -802,14 +803,52 @@ async function archiveZoneCardEntry(readyClient, spawnedBoss, bosses, state, his
 
 // ── PVP spawn checker ──────────────────────────────────────────────────────
 async function checkPvpSpawns(readyClient, now) {
-  const kills          = getAllPvpKills();
-  const killsThreadId  = process.env.PVP_KILLS_THREAD_ID;
-  const pvpAlertId     = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  const kills         = getAllPvpKills();
+  const killsThreadId = process.env.PVP_KILLS_THREAD_ID;
+  const pvpAlertId    = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
 
   for (const [key, entry] of Object.entries(kills)) {
-    const remaining = entry.nextSpawn - now;
+    const earliest  = entry.nextSpawn;
+    const latest    = entry.nextSpawnLatest || (earliest * 1.5); // fallback for old entries
+    const toEarliest = earliest - now;
 
-    if (remaining > 0) { pvpAlertedSpawned.delete(key); continue; }
+    // Reset soon-alert if still well before the window
+    if (toEarliest > PVP_SOON_MS) {
+      pvpAlertedSoon.delete(key);
+      pvpAlertedSpawned.delete(key);
+      continue;
+    }
+
+    // ── Spawning soon (30 min before earliest) ──────────────────────────────
+    if (!pvpAlertedSoon.has(key)) {
+      pvpAlertedSoon.add(key);
+      if (pvpAlertId) {
+        try {
+          const pvpRoleName = process.env.PVP_ROLE || 'PVP';
+          const guild       = readyClient.guilds.cache.first();
+          const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
+          const mention     = pvpRole ? `<@&${pvpRole.id}> ` : '';
+          const ch          = await readyClient.channels.fetch(pvpAlertId);
+          const { EmbedBuilder: EB } = require('discord.js');
+          await ch.send({
+            content: `${mention}⚠️ **${entry.name}** spawn window opens soon!`,
+            embeds: [new EB()
+              .setColor(0xffa500)
+              .setTitle(`⚠️ PVP Spawn Window — ${entry.name}`)
+              .addFields(
+                { name: '⏰ Earliest',  value: `${discordAbsoluteTime(earliest)} (${discordRelativeTime(earliest)})`, inline: true },
+                { name: '⏳ Latest',    value: `${discordAbsoluteTime(latest)} (${discordRelativeTime(latest)})`,     inline: true },
+              )
+              .setFooter({ text: 'The mob can spawn any time in this window.' })
+              .setTimestamp(),
+            ],
+          });
+        } catch (err) { console.warn('[pvp] Could not post soon alert:', err?.message); }
+      }
+    }
+
+    // ── Spawn window fully open (latest time reached) — auto-clear ──────────
+    if (now < latest) continue;
     if (pvpAlertedSpawned.has(key)) continue;
     pvpAlertedSpawned.add(key);
 
@@ -822,7 +861,7 @@ async function checkPvpSpawns(readyClient, now) {
       } catch { /* already gone */ }
     }
 
-    // Alert in PVP channel/thread
+    // Final "definitely spawned" alert
     if (pvpAlertId) {
       try {
         const pvpRoleName = process.env.PVP_ROLE || 'PVP';
@@ -830,25 +869,21 @@ async function checkPvpSpawns(readyClient, now) {
         const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
         const mention     = pvpRole ? `<@&${pvpRole.id}> ` : '';
         const ch          = await readyClient.channels.fetch(pvpAlertId);
-
-        const { EmbedBuilder } = require('discord.js');
+        const { EmbedBuilder: EB } = require('discord.js');
         await ch.send({
-          content: `${mention}🟢 **${entry.name}** has respawned!`,
-          embeds: [
-            new EmbedBuilder()
-              .setColor(0x57f287)
-              .setTitle(`🟢 PVP Mob Spawned — ${entry.name}`)
-              .setDescription('The mob has respawned and is available. Use `/pvpkill` to start a new timer after you engage.')
-              .setTimestamp(),
+          content: `${mention}🟢 **${entry.name}** spawn window has fully opened — mob is up!`,
+          embeds: [new EB()
+            .setColor(0x57f287)
+            .setTitle(`🟢 PVP Mob Up — ${entry.name}`)
+            .setDescription('Maximum spawn time reached. The mob is definitely available.\nUse `/pvpkill` to start a new timer after you engage.')
+            .setTimestamp(),
           ],
         });
-      } catch (err) {
-        console.warn('[pvp] Could not post spawn alert:', err?.message);
-      }
+      } catch (err) { console.warn('[pvp] Could not post spawned alert:', err?.message); }
     }
 
     clearPvpKill(key);
-    console.log(`🟢 PVP Spawned: ${entry.name}`);
+    console.log(`🟢 PVP Spawn window closed: ${entry.name}`);
   }
 }
 
