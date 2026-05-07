@@ -109,7 +109,52 @@ function findBossWithQuality(parsedName, bosses) {
 
 function fmt(n) { return n.toLocaleString('en-US'); }
 
-// ── Class data ────────────────────────────────────────────────────────────────
+// ── Session grouping (shared with parsestats) ────────────────────────────────
+
+// Group kill submissions by session: any submission within windowMs of the
+// first entry in an open group belongs to that group.
+function groupKillsBySession(sortedKills, windowMs) {
+  const groups = [];
+  for (const kill of sortedKills) {
+    const last = groups[groups.length - 1];
+    if (last && kill.timestamp - last[0].timestamp <= windowMs) {
+      last.push(kill);
+    } else {
+      groups.push([kill]);
+    }
+  }
+  return groups;
+}
+
+// Merge a session group into one canonical kill.
+// For each player, keep the submission with the highest damage.
+// Returns { timestamp, duration, totalDamage, totalDps, players }
+// Players are re-ranked by damage descending.
+function mergeKillGroup(group) {
+  const canonical = group.reduce((best, k) => k.totalDamage > best.totalDamage ? k : best, group[0]);
+  const playerMap = new Map();
+  for (const kill of group) {
+    for (const p of kill.players) {
+      const key = p.name.toLowerCase();
+      const existing = playerMap.get(key);
+      if (!existing || p.damage > existing.damage) playerMap.set(key, { ...p });
+    }
+  }
+  const players = [...playerMap.values()]
+    .map(p => ({ ...p, dps: p.duration > 0 ? Math.round(p.damage / p.duration) : p.dps }))
+    .sort((a, b) => b.damage - a.damage)
+    .map((p, i) => ({ ...p, rank: i + 1 }));
+  const totalDamage = players.reduce((s, p) => s + p.damage, 0);
+  const totalDps    = canonical.duration > 0 ? Math.round(totalDamage / canonical.duration) : canonical.totalDps;
+  return { timestamp: canonical.timestamp, duration: canonical.duration, totalDamage, totalDps, players };
+}
+
+// Find the session group (array of entries) that a given timestamp belongs to.
+function findSessionForTimestamp(allEntries, ts, windowMs) {
+  const sorted = [...allEntries].sort((a, b) => a.timestamp - b.timestamp);
+  const groups = groupKillsBySession(sorted, windowMs);
+  return groups.find(g => g.some(e => e.timestamp === ts)) || null;
+}
 const CLASS_EMOJI = {
   'Warrior':       '⚔️',
   'Cleric':        '💊',
@@ -180,17 +225,20 @@ async function handleParseBreakdown(interaction) {
     const ts = parseInt(tsStr, 10);
     if (bossId && !isNaN(ts)) {
       const allParses = loadParses();
-      const entry = (allParses[bossId] || []).find(e => e.timestamp === ts);
-      if (entry) {
-        delete require.cache[require.resolve('../data/bosses.json')];
-        const bosses = require('../data/bosses.json');
-        const boss   = bosses.find(b => b.id === bossId);
+      const allForBoss = allParses[bossId] || [];
+      delete require.cache[require.resolve('../data/bosses.json')];
+      const bosses  = require('../data/bosses.json');
+      const boss    = bosses.find(b => b.id === bossId);
+      const windowMs = (boss?.timerHours || 24) * 3600 * 1000;
+      const group   = findSessionForTimestamp(allForBoss, ts, windowMs);
+      if (group) {
+        const merged = mergeKillGroup(group);
         const parsed = {
           bossName:    boss?.name || bossId,
-          duration:    entry.duration,
-          totalDamage: entry.totalDamage,
-          totalDps:    entry.totalDps,
-          players:     entry.players,
+          duration:    merged.duration,
+          totalDamage: merged.totalDamage,
+          totalDps:    merged.totalDps,
+          players:     merged.players,
         };
         data = { bossName: parsed.bossName, parsed, bossEmoji: boss?.emoji };
       }
@@ -426,10 +474,28 @@ async function finishParse(interaction, bossId, boss, parsed) {
   parses[bossId].push(parseEntry);
   saveParses(parses);
 
-  const bossName   = boss?.name || parsed.bossName;
-  const embed      = buildParseEmbed(bossName, parsed, boss?.emoji);
-  const bdKey      = storeBreakdown(bossName, parsed, boss?.emoji, bossId, parseEntry.timestamp);
+  const bossName  = boss?.name || parsed.bossName;
+  const windowMs  = (boss?.timerHours || 24) * 3600 * 1000;
+  const allForBoss = parses[bossId];
+  const group      = findSessionForTimestamp(allForBoss, parseEntry.timestamp, windowMs) || [parseEntry];
+  const merged     = mergeKillGroup(group);
+  const mergedParsed = {
+    bossName,
+    duration:    merged.duration,
+    totalDamage: merged.totalDamage,
+    totalDps:    merged.totalDps,
+    players:     merged.players,
+  };
+  // Use the earliest timestamp in the session as the stable key so all
+  // submitters for the same kill share one breakdown entry.
+  const sessionTs = group[0].timestamp;
+  const bdKey     = storeBreakdown(bossName, mergedParsed, boss?.emoji, bossId, sessionTs);
+  const embed     = buildParseEmbed(bossName, mergedParsed, boss?.emoji);
   const components = buildParseComponents(bdKey);
+  const submitterCount = new Set(group.map(e => e.submittedBy)).size;
+  const mergeNote = group.length > 1
+    ? `\n*(${group.length} parse submissions merged — ${mergedParsed.players.length} unique players)*`
+    : '';
 
   // Log to Discord thread for persistence (fire-and-forget, but capture msg id)
   logParseToDiscord(interaction.client, bossId, parseEntry).then(msg => {
@@ -465,13 +531,14 @@ async function finishParse(interaction, bossId, boss, parsed) {
 
   // Auto-append to active raid night thread (fire-and-forget)
   const { appendParseToSession } = require('./raidnight');
-  appendParseToSession(interaction.client, bossId, parsed, bossName, boss?.emoji).catch(() => {});
+  appendParseToSession(interaction.client, bossId, mergedParsed, bossName, boss?.emoji).catch(() => {});
 
   // Post to any active announce/event threads (fire-and-forget)
   postParseToAnnounceThreads(interaction.client, embed, components).catch(() => {});
 
   // Post publicly in the channel where the command was run
-  interaction.channel.send({ embeds: [embed], components }).catch(err =>
+  const content = mergeNote || undefined;
+  interaction.channel.send({ content, embeds: [embed], components }).catch(err =>
     console.warn('[parse] public channel send failed:', err?.message)
   );
 
@@ -567,6 +634,9 @@ module.exports = {
   finishParse,
   postParseToAnnounceThreads,
   aggregateByClass,
+  groupKillsBySession,
+  mergeKillGroup,
+  findSessionForTimestamp,
   storeBreakdown,
   buildParseComponents,
   handleParseBreakdown,

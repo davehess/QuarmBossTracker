@@ -1,6 +1,6 @@
 // commands/parsestats.js — Aggregate DPS scoreboard across all stored parses for a boss.
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
-const { loadParses } = require('./parse');
+const { loadParses, groupKillsBySession, mergeKillGroup } = require('./parse');
 
 // "Eye of <Player>" mobs are Mage-summoned dummies used for AoE damage testing.
 // Damage against them inflates numbers and must never appear on scoreboards.
@@ -8,46 +8,6 @@ function isEyeMob(bossId, bosses) {
   const boss = bosses.find(b => b.id === bossId);
   const name = (boss?.name || bossId).replace(/_/g, ' ').toLowerCase();
   return name.includes('eye of ');
-}
-
-/**
- * Group kill submissions by session: submissions within 30 minutes of each other
- * are treated as multiple people logging the same fight.
- */
-function groupKillsBySession(killList, windowMs = 30 * 60 * 1000) {
-  const sorted = [...killList].sort((a, b) => a.timestamp - b.timestamp);
-  const groups = [];
-  for (const kill of sorted) {
-    const last = groups[groups.length - 1];
-    if (last && kill.timestamp - last[0].timestamp <= windowMs) {
-      last.push(kill);
-    } else {
-      groups.push([kill]);
-    }
-  }
-  return groups;
-}
-
-/**
- * Merge a session group into a single canonical kill.
- * For each player, take the submission with the highest damage.
- * DPS is recalculated from damage / player's own duration.
- */
-function mergeKillGroup(group) {
-  const canonical = group.reduce((best, k) => k.totalDamage > best.totalDamage ? k : best, group[0]);
-  const playerMap = new Map();
-  for (const kill of group) {
-    for (const p of kill.players) {
-      const key = p.name.toLowerCase();
-      const existing = playerMap.get(key);
-      if (!existing || p.damage > existing.damage) playerMap.set(key, { ...p });
-    }
-  }
-  const players = [...playerMap.values()].map(p => ({
-    ...p,
-    dps: p.duration > 0 ? Math.round(p.damage / p.duration) : p.dps,
-  }));
-  return { timestamp: canonical.timestamp, duration: canonical.duration, totalDamage: canonical.totalDamage, players };
 }
 
 
@@ -177,10 +137,12 @@ module.exports = {
       return interaction.editReply(`❌ No parses stored for **${boss?.name || bossId}** yet. Use \`/parse\` after a kill.`);
     }
 
-    // Group submissions by session (30-min window), merge to max-damage per player
+    // Group submissions by session (full boss timer window), merge to max-damage per player.
+    // Any parse submitted before the boss can respawn is part of the same kill session.
+    const windowMs = (boss?.timerHours || 24) * 3600 * 1000;
     rawKills = [...rawKills].sort((a, b) => a.timestamp - b.timestamp);
     if (last) rawKills = rawKills.slice(-last);
-    const killList  = groupKillsBySession(rawKills, 10 * 60 * 1000).map(mergeKillGroup);
+    const killList  = groupKillsBySession(rawKills, windowMs).map(mergeKillGroup);
     const killCount = killList.length;
 
     // Aggregate per player across merged kills
@@ -218,6 +180,4 @@ module.exports = {
   },
 
   isEyeMob,
-  groupKillsBySession,
-  mergeKillGroup,
 };
