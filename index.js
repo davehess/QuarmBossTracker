@@ -22,6 +22,7 @@ const {
   hasSeenWelcome, markWelcomeSeen,
   getRaidSession, clearRaidSession,
   clearRaidNight,
+  getAllLiveKills, clearLiveKill,
 } = require('./utils/state');
 const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
 const {
@@ -33,6 +34,7 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('./utils/roles');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion } = require('./utils/config');
+const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
 function getBosses() {
   delete require.cache[require.resolve('./data/bosses.json')];
@@ -711,7 +713,9 @@ client.on(Events.GuildMemberAdd, async (member) => {
 // ── Spawn checker ──────────────────────────────────────────────────────────
 const alertedSoon = new Set(), alertedSpawned = new Set();
 const pvpAlertedSoon = new Set(), pvpAlertedSpawned = new Set();
-const PVP_SOON_MS = 30 * 60 * 1000; // 30-minute warning before earliest spawn
+const liveAlertedSoon = new Set(), liveAlertedSpawned = new Set();
+const PVP_SOON_MS  = 30 * 60 * 1000;
+const SOON_WARN_MS = 30 * 60 * 1000;
 
 function startSpawnChecker(readyClient) {
   const channelId = process.env.TIMER_CHANNEL_ID;
@@ -775,6 +779,7 @@ function startSpawnChecker(readyClient) {
       }
       await checkQuakeAlert(readyClient).catch(console.warn);
       await checkPvpSpawns(readyClient, now).catch(console.warn);
+      await checkLiveSpawns(readyClient, now).catch(console.warn);
     } catch (err) { console.error('Spawn checker error:', err); }
   }, 5 * 60 * 1000);
   console.log('Spawn checker started');
@@ -884,6 +889,75 @@ async function checkPvpSpawns(readyClient, now) {
 
     clearPvpKill(key);
     console.log(`🟢 PVP Spawn window closed: ${entry.name}`);
+  }
+}
+
+// ── Live kill spawn checker ─────────────────────────────────────────────────
+async function checkLiveSpawns(readyClient, now) {
+  const kills     = getAllLiveKills();
+  const channelId = process.env.LIVE_CHANNEL_ID;
+
+  for (const [key, entry] of Object.entries(kills)) {
+    const toSpawn = entry.nextSpawn - now;
+
+    if (toSpawn > SOON_WARN_MS) {
+      liveAlertedSoon.delete(key);
+      liveAlertedSpawned.delete(key);
+      continue;
+    }
+
+    // ── Spawning soon ────────────────────────────────────────────────────────
+    if (!liveAlertedSoon.has(key)) {
+      liveAlertedSoon.add(key);
+      if (channelId) {
+        try {
+          const { EmbedBuilder: EB } = require('discord.js');
+          const ch = await readyClient.channels.fetch(channelId);
+          await ch.send({
+            content: `⚠️ **${entry.name}** is spawning soon!`,
+            embeds: [new EB()
+              .setColor(0xffa500)
+              .setTitle(`⚠️ Spawning Soon — ${entry.name}`)
+              .addFields({ name: 'Spawns', value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`, inline: false })
+              .setTimestamp(),
+            ],
+          });
+        } catch (err) { console.warn('[live] soon alert failed:', err?.message); }
+      }
+    }
+
+    if (toSpawn > 0) continue;
+    if (liveAlertedSpawned.has(key)) continue;
+    liveAlertedSpawned.add(key);
+
+    // Delete kill card
+    if (channelId && entry.channelMessageId) {
+      try {
+        const ch  = await readyClient.channels.fetch(channelId);
+        const msg = await ch.messages.fetch(entry.channelMessageId);
+        await msg.delete();
+      } catch { /* already gone */ }
+    }
+
+    // Spawned alert
+    if (channelId) {
+      try {
+        const { EmbedBuilder: EB } = require('discord.js');
+        const ch = await readyClient.channels.fetch(channelId);
+        await ch.send({
+          content: `🟢 **${entry.name}** has spawned!`,
+          embeds: [new EB()
+            .setColor(0x57f287)
+            .setTitle(`🟢 Spawned — ${entry.name}`)
+            .setDescription('Use `/livekill` or `/livehatekill` to start a new timer after the next kill.')
+            .setTimestamp(),
+          ],
+        });
+      } catch (err) { console.warn('[live] spawned alert failed:', err?.message); }
+    }
+
+    clearLiveKill(key);
+    console.log(`🟢 Live spawn: ${entry.name}`);
   }
 }
 

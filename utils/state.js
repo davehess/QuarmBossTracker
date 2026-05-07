@@ -10,7 +10,7 @@ function _empty() {
   return {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
-    announces: {}, pvpKills: {}, quake: null, pvpAlerts: {},
+    announces: {}, pvpKills: {}, liveKills: {}, quake: null, pvpAlerts: {},
     seenWelcome: [], raidSession: null, raidNight: null,
   };
 }
@@ -43,7 +43,7 @@ function loadState() {
 
   // Migrate old format: if the file was just a flat { bossId: {...} } map (no top-level keys)
   // Detection: has no known top-level keys at all
-  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'announces', 'pvpKills', 'quake', 'pvpAlerts', 'board'];
+  const knownKeys = ['bosses', 'expansionBoards', 'channelSlots', 'zoneCards', 'dailyKills', 'announceMessageIds', 'announces', 'pvpKills', 'liveKills', 'quake', 'pvpAlerts', 'board'];
   const hasKnownKey = knownKeys.some((k) => k in raw);
   if (!hasKnownKey && Object.keys(raw).length > 0) {
     // Old format: the whole object IS the bosses map
@@ -61,6 +61,7 @@ function loadState() {
   if (raw.announceMessageIds) s.announceMessageIds = raw.announceMessageIds;
   if (raw.announces)          s.announces          = raw.announces;
   if (raw.pvpKills)           s.pvpKills           = raw.pvpKills;
+  if (raw.liveKills)          s.liveKills          = raw.liveKills;
   if (raw.quake !== undefined) s.quake             = raw.quake;
   if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
   if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
@@ -311,6 +312,23 @@ function getRaidNight()        { return loadState().raidNight || null; }
 function saveRaidNight(data)   { const s = loadState(); s.raidNight = data; saveState(s); }
 function clearRaidNight()      { const s = loadState(); s.raidNight = null; saveState(s); }
 
+// ── Live kill tracking (exact timers, no variance) ───────────────────────────
+function recordLiveKill(bossId, bossName, timerHours, killedBy) {
+  const s = loadState();
+  const killedAt  = Date.now();
+  const nextSpawn = killedAt + timerHours * 3600000;
+  s.liveKills[bossId] = { bossId, name: bossName, killedAt, nextSpawn, timerHours, killedBy, channelMessageId: null };
+  saveState(s);
+}
+
+function setLiveKillMessageId(bossId, messageId) {
+  const s = loadState();
+  if (s.liveKills[bossId]) { s.liveKills[bossId].channelMessageId = messageId; saveState(s); }
+}
+
+function clearLiveKill(bossId)  { const s = loadState(); delete s.liveKills[bossId]; saveState(s); }
+function getAllLiveKills()       { return loadState().liveKills || {}; }
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -336,6 +354,7 @@ module.exports = {
   saveAnnounce, getAnnounce, removeAnnounce, getAllAnnounces,
   getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceTime, updateAnnounceEasterEgg,
   recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey, setPvpKillThreadMessageId,
+  recordLiveKill, setLiveKillMessageId, clearLiveKill, getAllLiveKills,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getRaidSession, saveRaidSession, clearRaidSession,
