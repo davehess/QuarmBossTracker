@@ -130,6 +130,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_pvp')                      { await handleOnbPvp(interaction); return; }
     if (interaction.customId === 'onb_organizer')               { await handleOnbOrganizer(interaction); return; }
     if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
+    if (interaction.customId === 'onb_deeps')                   { await handleOnbDeeps(interaction); return; }
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))         { await handleMarkAvail(interaction); return; }
@@ -761,6 +762,11 @@ async function handleOnbPvp(interaction) {
 async function handleOnbOrganizer(interaction) {
   const { buildOrganizerEmbed } = require('./utils/onboarding');
   await interaction.reply({ embeds: [buildOrganizerEmbed()], flags: MessageFlags.Ephemeral });
+}
+
+async function handleOnbDeeps(interaction) {
+  const { buildParseOverviewEmbed } = require('./utils/onboarding');
+  await interaction.reply({ embeds: [buildParseOverviewEmbed()], flags: MessageFlags.Ephemeral });
 }
 
 async function handleOnbAttend(interaction) {

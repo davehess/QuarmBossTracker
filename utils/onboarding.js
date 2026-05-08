@@ -241,6 +241,13 @@ function buildWelcomeEmbed() {
         inline: false,
       },
       {
+        name: '📊 Parses',
+        value:
+          'After every kill, paste your EQLogParser output into `/parse` — the bot auto-detects the boss, ' +
+          'posts a DPS breakdown, and tracks your numbers over time. Hit the button below to learn more.',
+        inline: false,
+      },
+      {
         name: '📣 Coordination',
         value:
           'Use `/announce` to schedule a group takedown — it creates a thread, a Discord event, and ' +
@@ -296,11 +303,51 @@ function buildAttendeeEmbed() {
 }
 
 // ── Onboarding action rows ────────────────────────────────────────────────────
+function buildParseOverviewEmbed() {
+  return new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle('📊 So you want to be top deeps?')
+    .setDescription(
+      'The parse system tracks DPS across every kill. Here\'s how to use it:'
+    )
+    .addFields(
+      {
+        name: '1️⃣ Submit a parse after every kill',
+        value:
+          'Open **EQLogParser**, filter to the fight, then paste the output into:\n' +
+          '`/parse <data>` — boss is auto-detected from the mob name\n' +
+          '`/parseboss <boss> <data>` — use this if auto-detect picks the wrong boss',
+        inline: false,
+      },
+      {
+        name: '2️⃣ Check the scoreboard',
+        value:
+          '`/parsestats <boss>` — DPS rankings for that boss across all recorded kills, plus your personal best and average\n' +
+          '`/parsenight` — full-night DPS summary across every kill from tonight',
+        inline: false,
+      },
+      {
+        name: '3️⃣ Live raid threads',
+        value:
+          '`/raidnight` — opens a raid thread with a rolling live scoreboard that updates as parses come in',
+        inline: false,
+      },
+      {
+        name: 'AoE fights',
+        value:
+          '`/parseaoe <data>` — combines AoE parses within a 5-minute window so tank/DPS contributions aren\'t split',
+        inline: false,
+      },
+    )
+    .setFooter({ text: 'Run /raidbosshelp for the full command reference' });
+}
+
 function buildWelcomeComponents(version) {
   const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
   const roleRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('onb_pvp').setLabel('Count me in for PVP').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('onb_organizer').setLabel('I want to help organize').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('onb_deeps').setLabel('I want to be top deeps').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('onb_attend').setLabel('Just here to attend').setStyle(ButtonStyle.Secondary),
   );
   const optRow = new ActionRowBuilder().addComponents(
@@ -339,6 +386,7 @@ module.exports = {
   buildWelcomeEmbed,
   buildOrganizerEmbed,
   buildAttendeeEmbed,
+  buildParseOverviewEmbed,
   buildWelcomeComponents,
   buildShowAgainComponents,
   buildInstructionsEmbed,
