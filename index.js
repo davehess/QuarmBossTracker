@@ -430,51 +430,16 @@ async function handleRemoveTargetButton(interaction) {
 }
 
 // ── Welcome card ──────────────────────────────────────────────────────────
-const { EmbedBuilder: _EB, ActionRowBuilder: _ARB, ButtonBuilder: _BB, ButtonStyle: _BS } = require('discord.js');
-
-function buildWelcomeEmbed() {
-  return new _EB()
-    .setColor(0x5865f2)
-    .setTitle('🐺 Welcome to the Wolf Pack Raid Tracker!')
-    .setDescription(
-      'This bot keeps the pack coordinated across three pillars. Hit a button below to tell us how you\'d like to run with the pack.'
-    )
-    .addFields(
-      {
-        name: '⚔️ Accountability',
-        value: 'When you kill a boss, click its button on the board. That logs the kill and starts the respawn countdown — accurate tracking means the whole pack knows when to be ready.',
-        inline: false,
-      },
-      {
-        name: '⏰ Timing',
-        value: 'The board and the **Spawning in the Next 24 Hours** card show exactly when each boss is back up. Never miss a window because no one wrote it down.',
-        inline: false,
-      },
-      {
-        name: '📣 Coordination',
-        value: 'Use `/announce` to schedule a group takedown — it creates a thread, a Discord event, and rallies the pack. Use `/pvpalert` to howl for backup right now.',
-        inline: false,
-      },
-    )
-    .setFooter({ text: 'You can always run /raidbosshelp for a full command reference.' });
-}
-
-function buildWelcomeRow() {
-  return new _ARB().addComponents(
-    new _BB().setCustomId('onb_pvp').setLabel('🐺 Count me in for PVP').setStyle(_BS.Danger),
-    new _BB().setCustomId('onb_organizer').setLabel('📣 I want to help organize').setStyle(_BS.Primary),
-    new _BB().setCustomId('onb_attend').setLabel('🔕 Dismiss until next update').setStyle(_BS.Secondary),
-  );
-}
-
 async function maybeShowWelcome(interaction) {
   if (hasSeenWelcome(interaction.user.id)) return;
   markWelcomeSeen(interaction.user.id);
   try {
+    const pkg = require('./package.json');
+    const { buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
     await interaction.followUp({
       flags: MessageFlags.Ephemeral,
       embeds: [buildWelcomeEmbed()],
-      components: [buildWelcomeRow()],
+      components: buildWelcomeComponents(pkg.version),
     });
   } catch { /* non-critical — don't let a failed welcome break anything */ }
 }
