@@ -316,7 +316,8 @@ function buildParseOverviewEmbed() {
         value:
           'Open **EQLogParser**, filter to the fight, then paste the output into:\n' +
           '`/parse <data>` — boss is auto-detected from the mob name\n' +
-          '`/parseboss <boss> <data>` — use this if auto-detect picks the wrong boss',
+          '`/parseboss <boss> <data>` — use this if auto-detect picks the wrong boss\n' +
+          '`/parsenight <data>` — paste a Combined EQLogParser string to submit a full night at once',
         inline: false,
       },
       {
