@@ -239,10 +239,10 @@ function updateAnnounceEasterEgg(msgId, level) {
 
 // ── PVP kills ─────────────────────────────────────────────────────────────────
 function pvpMobKey(name) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_'); }
-function recordPvpKill(name, timerHours, killedBy, bossId = null, timerUnknown = false) {
+function recordPvpKill(name, timerHours, killedBy, bossId = null, timerUnknown = false, killedAt = null) {
   const s = loadState();
   const key = bossId || pvpMobKey(name);
-  const killedAt      = Date.now();
+  killedAt            = killedAt || Date.now();
   const baseMs        = timerHours * 3600000;
   const nextSpawn     = timerUnknown ? null : (killedAt + baseMs * 0.8);
   const nextSpawnLatest = timerUnknown ? null : (killedAt + baseMs * 1.2);
@@ -316,9 +316,9 @@ function saveRaidNight(data)   { const s = loadState(); s.raidNight = data; save
 function clearRaidNight()      { const s = loadState(); s.raidNight = null; saveState(s); }
 
 // ── Live kill tracking (exact timers, no variance) ───────────────────────────
-function recordLiveKill(bossId, bossName, timerHours, killedBy, timerUnknown = false) {
+function recordLiveKill(bossId, bossName, timerHours, killedBy, timerUnknown = false, killedAt = null) {
   const s = loadState();
-  const killedAt  = Date.now();
+  killedAt = killedAt || Date.now();
   const nextSpawn = timerUnknown ? null : (killedAt + timerHours * 3600000);
   const entry = { bossId, name: bossName, killedAt, nextSpawn, timerHours, killedBy, channelMessageId: null };
   if (timerUnknown) entry.timerUnknown = true;

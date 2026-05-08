@@ -4,7 +4,7 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 const { recordLiveKill, getAllLiveKills, setLiveKillMessageId } = require('../utils/state');
-const { discordAbsoluteTime, discordRelativeTime } = require('../utils/timer');
+const { discordAbsoluteTime, discordRelativeTime, parseTimeString } = require('../utils/timer');
 const { refreshHateBoard } = require('../utils/hateBoard');
 
 const HATE_TIMER_HOURS = 72;
@@ -25,6 +25,11 @@ module.exports = {
       opt.setName('timer_unknown')
         .setDescription('Timer unknown — mark as killed but check manually for respawn')
         .setRequired(false)
+    )
+    .addStringOption(opt =>
+      opt.setName('killed_ago')
+        .setDescription('How long ago it was killed, e.g. "2h30m" or "45m" (back-dates the kill time)')
+        .setRequired(false)
     ),
 
   async execute(interaction) {
@@ -33,9 +38,18 @@ module.exports = {
 
     const position     = interaction.options.getInteger('position');
     const timerUnknown = interaction.options.getBoolean('timer_unknown') ?? false;
+    const killedAgoStr = interaction.options.getString('killed_ago') ?? null;
     const spot         = HATE_SPOTS[position];
     if (!spot)
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Invalid position. Valid spots: 1, 2, 3, 5, 7, 8, 9, 10, 11, 12.` });
+
+    let killedAt = null;
+    if (killedAgoStr) {
+      const agoMs = parseTimeString(killedAgoStr);
+      if (agoMs === null)
+        return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Could not parse \`killed_ago\` — use a format like "2h30m" or "45m".` });
+      killedAt = Date.now() - agoMs;
+    }
 
     const key      = `hate_${position}`;
     const spotName = `Hate Mini — ${spot.label}`;
@@ -51,7 +65,7 @@ module.exports = {
       });
     }
 
-    recordLiveKill(key, spotName, HATE_TIMER_HOURS, interaction.user.id, timerUnknown);
+    recordLiveKill(key, spotName, HATE_TIMER_HOURS, interaction.user.id, timerUnknown, killedAt);
     const entry = getAllLiveKills()[key];
 
     let embed, replyText;
