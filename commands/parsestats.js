@@ -23,10 +23,10 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, killList) {
   const lastKill   = killList[killList.length - 1];
   const lastRaidDps = raidDpsArr[raidDpsArr.length - 1];
 
-  // Single kill: rank by damage. Historical: rank by avg DPS.
+  // Single kill: rank by damage. Historical: rank by total damage across all kills.
   const sorted = isSingle
     ? [...entries].sort((a, b) => b.avgDamage - a.avgDamage)
-    : [...entries].sort((a, b) => b.avgDps - a.avgDps);
+    : [...entries].sort((a, b) => b.totalDamage - a.totalDamage);
 
   let rows, hdr;
   if (isSingle) {
@@ -40,15 +40,16 @@ function buildScoreboardEmbed(bossName, bossEmoji, entries, killList) {
     hdr = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(9)}  ${'DPS'.padStart(7)}`;
   } else {
     rows = sorted.slice(0, 15).map((p, i) => {
-      const rank   = String(i + 1).padStart(2);
-      const name   = (p.name + (p.hasPets ? ' +P' : '')).padEnd(20);
-      const avgDps = (fmt(p.avgDps) + '/s').padStart(7);
-      const best   = (fmt(p.bestDps) + '/s').padStart(7);
-      const dmg    = fmt(p.avgDamage).padStart(9);
-      const seen   = String(p.appearances).padStart(2) + 'x';
-      return `${rank}. ${name} ${avgDps}  ${best}  ${dmg}  ${seen}`;
+      const rank    = String(i + 1).padStart(2);
+      const name    = (p.name + (p.hasPets ? '+' : '')).padEnd(14);
+      const totDmg  = fmt(p.totalDamage).padStart(10);
+      const avgDmg  = fmt(p.avgDamage).padStart(9);
+      const avgDps  = fmt(p.avgDps).padStart(6);
+      const bestDps = fmt(p.bestDps).padStart(6);
+      const seen    = String(p.appearances) + 'x';
+      return `${rank}. ${name} ${totDmg} ${avgDmg} ${avgDps} ${bestDps} ${seen}`;
     });
-    hdr = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Avg DPS'.padStart(7)}  ${'Best'.padStart(7)}  ${'Avg Dmg'.padStart(9)}  Seen`;
+    hdr = `${'#'.padStart(2)}  ${'Player'.padEnd(14)} ${'TotDmg'.padStart(10)} ${'AvgDmg'.padStart(9)} ${'AvgDPS'.padStart(6)} ${'Best'.padStart(6)} Seen`;
   }
 
   const divider = '─'.repeat(hdr.length);
