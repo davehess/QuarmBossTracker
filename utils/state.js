@@ -11,7 +11,7 @@ function _empty() {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, liveKills: {}, quake: null, pvpAlerts: {},
-    seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {},
+    seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {}, ari: null,
   };
 }
 
@@ -67,6 +67,7 @@ function loadState() {
   if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
   if (raw.raidNight)          s.raidNight          = raw.raidNight;
   if (raw.hateBoards)         s.hateBoards         = raw.hateBoards;
+  if (raw.ari !== undefined)  s.ari                = raw.ari;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -87,7 +88,7 @@ function saveState(state) {
   }
 }
 
-// ── Boss kills ────────────────────────────────────────────────────────────────
+// ── Boss kills ──────────────────────────────────────────────────────────────────────────────
 function recordKill(bossId, timerHours, killedBy) {
   const state     = loadState();
   const killedAt  = Date.now();
@@ -115,7 +116,7 @@ function clearKill(bossId) {
 function getBossState(bossId) { return loadState().bosses[bossId] || null; }
 function getAllState()         { return loadState().bosses; }
 
-// ── Expansion boards ──────────────────────────────────────────────────────────
+// ── Expansion boards ─────────────────────────────────────────────────────────────────────
 function getExpansionBoard(expansion)       { return loadState().expansionBoards[expansion] || null; }
 function saveExpansionBoard(expansion, ids) {
   const s = loadState();
@@ -123,7 +124,7 @@ function saveExpansionBoard(expansion, ids) {
   saveState(s);
 }
 
-// ── Channel slots ─────────────────────────────────────────────────────────────
+// ── Channel slots ─────────────────────────────────────────────────────────────────────────
 // Keys in channelSlots:
 //   summary           → Active Cooldowns card (slot 1 in main channel)
 //   spawningTomorrow  → Spawning Tomorrow card (slot 2 in main channel)
@@ -163,17 +164,17 @@ function _setSlot(key, id) {
   saveState(s);
 }
 
-// ── Zone cards ────────────────────────────────────────────────────────────────
+// ── Zone cards ───────────────────────────────────────────────────────────────────────────────
 function getZoneCard(zone)                      { return loadState().zoneCards[zone] || null; }
 function setZoneCard(zone, messageId, threadId) { const s = loadState(); s.zoneCards[zone] = { messageId, threadId }; saveState(s); }
 function clearZoneCard(zone)                    { const s = loadState(); delete s.zoneCards[zone]; saveState(s); }
 function getAllZoneCards()                       { return loadState().zoneCards; }
 
-// ── Daily kills ───────────────────────────────────────────────────────────────
+// ── Daily kills ─────────────────────────────────────────────────────────────────────────────
 function getDailyKills()   { return loadState().dailyKills || []; }
 function resetDailyKills() { const s = loadState(); s.dailyKills = []; saveState(s); }
 
-// ── Announce IDs ──────────────────────────────────────────────────────────────
+// ── Announce IDs ────────────────────────────────────────────────────────────────────────────
 function addAnnounceMessageId(id)    { const s = loadState(); s.announceMessageIds.push(id); saveState(s); }
 function getAnnounceMessageIds()     { return loadState().announceMessageIds || []; }
 function removeAnnounceMessageId(id) { const s = loadState(); s.announceMessageIds = s.announceMessageIds.filter(x => x !== id); saveState(s); }
@@ -194,7 +195,7 @@ function getAllSpawnAlertMessageIds() {
     .map(([k, v]) => ({ bossId: k.replace('alert_', ''), messageId: v }));
 }
 
-// ── Announce events (full data) ───────────────────────────────────────────────
+// ── Announce events (full data) ───────────────────────────────────────────────────────────────
 function saveAnnounce(msgId, data) {
   const s = loadState();
   s.announces[msgId] = data;
@@ -237,7 +238,7 @@ function updateAnnounceEasterEgg(msgId, level) {
   return true;
 }
 
-// ── PVP kills ─────────────────────────────────────────────────────────────────
+// ── PVP kills ────────────────────────────────────────────────────────────────────────────────
 function pvpMobKey(name) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_'); }
 function recordPvpKill(name, timerHours, killedBy, bossId = null, timerUnknown = false, killedAt = null) {
   const s = loadState();
@@ -273,7 +274,7 @@ function applyQuakeToAllPvpKills(quakeTimeMs) {
   saveState(s);
 }
 
-// ── PVP alert howlers ─────────────────────────────────────────────────────────
+// ── PVP alert howlers ──────────────────────────────────────────────────────────────────────────
 function getPvpAlertHowlers(messageId) { return loadState().pvpAlerts?.[messageId]?.howlers || []; }
 function addPvpAlertHowler(messageId, userId) {
   const s = loadState();
@@ -290,12 +291,12 @@ function clearPvpAlert(messageId) {
   saveState(s);
 }
 
-// ── Quake state ───────────────────────────────────────────────────────────────
+// ── Quake state ────────────────────────────────────────────────────────────────────────────────
 function getQuake()              { return loadState().quake || null; }
 function saveQuake(data)         { const s = loadState(); s.quake = data; saveState(s); }
 function clearQuake()            { const s = loadState(); s.quake = null; saveState(s); }
 
-// ── Welcome card seen tracking ────────────────────────────────────────────────
+// ── Welcome card seen tracking ────────────────────────────────────────────────────────────────────
 function hasSeenWelcome(userId) { return (loadState().seenWelcome || []).includes(userId); }
 function markWelcomeSeen(userId) {
   const s = loadState();
@@ -303,19 +304,25 @@ function markWelcomeSeen(userId) {
   if (!s.seenWelcome.includes(userId)) { s.seenWelcome.push(userId); saveState(s); }
 }
 
-// ── Raid session ──────────────────────────────────────────────────────────────
+// ── Raid session ───────────────────────────────────────────────────────────────────────────────
 // { date, threadId, channelId, summaryMessageId, openedAt }
 function getRaidSession()       { return loadState().raidSession || null; }
 function saveRaidSession(data)  { const s = loadState(); s.raidSession = data; saveState(s); }
 function clearRaidSession()     { const s = loadState(); s.raidSession = null; saveState(s); }
 
-// ── Raid night (DKP tick tracking) ───────────────────────────────────────────
+// ── Raid night (DKP tick tracking) ──────────────────────────────────────────────────────────────────
 // { date, raidId, name, poolId, ticks: { 1:{ tickId, description, postedAt, count }, ... } }
 function getRaidNight()        { return loadState().raidNight || null; }
 function saveRaidNight(data)   { const s = loadState(); s.raidNight = data; saveState(s); }
 function clearRaidNight()      { const s = loadState(); s.raidNight = null; saveState(s); }
 
-// ── Live kill tracking (exact timers, no variance) ───────────────────────────
+// ── Auto-raid invite (ARI) state ───────────────────────────────────────────────────────────────
+// Stores { character: string, password: string, setBy: userId } or null
+function getAri()          { return loadState().ari || null; }
+function setAri(data)      { const s = loadState(); s.ari = data; saveState(s); }
+function clearAri()        { const s = loadState(); s.ari = null; saveState(s); }
+
+// ── Live kill tracking (exact timers, no variance) ───────────────────────────────────────────
 function recordLiveKill(bossId, bossName, timerHours, killedBy, timerUnknown = false, killedAt = null) {
   const s = loadState();
   killedAt = killedAt || Date.now();
@@ -334,7 +341,7 @@ function setLiveKillMessageId(bossId, messageId) {
 function clearLiveKill(bossId)  { const s = loadState(); delete s.liveKills[bossId]; saveState(s); }
 function getAllLiveKills()       { return loadState().liveKills || {}; }
 
-// ── Hate board message IDs ────────────────────────────────────────────────────
+// ── Hate board message IDs ────────────────────────────────────────────────────────────────────────────
 // type = 'live' | 'pvp'
 function getHateBoardMessageId(type) {
   const envKey = type === 'live' ? 'LIVE_HATE_BOARD_ID' : 'PVP_HATE_BOARD_ID';
@@ -399,4 +406,5 @@ module.exports = {
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getRaidSession, saveRaidSession, clearRaidSession,
   getRaidNight, saveRaidNight, clearRaidNight,
+  getAri, setAri, clearAri,
 };
