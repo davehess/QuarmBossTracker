@@ -1130,16 +1130,6 @@
     "pqdiUrl": "https://www.pqdi.cc/npc/162037"
   },
   {
-    "id": "xanamech_nezmirthafen",
-    "name": "Xanamech Nezmirthafen",
-    "zone": "Plane of Innovation",
-    "expansion": "PoP",
-    "timerHours": 72,
-    "nicknames": ["xanamech", "xana", "mech"],
-    "emoji": "⚙️",
-    "pqdiUrl": ""
-  },
-  {
     "id": "the_seventh_hammer",
     "name": "The Seventh Hammer",
     "zone": "Plane of Justice",
@@ -1147,6 +1137,16 @@
     "timerHours": 72,
     "nicknames": ["seventh hammer", "7th hammer", "hammer"],
     "emoji": "⚖️",
+    "pqdiUrl": ""
+  },
+  {
+    "id": "xanamech_nezmirthafen",
+    "name": "Xanamech Nezmirthafen",
+    "zone": "Plane of Innovation",
+    "expansion": "PoP",
+    "timerHours": 72,
+    "nicknames": ["xanamech", "xana", "mech"],
+    "emoji": "⚙️",
     "pqdiUrl": ""
   },
   {
@@ -1180,6 +1180,26 @@
     "pqdiUrl": ""
   },
   {
+    "id": "mujaki_the_ravager",
+    "name": "Mujaki the Ravager",
+    "zone": "Plane of Nightmare",
+    "expansion": "PoP",
+    "timerHours": 72,
+    "nicknames": ["mujaki", "ravager"],
+    "emoji": "😨",
+    "pqdiUrl": ""
+  },
+  {
+    "id": "terris_thule",
+    "name": "Terris-Thule",
+    "zone": "Plane of Nightmare",
+    "expansion": "PoP",
+    "timerHours": 168,
+    "nicknames": ["terris", "tt", "terris thule"],
+    "emoji": "😨",
+    "pqdiUrl": ""
+  },
+  {
     "id": "agnarr_storm_lord",
     "name": "Agnarr the Storm Lord",
     "zone": "Plane of Storms",
@@ -1207,26 +1227,6 @@
     "timerHours": 72,
     "nicknames": ["aerindar", "aerin", "dar"],
     "emoji": "⛈️",
-    "pqdiUrl": ""
-  },
-  {
-    "id": "mujaki_the_ravager",
-    "name": "Mujaki the Ravager",
-    "zone": "Plane of Nightmare",
-    "expansion": "PoP",
-    "timerHours": 72,
-    "nicknames": ["mujaki", "ravager"],
-    "emoji": "😨",
-    "pqdiUrl": ""
-  },
-  {
-    "id": "terris_thule",
-    "name": "Terris-Thule",
-    "zone": "Plane of Nightmare",
-    "expansion": "PoP",
-    "timerHours": 168,
-    "nicknames": ["terris", "tt", "terris thule"],
-    "emoji": "😨",
     "pqdiUrl": ""
   },
   {

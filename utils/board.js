@@ -17,11 +17,9 @@ function buildExpansionPanels(expansion, bosses, killState = {}) {
   const now  = Date.now();
   const meta = EXPANSION_META[expansion] || { label: expansion, color: 0x555555 };
 
-  // Collect zones for this expansion (skip locked PoP bosses)
   const byZone = {};
   for (const boss of bosses) {
     if ((boss.expansion || 'Luclin') !== expansion) continue;
-    if (isPopLocked(boss)) continue;
     if (!byZone[boss.zone]) byZone[boss.zone] = [];
     byZone[boss.zone].push(boss);
   }
@@ -74,6 +72,7 @@ function buildExpansionEmbed(color, title, chunk, killState, now, totalChunks, c
     const row = chunk.slice(i, i + ZONE_COLS);
     for (const [zone, zoneBosses] of row) {
       const lines = zoneBosses.map((boss) => {
+        if (isPopLocked(boss)) return `🔒 ${boss.name}`;
         const entry = killState[boss.id];
         const onCD  = entry && entry.nextSpawn > now;
         if (onCD) {
@@ -116,6 +115,11 @@ function buildButtonRowsForChunk(zoneChunk, killState, now) {
 }
 
 function makeBossButton(boss, killState, now) {
+  if (isPopLocked(boss)) {
+    return new ButtonBuilder().setCustomId(`kill:${boss.id}`)
+      .setLabel(`🔒 ${boss.name}`.slice(0, 80))
+      .setStyle(ButtonStyle.Secondary);
+  }
   const entry = killState[boss.id];
   const onCD  = entry && entry.nextSpawn > now;
   if (onCD) {
