@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.2.9  
+**Version:** 1.2.10  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -255,7 +255,7 @@ Uses `editOrPost(channel, storedId, payload, onNewId)` — tries edit first, pos
 ### `/cleanup`
 **What it deletes:**
 - Main channel: transient embeds (`☠️`, `⚠️`, `🟢`), old-format boards, duplicate slot messages, duplicate thread-link messages
-- Each thread: transient embeds, duplicate board sets (keeps earliest), duplicate cooldown cards (keeps earliest), stray thread-link messages
+- Each thread: transient embeds, duplicate board sets (keeps earliest), **orphan board panels** (lone panels not part of a recognized set), duplicate cooldown cards (keeps earliest), stray thread-link messages
 - Historic Kills thread: duplicate daily summaries for same date, strips "Available Now" from remaining ones
 
 **What it edits in place:** all 4 main-channel slots, thread cooldown cards, board panels.  

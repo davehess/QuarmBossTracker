@@ -10,6 +10,7 @@
 //   Each expansion thread:
 //     - Transient: ☠️ zone cards, ⚠️ spawn alerts, 🟢 spawned notices
 //     - Duplicate board panel sets (keep earliest, delete rest)
+//     - Orphan board panels not part of any recognized set (e.g. lone 3/3)
 //     - Duplicate "X — Active Cooldowns" cards (keep earliest, delete rest)
 //     - Thread-link messages (those should only be in main channel)
 //   Historic Kills thread:
@@ -284,6 +285,19 @@ async function runCleanup(client) {
           if (delPanels > 0) results.push(`🗑️ ${exp}: deleted ${delPanels} duplicate board panel(s)`);
           results.push(`📌 ${exp}: anchored to earliest board`);
         }
+
+        // ── Delete orphan board panels not part of any recognized set ─────────
+        // Catches stray panels (e.g. a lone 3/3) left behind when only part of a
+        // duplicate set was cleaned up or when a board re-post was interrupted.
+        let delOrphans = 0;
+        for (const msg of botMsgs) {
+          if (protectedInThread.has(msg.id)) continue;
+          const isOrphanPanel = msg.embeds.some((e) =>
+            e.title && (e.title === meta.label || e.title.startsWith(meta.label + ' ('))
+          );
+          if (isOrphanPanel && await tryDelete(msg)) delOrphans++;
+        }
+        if (delOrphans > 0) results.push(`🗑️ ${exp}: deleted ${delOrphans} orphan board panel(s)`);
 
         // ── Cooldown cards: keep EARLIEST "X — Active Cooldowns", delete rest ──
         const cooldownTitle = `${meta.emoji} ${exp} — Active Cooldowns`;
