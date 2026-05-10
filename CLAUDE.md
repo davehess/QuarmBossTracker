@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.2.4  
+**Version:** 1.2.6  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -195,7 +195,8 @@ Key functions: `recordKill`, `clearKill`, `getAllState`, `getBossState`, `overri
 `getExpansionBoard`, `saveExpansionBoard`, `getZoneCard`, `setZoneCard`, `clearZoneCard`,  
 `getSummaryMessageId`, `setSummaryMessageId` (and spawning/daily/threadLinks variants),  
 `getThreadCooldownId`, `setThreadCooldownId` (checks `<EXP>_COOLDOWN_ID` env var first),  
-`getSpawnAlertMessageId`, `setSpawnAlertMessageId`, `clearSpawnAlertMessageId`, `getAllSpawnAlertMessageIds`
+`getSpawnAlertMessageId`, `setSpawnAlertMessageId`, `clearSpawnAlertMessageId`, `getAllSpawnAlertMessageIds`,  
+`getAri`, `setAri`, `clearAri`
 
 ### `utils/killops.js`
 ```js
@@ -307,6 +308,12 @@ Removes from `bosses.json`, clears any kill state, refreshes board.
 ### `/timers [zone] [filter]`
 Zone filter uses autocomplete (supports 33+ zones — avoids Discord's 25-choice limit).  
 Filter options: `all`, `spawned`, `soon` (within 2h), `unknown`.
+
+### `/autoraidinvite` (alias `/ari`)
+- **No args** → shows current ARI character + password (ephemeral, all roles)
+- **`character` + `password`** → sets ARI (officer/pack leader only); posts public confirmation
+- **`clear` in either field** → clears current ARI (officer/pack leader only)
+- State stored in `state.json` as `ari: { character, password, setBy, setByName, setAt }`
 
 ---
 
