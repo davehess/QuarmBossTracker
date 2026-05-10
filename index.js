@@ -35,7 +35,7 @@ const {
   postKillUpdate, postOrUpdateExpansionBoard,
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('./utils/roles');
-const { EXPANSION_ORDER, getThreadId, getBossExpansion } = require('./utils/config');
+const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked } = require('./utils/config');
 const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
 function getBosses() {
@@ -168,6 +168,8 @@ async function handleBoardButton(interaction) {
   // Synchronous checks first — still within the 3-second window
   if (!boss)
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+  if (isPopLocked(boss))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '🔒 PoP bosses are not available until October 1, 2026.' });
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
 
