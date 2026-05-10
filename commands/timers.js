@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getAllState } = require('../utils/state');
 const { buildStatusEmbed } = require('../utils/embeds');
+const { isPopLocked } = require('../utils/config');
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
@@ -33,7 +34,7 @@ module.exports = {
   async autocomplete(interaction) {
     const bosses  = getBosses();
     const focused = interaction.options.getFocused().toLowerCase();
-    const zones   = [...new Set(bosses.map((b) => b.zone))].sort();
+    const zones   = [...new Set(bosses.filter((b) => !isPopLocked(b)).map((b) => b.zone))].sort();
     const filtered = zones
       .filter((z) => !focused || z.toLowerCase().includes(focused))
       .slice(0, 25)
@@ -50,7 +51,7 @@ module.exports = {
     const state = getAllState();
     const now   = Date.now();
 
-    let filtered = bosses;
+    let filtered = bosses.filter((b) => !isPopLocked(b));
     if (filterZone)                   filtered = filtered.filter((b) => b.zone === filterZone);
     if (filterStatus === 'spawned')   filtered = filtered.filter((b) => { const e = state[b.id]; return e && e.nextSpawn <= now; });
     else if (filterStatus === 'soon') filtered = filtered.filter((b) => { const e = state[b.id]; if (!e) return false; const r = e.nextSpawn - now; return r > 0 && r < 7200000; });

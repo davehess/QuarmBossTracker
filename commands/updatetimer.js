@@ -9,42 +9,13 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getBossState, overrideTimer, getAllState, getZoneCard, setZoneCard } = require('../utils/state');
 const { postKillUpdate } = require('../utils/killops');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { getThreadId, getBossExpansion } = require('../utils/config');
+const { getThreadId, getBossExpansion, isPopLocked } = require('../utils/config');
 const { buildZoneKillCard } = require('../utils/embeds');
-const { discordAbsoluteTime, discordRelativeTime } = require('../utils/timer');
+const { discordAbsoluteTime, discordRelativeTime, parseTimeString } = require('../utils/timer');
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
   return require('../data/bosses.json');
-}
-
-/**
- * Parse a time string into milliseconds.
- * Supports:
- *   "3d4h30m20s"
- *   "3 days, 4 hours, 30 minutes, and 20 seconds"
- *   "Expires in 3 Days, 4 Hours, 30 Minutes, and 20 Seconds"
- *   "3d" "4h" "30m" "20s"
- */
-function parseTimeString(input) {
-  const s = input.replace(/expires\s+in\s*/i, '').replace(/,?\s*and\s*/gi, ' ').trim();
-
-  const patterns = [
-    { re: /(\d+)\s*(?:d(?:ay)?s?)/i,    mult: 86400000 },
-    { re: /(\d+)\s*(?:h(?:our)?s?)/i,   mult: 3600000  },
-    { re: /(\d+)\s*(?:m(?:in(?:ute)?)?s?)/i, mult: 60000 },
-    { re: /(\d+)\s*(?:s(?:ec(?:ond)?)?s?)/i, mult: 1000  },
-  ];
-
-  let totalMs = 0;
-  let matched = false;
-
-  for (const { re, mult } of patterns) {
-    const m = s.match(re);
-    if (m) { totalMs += parseInt(m[1]) * mult; matched = true; }
-  }
-
-  return matched ? totalMs : null;
 }
 
 module.exports = {
@@ -63,7 +34,7 @@ module.exports = {
   async autocomplete(interaction) {
     const bosses  = getBosses();
     const focused = interaction.options.getFocused().toLowerCase().trim();
-    const choices = bosses.map((b) => ({
+    const choices = bosses.filter((b) => !isPopLocked(b)).map((b) => ({
       name: `${b.name} (${b.zone})`, value: b.id,
       terms: [b.name.toLowerCase(), ...(b.nicknames || []).map((n) => n.toLowerCase())],
     }));
@@ -83,6 +54,7 @@ module.exports = {
     const timeStr  = interaction.options.getString('timeleft');
     const boss     = bosses.find((b) => b.id === bossId);
     if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+    if (isPopLocked(boss)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '🔒 PoP bosses are not available until October 1, 2026.' });
 
     const existing = getBossState(bossId);
     if (!existing) {

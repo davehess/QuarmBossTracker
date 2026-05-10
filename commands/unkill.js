@@ -5,7 +5,7 @@ const { clearKill, getBossState, getAllState, getZoneCard, setZoneCard, clearZon
 const { postKillUpdate } = require('../utils/killops');
 const { buildZoneKillCard } = require('../utils/embeds');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { getThreadId, getBossExpansion } = require('../utils/config');
+const { getThreadId, getBossExpansion, isPopLocked } = require('../utils/config');
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
@@ -24,7 +24,7 @@ module.exports = {
     const bosses  = getBosses();
     const focused = interaction.options.getFocused().toLowerCase();
     await interaction.respond(
-      bosses.map((b) => ({ name: `${b.name} (${b.zone})`, value: b.id }))
+      bosses.filter((b) => !isPopLocked(b)).map((b) => ({ name: `${b.name} (${b.zone})`, value: b.id }))
         .filter((c) => c.name.toLowerCase().includes(focused)).slice(0, 25)
     );
   },
@@ -38,6 +38,7 @@ module.exports = {
     const bossId = interaction.options.getString('boss');
     const boss   = bosses.find((b) => b.id === bossId);
     if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+    if (isPopLocked(boss)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '🔒 PoP bosses are not available until October 1, 2026.' });
 
     const existing = getBossState(bossId);
     if (!existing) return interaction.reply({ flags: MessageFlags.Ephemeral, content: `⬜ **${boss.name}** has no recorded kill.` });

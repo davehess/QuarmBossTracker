@@ -3,7 +3,7 @@
 const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
 } = require('discord.js');
-const { EXPANSION_ORDER, EXPANSION_META } = require('./config');
+const { EXPANSION_ORDER, EXPANSION_META, isPopLocked } = require('./config');
 
 const ZONE_COLS      = 3;
 const MAX_ROWS       = 5;
@@ -17,10 +17,11 @@ function buildExpansionPanels(expansion, bosses, killState = {}) {
   const now  = Date.now();
   const meta = EXPANSION_META[expansion] || { label: expansion, color: 0x555555 };
 
-  // Collect zones for this expansion
+  // Collect zones for this expansion (skip locked PoP bosses)
   const byZone = {};
   for (const boss of bosses) {
     if ((boss.expansion || 'Luclin') !== expansion) continue;
+    if (isPopLocked(boss)) continue;
     if (!byZone[boss.zone]) byZone[boss.zone] = [];
     byZone[boss.zone].push(boss);
   }
@@ -81,10 +82,10 @@ function buildExpansionEmbed(color, title, chunk, killState, now, totalChunks, c
         }
         return `${boss.emoji || '•'} ${boss.name}`;
       });
-      embed.addFields({ name: `📍 ${zone}`, value: lines.join('\n').slice(0, 1024) || '\u200b', inline: true });
+      embed.addFields({ name: `📍 ${zone}`, value: lines.join('\n').slice(0, 1024) || '​', inline: true });
     }
     const rem = row.length % ZONE_COLS;
-    if (rem !== 0) for (let p = 0; p < ZONE_COLS - rem; p++) embed.addFields({ name: '\u200b', value: '\u200b', inline: true });
+    if (rem !== 0) for (let p = 0; p < ZONE_COLS - rem; p++) embed.addFields({ name: '​', value: '​', inline: true });
   }
   return embed;
 }
