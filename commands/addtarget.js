@@ -9,6 +9,7 @@ const {
 const {
   buildControlPanelEmbed, buildTargetButtons, buildCancelRow, EASTER_EGG_CHAIN,
 } = require('./announce');
+const { isPopLocked } = require('../utils/config');
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
@@ -41,7 +42,7 @@ module.exports = {
     const focused = interaction.options.getFocused().toLowerCase();
     await interaction.respond(
       bosses
-        .filter(b => b.name.toLowerCase().includes(focused) || (b.nicknames || []).some(n => n.includes(focused)))
+        .filter(b => !isPopLocked(b) && (b.name.toLowerCase().includes(focused) || (b.nicknames || []).some(n => n.includes(focused))))
         .slice(0, 25)
         .map(b => ({ name: `${b.emoji || ''} ${b.name} (${b.zone})`, value: b.id }))
     );
@@ -59,6 +60,7 @@ module.exports = {
     const bossId = interaction.options.getString('boss');
     const boss   = bosses.find(b => b.id === bossId);
     if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+    if (isPopLocked(boss)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '🔒 PoP bosses are not available until October 1, 2026.' });
 
     const targets = [...(announce.targets || [])];
     if (targets.includes(bossId))
@@ -70,7 +72,6 @@ module.exports = {
     const freshAnnounce = { ...getAnnounce(announce.messageId), messageId: announce.messageId };
     await refreshControlPanel(interaction.channel, freshAnnounce, bosses);
 
-    // Post boss info card if not already present
     try {
       const msgs = await interaction.channel.messages.fetch({ limit: 50 });
       const alreadyPosted = msgs.some(m => m.embeds[0]?.title?.includes(boss.name));

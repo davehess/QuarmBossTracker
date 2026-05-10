@@ -76,12 +76,14 @@ module.exports = {
         const targetCh = await interaction.client.channels.fetch(existing.threadId || targetChannelId);
         const msg = await targetCh.messages.fetch(existing.messageId);
         await msg.edit({ embeds: [embed] });
+        // Acknowledge kill silently if in a thread; publicly if in main channel
         const inThread = interaction.channelId !== process.env.TIMER_CHANNEL_ID;
         await interaction.reply({
           flags: inThread ? undefined : MessageFlags.Ephemeral,
           content: `✅ **${boss.name}** kill recorded — zone card updated${threadId ? ' in thread' : ''}.`,
           flags: MessageFlags.Ephemeral,
         });
+        // Run board + summary updates
         await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId);
         return;
       } catch { /* card gone — post new */ }

@@ -45,6 +45,7 @@ module.exports = {
 
     clearKill(bossId);
 
+    // Update or remove zone card
     const now        = Date.now();
     const killState  = getAllState();
     const zoneCard   = getZoneCard(boss.zone);

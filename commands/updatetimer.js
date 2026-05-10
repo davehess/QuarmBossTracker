@@ -75,6 +75,7 @@ module.exports = {
     const newNextSpawn = Date.now() + remainingMs;
     overrideTimer(bossId, newNextSpawn);
 
+    // Update zone card with corrected timer
     await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId);
 
     await interaction.reply({
