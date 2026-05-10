@@ -14,6 +14,7 @@ const https = require('https');
 const { addAnnounceMessageId, saveAnnounce } = require('../utils/state');
 const { hasOfficerRole, officerRolesList, getAllowedRoles } = require('../utils/roles');
 const { parseUserTime, getDefaultTz, formatInDefaultTz } = require('../utils/timezone');
+const { isPopLocked } = require('../utils/config');
 
 // ── Easter-egg boss chain ─────────────────────────────────────────────────────
 const EASTER_EGG_CHAIN = [
@@ -23,7 +24,7 @@ const EASTER_EGG_CHAIN = [
     quote: "Fippy Darkpaw shouts, '<BBBBBAAAARRRKKKK!> You wolves will pay for ruining our homeland! GRRRRRRRR! Family Darkpaw of the Sabertooth Clan will slay you all! <BARK!>'",
   },
   {
-    id: '_nillipuss', name: 'Nillipuss', zone: 'Plane of Mischief', emoji: '🧌',
+    id: '_nillipuss', name: 'Nillipuss', zone: 'Plane of Mischief', emoji: '🧙',
     pqdiUrl: 'https://www.pqdi.cc/npc/19015',
     quote: "Nillipuss, Nillipuss is my name. Stealing jumjum is my game. Think you can catch me? Let's see if you can! I'll always run faster than you ever ran.",
   },
@@ -57,8 +58,6 @@ function decodeHtml(str) {
 function scrapePqdiDetails(html) {
   const fields = [];
 
-  // Try multiple regex patterns for a stat — handles **field:** value (markdown bold),
-  // "field": value (JSON), and plain field: value formats.
   function tryStat(...patterns) {
     for (const pat of patterns) {
       const m = html.match(pat);
@@ -71,7 +70,7 @@ function scrapePqdiDetails(html) {
     /\*\*hp:\*\*\s*(\d[\d,]*)/i,
     /\*\*hp:\s*(\d[\d,]*)\*\*/i,
     /"hp"\s*:\s*(\d+)/i,
-    /Max HP[^<]*<[^>]+>(\d[\d,]+)/i,
+    /Max HP[^<]*<[^>]+>([\d,]+)/i,
     /\bhp["'\s]*[=:]\s*(\d+)/i,
   );
   if (hp) fields.push({ name: '❤️ HP', value: parseInt(hp.replace(/,/g, '')).toLocaleString(), inline: true });
@@ -88,7 +87,6 @@ function scrapePqdiDetails(html) {
   const detectionVal = [seesInvis && 'See Invis', seesIVU && 'See IVU'].filter(Boolean).join(', ') || '⚠️ Not confirmed — verify before pull';
   fields.push({ name: '👁️ Detection', value: detectionVal, inline: true });
 
-  // Always show all resist values — zero is as strategically important as high ones
   const resistParts = [];
   for (const [aliases, label] of [
     [['MR', 'mr', 'magic_resist'],   'MR'],
@@ -196,7 +194,7 @@ module.exports = {
     const option  = interaction.options.getFocused(true);
 
     if (option.name === 'boss') {
-      const choices = bosses.map(b => ({
+      const choices = bosses.filter(b => !isPopLocked(b)).map(b => ({
         name: `${b.emoji ? b.emoji + ' ' : ''}${b.name} (${b.zone})`,
         value: b.id,
         terms: [b.name.toLowerCase(), ...(b.nicknames || []).map(n => n.toLowerCase())],
@@ -234,22 +232,19 @@ module.exports = {
     if (bossId && !boss)
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
 
-    // Zone-level announce: find all bosses in the zone
     const zoneBosses = zone ? bosses.filter(b => b.zone === zone) : (boss ? [boss] : []);
     const announceName = boss ? boss.name : zone;
     const announceZone = boss ? boss.zone : zone;
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    // ── Parse time (timezone-aware) ───────────────────────────────────────
     let eventStart = parseUserTime(timeStr);
     if (!eventStart || isNaN(eventStart.getTime())) {
-      eventStart = new Date(Date.now() + 3600000); // fallback: 1h from now
+      eventStart = new Date(Date.now() + 3600000);
     }
     const eventEnd = new Date(eventStart.getTime() + 2 * 3600000);
     const plannedTimeStr = formatInDefaultTz(eventStart);
 
-    // ── Create thread in #raid-mobs ────────────────────────────────────────
     const mainChannelId = process.env.TIMER_CHANNEL_ID;
     let raidThread = null, threadUrl = null;
     if (mainChannelId) {
@@ -264,7 +259,6 @@ module.exports = {
       } catch (err) { console.warn('Could not create raid thread:', err?.message); }
     }
 
-    // ── Post boss info card(s) in thread ──────────────────────────────────
     const targets = boss ? [boss.id] : [];
 
     if (raidThread) {
@@ -290,7 +284,6 @@ module.exports = {
         }
       }
 
-      // If zone-level, show target-picker message so users know what to add
       if (zone && !bossId) {
         const pickerLines = zoneBosses.map(b => `• ${b.emoji || '⚔️'} **${b.name}** — use \`/addtarget\` to add`);
         if (pickerLines.length) {
@@ -301,7 +294,6 @@ module.exports = {
       }
     }
 
-    // ── Create Discord event ───────────────────────────────────────────────
     let eventUrl = null, eventId = null;
     try {
       const event = await interaction.guild.scheduledEvents.create({
@@ -317,7 +309,6 @@ module.exports = {
       eventUrl = `https://discord.com/events/${interaction.guildId}/${event.id}`;
     } catch (err) { console.warn('Could not create Discord event:', err?.message); }
 
-    // ── Post compact announcement in calling channel ───────────────────────
     const allowedRoleNames = getAllowedRoles();
     const roleMentions = allowedRoleNames
       .map(name => { const r = interaction.guild.roles.cache.find(r => r.name === name); return r ? `<@&${r.id}>` : null; })
@@ -353,13 +344,11 @@ module.exports = {
     });
     addAnnounceMessageId(annMsg.id);
 
-    // ── Post control panel in thread ───────────────────────────────────────
     if (raidThread) {
       const cpEmbed = buildControlPanelEmbed(targets, bosses, announceZone, plannedTimeStr);
       const targetRows = buildTargetButtons(targets, bosses);
       const cancelRow  = buildCancelRow(annMsg.id);
 
-      // Kill button — mirrors the one on the announce message so the thread is self-contained
       const firstTargetId = targets[0] || zoneBosses[0]?.id;
       const killRow = firstTargetId
         ? new ActionRowBuilder().addComponents(
@@ -376,7 +365,6 @@ module.exports = {
       });
     }
 
-    // ── Persist full announce state ────────────────────────────────────────
     saveAnnounce(annMsg.id, {
       eventId,
       threadId:      raidThread?.id || null,
@@ -396,7 +384,6 @@ module.exports = {
     );
   },
 
-  // Export helpers for use by addtarget/removetarget/adjusttime/adjustdate
   buildControlPanelEmbed,
   buildTargetButtons,
   buildCancelRow,
