@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.2.6  
+**Version:** 1.2.9  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -37,7 +37,7 @@ One thread per expansion. Each thread contains (top to bottom):
 3. Board panels (kill buttons) — edited in place, anchored by `<EXP>_BOARD_IDS` env var
 
 | Thread | Env Var |
-|--------|---------|
+|--------|--------|
 | Classic Thread | `CLASSIC_THREAD_ID` |
 | Kunark Thread | `KUNARK_THREAD_ID` |
 | Velious Thread | `VELIOUS_THREAD_ID` |
@@ -87,7 +87,7 @@ quarm-bot-v0.9.3/
 │   └── timer.js               calcNextSpawn(), discordRelativeTime(), discordAbsoluteTime()
 │
 └── data/
-    ├── bosses.json            109 bosses (Classic/Kunark/Velious/Luclin) — hot-reloaded
+    ├── bosses.json            133 bosses (Classic/Kunark/Velious/Luclin/PoP) — hot-reloaded
     └── state.json             Live state — NEVER commit, NEVER bake into Docker image
 ```
 
@@ -319,7 +319,7 @@ Filter options: `all`, `spawned`, `soon` (within 2h), `unknown`.
 
 ## Boss Data (`data/bosses.json`)
 
-109 bosses. Schema:
+133 bosses. Schema:
 ```json
 {
   "id": "lord_nagafen",
@@ -339,7 +339,7 @@ Valid `expansion` values: `Classic`, `Kunark`, `Velious`, `Luclin`, `PoP`
 **Hot reload:** all commands call `getBosses()` which does `delete require.cache[...]` before `require()`.  
 This means `/addboss` and `/removeboss` take effect immediately without restart.
 
-Breakdown: Classic (15) | Kunark (16) | Velious (35) | Luclin (43) | PoP (0, reserved)
+Breakdown: Classic (15) | Kunark (16) | Velious (35) | Luclin (47) | PoP (20, locked until 2026-10-01)
 
 ---
 
@@ -418,7 +418,7 @@ Paste links to any combination of Active Cooldowns cards (main channel or any th
 
 ## Known Issues / Future Work
 
-- **PoP expansion:** No bosses configured yet. PoP thread has a "Reserved" placeholder board. Add PoP bosses via `/addboss` when the expansion launches.
+- **PoP expansion:** 20 bosses pre-loaded but hard-locked until `2026-10-01T00:00:00` via `isPopLocked()` in `utils/config.js`. PoP thread shows locked 🔒 buttons until then — clicking any returns an ephemeral message. After unlock, run `/board` to activate the PoP thread. Update `pqdiUrl` fields via `/addboss` once PQDI has the NPC data.
 - **`/announce` Discord events:** Requires "Manage Events" bot permission. If not granted, announcement still works but no event is created.
 - **`/announce` cross-channel kills:** If `/announce` is posted in `#event-chat` and someone clicks the Kill button there, the kill is recorded and boards update correctly, but the zone card posts in the expansion thread (correct behavior).
 - **bosses.json sync:** `/addboss` and `/removeboss` write to the running container's `bosses.json`. Must manually sync back to repo. With Docker: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json`
