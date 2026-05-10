@@ -44,7 +44,7 @@ function getBosses() {
 }
 
 // ── Client ─────────────────────────────────────────────────────────────────
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages] });
 
 // ── Load commands ──────────────────────────────────────────────────────────
 client.commands = new Collection();
@@ -136,6 +136,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId.startsWith('mark_avail:'))         { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
+    if (interaction.customId.startsWith('suggest_host:'))        { await handleSuggestHost(interaction); return; }
+    if (interaction.customId.startsWith('suggest_nohost:'))     { await handleSuggestNoHost(interaction); return; }
+    if (interaction.customId.startsWith('suggest_confirm:'))    { await handleSuggestConfirm(interaction); return; }
+    if (interaction.customId.startsWith('suggest_cancel_host:')){ await handleSuggestCancelHost(interaction); return; }
     if (interaction.customId.startsWith('parse_breakdown:')) {
       const { handleParseBreakdown } = require('./commands/parse');
       await handleParseBreakdown(interaction).catch(console.error);
@@ -699,6 +703,118 @@ async function handleHateUnknownButton(interaction) {
   await interaction.update({ embeds: [doneEmbed], components: [] });
 }
 
+// ── Suggest button handlers ───────────────────────────────────────────────────
+// Flow: "I'll host it" → ephemeral confirmation → "Confirm" → claim + ping requester
+
+async function handleSuggestHost(interaction) {
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Only officers can respond to event requests.` });
+
+  const requesterId = interaction.customId.split(':')[1];
+  const original    = interaction.message;
+  const oldEmbed    = original.embeds[0];
+  if (!oldEmbed) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not find the original request.' });
+
+  const fields    = oldEmbed.fields || [];
+  const bossField = fields.find(f => f.name === 'Boss / Zone');
+  const timeField = fields.find(f => f.name === 'Wanted time');
+  const reqField  = fields.find(f => f.name === 'Requested by');
+
+  const { EmbedBuilder: EB, ActionRowBuilder: AR, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
+
+  const confirmEmbed = new EB()
+    .setColor(0xFEE75C)
+    .setTitle('⚠️ Confirm — Announce this event?')
+    .setDescription(
+      `You're about to claim this request and notify the requester.\n\n` +
+      `**Boss / Zone:** ${bossField?.value || 'Unknown'}\n` +
+      `**Wanted time:** ${timeField?.value || 'Unknown'}\n` +
+      `**Suggested by:** ${reqField?.value || `<@${requesterId}>`}`
+    )
+    .setFooter({ text: 'This will mark the request as claimed. Run /announce to post the full event.' });
+
+  const row = new AR().addComponents(
+    new BB()
+      .setCustomId(`suggest_confirm:${requesterId}:${original.id}`)
+      .setLabel("Yes, I'll host it")
+      .setStyle(BS.Success),
+    new BB()
+      .setCustomId(`suggest_cancel_host:${requesterId}`)
+      .setLabel('Cancel')
+      .setStyle(BS.Secondary),
+  );
+
+  await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [confirmEmbed], components: [row] });
+}
+
+async function handleSuggestConfirm(interaction) {
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Only officers can confirm event requests.` });
+
+  const parts       = interaction.customId.split(':');
+  const requesterId = parts[1];
+  const origMsgId   = parts[2];
+
+  const { EmbedBuilder: EB, ActionRowBuilder: AR, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
+
+  try {
+    const origMsg  = await interaction.channel.messages.fetch(origMsgId);
+    const oldEmbed = origMsg.embeds[0];
+    if (origMsg && oldEmbed) {
+      const updated = new EB(oldEmbed.data)
+        .setColor(0x57F287)
+        .setTitle('✅ Event Request — Claimed')
+        .setFooter({ text: `Claimed by ${interaction.member.displayName || interaction.user.username}` });
+      const disabled = new AR().addComponents(
+        new BB().setCustomId('suggest_host_done').setLabel("I'll host it").setStyle(BS.Success).setDisabled(true),
+        new BB().setCustomId('suggest_nohost_done').setLabel('No hosts available').setStyle(BS.Danger).setDisabled(true),
+      );
+      await origMsg.edit({ embeds: [updated], components: [disabled] });
+    }
+  } catch {}
+
+  try {
+    await interaction.channel.send({
+      content: `<@${requesterId}> — <@${interaction.user.id}> will host your event! Keep an eye out for an \`/announce\`.`,
+    });
+  } catch {}
+
+  await interaction.update({ embeds: [], components: [], content: '✅ Claimed! Remember to run `/announce` to post the full event.' });
+}
+
+async function handleSuggestCancelHost(interaction) {
+  await interaction.update({ embeds: [], components: [], content: '↩️ Cancelled — no changes made.' });
+}
+
+async function handleSuggestNoHost(interaction) {
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Only officers can respond to event requests.` });
+
+  const requesterId = interaction.customId.split(':')[1];
+  const original    = interaction.message;
+  const oldEmbed    = original.embeds[0];
+  if (!oldEmbed) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not find the original request.' });
+
+  const { EmbedBuilder: EB, ActionRowBuilder: AR, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
+  const updated = new EB(oldEmbed.data)
+    .setColor(0xED4245)
+    .setTitle('❌ Event Request — No Hosts Available')
+    .setFooter({ text: `Closed by ${interaction.member.displayName || interaction.user.username}` });
+
+  const disabled = new AR().addComponents(
+    new BB().setCustomId('suggest_host_done').setLabel("I'll host it").setStyle(BS.Success).setDisabled(true),
+    new BB().setCustomId('suggest_nohost_done').setLabel('No hosts available').setStyle(BS.Danger).setDisabled(true),
+  );
+
+  await interaction.update({ embeds: [updated], components: [disabled] });
+
+  try {
+    await interaction.channel.send({
+      content: `<@${requesterId}> — Unfortunately no officers are available to host your event right now. Try again later or post in the forum!`,
+    });
+  } catch {}
+}
+
 // ── Onboarding button handlers ────────────────────────────────────────────────
 async function handleOnbPvp(interaction) {
   const { buildAnnouncementEmbed, buildRoleRow, getPvpRole, getPvpRoleName } = require('./commands/pvprole');
@@ -809,6 +925,63 @@ client.on(Events.GuildMemberAdd, async (member) => {
     } catch (err) {
       console.warn('[onboarding] GuildMemberAdd fallback failed:', err?.message);
     }
+  }
+});
+
+// ── Forum suggestion listener ─────────────────────────────────────────────────
+// When a new post is created in the event-suggestions forum channel, reply with
+// a summary of what was detected (boss, time, date) and how to use /suggest.
+client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
+  if (!newlyCreated) return;
+  const forumChannelId = process.env.FORUM_CHANNEL_ID || '1242116105326166057';
+  if (thread.parentId !== forumChannelId) return;
+
+  await new Promise(r => setTimeout(r, 1500));
+
+  let starterContent = '';
+  try {
+    const starter = await thread.fetchStarterMessage();
+    starterContent = starter?.content || '';
+  } catch {}
+
+  const { parseSuggestion } = require('./utils/suggestParser');
+  const bosses = getBosses();
+  const combined = `${thread.name} ${starterContent}`;
+  const { matchedBosses, matchedZones, time, dateLabel } = parseSuggestion(combined, bosses);
+
+  const { EmbedBuilder: EB } = require('discord.js');
+
+  const detectedLines = [];
+  if (matchedBosses.length) {
+    const names = matchedBosses.slice(0, 5).map(b => `${b.emoji || '⚔️'} **${b.name}** (${b.zone})`);
+    if (matchedBosses.length > 5) names.push(`…and ${matchedBosses.length - 5} more`);
+    detectedLines.push(`🎯 **Boss/Zone:** ${names.join(', ')}`);
+  } else if (matchedZones.length) {
+    detectedLines.push(`📍 **Zone:** ${matchedZones.join(', ')}`);
+  }
+  if (time || dateLabel) {
+    detectedLines.push(`🕐 **When:** ${[dateLabel, time].filter(Boolean).join(' ')}`);
+  }
+
+  const embed = new EB()
+    .setColor(0x5865F2)
+    .setTitle('📣 Want officers to host this?')
+    .setDescription(
+      detectedLines.length
+        ? `I think I detected:\n${detectedLines.join('\n')}\n\nIf that looks right, use **\`/suggest\`** to send a formal request to officers!`
+        : `Use **\`/suggest\`** to send a formal request to the officers — they'll be notified and can claim your event.`
+    )
+    .addFields({
+      name: 'How to request',
+      value: '1. Run `/suggest` in any channel\n2. Pick the boss from the list\n3. Enter when you want to do it\n4. Officers will see it and respond',
+      inline: false,
+    })
+    .setFooter({ text: 'Officers can click "I\'ll host it" to claim your request' });
+
+  try {
+    await thread.send({ embeds: [embed] });
+  } catch (err) {
+    console.warn('[forum] Could not reply to new forum thread:', err?.message);
   }
 });
 
@@ -1228,13 +1401,10 @@ async function archiveRaidSession(readyClient) {
   try {
     const thread = await readyClient.channels.fetch(session.threadId).catch(() => null);
     if (thread) {
-      // Post archive notice in the thread itself
       await thread.send({ content: `📦 **Archived** — ${session.label}. Parses saved to history.` }).catch(() => {});
-      // Archive (lock) the Discord thread
       await thread.setArchived(true, 'Raid night ended at midnight').catch(() => {});
     }
 
-    // Post a link in the archive channel if configured
     if (archiveChannelId) {
       const archiveCh = await readyClient.channels.fetch(archiveChannelId).catch(() => null);
       if (archiveCh && thread) {
@@ -1394,38 +1564,6 @@ async function consolidateNightlyParses(client) {
   } else {
     console.log('[consolidate] No parse groups to consolidate');
   }
-}
-
-// ── Archive raid night parse thread at midnight ───────────────────────────────
-async function archiveRaidSession(readyClient) {
-  const { getRaidSession, clearRaidSession } = require('./utils/state');
-  const session = getRaidSession();
-  if (!session) return;
-
-  const archiveChannelId = process.env.RAID_MOBS_ARCHIVE_CHANNEL_ID;
-  try {
-    const thread = await readyClient.channels.fetch(session.threadId).catch(() => null);
-    if (thread) {
-      // Post archive notice in the thread itself
-      await thread.send({ content: `📦 **Archived** — ${session.label}. Parses saved to history.` }).catch(() => {});
-      // Archive (lock) the Discord thread
-      await thread.setArchived(true, 'Raid night ended at midnight').catch(() => {});
-    }
-
-    // Post a link in the archive channel if configured
-    if (archiveChannelId) {
-      const archiveCh = await readyClient.channels.fetch(archiveChannelId).catch(() => null);
-      if (archiveCh && thread) {
-        await archiveCh.send({
-          content: `📋 **${session.label}** parse thread archived → <#${session.threadId}>`,
-        }).catch(() => {});
-      }
-    }
-  } catch (err) {
-    console.warn('[raidnight] archiveRaidSession error:', err?.message);
-  }
-
-  clearRaidSession();
 }
 
 // ── Health check server ───────────────────────────────────────────────────────
