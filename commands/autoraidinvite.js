@@ -1,7 +1,8 @@
 // commands/autoraidinvite.js — Store and display the current auto-raid invite info.
-// Officers/pack leaders: /autoraidinvite <character> <password>  — set ARI
-//                        /autoraidinvite clear  (in either field) — clear ARI
+// Officers/pack leaders: /autoraidinvite <character> [password]  — set ARI
+//                        password defaults to ARI_DEFAULT_PASSWORD env var if omitted
 // Everyone:              /autoraidinvite (no args) — view current ARI (ephemeral)
+// To clear:              use /ariclear
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
@@ -13,11 +14,11 @@ module.exports = {
     .setDescription('View or set the current auto-raid invite character and password')
     .addStringOption(opt =>
       opt.setName('character')
-        .setDescription('Character name to /who for an invite (use "clear" to clear ARI)')
+        .setDescription('Character name to /who for an invite')
         .setRequired(false))
     .addStringOption(opt =>
       opt.setName('password')
-        .setDescription('ARI password (use "clear" to clear ARI)')
+        .setDescription('ARI password (defaults to server default if omitted)')
         .setRequired(false)),
 
   async execute(interaction) {
@@ -30,7 +31,7 @@ module.exports = {
       if (!ari) {
         return interaction.reply({
           flags: MessageFlags.Ephemeral,
-          content: '📭 No auto-raid invite is currently set. Officers can set one with `/autoraidinvite <character> <password>`.',
+          content: '📭 No auto-raid invite is currently set. Officers can set one with `/autoraidinvite <character>`.',
         });
       }
       const embed = new EmbedBuilder()
@@ -54,37 +55,37 @@ module.exports = {
       });
     }
 
-    // Clear if either field is "clear"
-    if (character?.toLowerCase() === 'clear' || password?.toLowerCase() === 'clear') {
-      clearAri();
+    if (!character) {
       return interaction.reply({
         flags: MessageFlags.Ephemeral,
-        content: '✅ Auto-raid invite cleared.',
+        content: '❌ `character` is required to set an ARI. Use `/ariclear` to clear it.',
       });
     }
 
-    // Both fields required to set
-    if (!character || !password) {
+    // Use provided password, then env var default, then error
+    const resolvedPassword = password || process.env.ARI_DEFAULT_PASSWORD || null;
+    if (!resolvedPassword) {
       return interaction.reply({
         flags: MessageFlags.Ephemeral,
-        content: '❌ Both `character` and `password` are required to set an ARI. To clear, pass "clear" in either field.',
+        content: '❌ No password provided and `ARI_DEFAULT_PASSWORD` is not set. Provide a password or ask an admin to set the env var.',
       });
     }
 
     setAri({
       character,
-      password,
+      password:  resolvedPassword,
       setBy:     interaction.user.id,
       setByName: interaction.member.displayName || interaction.user.username,
       setAt:     Date.now(),
     });
 
+    const usedDefault = !password && process.env.ARI_DEFAULT_PASSWORD;
     const embed = new EmbedBuilder()
       .setColor(0x57F287)
       .setTitle('🎟️ Auto-Raid Invite Updated')
       .addFields(
         { name: 'Character', value: `\`${character}\``, inline: true },
-        { name: 'Password',  value: `\`${password}\``,  inline: true },
+        { name: 'Password',  value: `\`${resolvedPassword}\`${usedDefault ? ' *(default)*' : ''}`, inline: true },
       )
       .setDescription(`Members can now use \`/autoraidinvite\` (or \`/ari\`) to see who to send a tell to for an auto-invite.`)
       .setTimestamp();
