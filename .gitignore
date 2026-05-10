@@ -12,6 +12,9 @@ data/parses.json.tmp
 # Dependencies
 node_modules/
 
+# Raid tick exports
+raid-tick-*.txt
+
 # Logs
 *.log
 npm-debug.log*
