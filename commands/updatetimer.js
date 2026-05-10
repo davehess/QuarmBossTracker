@@ -9,7 +9,7 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getBossState, overrideTimer, getAllState, getZoneCard, setZoneCard } = require('../utils/state');
 const { postKillUpdate } = require('../utils/killops');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { getThreadId, getBossExpansion } = require('../utils/config');
+const { getThreadId, getBossExpansion, isPopLocked } = require('../utils/config');
 const { buildZoneKillCard } = require('../utils/embeds');
 const { discordAbsoluteTime, discordRelativeTime, parseTimeString } = require('../utils/timer');
 
@@ -34,7 +34,7 @@ module.exports = {
   async autocomplete(interaction) {
     const bosses  = getBosses();
     const focused = interaction.options.getFocused().toLowerCase().trim();
-    const choices = bosses.map((b) => ({
+    const choices = bosses.filter((b) => !isPopLocked(b)).map((b) => ({
       name: `${b.name} (${b.zone})`, value: b.id,
       terms: [b.name.toLowerCase(), ...(b.nicknames || []).map((n) => n.toLowerCase())],
     }));
@@ -54,6 +54,7 @@ module.exports = {
     const timeStr  = interaction.options.getString('timeleft');
     const boss     = bosses.find((b) => b.id === bossId);
     if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+    if (isPopLocked(boss)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '🔒 PoP bosses are not available until October 1, 2026.' });
 
     const existing = getBossState(bossId);
     if (!existing) {
@@ -74,7 +75,6 @@ module.exports = {
     const newNextSpawn = Date.now() + remainingMs;
     overrideTimer(bossId, newNextSpawn);
 
-    // Update zone card with corrected timer
     await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId);
 
     await interaction.reply({

@@ -4,7 +4,7 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { recordKill, getAllState, getZoneCard, setZoneCard } = require('../utils/state');
 const { postKillUpdate } = require('../utils/killops');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { getThreadId, getBossExpansion } = require('../utils/config');
+const { getThreadId, getBossExpansion, isPopLocked } = require('../utils/config');
 const { buildZoneKillCard } = require('../utils/embeds');
 
 function getBosses() {
@@ -26,7 +26,7 @@ module.exports = {
   async autocomplete(interaction) {
     const bosses  = getBosses();
     const focused = interaction.options.getFocused().toLowerCase().trim();
-    const choices = bosses.map((b) => ({
+    const choices = bosses.filter((b) => !isPopLocked(b)).map((b) => ({
       name: `${b.emoji ? b.emoji + ' ' : ''}${b.name} (${b.zone})`,
       value: b.id,
       terms: [b.name.toLowerCase(), ...(b.nicknames || []).map((n) => n.toLowerCase())],
@@ -47,6 +47,7 @@ module.exports = {
     const note   = interaction.options.getString('note');
     const boss   = bosses.find((b) => b.id === bossId);
     if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
+    if (isPopLocked(boss)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '🔒 PoP bosses are not available until October 1, 2026.' });
 
     // Record kill in state
     recordKill(bossId, boss.timerHours, interaction.user.id);
@@ -75,14 +76,12 @@ module.exports = {
         const targetCh = await interaction.client.channels.fetch(existing.threadId || targetChannelId);
         const msg = await targetCh.messages.fetch(existing.messageId);
         await msg.edit({ embeds: [embed] });
-        // Acknowledge kill silently if in a thread; publicly if in main channel
         const inThread = interaction.channelId !== process.env.TIMER_CHANNEL_ID;
         await interaction.reply({
           flags: inThread ? undefined : MessageFlags.Ephemeral,
           content: `✅ **${boss.name}** kill recorded — zone card updated${threadId ? ' in thread' : ''}.`,
           flags: MessageFlags.Ephemeral,
         });
-        // Run board + summary updates
         await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId);
         return;
       } catch { /* card gone — post new */ }

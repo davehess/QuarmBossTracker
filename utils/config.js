@@ -2,6 +2,14 @@
 
 const EXPANSION_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP'];
 
+// PoP bosses are locked until this date (hard-coded per product decision).
+const POP_UNLOCK_MS = new Date('2026-10-01T00:00:00').getTime();
+
+/** Returns true if the boss is a PoP boss and PoP has not yet unlocked. */
+function isPopLocked(boss) {
+  return boss.expansion === 'PoP' && Date.now() < POP_UNLOCK_MS;
+}
+
 const EXPANSION_META = {
   Classic: { label: '⚔️ Classic EverQuest',   color: 0xaa6622, envKey: 'CLASSIC_THREAD_ID' },
   Kunark:  { label: '🦎 Ruins of Kunark',      color: 0x228822, envKey: 'KUNARK_THREAD_ID'  },
@@ -31,4 +39,4 @@ function getBossExpansion(boss) {
   return boss.expansion || 'Luclin';
 }
 
-module.exports = { EXPANSION_ORDER, EXPANSION_META, getThreadId, getAllThreadIds, getBossExpansion };
+module.exports = { EXPANSION_ORDER, EXPANSION_META, getThreadId, getAllThreadIds, getBossExpansion, isPopLocked, POP_UNLOCK_MS };
