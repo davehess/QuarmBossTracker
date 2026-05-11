@@ -4,10 +4,10 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 const {
-  getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceEasterEgg, getAnnounce,
+  getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceEasterEgg, getAnnounce, saveAnnounce,
 } = require('../utils/state');
 const {
-  buildControlPanelEmbed, buildTargetButtons, buildCancelRow, EASTER_EGG_CHAIN,
+  buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow, EASTER_EGG_CHAIN,
 } = require('./announce');
 
 function getBosses() {
@@ -20,14 +20,49 @@ async function refreshControlPanel(thread, announceData, bosses) {
     const msgs = await thread.messages.fetch({ limit: 20 });
     const cp = msgs.find(m =>
       m.author.bot && m.components.length > 0 &&
-      m.embeds[0]?.title === '📋 Raid Targets'
+      m.embeds[0]?.title === '\u{1F4CB} Raid Targets'
     );
     if (!cp) return;
     const cpEmbed    = buildControlPanelEmbed(announceData.targets, bosses, announceData.zone, announceData.plannedTimeStr);
+    const killRows   = buildKillRows(announceData.targets, bosses);
     const targetRows = buildTargetButtons(announceData.targets, bosses);
     const cancelRow  = buildCancelRow(announceData.messageId);
-    await cp.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+    await cp.edit({ embeds: [cpEmbed], components: [...killRows.slice(0, 2), ...targetRows.slice(0, 2), cancelRow] });
   } catch (err) { console.warn('removetarget: could not refresh panel:', err?.message); }
+}
+
+async function restoreAnnounceFromThread(channel, bosses) {
+  try {
+    const msgs = await channel.messages.fetch({ limit: 50 });
+    for (const msg of msgs.values()) {
+      if (!msg.author.bot || !msg.components.length) continue;
+      let announceId = null;
+      const targets = [];
+      for (const row of msg.components) {
+        for (const btn of row.components) {
+          const cid = btn.customId;
+          if (cid?.startsWith('cancel_event_thread:')) announceId = cid.replace('cancel_event_thread:', '');
+          if (cid?.startsWith('remove_target:')) { const t = cid.replace('remove_target:', ''); if (!targets.includes(t)) targets.push(t); }
+          if (cid?.startsWith('kill:') && !cid.includes('__none__')) { const t = cid.replace('kill:', ''); if (!targets.includes(t)) targets.push(t); }
+        }
+      }
+      if (!announceId) continue;
+      const embed = msg.embeds[0];
+      const plannedField = embed?.fields?.find(f => f.name.includes('Planned'));
+      const plannedTimeStr = plannedField?.value || 'Unknown';
+      const firstBoss = targets.map(tid => bosses.find(b => b.id === tid)).find(Boolean);
+      const zone = firstBoss?.zone || 'Unknown';
+      saveAnnounce(announceId, {
+        targets, zone, plannedTimeStr,
+        threadId: channel.id,
+        channelId: null, eventId: null, organizer: null,
+        plannedTimeMs: Date.now(), easterEggLevel: 0,
+      });
+      console.log(`[announce] Restored announce ${announceId} from thread ${channel.id} (${targets.length} targets)`);
+      return { messageId: announceId, targets, zone, plannedTimeStr, threadId: channel.id, easterEggLevel: 0 };
+    }
+  } catch (err) { console.warn('[announce] restoreAnnounceFromThread:', err?.message); }
+  return null;
 }
 
 /** Check if any remaining target is a "real" boss (not an easter-egg ID) */
@@ -63,23 +98,29 @@ module.exports = {
     if (!hasAllowedRole(interaction.member))
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
 
-    const announce = getAnnounceByThreadId(interaction.channel.id);
-    if (!announce)
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ This command must be used inside a raid announce thread.' });
+    const bosses = getBosses();
 
-    const bosses    = getBosses();
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    let announce = getAnnounceByThreadId(interaction.channel.id);
+    if (!announce) {
+      announce = await restoreAnnounceFromThread(interaction.channel, bosses);
+      if (!announce)
+        return interaction.editReply('❌ This command must be run inside a raid announce thread. Could not find announce state for this thread.');
+    }
+
     const removeId  = interaction.options.getString('boss');
     let targets     = [...(announce.targets || [])];
 
     if (!targets.includes(removeId))
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ That boss is not in the target list.' });
+      return interaction.editReply('❌ That boss is not in the target list.');
 
     targets = targets.filter(t => t !== removeId);
     updateAnnounceTargets(announce.messageId, targets);
 
     let replyMsg = `✅ Target removed.`;
 
-    // ── Easter-egg chain ─────────────────────────────────────────────────────
+    // ── Easter-egg chain ─────────────────────────────────────────────────────────────────────────
     if (!hasRealTargets(targets)) {
       const currentLevel = announce.easterEggLevel || 0;
       const nextEgg      = EASTER_EGG_CHAIN[currentLevel];
@@ -93,7 +134,7 @@ module.exports = {
         if (nextEgg.quote) {
           await interaction.channel.send({ content: `> ${nextEgg.quote}` });
         }
-        replyMsg += ` Added **${nextEgg.name}** to the target list. 😈`;
+        replyMsg += ` Added **${nextEgg.name}** to the target list. \u{1F608}`;
 
         // Update Discord event name
         if (announce.eventId) {
@@ -108,6 +149,6 @@ module.exports = {
     const freshAnnounce = { ...getAnnounce(announce.messageId), messageId: announce.messageId };
     await refreshControlPanel(interaction.channel, freshAnnounce, bosses);
 
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: replyMsg });
+    await interaction.editReply(replyMsg);
   },
 };
