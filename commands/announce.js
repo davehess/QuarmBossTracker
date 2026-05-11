@@ -179,6 +179,16 @@ function buildCancelRow(announceMessageId) {
   );
 }
 
+/** Button to bulk-add all remaining bosses from the same zone */
+function buildAddZoneRow(announceMessageId, zoneName, otherCount) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`add_zone_bosses:${announceMessageId}`)
+      .setLabel(`➕ Add all ${zoneName} bosses (${otherCount} more)`)
+      .setStyle(ButtonStyle.Primary)
+  );
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('announce')
@@ -315,7 +325,7 @@ module.exports = {
       .filter(Boolean).join(' ');
 
     const descLines = [
-      `<@${interaction.user.id}> is planning a pack takedown on **${announceName}** at **${plannedTimeStr}**.`,
+      `**${interaction.member?.displayName || interaction.user.username}** is planning a pack takedown on **${announceName}** at **${plannedTimeStr}**.`,
       `**Zone:** ${announceZone}`,
     ];
     if (note) descLines.push(`**Note:** ${note}`);
@@ -359,9 +369,14 @@ module.exports = {
           )
         : null;
 
+      const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && b.id !== boss.id && !isPopLocked(b)) : [];
+      const addZoneRow = (boss && zoneSiblings.length > 0)
+        ? buildAddZoneRow(annMsg.id, boss.zone, zoneSiblings.length)
+        : null;
+
       await raidThread.send({
         embeds: [cpEmbed],
-        components: [...(killRow ? [killRow] : []), ...targetRows, cancelRow],
+        components: [...(killRow ? [killRow] : []), ...targetRows, ...(addZoneRow ? [addZoneRow] : []), cancelRow],
       });
     }
 
@@ -387,5 +402,8 @@ module.exports = {
   buildControlPanelEmbed,
   buildTargetButtons,
   buildCancelRow,
+  buildAddZoneRow,
+  fetchUrl,
+  scrapePqdiDetails,
   EASTER_EGG_CHAIN,
 };
