@@ -7,7 +7,7 @@ const {
   getAnnounceByThreadId, updateAnnounceTargets, getAnnounce,
 } = require('../utils/state');
 const {
-  buildControlPanelEmbed, buildTargetButtons, buildCancelRow, EASTER_EGG_CHAIN,
+  buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow, EASTER_EGG_CHAIN,
 } = require('./announce');
 const { isPopLocked } = require('../utils/config');
 
@@ -21,13 +21,14 @@ async function refreshControlPanel(thread, announceData, bosses) {
     const msgs = await thread.messages.fetch({ limit: 20 });
     const cp = msgs.find(m =>
       m.author.bot && m.components.length > 0 &&
-      m.embeds[0]?.title === '📋 Raid Targets'
+      m.embeds[0]?.title === '\u{1F4CB} Raid Targets'
     );
     if (!cp) return;
     const cpEmbed    = buildControlPanelEmbed(announceData.targets, bosses, announceData.zone, announceData.plannedTimeStr);
+    const killRows   = buildKillRows(announceData.targets, bosses);
     const targetRows = buildTargetButtons(announceData.targets, bosses);
     const cancelRow  = buildCancelRow(announceData.messageId);
-    await cp.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+    await cp.edit({ embeds: [cpEmbed], components: [...killRows.slice(0, 2), ...targetRows.slice(0, 2), cancelRow] });
   } catch (err) { console.warn('addtarget: could not refresh panel:', err?.message); }
 }
 
@@ -60,7 +61,7 @@ module.exports = {
     const bossId = interaction.options.getString('boss');
     const boss   = bosses.find(b => b.id === bossId);
     if (!boss) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
-    if (isPopLocked(boss)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '🔒 PoP bosses are not available until October 1, 2026.' });
+    if (isPopLocked(boss)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '\u{1F512} PoP bosses are not available until October 1, 2026.' });
 
     const targets = [...(announce.targets || [])];
     if (targets.includes(bossId))
