@@ -396,7 +396,7 @@ async function handleRemoveTargetButton(interaction) {
   // Delegate to the removetarget command logic by faking the interaction
   // (reuse the state + easter egg logic via direct state calls)
   const {
-    buildControlPanelEmbed, buildTargetButtons, buildCancelRow, EASTER_EGG_CHAIN,
+    buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow, EASTER_EGG_CHAIN,
   } = require('./commands/announce');
   const bosses = getBosses();
 
@@ -428,9 +428,10 @@ async function handleRemoveTargetButton(interaction) {
   try {
     const freshAnnounce  = { ...getAnnounce(announce.messageId), messageId: announce.messageId };
     const cpEmbed        = buildControlPanelEmbed(freshAnnounce.targets, bosses, freshAnnounce.zone, freshAnnounce.plannedTimeStr);
+    const killRows       = buildKillRows(freshAnnounce.targets, bosses);
     const targetRows     = buildTargetButtons(freshAnnounce.targets, bosses);
     const cancelRow      = buildCancelRow(announce.messageId);
-    await interaction.message.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+    await interaction.message.edit({ embeds: [cpEmbed], components: [...killRows.slice(0, 2), ...targetRows.slice(0, 2), cancelRow] });
   } catch (err) { console.warn('remove_target button: could not refresh panel:', err?.message); }
 
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Target removed.${extra}` });
@@ -456,7 +457,7 @@ async function handleAddZoneBosses(interaction) {
   if (!newBosses.length)
     return interaction.editReply('ℹ️ All bosses in this zone are already targets.');
 
-  const { fetchUrl, scrapePqdiDetails, buildControlPanelEmbed, buildTargetButtons, buildCancelRow } = require('./commands/announce');
+  const { fetchUrl, scrapePqdiDetails, buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow } = require('./commands/announce');
   const { EmbedBuilder } = require('discord.js');
   const thread = interaction.channel;
 
@@ -506,10 +507,11 @@ async function handleAddZoneBosses(interaction) {
   // Refresh control panel — drop the zone button now that it's been used
   const freshAnnounce = { ...getAnnounce(announceMessageId), messageId: announceMessageId };
   const cpEmbed       = buildControlPanelEmbed(freshAnnounce.targets, bosses, zone, freshAnnounce.plannedTimeStr);
+  const killRows      = buildKillRows(freshAnnounce.targets, bosses);
   const targetRows    = buildTargetButtons(freshAnnounce.targets, bosses);
   const cancelRow     = buildCancelRow(announceMessageId);
   try {
-    await interaction.message.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+    await interaction.message.edit({ embeds: [cpEmbed], components: [...killRows.slice(0, 2), ...targetRows.slice(0, 2), cancelRow] });
   } catch { /* non-critical */ }
 
   await interaction.editReply(`✅ Added **${newBosses.length}** boss(es) from **${zone}**. Thread and event renamed.`);
