@@ -147,6 +147,28 @@ function buildControlPanelEmbed(targets, bosses, zone, plannedTimeStr) {
     .setFooter({ text: 'Use the Cancel button below to remove the event' });
 }
 
+/** Build ActionRows of Kill buttons for all targets (max 5 per row) */
+function buildKillRows(targets, bosses) {
+  const rows = [];
+  for (let i = 0; i < targets.length; i += 5) {
+    const row = new ActionRowBuilder();
+    for (const tid of targets.slice(i, i + 5)) {
+      const ee    = EASTER_EGG_CHAIN.find(e => e.id === tid);
+      const b     = bosses.find(b => b.id === tid);
+      const name  = ee ? ee.name : (b?.name || tid);
+      const emoji = ee ? ee.emoji : (b?.emoji || '⚔️');
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`kill:${tid}`)
+          .setLabel(`${emoji} Kill ${name}`)
+          .setStyle(ButtonStyle.Danger)
+      );
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
 /** Build ActionRows of Remove-target buttons (max 5 per row, max 4 rows to leave room for cancel) */
 function buildTargetButtons(targets, bosses) {
   const rows = [];
@@ -269,7 +291,7 @@ module.exports = {
       } catch (err) { console.warn('Could not create raid thread:', err?.message); }
     }
 
-    const targets = boss ? [boss.id] : [];
+    const targets = boss ? [boss.id] : zoneBosses.map(b => b.id);
 
     if (raidThread) {
       const bossesToPost = zoneBosses.length ? zoneBosses : (boss ? [boss] : []);
@@ -340,44 +362,33 @@ module.exports = {
       .setTimestamp()
       .setFooter({ text: 'Archived at midnight • Use Cancel to archive early' });
 
-    const firstTargetId = targets[0] || (zoneBosses[0]?.id);
-    const killBtnId     = firstTargetId ? `kill:${firstTargetId}` : 'kill:__none__';
-    const announceRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(killBtnId).setLabel(`${boss?.emoji || '⚔️'} Kill ${announceName}`).setStyle(ButtonStyle.Danger),
+    const announceKillRows   = buildKillRows(targets, bosses);
+    const announceCancelRow  = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('cancel_announce').setLabel('❌ Cancel / Archive').setStyle(ButtonStyle.Secondary),
     );
-
     const annMsg = await interaction.channel.send({
       content: roleMentions || undefined,
       embeds: [announceEmbed],
-      components: [announceRow],
+      components: [...announceKillRows.slice(0, 4), announceCancelRow],
     });
     addAnnounceMessageId(annMsg.id);
 
     if (raidThread) {
-      const cpEmbed = buildControlPanelEmbed(targets, bosses, announceZone, plannedTimeStr);
-      const targetRows = buildTargetButtons(targets, bosses);
+      const cpEmbed    = buildControlPanelEmbed(targets, bosses, announceZone, plannedTimeStr);
+      const cpKillRows = buildKillRows(targets, bosses);
+      const removeRows = buildTargetButtons(targets, bosses);
       const cancelRow  = buildCancelRow(annMsg.id);
 
-      const firstTargetId = targets[0] || zoneBosses[0]?.id;
-      const killRow = firstTargetId
-        ? new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`kill:${firstTargetId}`)
-              .setLabel(`${boss?.emoji || '⚔️'} Kill ${announceName}`)
-              .setStyle(ButtonStyle.Danger)
-          )
-        : null;
-
-      const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && b.id !== boss.id && !isPopLocked(b)) : [];
-      const addZoneRow = (boss && zoneSiblings.length > 0)
+      const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && !targets.includes(b.id) && !isPopLocked(b)) : [];
+      const addZoneRow   = (boss && zoneSiblings.length > 0)
         ? buildAddZoneRow(annMsg.id, boss.zone, zoneSiblings.length)
         : null;
 
-      await raidThread.send({
-        embeds: [cpEmbed],
-        components: [...(killRow ? [killRow] : []), ...targetRows, ...(addZoneRow ? [addZoneRow] : []), cancelRow],
-      });
+      const cpComponents = [...cpKillRows.slice(0, 2), ...removeRows.slice(0, 2)];
+      if (addZoneRow && cpComponents.length < 4) cpComponents.push(addZoneRow);
+      cpComponents.push(cancelRow);
+
+      await raidThread.send({ embeds: [cpEmbed], components: cpComponents });
     }
 
     saveAnnounce(annMsg.id, {
@@ -401,6 +412,7 @@ module.exports = {
 
   buildControlPanelEmbed,
   buildTargetButtons,
+  buildKillRows,
   buildCancelRow,
   buildAddZoneRow,
   fetchUrl,
