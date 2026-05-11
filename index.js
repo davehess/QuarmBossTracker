@@ -120,6 +120,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'cancel_announce')             { await handleCancelAnnounce(interaction); return; }
     if (interaction.customId.startsWith('cancel_event_thread:')){ await handleCancelEventThread(interaction); return; }
     if (interaction.customId.startsWith('remove_target:'))      { await handleRemoveTargetButton(interaction); return; }
+    if (interaction.customId.startsWith('add_zone_bosses:'))    { await handleAddZoneBosses(interaction); return; }
     if (interaction.customId === 'pvprole_toggle')              { await handlePvpRoleToggle(interaction, false); return; }
     if (interaction.customId === 'pvprole_toggle_silent')       { await handlePvpRoleToggle(interaction, true); return; }
     if (interaction.customId.startsWith('pvpalert_howl:'))      { await handlePvpAlertHowl(interaction); return; }
@@ -433,6 +434,85 @@ async function handleRemoveTargetButton(interaction) {
   } catch (err) { console.warn('remove_target button: could not refresh panel:', err?.message); }
 
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Target removed.${extra}` });
+}
+
+// ── Add all zone bosses button ─────────────────────────────────────────────
+async function handleAddZoneBosses(interaction) {
+  if (!hasAllowedRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  const announceMessageId = interaction.customId.replace('add_zone_bosses:', '');
+  const announce          = getAnnounce(announceMessageId);
+  if (!announce)
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not find announce record.' });
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const bosses    = getBosses();
+  const zone      = announce.zone;
+  const existing  = new Set(announce.targets || []);
+  const newBosses = bosses.filter(b => b.zone === zone && !existing.has(b.id) && !isPopLocked(b));
+
+  if (!newBosses.length)
+    return interaction.editReply('ℹ️ All bosses in this zone are already targets.');
+
+  const { fetchUrl, scrapePqdiDetails, buildControlPanelEmbed, buildTargetButtons, buildCancelRow } = require('./commands/announce');
+  const { EmbedBuilder } = require('discord.js');
+  const thread = interaction.channel;
+
+  for (const b of newBosses) {
+    if (b.pqdiUrl) {
+      try {
+        const html    = await fetchUrl(b.pqdiUrl);
+        const details = scrapePqdiDetails(html);
+        const embed   = new EmbedBuilder()
+          .setColor(0xf5a623)
+          .setTitle(`${b.emoji || '⚔️'} ${b.name}`)
+          .setURL(b.pqdiUrl)
+          .setDescription(`**Zone:** ${b.zone}\n[Full PQDI listing](${b.pqdiUrl})`)
+          .setTimestamp();
+        if (details.length) embed.addFields(details.slice(0, 25));
+        await thread.send({ embeds: [embed] });
+      } catch {
+        await thread.send({ content: `PQDI info unavailable — [View on PQDI](${b.pqdiUrl})` }).catch(() => {});
+      }
+    }
+  }
+
+  const allTargets = [...existing, ...newBosses.map(b => b.id)];
+  updateAnnounceTargets(announceMessageId, allTargets);
+
+  // Rename thread to zone name
+  try { await thread.edit({ name: `${zone} — ${announce.plannedTimeStr}` }); } catch { /* non-critical */ }
+
+  // Rename Discord scheduled event to zone
+  if (announce.eventId) {
+    try {
+      const ev = await interaction.guild.scheduledEvents.fetch(announce.eventId);
+      await ev.edit({ name: `Pack Takedown: ${zone}` });
+    } catch { /* non-critical */ }
+  }
+
+  // Update announce message title in event-chat
+  try {
+    const ch  = await interaction.client.channels.fetch(announce.channelId);
+    const msg = await ch.messages.fetch(announceMessageId);
+    if (msg?.embeds?.[0]) {
+      const updated = EmbedBuilder.from(msg.embeds[0]).setTitle(`📣 Pack Takedown: ${zone}`);
+      await msg.edit({ embeds: [updated] });
+    }
+  } catch { /* non-critical */ }
+
+  // Refresh control panel — drop the zone button now that it's been used
+  const freshAnnounce = { ...getAnnounce(announceMessageId), messageId: announceMessageId };
+  const cpEmbed       = buildControlPanelEmbed(freshAnnounce.targets, bosses, zone, freshAnnounce.plannedTimeStr);
+  const targetRows    = buildTargetButtons(freshAnnounce.targets, bosses);
+  const cancelRow     = buildCancelRow(announceMessageId);
+  try {
+    await interaction.message.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+  } catch { /* non-critical */ }
+
+  await interaction.editReply(`✅ Added **${newBosses.length}** boss(es) from **${zone}**. Thread and event renamed.`);
 }
 
 // ── Welcome card ──────────────────────────────────────────────────────────
