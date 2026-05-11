@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.2.8  
+**Version:** 1.2.11  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -37,7 +37,7 @@ One thread per expansion. Each thread contains (top to bottom):
 3. Board panels (kill buttons) — edited in place, anchored by `<EXP>_BOARD_IDS` env var
 
 | Thread | Env Var |
-|--------|---------|
+|--------|--------|
 | Classic Thread | `CLASSIC_THREAD_ID` |
 | Kunark Thread | `KUNARK_THREAD_ID` |
 | Velious Thread | `VELIOUS_THREAD_ID` |
@@ -255,7 +255,7 @@ Uses `editOrPost(channel, storedId, payload, onNewId)` — tries edit first, pos
 ### `/cleanup`
 **What it deletes:**
 - Main channel: transient embeds (`☠️`, `⚠️`, `🟢`), old-format boards, duplicate slot messages, duplicate thread-link messages
-- Each thread: transient embeds, duplicate board sets (keeps earliest), duplicate cooldown cards (keeps earliest), stray thread-link messages
+- Each thread: transient embeds, duplicate board sets (keeps earliest), **orphan board panels** (lone panels not part of a recognized set), duplicate cooldown cards (keeps earliest), stray thread-link messages
 - Historic Kills thread: duplicate daily summaries for same date, strips "Available Now" from remaining ones
 
 **What it edits in place:** all 4 main-channel slots, thread cooldown cards, board panels.  
@@ -418,7 +418,7 @@ Paste links to any combination of Active Cooldowns cards (main channel or any th
 
 ## Known Issues / Future Work
 
-- **PoP expansion:** 20 bosses pre-loaded but hard-locked until `2026-10-01T00:00:00` via `isPopLocked()` in `utils/config.js`. PoP thread shows "Reserved" placeholder until then. After unlock, run `/board` to populate the PoP thread. Update `pqdiUrl` fields via `/addboss` once PQDI has the NPC data.
+- **PoP expansion:** 20 bosses pre-loaded but hard-locked until `2026-10-01T00:00:00` via `isPopLocked()` in `utils/config.js`. PoP thread shows locked 🔒 buttons until then — clicking any returns an ephemeral message. After unlock, run `/board` to activate the PoP thread. Update `pqdiUrl` fields via `/addboss` once PQDI has the NPC data.
 - **`/announce` Discord events:** Requires "Manage Events" bot permission. If not granted, announcement still works but no event is created.
 - **`/announce` cross-channel kills:** If `/announce` is posted in `#event-chat` and someone clicks the Kill button there, the kill is recorded and boards update correctly, but the zone card posts in the expansion thread (correct behavior).
 - **bosses.json sync:** `/addboss` and `/removeboss` write to the running container's `bosses.json`. Must manually sync back to repo. With Docker: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json`
