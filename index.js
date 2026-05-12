@@ -136,6 +136,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))         { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
+    if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
     if (interaction.customId.startsWith('suggest_host:'))        { await handleSuggestHost(interaction); return; }
     if (interaction.customId.startsWith('suggest_nohost:'))     { await handleSuggestNoHost(interaction); return; }
@@ -670,6 +671,8 @@ async function handleMarkAvail(interaction) {
   const [, type, ...rest] = interaction.customId.split(':');
   const key = rest.join(':');
 
+  const { refreshHateBoard } = require('./utils/hateBoard');
+
   if (type === 'live') {
     const { clearLiveKill } = require('./utils/state');
     clearLiveKill(key);
@@ -685,10 +688,13 @@ async function handleMarkAvail(interaction) {
     .setTimestamp();
 
   await interaction.update({ embeds: [availEmbed], components: [] });
+  refreshHateBoard(interaction.client, type).catch(err => console.warn('[mark_avail] refreshHateBoard:', err?.message));
 }
 
 // ── Hate board kill button ────────────────────────────────────────────────────
 // customId: hate_kill:<type>:<n>   type = live | pvp, n = 1-12
+// Clicking an available spot kills it. Clicking an on-cooldown spot shows a
+// confirmation instead of immediately unkilling (prevents stale-cache accidents).
 async function handleHateKillButton(interaction) {
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
@@ -713,18 +719,28 @@ async function handleHateKillButton(interaction) {
   const existing = kills[key];
   const now = Date.now();
 
-  let replyContent;
-
   if (existing && (existing.timerUnknown || (existing.nextSpawn && existing.nextSpawn > now))) {
-    // Unkill — clear the entry
-    if (type === 'live') clearLiveKill(key);
-    else clearPvpKill(key);
-    replyContent = `↩️ **${spot.label}** cleared — marked as available.`;
-    await refreshHateBoard(interaction.client, type);
-    return interaction.reply({ flags: MessageFlags.Ephemeral, content: replyContent });
+    // Spot is on cooldown — show confirmation instead of silently unkilling.
+    // This prevents accidental unkills when Discord shows a user a stale board.
+    const statusLine = existing.timerUnknown
+      ? 'timer unknown — check manually'
+      : `spawns ${discordRelativeTime(existing.nextSpawn)}`;
+    const confirmRow = new ARB().addComponents(
+      new BB()
+        .setCustomId(`hate_confirm_unkill:${type}:${n}`)
+        .setLabel(`✅ Confirm: Mark #${n} Available`)
+        .setStyle(BS.Danger)
+    );
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      content: `⚠️ **${spot.label}** is currently on cooldown (${statusLine}).\nIf this mob has re-spawned, click below to mark it available.`,
+      components: [confirmRow],
+    });
   }
 
-  // Kill — record with normal timer
+  // Kill — defer first since refreshHateBoard is async
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const spotName = `Hate Mini — ${spot.label}`;
   if (type === 'live') {
     recordLiveKill(key, spotName, HATE_TIMER_HOURS, interaction.user.id, false);
@@ -733,7 +749,6 @@ async function handleHateKillButton(interaction) {
   }
   await refreshHateBoard(interaction.client, type);
 
-  // Build ephemeral reply with timer info + "Mark Timer Unknown" button
   const entry = type === 'live' ? getAllLiveKills()[key] : getAllPvpKills()[key];
   let desc;
   if (type === 'live') {
@@ -755,7 +770,36 @@ async function handleHateKillButton(interaction) {
       .setStyle(BS.Secondary)
   );
 
-  await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [killEmbed], components: [unknownRow] });
+  await interaction.editReply({ embeds: [killEmbed], components: [unknownRow] });
+}
+
+// ── Hate board confirm unkill ──────────────────────────────────────────────────
+// customId: hate_confirm_unkill:<type>:<n>
+async function handleHateConfirmUnkill(interaction) {
+  const parts = interaction.customId.split(':');
+  const type  = parts[1];
+  const n     = parseInt(parts[2], 10);
+
+  const { HATE_SPOTS } = require('./data/hate-spots');
+  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { EmbedBuilder: EB } = require('discord.js');
+
+  const spot = HATE_SPOTS[n];
+  const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
+  const key = keyPrefix + n;
+
+  if (type === 'live') clearLiveKill(key);
+  else clearPvpKill(key);
+
+  await refreshHateBoard(interaction.client, type);
+
+  const doneEmbed = new EB()
+    .setColor(0x57f287)
+    .setTitle(`✅ Available — ${spot?.label || `Spot #${n}`}`)
+    .setDescription(`Marked available by <@${interaction.user.id}>. The board has been updated.`)
+    .setTimestamp();
+
+  await interaction.update({ embeds: [doneEmbed], components: [] });
 }
 
 // ── Hate board "Timer Unknown" button ─────────────────────────────────────────
@@ -1060,7 +1104,7 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
       value: '1. Run `/suggest` in any channel\n2. Pick the boss from the list\n3. Enter when you want to do it\n4. Officers will see it and respond',
       inline: false,
     })
-    .setFooter({ text: 'Officers can click "I\'ll host it" to claim your request' });
+    .setFooter({ text: 'Officers can click \'I\'ll host it\' to claim your request' });
 
   try {
     await thread.send({ embeds: [embed] });
