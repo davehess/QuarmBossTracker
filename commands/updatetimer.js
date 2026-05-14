@@ -82,5 +82,11 @@ module.exports = {
       flags: MessageFlags.Ephemeral,
       content: `⏱️ Timer updated for **${boss.name}**\n**New spawn:** ${discordAbsoluteTime(newNextSpawn)} (${discordRelativeTime(newNextSpawn)})`,
     });
+
+    const { postAuditEntry } = require('../utils/audit');
+    postAuditEntry(interaction.client, {
+      action: 'updatetimer', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState: existing, newNextSpawn, msgLink: null,
+    }).catch(() => {});
   },
 };
