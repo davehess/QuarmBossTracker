@@ -2,8 +2,7 @@
 // The registered URL makes the character's name a clickable link in /who and /whoall.
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { getQuarmyLink, setQuarmyLink, clearQuarmyLink } = require('../utils/state');
-const { getAllNames, getCharacter } = require('../utils/roster');
+const { getAllNames, getCharacter, setRosterQuarmyLink, clearRosterQuarmyLink, saveRosters } = require('../utils/roster');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -67,24 +66,26 @@ module.exports = {
     const name = interaction.options.getString('name');
 
     if (sub === 'view') {
-      const url = getQuarmyLink(name);
+      const url = getCharacter(name)?.quarmyUrl;
       if (!url) return interaction.reply({ flags: MessageFlags.Ephemeral, content: `ℹ️ No Quarmy link registered for **${name}**.` });
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: `🔗 **${name}**: ${url}` });
     }
 
     if (sub === 'clear') {
-      clearQuarmyLink(name);
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Quarmy link cleared for **${name}**.` });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      clearRosterQuarmyLink(name);
+      await saveRosters(interaction.client).catch(err => console.warn('[quarmy] saveRosters:', err?.message));
+      return interaction.editReply(`✅ Quarmy link cleared for **${name}**.`);
     }
 
     const url = interaction.options.getString('url').trim();
     if (!url.startsWith('http')) {
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ URL must start with http:// or https://' });
     }
-    setQuarmyLink(name, url);
-    return interaction.reply({
-      flags: MessageFlags.Ephemeral,
-      content: `✅ Quarmy link registered for **${name}**: ${url}\nTheir name will now appear as a clickable link in \`/who\` and \`/whoall\`.`,
-    });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const found = setRosterQuarmyLink(name, url);
+    if (!found) return interaction.editReply(`❌ **${name}** not found in the roster.`);
+    await saveRosters(interaction.client).catch(err => console.warn('[quarmy] saveRosters:', err?.message));
+    return interaction.editReply(`✅ Quarmy link registered for **${name}**: ${url}\nTheir name will now appear as a clickable link in \`/who\` and \`/whoall\`.`);
   },
 };
