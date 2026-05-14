@@ -1,11 +1,10 @@
 // commands/whoall.js — Look up a character and show their full main/alt family.
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getCharacter, getFamily, getAllNames } = require('../utils/roster');
-const { getQuarmyLink } = require('../utils/state');
 const { CLASS_EMOJI } = require('./parse');
 
 function charLink(name) {
-  const url = getQuarmyLink(name);
+  const url = getCharacter(name)?.quarmyUrl;
   return url ? `[${name}](<${url}>)` : name;
 }
 
@@ -20,13 +19,11 @@ function buildWhoallEmbed(name) {
   const mainEmoji = CLASS_EMOJI[main.class] || '❓';
   const charEmoji = CLASS_EMOJI[char.class]  || '❓';
 
-  const mainUrl   = getQuarmyLink(main.name);
-  const mainLabel = mainUrl ? `**[${main.name}](<${mainUrl}>)**` : `**${main.name}**`;
+  const mainLabel = main.quarmyUrl ? `**[${main.name}](<${main.quarmyUrl}>)**` : `**${main.name}**`;
 
   const altLines = alts.length > 0
     ? alts.map(a => {
-        const url   = getQuarmyLink(a.name);
-        const label = url ? `[${a.name}](<${url}>)` : a.name;
+        const label = a.quarmyUrl ? `[${a.name}](<${a.quarmyUrl}>)` : a.name;
         const emoji = CLASS_EMOJI[a.class] || '❓';
         return `↳ ${emoji} **${label}** — ${a.race} ${a.class}`;
       }).join('\n')

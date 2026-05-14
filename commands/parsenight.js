@@ -58,7 +58,7 @@ module.exports = {
       postParseToAnnounceThreads(interaction.client, embed, components).catch(() => {});
     }
 
-    // If a raid session is active, post the full-night summary to the raid thread
+// If a raid session is active, post the full-night summary to the raid thread
     // and update the parseboard with the combined parse data.
     const { postNightSummaryToSession } = require('./raidnight');
     postNightSummaryToSession(interaction.client, embed, parsed).catch(err =>

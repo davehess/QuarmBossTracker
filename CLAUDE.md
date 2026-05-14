@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.3.2  
+**Version:** 1.3.3  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -196,9 +196,7 @@ Key functions: `recordKill`, `clearKill`, `getAllState`, `getBossState`, `overri
 `getSummaryMessageId`, `setSummaryMessageId` (and spawning/daily/threadLinks variants),  
 `getThreadCooldownId`, `setThreadCooldownId` (checks `<EXP>_COOLDOWN_ID` env var first),  
 `getSpawnAlertMessageId`, `setSpawnAlertMessageId`, `clearSpawnAlertMessageId`, `getAllSpawnAlertMessageIds`,  
-`getAri`, `setAri`, `clearAri`,  
-`getParseLeaderboardMsgId`, `setParseLeaderboardMsgId`,  
-`getAuditEntries`, `getAuditEntry`, `addAuditEntry`, `updateAuditEntryMsgId`, `markAuditEntryUndone`, `findLatestActiveAuditEntry`
+`getAri`, `setAri`, `clearAri`
 
 ### `utils/killops.js`
 ```js

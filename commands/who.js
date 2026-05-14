@@ -1,11 +1,10 @@
 // commands/who.js — Look up a single character's race/class and main/alt status.
 const { SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getCharacter, getAllNames } = require('../utils/roster');
-const { getQuarmyLink } = require('../utils/state');
 const { CLASS_EMOJI } = require('./parse');
 
 function charLink(name) {
-  const url = getQuarmyLink(name);
+  const url = getCharacter(name)?.quarmyUrl;
   return url ? `[${name}](<${url}>)` : name;
 }
 
@@ -52,8 +51,7 @@ module.exports = {
       ? (char.mainName ? `Alt of **${charLink(char.mainName)}**` : 'Alt *(main not linked)*')
       : 'Main';
     const active = char.active ? '' : ' *(inactive)*';
-    const link   = getQuarmyLink(char.name);
-    const quarmySuffix = link ? ` · [Quarmy](<${link}>)` : '';
+    const quarmySuffix = char.quarmyUrl ? ` · [Quarmy](<${char.quarmyUrl}>)` : '';
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()

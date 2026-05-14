@@ -3,7 +3,8 @@
 // Main within a family: highest rank in RANK_PRIORITY (Officer > Pack Leader > ...).
 // Alts: Rank==='Raid Alt' members of a family that are not the main.
 // Standalone alts: Raid Alt with ParentId===0 and no family members, or orphaned alts.
-// Data model: main entry { n, r, c, a: [{n,r,c}] }; standalone alt { n,r,c,a:[],_alt:true }
+// Data model: main entry { n, r, c, q?, a: [{n,r,c,q?}] }; standalone alt { n,r,c,q?,a:[],_alt:true }
+// q = Quarmy profile URL, stored directly in roster entries so it persists in Discord thread chunks.
 
 const { EmbedBuilder } = require('discord.js');
 const { getQuarmyLink } = require('./state');
@@ -28,9 +29,9 @@ function _buildLookup() {
   _lookup = new Map();
   const index = (char, isAlt, mainName, active) => {
     _lookup.set(char.n.toLowerCase(), {
-      name: char.n, race: char.r, class: char.c,
+      name: char.n, race: char.r, class: char.c, quarmyUrl: char.q || null,
       isAlt, mainName, active,
-      alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c })),
+      alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null })),
     });
   };
   for (const m of _active) {
@@ -60,9 +61,49 @@ function getAllNames()        { return [..._lookup.keys()]; }
 function getActiveRoster()   { return _active; }
 function getInactiveRoster() { return _inactive; }
 
+// ── Quarmy link management ────────────────────────────────────────────────────
+// Sets (or clears when url is falsy) the q field on the roster entry directly.
+// Returns true if the character was found.
+function setRosterQuarmyLink(name, url) {
+  const key = name.toLowerCase();
+  for (const roster of [_active, _inactive]) {
+    for (const entry of roster) {
+      if (entry.n.toLowerCase() === key) {
+        if (url) entry.q = url; else delete entry.q;
+        _buildLookup();
+        return true;
+      }
+      if (!entry._alt) {
+        for (const alt of (entry.a || [])) {
+          if (alt.n.toLowerCase() === key) {
+            if (url) alt.q = url; else delete alt.q;
+            _buildLookup();
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function clearRosterQuarmyLink(name) { return setRosterQuarmyLink(name, null); }
+
+// Re-saves both active and inactive rosters to their Discord threads.
+async function saveRosters(client) {
+  const activeId   = process.env.ROSTER_ACTIVE_THREAD_ID;
+  const inactiveId = process.env.ROSTER_INACTIVE_THREAD_ID;
+  const now = new Date();
+  await Promise.all([
+    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   'quarmy update', now) : Promise.resolve(),
+    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, 'quarmy update', now) : Promise.resolve(),
+  ]);
+}
+
 // ── OpenDKP import ────────────────────────────────────────────────────────────
 // Groups characters into families via ParentId. Main = highest-priority rank in family.
 // Returns { active, inactive, unknowns } where unknowns = active chars with UNKNOWN fields.
+// Preserves existing q fields from the current in-memory roster when re-importing.
 function processOpenDkpExport(rawArray) {
   const all = rawArray.filter(c => !c.Deleted);
 
@@ -90,6 +131,14 @@ function processOpenDkpExport(rawArray) {
     }
   }
 
+  // Snapshot existing quarmy links so re-import doesn't wipe them
+  const existingLinks = new Map();
+  for (const [key, val] of _lookup) { if (val.quarmyUrl) existingLinks.set(key, val.quarmyUrl); }
+  const withQ = (name, entry) => {
+    const q = existingLinks.get(name.toLowerCase());
+    return q ? { ...entry, q } : entry;
+  };
+
   const active = [], inactive = [];
   const addTo = (entry, isActive) => (isActive ? active : inactive).push(entry);
 
@@ -104,14 +153,14 @@ function processOpenDkpExport(rawArray) {
     if (!main) {
       // No main found — all Raid Alts, store as standalone
       for (const c of members) {
-        if (c.Rank === ALT_RANK) addTo({ n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.Active === 1);
+        if (c.Rank === ALT_RANK) addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }), c.Active === 1);
       }
       continue;
     }
 
     const alts = members.filter(m => m !== main && m.Rank === ALT_RANK);
     addTo(
-      { n: main.Name, r: main.Race, c: main.Class, a: alts.map(a => ({ n: a.Name, r: a.Race, c: a.Class })) },
+      withQ(main.Name, { n: main.Name, r: main.Race, c: main.Class, a: alts.map(a => withQ(a.Name, { n: a.Name, r: a.Race, c: a.Class })) }),
       main.Active === 1
     );
   }
@@ -119,9 +168,9 @@ function processOpenDkpExport(rawArray) {
   // Orphaned characters (parent not found in export)
   for (const c of orphans) {
     if (c.Rank === ALT_RANK) {
-      addTo({ n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.Active === 1);
+      addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }), c.Active === 1);
     } else if (RANK_PRIORITY.includes(c.Rank)) {
-      addTo({ n: c.Name, r: c.Race, c: c.Class, a: [] }, c.Active === 1);
+      addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [] }), c.Active === 1);
     }
     // UNKNOWN rank orphans: already in unknowns list, skip display
   }
@@ -155,15 +204,16 @@ function _buildMemberEmbeds(roster) {
 
   const linkedAlts = [];
   for (const m of mains) {
-    for (const a of (m.a || [])) linkedAlts.push({ n: a.n, r: a.r, c: a.c, _main: m.n });
+    for (const a of (m.a || [])) linkedAlts.push({ n: a.n, r: a.r, c: a.c, q: a.q, _main: m.n });
   }
   const standaloneAlts = roster
     .filter(m => m._alt)
-    .map(a => ({ n: a.n, r: a.r, c: a.c, _main: null }));
+    .map(a => ({ n: a.n, r: a.r, c: a.c, q: a.q, _main: null }));
   const allAlts = [...linkedAlts, ...standaloneAlts]
     .sort((a, b) => (a.c || '').localeCompare(b.c || '') || a.n.localeCompare(b.n));
 
   const descs = [];
+  const _fmt = (name, url) => url ? `[${name}](<${url}>)` : name;
 
   const _fmt = (name) => {
     const url = getQuarmyLink(name);
@@ -172,14 +222,14 @@ function _buildMemberEmbeds(roster) {
 
   for (const [cls, chars] of _groupByClass(mains)) {
     const lines = [`**— Mains: ${cls} (${chars.length}) —**`];
-    for (const m of chars) lines.push(`${_fmt(m.n)} *(${m.r})*`);
+for (const m of chars) lines.push(`${_fmt(m.n, m.q)} *(${m.r})*`);
     descs.push(lines.join('\n'));
   }
 
   for (const [cls, chars] of _groupByClass(allAlts)) {
     const lines = [`**— Alts: ${cls} (${chars.length}) —**`];
     for (const a of chars) {
-      lines.push(`${_fmt(a.n)} *(${a.r})*${a._main ? ` · *${a._main}*` : ''}`);
+lines.push(`${_fmt(a.n, a.q)} *(${a.r})*${a._main ? ` · *${a._main}*` : ''}`);
     }
     descs.push(lines.join('\n'));
   }
@@ -304,6 +354,9 @@ module.exports = {
   processOpenDkpExport,
   loadRosterFromDiscord,
   saveRosterToThread,
+  saveRosters,
+  setRosterQuarmyLink,
+  clearRosterQuarmyLink,
   rosterCounts,
   getCharacter,
   getFamily,

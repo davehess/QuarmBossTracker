@@ -142,8 +142,9 @@ module.exports = {
     // Any parse submitted before the boss can respawn is part of the same kill session.
     const windowMs = (boss?.timerHours || 24) * 3600 * 1000;
     rawKills = [...rawKills].sort((a, b) => a.timestamp - b.timestamp);
-    if (last) rawKills = rawKills.slice(-last);
-    const killList  = groupKillsBySession(rawKills, windowMs).map(mergeKillGroup);
+    const allKillGroups  = groupKillsBySession(rawKills, windowMs);
+    const limitedGroups  = last ? allKillGroups.slice(-last) : allKillGroups;
+    const killList  = limitedGroups.map(mergeKillGroup);
     const killCount = killList.length;
 
     // Aggregate per player across merged kills
@@ -173,8 +174,8 @@ module.exports = {
     const bossName = boss?.name || bossId;
     const embed    = buildScoreboardEmbed(bossName, boss?.emoji, entries, killList);
 
-    if (last && allParses[bossId]?.length > last) {
-      embed.setFooter({ text: `Showing last ${last} of ${allParses[bossId].length} logged kills` });
+    if (last && allKillGroups.length > last) {
+      embed.setFooter({ text: `Showing last ${last} of ${allKillGroups.length} kills` });
     }
 
     await interaction.editReply({ embeds: [embed] });

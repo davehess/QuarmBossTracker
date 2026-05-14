@@ -291,7 +291,7 @@ module.exports = {
       } catch (err) { console.warn('Could not create raid thread:', err?.message); }
     }
 
-    const targets = boss ? [boss.id] : zoneBosses.map(b => b.id);
+const targets = boss ? [boss.id] : zoneBosses.map(b => b.id);
 
     if (raidThread) {
       const bossesToPost = zoneBosses.length ? zoneBosses : (boss ? [boss] : []);
@@ -379,7 +379,7 @@ module.exports = {
       const removeRows = buildTargetButtons(targets, bosses);
       const cancelRow  = buildCancelRow(annMsg.id);
 
-      const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && !targets.includes(b.id) && !isPopLocked(b)) : [];
+const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && !targets.includes(b.id) && !isPopLocked(b)) : [];
       const addZoneRow   = (boss && zoneSiblings.length > 0)
         ? buildAddZoneRow(annMsg.id, boss.zone, zoneSiblings.length)
         : null;

@@ -47,11 +47,20 @@ function buildSummaryEmbed(label, raidNight, tonightParses) {
   delete require.cache[require.resolve('../data/bosses.json')];
   const bosses = require('../data/bosses.json');
 
+  const guildId    = process.env.DISCORD_GUILD_ID;
+  const logChannel = process.env.PARSES_LOG_THREAD_ID;
+
   const mobLines = Object.entries(tonightParses).map(([bossId, kills]) => {
     const boss   = bosses.find(b => b.id === bossId);
     const latest = kills[kills.length - 1];
     const dmg    = (latest.totalDamage / 1000).toFixed(1) + 'K';
-    return `${boss?.emoji || '⚔️'} **${boss?.name || bossId}** — ${dmg} dmg in ${latest.duration}s`;
+    const count  = kills.length;
+    const countTag = count > 1 ? ` · ${count} parses` : '';
+    let link = '';
+    if (guildId && logChannel && latest.discordMsgId) {
+      link = ` · [view](<https://discord.com/channels/${guildId}/${logChannel}/${latest.discordMsgId}>)`;
+    }
+    return `${boss?.emoji || '⚔️'} **${boss?.name || bossId}** — ${dmg} dmg in ${latest.duration}s${countTag}${link}`;
   });
 
   return new EmbedBuilder()

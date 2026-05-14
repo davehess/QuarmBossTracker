@@ -12,6 +12,7 @@ function _empty() {
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, liveKills: {}, quake: null, pvpAlerts: {},
     seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {}, ari: null, quarmyLinks: {},
+auditEntries: [],
   };
 }
 
@@ -70,6 +71,7 @@ function loadState() {
   if (raw.hateBoards)         s.hateBoards         = raw.hateBoards;
   if (raw.ari !== undefined)  s.ari                = raw.ari;
   if (raw.quarmyLinks)        s.quarmyLinks        = raw.quarmyLinks;
+if (raw.auditEntries)       s.auditEntries       = raw.auditEntries;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -117,6 +119,12 @@ function clearKill(bossId) {
 
 function getBossState(bossId) { return loadState().bosses[bossId] || null; }
 function getAllState()         { return loadState().bosses; }
+function restoreBossState(bossId, prev) {
+  if (!prev) return;
+  const s = loadState();
+  s.bosses[bossId] = { killedAt: prev.killedAt, nextSpawn: prev.nextSpawn, killedBy: prev.killedBy };
+  saveState(s);
+}
 
 // ── Expansion boards ─────────────────────────────────────────────────────────────────────
 function getExpansionBoard(expansion)       { return loadState().expansionBoards[expansion] || null; }
@@ -389,12 +397,48 @@ function clearQuarmyLink(name) {
   saveState(s);
 }
 
+// ── Parse leaderboard message ID ───────────────────────────────────────────────────────────────
+function getParseLeaderboardMsgId()   { return process.env.PARSE_LEADERBOARD_MSG_ID || loadState().channelSlots?.parseLeaderboard || null; }
+function setParseLeaderboardMsgId(id) { if (!process.env.PARSE_LEADERBOARD_MSG_ID) _setSlot('parseLeaderboard', id); }
+
+// ── Audit trail entries ─────────────────────────────────────────────────────────────────────────
+function getAuditEntries()    { return loadState().auditEntries || []; }
+function getAuditEntry(id)    { return (loadState().auditEntries || []).find(e => e.id === id) || null; }
+
+function addAuditEntry(entry) {
+  const s = loadState();
+  s.auditEntries = [...(s.auditEntries || []), entry].slice(-200);
+  saveState(s);
+}
+
+function updateAuditEntryMsgId(id, auditMsgId) {
+  const s = loadState();
+  const e = (s.auditEntries || []).find(e => e.id === id);
+  if (e) { e.auditMsgId = auditMsgId; saveState(s); }
+}
+
+function markAuditEntryUndone(id) {
+  const s = loadState();
+  const e = (s.auditEntries || []).find(e => e.id === id);
+  if (e) { e.undone = true; saveState(s); }
+}
+
+function findLatestActiveAuditEntry(bossId, action) {
+  const entries = loadState().auditEntries || [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].bossId === bossId && entries[i].action === action && !entries[i].undone) {
+      return entries[i];
+    }
+  }
+  return null;
+}
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
 
 module.exports = {
-  recordKill, overrideTimer, clearKill, getBossState, getAllState,
+  recordKill, overrideTimer, clearKill, getBossState, getAllState, restoreBossState,
   getExpansionBoard, saveExpansionBoard,
   getChannelSlots,
   getSummaryMessageId, setSummaryMessageId,
@@ -423,4 +467,6 @@ module.exports = {
   getRaidNight, saveRaidNight, clearRaidNight,
   getAri, setAri, clearAri,
   getQuarmyLink, setQuarmyLink, clearQuarmyLink,
+getParseLeaderboardMsgId, setParseLeaderboardMsgId,
+  getAuditEntries, getAuditEntry, addAuditEntry, updateAuditEntryMsgId, markAuditEntryUndone, findLatestActiveAuditEntry,
 };
