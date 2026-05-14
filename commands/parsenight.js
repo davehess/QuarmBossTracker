@@ -57,5 +57,10 @@ module.exports = {
     if (isPublic) {
       postParseToAnnounceThreads(interaction.client, embed, components).catch(() => {});
     }
+
+    const { postNightSummaryToSession } = require('./raidnight');
+    postNightSummaryToSession(interaction.client, embed, parsed).catch(err =>
+      console.warn('[parsenight] postNightSummaryToSession:', err?.message)
+    );
   },
 };

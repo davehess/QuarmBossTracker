@@ -1,6 +1,12 @@
 // commands/who.js — Look up a single character's race/class and main/alt status.
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getCharacter, getAllNames } = require('../utils/roster');
+const { getQuarmyLink } = require('../utils/state');
+
+function charLink(name) {
+  const url = getQuarmyLink(name);
+  return url ? `[${name}](${url})` : name;
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -41,12 +47,14 @@ module.exports = {
     }
 
     const status = char.isAlt
-      ? (char.mainName ? `Alt of **${char.mainName}**` : 'Alt *(main not linked)*')
+      ? (char.mainName ? `Alt of **${charLink(char.mainName)}**` : 'Alt *(main not linked)*')
       : 'Main';
     const active = char.active ? '' : ' *(inactive)*';
+    const link   = getQuarmyLink(char.name);
+    const quarmySuffix = link ? ` · [Quarmy](${link})` : '';
     return interaction.reply({
       flags: MessageFlags.Ephemeral,
-      content: `**${char.name}** is a ${char.race} ${char.class} — ${status}${active}`,
+      content: `**${charLink(char.name)}** is a ${char.race} ${char.class} — ${status}${active}${quarmySuffix}`,
     });
   },
 };
