@@ -148,6 +148,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
     if (interaction.customId.startsWith('who_family:'))         { await handleWhoFamily(interaction); return; }
+    if (interaction.customId.startsWith('audit_undo:'))         { await handleAuditUndo(interaction); return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
@@ -192,6 +193,7 @@ async function handleBoardButton(interaction) {
 
   if (existing && existing.nextSpawn > now) {
     // Unkill
+    const prevState = { ...existing };
     clearKill(bossId);
     const newState    = getAllState();
     const stillKilled = bosses.filter((b) => b.zone === boss.zone && newState[b.id] && newState[b.id].nextSpawn > now);
@@ -209,6 +211,11 @@ async function handleBoardButton(interaction) {
       } catch { clearZoneCard(boss.zone); }
     }
     await interaction.editReply(`↩️ Kill record cleared for **${boss.name}**.`);
+    const { postAuditEntry } = require('./utils/audit');
+    postAuditEntry(interaction.client, {
+      action: 'unkill_board', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState, newNextSpawn: null, msgLink: null,
+    }).catch(() => {});
   } else {
     // Kill
     recordKill(bossId, boss.timerHours, interaction.user.id);
@@ -233,8 +240,43 @@ async function handleBoardButton(interaction) {
       setZoneCard(boss.zone, s.id, threadId);
     }
     await interaction.editReply(`✅ **${boss.name}** kill recorded.`);
+    const { postAuditEntry } = require('./utils/audit');
+    postAuditEntry(interaction.client, {
+      action: 'kill_board', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState: null, newNextSpawn: null, msgLink: null,
+    }).catch(() => {});
   }
   await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
+}
+
+// ── Audit undo button ──────────────────────────────────────────────────────
+async function handleAuditUndo(interaction) {
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Only officers can undo audit actions. Roles required: ${officerRolesList()}` });
+
+  const entryId = interaction.customId.replace('audit_undo:', '');
+  const { getAuditEntry, markAuditEntryUndone, restoreBossState } = require('./utils/state');
+  const { removeUndoButton } = require('./utils/audit');
+
+  const entry = getAuditEntry(entryId);
+  if (!entry) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Audit entry not found.' });
+  if (entry.undone) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ This action has already been undone.' });
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const killActions   = ['kill', 'kill_board'];
+  const unkillActions = ['unkill', 'unkill_board'];
+
+  if (killActions.includes(entry.action)) {
+    clearKill(entry.bossId);
+  } else if (unkillActions.includes(entry.action) || entry.action === 'updatetimer') {
+    if (entry.prevState) restoreBossState(entry.bossId, entry.prevState);
+  }
+
+  markAuditEntryUndone(entryId);
+  await removeUndoButton(interaction.client, entry.auditMsgId);
+  await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, entry.bossId).catch(console.warn);
+  await interaction.editReply(`✅ Undone: **${entry.bossName}** ${entry.action} (originally by <@${entry.userId}>)`);
 }
 
 // ── Cancel announce button ─────────────────────────────────────────────────
