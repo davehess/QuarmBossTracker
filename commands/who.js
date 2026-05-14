@@ -1,11 +1,12 @@
 // commands/who.js — Look up a single character's race/class and main/alt status.
-const { SlashCommandBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getCharacter, getAllNames } = require('../utils/roster');
 const { getQuarmyLink } = require('../utils/state');
+const { CLASS_EMOJI } = require('./parse');
 
 function charLink(name) {
   const url = getQuarmyLink(name);
-  return url ? `[${name}](${url})` : name;
+  return url ? `[${name}](<${url}>)` : name;
 }
 
 module.exports = {
@@ -46,15 +47,26 @@ module.exports = {
       });
     }
 
+    const classEmoji = CLASS_EMOJI[char.class] || '❓';
     const status = char.isAlt
       ? (char.mainName ? `Alt of **${charLink(char.mainName)}**` : 'Alt *(main not linked)*')
       : 'Main';
     const active = char.active ? '' : ' *(inactive)*';
     const link   = getQuarmyLink(char.name);
-    const quarmySuffix = link ? ` · [Quarmy](${link})` : '';
+    const quarmySuffix = link ? ` · [Quarmy](<${link}>)` : '';
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`who_family:${char.name}`)
+        .setLabel('Show Family')
+        .setEmoji('👥')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
     return interaction.reply({
-      flags: MessageFlags.Ephemeral,
-      content: `**${charLink(char.name)}** is a ${char.race} ${char.class} — ${status}${active}${quarmySuffix}`,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressEmbeds,
+      content: `${classEmoji} **${charLink(char.name)}** — ${char.race} ${char.class} · ${status}${active}${quarmySuffix}`,
+      components: [row],
     });
   },
 };
