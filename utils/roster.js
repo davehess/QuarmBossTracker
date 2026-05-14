@@ -7,7 +7,6 @@
 // q = Quarmy profile URL, stored directly in roster entries so it persists in Discord thread chunks.
 
 const { EmbedBuilder } = require('discord.js');
-const { getQuarmyLink } = require('./state');
 
 const ACTIVE_TITLE           = '📋 Active Roster';
 const INACTIVE_TITLE         = '📋 Inactive Roster';
@@ -214,11 +213,6 @@ function _buildMemberEmbeds(roster) {
 
   const descs = [];
   const _fmt = (name, url) => url ? `[${name}](<${url}>)` : name;
-
-  const _fmt = (name) => {
-    const url = getQuarmyLink(name);
-    return url ? `[${name}](<${url}>)` : name;
-  };
 
   for (const [cls, chars] of _groupByClass(mains)) {
     const lines = [`**— Mains: ${cls} (${chars.length}) —**`];
