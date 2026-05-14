@@ -6,6 +6,7 @@
 // Data model: main entry { n, r, c, a: [{n,r,c}] }; standalone alt { n,r,c,a:[],_alt:true }
 
 const { EmbedBuilder } = require('discord.js');
+const { getQuarmyLink } = require('./state');
 
 const ACTIVE_TITLE           = '📋 Active Roster';
 const INACTIVE_TITLE         = '📋 Inactive Roster';
@@ -164,16 +165,21 @@ function _buildMemberEmbeds(roster) {
 
   const descs = [];
 
+  const _fmt = (name) => {
+    const url = getQuarmyLink(name);
+    return url ? `[${name}](<${url}>)` : name;
+  };
+
   for (const [cls, chars] of _groupByClass(mains)) {
     const lines = [`**— Mains: ${cls} (${chars.length}) —**`];
-    for (const m of chars) lines.push(`${m.n} *(${m.r})*`);
+    for (const m of chars) lines.push(`${_fmt(m.n)} *(${m.r})*`);
     descs.push(lines.join('\n'));
   }
 
   for (const [cls, chars] of _groupByClass(allAlts)) {
     const lines = [`**— Alts: ${cls} (${chars.length}) —**`];
     for (const a of chars) {
-      lines.push(`${a.n} *(${a.r})*${a._main ? ` · *${a._main}*` : ''}`);
+      lines.push(`${_fmt(a.n)} *(${a.r})*${a._main ? ` · *${a._main}*` : ''}`);
     }
     descs.push(lines.join('\n'));
   }

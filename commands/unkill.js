@@ -73,5 +73,11 @@ module.exports = {
 
     await interaction.reply({ embeds: [embed] });
     await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId);
+
+    const { postAuditEntry } = require('../utils/audit');
+    postAuditEntry(interaction.client, {
+      action: 'unkill', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState: existing, newNextSpawn: null, msgLink: null,
+    }).catch(() => {});
   },
 };

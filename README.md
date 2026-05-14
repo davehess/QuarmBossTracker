@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.1.6 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.2 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -73,6 +73,9 @@ Every `/parse` submission is archived here as a JSON embed. This is the **source
 | `/parseaoe <data>` | Submit an AoE parse combining damage within a 5-minute window (max damage per player) |
 | `/parsenight [public]` | Full-night DPS summary across every kill tonight |
 | `/raidnight` | Open tonight's raid parse thread with a live rolling scoreboard |
+| `/mystats <character>` | Per-character DPS stats — kills, avg DPS, peak DPS, per-boss breakdown (ephemeral) |
+| `/mystatsall <character>` | Same as `/mystats` but aggregates across the full main + alt family |
+| `/parseleaderboard` | Post/update a pinned leaderboard in the parse log thread (officer only) |
 
 EQLogParser "Send to EQ" format:
 ```
@@ -255,6 +258,7 @@ Paste links to any combination of Active Cooldowns cards and Daily Raid Summary 
 | `PVP_CHANNEL_ID` | — | Channel for PVP alerts, quake alerts, and spawn notifications |
 | `PVP_THREAD_ID` | — | Thread for PVP alerts (takes priority over `PVP_CHANNEL_ID`) |
 | `PVP_ROLE` | `PVP` | Name of the Discord role to ping for PVP alerts and spawn notifications |
+| `AUDIT_TRAIL_THREAD_ID` | — | Thread for audit log entries with undo buttons (officer-only undo) |
 
 ---
 
@@ -286,7 +290,7 @@ Run at midnight in `DEFAULT_TIMEZONE` (default: Eastern):
 
 ## Boss Data
 
-109 bosses across Classic (15), Kunark (16), Velious (35), and Luclin (43). PoP reserved.
+133 bosses across Classic (15), Kunark (16), Velious (35), Luclin (47), and PoP (20, locked until 2026-10-01).
 
 `bosses.json` schema:
 
@@ -311,64 +315,6 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 
 ---
 
-## Project Structure
-
-```
-quarm-raid-timer-bot/
-├── index.js                   Entry point: client, interaction router, spawn checker, midnight tasks
-├── package.json               version 1.0.1
-├── Dockerfile
-├── docker-compose.yml
-├── railway.toml
-├── .env.example
-│
-├── commands/
-│   ├── board.js               /board
-│   ├── cleanup.js             /cleanup
-│   ├── kill.js                /kill
-│   ├── unkill.js              /unkill
-│   ├── updatetimer.js         /updatetimer
-│   ├── timers.js              /timers
-│   ├── restore.js             /restore
-│   ├── announce.js            /announce
-│   ├── adjusttime.js          /adjusttime
-│   ├── adjustdate.js          /adjustdate
-│   ├── addtarget.js           /addtarget
-│   ├── removetarget.js        /removetarget
-│   ├── addboss.js             /addboss
-│   ├── removeboss.js          /removeboss
-│   ├── parse.js               /parse
-│   ├── parseboss.js           /parseboss
-│   ├── parsestats.js          /parsestats
-│   ├── parseaoe.js            /parseaoe
-│   ├── parsenight.js          /parsenight
-│   ├── raidnight.js           /raidnight
-│   ├── pvpkill.js             /pvpkill
-│   ├── pvpunkill.js           /pvpunkill
-│   ├── quake.js               /quake
-│   ├── pvprole.js             /pvprole
-│   ├── pvpalert.js            /pvpalert
-│   ├── onboarding.js          /onboarding
-│   └── raidbosshelp.js        /raidbosshelp
-│
-├── utils/
-│   ├── config.js              EXPANSION_ORDER, EXPANSION_META, getThreadId(), getBossExpansion()
-│   ├── state.js               State persistence (atomic writes via .tmp rename)
-│   ├── board.js               buildExpansionPanels(), buildAllExpansionPanels()
-│   ├── embeds.js              All Discord embed builders
-│   ├── killops.js             postKillUpdate(), postOrUpdateExpansionBoard(), refresh*Card()
-│   ├── roles.js               hasAllowedRole(), getAllowedRoles()
-│   ├── timer.js               calcNextSpawn(), discordRelativeTime(), discordAbsoluteTime()
-│   ├── timezone.js            getDefaultTz(), msUntilMidnightInTz(), parseUserTime(), localToUTC()
-│   └── onboarding.js          Opt-out registry, SHA-256 hashing, welcome/organizer/attendee embeds
-│
-└── data/
-    ├── bosses.json            109 bosses — hot-reloaded; never baked into Docker image
-    └── state.json             Live state — gitignored; stored on persistent volume
-```
-
----
-
 ## Required Bot Permissions
 
 | Permission | Why |
@@ -380,3 +326,40 @@ quarm-raid-timer-bot/
 | Manage Events | Create/delete Discord Scheduled Events for `/announce` and `/quake` |
 | Manage Roles | Add/remove @PVP role via `/pvprole` |
 | Create Public Threads | Create announce and raid-night threads |
+
+---
+
+## Version Log
+
+### v1.3.2 (2026-05-14)
+- **Audit trail:** Every `/kill`, `/unkill`, `/updatetimer`, and board button click posts an entry to `AUDIT_TRAIL_THREAD_ID` with an officer-only Undo button. Undo restores the previous boss state and refreshes all boards.
+- **Quarmy links in roster:** Active and inactive roster thread embeds now hyperlink character names to their Quarmy profile when a link has been stored via `/who set`.
+- **Parse stats fix:** `/parsestats last N` now counts N kill sessions (grouped by respawn window) rather than N raw parse submissions.
+- **Raid night parse count + link:** The "Parses Tonight" summary now shows the parse count per boss and a clickable "view" link to the most recent parse in the log thread.
+
+### v1.3.1 (2026-05-13)
+- **`/who` family button:** `/who <character>` now includes a "Show Family" button that reveals all alts inline (ephemeral).
+- **Class emojis:** `/who` and `/whoall` display a class emoji next to each character's name.
+- **`/mystats <character>`:** Per-character DPS stats — kills, avg DPS, peak DPS, and per-boss breakdown (ephemeral).
+- **`/mystatsall <character>`:** Same as `/mystats` but aggregates across the full main + alt family.
+- **`/parseleaderboard`:** Officer command that posts/updates a pinned leaderboard in the parse log thread showing top parse submitters and boss kill coverage.
+
+### v1.3.0 (2026-05-12)
+- **Quarmy link storage:** `/who <character> set <url>` stores a Quarmy profile link in state; `/who` output displays it as a hyperlink.
+- **Raid night parse thread:** `/raidnight` opens a session thread with a live summary and parseboard that auto-updates on each `/parse`.
+- **`/parsenight`:** Post a combined full-night parse to the raid session thread; updates the parseboard.
+
+### v1.2.x (2026-05)
+- Expanded boss data to 133 bosses (Classic/Kunark/Velious/Luclin/PoP).
+- Added PoP expansion with hard lock until 2026-10-01.
+- `/addboss` and `/removeboss` for live boss management without restarts.
+- Audit-safe atomic state writes (`.tmp` rename).
+- `/restore` multi-link state recovery from any combination of cooldown/daily-summary messages.
+- PVP kill tracking, quake alerts, onboarding flow, suggest-host system.
+
+### v1.1.x (2026-04)
+- Thread-based layout: one thread per expansion for boards + zone kill cards.
+- Env-var anchoring for all fixed message slots (survives Railway redeploys).
+- `/cleanup` for removing stale/duplicate messages.
+- Spawn alert messages (⚠️ 30-minute warning, 🟢 spawned), edited in place.
+- Daily kill summary + midnight archive to Historic Kills thread.
