@@ -1,6 +1,12 @@
 // commands/whoall.js — Look up a character and show their full main/alt family.
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getCharacter, getFamily, getAllNames } = require('../utils/roster');
+const { getQuarmyLink } = require('../utils/state');
+
+function charLink(name) {
+  const url = getQuarmyLink(name);
+  return url ? `[${name}](${url})` : name;
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -50,20 +56,27 @@ module.exports = {
     const { main, alts } = family;
     const active = main.active ? '' : ' *(inactive)*';
 
+    const mainUrl   = getQuarmyLink(main.name);
+    const mainLabel = mainUrl ? `**[${main.name}](${mainUrl})**` : `**${main.name}**`;
+
     const altLines = alts.length > 0
-      ? alts.map(a => `↳ **${a.name}** — ${a.race} ${a.class}`).join('\n')
+      ? alts.map(a => {
+          const url = getQuarmyLink(a.name);
+          const label = url ? `[${a.name}](${url})` : a.name;
+          return `↳ **${label}** — ${a.race} ${a.class}`;
+        }).join('\n')
       : '*No alts on record*';
 
     const intro = char.isAlt
-      ? `**${char.name}** is a ${char.race} ${char.class} (Alt of **${char.mainName}**)`
-      : `**${char.name}** is a ${char.race} ${char.class} (Main)`;
+      ? `**${charLink(char.name)}** is a ${char.race} ${char.class} (Alt of **${charLink(char.mainName)}**)`
+      : `**${charLink(char.name)}** is a ${char.race} ${char.class} (Main)`;
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle(`👤 ${main.name}${active}`)
       .setDescription(intro)
       .addFields(
-        { name: `⚔️ Main`, value: `**${main.name}** — ${main.race} ${main.class}`, inline: false },
+        { name: `⚔️ Main`, value: `${mainLabel} — ${main.race} ${main.class}`, inline: false },
         { name: `🗡️ Alts (${alts.length})`, value: altLines, inline: false },
       );
 

@@ -44,8 +44,8 @@ function parseEQLog(str) {
   const totalDamage = kmToInt(headerMatch[3], headerMatch[4]);
   const totalDps    = kmToInt(headerMatch[5], headerMatch[6]);
 
-  // Handles K-suffixed damage (78.22K@216 or 231.20K@5.78K) and raw numbers (204@68)
-  const playerRx = /(\d+)\.\s+(.+?)\s+=\s+([\d.]+)(K)?@([\d.]+)(K)?\s+in\s+(\d+)s/g;
+  // Handles K/M-suffixed damage (78.22K@216, 1.07M@222, 231.20K@5.78K) and raw numbers (204@68)
+  const playerRx = /(\d+)\.\s+(.+?)\s+=\s+([\d.]+)([KM])?@([\d.]+)([KM])?\s+in\s+(\d+)s/g;
   const players  = [];
   let m;
   while ((m = playerRx.exec(cleaned)) !== null) {

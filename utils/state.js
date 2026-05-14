@@ -11,7 +11,7 @@ function _empty() {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, liveKills: {}, quake: null, pvpAlerts: {},
-    seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {}, ari: null,
+    seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {}, ari: null, quarmyLinks: {},
   };
 }
 
@@ -65,9 +65,11 @@ function loadState() {
   if (raw.quake !== undefined) s.quake             = raw.quake;
   if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
   if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
+  if (raw.raidSession)        s.raidSession        = raw.raidSession;
   if (raw.raidNight)          s.raidNight          = raw.raidNight;
   if (raw.hateBoards)         s.hateBoards         = raw.hateBoards;
   if (raw.ari !== undefined)  s.ari                = raw.ari;
+  if (raw.quarmyLinks)        s.quarmyLinks        = raw.quarmyLinks;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -374,6 +376,19 @@ function setPvpKillTimerUnknown(key) {
   saveState(s);
 }
 
+// ── Quarmy links ────────────────────────────────────────────────────────────────────────────────
+function getQuarmyLink(name) { return loadState().quarmyLinks?.[name.toLowerCase()] || null; }
+function setQuarmyLink(name, url) {
+  const s = loadState();
+  s.quarmyLinks[name.toLowerCase()] = url;
+  saveState(s);
+}
+function clearQuarmyLink(name) {
+  const s = loadState();
+  delete s.quarmyLinks[name.toLowerCase()];
+  saveState(s);
+}
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -407,4 +422,5 @@ module.exports = {
   getRaidSession, saveRaidSession, clearRaidSession,
   getRaidNight, saveRaidNight, clearRaidNight,
   getAri, setAri, clearAri,
+  getQuarmyLink, setQuarmyLink, clearQuarmyLink,
 };

@@ -175,26 +175,118 @@ async function appendParseToSession(client, bossId, parsed, bossName, bossEmoji)
   }
 }
 
+// Build a parseboard from a single combined parse object (used by /parsenight integration).
+function buildParseboardEmbedFromParsed(label, raidNight, parsed) {
+  const { players, totalDamage, duration } = parsed;
+  const totalRaidDps = duration > 0 ? Math.round(totalDamage / duration) : 0;
+
+  let table = '';
+  if (players.length > 0) {
+    const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Total Dmg'.padStart(10)}  ${'Avg DPS'.padStart(7)}`;
+    const divider = '─'.repeat(hdr.length);
+    const rows = players.slice(0, 15).map((p, i) => {
+      const rank = String(i + 1).padStart(2);
+      const name = (p.name + (p.hasPets ? ' +P' : '')).slice(0, 20).padEnd(20);
+      const dmg  = fmt(p.damage).padStart(10);
+      const dps  = (p.dps + '/s').padStart(7);
+      return `${rank}. ${name} ${dmg}  ${dps}`;
+    });
+    table = '```\n' + [hdr, divider, ...rows].join('\n') + '\n```';
+  } else {
+    table = '*No player data yet*';
+  }
+
+  return new EmbedBuilder()
+    .setColor(raidNight ? 0xe74c3c : 0x95a5a6)
+    .setTitle(`📊 Raid Parseboard — ${label}`)
+    .setDescription(`Combined parse · Total: **${fmt(totalDamage)}** dmg · Raid DPS: **${fmt(totalRaidDps)}/s**`)
+    .addFields({ name: 'Player Rankings', value: table, inline: false })
+    .setTimestamp();
+}
+
+// Called by /parsenight when a session is active — posts the full-night summary to the thread
+// and updates the parseboard with combined parse data.
+async function postNightSummaryToSession(client, fullNightEmbed, parsed) {
+  const session = getRaidSession();
+  if (!session) return;
+  try {
+    const thread = await client.channels.fetch(session.threadId).catch(() => null);
+    if (!thread) return;
+    await thread.send({ embeds: [fullNightEmbed] });
+    if (session.parseboardMessageId && parsed) {
+      try {
+        const pbMsg = await thread.messages.fetch(session.parseboardMessageId);
+        await pbMsg.edit({ embeds: [buildParseboardEmbedFromParsed(session.label, isRaidNight(), parsed)] });
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('[raidnight] postNightSummaryToSession:', err?.message);
+  }
+}
+
+async function openSession(thread, channelId, label, tonightParses) {
+  const raidNight      = isRaidNight();
+  const summaryEmbed   = buildSummaryEmbed(label, raidNight, tonightParses);
+  const parseboardEmbed = buildParseboardEmbed(label, raidNight, tonightParses);
+
+  const summaryMsg    = await thread.send({ embeds: [summaryEmbed] });
+  const parseboardMsg = await thread.send({ embeds: [parseboardEmbed] });
+
+  if (Object.keys(tonightParses).length > 0) {
+    delete require.cache[require.resolve('../data/bosses.json')];
+    const bosses = require('../data/bosses.json');
+    const { buildParseEmbed } = require('./parse');
+    for (const [bossId, kills] of Object.entries(tonightParses)) {
+      const boss   = bosses.find(b => b.id === bossId);
+      const latest = kills[kills.length - 1];
+      await thread.send({ embeds: [buildParseEmbed(boss?.name || bossId, latest, boss?.emoji)] });
+    }
+  }
+
+  saveRaidSession({
+    date: todayDateKey(),
+    label,
+    threadId:            thread.id,
+    channelId,
+    summaryMessageId:    summaryMsg.id,
+    parseboardMessageId: parseboardMsg.id,
+    openedAt:            Date.now(),
+  });
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('raidnight')
-    .setDescription('Open tonight\'s raid parse thread. /parse will auto-append each kill.'),
+    .setDescription('Open tonight\'s raid parse thread. /parse will auto-append each kill.')
+    .addBooleanOption(opt =>
+      opt.setName('here')
+        .setDescription('Use the current channel as the raid thread instead of creating a new one')
+        .setRequired(false)
+    ),
 
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const session = getRaidSession();
+    const useHere     = interaction.options.getBoolean('here') ?? false;
+    const session     = getRaidSession();
+    const label       = todayLabel();
+    const tonightParses = getTonightParses();
+
+    if (useHere) {
+      // Use current channel/thread as the session — skip thread creation
+      const thread = interaction.channel;
+      await openSession(thread, thread.id, label, tonightParses);
+      return interaction.editReply(`✅ Raid session started in <#${thread.id}>. Use \`/parse\` after each kill.`);
+    }
+
     if (session && session.date === todayDateKey()) {
       return interaction.editReply(
         `✅ Tonight's thread is already open: <#${session.threadId}>\nUse \`/parse\` after each kill to append results.`
       );
     }
 
-    const raidNight   = isRaidNight();
-    const label       = todayLabel();
-    const threadName  = (raidNight ? '🗡️ Raid Night — ' : '⚔️ Kill Log — ') + label;
-    const tonightParses = getTonightParses();
-    const summaryEmbed  = buildSummaryEmbed(label, raidNight, tonightParses);
+    const raidNight  = isRaidNight();
+    const threadName = (raidNight ? '🗡️ Raid Night — ' : '⚔️ Kill Log — ') + label;
 
     let targetChannel;
     if (raidNight && process.env.RAID_CHAT_CHANNEL_ID) {
@@ -228,65 +320,29 @@ module.exports = {
     // Create thread — if RAID_CHAT_CHANNEL_ID lacks permission, fall back to TIMER_CHANNEL_ID
     let thread;
     try {
-      thread = await targetChannel.threads.create({
-        name: threadName,
-        autoArchiveDuration: 1440,
-        reason: 'Raid night parse scoreboard',
-      });
+      thread = await targetChannel.threads.create({ name: threadName, autoArchiveDuration: 1440, reason: 'Raid night parse scoreboard' });
     } catch (err) {
       if (targetChannel.id !== process.env.TIMER_CHANNEL_ID) {
-        console.warn(`[raidnight] Could not create thread in ${targetChannel.id} (${err?.message}), falling back to TIMER_CHANNEL_ID`);
+        console.warn(`[raidnight] Could not create thread in ${targetChannel.id} (${err?.message}), falling back`);
         const fallback = await interaction.client.channels.fetch(process.env.TIMER_CHANNEL_ID).catch(() => null);
         if (!fallback) return interaction.editReply(`❌ Could not create thread: ${err?.message}`);
         targetChannel = fallback;
-        thread = await targetChannel.threads.create({
-          name: threadName,
-          autoArchiveDuration: 1440,
-          reason: 'Raid night parse scoreboard',
-        });
+        thread = await targetChannel.threads.create({ name: threadName, autoArchiveDuration: 1440, reason: 'Raid night parse scoreboard' });
       } else {
         return interaction.editReply(`❌ Could not create thread: ${err?.message}`);
       }
     }
 
-    // Post summary as first message (will be edited in place as parses come in)
-    const summaryMsg = await thread.send({ embeds: [summaryEmbed] });
-
-    // Post parseboard as second message
-    const parseboardEmbed = buildParseboardEmbed(label, raidNight, tonightParses);
-    const parseboardMsg   = await thread.send({ embeds: [parseboardEmbed] });
-
-    // Post any parses already submitted tonight
-    if (Object.keys(tonightParses).length > 0) {
-      delete require.cache[require.resolve('../data/bosses.json')];
-      const bosses = require('../data/bosses.json');
-      const { buildParseEmbed } = require('./parse');
-
-      for (const [bossId, kills] of Object.entries(tonightParses)) {
-        const boss   = bosses.find(b => b.id === bossId);
-        const latest = kills[kills.length - 1];
-        const embed  = buildParseEmbed(boss?.name || bossId, latest, boss?.emoji);
-        await thread.send({ embeds: [embed] });
-      }
-    }
-
-    saveRaidSession({
-      date:               todayDateKey(),
-      label,
-      threadId:           thread.id,
-      channelId:          targetChannel.id,
-      summaryMessageId:   summaryMsg.id,
-      parseboardMessageId: parseboardMsg.id,
-      openedAt:           Date.now(),
-    });
-
+    await openSession(thread, targetChannel.id, label, tonightParses);
     await interaction.editReply(`✅ Raid thread open: <#${thread.id}>\nUse \`/parse\` after each kill to post results.`);
   },
 
   appendParseToSession,
+  postNightSummaryToSession,
   getTonightParses,
   buildSummaryEmbed,
   buildParseboardEmbed,
+  buildParseboardEmbedFromParsed,
   isRaidNight,
   todayDateKey,
   todayLabel,
