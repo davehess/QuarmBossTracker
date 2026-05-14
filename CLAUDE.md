@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.3.1  
+**Version:** 1.3.2  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -191,12 +191,14 @@ getBossExpansion(boss)    // → boss.expansion || 'Luclin'
 ### `utils/state.js`
 All reads call `loadState()` (reads from disk each time).  
 All writes call `saveState(state)` — atomic write via `.tmp` rename.  
-Key functions: `recordKill`, `clearKill`, `getAllState`, `getBossState`, `overrideTimer`,  
+Key functions: `recordKill`, `clearKill`, `getAllState`, `getBossState`, `overrideTimer`, `restoreBossState`,  
 `getExpansionBoard`, `saveExpansionBoard`, `getZoneCard`, `setZoneCard`, `clearZoneCard`,  
 `getSummaryMessageId`, `setSummaryMessageId` (and spawning/daily/threadLinks variants),  
 `getThreadCooldownId`, `setThreadCooldownId` (checks `<EXP>_COOLDOWN_ID` env var first),  
 `getSpawnAlertMessageId`, `setSpawnAlertMessageId`, `clearSpawnAlertMessageId`, `getAllSpawnAlertMessageIds`,  
-`getAri`, `setAri`, `clearAri`
+`getAri`, `setAri`, `clearAri`,  
+`getParseLeaderboardMsgId`, `setParseLeaderboardMsgId`,  
+`getAuditEntries`, `getAuditEntry`, `addAuditEntry`, `updateAuditEntryMsgId`, `markAuditEntryUndone`, `findLatestActiveAuditEntry`
 
 ### `utils/killops.js`
 ```js
@@ -241,6 +243,17 @@ buildSpawnedEmbed(boss)                      // 🟢 has spawned
 buildDailySummaryEmbed(killedToday, availableNow, bosses, dateLabel)
 // dateLabel: "April 24, 2026" → changes "Killed Today" to "Killed April 24, 2026" in archives
 // availableNow intentionally ignored (no "Available Now" section in output)
+```
+
+### `utils/audit.js`
+```js
+postAuditEntry(client, { action, userId, userName, bossId, bossName, prevState, newNextSpawn, msgLink })
+// Posts to AUDIT_TRAIL_THREAD_ID with an Undo button (officer-only, customId: audit_undo:<id>)
+// Actions: kill, unkill, kill_board, unkill_board, updatetimer
+// Opposing actions (kill↔unkill) for same boss automatically removes the prior Undo button
+
+removeUndoButton(client, auditMsgId)
+// Strips components from an audit message (called after undo completes)
 ```
 
 ---
@@ -367,6 +380,7 @@ Runs at midnight EST. Scheduled via recursive `setTimeout(msUntilMidnightEST())`
 Button custom IDs:
 - `kill:<bossId>` — toggle: if boss is on cooldown → unkill, else → kill
 - `cancel_announce` — archive announce to Historic Kills thread, delete from channel
+- `audit_undo:<entryId>` — officer-only undo of a logged kill/unkill/updatetimer action
 
 The kill/unkill toggle logic is in `handleBoardButton()` in `index.js`. It duplicates some logic from `kill.js`/`unkill.js` intentionally (interaction context differs — button vs slash command).
 
