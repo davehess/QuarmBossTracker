@@ -88,14 +88,15 @@ function setRosterQuarmyLink(name, url) {
 
 function clearRosterQuarmyLink(name) { return setRosterQuarmyLink(name, null); }
 
-// Re-saves both active and inactive rosters to their Discord threads.
+// Re-saves both active and inactive rosters to their Discord threads, editing in place
+// so existing thread subscribers are not pinged.
 async function saveRosters(client) {
   const activeId   = process.env.ROSTER_ACTIVE_THREAD_ID;
   const inactiveId = process.env.ROSTER_INACTIVE_THREAD_ID;
   const now = new Date();
   await Promise.all([
-    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   'quarmy update', now) : Promise.resolve(),
-    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, 'quarmy update', now) : Promise.resolve(),
+    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   'quarmy update', now, true) : Promise.resolve(),
+    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, 'quarmy update', now, true) : Promise.resolve(),
   ]);
 }
 
@@ -248,59 +249,93 @@ function _chunkJson(roster) {
 }
 
 // ── Discord persistence ───────────────────────────────────────────────────────
-async function saveRosterToThread(client, roster, threadId, headerTitle, membersTitle, dataTitle, importerName, importedAt) {
+// editInPlace=true: edit existing messages in place (no new send → no notifications).
+// editInPlace=false (default): delete-and-repost (used for full imports).
+async function saveRosterToThread(client, roster, threadId, headerTitle, membersTitle, dataTitle, importerName, importedAt, editInPlace = false) {
   if (!threadId) return;
   try {
     const thread = await client.channels.fetch(threadId);
-
-    // Delete all previous bot messages
     const msgs = await thread.messages.fetch({ limit: 100 });
-    for (const msg of msgs.values()) {
-      if (msg.author.id !== client.user.id) continue;
-      const t = msg.embeds[0]?.title;
-      if (t === headerTitle || t === membersTitle || t === dataTitle) await msg.delete().catch(() => {});
-    }
 
     const { mainCount, altCount } = _rosterCounts(roster);
     const importTs = importedAt ? `<t:${Math.floor(importedAt.getTime() / 1000)}:F>` : 'unknown';
-
-    // 1. Header
-    await thread.send({ embeds: [
-      new EmbedBuilder()
-        .setTitle(headerTitle)
-        .setColor(0x5865f2)
-        .setDescription('Character roster for Wolf Pack EQ. Imported from OpenDKP.')
-        .addFields(
-          { name: 'Mains', value: String(mainCount), inline: true },
-          { name: 'Alts',  value: String(altCount),  inline: true },
-          { name: 'Last Imported', value: `By **${importerName || 'unknown'}** on ${importTs}`, inline: false },
-        )
-        .setTimestamp(importedAt || undefined),
-    ]});
-
-    // 2. One message per class (mains then alts)
     const classDescs = _buildMemberEmbeds(roster);
-    for (let i = 0; i < classDescs.length; i++) {
-      await thread.send({ embeds: [
-        new EmbedBuilder()
-          .setTitle(membersTitle)
-          .setColor(0x5865f2)
-          .setDescription(classDescs[i])
-          .setFooter({ text: `${i + 1}/${classDescs.length}` }),
-      ]});
-    }
-
-    // 3. JSON data chunks (for bot reload)
     const dataChunks = _chunkJson(roster);
-    for (let i = 0; i < dataChunks.length; i++) {
-      await thread.send({ embeds: [
-        new EmbedBuilder()
-          .setTitle(dataTitle)
-          .setColor(0x2b2d31)
-          .setDescription(JSON.stringify(dataChunks[i]))
-          .setFooter({ text: `chunk ${i + 1}/${dataChunks.length} · imported by ${importerName || 'unknown'}` })
-          .setTimestamp(importedAt || undefined),
-      ]});
+
+    const _headerEmbed = () => new EmbedBuilder()
+      .setTitle(headerTitle)
+      .setColor(0x5865f2)
+      .setDescription('Character roster for Wolf Pack EQ. Imported from OpenDKP.')
+      .addFields(
+        { name: 'Mains', value: String(mainCount), inline: true },
+        { name: 'Alts',  value: String(altCount),  inline: true },
+        { name: 'Last Imported', value: `By **${importerName || 'unknown'}** on ${importTs}`, inline: false },
+      )
+      .setTimestamp(importedAt || undefined);
+
+    const _memberEmbed = (i) => new EmbedBuilder()
+      .setTitle(membersTitle)
+      .setColor(0x5865f2)
+      .setDescription(classDescs[i])
+      .setFooter({ text: `${i + 1}/${classDescs.length}` });
+
+    const _dataEmbed = (i) => new EmbedBuilder()
+      .setTitle(dataTitle)
+      .setColor(0x2b2d31)
+      .setDescription(JSON.stringify(dataChunks[i]))
+      .setFooter({ text: `chunk ${i + 1}/${dataChunks.length} · imported by ${importerName || 'unknown'}` })
+      .setTimestamp(importedAt || undefined);
+
+    if (editInPlace) {
+      // Sort oldest-first so indices align with visual order
+      const botMsgs = [...msgs.values()]
+        .filter(m => m.author.id === client.user.id)
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+      const existingHeaders = botMsgs.filter(m => m.embeds[0]?.title === headerTitle);
+      const existingMembers = botMsgs.filter(m => m.embeds[0]?.title === membersTitle);
+      const existingData    = botMsgs.filter(m => m.embeds[0]?.title === dataTitle);
+
+      // Header: edit first, delete extras, send if missing
+      if (existingHeaders.length > 0) {
+        await existingHeaders[0].edit({ embeds: [_headerEmbed()] });
+        for (let i = 1; i < existingHeaders.length; i++) await existingHeaders[i].delete().catch(() => {});
+      } else {
+        await thread.send({ embeds: [_headerEmbed()] });
+      }
+
+      // Member messages: edit / send new / delete extras
+      for (let i = 0; i < Math.max(classDescs.length, existingMembers.length); i++) {
+        if (i < classDescs.length && i < existingMembers.length) {
+          await existingMembers[i].edit({ embeds: [_memberEmbed(i)] });
+        } else if (i < classDescs.length) {
+          await thread.send({ embeds: [_memberEmbed(i)] });
+        } else {
+          await existingMembers[i].delete().catch(() => {});
+        }
+      }
+
+      // Data chunks: edit / send new / delete extras
+      for (let i = 0; i < Math.max(dataChunks.length, existingData.length); i++) {
+        if (i < dataChunks.length && i < existingData.length) {
+          await existingData[i].edit({ embeds: [_dataEmbed(i)] });
+        } else if (i < dataChunks.length) {
+          await thread.send({ embeds: [_dataEmbed(i)] });
+        } else {
+          await existingData[i].delete().catch(() => {});
+        }
+      }
+    } else {
+      // Delete all matching bot messages, then repost fresh
+      for (const msg of msgs.values()) {
+        if (msg.author.id !== client.user.id) continue;
+        const t = msg.embeds[0]?.title;
+        if (t === headerTitle || t === membersTitle || t === dataTitle) await msg.delete().catch(() => {});
+      }
+
+      await thread.send({ embeds: [_headerEmbed()] });
+      for (let i = 0; i < classDescs.length; i++) await thread.send({ embeds: [_memberEmbed(i)] });
+      for (let i = 0; i < dataChunks.length; i++) await thread.send({ embeds: [_dataEmbed(i)] });
     }
   } catch (err) {
     console.warn('[roster] Could not save to thread:', err?.message);

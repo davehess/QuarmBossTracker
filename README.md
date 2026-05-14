@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.3.3 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.4 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -330,6 +330,9 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ---
 
 ## Version Log
+
+### v1.3.4 (2026-05-14)
+- **Roster saves edit in place:** `/quarmy set` and `/quarmy clear` now update roster thread messages in place (`.edit()`) instead of deleting and reposting, preventing Discord notifications for thread subscribers.
 
 ### v1.3.3 (2026-05-14)
 - **Quarmy links persist in roster:** Quarmy URLs are now stored directly in roster entries (serialized in Discord thread chunks), so they survive bot restarts, redeploys, and roster re-imports without relying on `state.json`.
