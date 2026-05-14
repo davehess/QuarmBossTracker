@@ -147,6 +147,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleParseBreakdown(interaction).catch(console.error);
       return;
     }
+    if (interaction.customId.startsWith('who_family:'))         { await handleWhoFamily(interaction); return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
@@ -1004,6 +1005,16 @@ async function handleOnbShowAgain(interaction) {
     components: buildWelcomeComponents(pkg.version),
     flags:      MessageFlags.Ephemeral,
   });
+}
+
+async function handleWhoFamily(interaction) {
+  const name = interaction.customId.replace('who_family:', '');
+  const { buildWhoallEmbed } = require('./commands/whoall');
+  const embed = buildWhoallEmbed(name);
+  if (!embed) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Could not find family for **${name}**.` });
+  }
+  return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
 }
 
 // ── New member onboarding ─────────────────────────────────────────────────────
