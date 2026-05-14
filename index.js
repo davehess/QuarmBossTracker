@@ -1290,7 +1290,7 @@ async function checkPvpSpawns(readyClient, now) {
           const pvpRoleName = process.env.PVP_ROLE || 'PVP';
           const guild       = readyClient.guilds.cache.first();
           const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
-          const mention     = pvpRole ? `<@&${pvpRole.id}> ` : '';
+          const mention     = pvpRole ? `<@&${pvpRole.id}>` : '';
           const ch          = await readyClient.channels.fetch(pvpAlertId);
           const { EmbedBuilder: EB } = require('discord.js');
           await ch.send({
@@ -1330,7 +1330,7 @@ async function checkPvpSpawns(readyClient, now) {
         const pvpRoleName = process.env.PVP_ROLE || 'PVP';
         const guild       = readyClient.guilds.cache.first();
         const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const mention     = pvpRole ? `<@&${pvpRole.id}> ` : '';
+        const mention     = pvpRole ? `<@&${pvpRole.id}>` : '';
         const ch          = await readyClient.channels.fetch(pvpAlertId);
         const { EmbedBuilder: EB } = require('discord.js');
         await ch.send({
