@@ -19,11 +19,12 @@ function _undoRow(entryId) {
 
 function _actionLabel(action) {
   const map = {
-    kill:         '☠️ Kill recorded',
-    unkill:       '↩️ Kill cleared',
-    kill_board:   '☠️ Kill recorded (board)',
-    unkill_board: '↩️ Kill cleared (board)',
-    updatetimer:  '⏱️ Timer updated',
+    kill:            '☠️ Kill recorded',
+    unkill:          '↩️ Kill cleared',
+    kill_board:      '☠️ Kill recorded (board)',
+    unkill_board:    '↩️ Kill cleared (board)',
+    updatetimer:     '⏱️ Timer updated',
+    unkill_summary:  '📝 Kill removed from daily summary',
   };
   return map[action] || action;
 }
@@ -50,7 +51,9 @@ async function postAuditEntry(client, { action, userId, userName, bossId, bossNa
     : action.includes('kill') ? null : null;
   // More precisely: any kill cancels any recent unkill and vice versa
   const killActions   = ['kill', 'kill_board'];
-  const unkillActions = ['unkill', 'unkill_board'];
+  const unkillActions = ['unkill', 'unkill_board', 'unkill_summary'];
+  // unkill_summary cannot be auto-undone (reversing a message edit requires the original text)
+  const noUndo = action === 'unkill_summary';
 
   try {
     const thread = await client.channels.fetch(threadId).catch(() => null);
@@ -60,7 +63,7 @@ async function postAuditEntry(client, { action, userId, userName, bossId, bossNa
     const linkText = msgLink ? ` · [Jump to message](<${msgLink}>)` : '';
     const content  = `${_actionLabel(action)} — **${bossName}** by <@${userId}>${linkText}\n${ts}`;
 
-    const msg = await thread.send({ content, components: [_undoRow(id)] });
+    const msg = await thread.send({ content, components: noUndo ? [] : [_undoRow(id)] });
     updateAuditEntryMsgId(id, msg.id);
 
     // Remove undo from the most recent opposing action for this boss
