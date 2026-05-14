@@ -136,6 +136,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))         { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
+    if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
     if (interaction.customId.startsWith('suggest_host:'))        { await handleSuggestHost(interaction); return; }
     if (interaction.customId.startsWith('suggest_nohost:'))     { await handleSuggestNoHost(interaction); return; }
@@ -146,6 +147,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleParseBreakdown(interaction).catch(console.error);
       return;
     }
+    if (interaction.customId.startsWith('who_family:'))         { await handleWhoFamily(interaction); return; }
+    if (interaction.customId.startsWith('audit_undo:'))         { await handleAuditUndo(interaction); return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
@@ -190,6 +193,7 @@ async function handleBoardButton(interaction) {
 
   if (existing && existing.nextSpawn > now) {
     // Unkill
+    const prevState = { ...existing };
     clearKill(bossId);
     const newState    = getAllState();
     const stillKilled = bosses.filter((b) => b.zone === boss.zone && newState[b.id] && newState[b.id].nextSpawn > now);
@@ -207,6 +211,11 @@ async function handleBoardButton(interaction) {
       } catch { clearZoneCard(boss.zone); }
     }
     await interaction.editReply(`↩️ Kill record cleared for **${boss.name}**.`);
+    const { postAuditEntry } = require('./utils/audit');
+    postAuditEntry(interaction.client, {
+      action: 'unkill_board', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState, newNextSpawn: null, msgLink: null,
+    }).catch(() => {});
   } else {
     // Kill
     recordKill(bossId, boss.timerHours, interaction.user.id);
@@ -231,8 +240,43 @@ async function handleBoardButton(interaction) {
       setZoneCard(boss.zone, s.id, threadId);
     }
     await interaction.editReply(`✅ **${boss.name}** kill recorded.`);
+    const { postAuditEntry } = require('./utils/audit');
+    postAuditEntry(interaction.client, {
+      action: 'kill_board', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState: null, newNextSpawn: null, msgLink: null,
+    }).catch(() => {});
   }
   await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
+}
+
+// ── Audit undo button ──────────────────────────────────────────────────────
+async function handleAuditUndo(interaction) {
+  if (!hasOfficerRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Only officers can undo audit actions. Roles required: ${officerRolesList()}` });
+
+  const entryId = interaction.customId.replace('audit_undo:', '');
+  const { getAuditEntry, markAuditEntryUndone, restoreBossState } = require('./utils/state');
+  const { removeUndoButton } = require('./utils/audit');
+
+  const entry = getAuditEntry(entryId);
+  if (!entry) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Audit entry not found.' });
+  if (entry.undone) return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ This action has already been undone.' });
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const killActions   = ['kill', 'kill_board'];
+  const unkillActions = ['unkill', 'unkill_board'];
+
+  if (killActions.includes(entry.action)) {
+    clearKill(entry.bossId);
+  } else if (unkillActions.includes(entry.action) || entry.action === 'updatetimer') {
+    if (entry.prevState) restoreBossState(entry.bossId, entry.prevState);
+  }
+
+  markAuditEntryUndone(entryId);
+  await removeUndoButton(interaction.client, entry.auditMsgId);
+  await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, entry.bossId).catch(console.warn);
+  await interaction.editReply(`✅ Undone: **${entry.bossName}** ${entry.action} (originally by <@${entry.userId}>)`);
 }
 
 // ── Cancel announce button ─────────────────────────────────────────────────
@@ -396,7 +440,7 @@ async function handleRemoveTargetButton(interaction) {
   // Delegate to the removetarget command logic by faking the interaction
   // (reuse the state + easter egg logic via direct state calls)
   const {
-    buildControlPanelEmbed, buildTargetButtons, buildCancelRow, EASTER_EGG_CHAIN,
+    buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow, EASTER_EGG_CHAIN,
   } = require('./commands/announce');
   const bosses = getBosses();
 
@@ -428,9 +472,10 @@ async function handleRemoveTargetButton(interaction) {
   try {
     const freshAnnounce  = { ...getAnnounce(announce.messageId), messageId: announce.messageId };
     const cpEmbed        = buildControlPanelEmbed(freshAnnounce.targets, bosses, freshAnnounce.zone, freshAnnounce.plannedTimeStr);
+    const killRows       = buildKillRows(freshAnnounce.targets, bosses);
     const targetRows     = buildTargetButtons(freshAnnounce.targets, bosses);
     const cancelRow      = buildCancelRow(announce.messageId);
-    await interaction.message.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+    await interaction.message.edit({ embeds: [cpEmbed], components: [...killRows.slice(0, 2), ...targetRows.slice(0, 2), cancelRow] });
   } catch (err) { console.warn('remove_target button: could not refresh panel:', err?.message); }
 
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: `✅ Target removed.${extra}` });
@@ -456,7 +501,7 @@ async function handleAddZoneBosses(interaction) {
   if (!newBosses.length)
     return interaction.editReply('ℹ️ All bosses in this zone are already targets.');
 
-  const { fetchUrl, scrapePqdiDetails, buildControlPanelEmbed, buildTargetButtons, buildCancelRow } = require('./commands/announce');
+  const { fetchUrl, scrapePqdiDetails, buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow } = require('./commands/announce');
   const { EmbedBuilder } = require('discord.js');
   const thread = interaction.channel;
 
@@ -506,10 +551,11 @@ async function handleAddZoneBosses(interaction) {
   // Refresh control panel — drop the zone button now that it's been used
   const freshAnnounce = { ...getAnnounce(announceMessageId), messageId: announceMessageId };
   const cpEmbed       = buildControlPanelEmbed(freshAnnounce.targets, bosses, zone, freshAnnounce.plannedTimeStr);
+  const killRows      = buildKillRows(freshAnnounce.targets, bosses);
   const targetRows    = buildTargetButtons(freshAnnounce.targets, bosses);
   const cancelRow     = buildCancelRow(announceMessageId);
   try {
-    await interaction.message.edit({ embeds: [cpEmbed], components: [...targetRows, cancelRow] });
+    await interaction.message.edit({ embeds: [cpEmbed], components: [...killRows.slice(0, 2), ...targetRows.slice(0, 2), cancelRow] });
   } catch { /* non-critical */ }
 
   await interaction.editReply(`✅ Added **${newBosses.length}** boss(es) from **${zone}**. Thread and event renamed.`);
@@ -668,6 +714,8 @@ async function handleMarkAvail(interaction) {
   const [, type, ...rest] = interaction.customId.split(':');
   const key = rest.join(':');
 
+  const { refreshHateBoard } = require('./utils/hateBoard');
+
   if (type === 'live') {
     const { clearLiveKill } = require('./utils/state');
     clearLiveKill(key);
@@ -683,10 +731,13 @@ async function handleMarkAvail(interaction) {
     .setTimestamp();
 
   await interaction.update({ embeds: [availEmbed], components: [] });
+  refreshHateBoard(interaction.client, type).catch(err => console.warn('[mark_avail] refreshHateBoard:', err?.message));
 }
 
 // ── Hate board kill button ────────────────────────────────────────────────────
 // customId: hate_kill:<type>:<n>   type = live | pvp, n = 1-12
+// Clicking an available spot kills it. Clicking an on-cooldown spot shows a
+// confirmation instead of immediately unkilling (prevents stale-cache accidents).
 async function handleHateKillButton(interaction) {
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
@@ -711,18 +762,28 @@ async function handleHateKillButton(interaction) {
   const existing = kills[key];
   const now = Date.now();
 
-  let replyContent;
-
   if (existing && (existing.timerUnknown || (existing.nextSpawn && existing.nextSpawn > now))) {
-    // Unkill — clear the entry
-    if (type === 'live') clearLiveKill(key);
-    else clearPvpKill(key);
-    replyContent = `↩️ **${spot.label}** cleared — marked as available.`;
-    await refreshHateBoard(interaction.client, type);
-    return interaction.reply({ flags: MessageFlags.Ephemeral, content: replyContent });
+    // Spot is on cooldown — show confirmation instead of silently unkilling.
+    // This prevents accidental unkills when Discord shows a user a stale board.
+    const statusLine = existing.timerUnknown
+      ? 'timer unknown — check manually'
+      : `spawns ${discordRelativeTime(existing.nextSpawn)}`;
+    const confirmRow = new ARB().addComponents(
+      new BB()
+        .setCustomId(`hate_confirm_unkill:${type}:${n}`)
+        .setLabel(`✅ Confirm: Mark #${n} Available`)
+        .setStyle(BS.Danger)
+    );
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      content: `⚠️ **${spot.label}** is currently on cooldown (${statusLine}).\nIf this mob has re-spawned, click below to mark it available.`,
+      components: [confirmRow],
+    });
   }
 
-  // Kill — record with normal timer
+  // Kill — defer first since refreshHateBoard is async
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const spotName = `Hate Mini — ${spot.label}`;
   if (type === 'live') {
     recordLiveKill(key, spotName, HATE_TIMER_HOURS, interaction.user.id, false);
@@ -731,7 +792,6 @@ async function handleHateKillButton(interaction) {
   }
   await refreshHateBoard(interaction.client, type);
 
-  // Build ephemeral reply with timer info + "Mark Timer Unknown" button
   const entry = type === 'live' ? getAllLiveKills()[key] : getAllPvpKills()[key];
   let desc;
   if (type === 'live') {
@@ -753,7 +813,36 @@ async function handleHateKillButton(interaction) {
       .setStyle(BS.Secondary)
   );
 
-  await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [killEmbed], components: [unknownRow] });
+  await interaction.editReply({ embeds: [killEmbed], components: [unknownRow] });
+}
+
+// ── Hate board confirm unkill ──────────────────────────────────────────────────
+// customId: hate_confirm_unkill:<type>:<n>
+async function handleHateConfirmUnkill(interaction) {
+  const parts = interaction.customId.split(':');
+  const type  = parts[1];
+  const n     = parseInt(parts[2], 10);
+
+  const { HATE_SPOTS } = require('./data/hate-spots');
+  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { EmbedBuilder: EB } = require('discord.js');
+
+  const spot = HATE_SPOTS[n];
+  const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
+  const key = keyPrefix + n;
+
+  if (type === 'live') clearLiveKill(key);
+  else clearPvpKill(key);
+
+  await refreshHateBoard(interaction.client, type);
+
+  const doneEmbed = new EB()
+    .setColor(0x57f287)
+    .setTitle(`✅ Available — ${spot?.label || `Spot #${n}`}`)
+    .setDescription(`Marked available by <@${interaction.user.id}>. The board has been updated.`)
+    .setTimestamp();
+
+  await interaction.update({ embeds: [doneEmbed], components: [] });
 }
 
 // ── Hate board "Timer Unknown" button ─────────────────────────────────────────
@@ -960,6 +1049,16 @@ async function handleOnbShowAgain(interaction) {
   });
 }
 
+async function handleWhoFamily(interaction) {
+  const name = interaction.customId.replace('who_family:', '');
+  const { buildWhoallEmbed } = require('./commands/whoall');
+  const embed = buildWhoallEmbed(name);
+  if (!embed) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Could not find family for **${name}**.` });
+  }
+  return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
+}
+
 // ── New member onboarding ─────────────────────────────────────────────────────
 client.on(Events.GuildMemberAdd, async (member) => {
   const pkg = require('./package.json');
@@ -1058,7 +1157,7 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
       value: '1. Run `/suggest` in any channel\n2. Pick the boss from the list\n3. Enter when you want to do it\n4. Officers will see it and respond',
       inline: false,
     })
-    .setFooter({ text: 'Officers can click "I\'ll host it" to claim your request' });
+    .setFooter({ text: 'Officers can click \'I\'ll host it\' to claim your request' });
 
   try {
     await thread.send({ embeds: [embed] });
