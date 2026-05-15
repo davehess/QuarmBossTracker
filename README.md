@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.3.5 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.6 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -330,6 +330,10 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ---
 
 ## Version Log
+
+### v1.3.6 (2026-05-14)
+- **`/rosterclean`:** Deduplicates in-memory roster entries and normalizes roster thread messages in place (edits existing messages, deletes extra duplicate sets — no new sends, no notifications).
+- **Load-time dedup:** `loadRosterFromDiscord` now deduplicates entries by name after parsing all data-chunk messages, so a thread with multiple message sets no longer produces a multiplied roster on restart.
 
 ### v1.3.5 (2026-05-14)
 - **`/unkill` daily summary edit:** `/unkill <boss> message:<link>` now removes an inaccurate kill from a specific daily summary message in place (no new message, no notification). Works even after the kill has expired. Always logged to the audit trail as `unkill_summary`.

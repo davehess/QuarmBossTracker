@@ -362,7 +362,13 @@ async function loadRosterFromDiscord(client) {
         if (msg.embeds[0]?.title !== dataTitle) continue;
         try { entries.push(...JSON.parse(msg.embeds[0].description)); } catch {}
       }
-      return entries;
+      // Deduplicate by name — if Discord thread has multiple message sets
+      // (e.g. from pre-edit-in-place saves), each set contributes the same
+      // entries and we only want one copy. Last occurrence wins so quarmy
+      // links from the most recent save are kept.
+      const seen = new Map();
+      for (const e of entries) seen.set(e.n.toLowerCase(), e);
+      return [...seen.values()];
     } catch (err) {
       console.warn('[roster] Could not load thread:', err?.message);
       return [];
@@ -377,6 +383,26 @@ async function loadRosterFromDiscord(client) {
   console.log(`[roster] Loaded ${mainCount} mains, ${altCount} alts`);
 }
 
+// Deduplicates in-memory rosters then re-saves (edit-in-place). The save will
+// edit the first message set to contain clean data and delete all extra sets,
+// without sending new messages (no Discord notifications).
+async function deduplicateAndSave(client) {
+  const dedup = (roster) => {
+    const seen = new Map();
+    for (const e of roster) seen.set(e.n.toLowerCase(), e);
+    return [...seen.values()];
+  };
+  const beforeActive   = _active.length;
+  const beforeInactive = _inactive.length;
+  _active   = dedup(_active);
+  _inactive = dedup(_inactive);
+  _buildLookup();
+  const removedActive   = beforeActive   - _active.length;
+  const removedInactive = beforeInactive - _inactive.length;
+  await saveRosters(client);
+  return { removedActive, removedInactive };
+}
+
 function rosterCounts(roster) { return _rosterCounts(roster); }
 
 module.exports = {
@@ -384,6 +410,7 @@ module.exports = {
   loadRosterFromDiscord,
   saveRosterToThread,
   saveRosters,
+  deduplicateAndSave,
   setRosterQuarmyLink,
   clearRosterQuarmyLink,
   rosterCounts,
