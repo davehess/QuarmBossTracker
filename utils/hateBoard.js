@@ -2,8 +2,17 @@
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { HATE_SPOTS, HATE_AREA_GROUPS } = require('../data/hate-spots');
-const { getAllLiveKills, getAllPvpKills, getHateBoardMessageId } = require('./state');
+const {
+  getAllLiveKills, getAllPvpKills,
+  getHateBoardMessageId,
+  getHateStateMessageId, setHateStateMessageId,
+  setAllLiveKills, setAllPvpKills,
+} = require('./state');
 const { discordRelativeTime, discordAbsoluteTime } = require('./timer');
+
+// Titles for the hidden JSON state embeds stored in the hate thread
+const HATE_LIVE_DATA_TITLE = '🟣 Plane of Hate — Live State';
+const HATE_PVP_DATA_TITLE  = '🔴 Plane of Hate — PVP State';
 
 const HATE_THREAD_ID = () => process.env.HATE_THREAD_ID || '1502031518090924224';
 
@@ -102,6 +111,103 @@ async function refreshHateBoard(client, type) {
   } catch (err) {
     console.warn(`[hateBoard] Could not refresh ${type} board:`, err?.message);
   }
+
+  // Persist kill state to Discord so it survives redeploys without a volume
+  saveHateStateToDiscord(client, type).catch(err =>
+    console.warn(`[hateBoard] saveHateStateToDiscord(${type}):`, err?.message)
+  );
 }
 
-module.exports = { buildHateBoardEmbed, buildHateBoardRows, refreshHateBoard, HATE_THREAD_ID, spotStatus };
+// Saves liveKills or pvpKills as a JSON embed in the hate thread (edit in place).
+// Stores the message ID in state.json so future saves don't need a thread scan.
+async function saveHateStateToDiscord(client, type) {
+  const threadId = HATE_THREAD_ID();
+  if (!threadId) return;
+
+  const title = type === 'live' ? HATE_LIVE_DATA_TITLE : HATE_PVP_DATA_TITLE;
+  const kills = type === 'live' ? getAllLiveKills() : getAllPvpKills();
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(0x2b2d31)
+    .setDescription(JSON.stringify(kills))
+    .setTimestamp();
+
+  try {
+    const thread   = await client.channels.fetch(threadId);
+    const storedId = getHateStateMessageId(type);
+
+    if (storedId) {
+      try {
+        const msg = await thread.messages.fetch(storedId);
+        await msg.edit({ embeds: [embed] });
+        return;
+      } catch {
+        // message gone — fall through to post new
+      }
+    }
+
+    const msg = await thread.send({ embeds: [embed] });
+    setHateStateMessageId(type, msg.id);
+  } catch (err) {
+    console.warn(`[hateBoard] saveHateStateToDiscord(${type}):`, err?.message);
+  }
+}
+
+// Loads hate kill state from Discord on startup. Only restores entries that are
+// active (nextSpawn in the future, or timerUnknown) and missing from state.json —
+// never overwrites existing state.json data.
+async function loadHateStateFromDiscord(client) {
+  const threadId = HATE_THREAD_ID();
+  if (!threadId) {
+    console.warn('[hateBoard] HATE_THREAD_ID not set — hate state not loaded from Discord');
+    return;
+  }
+
+  const now = Date.now();
+
+  try {
+    const thread = await client.channels.fetch(threadId);
+    const msgs   = await thread.messages.fetch({ limit: 100 });
+
+    for (const msg of msgs.values()) {
+      if (msg.author.id !== client.user.id) continue;
+      const title = msg.embeds[0]?.title;
+      if (title !== HATE_LIVE_DATA_TITLE && title !== HATE_PVP_DATA_TITLE) continue;
+
+      let data;
+      try { data = JSON.parse(msg.embeds[0].description); } catch { continue; }
+
+      const isLive    = title === HATE_LIVE_DATA_TITLE;
+      const existing  = isLive ? getAllLiveKills() : getAllPvpKills();
+      const restored  = {};
+
+      for (const [key, entry] of Object.entries(data)) {
+        if (existing[key]) continue; // state.json already has this — don't overwrite
+        const active = entry.timerUnknown || (entry.nextSpawn && entry.nextSpawn > now);
+        if (!active) continue;       // expired — skip
+        restored[key] = entry;
+      }
+
+      if (Object.keys(restored).length === 0) continue;
+
+      const merged = { ...existing, ...restored };
+      if (isLive) setAllLiveKills(merged);
+      else        setAllPvpKills(merged);
+
+      // Cache the message ID so future saves edit in place
+      const type = isLive ? 'live' : 'pvp';
+      if (!getHateStateMessageId(type)) setHateStateMessageId(type, msg.id);
+
+      console.log(`[hateBoard] Restored ${Object.keys(restored).length} ${isLive ? 'live' : 'pvp'} hate kill(s) from Discord`);
+    }
+  } catch (err) {
+    console.warn('[hateBoard] loadHateStateFromDiscord:', err?.message);
+  }
+}
+
+module.exports = {
+  buildHateBoardEmbed, buildHateBoardRows, refreshHateBoard,
+  saveHateStateToDiscord, loadHateStateFromDiscord,
+  HATE_THREAD_ID, spotStatus,
+};

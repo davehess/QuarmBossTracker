@@ -365,6 +365,21 @@ function setHateBoardMessageId(type, id) {
   saveState(s);
 }
 
+// Message IDs for the hidden hate state data embeds (used for Discord persistence)
+function getHateStateMessageId(type) {
+  return loadState().hateBoards?.[`${type}StateMsg`] || null;
+}
+function setHateStateMessageId(type, id) {
+  const s = loadState();
+  if (!s.hateBoards) s.hateBoards = {};
+  s.hateBoards[`${type}StateMsg`] = id;
+  saveState(s);
+}
+
+// Bulk setters used when restoring hate state from Discord on startup
+function setAllLiveKills(kills) { const s = loadState(); s.liveKills = kills; saveState(s); }
+function setAllPvpKills(kills)  { const s = loadState(); s.pvpKills  = kills; saveState(s); }
+
 // Mark a live kill entry as timer-unknown (from hate board "Unknown" button)
 function setLiveKillTimerUnknown(key) {
   const s = loadState();
@@ -460,6 +475,8 @@ module.exports = {
   recordPvpKill, clearPvpKill, getAllPvpKills, applyQuakeToAllPvpKills, pvpMobKey, setPvpKillThreadMessageId,
   recordLiveKill, setLiveKillMessageId, clearLiveKill, getAllLiveKills,
   getHateBoardMessageId, setHateBoardMessageId,
+  getHateStateMessageId, setHateStateMessageId,
+  setAllLiveKills, setAllPvpKills,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,

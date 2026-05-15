@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.3.6 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.7 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -330,6 +330,9 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ---
 
 ## Version Log
+
+### v1.3.7 (2026-05-15)
+- **Hate tracker Discord persistence:** Live and PVP Plane of Hate kill state is now saved to hidden JSON embeds in the hate thread after every board refresh. On startup the bot restores any active entries missing from `state.json`, so hate tracker state survives redeploys even without a Railway volume.
 
 ### v1.3.6 (2026-05-14)
 - **`/rosterclean`:** Deduplicates in-memory roster entries and normalizes roster thread messages in place (edits existing messages, deletes extra duplicate sets — no new sends, no notifications).
