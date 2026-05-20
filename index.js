@@ -1287,7 +1287,10 @@ async function checkPvpSpawns(readyClient, now) {
     // ── Spawning soon (30 min before earliest) ──────────────────────────────
     if (!pvpAlertedSoon.has(key)) {
       pvpAlertedSoon.add(key);
-      if (pvpAlertId) {
+      // Suppress stale alerts: if the earliest window opened more than 10 min ago
+      // (e.g. bot was offline / just redeployed), skip the notification silently.
+      const stale = earliest < now - 10 * 60 * 1000;
+      if (!stale && pvpAlertId) {
         try {
           const pvpRoleName = process.env.PVP_ROLE || 'PVP';
           const guild       = readyClient.guilds.cache.first();
@@ -1326,8 +1329,9 @@ async function checkPvpSpawns(readyClient, now) {
       } catch { /* already gone */ }
     }
 
-    // Final "definitely spawned" alert
-    if (pvpAlertId) {
+    // Final "definitely spawned" alert — suppress if latest passed long ago (stale post-redeploy)
+    const spawnedLongAgo = latest < now - 15 * 60 * 1000;
+    if (!spawnedLongAgo && pvpAlertId) {
       try {
         const pvpRoleName = process.env.PVP_ROLE || 'PVP';
         const guild       = readyClient.guilds.cache.first();
