@@ -136,7 +136,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_deeps')                   { await handleOnbDeeps(interaction); return; }
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
-    if (interaction.customId.startsWith('mark_avail:'))         { await handleMarkAvail(interaction); return; }
+    if (interaction.customId.startsWith('mark_avail:'))           { await handleMarkAvail(interaction); return; }
+    if (interaction.customId.startsWith('pvp_window_spawned:')) { await handlePvpWindowSpawned(interaction); return; }
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
     if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
@@ -736,6 +737,54 @@ async function handleMarkAvail(interaction) {
   refreshHateBoard(interaction.client, type).catch(err => console.warn('[mark_avail] refreshHateBoard:', err?.message));
 }
 
+// ── PVP spawn window "Mob Spawned" button ─────────────────────────────────────
+// customId: pvp_window_spawned:<key>
+// Fired from the spawn-window-opens-soon alert. Clears the kill, deletes the
+// kill card, refreshes the hate board, and edits the alert message in place.
+async function handlePvpWindowSpawned(interaction) {
+  if (!hasAllowedRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  const key   = interaction.customId.replace('pvp_window_spawned:', '');
+  const kills = getAllPvpKills();
+  const entry = kills[key];
+
+  if (!entry) {
+    // Already cleared — just remove the button so nobody clicks it again
+    const { EmbedBuilder: EB } = require('discord.js');
+    return interaction.update({
+      embeds: [new EB().setColor(0x57f287).setTitle('🟢 Already cleared').setDescription('This timer was already removed.').setTimestamp()],
+      components: [],
+    });
+  }
+
+  // Delete kill card from kills thread
+  const killsThreadId = process.env.PVP_KILLS_THREAD_ID;
+  if (killsThreadId && entry.threadMessageId) {
+    try {
+      const thread = await interaction.client.channels.fetch(killsThreadId);
+      const msg    = await thread.messages.fetch(entry.threadMessageId);
+      await msg.delete();
+    } catch { /* already gone */ }
+  }
+
+  clearPvpKill(key);
+
+  const { refreshHateBoard } = require('./utils/hateBoard');
+  refreshHateBoard(interaction.client, 'pvp').catch(err => console.warn('[pvp_window_spawned] refreshHateBoard:', err?.message));
+
+  const { EmbedBuilder: EB } = require('discord.js');
+  await interaction.update({
+    embeds: [new EB()
+      .setColor(0x57f287)
+      .setTitle(`🟢 Mob Spawned — ${entry.name}`)
+      .setDescription(`Confirmed by <@${interaction.user.id}>. Timer cleared — use \`/pvphatekill\` after engaging.`)
+      .setTimestamp(),
+    ],
+    components: [],
+  });
+}
+
 // ── Hate board kill button ────────────────────────────────────────────────────
 // customId: hate_kill:<type>:<n>   type = live | pvp, n = 1-12
 // Clicking an available spot kills it. Clicking an on-cooldown spot shows a
@@ -1297,7 +1346,7 @@ async function checkPvpSpawns(readyClient, now) {
           const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
           const mention     = pvpRole ? `<@&${pvpRole.id}>` : '';
           const ch          = await readyClient.channels.fetch(pvpAlertId);
-          const { EmbedBuilder: EB } = require('discord.js');
+          const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
           await ch.send({
             content: `${mention}⚠️ **${entry.name}** spawn window opens soon!`,
             embeds: [new EB()
@@ -1310,6 +1359,12 @@ async function checkPvpSpawns(readyClient, now) {
               .setFooter({ text: 'The mob can spawn any time in this window.' })
               .setTimestamp(),
             ],
+            components: [new ARB().addComponents(
+              new BB()
+                .setCustomId(`pvp_window_spawned:${key}`)
+                .setLabel('✅ Mob Spawned')
+                .setStyle(BS.Success)
+            )],
           });
         } catch (err) { console.warn('[pvp] Could not post soon alert:', err?.message); }
       }
