@@ -36,7 +36,7 @@ function parseEQLog(str) {
   // Strip "Combined (N): " prefix from EQLogParser combined multi-mob format
   const cleaned = str.replace(/^Combined\s*\(\d+\):\s*/, '');
 
-  const headerMatch = cleaned.match(/^(.+?)\s+in\s+(\d+)s,\s*([\d.]+)([KM])\s+Damage\s+@([\d.]+)([KM])/);
+  const headerMatch = cleaned.match(/^(.+?)\s+in\s+(\d+)s,\s*([\d.]+)([KM])\s+Damage\s+@([\d.]+)([KM])?/);
   if (!headerMatch) return null;
 
   const bossName    = headerMatch[1].trim();
