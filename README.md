@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.4.0 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.10 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -331,7 +331,7 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 
 ## Version Log
 
-### v1.4.0 (2026-05-21)
+### v1.3.10 (2026-05-21)
 - **Fix parse rejection for low-DPS fights:** EQLogParser omits the K/M suffix on the DPS field when the value is a plain integer (e.g. `@716` instead of `@1.5K`). The header regex now accepts an optional suffix, matching the player-row regex which already handled this correctly. Parses for long fights like "A Shissar Observer in 2568s, 1.84M Damage @716" will no longer be rejected.
 
 ### v1.3.9 (2026-05-20)
