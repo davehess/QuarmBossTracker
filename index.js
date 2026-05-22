@@ -189,7 +189,12 @@ async function handleBoardButton(interaction) {
 
   // If the kill button is on an /announce message, require an ephemeral confirmation
   // before recording the kill — prevents accidental clicks on event announcements.
-  if (getAnnounceMessageIds().includes(interaction.message.id)) {
+  // Detect announce messages by the presence of the cancel_announce button — reliable
+  // even after a redeploy that clears state.json's announceMessageIds list.
+  const isAnnounceMsg = interaction.message.components?.some(row =>
+    row.components?.some(c => c.customId === 'cancel_announce')
+  );
+  if (isAnnounceMsg) {
     const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
     const killState = getAllState();
     const existing  = killState[bossId];
