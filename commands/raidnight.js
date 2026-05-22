@@ -169,16 +169,6 @@ async function appendParseToSession(client, bossId, parsed, bossName, bossEmoji)
     const { buildParseEmbed } = require('./parse');
     const mobEmbed = buildParseEmbed(bossName, parsed, bossEmoji);
     await thread.send({ embeds: [mobEmbed] });
-
-    // Also post the individual parse embed to the parent channel
-    if (session.channelId && session.channelId !== session.threadId) {
-      try {
-        const parentCh = await client.channels.fetch(session.channelId).catch(() => null);
-        if (parentCh) {
-          await parentCh.send({ embeds: [mobEmbed] });
-        }
-      } catch {}
-    }
   } catch (err) {
     console.warn('[raidnight] appendParseToSession error:', err?.message);
   }

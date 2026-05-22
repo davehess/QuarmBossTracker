@@ -536,11 +536,17 @@ async function finishParse(interaction, bossId, boss, parsed) {
   // Post to any active announce/event threads (fire-and-forget)
   postParseToAnnounceThreads(interaction.client, embed, components).catch(() => {});
 
-  // Post publicly in the channel where the command was run
-  const content = mergeNote || undefined;
-  interaction.channel.send({ content, embeds: [embed], components }).catch(err =>
-    console.warn('[parse] public channel send failed:', err?.message)
-  );
+  // Post publicly in the channel where the command was run — but only when
+  // there is no active raid session. When a session is open, appendParseToSession
+  // already posts the card to the raid thread; posting here too would duplicate
+  // it in the parent channel (e.g. Raid Chat).
+  const { getRaidSession } = require('../utils/state');
+  if (!getRaidSession()) {
+    const content = mergeNote || undefined;
+    interaction.channel.send({ content, embeds: [embed], components }).catch(err =>
+      console.warn('[parse] public channel send failed:', err?.message)
+    );
+  }
 
   return embed;
 }

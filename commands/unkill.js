@@ -164,6 +164,7 @@ module.exports = {
       prevState:    existing || null,
       newNextSpawn: null,
       msgLink,
+      source:       msgLink ? `/unkill (summary edit)` : '/unkill',
     }).catch(() => {});
   },
 };

@@ -87,6 +87,7 @@ module.exports = {
     postAuditEntry(interaction.client, {
       action: 'updatetimer', userId: interaction.user.id, userName: interaction.user.username,
       bossId, bossName: boss.name, prevState: existing, newNextSpawn, msgLink: null,
+      source: '/updatetimer',
     }).catch(() => {});
   },
 };
