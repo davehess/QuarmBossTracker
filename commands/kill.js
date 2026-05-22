@@ -106,6 +106,7 @@ module.exports = {
     postAuditEntry(interaction.client, {
       action: 'kill', userId: interaction.user.id, userName: interaction.user.username,
       bossId, bossName: boss.name, prevState: null, newNextSpawn: null, msgLink: null,
+      source: '/kill',
     }).catch(() => {});
   },
 };

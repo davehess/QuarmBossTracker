@@ -32,7 +32,7 @@ function _actionLabel(action) {
  * Post an audit entry to the audit trail thread.
  * Returns the entry id (call later with updateAuditEntryMsgId once the Discord message is posted).
  */
-async function postAuditEntry(client, { action, userId, userName, bossId, bossName, prevState, newNextSpawn, msgLink }) {
+async function postAuditEntry(client, { action, userId, userName, bossId, bossName, prevState, newNextSpawn, msgLink, source }) {
   const threadId = process.env.AUDIT_TRAIL_THREAD_ID;
   if (!threadId) return null;
 
@@ -41,6 +41,7 @@ async function postAuditEntry(client, { action, userId, userName, bossId, bossNa
     id, timestamp: Date.now(), userId, userName,
     action, bossId, bossName, prevState: prevState || null,
     newNextSpawn: newNextSpawn || null, msgLink: msgLink || null,
+    source: source || null,
     auditMsgId: null, undone: false,
   };
   addAuditEntry(entry);
@@ -56,9 +57,10 @@ async function postAuditEntry(client, { action, userId, userName, bossId, bossNa
     const thread = await client.channels.fetch(threadId).catch(() => null);
     if (!thread) return id;
 
-    const ts       = `<t:${Math.floor(Date.now() / 1000)}:F>`;
-    const linkText = msgLink ? ` · [Jump to message](<${msgLink}>)` : '';
-    const content  = `${_actionLabel(action)} — **${bossName}** by <@${userId}>${linkText}\n${ts}`;
+    const ts         = `<t:${Math.floor(Date.now() / 1000)}:F>`;
+    const linkText   = msgLink ? ` · [Jump to message](<${msgLink}>)` : '';
+    const sourceText = source ? `\n📍 via ${source}` : '';
+    const content    = `${_actionLabel(action)} — **${bossName}** by <@${userId}>${linkText}\n${ts}${sourceText}`;
 
     const msg = await thread.send({ content, components: [_undoRow(id)] });
     updateAuditEntryMsgId(id, msg.id);

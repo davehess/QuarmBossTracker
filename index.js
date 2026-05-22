@@ -117,6 +117,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('kill:'))               { await handleBoardButton(interaction); return; }
+    if (interaction.customId.startsWith('confirm_kill_announce:')) { await handleConfirmKillAnnounce(interaction); return; }
+    if (interaction.customId === 'cancel_kill_confirm')          { await interaction.update({ content: '↩️ Cancelled.', components: [] }); return; }
     if (interaction.customId === 'cancel_announce')             { await handleCancelAnnounce(interaction); return; }
     if (interaction.customId.startsWith('cancel_event_thread:')){ await handleCancelEventThread(interaction); return; }
     if (interaction.customId.startsWith('remove_target:'))      { await handleRemoveTargetButton(interaction); return; }
@@ -182,6 +184,27 @@ async function handleBoardButton(interaction) {
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
 
+  // If the kill button is on an /announce message, require an ephemeral confirmation
+  // before recording the kill — prevents accidental clicks on event announcements.
+  if (getAnnounceMessageIds().includes(interaction.message.id)) {
+    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+    const killState = getAllState();
+    const existing  = killState[bossId];
+    const isKilled  = existing && existing.nextSpawn > Date.now();
+    const label     = isKilled ? `↩️ Confirm: Clear kill for ${boss.name}` : `☠️ Confirm kill: ${boss.name}`;
+    const style     = isKilled ? ButtonStyle.Secondary : ButtonStyle.Danger;
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      content: isKilled
+        ? `⚠️ **${boss.name}** is currently on cooldown. Confirm you want to clear the kill record?`
+        : `⚠️ Record a kill for **${boss.name}**? This will start the respawn timer.`,
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`confirm_kill_announce:${bossId}`).setLabel(label).setStyle(style),
+        new ButtonBuilder().setCustomId('cancel_kill_confirm').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+      )],
+    });
+  }
+
   // Defer immediately so Discord doesn't time out while we do async work
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -215,6 +238,7 @@ async function handleBoardButton(interaction) {
     postAuditEntry(interaction.client, {
       action: 'unkill_board', userId: interaction.user.id, userName: interaction.user.username,
       bossId, bossName: boss.name, prevState, newNextSpawn: null, msgLink: null,
+      source: `board button — ${interaction.customId}`,
     }).catch(() => {});
   } else {
     // Kill
@@ -244,6 +268,87 @@ async function handleBoardButton(interaction) {
     postAuditEntry(interaction.client, {
       action: 'kill_board', userId: interaction.user.id, userName: interaction.user.username,
       bossId, bossName: boss.name, prevState: null, newNextSpawn: null, msgLink: null,
+      source: `board button — ${interaction.customId}`,
+    }).catch(() => {});
+  }
+  await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
+}
+
+// ── Confirm kill from /announce message ────────────────────────────────────
+// Fires after user confirms the ephemeral prompt shown by handleBoardButton
+// when the kill button was on an /announce message.
+async function handleConfirmKillAnnounce(interaction) {
+  const bossId = interaction.customId.replace('confirm_kill_announce:', '');
+  const bosses = getBosses();
+  const boss   = bosses.find((b) => b.id === bossId);
+
+  if (!boss)
+    return interaction.update({ content: '❌ Unknown boss.', components: [] });
+  if (!hasAllowedRole(interaction.member))
+    return interaction.update({ content: `❌ You need one of these roles: ${allowedRolesList()}`, components: [] });
+
+  await interaction.deferUpdate();
+
+  const killState  = getAllState();
+  const existing   = killState[bossId];
+  const now        = Date.now();
+  const expansion  = getBossExpansion(boss);
+  const threadId   = getThreadId(expansion);
+
+  const { postAuditEntry } = require('./utils/audit');
+
+  if (existing && existing.nextSpawn > now) {
+    // Unkill
+    const prevState = { ...existing };
+    clearKill(bossId);
+    const newState    = getAllState();
+    const stillKilled = bosses.filter((b) => b.zone === boss.zone && newState[b.id] && newState[b.id].nextSpawn > now);
+    const zoneCard    = getZoneCard(boss.zone);
+    if (zoneCard) {
+      try {
+        const ch = await interaction.client.channels.fetch(zoneCard.threadId || process.env.TIMER_CHANNEL_ID);
+        if (stillKilled.length > 0) {
+          const killedInZone = stillKilled.map((b) => ({ boss: b, entry: newState[b.id], killedBy: newState[b.id].killedBy }));
+          const m = await ch.messages.fetch(zoneCard.messageId);
+          await m.edit({ embeds: [buildZoneKillCard(boss.zone, killedInZone)] });
+        } else {
+          const m = await ch.messages.fetch(zoneCard.messageId); await m.delete(); clearZoneCard(boss.zone);
+        }
+      } catch { clearZoneCard(boss.zone); }
+    }
+    await interaction.editReply({ content: `↩️ Kill record cleared for **${boss.name}**.`, components: [] });
+    postAuditEntry(interaction.client, {
+      action: 'unkill_board', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState, newNextSpawn: null, msgLink: null,
+      source: `announce confirm button`,
+    }).catch(() => {});
+  } else {
+    // Kill
+    recordKill(bossId, boss.timerHours, interaction.user.id);
+    const newState     = getAllState();
+    const zoneBosses   = bosses.filter((b) => b.zone === boss.zone);
+    const killedInZone = zoneBosses.filter((b) => newState[b.id] && newState[b.id].nextSpawn > now)
+      .map((b) => ({ boss: b, entry: newState[b.id], killedBy: newState[b.id].killedBy }));
+    const embed    = buildZoneKillCard(boss.zone, killedInZone);
+    const zoneCard = getZoneCard(boss.zone);
+    if (zoneCard) {
+      try {
+        const ch = await interaction.client.channels.fetch(zoneCard.threadId || process.env.TIMER_CHANNEL_ID);
+        const m  = await ch.messages.fetch(zoneCard.messageId);
+        await m.edit({ embeds: [embed] });
+      } catch {
+        if (threadId) { const t = await interaction.client.channels.fetch(threadId); const s = await t.send({ embeds: [embed] }); setZoneCard(boss.zone, s.id, threadId); }
+      }
+    } else if (threadId) {
+      const t = await interaction.client.channels.fetch(threadId);
+      const s = await t.send({ embeds: [embed] });
+      setZoneCard(boss.zone, s.id, threadId);
+    }
+    await interaction.editReply({ content: `✅ **${boss.name}** kill recorded.`, components: [] });
+    postAuditEntry(interaction.client, {
+      action: 'kill_board', userId: interaction.user.id, userName: interaction.user.username,
+      bossId, bossName: boss.name, prevState: null, newNextSpawn: null, msgLink: null,
+      source: `announce confirm button`,
     }).catch(() => {});
   }
   await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
