@@ -1330,6 +1330,8 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
 // ── Spawn checker ──────────────────────────────────────────────────────────
 const alertedSoon = new Set(), alertedSpawned = new Set();
 const pvpAlertedSoon = new Set(), pvpAlertedSpawned = new Set();
+const pvpAlertedWindow = new Set();      // entries whose "soon" alert has been edited to "possibly spawned"
+const pvpAlertMessages = new Map();      // key → Discord message object, for in-place edits
 const liveAlertedSoon = new Set(), liveAlertedSpawned = new Set();
 const PVP_SOON_MS  = 30 * 60 * 1000;
 const SOON_WARN_MS = 30 * 60 * 1000;
@@ -1440,6 +1442,8 @@ async function checkPvpSpawns(readyClient, now) {
     if (toEarliest > PVP_SOON_MS) {
       pvpAlertedSoon.delete(key);
       pvpAlertedSpawned.delete(key);
+      pvpAlertedWindow.delete(key);
+      pvpAlertMessages.delete(key);
       continue;
     }
 
@@ -1457,7 +1461,7 @@ async function checkPvpSpawns(readyClient, now) {
           const mention     = pvpRole ? `<@&${pvpRole.id}>` : '';
           const ch          = await readyClient.channels.fetch(pvpAlertId);
           const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
-          await ch.send({
+          const sent = await ch.send({
             content: `${mention}⚠️ **${entry.name}** spawn window opens soon!`,
             embeds: [new EB()
               .setColor(0xffa500)
@@ -1476,7 +1480,38 @@ async function checkPvpSpawns(readyClient, now) {
                 .setStyle(BS.Success)
             )],
           });
+          pvpAlertMessages.set(key, sent);
         } catch (err) { console.warn('[pvp] Could not post soon alert:', err?.message); }
+      }
+    }
+
+    // ── Earliest passed — edit alert to "possibly spawned" ───────────────────
+    if (now >= earliest && !pvpAlertedWindow.has(key)) {
+      pvpAlertedWindow.add(key);
+      const alertMsg = pvpAlertMessages.get(key);
+      if (alertMsg) {
+        try {
+          const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
+          await alertMsg.edit({
+            content: `🎯 **${entry.name}** may have spawned — check the zone!`,
+            embeds: [new EB()
+              .setColor(0xffd700)
+              .setTitle(`🎯 PVP Possibly Spawned — ${entry.name}`)
+              .addFields(
+                { name: '⏰ Window Opened', value: `${discordAbsoluteTime(earliest)} (${discordRelativeTime(earliest)})`, inline: true },
+                { name: '⏳ Guaranteed By', value: `${discordAbsoluteTime(latest)} (${discordRelativeTime(latest)})`,     inline: true },
+              )
+              .setFooter({ text: 'Mob may be up — check the zone!' })
+              .setTimestamp(),
+            ],
+            components: [new ARB().addComponents(
+              new BB()
+                .setCustomId(`pvp_window_spawned:${key}`)
+                .setLabel('✅ Mob Spawned')
+                .setStyle(BS.Success)
+            )],
+          });
+        } catch (err) { console.warn('[pvp] Could not edit possibly-spawned alert:', err?.message); }
       }
     }
 
