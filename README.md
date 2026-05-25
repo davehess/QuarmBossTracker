@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.3.3 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.12 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -330,6 +330,12 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ---
 
 ## Version Log
+
+### v1.3.12 (2026-05-25)
+- **`/register` command:** Create a new character in OpenDKP directly from Discord. Accepts name, class (16 choices), race (14 choices), and optional main (autocomplete). Sets Level=10, Active=1, Rank='Non-raid Alt'. Automatically links the character as an alt if a main is specified (uses OpenDKP CharacterId as ParentId). Notifies `OFFICER_CHAT_CHANNEL_ID` and updates the in-memory roster + Discord threads immediately.
+- **OpenDKP character URLs in roster:** The `d` field on roster entries now stores the OpenDKP character profile URL (`https://wolfpack.opendkp.com/#/characters/{id}`). Generated automatically from CharacterId on `/rosterimport`. Persists across re-imports.
+- **`/who` + `/whoall` DKP links:** Both commands now show an `[OpenDKP]` link alongside the Quarmy link when a DKP URL is available.
+- **New env vars:** `OPENDKP_API_URL`, `OPENDKP_CLIENT_NAME`, `OFFICER_CHAT_CHANNEL_ID`.
 
 ### v1.3.3 (2026-05-14)
 - **Quarmy links persist in roster:** Quarmy URLs are now stored directly in roster entries (serialized in Discord thread chunks), so they survive bot restarts, redeploys, and roster re-imports without relying on `state.json`.

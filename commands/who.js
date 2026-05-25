@@ -50,9 +50,10 @@ module.exports = {
       : 'Main';
     const active = char.active ? '' : ' *(inactive)*';
     const quarmySuffix = char.quarmyUrl ? ` · [Quarmy](${char.quarmyUrl})` : '';
+    const dkpSuffix    = char.dkpUrl    ? ` · [OpenDKP](<${char.dkpUrl}>)` : '';
     return interaction.reply({
       flags: MessageFlags.Ephemeral,
-      content: `**${charLink(char.name)}** is a ${char.race} ${char.class} — ${status}${active}${quarmySuffix}`,
+      content: `**${charLink(char.name)}** is a ${char.race} ${char.class} — ${status}${active}${quarmySuffix}${dkpSuffix}`,
     });
   },
 };

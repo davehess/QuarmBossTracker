@@ -1,11 +1,18 @@
 // commands/whoall.js — Look up a character and show their full main/alt family.
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getCharacter, getFamily, getAllNames } = require('../utils/roster');
-const { getQuarmyLink } = require('../utils/state');
+
+// Build a display name with optional Quarmy and OpenDKP links
+function _links(name, quarmyUrl, dkpUrl) {
+  const parts = [];
+  if (quarmyUrl) parts.push(`[Quarmy](<${quarmyUrl}>)`);
+  if (dkpUrl)    parts.push(`[OpenDKP](<${dkpUrl}>)`);
+  return parts.length ? `${name} *(${parts.join(' · ')})*` : name;
+}
 
 function charLink(name) {
-  const url = getQuarmyLink(name);
-  return url ? `[${name}](${url})` : name;
+  const c = getCharacter(name);
+  return c?.quarmyUrl ? `[${name}](<${c.quarmyUrl}>)` : name;
 }
 
 module.exports = {
@@ -56,14 +63,12 @@ module.exports = {
     const { main, alts } = family;
     const active = main.active ? '' : ' *(inactive)*';
 
-    const mainUrl   = getQuarmyLink(main.name);
-    const mainLabel = mainUrl ? `**[${main.name}](${mainUrl})**` : `**${main.name}**`;
+    const mainLabel = `**${main.name}** ${_links('', main.quarmyUrl, main.dkpUrl)}`.trim();
 
     const altLines = alts.length > 0
       ? alts.map(a => {
-          const url = getQuarmyLink(a.name);
-          const label = url ? `[${a.name}](${url})` : a.name;
-          return `↳ **${label}** — ${a.race} ${a.class}`;
+          const suffix = _links('', a.quarmyUrl, a.dkpUrl);
+          return `↳ **${a.name}** — ${a.race} ${a.class}${suffix ? ' ' + suffix : ''}`;
         }).join('\n')
       : '*No alts on record*';
 

@@ -3,8 +3,8 @@
 // Main within a family: highest rank in RANK_PRIORITY (Officer > Pack Leader > ...).
 // Alts: Rank==='Raid Alt' members of a family that are not the main.
 // Standalone alts: Raid Alt with ParentId===0 and no family members, or orphaned alts.
-// Data model: main entry { n, r, c, q?, a: [{n,r,c,q?}] }; standalone alt { n,r,c,q?,a:[],_alt:true }
-// q = Quarmy profile URL, stored directly in roster entries so it persists in Discord thread chunks.
+// Data model: main entry { n, r, c, q?, d?, a: [{n,r,c,q?,d?}] }; standalone alt { n,r,c,q?,d?,a:[],_alt:true }
+// q = Quarmy profile URL, d = OpenDKP character URL. Both stored directly so they persist in Discord thread chunks.
 
 const { EmbedBuilder } = require('discord.js');
 
@@ -28,9 +28,9 @@ function _buildLookup() {
   _lookup = new Map();
   const index = (char, isAlt, mainName, active) => {
     _lookup.set(char.n.toLowerCase(), {
-      name: char.n, race: char.r, class: char.c, quarmyUrl: char.q || null,
+      name: char.n, race: char.r, class: char.c, quarmyUrl: char.q || null, dkpUrl: char.d || null,
       isAlt, mainName, active,
-      alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null })),
+      alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null, dkpUrl: a.d || null })),
     });
   };
   for (const m of _active) {
@@ -88,6 +88,71 @@ function setRosterQuarmyLink(name, url) {
 
 function clearRosterQuarmyLink(name) { return setRosterQuarmyLink(name, null); }
 
+// ── DKP link management ───────────────────────────────────────────────────────
+// Sets (or clears when url is falsy) the d field on the roster entry directly.
+// Returns true if the character was found.
+function setRosterDkpLink(name, url) {
+  const key = name.toLowerCase();
+  for (const roster of [_active, _inactive]) {
+    for (const entry of roster) {
+      if (entry.n.toLowerCase() === key) {
+        if (url) entry.d = url; else delete entry.d;
+        _buildLookup();
+        return true;
+      }
+      if (!entry._alt) {
+        for (const alt of (entry.a || [])) {
+          if (alt.n.toLowerCase() === key) {
+            if (url) alt.d = url; else delete alt.d;
+            _buildLookup();
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// ── Direct roster entry addition ──────────────────────────────────────────────
+// Adds a new character to the in-memory roster without a full re-import.
+// If mainName is provided, the character is added as an alt nested under the main's entry.
+// If mainName is not provided, the character is added as a top-level main entry.
+// Call saveRosters(client) afterward to persist the change to Discord threads.
+function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null }, isActive = true) {
+  const target  = isActive ? _active : _inactive;
+  const nameKey = name.toLowerCase();
+
+  if (mainName) {
+    // Try to add as a nested alt under the main's entry
+    const mainEntry = target.find(e => e.n.toLowerCase() === mainName.toLowerCase() && !e._alt);
+    if (mainEntry) {
+      if (!mainEntry.a) mainEntry.a = [];
+      // Remove any existing alt with same name first
+      mainEntry.a = mainEntry.a.filter(a => a.n.toLowerCase() !== nameKey);
+      const altObj = { n: name, r: race, c: charClass };
+      if (dkpUrl)   altObj.d = dkpUrl;
+      if (quarmyUrl) altObj.q = quarmyUrl;
+      mainEntry.a.push(altObj);
+      _buildLookup();
+      return;
+    }
+    // Main not in the same roster bucket — fall through to standalone alt
+  }
+
+  // Add as a top-level entry (main or standalone alt when parent not found)
+  const entry = { n: name, r: race, c: charClass, a: [] };
+  if (dkpUrl)   entry.d = dkpUrl;
+  if (quarmyUrl) entry.q = quarmyUrl;
+  if (mainName) entry._alt = true; // mark standalone since main wasn't found
+
+  const existing = target.findIndex(e => e.n.toLowerCase() === nameKey);
+  if (existing !== -1) target.splice(existing, 1, entry);
+  else target.push(entry);
+
+  _buildLookup();
+}
+
 // Re-saves both active and inactive rosters to their Discord threads.
 async function saveRosters(client) {
   const activeId   = process.env.ROSTER_ACTIVE_THREAD_ID;
@@ -130,12 +195,24 @@ function processOpenDkpExport(rawArray) {
     }
   }
 
-  // Snapshot existing quarmy links so re-import doesn't wipe them
-  const existingLinks = new Map();
-  for (const [key, val] of _lookup) { if (val.quarmyUrl) existingLinks.set(key, val.quarmyUrl); }
-  const withQ = (name, entry) => {
+  // Snapshot existing quarmy + dkp links so re-import doesn't wipe them
+  const existingLinks    = new Map();
+  const existingDkpLinks = new Map();
+  for (const [key, val] of _lookup) {
+    if (val.quarmyUrl) existingLinks.set(key, val.quarmyUrl);
+    if (val.dkpUrl)    existingDkpLinks.set(key, val.dkpUrl);
+  }
+
+  // Build a display URL for a character: prefer freshly generated from CharacterId,
+  // fall back to existing stored URL so manually set links survive re-imports.
+  const dkpUrlFromId  = (id) => id ? `https://wolfpack.opendkp.com/#/characters/${id}` : null;
+  const withLinks = (name, entry, characterId) => {
     const q = existingLinks.get(name.toLowerCase());
-    return q ? { ...entry, q } : entry;
+    const d = dkpUrlFromId(characterId) || existingDkpLinks.get(name.toLowerCase());
+    const result = { ...entry };
+    if (q) result.q = q;
+    if (d) result.d = d;
+    return result;
   };
 
   const active = [], inactive = [];
@@ -152,14 +229,14 @@ function processOpenDkpExport(rawArray) {
     if (!main) {
       // No main found — all Raid Alts, store as standalone
       for (const c of members) {
-        if (c.Rank === ALT_RANK) addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }), c.Active === 1);
+        if (c.Rank === ALT_RANK) addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.CharacterId), c.Active === 1);
       }
       continue;
     }
 
     const alts = members.filter(m => m !== main && m.Rank === ALT_RANK);
     addTo(
-      withQ(main.Name, { n: main.Name, r: main.Race, c: main.Class, a: alts.map(a => withQ(a.Name, { n: a.Name, r: a.Race, c: a.Class })) }),
+      withLinks(main.Name, { n: main.Name, r: main.Race, c: main.Class, a: alts.map(a => withLinks(a.Name, { n: a.Name, r: a.Race, c: a.Class }, a.CharacterId)) }, main.CharacterId),
       main.Active === 1
     );
   }
@@ -167,9 +244,9 @@ function processOpenDkpExport(rawArray) {
   // Orphaned characters (parent not found in export)
   for (const c of orphans) {
     if (c.Rank === ALT_RANK) {
-      addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }), c.Active === 1);
+      addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.CharacterId), c.Active === 1);
     } else if (RANK_PRIORITY.includes(c.Rank)) {
-      addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [] }), c.Active === 1);
+      addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [] }, c.CharacterId), c.Active === 1);
     }
     // UNKNOWN rank orphans: already in unknowns list, skip display
   }
@@ -351,6 +428,8 @@ module.exports = {
   saveRosters,
   setRosterQuarmyLink,
   clearRosterQuarmyLink,
+  setRosterDkpLink,
+  addCharacterEntry,
   rosterCounts,
   getCharacter,
   getFamily,

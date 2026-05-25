@@ -10,6 +10,8 @@
 //   OPENDKP_EMAIL            — officer/admin account email
 //   OPENDKP_PASSWORD         — officer/admin account password
 //   OPENDKP_POOL_ID          — DKP pool ID (default 5 = SoL)
+//   OPENDKP_API_URL          — base URL for the OpenDKP REST API (default: https://api.opendkp.com)
+//   OPENDKP_CLIENT_NAME      — client/guild slug in OpenDKP (default: wolfpack)
 
 const https = require('https');
 
@@ -103,6 +105,34 @@ async function _writeHeaders() {
   return { clientid: clientId, CognitoInfo: token, 'Content-Type': 'application/json' };
 }
 
+// ── Character API helpers ──────────────────────────────────────────────────────
+function _clientUrl(path = '') {
+  const base = process.env.OPENDKP_API_URL || 'https://api.opendkp.com';
+  const name = process.env.OPENDKP_CLIENT_NAME || 'wolfpack';
+  const u = new URL(`${base}/clients/${name}${path}`);
+  return { hostname: u.hostname, path: u.pathname + u.search };
+}
+
+// GET /clients/{name}/characters — all characters
+async function getCharacters() {
+  const headers = await _writeHeaders();
+  return _get({ ..._clientUrl('/characters'), headers });
+}
+
+// PUT /clients/{name}/characters — create a new character
+// payload: { Name, Class, Race, Level, Active, Rank, ParentId }
+// Returns object with CharacterId on success.
+async function createCharacter(payload) {
+  const headers = await _writeHeaders();
+  const body    = JSON.stringify(payload);
+  return _post({
+    ..._clientUrl('/characters'),
+    method: 'PUT',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
+// ── Raids API ─────────────────────────────────────────────────────────────────
 // GET /beta/raids — all raids (no ticks detail)
 async function getRaids() {
   return _get({ ..._raidsUrl(), headers: _readHeaders() });
@@ -135,4 +165,4 @@ async function updateRaid(payload) {
   }, body);
 }
 
-module.exports = { getRaids, getRaid, createRaid, updateRaid };
+module.exports = { getRaids, getRaid, createRaid, updateRaid, getCharacters, createCharacter };
