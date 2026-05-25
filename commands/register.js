@@ -1,6 +1,9 @@
 // commands/register.js — Create a new character in OpenDKP and add to the local roster.
-// Sets Level=10, Active=1, Rank='Non-raid Alt' automatically.
-// If a main is specified, the character is linked as an alt (ParentId set to main's CharacterId).
+// Defaults: Level=10, Active=1.
+// Rank choices: 'Non-raid Alt' (default) or 'Trader level 1'.
+// If a main is specified, the character is linked via ParentId set to the family root's
+// CharacterId (the ParentId=0 root in OpenDKP's family tree, NOT necessarily the rank-
+// priority main's own CharacterId).
 // After creation, notifies OFFICER_CHAT_CHANNEL_ID and updates the roster threads.
 
 const { SlashCommandBuilder, MessageFlags, EmbedBuilder } = require('discord.js');
@@ -9,22 +12,22 @@ const { createCharacter, getCharacters } = require('../utils/opendkp');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 
 const EQ_CLASSES = [
-  { name: 'Bard',         value: 'Bard' },
-  { name: 'Beastlord',    value: 'Beastlord' },
-  { name: 'Berserker',    value: 'Berserker' },
-  { name: 'Cleric',       value: 'Cleric' },
-  { name: 'Druid',        value: 'Druid' },
-  { name: 'Enchanter',    value: 'Enchanter' },
-  { name: 'Magician',     value: 'Magician' },
-  { name: 'Monk',         value: 'Monk' },
-  { name: 'Necromancer',  value: 'Necromancer' },
-  { name: 'Paladin',      value: 'Paladin' },
-  { name: 'Ranger',       value: 'Ranger' },
-  { name: 'Rogue',        value: 'Rogue' },
+  { name: 'Bard',          value: 'Bard' },
+  { name: 'Beastlord',     value: 'Beastlord' },
+  { name: 'Berserker',     value: 'Berserker' },
+  { name: 'Cleric',        value: 'Cleric' },
+  { name: 'Druid',         value: 'Druid' },
+  { name: 'Enchanter',     value: 'Enchanter' },
+  { name: 'Magician',      value: 'Magician' },
+  { name: 'Monk',          value: 'Monk' },
+  { name: 'Necromancer',   value: 'Necromancer' },
+  { name: 'Paladin',       value: 'Paladin' },
+  { name: 'Ranger',        value: 'Ranger' },
+  { name: 'Rogue',         value: 'Rogue' },
   { name: 'Shadow Knight', value: 'Shadow Knight' },
-  { name: 'Shaman',       value: 'Shaman' },
-  { name: 'Warrior',      value: 'Warrior' },
-  { name: 'Wizard',       value: 'Wizard' },
+  { name: 'Shaman',        value: 'Shaman' },
+  { name: 'Warrior',       value: 'Warrior' },
+  { name: 'Wizard',        value: 'Wizard' },
 ];
 
 const EQ_RACES = [
@@ -51,10 +54,38 @@ const CLASS_EMOJI = {
   Beastlord: '🐾', Berserker: '🪓',
 };
 
-// Extract CharacterId from a DKP URL (https://wolfpack.opendkp.com/#/characters/12345)
+// Extract CharacterId from a wolfpack.opendkp.com character URL
 function _extractCharId(dkpUrl) {
   const m = (dkpUrl || '').match(/\/characters\/(\d+)$/);
   return m ? parseInt(m[1], 10) : null;
+}
+
+// Resolve the OpenDKP ParentId for a new alt of the given main.
+// OpenDKP's family tree is a flat star: all alts point to the ParentId=0 root, NOT to
+// the rank-priority main. rootCharId on the roster entry gives us this directly.
+// Falls back to an API fetch if the roster entry predates the rootCharId field.
+async function _resolveParentId(mainChar, mainName) {
+  // Fast path: rootCharId stored from the last /rosterimport
+  if (mainChar.rootCharId) return { parentId: mainChar.rootCharId, error: null };
+
+  // Slow path: roster was imported before _rootId field existed — fetch from API
+  try {
+    const allChars = await getCharacters();
+    const chars = Array.isArray(allChars) ? allChars : (allChars?.characters || []);
+    const found = chars.find(c => c.Name?.toLowerCase() === mainName.toLowerCase() && !c.Deleted);
+    if (!found) {
+      return {
+        parentId: null,
+        error: `❌ Could not find **${mainName}** in OpenDKP. Run /rosterimport to refresh the roster.`,
+      };
+    }
+    // If this character is itself the root (ParentId=0), use their CharacterId.
+    // If they have a ParentId, that's the family root — use it.
+    const parentId = found.ParentId === 0 ? found.CharacterId : found.ParentId;
+    return { parentId, error: null };
+  } catch (err) {
+    return { parentId: null, error: `❌ Failed to look up main in OpenDKP: ${err?.message}` };
+  }
 }
 
 module.exports = {
@@ -83,6 +114,15 @@ module.exports = {
         .setDescription('Main character name (leave blank if this is a main)')
         .setRequired(false)
         .setAutocomplete(true)
+    )
+    .addStringOption(opt =>
+      opt.setName('rank')
+        .setDescription('Rank to assign (default: Non-raid Alt)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Non-raid Alt',   value: 'Non-raid Alt' },
+          { name: 'Trader level 1', value: 'Trader level 1' },
+        )
     ),
 
   async autocomplete(interaction) {
@@ -108,48 +148,34 @@ module.exports = {
     const charClass = interaction.options.getString('class');
     const charRace  = interaction.options.getString('race');
     const mainName  = interaction.options.getString('main')?.trim() || null;
+    const rank      = interaction.options.getString('rank') || 'Non-raid Alt';
 
-    // Proper-case the name (capitalize first letter of each word)
+    // Proper-case the name
     const name = rawName.replace(/\b\w/g, c => c.toUpperCase());
 
-    // Validate main exists if specified
+    // ── Validate + resolve ParentId ──────────────────────────────────────────
     let parentId = 0;
     if (mainName) {
       const mainChar = getCharacter(mainName);
       if (!mainChar) {
         return interaction.reply({
           flags: MessageFlags.Ephemeral,
-          content: `❌ Main character **${mainName}** not found in the roster. Make sure they've been imported via /rosterimport first.`,
+          content: `❌ **${mainName}** not found in the roster. Run /rosterimport first.`,
         });
       }
       if (mainChar.isAlt) {
         return interaction.reply({
           flags: MessageFlags.Ephemeral,
-          content: `❌ **${mainName}** is already an alt — can't use an alt as a parent character.`,
+          content: `❌ **${mainName}** is an alt — can't use an alt as a parent.`,
         });
       }
-      // Try to extract CharacterId from the stored DKP URL (fast path)
-      const storedId = _extractCharId(mainChar.dkpUrl);
-      if (storedId) {
-        parentId = storedId;
-      } else {
-        // DKP URL not yet in roster — fetch full character list from OpenDKP
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        try {
-          const allChars = await getCharacters();
-          const chars = Array.isArray(allChars) ? allChars : (allChars?.characters || []);
-          const found = chars.find(c => c.Name?.toLowerCase() === mainName.toLowerCase() && !c.Deleted);
-          if (!found) {
-            return interaction.editReply(
-              `❌ Could not find **${mainName}** in OpenDKP. ` +
-              `Make sure they exist there, or run /rosterimport to refresh the roster with DKP IDs.`
-            );
-          }
-          parentId = found.CharacterId;
-        } catch (err) {
-          return interaction.editReply(`❌ Failed to look up main character in OpenDKP: ${err?.message}`);
-        }
-      }
+
+      // Fast path uses rootCharId; slow path fetches from API
+      // Both paths may need async, so defer now
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const { parentId: resolved, error } = await _resolveParentId(mainChar, mainName);
+      if (error) return interaction.editReply(error);
+      parentId = resolved;
     }
 
     if (!interaction.deferred) {
@@ -159,17 +185,15 @@ module.exports = {
     // ── Create character in OpenDKP ──────────────────────────────────────────
     let newCharId = null;
     try {
-      const payload = {
+      const result = await createCharacter({
         Name:     name,
         Class:    charClass,
         Race:     charRace,
         Level:    10,
         Active:   1,
-        Rank:     'Non-raid Alt',
+        Rank:     rank,
         ParentId: parentId,
-      };
-      const result = await createCharacter(payload);
-      // OpenDKP returns the created character object; CharacterId is the primary key
+      });
       newCharId = result?.CharacterId ?? result?.characterId ?? result?.id ?? null;
     } catch (err) {
       return interaction.editReply(`❌ Failed to create character in OpenDKP: ${err?.message}`);
@@ -177,17 +201,18 @@ module.exports = {
 
     // ── Build DKP URL ────────────────────────────────────────────────────────
     const clientName = process.env.OPENDKP_CLIENT_NAME || 'wolfpack';
-    const dkpUrl = newCharId != null ? `https://${clientName}.opendkp.com/#/characters/${newCharId}` : null;
+    const dkpUrl     = newCharId != null ? `https://${clientName}.opendkp.com/#/characters/${newCharId}` : null;
 
-    // ── Add to local in-memory roster ────────────────────────────────────────
-    addCharacterEntry({ name, race: charRace, charClass, dkpUrl, mainName });
+    // ── Add to local roster ──────────────────────────────────────────────────
+    // For a new main (no mainName), rootCharId = their own CharacterId (they become family root)
+    const rootCharId = mainName ? null : newCharId;
+    addCharacterEntry({ name, race: charRace, charClass, dkpUrl, mainName, rootCharId });
 
-    // Persist to Discord roster threads (best-effort)
     saveRosters(interaction.client).catch(err =>
       console.warn('[register] saveRosters failed:', err?.message)
     );
 
-    // ── Notify officer chat ──────────────────────────────────────────────────
+    // ── Officer notification ─────────────────────────────────────────────────
     const officerChannelId = process.env.OFFICER_CHAT_CHANNEL_ID;
     if (officerChannelId) {
       try {
@@ -202,22 +227,20 @@ module.exports = {
               : `New character · Registered by <@${interaction.user.id}>`
           )
           .addFields(
-            { name: 'Race',  value: charRace,       inline: true },
-            { name: 'Class', value: charClass,      inline: true },
-            { name: 'Rank',  value: 'Non-raid Alt', inline: true },
+            { name: 'Race',  value: charRace,  inline: true },
+            { name: 'Class', value: charClass, inline: true },
+            { name: 'Rank',  value: rank,      inline: true },
           );
-        if (dkpUrl) {
-          embed.addFields({ name: '🔗 OpenDKP', value: `[View Character](<${dkpUrl}>)`, inline: false });
-        }
+        if (dkpUrl) embed.addFields({ name: '🔗 OpenDKP', value: `[View Character](<${dkpUrl}>)`, inline: false });
         await ch.send({ embeds: [embed] });
       } catch (err) {
-        console.warn('[register] officer chat notification failed:', err?.message);
+        console.warn('[register] officer notification failed:', err?.message);
       }
     }
 
     // ── Reply ────────────────────────────────────────────────────────────────
     const classEmoji = CLASS_EMOJI[charClass] || '❓';
-    const lines = [`✅ **${name}** created successfully!`, `${classEmoji} ${charRace} ${charClass}`];
+    const lines = [`✅ **${name}** created successfully!`, `${classEmoji} ${charRace} ${charClass} — ${rank}`];
     if (mainName) lines.push(`Alt of **${mainName}**`);
     if (dkpUrl)   lines.push(`🔗 [View on OpenDKP](<${dkpUrl}>)`);
     else          lines.push('*(CharacterId not returned — verify on OpenDKP)*');

@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.3.12  
+**Version:** 1.3.13  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -435,6 +435,9 @@ Paste links to any combination of Active Cooldowns cards (main channel or any th
 - **`/announce` cross-channel kills:** If `/announce` is posted in `#event-chat` and someone clicks the Kill button there, the kill is recorded and boards update correctly, but the zone card posts in the expansion thread (correct behavior).
 - **bosses.json sync:** `/addboss` and `/removeboss` write to the running container's `bosses.json`. Must manually sync back to repo. With Docker: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json`
 - **`/cleanup` scope:** Historic Kills thread scan is limited to 300 messages. Increase `limit` param in `fetchBotMessages(histThread, botId, 300)` if older duplicates aren't caught.
+- **OpenDKP roster auto-sync:** Currently the roster is updated only on `/rosterimport` (manual) or `/register` (single character). A future enhancement could periodically poll `GET /clients/wolfpack/characters` and diff against the in-memory roster, posting a summary of new/changed characters to officer chat. Useful for catching rank changes, new imports done directly on the OpenDKP site, etc.
+- **Discord → character mapping:** Store a `discordId → [characterNames]` table (in `state.json`) so members can self-assign their characters. This would enable bid/loot commands that infer the character automatically. Implementation sketch: `/mycharacter <name>` stores `state.discordChars[userId] = name`; `/bid` reads that to know whose DKP to spend. The registration flow could also accept an optional `discorduser` mention to pre-populate the mapping at `/register` time.
+- **OpenDKP bidding / loot posting:** When OpenDKP posts an item for bidding (detected via polling or webhook), the bot could post in a Discord channel with a `/bid` button that looks up the user's character → calls the OpenDKP bid endpoint. Requires the Discord↔character mapping above.
 
 ---
 

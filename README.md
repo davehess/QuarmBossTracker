@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.3.12 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.13 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -330,6 +330,12 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ---
 
 ## Version Log
+
+### v1.3.13 (2026-05-25)
+- **`/register` ParentId fix:** New alts now correctly use the family root's CharacterId as `ParentId` (the ParentId=0 root in OpenDKP's family tree), not the rank-priority main's ID. Fixes families like Canopy/Hitya where the root character is a Raid Alt but another member is the Officer/main.
+- **Roster stores `_rootId`:** `processOpenDkpExport` now stores `_rootId` (the family root CharacterId) on main entries. `_buildLookup` exposes it as `rootCharId`. Used by `/register` to resolve ParentId without an API roundtrip after the first `/rosterimport`.
+- **`/register` rank option:** Added optional `rank` parameter — `Non-raid Alt` (default) or `Trader level 1`.
+- **Future work noted in CLAUDE.md:** roster auto-sync, Discord↔character mapping, OpenDKP bidding integration.
 
 ### v1.3.12 (2026-05-25)
 - **`/register` command:** Create a new character in OpenDKP directly from Discord. Accepts name, class (16 choices), race (14 choices), and optional main (autocomplete). Sets Level=10, Active=1, Rank='Non-raid Alt'. Automatically links the character as an alt if a main is specified (uses OpenDKP CharacterId as ParentId). Notifies `OFFICER_CHAT_CHANNEL_ID` and updates the in-memory roster + Discord threads immediately.

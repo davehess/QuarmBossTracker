@@ -29,6 +29,9 @@ function _buildLookup() {
   const index = (char, isAlt, mainName, active) => {
     _lookup.set(char.n.toLowerCase(), {
       name: char.n, race: char.r, class: char.c, quarmyUrl: char.q || null, dkpUrl: char.d || null,
+      // _rootId: CharacterId of the ParentId=0 root in the OpenDKP family tree.
+      // Used by /register to set the correct ParentId for new alts.
+      rootCharId: char._rootId || null,
       isAlt, mainName, active,
       alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null, dkpUrl: a.d || null })),
     });
@@ -118,8 +121,10 @@ function setRosterDkpLink(name, url) {
 // Adds a new character to the in-memory roster without a full re-import.
 // If mainName is provided, the character is added as an alt nested under the main's entry.
 // If mainName is not provided, the character is added as a top-level main entry.
+// rootCharId: CharacterId of the ParentId=0 family root (stored on top-level entries so
+//             /register can resolve the correct OpenDKP ParentId for future alts).
 // Call saveRosters(client) afterward to persist the change to Discord threads.
-function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null }, isActive = true) {
+function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null, rootCharId = null }, isActive = true) {
   const target  = isActive ? _active : _inactive;
   const nameKey = name.toLowerCase();
 
@@ -131,7 +136,7 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
       // Remove any existing alt with same name first
       mainEntry.a = mainEntry.a.filter(a => a.n.toLowerCase() !== nameKey);
       const altObj = { n: name, r: race, c: charClass };
-      if (dkpUrl)   altObj.d = dkpUrl;
+      if (dkpUrl)    altObj.d = dkpUrl;
       if (quarmyUrl) altObj.q = quarmyUrl;
       mainEntry.a.push(altObj);
       _buildLookup();
@@ -142,9 +147,10 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
 
   // Add as a top-level entry (main or standalone alt when parent not found)
   const entry = { n: name, r: race, c: charClass, a: [] };
-  if (dkpUrl)   entry.d = dkpUrl;
+  if (dkpUrl)    entry.d = dkpUrl;
   if (quarmyUrl) entry.q = quarmyUrl;
-  if (mainName) entry._alt = true; // mark standalone since main wasn't found
+  if (mainName)  entry._alt = true;                     // standalone alt (main not in roster)
+  if (rootCharId && !mainName) entry._rootId = rootCharId; // only on true top-level mains
 
   const existing = target.findIndex(e => e.n.toLowerCase() === nameKey);
   if (existing !== -1) target.splice(existing, 1, entry);
@@ -218,7 +224,7 @@ function processOpenDkpExport(rawArray) {
   const active = [], inactive = [];
   const addTo = (entry, isActive) => (isActive ? active : inactive).push(entry);
 
-  for (const [, members] of families) {
+  for (const [rootId, members] of families) {
     // Find main by rank priority (skip UNKNOWN rank)
     let main = null;
     for (const rank of RANK_PRIORITY) {
@@ -235,8 +241,14 @@ function processOpenDkpExport(rawArray) {
     }
 
     const alts = members.filter(m => m !== main && m.Rank === ALT_RANK);
+    // Store _rootId so /register can set the correct ParentId for new alts.
+    // OpenDKP's family model: the ParentId=0 root's CharacterId is used as ParentId
+    // for ALL family members — not the rank-priority main's CharacterId.
     addTo(
-      withLinks(main.Name, { n: main.Name, r: main.Race, c: main.Class, a: alts.map(a => withLinks(a.Name, { n: a.Name, r: a.Race, c: a.Class }, a.CharacterId)) }, main.CharacterId),
+      withLinks(main.Name, {
+        n: main.Name, r: main.Race, c: main.Class, _rootId: rootId,
+        a: alts.map(a => withLinks(a.Name, { n: a.Name, r: a.Race, c: a.Class }, a.CharacterId)),
+      }, main.CharacterId),
       main.Active === 1
     );
   }
