@@ -474,6 +474,25 @@ async function finishParse(interaction, bossId, boss, parsed) {
   parses[bossId].push(parseEntry);
   saveParses(parses);
 
+  // Best-effort Supabase write — non-blocking, gracefully no-ops if not configured.
+  // Aggregates this submission as a contribution to the matching encounter.
+  try {
+    const supabase = require('../utils/supabase');
+    if (supabase.isEnabled()) {
+      supabase.recordParse({
+        bossId,
+        bossName: boss?.name || parsed.bossName,
+        parsed,
+        timestampMs:          parseEntry.timestamp,
+        contributorDiscordId: interaction.user.id,
+        contributorCharacter: parseEntry.submittedByName,
+        source:               'eqlogparser_send_to_eq',
+      }).catch(err => console.warn('[parse] supabase write failed:', err?.message));
+    }
+  } catch (err) {
+    console.warn('[parse] supabase module load failed:', err?.message);
+  }
+
   const bossName  = boss?.name || parsed.bossName;
   const windowMs  = (boss?.timerHours || 24) * 3600 * 1000;
   const allForBoss = parses[bossId];
