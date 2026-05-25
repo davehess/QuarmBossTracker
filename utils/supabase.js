@@ -81,19 +81,26 @@ async function rpc(fnName, params = {}) {
 
 // ── Domain helpers ───────────────────────────────────────────────────────────
 
-// Find or create an encounter matching boss_id within ±30 min of timestamp.
+// Look up the npc_id for one of our local boss internal_ids (e.g. 'lord_nagafen').
+// Returns the int or null if not yet mapped in bosses_local.
+async function getNpcIdForInternalId(internalId) {
+  if (!isEnabled() || !internalId) return null;
+  const rows = await select('bosses_local', `internal_id=eq.${encodeURIComponent(internalId)}&select=npc_id`);
+  return Array.isArray(rows) && rows[0]?.npc_id ? rows[0].npc_id : null;
+}
+
+// Find or create an encounter matching npc_id within ±N min of timestamp.
 // Returns the encounter id (uuid) or null on failure.
-async function findOrCreateEncounter({ bossId, bossName, startedAtMs, durationSec, windowMin = 30 }) {
-  if (!isEnabled()) return null;
+async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMin = 30 }) {
+  if (!isEnabled() || !npcId) return null;
   const result = await rpc('find_or_create_encounter', {
     p_guild_id:   _guildId(),
-    p_boss_id:    bossId,
-    p_boss_name:  bossName,
+    p_npc_id:     npcId,
     p_started_at: new Date(startedAtMs).toISOString(),
     p_duration:   durationSec,
     p_window_min: windowMin,
   });
-  // RPC returns the scalar uuid wrapped in jsonb
+  // RPC returns the scalar uuid
   return typeof result === 'string' ? result : null;
 }
 
@@ -129,18 +136,33 @@ async function recordContribution({
   return contributionId;
 }
 
-// One-shot helper: takes a parsed EQLogParser result, creates/finds encounter,
-// records the contribution, and recomputes the merge.
-// Returns { encounterId, contributionId } or null on failure.
+// One-shot helper: takes a parsed EQLogParser result, looks up the npc_id from
+// bosses_local (via our internal_id), creates/finds the encounter, records the
+// contribution, and recomputes the merged player view.
+//
+// Gracefully no-ops in any of these cases (no errors thrown):
+//   - Supabase env vars unset
+//   - bossInternalId not yet mapped in bosses_local (sync not done; or boss not opt-in)
+//   - any RPC call fails
+//
+// Returns { encounterId, contributionId, npcId } or null.
 async function recordParse({
-  bossId, bossName, parsed, timestampMs, contributorDiscordId, contributorCharacter,
+  bossInternalId, parsed, timestampMs,
+  contributorDiscordId, contributorCharacter,
   source = 'eqlogparser_send_to_eq',
 }) {
   if (!isEnabled()) return null;
 
+  const npcId = await getNpcIdForInternalId(bossInternalId);
+  if (!npcId) {
+    // Expected during rollout — bosses_local hasn't been populated yet, or this
+    // boss isn't opt-in. Falling back to no-op is correct; the legacy parses.json
+    // path still records everything locally.
+    return null;
+  }
+
   const encounterId = await findOrCreateEncounter({
-    bossId,
-    bossName,
+    npcId,
     startedAtMs: timestampMs,
     durationSec: parsed.duration,
   });
@@ -154,7 +176,7 @@ async function recordParse({
     rawParse: parsed,
   });
 
-  return { encounterId, contributionId };
+  return { encounterId, contributionId, npcId };
 }
 
 // Fetch the completeness summary for an encounter.
@@ -200,6 +222,7 @@ async function getTonightEncounters(date = new Date()) {
 module.exports = {
   isEnabled,
   select, insert, update, upsert, rpc,
+  getNpcIdForInternalId,
   findOrCreateEncounter,
   recordContribution,
   recordParse,

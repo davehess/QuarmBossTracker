@@ -75,8 +75,7 @@ module.exports = {
     // find_or_create_encounter will create one if none exists — which is fine,
     // it means this person is the first to contribute for this kill.
     const result = await supabase.recordParse({
-      bossId:               boss.id,
-      bossName:             boss.name,
+      bossInternalId:       boss.id,
       parsed,
       timestampMs:          Date.now(),
       contributorDiscordId: interaction.user.id,
@@ -86,7 +85,10 @@ module.exports = {
 
     if (!result?.encounterId) {
       return interaction.editReply({
-        content: '⚠️ Recorded locally but the Supabase write failed. Check the bot logs.',
+        content:
+          '⚠️ Could not record contribution. Either Supabase is not configured, ' +
+          'the boss is not yet mapped in `bosses_local`, or the upstream NPC table ' +
+          'is not synced yet. Check the bot logs for details.',
       });
     }
 

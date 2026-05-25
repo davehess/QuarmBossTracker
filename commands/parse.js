@@ -474,14 +474,17 @@ async function finishParse(interaction, bossId, boss, parsed) {
   parses[bossId].push(parseEntry);
   saveParses(parses);
 
-  // Best-effort Supabase write — non-blocking, gracefully no-ops if not configured.
-  // Aggregates this submission as a contribution to the matching encounter.
+  // Best-effort Supabase write — non-blocking, gracefully no-ops in any of:
+  //   - Supabase env vars not set
+  //   - bosses_local not yet populated (early rollout, boss not opt-in)
+  //   - upstream eqemu_npc_types not yet synced
+  // The legacy parses.json + Discord-thread archive remain the source of truth
+  // until the Supabase tier has been verified populated.
   try {
     const supabase = require('../utils/supabase');
     if (supabase.isEnabled()) {
       supabase.recordParse({
-        bossId,
-        bossName: boss?.name || parsed.bossName,
+        bossInternalId:       bossId,
         parsed,
         timestampMs:          parseEntry.timestamp,
         contributorDiscordId: interaction.user.id,
