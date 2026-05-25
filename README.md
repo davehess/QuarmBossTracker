@@ -367,6 +367,26 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 
 Until step 1, the bot runs identically to 1.3.14 — all Supabase calls gracefully no-op.
 
+**Shipped in this session (all on the feature branch, awaiting merge):**
+
+- `supabase/migrations/20260525120000_initial_schema.sql` — full Tier 1 + Tier 2 schema with RLS-by-default, completeness view, RPC helpers
+- `scripts/sync-from-eqmac.js` + `.github/workflows/sync-quarm.yml` — weekly auto-sync of `quarm_*.tar.gz` upstream dumps with idempotent skip-if-unchanged
+- `scripts/migrate-bosses-to-supabase.js` — one-shot bosses.json → bosses_local importer with fuzzy-match review file for ambiguous bosses
+- `/dkp [character] [family]` — ephemeral DKP lookup, defaults to your Discord display name, 60s cache, family mode shows main+alts with total
+- `/wishlist add|remove|show` — async BIS registration with per-item DKP ceiling, priority, notes; auto-bid hook lives in /loot
+- `/encounter tonight|view|mine` — post-raid recap: every encounter, completeness bars, who was in vs missed, loot won
+- `/parsecontrib` — multi-perspective parse contribution; merges into encounter_players with max-damage rule and live completeness score
+- `packages/wolfpack-logsync/` — tail-mode EQ log agent (zero npm deps, single file, gigabyte-safe). Filters officer chat / tells / custom channels at the byte level before parsing. Comprehensive damage parser covering all observed verbs (slash, crush, pierce, bite, claw, gore, slam, sting, tail-whip, etc.) with proper -es/-s normalization.
+- `POST /api/agent/encounter` on the bot's existing HTTP server — bearer-auth agent ingest, synthesizes contributions row from event stream, gracefully no-ops if Supabase or `bosses_local` not yet populated
+- `/loot` extension — wishlist match surfacing when items drop; officer-visible follow-up names wishlisters (auto-bid placement gated on OpenDKP auction API capture)
+
+**Not yet shipped this session (next pass):**
+
+- `/addboss` rewrite to use `eqemu_npc_types` (current PQDI scraping still works)
+- OpenDKP auction creation (still pending API capture from live Bidding Tool)
+- `parseQuarmyWishlist` (need a quarmy.com BIS URL to test against)
+- `parseQuarmyInventory` (TSV format identified from `HityaQuarmy.txt`; useful for "you already own this" hints later)
+
 ### v1.3.14 (2026-05-25)
 - **`/loot` command (infrastructure):** New command for posting looted items for DKP bidding. Parses Zeal item paste (pipe, comma, or space-delimited; 7-digit EQ item IDs), checks guild drop history from OpenDKP (cached 1h), and optionally scrapes the boss's PQDI NPC page for drop rates.
 - **Item rarity labels:** `🆕 NEW` (first guild drop ever), `💎 ULTRA RARE` (seen once, drop rate in bottom quartile or ≤5% of boss's table). Both labels include context lines in the loot embed.
