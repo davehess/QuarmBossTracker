@@ -105,12 +105,25 @@ async function _writeHeaders() {
   return { clientid: clientId, CognitoInfo: token, 'Content-Type': 'application/json' };
 }
 
-// ── Character API helpers ──────────────────────────────────────────────────────
+// ── Client REST API helpers ───────────────────────────────────────────────────
+// New endpoints at api.opendkp.com/clients/{name}/ use Authorization: Bearer token.
+// Character endpoints currently work with the legacy CognitoInfo header (_writeHeaders).
+// Auction/bidding endpoints require proper Bearer auth (_bearerHeaders).
+
 function _clientUrl(path = '') {
   const base = process.env.OPENDKP_API_URL || 'https://api.opendkp.com';
   const name = process.env.OPENDKP_CLIENT_NAME || 'wolfpack';
   const u = new URL(`${base}/clients/${name}${path}`);
   return { hostname: u.hostname, path: u.pathname + u.search };
+}
+
+// Bearer-auth headers for auction and bidding endpoints.
+// Same Cognito ID token as CognitoInfo, different header name.
+async function _bearerHeaders(contentType = false) {
+  const token = await getAuthToken();
+  const h = { 'Authorization': `Bearer ${token}` };
+  if (contentType) h['Content-Type'] = 'application/json';
+  return h;
 }
 
 // GET /clients/{name}/characters — all characters
@@ -132,13 +145,48 @@ async function createCharacter(payload) {
   }, body);
 }
 
+// ── Auction API ───────────────────────────────────────────────────────────────
+// PUT /clients/{name}/auctions — create an auction for one or more items.
+//
+// ⚠️  PENDING API CAPTURE: payload format not yet confirmed (500 on test with fake ItemId).
+//     Once a successful auction creation cURL is captured from the OpenDKP Bidding Tool,
+//     update this function with the correct payload structure.
+//
+// Known required fields (from failed attempt + context):
+//   ItemId, ItemName, GameItemId, ItemQuantity, RaidId, PoolId, ClientId
+//
+// payload: { items: [{ ItemId, ItemName, GameItemId, ItemQuantity }], raidId, poolId }
+async function createAuctions(payload) {
+  throw new Error(
+    'createAuctions: pending API capture. ' +
+    'Please submit a real bid in OpenDKP and capture the Network request, ' +
+    'then share the cURL so this function can be implemented.'
+  );
+  // ── Uncomment and update when confirmed ──
+  // const headers = await _bearerHeaders(true);
+  // const body = JSON.stringify(payload);
+  // return _post({
+  //   ..._clientUrl('/auctions'),
+  //   method: 'PUT',
+  //   headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  // }, body);
+}
+
+// GET /clients/{name}/auctions — list active auctions
+// Returns array of auction objects with Bids.
+// ⚠️  PENDING API CAPTURE: exact endpoint path not confirmed.
+async function getAuctions() {
+  const headers = await _bearerHeaders();
+  return _get({ ..._clientUrl('/auctions'), headers });
+}
+
 // ── Raids API ─────────────────────────────────────────────────────────────────
 // GET /beta/raids — all raids (no ticks detail)
 async function getRaids() {
   return _get({ ..._raidsUrl(), headers: _readHeaders() });
 }
 
-// GET /beta/raids/:id — single raid with full ticks and attendees
+// GET /beta/raids/:id — single raid with full ticks, attendees, and loot Items
 async function getRaid(raidId) {
   return _get({ ..._raidsUrl(`/${raidId}`), headers: _readHeaders() });
 }
@@ -165,4 +213,8 @@ async function updateRaid(payload) {
   }, body);
 }
 
-module.exports = { getRaids, getRaid, createRaid, updateRaid, getCharacters, createCharacter };
+module.exports = {
+  getRaids, getRaid, createRaid, updateRaid,
+  getCharacters, createCharacter,
+  createAuctions, getAuctions,
+};

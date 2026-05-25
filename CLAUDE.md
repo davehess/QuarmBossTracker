@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 1.3.13  
+**Version:** 1.3.14  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -437,7 +437,13 @@ Paste links to any combination of Active Cooldowns cards (main channel or any th
 - **`/cleanup` scope:** Historic Kills thread scan is limited to 300 messages. Increase `limit` param in `fetchBotMessages(histThread, botId, 300)` if older duplicates aren't caught.
 - **OpenDKP roster auto-sync:** Currently the roster is updated only on `/rosterimport` (manual) or `/register` (single character). A future enhancement could periodically poll `GET /clients/wolfpack/characters` and diff against the in-memory roster, posting a summary of new/changed characters to officer chat. Useful for catching rank changes, new imports done directly on the OpenDKP site, etc.
 - **Discord → character mapping:** Store a `discordId → [characterNames]` table (in `state.json`) so members can self-assign their characters. This would enable bid/loot commands that infer the character automatically. Implementation sketch: `/mycharacter <name>` stores `state.discordChars[userId] = name`; `/bid` reads that to know whose DKP to spend. The registration flow could also accept an optional `discorduser` mention to pre-populate the mapping at `/register` time.
-- **OpenDKP bidding / loot posting:** When OpenDKP posts an item for bidding (detected via polling or webhook), the bot could post in a Discord channel with a `/bid` button that looks up the user's character → calls the OpenDKP bid endpoint. Requires the Discord↔character mapping above.
+- **`/loot` auction creation (pending API capture):** `utils/opendkp.js createAuctions()` is stubbed. To complete: from the OpenDKP Bidding Tool, create a real auction with a valid item ID selected via autocomplete and capture the Network request cURL (`PUT /clients/wolfpack/auctions`). The 500 error in v1.3.12 was caused by a fake ItemId (31337). Also need: bid submission cURL (what payload submits a character's bid), and the Auction "End All" endpoint. Once captured, uncomment the auction block in `commands/loot.js execute()`.
+- **`/loot` bid characters:** When auction creation is live, players bidding via Discord button should see a character picker (their raid-eligible alts only — no Non-raid Alt, no Trader). Character eligibility: Officer/Pack Leader/Raid Pack/Recruit/Member/Inactive = full; Raid Alt = eligible, max 100 DKP. Requires Discord↔character mapping (see above) or manual character selection at bid time.
+- **`/loot` wishlist notifications:** After the loot embed posts, delay 10–15 seconds, then send ephemeral DMs/mentions to members who have the item on their wishlist. Character picker pre-populated from wishlist. Requires wishlist storage per character (in `state.json` or separate DB).
+- **Quarmy wishlist pre-loading:** `utils/loot.js parseQuarmyWishlist(url)` is a placeholder. Once Quarmy BIS page format is confirmed (e.g., `https://quarmy.com/b/<id>?gs=<gsId>`), implement to parse item names and sources → register as wishlist items for a character. Loot embed delay can show "🎯 X guildies have this wishlisted" hint.
+- **Item rarity from PQDI:** Drop table scraping in `fetchPqdiDropTable` uses a row-by-row HTML regex approach. If PQDI changes their table format, update the regex in `utils/loot.js`. Current pattern assumes `<tr>` rows with `<a href="/item/ID">Name</a>` and `X.X%` in the same row.
+- **Quest turn-in loot:** Items bid on for quest hand-ins (e.g., item 8365 "Remains of Vah Kerrath" → reward item 8364 via PQDI script) work identically to regular loot — the Zeal paste includes the real EQ item ID, PQDI link in the embed provides context. No special handling needed; officers manage the quest/turn-in coordination offline.
+- **OpenDKP bidding / loot posting (original):** The bot now proactively posts loot via `/loot` (officer-initiated) rather than polling OpenDKP. Discord bid buttons will come once auction creation API is captured.
 
 ---
 
