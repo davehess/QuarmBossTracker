@@ -151,7 +151,7 @@ module.exports = {
         const itemIds = enrichedItems.map(i => i.gameItemId);
         const wishlistRows = await supabase.select(
           'wishlists',
-          `item_id=in.(${itemIds.join(',')})&select=character_name,item_id,priority,note`
+          `item_id=in.(${itemIds.join(',')})&select=character_name,item_id,priority,max_dkp,note`
         );
 
         if (Array.isArray(wishlistRows) && wishlistRows.length > 0) {
@@ -162,17 +162,27 @@ module.exports = {
             byItem.get(w.item_id).push(w);
           }
 
-          // Post officer-visible summary as a follow-up
+          // Post officer-visible summary with each wishlister's ceiling (or "1 DKP only").
+          // This lets officers anticipate who'll escalate and who'll concede silently.
           const summary = enrichedItems
             .filter(i => byItem.has(i.gameItemId))
             .map(i => {
-              const wishers = byItem.get(i.gameItemId);
-              return `• **${i.name}** — ${wishers.length} wishlister(s): ${wishers.map(w => w.character_name).join(', ')}`;
+              const wishers = byItem.get(i.gameItemId)
+                .sort((a, b) => (b.max_dkp || 0) - (a.max_dkp || 0));
+              const lines = wishers.map(w => {
+                const ceiling = w.max_dkp ? `up to **${w.max_dkp.toLocaleString()}** DKP` : '`1 DKP only`';
+                const noteStr = w.note ? ` *(${w.note})*` : '';
+                return `  ↳ ${w.character_name} · P${w.priority} · ${ceiling}${noteStr}`;
+              });
+              return `• **${i.name}** — ${wishers.length} wishlister(s):\n${lines.join('\n')}`;
             });
           if (summary.length) {
             await interaction.followUp({
               flags: MessageFlags.Ephemeral,
-              content: `🎯 **Wishlist matches** (auto-bids will be placed in ~12s):\n${summary.join('\n')}`,
+              content:
+                `🎯 **Wishlist matches** (auto-bid placement queued for ~12s):\n${summary.join('\n')}\n\n` +
+                `Wishlisters with no ceiling get a single 1 DKP auto-bid (no escalation).\n` +
+                `Wishlisters with a ceiling will escalate +1 each round up to their max.`,
             });
           }
         }

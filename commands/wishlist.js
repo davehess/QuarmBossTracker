@@ -45,7 +45,7 @@ async function _findItem(query) {
 async function _add(interaction) {
   const characterArg = interaction.options.getString('character');
   const itemQuery    = interaction.options.getString('item');
-  const maxDkp       = interaction.options.getInteger('max_dkp');
+  const maxDkp       = interaction.options.getInteger('max_dkp') ?? null;
   const priority     = interaction.options.getInteger('priority') ?? 5;
   const note         = interaction.options.getString('note') ?? null;
 
@@ -78,6 +78,7 @@ async function _add(interaction) {
   const row = {
     character_name: rosterChar.name,
     item_id:        item.id,
+    max_dkp:        maxDkp,           // null = no ceiling, bid 1 DKP only
     priority,
     note,
     source:         'manual',
@@ -91,15 +92,24 @@ async function _add(interaction) {
     });
   }
 
+  // Describe the auto-bid behavior clearly — "1 DKP only" vs "escalate to ceiling"
+  const ceilingStr = maxDkp
+    ? `ceiling **${maxDkp.toLocaleString()}** DKP (escalates by +1 if outbid)`
+    : `**1 DKP** floor only (no escalation — re-add with \`max_dkp\` to compete)`;
+
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
     .setTitle('🎯 Wishlist updated')
     .setDescription(
       `**${rosterChar.name}** added **[${item.name}](<https://www.pqdi.cc/item/${item.id}>)** ` +
-      `(max **${maxDkp.toLocaleString()}** DKP, priority **${priority}**)${item.lore_flag ? ' · 🔒 LORE' : ''}.`
+      `· priority **${priority}** · ${ceilingStr}${item.lore_flag ? ' · 🔒 LORE' : ''}.`
     );
   if (note) embed.addFields({ name: 'Note', value: note, inline: false });
-  embed.setFooter({ text: 'When this item drops, the bot will auto-place a 1 DKP bid for you.' });
+  embed.setFooter({
+    text: maxDkp
+      ? `Auto-bid starts at 1 DKP, escalates by +1 each round up to ${maxDkp.toLocaleString()}.`
+      : 'Auto-bid places 1 DKP on your behalf. If anyone else bids, you do not auto-escalate.',
+  });
 
   return interaction.editReply({ embeds: [embed] });
 }
@@ -200,14 +210,22 @@ async function _show(interaction) {
     const itemName = item ? `[${item.name}](<https://www.pqdi.cc/item/${r.item_id}>)` : `Item ${r.item_id}`;
     const lore = item?.lore_flag ? ' 🔒' : '';
     const noteStr = r.note ? `  *${r.note}*` : '';
-    return `\`P${r.priority}\` ${itemName}${lore}${noteStr}`;
+    const ceiling = r.max_dkp ? `max **${r.max_dkp.toLocaleString()}**` : '`1 DKP only`';
+    return `\`P${r.priority}\` ${itemName}${lore} · ${ceiling}${noteStr}`;
   });
+
+  // Count how many entries auto-escalate vs are floor-only
+  const withCeiling   = rows.filter(r => r.max_dkp).length;
+  const floorOnly     = rows.length - withCeiling;
+  const footerParts = [`${rows.length} item${rows.length === 1 ? '' : 's'}`];
+  if (withCeiling) footerParts.push(`${withCeiling} with escalation ceiling`);
+  if (floorOnly)   footerParts.push(`${floorOnly} bid 1 DKP only`);
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`🎯 ${rosterChar.name}'s wishlist`)
     .setDescription(lines.join('\n').slice(0, 4000))
-    .setFooter({ text: `${rows.length} item${rows.length === 1 ? '' : 's'} · auto-bid 1 DKP when these drop` });
+    .setFooter({ text: footerParts.join(' · ') });
 
   return interaction.editReply({ embeds: [embed] });
 }
@@ -222,7 +240,7 @@ module.exports = {
         .setDescription('Add an item to a character\'s wishlist')
         .addStringOption(o => o.setName('character').setDescription('Character name').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('item').setDescription('Item name or 7-digit ID').setRequired(true))
-        .addIntegerOption(o => o.setName('max_dkp').setDescription('Maximum DKP to spend').setRequired(true).setMinValue(1).setMaxValue(50000))
+        .addIntegerOption(o => o.setName('max_dkp').setDescription('Optional ceiling — escalate up to this if outbid. Omit = bid 1 DKP only.').setRequired(false).setMinValue(1).setMaxValue(50000))
         .addIntegerOption(o => o.setName('priority').setDescription('1=top BIS, 10=nice-to-have (default 5)').setMinValue(1).setMaxValue(10))
         .addStringOption(o => o.setName('note').setDescription('Optional note (e.g. "BIS for raids"; "weekend only")').setMaxLength(200))
     )
