@@ -14,9 +14,10 @@
 // configured — wishlists are inherently async, so no local-cache fallback.
 
 const { SlashCommandBuilder, MessageFlags, EmbedBuilder } = require('discord.js');
-const supabase = require('../utils/supabase');
-const { getCharacter, getAllNames } = require('../utils/roster');
-const { hasAllowedRole } = require('../utils/roles');
+const supabase                              = require('../utils/supabase');
+const { encryptBid, decryptBid, isEncryptionEnabled } = require('../utils/bidCrypto');
+const { getCharacter, getAllNames }         = require('../utils/roster');
+const { hasAllowedRole }                   = require('../utils/roles');
 
 // ── Item resolution ─────────────────────────────────────────────────────────
 // Two ways to specify an item:
@@ -92,14 +93,19 @@ async function _add(interaction) {
     });
   }
 
+  // Encrypt the bid amount so the raw DB value is opaque even to DB admins.
+  // bid_amount (plaintext) is nullified per migration 20260525150000.
+  const bidAmountEnc = encryptBid(bidAmount); // null if no bid OR key not set
+
   const row = {
-    character_name: rosterChar.name,
-    item_id:        item.id,
-    bid_amount:     bidAmount,        // null = bid 1 DKP (safe default); N = exactly N DKP
+    character_name:  rosterChar.name,
+    item_id:         item.id,
+    bid_amount:      null,            // deprecated plaintext column — always null
+    bid_amount_enc:  bidAmountEnc,    // AES-256-GCM encrypted
     priority,
     note,
-    source:         'manual',
-    source_url:     null,
+    source:          'manual',
+    source_url:      null,
   };
 
   const result = await supabase.upsert('wishlists', [row], 'character_name,item_id');
@@ -139,10 +145,11 @@ async function _add(interaction) {
     embed.addFields({ name: '💰 DKP', value: fields.join('\n'), inline: false });
   }
 
+  const encNote = isEncryptionEnabled() ? '🔒 Bid encrypted in DB.' : '⚠️ Set WISHLIST_BID_KEY for bid encryption.';
   embed.setFooter({
     text: bidAmount
-      ? `Closed bid: bot places exactly ${bidAmount.toLocaleString()} DKP if this drops. No escalation. Highest unique bid wins.`
-      : 'Closed bid: bot places 1 DKP if this drops. Re-add with bid_amount to commit more.',
+      ? `Closed bid: bot places exactly ${bidAmount.toLocaleString()} DKP if this drops. No escalation. Highest unique bid wins. ${encNote}`
+      : `Closed bid: bot places 1 DKP if this drops. Re-add with bid_amount to commit more. ${encNote}`,
   });
 
   return interaction.editReply({ embeds: [embed] });
@@ -172,26 +179,9 @@ async function _remove(interaction) {
     itemId = item.id;
   }
 
-  // PostgREST delete via ?col=eq.x&col2=eq.y
-  const url = `/wishlists?character_name=eq.${encodeURIComponent(rosterChar.name)}&item_id=eq.${itemId}`;
-  const result = await supabase._request ? null : null;  // explicit DELETE below
-
-  // Use the raw fetch via supabase.update with a DELETE method instead
-  await supabase.rpc; // touch to ensure module loaded
-  const sb = await fetch(
-    `${process.env.SUPABASE_URL}/rest/v1${url}`,
-    {
-      method: 'DELETE',
-      headers: {
-        'apikey':        process.env.SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    }
-  );
-
-  if (!sb.ok) {
-    return interaction.editReply({ content: `⚠️ Delete failed (${sb.status}). Check bot logs.` });
-  }
+  const query = `character_name=eq.${encodeURIComponent(rosterChar.name)}&item_id=eq.${itemId}`;
+  await supabase.del('wishlists', query);
+  // del() returns null on failure (already logged) — treat as best-effort
 
   return interaction.editReply({
     content: `🗑️ Removed item \`${itemId}\` from **${rosterChar.name}**'s wishlist.`,
@@ -239,27 +229,50 @@ async function _show(interaction) {
   );
   const itemsMap = new Map((itemsList || []).map(i => [i.id, i]));
 
-  // Fetch current DKP for context — useful when reviewing all-in commitments
-  const currentDkp = await _currentDkpForCharacter(rosterChar.name);
-  const totalCommitted = rows.reduce((s, r) => s + (r.bid_amount || 1), 0);
+  // Privacy: only show bid amounts if the caller is the character's owner or an officer.
+  // Officer can see bids when they need to run a manual auction — same as the
+  // loot.js officer follow-up. Member viewing their OWN character → full bids.
+  // Member viewing ANOTHER member's character → item list only (no bids).
+  const selfDisplayName = (interaction.member?.displayName || interaction.user.username).toLowerCase();
+  const selfChar  = getCharacter(selfDisplayName);
+  const isSelf    = selfChar?.name?.toLowerCase() === rosterChar.name.toLowerCase()
+                 || selfDisplayName === rosterChar.name.toLowerCase();
+  const isOfficer = hasAllowedRole(interaction.member);
+  const showBids  = isSelf || isOfficer;
 
-  const lines = rows.map(r => {
-    const item = itemsMap.get(r.item_id);
+  // Decrypt bids and compute totals (decrypt only if showing bids)
+  const enriched = rows.map(r => {
+    const bid = showBids ? (decryptBid(r.bid_amount_enc) ?? r.bid_amount ?? null) : null;
+    return { ...r, _bid: bid };
+  });
+
+  const currentDkp     = showBids ? await _currentDkpForCharacter(rosterChar.name) : null;
+  const totalCommitted = enriched.reduce((s, r) => s + (r._bid ?? 1), 0);
+
+  const lines = enriched.map(r => {
+    const item     = itemsMap.get(r.item_id);
     const itemName = item ? `[${item.name}](<https://www.pqdi.cc/item/${r.item_id}>)` : `Item ${r.item_id}`;
-    const lore = item?.lore_flag ? ' 🔒' : '';
-    const noteStr = r.note ? `  *${r.note}*` : '';
-    const bid = r.bid_amount
-      ? `**${r.bid_amount.toLocaleString()}** DKP`
-      : '`1 DKP`';
-    const allIn = currentDkp !== null && r.bid_amount && r.bid_amount >= currentDkp ? ' 💎' : '';
-    return `\`P${r.priority}\` ${itemName}${lore} · ${bid}${allIn}${noteStr}`;
+    const lore     = item?.lore_flag ? ' 🔒' : '';
+    const noteStr  = r.note ? `  *${r.note}*` : '';
+    let bidStr;
+    if (!showBids) {
+      bidStr = '`🔒 sealed`';
+    } else if (r._bid !== null) {
+      const allIn = currentDkp !== null && r._bid >= currentDkp ? ' 💎' : '';
+      bidStr = `**${r._bid.toLocaleString()}** DKP${allIn}`;
+    } else {
+      bidStr = '`1 DKP`';
+    }
+    return `\`P${r.priority}\` ${itemName}${lore} · ${bidStr}${noteStr}`;
   });
 
   const footerParts = [`${rows.length} item${rows.length === 1 ? '' : 's'}`];
-  if (currentDkp !== null) footerParts.push(`current DKP: ${currentDkp.toLocaleString()}`);
-  footerParts.push(`total committed if all drop: ${totalCommitted.toLocaleString()}`);
-  if (currentDkp !== null && totalCommitted > currentDkp) {
-    footerParts.push(`⚠️ committed > balance`);
+  if (showBids) {
+    if (currentDkp !== null) footerParts.push(`current DKP: ${currentDkp.toLocaleString()}`);
+    footerParts.push(`total committed if all drop: ${totalCommitted.toLocaleString()}`);
+    if (currentDkp !== null && totalCommitted > currentDkp) footerParts.push('⚠️ committed > balance');
+  } else {
+    footerParts.push('Bid amounts sealed — use /mywishlist to see your own bids');
   }
 
   const embed = new EmbedBuilder()

@@ -146,36 +146,38 @@ module.exports = {
     // start (per the 'vigor stays high' design) while still ensuring the busy
     // player who can't alt-tab gets bid in automatically before the timer ends.
     try {
-      const supabase = require('../utils/supabase');
+      const supabase   = require('../utils/supabase');
+      const { decryptBid } = require('../utils/bidCrypto');
       if (supabase.isEnabled()) {
         const itemIds = enrichedItems.map(i => i.gameItemId);
         const wishlistRows = await supabase.select(
           'wishlists',
-          `item_id=in.(${itemIds.join(',')})&select=character_name,item_id,priority,bid_amount,note`
+          `item_id=in.(${itemIds.join(',')})&select=character_name,item_id,priority,bid_amount_enc,bid_amount,note`
         );
 
         if (Array.isArray(wishlistRows) && wishlistRows.length > 0) {
-          // Group by item_id
+          // Group by item_id; decrypt each bid in the bot process (never returned to Discord raw)
           const byItem = new Map();
           for (const w of wishlistRows) {
+            const bid = decryptBid(w.bid_amount_enc) ?? w.bid_amount ?? null;
             if (!byItem.has(w.item_id)) byItem.set(w.item_id, []);
-            byItem.get(w.item_id).push(w);
+            byItem.get(w.item_id).push({ ...w, _bid: bid });
           }
 
           // Post officer-visible summary with each wishlister's sealed bid amount.
           // Sealed bid semantics: each row is the EXACT amount that will be bid —
-          // no escalation, no overage. NULL bid_amount = 1 DKP safe default.
+          // no escalation, no overage. NULL bid = 1 DKP safe default.
           // Sort by effective bid descending so the projected winner is on top.
           const summary = enrichedItems
             .filter(i => byItem.has(i.gameItemId))
             .map(i => {
               const wishers = byItem.get(i.gameItemId)
-                .map(w => ({ ...w, _eff: w.bid_amount ?? 1 }))
+                .map(w => ({ ...w, _eff: w._bid ?? 1 }))
                 .sort((a, b) => b._eff - a._eff || a.priority - b.priority);
 
               const lines = wishers.map((w, idx) => {
-                const marker = idx === 0 ? '🏆' : '  ';
-                const bid    = w.bid_amount ? `**${w.bid_amount.toLocaleString()}** DKP` : '`1 DKP`';
+                const marker  = idx === 0 ? '🏆' : '  ';
+                const bid     = w._bid ? `**${w._bid.toLocaleString()}** DKP` : '`1 DKP`';
                 const noteStr = w.note ? ` *(${w.note})*` : '';
                 return `${marker} ${w.character_name} · P${w.priority} · ${bid}${noteStr}`;
               });
@@ -186,7 +188,7 @@ module.exports = {
               flags: MessageFlags.Ephemeral,
               content:
                 `🎯 **Wishlist matches** (sealed bids queued for ~12s):\n${summary.join('\n')}\n\n` +
-                `🏆 = projected winner (highest bid_amount, ties broken by priority).\n` +
+                `🏆 = projected winner (highest sealed bid, ties broken by priority).\n` +
                 `These are **closed bids** — no escalation. Tell-bids submitted by other players will be merged in at settlement.`,
             });
           }

@@ -74,6 +74,10 @@ async function upsert(table, rows, onConflict) {
   return _request(path, { method: 'POST', body: rows, prefer });
 }
 
+async function del(table, queryString) {
+  return _request(`/${table}?${queryString}`, { method: 'DELETE', prefer: 'return=minimal' });
+}
+
 // Call a stored procedure (RPC). For find_or_create_encounter, merge_encounter_players.
 async function rpc(fnName, params = {}) {
   return _request(`/rpc/${fnName}`, { method: 'POST', body: params });
@@ -221,7 +225,7 @@ async function getTonightEncounters(date = new Date()) {
 
 module.exports = {
   isEnabled,
-  select, insert, update, upsert, rpc,
+  select, insert, update, upsert, del, rpc,
   getNpcIdForInternalId,
   findOrCreateEncounter,
   recordContribution,
