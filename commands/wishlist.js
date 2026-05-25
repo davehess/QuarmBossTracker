@@ -42,10 +42,27 @@ async function _findItem(query) {
 }
 
 // ── Subcommand: add ─────────────────────────────────────────────────────────
+// Fetch a character's current DKP from OpenDKP (best-effort, swallows errors).
+// Reuses the same logic as /dkp but keeps this command independent.
+async function _currentDkpForCharacter(name) {
+  try {
+    const { getCharacters } = require('../utils/opendkp');
+    const res = await getCharacters();
+    const list = Array.isArray(res) ? res : (res?.Characters || res?.characters || []);
+    const lc = name.toLowerCase();
+    const char = list.find(c => (c.Name || c.name || '').toLowerCase() === lc);
+    if (!char) return null;
+    const v = char.CurrentDkp ?? char.currentDkp ?? char.Points ?? char.points ?? char.dkp ?? char.DKP;
+    return typeof v === 'number' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 async function _add(interaction) {
   const characterArg = interaction.options.getString('character');
   const itemQuery    = interaction.options.getString('item');
-  const maxDkp       = interaction.options.getInteger('max_dkp') ?? null;
+  const bidAmount    = interaction.options.getInteger('bid_amount') ?? null;
   const priority     = interaction.options.getInteger('priority') ?? 5;
   const note         = interaction.options.getString('note') ?? null;
 
@@ -78,7 +95,7 @@ async function _add(interaction) {
   const row = {
     character_name: rosterChar.name,
     item_id:        item.id,
-    max_dkp:        maxDkp,           // null = no ceiling, bid 1 DKP only
+    bid_amount:     bidAmount,        // null = bid 1 DKP (safe default); N = exactly N DKP
     priority,
     note,
     source:         'manual',
@@ -92,23 +109,40 @@ async function _add(interaction) {
     });
   }
 
-  // Describe the auto-bid behavior clearly — "1 DKP only" vs "escalate to ceiling"
-  const ceilingStr = maxDkp
-    ? `ceiling **${maxDkp.toLocaleString()}** DKP (escalates by +1 if outbid)`
-    : `**1 DKP** floor only (no escalation — re-add with \`max_dkp\` to compete)`;
+  // Surface current DKP context — important when the user is deciding an all-in amount.
+  // Closed/sealed bid means whatever they set IS what gets bid — no escalation, no overage.
+  const currentDkp = await _currentDkpForCharacter(rosterChar.name);
+  const bidStr = bidAmount
+    ? `bid **${bidAmount.toLocaleString()}** DKP (sealed)`
+    : `bid **1 DKP** (safe default)`;
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
     .setTitle('🎯 Wishlist updated')
     .setDescription(
       `**${rosterChar.name}** added **[${item.name}](<https://www.pqdi.cc/item/${item.id}>)** ` +
-      `· priority **${priority}** · ${ceilingStr}${item.lore_flag ? ' · 🔒 LORE' : ''}.`
+      `· priority **${priority}** · ${bidStr}${item.lore_flag ? ' · 🔒 LORE' : ''}.`
     );
   if (note) embed.addFields({ name: 'Note', value: note, inline: false });
+
+  // DKP context + warnings
+  if (currentDkp !== null) {
+    const fields = [];
+    fields.push(`Current DKP: **${currentDkp.toLocaleString()}**`);
+    if (bidAmount && bidAmount > currentDkp) {
+      fields.push(`⚠️ Bid (${bidAmount}) exceeds current DKP (${currentDkp}) — bid will be capped to balance at auction time.`);
+    } else if (bidAmount && bidAmount === currentDkp) {
+      fields.push(`💎 **All-in bid** — committing your entire balance.`);
+    } else if (bidAmount) {
+      fields.push(`Remaining if you win: **${(currentDkp - bidAmount).toLocaleString()}** DKP`);
+    }
+    embed.addFields({ name: '💰 DKP', value: fields.join('\n'), inline: false });
+  }
+
   embed.setFooter({
-    text: maxDkp
-      ? `Auto-bid starts at 1 DKP, escalates by +1 each round up to ${maxDkp.toLocaleString()}.`
-      : 'Auto-bid places 1 DKP on your behalf. If anyone else bids, you do not auto-escalate.',
+    text: bidAmount
+      ? `Closed bid: bot places exactly ${bidAmount.toLocaleString()} DKP if this drops. No escalation. Highest unique bid wins.`
+      : 'Closed bid: bot places 1 DKP if this drops. Re-add with bid_amount to commit more.',
   });
 
   return interaction.editReply({ embeds: [embed] });
@@ -205,21 +239,28 @@ async function _show(interaction) {
   );
   const itemsMap = new Map((itemsList || []).map(i => [i.id, i]));
 
+  // Fetch current DKP for context — useful when reviewing all-in commitments
+  const currentDkp = await _currentDkpForCharacter(rosterChar.name);
+  const totalCommitted = rows.reduce((s, r) => s + (r.bid_amount || 1), 0);
+
   const lines = rows.map(r => {
     const item = itemsMap.get(r.item_id);
     const itemName = item ? `[${item.name}](<https://www.pqdi.cc/item/${r.item_id}>)` : `Item ${r.item_id}`;
     const lore = item?.lore_flag ? ' 🔒' : '';
     const noteStr = r.note ? `  *${r.note}*` : '';
-    const ceiling = r.max_dkp ? `max **${r.max_dkp.toLocaleString()}**` : '`1 DKP only`';
-    return `\`P${r.priority}\` ${itemName}${lore} · ${ceiling}${noteStr}`;
+    const bid = r.bid_amount
+      ? `**${r.bid_amount.toLocaleString()}** DKP`
+      : '`1 DKP`';
+    const allIn = currentDkp !== null && r.bid_amount && r.bid_amount >= currentDkp ? ' 💎' : '';
+    return `\`P${r.priority}\` ${itemName}${lore} · ${bid}${allIn}${noteStr}`;
   });
 
-  // Count how many entries auto-escalate vs are floor-only
-  const withCeiling   = rows.filter(r => r.max_dkp).length;
-  const floorOnly     = rows.length - withCeiling;
   const footerParts = [`${rows.length} item${rows.length === 1 ? '' : 's'}`];
-  if (withCeiling) footerParts.push(`${withCeiling} with escalation ceiling`);
-  if (floorOnly)   footerParts.push(`${floorOnly} bid 1 DKP only`);
+  if (currentDkp !== null) footerParts.push(`current DKP: ${currentDkp.toLocaleString()}`);
+  footerParts.push(`total committed if all drop: ${totalCommitted.toLocaleString()}`);
+  if (currentDkp !== null && totalCommitted > currentDkp) {
+    footerParts.push(`⚠️ committed > balance`);
+  }
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
@@ -240,7 +281,7 @@ module.exports = {
         .setDescription('Add an item to a character\'s wishlist')
         .addStringOption(o => o.setName('character').setDescription('Character name').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('item').setDescription('Item name or 7-digit ID').setRequired(true))
-        .addIntegerOption(o => o.setName('max_dkp').setDescription('Optional ceiling — escalate up to this if outbid. Omit = bid 1 DKP only.').setRequired(false).setMinValue(1).setMaxValue(50000))
+        .addIntegerOption(o => o.setName('bid_amount').setDescription('EXACT DKP to bid (closed/sealed). Omit = bot bids 1 DKP only. No escalation.').setRequired(false).setMinValue(1).setMaxValue(50000))
         .addIntegerOption(o => o.setName('priority').setDescription('1=top BIS, 10=nice-to-have (default 5)').setMinValue(1).setMaxValue(10))
         .addStringOption(o => o.setName('note').setDescription('Optional note (e.g. "BIS for raids"; "weekend only")').setMaxLength(200))
     )
