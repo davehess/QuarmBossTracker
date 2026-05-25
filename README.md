@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.3.10 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 1.3.14 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
 
 ---
 
@@ -330,6 +330,26 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ---
 
 ## Version Log
+
+### v1.3.14 (2026-05-25)
+- **`/loot` command (infrastructure):** New command for posting looted items for DKP bidding. Parses Zeal item paste (pipe, comma, or space-delimited; 7-digit EQ item IDs), checks guild drop history from OpenDKP (cached 1h), and optionally scrapes the boss's PQDI NPC page for drop rates.
+- **Item rarity labels:** `🆕 NEW` (first guild drop ever), `💎 ULTRA RARE` (seen once, drop rate in bottom quartile or ≤5% of boss's table). Both labels include context lines in the loot embed.
+- **`utils/loot.js`:** New utility with `parseZealLoot`, `fetchPqdiDropTable`, `getDropHistory`, `enrichLootItems`, `buildLootAnnounceEmbed`, and `parseQuarmyWishlist` (placeholder).
+- **`utils/opendkp.js` additions:** `_bearerHeaders()` (Authorization: Bearer for new API endpoints), `createAuctions()` and `getAuctions()` stubs (pending API capture — 500 error on test with fake ItemId; need real-item cURL from Bidding Tool).
+- **Quest turn-ins supported:** Items bid on for quest hand-ins (e.g., Remains of Vah Kerrath) work the same as loot — Zeal paste includes the real EQ item ID; PQDI link in embed shows full item/quest context.
+- **OpenDKP auction creation:** Pending API capture — command currently posts the loot embed and links to the OpenDKP Bidding Tool. To complete: capture a working auction creation cURL from the Bidding Tool with a real item ID.
+
+### v1.3.13 (2026-05-25)
+- **`/register` ParentId fix:** New alts now correctly use the family root's CharacterId as `ParentId` (the ParentId=0 root in OpenDKP's family tree), not the rank-priority main's ID. Fixes families like Canopy/Hitya where the root character is a Raid Alt but another member is the Officer/main.
+- **Roster stores `_rootId`:** `processOpenDkpExport` now stores `_rootId` (the family root CharacterId) on main entries. `_buildLookup` exposes it as `rootCharId`. Used by `/register` to resolve ParentId without an API roundtrip after the first `/rosterimport`.
+- **`/register` rank option:** Added optional `rank` parameter — `Non-raid Alt` (default) or `Trader level 1`.
+- **Future work noted in CLAUDE.md:** roster auto-sync, Discord↔character mapping, OpenDKP bidding integration.
+
+### v1.3.12 (2026-05-25)
+- **`/register` command:** Create a new character in OpenDKP directly from Discord. Accepts name, class (16 choices), race (14 choices), and optional main (autocomplete). Sets Level=10, Active=1, Rank='Non-raid Alt'. Automatically links the character as an alt if a main is specified (uses OpenDKP CharacterId as ParentId). Notifies `OFFICER_CHAT_CHANNEL_ID` and updates the in-memory roster + Discord threads immediately.
+- **OpenDKP character URLs in roster:** The `d` field on roster entries now stores the OpenDKP character profile URL (`https://wolfpack.opendkp.com/#/characters/{id}`). Generated automatically from CharacterId on `/rosterimport`. Persists across re-imports.
+- **`/who` + `/whoall` DKP links:** Both commands now show an `[OpenDKP]` link alongside the Quarmy link when a DKP URL is available.
+- **New env vars:** `OPENDKP_API_URL`, `OPENDKP_CLIENT_NAME`, `OFFICER_CHAT_CHANNEL_ID`.
 
 ### v1.3.10 (2026-05-21)
 - **Fix parse rejection for low-DPS fights:** EQLogParser omits the K/M suffix on the DPS field when the value is a plain integer (e.g. `@716` instead of `@1.5K`). The header regex now accepts an optional suffix, matching the player-row regex which already handled this correctly. Parses for long fights like "A Shissar Observer in 2568s, 1.84M Damage @716" will no longer be rejected.

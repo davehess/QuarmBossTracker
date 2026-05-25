@@ -52,6 +52,7 @@ module.exports = {
       : 'Main';
     const active = char.active ? '' : ' *(inactive)*';
     const quarmySuffix = char.quarmyUrl ? ` · [Quarmy](<${char.quarmyUrl}>)` : '';
+    const dkpSuffix    = char.dkpUrl    ? ` · [OpenDKP](<${char.dkpUrl}>)` : '';
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -63,7 +64,7 @@ module.exports = {
 
     return interaction.reply({
       flags: MessageFlags.Ephemeral | MessageFlags.SuppressEmbeds,
-      content: `${classEmoji} **${charLink(char.name)}** — ${char.race} ${char.class} · ${status}${active}${quarmySuffix}`,
+      content: `${classEmoji} **${charLink(char.name)}** — ${char.race} ${char.class} · ${status}${active}${quarmySuffix}${dkpSuffix}`,
       components: [row],
     });
   },

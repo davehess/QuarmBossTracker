@@ -1,0 +1,36 @@
+# .github/dependabot.yml
+# Enables Dependabot version-update PRs against the dependency graph
+# (package.json + package-lock.json).
+#
+# Dependency graph overview:
+#   https://docs.github.com/en/code-security/concepts/supply-chain-security/about-the-dependency-graph
+#
+# How the two Dependabot features relate:
+#   1. Dependency graph   — GitHub reads package.json + package-lock.json and
+#                           builds the graph automatically (no config needed).
+#                           Visible under Insights → Dependency graph.
+#   2. Security alerts    — GitHub notifies when a dependency has a known CVE.
+#                           Enabled in: Settings → Security & analysis →
+#                           "Dependabot alerts".  No yml needed.
+#   3. Version updates    — This file. Dependabot opens weekly PRs to bump
+#                           dependencies, keeping the graph current.
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"           # package.json lives in the repo root
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    # Ignore major-version bumps — those need manual review (breaking changes).
+    # Patch and minor updates open PRs automatically.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"         # e.g. "deps: bump discord.js from 14.14.1 to 14.16.0"

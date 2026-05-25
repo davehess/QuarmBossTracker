@@ -19,13 +19,22 @@ function buildWhoallEmbed(name) {
   const mainEmoji = CLASS_EMOJI[main.class] || '❓';
   const charEmoji = CLASS_EMOJI[char.class]  || '❓';
 
-  const mainLabel = main.quarmyUrl ? `**[${main.name}](<${main.quarmyUrl}>)**` : `**${main.name}**`;
+  // Main label with Quarmy + OpenDKP links
+  const mainLinks = [
+    main.quarmyUrl ? `[Quarmy](<${main.quarmyUrl}>)` : null,
+    main.dkpUrl    ? `[OpenDKP](<${main.dkpUrl}>)`   : null,
+  ].filter(Boolean).join(' · ');
+  const mainLabel = mainLinks ? `**${main.name}** *(${mainLinks})*` : `**${main.name}**`;
 
   const altLines = alts.length > 0
     ? alts.map(a => {
+        const altLinks = [
+          a.quarmyUrl ? `[Quarmy](<${a.quarmyUrl}>)` : null,
+          a.dkpUrl    ? `[OpenDKP](<${a.dkpUrl}>)`   : null,
+        ].filter(Boolean).join(' · ');
         const label = a.quarmyUrl ? `[${a.name}](<${a.quarmyUrl}>)` : a.name;
         const emoji = CLASS_EMOJI[a.class] || '❓';
-        return `↳ ${emoji} **${label}** — ${a.race} ${a.class}`;
+        return `↳ ${emoji} **${label}** — ${a.race} ${a.class}${altLinks ? ' · ' + altLinks : ''}`;
       }).join('\n')
     : '*No alts on record*';
 

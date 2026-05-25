@@ -3,8 +3,8 @@
 // Main within a family: highest rank in RANK_PRIORITY (Officer > Pack Leader > ...).
 // Alts: Rank==='Raid Alt' members of a family that are not the main.
 // Standalone alts: Raid Alt with ParentId===0 and no family members, or orphaned alts.
-// Data model: main entry { n, r, c, q?, a: [{n,r,c,q?}] }; standalone alt { n,r,c,q?,a:[],_alt:true }
-// q = Quarmy profile URL, stored directly in roster entries so it persists in Discord thread chunks.
+// Data model: main entry { n, r, c, q?, d?, a: [{n,r,c,q?,d?}] }; standalone alt { n,r,c,q?,d?,a:[],_alt:true }
+// q = Quarmy profile URL, d = OpenDKP character URL. Both stored directly so they persist in Discord thread chunks.
 
 const { EmbedBuilder } = require('discord.js');
 
@@ -28,9 +28,12 @@ function _buildLookup() {
   _lookup = new Map();
   const index = (char, isAlt, mainName, active) => {
     _lookup.set(char.n.toLowerCase(), {
-      name: char.n, race: char.r, class: char.c, quarmyUrl: char.q || null,
+      name: char.n, race: char.r, class: char.c, quarmyUrl: char.q || null, dkpUrl: char.d || null,
+      // _rootId: CharacterId of the ParentId=0 root in the OpenDKP family tree.
+      // Used by /register to set the correct ParentId for new alts.
+      rootCharId: char._rootId || null,
       isAlt, mainName, active,
-      alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null })),
+      alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null, dkpUrl: a.d || null })),
     });
   };
   for (const m of _active) {
@@ -88,15 +91,82 @@ function setRosterQuarmyLink(name, url) {
 
 function clearRosterQuarmyLink(name) { return setRosterQuarmyLink(name, null); }
 
-// Re-saves both active and inactive rosters to their Discord threads, editing in place
-// so existing thread subscribers are not pinged.
+// ── DKP link management ───────────────────────────────────────────────────────
+// Sets (or clears when url is falsy) the d field on the roster entry directly.
+// Returns true if the character was found.
+function setRosterDkpLink(name, url) {
+  const key = name.toLowerCase();
+  for (const roster of [_active, _inactive]) {
+    for (const entry of roster) {
+      if (entry.n.toLowerCase() === key) {
+        if (url) entry.d = url; else delete entry.d;
+        _buildLookup();
+        return true;
+      }
+      if (!entry._alt) {
+        for (const alt of (entry.a || [])) {
+          if (alt.n.toLowerCase() === key) {
+            if (url) alt.d = url; else delete alt.d;
+            _buildLookup();
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// ── Direct roster entry addition ──────────────────────────────────────────────
+// Adds a new character to the in-memory roster without a full re-import.
+// If mainName is provided, the character is added as an alt nested under the main's entry.
+// If mainName is not provided, the character is added as a top-level main entry.
+// rootCharId: CharacterId of the ParentId=0 family root (stored on top-level entries so
+//             /register can resolve the correct OpenDKP ParentId for future alts).
+// Call saveRosters(client) afterward to persist the change to Discord threads.
+function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null, rootCharId = null }, isActive = true) {
+  const target  = isActive ? _active : _inactive;
+  const nameKey = name.toLowerCase();
+
+  if (mainName) {
+    // Try to add as a nested alt under the main's entry
+    const mainEntry = target.find(e => e.n.toLowerCase() === mainName.toLowerCase() && !e._alt);
+    if (mainEntry) {
+      if (!mainEntry.a) mainEntry.a = [];
+      // Remove any existing alt with same name first
+      mainEntry.a = mainEntry.a.filter(a => a.n.toLowerCase() !== nameKey);
+      const altObj = { n: name, r: race, c: charClass };
+      if (dkpUrl)    altObj.d = dkpUrl;
+      if (quarmyUrl) altObj.q = quarmyUrl;
+      mainEntry.a.push(altObj);
+      _buildLookup();
+      return;
+    }
+    // Main not in the same roster bucket — fall through to standalone alt
+  }
+
+  // Add as a top-level entry (main or standalone alt when parent not found)
+  const entry = { n: name, r: race, c: charClass, a: [] };
+  if (dkpUrl)    entry.d = dkpUrl;
+  if (quarmyUrl) entry.q = quarmyUrl;
+  if (mainName)  entry._alt = true;                     // standalone alt (main not in roster)
+  if (rootCharId && !mainName) entry._rootId = rootCharId; // only on true top-level mains
+
+  const existing = target.findIndex(e => e.n.toLowerCase() === nameKey);
+  if (existing !== -1) target.splice(existing, 1, entry);
+  else target.push(entry);
+
+  _buildLookup();
+}
+
+// Re-saves both active and inactive rosters to their Discord threads.
 async function saveRosters(client) {
   const activeId   = process.env.ROSTER_ACTIVE_THREAD_ID;
   const inactiveId = process.env.ROSTER_INACTIVE_THREAD_ID;
   const now = new Date();
   await Promise.all([
-    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   'quarmy update', now, true) : Promise.resolve(),
-    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, 'quarmy update', now, true) : Promise.resolve(),
+    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   'quarmy update', now) : Promise.resolve(),
+    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, 'quarmy update', now) : Promise.resolve(),
   ]);
 }
 
@@ -131,18 +201,30 @@ function processOpenDkpExport(rawArray) {
     }
   }
 
-  // Snapshot existing quarmy links so re-import doesn't wipe them
-  const existingLinks = new Map();
-  for (const [key, val] of _lookup) { if (val.quarmyUrl) existingLinks.set(key, val.quarmyUrl); }
-  const withQ = (name, entry) => {
+  // Snapshot existing quarmy + dkp links so re-import doesn't wipe them
+  const existingLinks    = new Map();
+  const existingDkpLinks = new Map();
+  for (const [key, val] of _lookup) {
+    if (val.quarmyUrl) existingLinks.set(key, val.quarmyUrl);
+    if (val.dkpUrl)    existingDkpLinks.set(key, val.dkpUrl);
+  }
+
+  // Build a display URL for a character: prefer freshly generated from CharacterId,
+  // fall back to existing stored URL so manually set links survive re-imports.
+  const dkpUrlFromId  = (id) => id ? `https://wolfpack.opendkp.com/#/characters/${id}` : null;
+  const withLinks = (name, entry, characterId) => {
     const q = existingLinks.get(name.toLowerCase());
-    return q ? { ...entry, q } : entry;
+    const d = dkpUrlFromId(characterId) || existingDkpLinks.get(name.toLowerCase());
+    const result = { ...entry };
+    if (q) result.q = q;
+    if (d) result.d = d;
+    return result;
   };
 
   const active = [], inactive = [];
   const addTo = (entry, isActive) => (isActive ? active : inactive).push(entry);
 
-  for (const [, members] of families) {
+  for (const [rootId, members] of families) {
     // Find main by rank priority (skip UNKNOWN rank)
     let main = null;
     for (const rank of RANK_PRIORITY) {
@@ -153,14 +235,20 @@ function processOpenDkpExport(rawArray) {
     if (!main) {
       // No main found — all Raid Alts, store as standalone
       for (const c of members) {
-        if (c.Rank === ALT_RANK) addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }), c.Active === 1);
+        if (c.Rank === ALT_RANK) addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.CharacterId), c.Active === 1);
       }
       continue;
     }
 
     const alts = members.filter(m => m !== main && m.Rank === ALT_RANK);
+    // Store _rootId so /register can set the correct ParentId for new alts.
+    // OpenDKP's family model: the ParentId=0 root's CharacterId is used as ParentId
+    // for ALL family members — not the rank-priority main's CharacterId.
     addTo(
-      withQ(main.Name, { n: main.Name, r: main.Race, c: main.Class, a: alts.map(a => withQ(a.Name, { n: a.Name, r: a.Race, c: a.Class })) }),
+      withLinks(main.Name, {
+        n: main.Name, r: main.Race, c: main.Class, _rootId: rootId,
+        a: alts.map(a => withLinks(a.Name, { n: a.Name, r: a.Race, c: a.Class }, a.CharacterId)),
+      }, main.CharacterId),
       main.Active === 1
     );
   }
@@ -168,9 +256,9 @@ function processOpenDkpExport(rawArray) {
   // Orphaned characters (parent not found in export)
   for (const c of orphans) {
     if (c.Rank === ALT_RANK) {
-      addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }), c.Active === 1);
+      addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [], _alt: true }, c.CharacterId), c.Active === 1);
     } else if (RANK_PRIORITY.includes(c.Rank)) {
-      addTo(withQ(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [] }), c.Active === 1);
+      addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [] }, c.CharacterId), c.Active === 1);
     }
     // UNKNOWN rank orphans: already in unknowns list, skip display
   }
@@ -217,14 +305,14 @@ function _buildMemberEmbeds(roster) {
 
   for (const [cls, chars] of _groupByClass(mains)) {
     const lines = [`**— Mains: ${cls} (${chars.length}) —**`];
-for (const m of chars) lines.push(`${_fmt(m.n, m.q)} *(${m.r})*`);
+    for (const m of chars) lines.push(`${_fmt(m.n, m.q)} *(${m.r})*`);
     descs.push(lines.join('\n'));
   }
 
   for (const [cls, chars] of _groupByClass(allAlts)) {
     const lines = [`**— Alts: ${cls} (${chars.length}) —**`];
     for (const a of chars) {
-lines.push(`${_fmt(a.n, a.q)} *(${a.r})*${a._main ? ` · *${a._main}*` : ''}`);
+      lines.push(`${_fmt(a.n, a.q)} *(${a.r})*${a._main ? ` · *${a._main}*` : ''}`);
     }
     descs.push(lines.join('\n'));
   }
@@ -249,93 +337,59 @@ function _chunkJson(roster) {
 }
 
 // ── Discord persistence ───────────────────────────────────────────────────────
-// editInPlace=true: edit existing messages in place (no new send → no notifications).
-// editInPlace=false (default): delete-and-repost (used for full imports).
-async function saveRosterToThread(client, roster, threadId, headerTitle, membersTitle, dataTitle, importerName, importedAt, editInPlace = false) {
+async function saveRosterToThread(client, roster, threadId, headerTitle, membersTitle, dataTitle, importerName, importedAt) {
   if (!threadId) return;
   try {
     const thread = await client.channels.fetch(threadId);
+
+    // Delete all previous bot messages
     const msgs = await thread.messages.fetch({ limit: 100 });
+    for (const msg of msgs.values()) {
+      if (msg.author.id !== client.user.id) continue;
+      const t = msg.embeds[0]?.title;
+      if (t === headerTitle || t === membersTitle || t === dataTitle) await msg.delete().catch(() => {});
+    }
 
     const { mainCount, altCount } = _rosterCounts(roster);
     const importTs = importedAt ? `<t:${Math.floor(importedAt.getTime() / 1000)}:F>` : 'unknown';
+
+    // 1. Header
+    await thread.send({ embeds: [
+      new EmbedBuilder()
+        .setTitle(headerTitle)
+        .setColor(0x5865f2)
+        .setDescription('Character roster for Wolf Pack EQ. Imported from OpenDKP.')
+        .addFields(
+          { name: 'Mains', value: String(mainCount), inline: true },
+          { name: 'Alts',  value: String(altCount),  inline: true },
+          { name: 'Last Imported', value: `By **${importerName || 'unknown'}** on ${importTs}`, inline: false },
+        )
+        .setTimestamp(importedAt || undefined),
+    ]});
+
+    // 2. One message per class (mains then alts)
     const classDescs = _buildMemberEmbeds(roster);
+    for (let i = 0; i < classDescs.length; i++) {
+      await thread.send({ embeds: [
+        new EmbedBuilder()
+          .setTitle(membersTitle)
+          .setColor(0x5865f2)
+          .setDescription(classDescs[i])
+          .setFooter({ text: `${i + 1}/${classDescs.length}` }),
+      ]});
+    }
+
+    // 3. JSON data chunks (for bot reload)
     const dataChunks = _chunkJson(roster);
-
-    const _headerEmbed = () => new EmbedBuilder()
-      .setTitle(headerTitle)
-      .setColor(0x5865f2)
-      .setDescription('Character roster for Wolf Pack EQ. Imported from OpenDKP.')
-      .addFields(
-        { name: 'Mains', value: String(mainCount), inline: true },
-        { name: 'Alts',  value: String(altCount),  inline: true },
-        { name: 'Last Imported', value: `By **${importerName || 'unknown'}** on ${importTs}`, inline: false },
-      )
-      .setTimestamp(importedAt || undefined);
-
-    const _memberEmbed = (i) => new EmbedBuilder()
-      .setTitle(membersTitle)
-      .setColor(0x5865f2)
-      .setDescription(classDescs[i])
-      .setFooter({ text: `${i + 1}/${classDescs.length}` });
-
-    const _dataEmbed = (i) => new EmbedBuilder()
-      .setTitle(dataTitle)
-      .setColor(0x2b2d31)
-      .setDescription(JSON.stringify(dataChunks[i]))
-      .setFooter({ text: `chunk ${i + 1}/${dataChunks.length} · imported by ${importerName || 'unknown'}` })
-      .setTimestamp(importedAt || undefined);
-
-    if (editInPlace) {
-      // Sort oldest-first so indices align with visual order
-      const botMsgs = [...msgs.values()]
-        .filter(m => m.author.id === client.user.id)
-        .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-      const existingHeaders = botMsgs.filter(m => m.embeds[0]?.title === headerTitle);
-      const existingMembers = botMsgs.filter(m => m.embeds[0]?.title === membersTitle);
-      const existingData    = botMsgs.filter(m => m.embeds[0]?.title === dataTitle);
-
-      // Header: edit first, delete extras, send if missing
-      if (existingHeaders.length > 0) {
-        await existingHeaders[0].edit({ embeds: [_headerEmbed()] });
-        for (let i = 1; i < existingHeaders.length; i++) await existingHeaders[i].delete().catch(() => {});
-      } else {
-        await thread.send({ embeds: [_headerEmbed()] });
-      }
-
-      // Member messages: edit / send new / delete extras
-      for (let i = 0; i < Math.max(classDescs.length, existingMembers.length); i++) {
-        if (i < classDescs.length && i < existingMembers.length) {
-          await existingMembers[i].edit({ embeds: [_memberEmbed(i)] });
-        } else if (i < classDescs.length) {
-          await thread.send({ embeds: [_memberEmbed(i)] });
-        } else {
-          await existingMembers[i].delete().catch(() => {});
-        }
-      }
-
-      // Data chunks: edit / send new / delete extras
-      for (let i = 0; i < Math.max(dataChunks.length, existingData.length); i++) {
-        if (i < dataChunks.length && i < existingData.length) {
-          await existingData[i].edit({ embeds: [_dataEmbed(i)] });
-        } else if (i < dataChunks.length) {
-          await thread.send({ embeds: [_dataEmbed(i)] });
-        } else {
-          await existingData[i].delete().catch(() => {});
-        }
-      }
-    } else {
-      // Delete all matching bot messages, then repost fresh
-      for (const msg of msgs.values()) {
-        if (msg.author.id !== client.user.id) continue;
-        const t = msg.embeds[0]?.title;
-        if (t === headerTitle || t === membersTitle || t === dataTitle) await msg.delete().catch(() => {});
-      }
-
-      await thread.send({ embeds: [_headerEmbed()] });
-      for (let i = 0; i < classDescs.length; i++) await thread.send({ embeds: [_memberEmbed(i)] });
-      for (let i = 0; i < dataChunks.length; i++) await thread.send({ embeds: [_dataEmbed(i)] });
+    for (let i = 0; i < dataChunks.length; i++) {
+      await thread.send({ embeds: [
+        new EmbedBuilder()
+          .setTitle(dataTitle)
+          .setColor(0x2b2d31)
+          .setDescription(JSON.stringify(dataChunks[i]))
+          .setFooter({ text: `chunk ${i + 1}/${dataChunks.length} · imported by ${importerName || 'unknown'}` })
+          .setTimestamp(importedAt || undefined),
+      ]});
     }
   } catch (err) {
     console.warn('[roster] Could not save to thread:', err?.message);
@@ -362,13 +416,7 @@ async function loadRosterFromDiscord(client) {
         if (msg.embeds[0]?.title !== dataTitle) continue;
         try { entries.push(...JSON.parse(msg.embeds[0].description)); } catch {}
       }
-      // Deduplicate by name — if Discord thread has multiple message sets
-      // (e.g. from pre-edit-in-place saves), each set contributes the same
-      // entries and we only want one copy. Last occurrence wins so quarmy
-      // links from the most recent save are kept.
-      const seen = new Map();
-      for (const e of entries) seen.set(e.n.toLowerCase(), e);
-      return [...seen.values()];
+      return entries;
     } catch (err) {
       console.warn('[roster] Could not load thread:', err?.message);
       return [];
@@ -383,26 +431,6 @@ async function loadRosterFromDiscord(client) {
   console.log(`[roster] Loaded ${mainCount} mains, ${altCount} alts`);
 }
 
-// Deduplicates in-memory rosters then re-saves (edit-in-place). The save will
-// edit the first message set to contain clean data and delete all extra sets,
-// without sending new messages (no Discord notifications).
-async function deduplicateAndSave(client) {
-  const dedup = (roster) => {
-    const seen = new Map();
-    for (const e of roster) seen.set(e.n.toLowerCase(), e);
-    return [...seen.values()];
-  };
-  const beforeActive   = _active.length;
-  const beforeInactive = _inactive.length;
-  _active   = dedup(_active);
-  _inactive = dedup(_inactive);
-  _buildLookup();
-  const removedActive   = beforeActive   - _active.length;
-  const removedInactive = beforeInactive - _inactive.length;
-  await saveRosters(client);
-  return { removedActive, removedInactive };
-}
-
 function rosterCounts(roster) { return _rosterCounts(roster); }
 
 module.exports = {
@@ -410,9 +438,10 @@ module.exports = {
   loadRosterFromDiscord,
   saveRosterToThread,
   saveRosters,
-  deduplicateAndSave,
   setRosterQuarmyLink,
   clearRosterQuarmyLink,
+  setRosterDkpLink,
+  addCharacterEntry,
   rosterCounts,
   getCharacter,
   getFamily,
