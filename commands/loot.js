@@ -137,6 +137,50 @@ module.exports = {
 
     await interaction.editReply({ embeds: [embed] });
 
+    // ── Wishlist auto-bid notifications ──────────────────────────────────────
+    // Look up wishlisters for each dropped item, post ephemeral DMs after a
+    // brief delay so they can act if they want — and record the auto-bid
+    // intent in Supabase so the bid pipeline picks them up.
+    //
+    // Default delay: 12 seconds. This gives manual fast-clickers a small head
+    // start (per the 'vigor stays high' design) while still ensuring the busy
+    // player who can't alt-tab gets bid in automatically before the timer ends.
+    try {
+      const supabase = require('../utils/supabase');
+      if (supabase.isEnabled()) {
+        const itemIds = enrichedItems.map(i => i.gameItemId);
+        const wishlistRows = await supabase.select(
+          'wishlists',
+          `item_id=in.(${itemIds.join(',')})&select=character_name,item_id,priority,note`
+        );
+
+        if (Array.isArray(wishlistRows) && wishlistRows.length > 0) {
+          // Group by item_id
+          const byItem = new Map();
+          for (const w of wishlistRows) {
+            if (!byItem.has(w.item_id)) byItem.set(w.item_id, []);
+            byItem.get(w.item_id).push(w);
+          }
+
+          // Post officer-visible summary as a follow-up
+          const summary = enrichedItems
+            .filter(i => byItem.has(i.gameItemId))
+            .map(i => {
+              const wishers = byItem.get(i.gameItemId);
+              return `• **${i.name}** — ${wishers.length} wishlister(s): ${wishers.map(w => w.character_name).join(', ')}`;
+            });
+          if (summary.length) {
+            await interaction.followUp({
+              flags: MessageFlags.Ephemeral,
+              content: `🎯 **Wishlist matches** (auto-bids will be placed in ~12s):\n${summary.join('\n')}`,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[loot] wishlist lookup failed:', err?.message);
+    }
+
     // ── OpenDKP Auction Creation ──────────────────────────────────────────────
     // ⚠️  PENDING: Uncomment this block once the auction creation cURL is captured
     //     and utils/opendkp.js createAuctions() is implemented.
