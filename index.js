@@ -2130,13 +2130,25 @@ async function _handleAgentUpload(req, res) {
 
         const mobName    = encounter.boss_name || '? (unidentified mob)';
         const stagingTag = process.env.STAGING_MODE === 'true' ? ' *(staging)*' : '';
-        const TEN_MIN    = 10 * 60 * 1000;
         // Key by slugified mob name so the same mob from multiple parsers shares a card
         const bossKey    = (encounter.boss_name || 'unknown').toLowerCase().replace(/\W+/g, '_');
 
-        // ── Mob card — edit in place when same mob arrives within 10 min ─────
-        const existing      = getAgentTestCard(bossKey);
-        const withinWindow  = existing && (Date.now() - existing.timestamp) < TEN_MIN;
+        // ── Mob card — edit in place only for the SAME KILL ─────────────────
+        // Two parsers seeing the same fight emit encounters with near-identical
+        // ended_at timestamps (both flush on the boss-death event). Two SEPARATE
+        // kills of the same mob have ended_at minutes apart.
+        //
+        // Old logic: any upload of <bossKey> within 10 minutes of the existing
+        // card was treated as a merge target. This wrongly folded e.g. two
+        // back-to-back trash kills into one card. Now we compare encounter
+        // ended_at proximity (90s tolerance for slightly-late-flushing parsers).
+        const SAME_KILL_WINDOW_MS = 90 * 1000;
+        const existing            = getAgentTestCard(bossKey);
+        const existingEndedAt     = existing?.encounterEndedAt || 0;
+        const isSameKill          = existing
+          && existingEndedAt > 0
+          && Math.abs(endedMs - existingEndedAt) < SAME_KILL_WINDOW_MS;
+        const withinWindow        = isSameKill;
 
         let mergedPlayers, perspectives, newDuration, newTotalDamage, newTotalDps;
 
@@ -2181,22 +2193,27 @@ async function _handleAgentUpload(req, res) {
             const existingMsg = await testThread.messages.fetch(existing.messageId);
             await existingMsg.edit({ embeds: [card] });
             setAgentTestCard(bossKey, {
-              messageId:   existing.messageId,
-              timestamp:   existing.timestamp, // keep original window start
+              messageId:        existing.messageId,
+              timestamp:        existing.timestamp, // keep original window start
+              encounterEndedAt: Math.max(existingEndedAt, endedMs),
               perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
             });
           } catch {
             // Message gone — post fresh card
             const sent = await testThread.send({ embeds: [card] });
             setAgentTestCard(bossKey, {
-              messageId: sent.id, timestamp: Date.now(),
+              messageId:        sent.id,
+              timestamp:        Date.now(),
+              encounterEndedAt: endedMs,
               perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
             });
           }
         } else {
           const sent = await testThread.send({ embeds: [card] });
           setAgentTestCard(bossKey, {
-            messageId: sent.id, timestamp: Date.now(),
+            messageId:        sent.id,
+            timestamp:        Date.now(),
+            encounterEndedAt: endedMs,
             perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
           });
         }
