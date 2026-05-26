@@ -291,44 +291,45 @@ def draw_features(draw, frame):
     eye_pulse = pulse(frame, speed=0.7, lo=0.55, hi=1.0)
     tx = 325
 
-    # ── section: Parser ───────────────────────────────────────────────────────
+    # ── section: Lockout → Timers (headline feature) ──────────────────────────
     y = 78
-    draw.text((tx, y), "⚙  PARSE TRACKING", font=FONT_TITLE,
+    draw.text((tx, y), "⏱  LOCKOUT → LIVE TIMERS", font=FONT_TITLE,
               fill=lc(GOLD_DIM, GOLD, eye_pulse))
     y += 22
     lines = [
-        "Multi-player submissions auto-merge into one",
-        "encounter — no matter who submits first.",
-        "Boss auto-detected from the EQLogParser header.",
-        "Coverage bar shows how complete the picture is.",
+        "Paste #showlootlockouts → /sll reads every line,",
+        "matches the boss, and sets exact respawn timers",
+        "for the whole raid in one shot. On Quarm, lockout",
+        "remaining = respawn remaining. No guessing.",
     ]
     for ln in lines:
         draw.text((tx+6, y), ln, font=FONT_BODY, fill=LIGHT_GRAY)
         y += 17
 
-    # ── section: Parser streaming ─────────────────────────────────────────────
+    # ── section: Parser ───────────────────────────────────────────────────────
     y += 8
-    draw.text((tx, y), "⚡  LIVE LOG STREAMING", font=FONT_TITLE,
+    draw.text((tx, y), "⚙  FULL GUILD DPS PICTURE", font=FONT_TITLE,
               fill=lc(GOLD_DIM, GOLD, eye_pulse))
     y += 22
     lines2 = [
-        "Parser.bat watches every active character log",
-        "at once — no character picking, no setup each",
-        "raid night. Installs itself into your EQ folder",
-        "(already Defender-excluded). Auto-starts on login.",
+        "Multiple EQLogParser submissions auto-merge into",
+        "one encounter — whoever submits, it combines.",
+        "Boss auto-detected. Coverage bar shows what %",
+        "of the raid is accounted for across all parses.",
     ]
     for ln in lines2:
         draw.text((tx+6, y), ln, font=FONT_BODY, fill=LIGHT_GRAY)
         y += 17
 
-    # ── section: Timer recovery ────────────────────────────────────────────────
+    # ── section: Live streaming ────────────────────────────────────────────────
     y += 8
-    draw.text((tx, y), "⏱  LOCKOUT TIMER SYNC", font=FONT_TITLE,
+    draw.text((tx, y), "⚡  LIVE LOG STREAMING", font=FONT_TITLE,
               fill=lc(GOLD_DIM, GOLD, eye_pulse))
     y += 22
     lines3 = [
-        "Paste #showlootlockouts → /sll computes every",
-        "nextSpawn time and applies them all at once.",
+        "Parser.bat watches every active character log at",
+        "once. Installs to your EQ folder (Defender-safe),",
+        "auto-starts on Windows login. No config per raid.",
     ]
     for ln in lines3:
         draw.text((tx+6, y), ln, font=FONT_BODY, fill=LIGHT_GRAY)
@@ -339,9 +340,8 @@ def draw_features(draw, frame):
     draw.text((tx, y), "🔬  ON DECK — v2.1", font=FONT_TITLE, fill=GRAY)
     y += 20
     boring = [
-        "Direct Quarm DB integration via wolfpack-logsync",
-        "EQMacEmu NPC tables → richer boss data, no scraping",
-        "OpenDKP bid/award API  ·  Sealed wishlist auctions",
+        "In-raid /bid · /award via OpenDKP auction API",
+        "EQMacEmu DB sync → richer boss data, no scraping",
     ]
     for ln in boring:
         draw.text((tx+6, y), "·  " + ln, font=FONT_SMALL, fill=DARK_GRAY)
@@ -395,7 +395,7 @@ def draw_footer(draw, frame):
     tag = "Project Quarm  ·  Wolf Pack EQ"
     bb2 = draw.textbbox((0,0), tag, font=FONT_SMALL)
     draw.text((W - (bb2[2]-bb2[0]) - 18, fy),    tag, font=FONT_SMALL, fill=GRAY)
-    draw.text((W - 148, fy+15), "discord.gg/rtzZNxxT3", font=FONT_SMALL, fill=DARK_GRAY)
+    draw.text((W - 162, fy+15), "tinyurl.com/WolfPackEQ", font=FONT_SMALL, fill=DARK_GRAY)
 
 # ── Robot label ───────────────────────────────────────────────────────────────
 def draw_robot_label(draw, frame):
