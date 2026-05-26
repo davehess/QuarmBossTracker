@@ -7,7 +7,7 @@ Two-robot layout: rusty v1.4 (left) vs shiny v2.0 (right)
 import math, os, random
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-W, H      = 860, 540
+W, H      = 680, 545
 FRAMES    = 36
 FRAME_MS  = 65
 
@@ -78,20 +78,20 @@ def load_mono(size):
             return ImageFont.truetype(p, size)
     return ImageFont.load_default()
 
-FONT_EPIC   = load_font(46, bold=True)
-FONT_TITLE  = load_font(15, bold=True)
-FONT_BODY   = load_font(13)
-FONT_BODY_B = load_font(13, bold=True)
-FONT_SMALL  = load_font(11)
-FONT_MONO   = load_mono(11)
+FONT_EPIC   = load_font(44, bold=True)
+FONT_TITLE  = load_font(17, bold=True)
+FONT_BODY   = load_font(15)
+FONT_BODY_B = load_font(15, bold=True)
+FONT_SMALL  = load_font(13)
+FONT_MONO   = load_mono(13)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def star_field(draw, seed=42):
     rng = random.Random(seed)
-    for _ in range(130):
+    for _ in range(55):
         x = rng.randint(0, W); y = rng.randint(0, H)
-        b = rng.randint(50, 140); r = rng.choice([1,1,1,2])
-        draw.ellipse([x-r,y-r,x+r,y+r], fill=(b,b,b+15))
+        b = rng.randint(28, 70); r = 1
+        draw.ellipse([x-r,y-r,x+r,y+r], fill=(b,b,b+10))
 
 def glow_blit(img, draw, text, xy, font, fill, glow_col, radius=5):
     layer = Image.new("RGBA", img.size, (0,0,0,0))
@@ -371,13 +371,19 @@ def draw_header(img, draw, frame):
     return ImageDraw.Draw(img)
 
 # ── Left column: OLD AND BUSTED ───────────────────────────────────────────────
-def draw_left_col(draw, frame):
-    tx  = 18
-    mid = W//2 - 12   # right edge of left column
-    y   = 70
+def draw_left_col(img, draw, frame):
+    tx = 14
+    y  = 70
 
-    strikethrough(draw, "  OLD AND BUSTED", (tx, y), FONT_TITLE, RED_MED)
-    y += 24
+    # dark panel behind text
+    panel = Image.new("RGBA", img.size, (0,0,0,0))
+    pd    = ImageDraw.Draw(panel)
+    pd.rectangle([tx-2, y-4, W//2-6, y+105], fill=(0,0,0,110))
+    img.paste(Image.alpha_composite(img.convert("RGBA"), panel).convert("RGB"), (0,0))
+    draw = ImageDraw.Draw(img)
+
+    strikethrough(draw, "  OLD AND BUSTED", (tx, y), FONT_TITLE, (210,80,80))
+    y += 26
 
     busted = [
         ("✗", "Manual paste — miss it, you don't exist"),
@@ -385,25 +391,33 @@ def draw_left_col(draw, frame):
         ("✗", "Timers guessed, never exact"),
     ]
     for icon, txt in busted:
-        draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=RED_MED)
-        draw.text((tx+20, y), txt,  font=FONT_BODY,   fill=(130,100,100))
-        y += 19
+        draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=(220,90,90))
+        draw.text((tx+22, y), txt,  font=FONT_BODY,   fill=(175,135,130))
+        y += 21
 
     # v1.4 label under robot
     lbl = "v1.4  @RaidBosses"
     bb  = draw.textbbox((0,0),lbl,font=FONT_SMALL)
-    lx  = (W//4) - (bb[2]-bb[0])//2
-    draw.text((lx, H-98), lbl, font=FONT_SMALL, fill=GRAY)
+    lx  = (W//4+10) - (bb[2]-bb[0])//2
+    draw.text((lx, H-100), lbl, font=FONT_SMALL, fill=GRAY)
+    return draw
 
 # ── Right column: NEW HOTNESS ─────────────────────────────────────────────────
-def draw_right_col(draw, frame):
+def draw_right_col(img, draw, frame):
     ep  = pulse(frame, speed=0.5, lo=0.6, hi=1.0)
-    ep2 = pulse(frame, speed=0.7, lo=0.55, hi=1.0)
-    tx  = W//2 + 12
+    ep2 = pulse(frame, speed=0.7, lo=0.6, hi=1.0)
+    tx  = W//2 + 10
     y   = 70
 
+    # dark panel behind text
+    panel = Image.new("RGBA", img.size, (0,0,0,0))
+    pd    = ImageDraw.Draw(panel)
+    pd.rectangle([tx-2, y-4, W-8, y+105], fill=(0,0,0,110))
+    img.paste(Image.alpha_composite(img.convert("RGBA"), panel).convert("RGB"), (0,0))
+    draw = ImageDraw.Draw(img)
+
     draw.text((tx, y), "  NEW HOTNESS", font=FONT_TITLE, fill=lc(GOLD_DIM,GOLD,ep))
-    y += 24
+    y += 26
 
     hotness = [
         ("✓", "Log streams live — zero action needed"),
@@ -412,48 +426,40 @@ def draw_right_col(draw, frame):
     ]
     for icon, txt in hotness:
         draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=lc(GREEN_DIM,GREEN_MED,ep2))
-        draw.text((tx+20, y), txt,  font=FONT_BODY,   fill=LIGHT_GRAY)
-        y += 19
+        draw.text((tx+22, y), txt,  font=FONT_BODY,   fill=OFF_WHITE)
+        y += 21
 
     # v2.0 label under robot
     lbl = "v2.0  @RaidBosses"
     bb  = draw.textbbox((0,0),lbl,font=FONT_SMALL)
-    lx  = (W*3//4) - (bb[2]-bb[0])//2
-    draw.text((lx, H-98), lbl, font=FONT_SMALL, fill=lc(TEAL_DIM,TEAL,ep))
+    lx  = (W*3//4-10) - (bb[2]-bb[0])//2
+    draw.text((lx, H-100), lbl, font=FONT_SMALL, fill=lc(TEAL_DIM,TEAL,ep))
+    return draw
 
 # ── Tagline ───────────────────────────────────────────────────────────────────
 def draw_tagline(draw, frame):
     ep  = pulse(frame, speed=0.45, lo=0.6, hi=1.0)
     tag = "Help the Pack see your full contribution!"
-    bb  = draw.textbbox((0,0),tag,font=FONT_BODY_B)
+    bb  = draw.textbbox((0,0),tag,font=FONT_TITLE)
     tw  = bb[2]-bb[0]
     tx  = (W-tw)//2
-    ty  = H - 112
-    draw.text((tx+1,ty+1), tag, font=FONT_BODY_B, fill=GOLD_DARK)
-    draw.text((tx,ty),     tag, font=FONT_BODY_B, fill=lc(GOLD_DIM,GOLD,ep))
+    ty  = H - 116
+    draw.text((tx+1,ty+1), tag, font=FONT_TITLE, fill=GOLD_DARK)
+    draw.text((tx,ty),     tag, font=FONT_TITLE, fill=lc(GOLD_DIM,GOLD,ep))
 
 # ── Bottom strip ──────────────────────────────────────────────────────────────
 def draw_bottom_strip(draw, frame):
     ep = pulse(frame, speed=0.5, lo=0.5, hi=1.0)
-    y  = H - 88
+    y  = H - 94
 
-    draw.line([18, y, W-18, y], fill=DIVIDER, width=1)
-    y += 8
+    draw.line([14, y, W-14, y], fill=DIVIDER, width=1)
+    y += 7
 
-    # left: lockout timers
-    draw.text((18, y), "⏱", font=FONT_BODY_B, fill=lc(GOLD_DIM,GOLD,ep))
-    draw.text((34, y), "Paste #showlootlockouts  →  /sll sets every boss timer in one shot",
+    draw.text((14, y), "⏱", font=FONT_BODY_B, fill=lc(GOLD_DIM,GOLD,ep))
+    draw.text((32, y), "/sll — paste #showlootlockouts, sets every respawn timer instantly",
               font=FONT_SMALL, fill=LIGHT_GRAY)
     y += 17
-    draw.text((34, y), "Lockout remaining = respawn remaining on Quarm. Always exact.",
-              font=FONT_SMALL, fill=GRAY)
-
-    # right half: on deck
-    tx = W//2 + 18
-    y  = H - 88 + 9
-    draw.text((tx, y), "🔬  On deck — v2.1:", font=FONT_SMALL, fill=DARK_GRAY)
-    y += 16
-    draw.text((tx, y), "In-raid /bid · /award  ·  EQMacEmu DB sync",
+    draw.text((32, y), "🔬  On deck v2.1:  /bid · /award  ·  EQMacEmu DB sync",
               font=FONT_SMALL, fill=DARK_GRAY)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
@@ -483,11 +489,11 @@ def render_frame(f):
     draw_background(img, draw)
     draw = draw_header(img, draw, f)
 
-    draw = draw_robot(img, draw, f, cx=W//4,   cy=290, s=0.80, style='rusty')
-    draw = draw_robot(img, draw, f, cx=W*3//4, cy=290, s=0.80, style='shiny')
+    draw = draw_robot(img, draw, f, cx=W//4+10,   cy=295, s=1.02, style='rusty')
+    draw = draw_robot(img, draw, f, cx=W*3//4-10, cy=295, s=1.02, style='shiny')
 
-    draw_left_col(draw, f)
-    draw_right_col(draw, f)
+    draw = draw_left_col(img, draw, f)
+    draw = draw_right_col(img, draw, f)
     draw_tagline(draw, f)
     draw_bottom_strip(draw, f)
     draw_footer(draw, f)
