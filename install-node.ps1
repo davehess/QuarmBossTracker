@@ -2,12 +2,10 @@
 # Right-click → "Run with PowerShell"  (self-elevates via UAC if needed)
 
 # ── Self-elevate if not already running as Administrator ──────────────────────
-if (-not ([Security.Principal.WindowsPrincipal]
-          [Security.Principal.WindowsIdentity]::GetCurrent()
-         ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell.exe `
-        -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
-        -Verb RunAs
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    $self = $MyInvocation.MyCommand.Path
+    Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$self`"" -Verb RunAs
     exit
 }
 
