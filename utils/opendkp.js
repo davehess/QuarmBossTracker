@@ -341,8 +341,54 @@ async function updateRaid(payload) {
   }, body);
 }
 
+// POST /clients/{name}/raids/{raidId} — save the full raid record.
+// Captured cURL (2026-05-26): used by the "Edit Raid" UI to save items, ticks,
+// attendance, and metadata in one shot. This is the path for awarding loot
+// manually (charge a character DKP for an item awarded outside the auction
+// flow — common when bids happened in-game on /ooc and an officer needs to
+// record the transaction).
+//
+// Full body shape:
+//   {
+//     "RaidId":     96336,
+//     "ClientId":   "8fa8662b40c12",
+//     "Name":       "Test Raid",
+//     "Timestamp":  "2026-05-26T12:00:00.000Z",
+//     "Attendance": 1,
+//     "Version":    3,
+//     "Pool":       {"PoolId":5, "Description":"Shadows of Luclin", "Name":"SoL", "Order":3},
+//     "Items":      [{
+//       "ItemId":         17005,
+//       "ItemName":       "Backpack",
+//       "CharacterName":  "Hitya",       (NB: name not id — server resolves)
+//       "Dkp":            1,
+//       "Notes":          "free-form",
+//       "GameItemId":     17005
+//     }],
+//     "Ticks":      [{
+//       "TickId":      575429,
+//       "Value":       5,
+//       "Description": "Tick 1 (Raid Start)",
+//       "Characters":  [<characterId>, ...]   (empty = no attendance change)
+//     }]
+//   }
+//
+// Distinct from updateRaid() which posts to the legacy /beta/raids endpoint;
+// both backends accept full-raid payloads but the /clients/ path is the one
+// the new Bidding Tool UI uses and is preferred for new code.
+async function updateRaidById(raidId, raidObject) {
+  if (!raidId) throw new Error('updateRaidById: raidId is required');
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(raidObject);
+  return _post({
+    ..._clientUrl(`/raids/${raidId}`),
+    method: 'POST',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
 module.exports = {
-  getRaids, getRaid, createRaid, updateRaid,
+  getRaids, getRaid, createRaid, updateRaid, updateRaidById,
   getCharacters, createCharacter,
   createAuctions, getAuctions, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
