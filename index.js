@@ -1720,6 +1720,26 @@ function scheduleMidnightSummary(readyClient) {
       // ── Consolidate nightly parses ───────────────────────────────────────
       await consolidateNightlyParses(readyClient).catch(console.error);
 
+      // ── Compact Supabase contributions (null out raw_parse blobs > 7 days) ─
+      // encounter_players already holds the merged per-player totals permanently.
+      // The contributions.raw_parse JSONB blobs are only needed for debugging
+      // recent encounters; after 7 days they're just storage cost with no query value.
+      // combat_events is intentionally not written to (schema exists for future use).
+      try {
+        const supabase = require('./utils/supabase');
+        if (supabase.isEnabled()) {
+          const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          const result = await supabase.update(
+            'contributions',
+            `created_at=lt.${encodeURIComponent(cutoff)}&raw_parse=not.is.null`,
+            { raw_parse: null },
+          );
+          console.log('[midnight] compacted contributions.raw_parse older than 7 days');
+        }
+      } catch (err) {
+        console.warn('[midnight] contribution compaction skipped:', err?.message);
+      }
+
       console.log('✅ Midnight tasks complete');
     } catch (err) { console.error('Midnight task error:', err); }
     setTimeout(runMidnightTasks, msUntilMidnightEST());
@@ -2005,12 +2025,20 @@ async function _handleAgentUpload(req, res) {
   // Filter out noise before aggregating:
   //   - "Eye of PLAYERNAME" — wizard/mage scout pets that attack your target (not player DPS)
   //   - Cannibalize self-hits — shaman HP→mana conversion logged as self-damage
+  //
+  // IMPORTANT: events from the uploading character's OWN perspective (melee, spells,
+  // DoTs, archery) are parsed by the agent as attacker=null ("self / first person").
+  // We re-attribute those to `character` so their damage isn't silently dropped.
   const playerTotals = new Map();
   for (const ev of encounter.events) {
-    if (ev.type !== 'damage' || !ev.attacker) continue;
-    if (/^Eye of /i.test(ev.attacker)) continue;                                         // skip Eye of X pets
-    if (ev.spell && /cannibali[sz]e/i.test(ev.spell) && ev.attacker === ev.target) continue; // skip self-cannibalizes
-    playerTotals.set(ev.attacker, (playerTotals.get(ev.attacker) || 0) + (ev.amount || 0));
+    if (ev.type !== 'damage') continue;
+    const rawAttacker = ev.attacker;
+    // Re-attribute first-person (null) events to the uploading character
+    const attacker = rawAttacker ?? character ?? null;
+    if (!attacker) continue;
+    if (/^Eye of /i.test(attacker)) continue;                                                    // skip Eye of X pets
+    if (ev.spell && /cannibali[sz]e/i.test(ev.spell) && rawAttacker === ev.target) continue;    // skip self-cannibalizes
+    playerTotals.set(attacker, (playerTotals.get(attacker) || 0) + (ev.amount || 0));
   }
   const startedMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
   const endedMs   = encounter.ended_at   ? new Date(encounter.ended_at).getTime()   : startedMs;

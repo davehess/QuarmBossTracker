@@ -247,6 +247,14 @@ function parseEvent(line, ts) {
   //
   // The alternation includes BOTH base forms and -s/-es third-person forms
   // because "Klickbate crushes" and "You crush" are both valid log lines.
+  //
+  // Ranged weapons (archery / throwing):
+  //   "Soandso shoots Lord Nagafen for 245 points of damage."  → shoots
+  //   "You throw a dagger at Nagafen for 112 points of damage." → throws (rare)
+  //   "You fire an arrow at Nagafen for ..." → fires (some server variants)
+  // These were previously caught by KEEP_PATTERNS (matched for \d+ points of damage)
+  // but parseEvent returned null because the verbs weren't in this list, causing
+  // Ranger bow damage to be silently dropped.
   const ATTACK_VERBS_RX =
     '(?:hits?|slashes?|crushes?|pierces?|punches?|kicks?|bashes?|backstabs?|' +
     'bites?|claws?|gores?|mauls?|slams?|smashes?|pecks?|gnaws?|stings?|' +
@@ -255,7 +263,8 @@ function parseEvent(line, ts) {
     'jabs?|strikes?|chops?|slices?|hacks?|thrusts?|gouges?|lashes?|' +
     'sweeps?|slashes?|stabs?|raps?|smites?|bludgeons?|crunches?|nicks?|' +
     'slices?|stomps?|tail-slaps?|tail-swipes?|tail-thrashes?|' +
-    'hit|slash|crush|pierce|punch|kick|bash|backstab)';  // bare past-tense fallback
+    'shoots?|fires?|throws?|flings?|' +                   // ranged: archery, throwing
+    'hit|slash|crush|pierce|punch|kick|bash|backstab)';   // bare past-tense fallback
 
   // "You <verb> X for N points of damage." (player attacking, second-person)
   m = line.match(new RegExp(`\\]\\s+You\\s+${ATTACK_VERBS_RX}\\s+(.+?)\\s+for\\s+(\\d+)(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+(?:non-melee\\s+)?damage`, 'i'));
