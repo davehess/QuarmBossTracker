@@ -450,23 +450,23 @@ def draw_bottom_strip(draw, frame):
     draw.line([14, y, W-14, y], fill=DIVIDER, width=1)
     y += 5
 
-    # "Upcoming in v2.1" dim label
-    draw.text((14, y), "Upcoming in v2.1:", font=FONT_MONO, fill=(68, 68, 90))
+    # "New in v2.1" dim label
+    draw.text((14, y), "New in v2.1:", font=FONT_MONO, fill=(68, 68, 90))
     y += 17
 
-    # /register
-    draw.text((14, y), "/register", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
-    bb = draw.textbbox((0,0), "/register", font=FONT_BODY_B)
+    # auto-kills
+    draw.text((14, y), "Auto-kills", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
+    bb = draw.textbbox((0,0), "Auto-kills", font=FONT_BODY_B)
     x2 = 14 + bb[2] - bb[0] + 8
-    draw.text((x2, y), "— Add your character to OpenDKP straight from Discord",
+    draw.text((x2, y), "— Parser uploads start the respawn timer for you",
               font=FONT_BODY, fill=LIGHT_GRAY)
     y += 20
 
-    # /wishlist
-    draw.text((14, y), "/wishlist", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep2))
-    bb2 = draw.textbbox((0,0), "/wishlist", font=FONT_BODY_B)
+    # /parsestats
+    draw.text((14, y), "/parsestats", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep2))
+    bb2 = draw.textbbox((0,0), "/parsestats", font=FONT_BODY_B)
     x3  = 14 + bb2[2] - bb2[0] + 8
-    draw.text((x3, y), "— Build your BIS list and link your Quarmy profile",
+    draw.text((x3, y), "— Now shows every parse the agent uploads",
               font=FONT_BODY, fill=LIGHT_GRAY)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
@@ -477,7 +477,7 @@ def draw_footer(draw, frame):
     draw.text((18, fy),    "@RaidBosses", font=FONT_BODY_B, fill=lc(TEAL_DIM,TEAL,ep))
     draw.text((18, fy+15), "Quarm Raid Timer Bot", font=FONT_SMALL, fill=DARK_GRAY)
 
-    ver = "v2.0.4  —  PARSER UPDATE"
+    ver = "v2.1.0  —  AUTO TIMERS"
     bb  = draw.textbbox((0,0),ver,font=FONT_BODY_B)
     vx  = (W-(bb[2]-bb[0]))//2
     draw.rectangle([vx-8,fy-2,vx+(bb[2]-bb[0])+8,fy+16], fill=(20,20,40))
