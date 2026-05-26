@@ -43,7 +43,8 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GUILD_ID     = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 const DUMP_OVERRIDE = process.env.DUMP_URL_OVERRIDE || '';
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
+// Env vars only required when running the sync (not when required as a module by tests)
+if (require.main === module && (!SUPABASE_URL || !SUPABASE_KEY)) {
   console.error('❌ SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY required');
   process.exit(1);
 }
@@ -256,8 +257,13 @@ function* splitTuples(valuesStr) {
     if (valuesStr[i] !== '(') break;
     i++; // consume (
 
-    const fields = [];
+    // Track each field as either bare (NULL / number / bareword) or quoted
+    // (always a string, even if the contents look numeric or empty). Without
+    // this, a spawngroup name of '159183' coerces to the integer 159183 and
+    // an empty quoted name '' coerces to NULL → NOT NULL violation.
+    const fields = []; // [{val, quoted}]
     let field = '';
+    let fieldQuoted = false;
     let inStr = false;
     let strChar = '';
     let depth = 1;
@@ -291,6 +297,7 @@ function* splitTuples(valuesStr) {
       // Not in a string
       if (ch === "'" || ch === '"') {
         inStr = true;
+        fieldQuoted = true;
         strChar = ch;
         i++;
         continue;
@@ -302,22 +309,23 @@ function* splitTuples(valuesStr) {
         field += ch; i++; continue;
       }
       if (ch === ',') {
-        fields.push(field.trim());
+        fields.push({ val: field.trim(), quoted: fieldQuoted });
         field = '';
+        fieldQuoted = false;
         i++;
         continue;
       }
       field += ch;
       i++;
     }
-    if (field.length || fields.length) fields.push(field.trim());
+    if (field.length || fields.length || fieldQuoted) {
+      fields.push({ val: field.trim(), quoted: fieldQuoted });
+    }
 
-    // Coerce values: 'NULL' → null, numeric strings → number, quoted strings → as-is.
-    // Belt-and-suspenders: strip U+0000 from any remaining string. The escape
-    // handler above already drops mysql \0 sequences, so this is defensive
-    // against any null byte that sneaks in via another path. Postgres text
-    // columns reject null bytes (22P05).
-    yield fields.map(f => {
+    // Coerce. Quoted → always string (strip null bytes per 22P05). Bare →
+    // 'NULL' → null, numeric → number, anything else → string.
+    yield fields.map(({ val: f, quoted }) => {
+      if (quoted) return f.replace(/\u0000/g, '');
       if (f === 'NULL' || f === '') return null;
       if (/^-?\d+$/.test(f)) return parseInt(f, 10);
       if (/^-?\d*\.\d+$/.test(f)) return parseFloat(f);
@@ -475,6 +483,12 @@ const PK_MAP = {
   eqemu_spawnentry:        ['spawngroup_id', 'npc_id'],
   eqemu_spawn2:            ['id'],
 };
+
+// ── Exports for tests ───────────────────────────────────────────────────────
+module.exports = { iterInserts, splitTuples, pick, toBool, TRANSFORMS, WHITELIST, PK_MAP };
+
+// Skip the IIFE when this file is loaded as a module (e.g. by test-sync-parser.js)
+if (require.main !== module) return;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 (async () => {
