@@ -312,11 +312,13 @@ if ($isFirstRun -and -not $alreadyInEqDir) {
 }
 
 # ── Bot URL ───────────────────────────────────────────────────────────────────
+$DefaultBotUrl = "https://wolfpackparse.up.railway.app/api/agent/encounter"
 if (-not $cfg.BotUrl) {
     Write-Host ""
-    Write-Host "  Bot upload URL -- ask an officer for this." -ForegroundColor White
-    Write-Host "  Example: https://wolfpackparse.up.railway.app/api/agent/encounter" -ForegroundColor DarkGray
-    $cfg.BotUrl = (Read-Host "  Bot URL").Trim()
+    Write-Host "  Bot upload URL" -ForegroundColor White
+    Write-Host "  Default: $DefaultBotUrl" -ForegroundColor DarkGray
+    $entered = (Read-Host "  Bot URL (press Enter to use default)").Trim()
+    $cfg.BotUrl = if ($entered) { $entered } else { $DefaultBotUrl }
 }
 
 # ── Token ─────────────────────────────────────────────────────────────────────
