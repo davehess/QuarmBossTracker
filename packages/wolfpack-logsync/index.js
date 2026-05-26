@@ -157,6 +157,21 @@ const DEFAULT_DROP_PATTERNS = [
   /^\[.+\]\s+Welcome to /i,
   /^\[.+\]\s+MESSAGE OF THE DAY/i,
   /^\[.+\]\s+Autojoining channels/i,
+
+  // Item self-damage — HP→mana conversions and similar clicky effects.
+  // These show up as "You have taken N points of damage" with a flavour text prefix.
+  // They are NOT combat events; dropping them prevents them from inflating totals or
+  // being misidentified as DoT ticks on the player.
+  //
+  //   Manastone / Manarobe (Manaconvert):
+  //     "You feel your life force draining into your mind. You have taken 60 points of damage."
+  /you feel your life force draining into your mind/i,
+  //
+  //   Generic "You have taken N points of damage" — catches all remaining flavours
+  //   (diseased, cursed, other item procs that deal self-damage for a benefit).
+  //   Note: NPC DoT ticks say "X has taken N" (third person), so this first-person
+  //   form is safe to drop without losing any mob-damage data.
+  /\byou have taken \d+ points? of damage/i,
 ];
 
 // Lines we KEEP (positive list — combat events). Anything not matching here
