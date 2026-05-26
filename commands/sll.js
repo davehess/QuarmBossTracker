@@ -17,8 +17,10 @@
 //   3. Copy-paste those lines into the Discord /sll command
 //
 // EXAMPLE INPUT (any of these formats work):
+//   [Mon May 25 23:06:25 2026] == Lord Feshlak: Expires in 5 Days, 18 Hours, 13 Minutes, and 48 Seconds
+//   [Mon May 25 23:06:25 2026] == Lord of Ire: Available            ← skipped (no timer)
+//   [Mon May 25 23:06:25 2026] === Current Loot Lockouts ===        ← skipped (header)
 //   Vex Thal - 2 Days, 14 Hours, 22 Minutes, 5 Seconds Remaining
-//   [Mon May 26 21:00:00 2026] Ssraeshza Temple - 1 Day, 2 Hours, 14 Minutes Remaining
 //   You have a lockout for the instance of Acrylia Caverns - 3 Days 6 Hours
 //   Aten Ha Ra: 2d14h22m
 //
@@ -54,6 +56,7 @@ function parseLockoutLine(raw) {
   const cleaned = stripped
     .replace(/^You have a lockout (?:for )?(?:on )?(?:the instance of )?/i, '')
     .replace(/^Loot Lockout:\s*/i, '')
+    .replace(/^=+\s*/, '')          // strip == / === prefix from #showlootlockouts output
     .trim();
 
   // Split on common delimiters between name and time:
@@ -78,20 +81,34 @@ function parseLockoutLine(raw) {
 }
 
 // ── Boss matching ─────────────────────────────────────────────────────────────
-// Returns all bosses whose name, nicknames, OR zone matches the label.
+// Tiered match — returns early so a precise tier never gets polluted by a
+// greedy fuzzy tier.  Critically: "Aten Ha Ra" won't grab "Kaas Thox Xi Aten
+// Ha Ra (North)" when both appear as separate SLL entries.
 function matchBosses(label, bosses) {
   const lc = label.toLowerCase().trim();
-  return bosses.filter(b => {
-    if (b.name.toLowerCase() === lc)                                return true;
-    if ((b.nicknames || []).some(n => n.toLowerCase() === lc))      return true;
-    if (b.zone.toLowerCase() === lc)                                return true;
-    // Partial zone match — e.g. "ssraeshza temple" matches "Ssraeshza Temple - Sanctum"
-    if (b.zone.toLowerCase().startsWith(lc))                        return true;
-    if (lc.startsWith(b.zone.toLowerCase()))                        return true;
-    // Partial boss name match (generous — the SLL output might abbreviate)
-    if (b.name.toLowerCase().includes(lc) || lc.includes(b.name.toLowerCase())) return true;
-    return false;
-  });
+
+  // Tier 1 — exact boss name or nickname
+  const t1 = bosses.filter(b =>
+    b.name.toLowerCase() === lc ||
+    (b.nicknames || []).some(n => n.toLowerCase() === lc)
+  );
+  if (t1.length) return t1;
+
+  // Tier 2 — exact zone name (one entry covers all bosses in that zone)
+  const t2 = bosses.filter(b => b.zone.toLowerCase() === lc);
+  if (t2.length) return t2;
+
+  // Tier 3 — zone prefix (abbreviated zone name, e.g. "ssraeshza temple" →
+  //           "Ssraeshza Temple - Sanctum Sanctorum")
+  const t3 = bosses.filter(b =>
+    b.zone.toLowerCase().startsWith(lc) || lc.startsWith(b.zone.toLowerCase())
+  );
+  if (t3.length) return t3;
+
+  // Tier 4 — boss name contains label as substring.  Used when bosses.json
+  //           has "(North)"/"(South)" suffixes but SLL prints the bare name,
+  //           e.g. "Kaas Thox Xi Aten Ha Ra" → matches both variants.
+  return bosses.filter(b => b.name.toLowerCase().includes(lc));
 }
 
 // ── Main execute ─────────────────────────────────────────────────────────────
@@ -129,12 +146,12 @@ module.exports = {
           '❌ Couldn\'t parse any lockout entries from that paste.\n\n' +
           '**Expected formats (any of these work):**\n' +
           '```\n' +
+          '== Lord Feshlak: Expires in 5 Days, 18 Hours, 13 Minutes, and 48 Seconds\n' +
           'Vex Thal - 2 Days, 14 Hours, 22 Minutes Remaining\n' +
           'Ssraeshza Temple - 1 Day, 2 Hours Remaining\n' +
           'Acrylia Caverns - 3d6h\n' +
-          '[Mon May 26 21:00:00 2026] Aten Ha Ra - 2 Days 14 Hours\n' +
           '```\n' +
-          'Make sure each line has a name followed by ` - `, `:`, or `(` and then a time.',
+          'Paste the full output of `#showlootlockouts` — headers and "Available" lines are skipped automatically.',
       });
     }
 
