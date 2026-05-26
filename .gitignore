@@ -20,3 +20,6 @@ raid-tick-*.txt
 npm-debug.log*
 package-lock.json
 dist/
+packages/wolfpack-logsync/logsync.stats.json
+packages/wolfpack-logsync/.last-update-check
+packages/wolfpack-logsync/.force-update-on-restart

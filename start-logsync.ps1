@@ -501,6 +501,15 @@ if (-not $AgentEntry -or -not (Test-Path $AgentEntry)) {
 }
 
 # ── Auto-update the agent (throttled, opt-out via -NoUpdate or config) ───────
+# If the agent dropped a .force-update-on-restart marker (user pressed [U] in
+# the dashboard), force a check this launch and clean the marker afterwards.
+$forceMarker = Join-Path (Split-Path $AgentEntry) ".force-update-on-restart"
+$forceThisRun = Test-Path $forceMarker
+if ($forceThisRun) {
+    Remove-Item $forceMarker -Force -ErrorAction SilentlyContinue
+    $ForceUpdate = $true
+}
+
 # Silent in scheduled-task mode so the task log stays quiet. The agent's own
 # next-launch picks up the new file because we always re-read AgentEntry below.
 $updated = Update-Agent -agentPath $AgentEntry -silent:(-not $IsInteractive)
@@ -510,16 +519,32 @@ if ($updated -and $IsInteractive) {
 }
 
 # ── Build and run node command ────────────────────────────────────────────────
-$nodeArgs = @($AgentEntry)
-foreach ($f in $activeLogs) {
-    $nodeArgs += "--log"
-    $nodeArgs += $f.FullName
-}
-$nodeArgs += "--watch"
-$nodeArgs += "--bot-url"
-$nodeArgs += $cfg.BotUrl
-$nodeArgs += "--token"
-$nodeArgs += $cfg.Token
-if ($DryRun) { $nodeArgs += "--dry-run" }
+# We loop the node invocation so that pressing [U] in the dashboard (which
+# exits node with code 0 after dropping the marker) re-enters this script,
+# applies the update, and relaunches automatically.
+while ($true) {
+    $nodeArgs = @($AgentEntry)
+    foreach ($f in $activeLogs) {
+        $nodeArgs += "--log"
+        $nodeArgs += $f.FullName
+    }
+    $nodeArgs += "--watch"
+    $nodeArgs += "--bot-url"
+    $nodeArgs += $cfg.BotUrl
+    $nodeArgs += "--token"
+    $nodeArgs += $cfg.Token
+    if ($DryRun) { $nodeArgs += "--dry-run" }
 
-& node @nodeArgs
+    & node @nodeArgs
+    $exitCode = $LASTEXITCODE
+
+    # If the agent dropped an update marker, re-run Update-Agent with force and loop.
+    if (Test-Path $forceMarker) {
+        Remove-Item $forceMarker -Force -ErrorAction SilentlyContinue
+        $ForceUpdate = $true
+        Update-Agent -agentPath $AgentEntry -silent:$false | Out-Null
+        Start-Sleep -Milliseconds 500
+        continue
+    }
+    break
+}

@@ -462,6 +462,9 @@ class EncounterBuilder {
     this.lastEvent = event.ts;
     this.events.push(event);
 
+    // Dashboard tracking — sees every parsed damage event, not just uploaded ones
+    try { recordEventForDashboard(event, this.character); } catch {}
+
     // Track damage dealt TO targets — but exclude "YOU" / "you" so player-received
     // damage never inflates a player-name into appearing to be the primary target.
     if (event.type === 'damage' && event.defender && !/^you$/i.test(event.defender)) {
@@ -524,11 +527,303 @@ class EncounterBuilder {
   }
 }
 
+// ── Stats tracker (dashboard backing store) ──────────────────────────────────
+// The agent keeps a single Stats object in memory updated by parseEvent and
+// uploadEncounter. The dashboard renderer reads from it on every redraw.
+//
+// Persistent fields (totalEvents, totalMinutes, etc.) survive across process
+// restarts via logsync.stats.json placed next to the agent index.js.
+const STATS_FILE = path.join(__dirname, 'logsync.stats.json');
+
+const stats = {
+  agentVersion:    AGENT_VERSION,
+  startedAt:       Date.now(),
+  watchedLogs:     [],            // [{character, logPath, lastSeen}]
+  recentParses:    [],            // last 8 uploads: {bossName, eventCount, totalDamage, spellDotDamage, when}
+  topDamageSaw:    [],            // top 5 high-damage events from others
+  topDamageDid:    [],            // top 5 high-damage events from the uploader
+  sessionEvents:   0,             // cumulative events parsed this run
+  uploadCount:     0,
+  uploadErrors:    0,
+  lastUploadAt:    null,
+  lifetime: {                     // persisted across restarts
+    totalEvents:       0,
+    totalMinutes:      0,
+    topSessionEvents:  0,
+    topSessionMinutes: 0,
+    firstSeenAt:       null,
+  },
+};
+
+function loadStats() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+    if (raw.lifetime) Object.assign(stats.lifetime, raw.lifetime);
+  } catch { /* missing or unreadable — keep defaults */ }
+  if (!stats.lifetime.firstSeenAt) stats.lifetime.firstSeenAt = new Date().toISOString();
+}
+
+let _saveTimer = null;
+function saveStatsSoon() {
+  if (_saveTimer) return;
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    try {
+      const sessionMin = Math.round((Date.now() - stats.startedAt) / 60000);
+      if (stats.sessionEvents > stats.lifetime.topSessionEvents) {
+        stats.lifetime.topSessionEvents  = stats.sessionEvents;
+        stats.lifetime.topSessionMinutes = sessionMin;
+      }
+      fs.writeFileSync(STATS_FILE, JSON.stringify({ lifetime: stats.lifetime }, null, 2));
+    } catch { /* non-fatal */ }
+  }, 2000);
+}
+
+// Classify the ability of a damage event for the dashboard's "top damage" lists.
+// Returns one of: 'Melee Crit', 'Spell Crit' (DoT, proc, nuke), or 'Hit'.
+const MELEE_ABILITIES = new Set([
+  'hit','slash','crush','pierce','punch','kick','bash','backstab','bite','claw',
+  'gore','maul','slam','smash','peck','gnaw','sting','trample','snap','stomp',
+  'chomp','swing','tear','rend','spit','swipe','buffet','thrash','mangle',
+  'pummel','whip','tail-whip','jab','strike','chop','slice','hack','thrust',
+  'gouge','lash','sweep','stab','rap','smite','bludgeon','crunch','nick',
+  'tail-slap','tail-swipe','tail-thrash','shoot','fire','throw','fling',
+]);
+function classifyDamage(event) {
+  if (event.ability && /^(non-melee|dot)$/i.test(event.ability)) return 'Spell Crit';
+  if (event.ability && MELEE_ABILITIES.has(String(event.ability).toLowerCase())) return 'Melee Crit';
+  return event.ability ? 'Spell Crit' : 'Hit';
+}
+
+function recordEventForDashboard(event, character) {
+  if (!event || event.type !== 'damage' || !event.amount) return;
+  stats.sessionEvents++;
+  // Only track sizeable hits to keep the lists meaningful
+  if (event.amount < 500) return;
+
+  const attacker = event.attacker || character || 'You';
+  // Skip events that look like NPC-on-NPC (multi-word attacker with no pet leader)
+  if (/\s/.test(attacker) && attacker !== character) return;
+
+  const item = {
+    label:    classifyDamage(event),
+    attacker,
+    target:   event.defender || '?',
+    ability:  event.ability || null,
+    amount:   event.amount,
+    when:     Date.now(),
+  };
+
+  const isMine = (event.attacker === null) || (event.attacker === character);
+  const list   = isMine ? stats.topDamageDid : stats.topDamageSaw;
+  list.push(item);
+  list.sort((a, b) => b.amount - a.amount);
+  if (list.length > 5) list.length = 5;
+}
+
+function recordUploadForDashboard(payload, character) {
+  const e        = payload.encounter;
+  // Recompute totals from events for accurate per-uploader spell/dot subtotal
+  let totalDmg     = 0;
+  let spellDotDmg  = 0;
+  for (const ev of e.events) {
+    if (ev.type !== 'damage' || !ev.amount) continue;
+    const attacker = ev.attacker ?? character;
+    if (!attacker || (/\s/.test(attacker) && attacker !== character)) continue;
+    if (attacker !== character) continue;            // uploader's damage only
+    totalDmg += ev.amount;
+    if (!ev.ability || !MELEE_ABILITIES.has(String(ev.ability).toLowerCase())) {
+      spellDotDmg += ev.amount;
+    }
+  }
+  stats.recentParses.unshift({
+    bossName:        e.boss_name || '?',
+    eventCount:      e.events.length,
+    totalDamage:     totalDmg,
+    spellDotDamage:  spellDotDmg,
+    when:            Date.now(),
+  });
+  if (stats.recentParses.length > 8) stats.recentParses.length = 8;
+  stats.uploadCount++;
+  stats.lastUploadAt = Date.now();
+  stats.lifetime.totalEvents += e.events.length;
+  saveStatsSoon();
+}
+
+// ── Dashboard renderer (ANSI, zero-deps) ─────────────────────────────────────
+const ANSI = {
+  reset:  '\x1b[0m',
+  clear:  '\x1b[2J\x1b[H',
+  bold:   '\x1b[1m',
+  dim:    '\x1b[2m',
+  cyan:   '\x1b[36m',
+  green:  '\x1b[32m',
+  yellow: '\x1b[33m',
+  red:    '\x1b[31m',
+  gray:   '\x1b[90m',
+  white:  '\x1b[37m',
+};
+const C = ANSI; // shorthand
+
+function fmtK(n) {
+  if (n == null) return '?';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1000)     return `${(n / 1000).toFixed(2)}K`;
+  return String(n);
+}
+function fmtAgo(ts) {
+  if (!ts) return '?';
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1)  return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+function pad(s, n) {
+  s = String(s ?? '');
+  if (s.length >= n) return s.slice(0, n);
+  return s + ' '.repeat(n - s.length);
+}
+
+let _dashboardEnabled = false;
+function renderDashboard() {
+  if (!_dashboardEnabled) return;
+  const out = [];
+  out.push(C.clear);
+  out.push(`${C.cyan}${C.bold}  Wolf Pack EQ — Parser (wolfpack-logsync)${C.reset}\n`);
+  out.push(`${C.gray}  ──────────────────────────────────────────${C.reset}\n`);
+  out.push(`  ${C.dim}Current version ${C.reset}${C.bold}${AGENT_VERSION}${C.reset}`);
+  if (stats.uploadCount) out.push(`   ${C.dim}· ${stats.uploadCount} upload${stats.uploadCount === 1 ? '' : 's'} this session${C.reset}`);
+  out.push('\n\n');
+
+  // Two-column layout: Recent Parses (left) vs Damage done this session (right)
+  const LCOL = 50; // left column width
+  const left  = [];
+  const right = [];
+
+  left.push(`${C.bold}${C.yellow}Recent Parses${C.reset}`);
+  if (stats.recentParses.length === 0) {
+    left.push(`  ${C.dim}(no uploads yet){C.reset}`.replace('{C.reset}', C.reset));
+  }
+  for (const p of stats.recentParses.slice(0, 4)) {
+    left.push(`  ${C.green}↑${C.reset} ${pad(p.bossName, 26)} ${C.dim}(${p.eventCount} ev)${C.reset}`);
+    left.push(`     ${C.bold}${fmtK(p.totalDamage)}${C.reset}  ${C.dim}(${fmtK(p.spellDotDamage)} spell/dot)${C.reset}`);
+  }
+
+  right.push(`${C.bold}${C.yellow}Damage done this session${C.reset}`);
+  right.push(`${C.dim}Watching ${stats.watchedLogs.length} log file(s):${C.reset}`);
+  const recent = [...stats.watchedLogs].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 8);
+  for (const w of recent) {
+    const hot = (Date.now() - (w.lastSeen || 0)) < 60 * 60 * 1000;
+    const dot = hot ? `${C.green}*${C.reset}` : ` `;
+    right.push(`  ${dot}${pad(w.character, 16)} ${C.dim}${fmtAgo(w.lastSeen)}${C.reset}`);
+  }
+
+  // Zip the two columns
+  const rows = Math.max(left.length, right.length);
+  for (let i = 0; i < rows; i++) {
+    const l = left[i]  || '';
+    const r = right[i] || '';
+    // Strip ANSI codes for length calculation
+    const lLen = l.replace(/\x1b\[[0-9;]*m/g, '').length;
+    out.push(`  ${l}${' '.repeat(Math.max(0, LCOL - lLen))}  ${r}\n`);
+  }
+  out.push('\n');
+
+  // Top damage rows
+  out.push(`  ${C.bold}${C.yellow}Top damage I saw${C.reset}${' '.repeat(LCOL - 16)}  ${C.bold}${C.yellow}Top damage I did${C.reset}\n`);
+  const damRows = Math.max(stats.topDamageSaw.length, stats.topDamageDid.length, 2);
+  for (let i = 0; i < damRows; i++) {
+    const s = stats.topDamageSaw[i];
+    const d = stats.topDamageDid[i];
+    const lTxt = s ? `${C.dim}${s.label}:${C.reset} ${C.bold}${s.attacker}${C.reset} ${C.green}${fmtK(s.amount)}${C.reset} ${C.dim}— ${s.target}${s.ability ? ' · ' + s.ability : ''}${C.reset}`
+                   : `${C.dim}(none yet)${C.reset}`;
+    const rTxt = d ? `${C.dim}${d.label}:${C.reset} ${C.bold}${d.attacker}${C.reset} ${C.green}${fmtK(d.amount)}${C.reset} ${C.dim}— ${d.target}${d.ability ? ' · ' + d.ability : ''}${C.reset}`
+                   : `${C.dim}(none yet)${C.reset}`;
+    const lLen = lTxt.replace(/\x1b\[[0-9;]*m/g, '').length;
+    out.push(`  ${lTxt}${' '.repeat(Math.max(0, LCOL - lLen))}  ${rTxt}\n`);
+  }
+  out.push('\n');
+
+  // Stats lines
+  const sessionMin = Math.max(1, Math.round((Date.now() - stats.startedAt) / 60000));
+  const lifetimeMin = stats.lifetime.totalMinutes + sessionMin;
+  out.push(`  ${C.dim}This session:${C.reset} ${C.bold}${stats.sessionEvents}${C.reset} events in ${C.bold}${sessionMin}${C.reset} min`);
+  out.push(`     ${C.dim}Top session:${C.reset} ${C.bold}${stats.lifetime.topSessionEvents}${C.reset} ev / ${C.bold}${stats.lifetime.topSessionMinutes}${C.reset} min`);
+  out.push(`     ${C.dim}Lifetime:${C.reset} ${C.bold}${stats.lifetime.totalEvents + stats.sessionEvents}${C.reset} ev / ${C.bold}${lifetimeMin}${C.reset} min\n`);
+  out.push('\n');
+
+  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}·${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}·${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  process.stdout.write(out.join(''));
+}
+
+let _renderTimer = null;
+function scheduleRender() {
+  if (!_dashboardEnabled) return;
+  if (_renderTimer) return;
+  _renderTimer = setTimeout(() => { _renderTimer = null; renderDashboard(); }, 250);
+}
+
+// Raw-mode keypress handler. Supports:
+//   U / u  → write a sentinel file so start-logsync.ps1 picks up the request
+//            on next launch; then exit the process so the scheduled task /
+//            shortcut relaunches us with the new agent code
+//   I / i  → flip into info view (next keypress returns to dashboard)
+//   Ctrl+C → exit cleanly
+let _viewMode = 'dashboard'; // 'dashboard' | 'info'
+function setupKeypressHandler() {
+  if (!process.stdin.isTTY) return;
+  try { process.stdin.setRawMode(true); } catch { return; }
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (key) => {
+    if (_viewMode === 'info') {
+      _viewMode = 'dashboard';
+      renderDashboard();
+      return;
+    }
+    if (key === '') { // Ctrl+C
+      process.stdout.write(`${ANSI.reset}\nExiting.\n`);
+      process.exit(0);
+    }
+    if (key === 'u' || key === 'U') {
+      // Write a marker file then exit; start-logsync.ps1 sees the marker
+      // and re-runs Update-Agent with -ForceUpdate before relaunching node.
+      try {
+        const marker = path.join(__dirname, '.force-update-on-restart');
+        fs.writeFileSync(marker, new Date().toISOString());
+      } catch {}
+      process.stdout.write(`${ANSI.yellow}\n  Restarting to apply update...${ANSI.reset}\n`);
+      process.exit(0);
+    }
+    if (key === 'i' || key === 'I') {
+      _viewMode = 'info';
+      process.stdout.write(ANSI.clear);
+      showInfo();
+    }
+  });
+}
+
+function showInfo() {
+  const out = [];
+  out.push(`\n${C.bold}${C.cyan}Parser info${C.reset}\n`);
+  out.push(`  Agent version: ${C.bold}${AGENT_VERSION}${C.reset}\n`);
+  out.push(`  Stats file:    ${STATS_FILE}\n`);
+  out.push(`  Uploads this session: ${stats.uploadCount} (${stats.uploadErrors} errors)\n`);
+  out.push(`  Watched logs:  ${stats.watchedLogs.length}\n`);
+  out.push(`  Lifetime first seen: ${stats.lifetime.firstSeenAt}\n`);
+  out.push(`\n  Press any key to return to the dashboard.\n`);
+  process.stdout.write(out.join(''));
+}
+
 // ── Upload ──────────────────────────────────────────────────────────────────
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
   if (dryRun) {
     const e = payload.encounter;
     console.log(`[dry-run] ${e.boss_name || '?'} · ${e.events.length} events · ${e.started_at} → ${e.ended_at}`);
+    recordUploadForDashboard(payload, payload.character);
+    scheduleRender();
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
@@ -551,11 +846,15 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
       res.on('data', c => data += c);
       res.on('end', () => {
         if (res.statusCode >= 400) {
-          console.warn(`[upload] ${res.statusCode}: ${data}`);
+          stats.uploadErrors++;
+          if (!_dashboardEnabled) console.warn(`[upload] ${res.statusCode}: ${data}`);
+          scheduleRender();
           reject(new Error(`HTTP ${res.statusCode}`));
         } else {
           const e = payload.encounter;
-          console.log(`✓ uploaded ${e.boss_name || '?'} (${e.events.length} events)`);
+          recordUploadForDashboard(payload, payload.character);
+          if (!_dashboardEnabled) console.log(`✓ uploaded ${e.boss_name || '?'} (${e.events.length} events)`);
+          scheduleRender();
           resolve();
         }
       });
@@ -577,7 +876,9 @@ async function tailFile(logPath, onLine) {
 
   let pos = stat.size;
   let buf = '';
-  console.log(`[${path.basename(logPath)}] tailing from offset ${pos} (file size ${stat.size})`);
+  if (!_dashboardEnabled) {
+    console.log(`[${path.basename(logPath)}] tailing from offset ${pos} (file size ${stat.size})`);
+  }
 
   setInterval(async () => {
     try {
@@ -667,9 +968,14 @@ async function main() {
     console.warn('⚠️  No --token / WOLFPACK_TOKEN set. Uploads will likely fail auth.');
   }
 
+  // Load persisted lifetime stats so the dashboard can show them
+  loadStats();
+
   // One encounter builder per log file (per character)
   const builders = args.logs.map(logPath => {
     const character = args.flags.character || characterFromFilename(logPath) || 'unknown';
+    // Register this log in the dashboard's watched list (lastSeen updates on each line)
+    stats.watchedLogs.push({ character, logPath, lastSeen: null });
     return {
       logPath,
       character,
@@ -681,6 +987,16 @@ async function main() {
       }),
     };
   });
+
+  // Enable the dashboard if stdout is a TTY (terminal). When the agent runs
+  // headless under the Windows scheduled task, stdout is redirected and we
+  // fall back to the plain log-line output that's been there forever.
+  if (process.stdout.isTTY && !args.flags.dryRun) {
+    _dashboardEnabled = true;
+    renderDashboard();
+    setInterval(renderDashboard, 5000);
+    setupKeypressHandler();
+  }
 
   // Idle ticker — flushes encounters that have gone quiet
   setInterval(() => {
@@ -709,9 +1025,11 @@ async function main() {
 
   // Watch mode (default for live raids)
   if (args.flags.watch || (!args.flags.once && !args.flags.since)) {
-    console.log(`Watching ${builders.length} log file(s). Press Ctrl+C to stop.`);
+    if (!_dashboardEnabled) console.log(`Watching ${builders.length} log file(s). Press Ctrl+C to stop.`);
     for (const b of builders) {
+      const watched = stats.watchedLogs.find(w => w.logPath === b.logPath);
       await tailFile(b.logPath, line => {
+        if (watched) { watched.lastSeen = Date.now(); }
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ts = parseEqTimestamp(line);
         const ev = parseEvent(line, ts);
