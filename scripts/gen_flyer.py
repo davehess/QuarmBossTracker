@@ -546,8 +546,8 @@ CTA_URL = "tinyurl.com/WolfPackP"
 def draw_burst(img, draw, frame, url=CTA_URL):
     """Comic-book starburst CTA badge, centered between the two robots at robot-body height."""
     cx, cy   = W // 2, 295   # vertically level with robot centers, in the gap between them
-    r_out    = 85
-    r_in     = 55
+    r_out    = 108           # widened so 'tinyurl.com/WolfPackP' fits inside r_in
+    r_in     = 72
     n_points = 20
     # very slow wobble rotation so it feels alive
     rot = (frame / FRAMES) * math.pi * 0.18
@@ -599,10 +599,10 @@ def draw_burst(img, draw, frame, url=CTA_URL):
 
     return ImageDraw.Draw(img)
 
-# ── Secondary "Now includes DoT Damage!" starburst (far-right edge) ──────────
+# ── Secondary "Now includes DOT Damage!" starburst (left side, robot level) ──
 def draw_dot_burst(img, draw, frame):
-    """Smaller diagonal starburst calling out the new DoT-damage capture feature."""
-    cx, cy   = W - 60, 90       # far-right edge, 10px buffer from the canvas edge
+    """Smaller diagonal starburst calling out the new DOT-damage capture feature."""
+    cx, cy   = 55, 295          # far-left edge, level with the v1.4 (left) robot
     r_out    = 50
     r_in     = 32
     n_points = 14
