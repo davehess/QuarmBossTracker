@@ -53,7 +53,11 @@ const https = require('https');
 const http  = require('http');
 const { URL } = require('url');
 
-const AGENT_VERSION = '0.1.0';
+// Read version from package.json so we only have to bump it in one place per release.
+// If the require fails (e.g. agent run from a non-package context), fall back to a literal.
+let AGENT_VERSION;
+try { AGENT_VERSION = require('./package.json').version || '2.2.2'; }
+catch { AGENT_VERSION = '2.2.2'; }
 const DEFAULT_BOT_URL = process.env.WOLFPACK_BOT_URL || 'https://wolfpackparse.up.railway.app/api/agent/encounter';
 
 // ── CLI args ────────────────────────────────────────────────────────────────
@@ -1141,6 +1145,7 @@ async function main() {
 
 // Export internals for tests; only run main() when invoked directly as CLI.
 module.exports = {
+  AGENT_VERSION,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   EncounterBuilder, characterFromFilename,

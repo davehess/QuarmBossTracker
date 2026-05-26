@@ -31,13 +31,15 @@ $ShortcutName = "Parser.lnk"
 # We fetch the agent source straight from GitHub's main branch on the official
 # repo. If you fork or self-host, change *_RAW_URL to your own raw URL.
 $AGENT_RAW_URL              = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/index.js"
+$AGENT_PKG_RAW_URL          = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/package.json"
 $SCRIPT_RAW_URL             = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/start-logsync.ps1"
 $AGENT_UPDATE_INTERVAL_HRS  = 12
 
-# Bumped whenever this file changes shape (new markers, new flags, new flow).
-# Used by Update-Script to detect when the user's local copy is behind GitHub
-# and rewrite it in place.  Script changes take effect on the NEXT launch.
-$SCRIPT_VERSION             = "2.2.1"
+# Displayed in console output during updates.  The auto-update mechanism does
+# NOT depend on this string — it compares full file content (normalized line
+# endings) so an update fires whenever the GitHub copy actually differs, even
+# if I forgot to bump the version.  The version is informational only.
+$SCRIPT_VERSION             = "2.2.2"
 
 # Config and agent live next to this script file.
 # After first-run install, $PSScriptRoot == the EQ directory.
@@ -207,6 +209,7 @@ function Update-Agent([string]$agentPath, [bool]$silent) {
     if ($cfg.AutoUpdate -eq $false)   { return $false }   # opt-out via config
 
     $agentDir   = Split-Path $agentPath -Parent
+    $pkgPath    = Join-Path $agentDir "package.json"
     $markerFile = Join-Path $agentDir ".last-update-check"
 
     if (-not $ForceUpdate -and (Test-Path $markerFile)) {
@@ -215,27 +218,51 @@ function Update-Agent([string]$agentPath, [bool]$silent) {
     }
 
     try {
-        # Pull remote source
-        $resp = Invoke-WebRequest -Uri $AGENT_RAW_URL -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-        $remote = $resp.Content
+        # Pull remote agent source + companion package.json (which carries the
+        # version string the agent displays).  We update BOTH atomically so the
+        # dashboard's displayed version always reflects the running code.
+        $resp     = Invoke-WebRequest -Uri $AGENT_RAW_URL     -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $respPkg  = Invoke-WebRequest -Uri $AGENT_PKG_RAW_URL -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $remote     = $resp.Content
+        $remotePkg  = $respPkg.Content
         if (-not $remote) { return $false }
 
-        $remoteVer = ([regex]::Match($remote, "AGENT_VERSION\s*=\s*['""]([^'""]+)['""]")).Groups[1].Value
-        $localContent = Get-Content $agentPath -Raw
-        $localVer  = ([regex]::Match($localContent, "AGENT_VERSION\s*=\s*['""]([^'""]+)['""]")).Groups[1].Value
-        if (-not $remoteVer) { return $false }
+        # Normalize line endings before comparison: GitHub raw serves LF, but
+        # locally extracted ZIPs on Windows may be CRLF (depends on archiver).
+        # Without this, every launch would falsely detect a "change".
+        # (Avoid ?? null-coalescing — that's PS7+ only; many installs are PS5.)
+        $remoteNorm    = ([string]$remote)    -replace "`r`n", "`n"
+        $remotePkgNorm = ([string]$remotePkg) -replace "`r`n", "`n"
+        $localText     = if (Test-Path $agentPath) { Get-Content $agentPath -Raw } else { "" }
+        $localNorm     = ([string]$localText)  -replace "`r`n", "`n"
+        $localPkgText  = if (Test-Path $pkgPath) { Get-Content $pkgPath -Raw } else { "" }
+        $localPkgNorm  = ([string]$localPkgText) -replace "`r`n", "`n"
 
         # Mark this check as done so we don't hammer GitHub
         Set-Content $markerFile (Get-Date).ToString("o")
 
-        if ($remoteVer -eq $localVer -and -not $ForceUpdate) { return $false }
+        $indexChanged = ($remoteNorm -ne $localNorm)
+        $pkgChanged   = ($remotePkg -and ($remotePkgNorm -ne $localPkgNorm))
+
+        if (-not $indexChanged -and -not $pkgChanged -and -not $ForceUpdate) {
+            return $false
+        }
+
+        # Pull version strings for the display message (auto-update no longer
+        # *depends* on them — content comparison is authoritative — but they're
+        # useful in the changelog line).
+        $remoteVer = ([regex]::Match(([string]$remotePkg), '"version"\s*:\s*"([^"]+)"')).Groups[1].Value
+        if (-not $remoteVer) { $remoteVer = ([regex]::Match($remote, "AGENT_VERSION\s*=\s*['""]([^'""]+)['""]")).Groups[1].Value }
+        $localVer  = ([regex]::Match($localPkgNorm, '"version"\s*:\s*"([^"]+)"')).Groups[1].Value
+        if (-not $localVer)  { $localVer  = ([regex]::Match($localNorm,  "AGENT_VERSION\s*=\s*['""]([^'""]+)['""]")).Groups[1].Value }
 
         if (-not $silent) {
             Write-Host ""
-            Write-Host "  Update available: agent $localVer -> $remoteVer" -ForegroundColor Yellow
+            $verStr = if ($remoteVer -and $localVer -and $remoteVer -ne $localVer) { "$localVer -> $remoteVer" } else { "content changed" }
+            Write-Host "  Update available: agent ($verStr)" -ForegroundColor Yellow
         }
 
-        # Atomic write: temp -> rename
+        # Atomic write of index.js: temp -> rename
         $tmp = "$agentPath.tmp"
         Set-Content -LiteralPath $tmp -Value $remote -NoNewline
 
@@ -249,8 +276,20 @@ function Update-Agent([string]$agentPath, [bool]$silent) {
         }
 
         Move-Item -LiteralPath $tmp -Destination $agentPath -Force
+
+        # Also update package.json so the agent reads the new version string.
+        if ($pkgChanged -and $remotePkg) {
+            $tmpPkg = "$pkgPath.tmp"
+            Set-Content -LiteralPath $tmpPkg -Value $remotePkg -NoNewline
+            if ((Get-Content $tmpPkg -Raw) -match '"version"') {
+                Move-Item -LiteralPath $tmpPkg -Destination $pkgPath -Force
+            } else {
+                Remove-Item $tmpPkg -Force -ErrorAction SilentlyContinue
+            }
+        }
+
         if (-not $silent) {
-            Write-Host "  Updated to $remoteVer." -ForegroundColor Green
+            Write-Host "  Updated$(if ($remoteVer) { ' to ' + $remoteVer } else { '' })." -ForegroundColor Green
         }
         return $true
     } catch {
@@ -282,20 +321,27 @@ function Update-Script([bool]$silent) {
         $remote = $resp.Content
         if (-not $remote) { return $false }
 
+        # Content comparison (normalized line endings) — version string is
+        # informational only, content is authoritative.
+        $remoteNorm = ([string]$remote) -replace "`r`n", "`n"
+        $localText  = if (Test-Path $PSCommandPath) { Get-Content $PSCommandPath -Raw } else { "" }
+        $localNorm  = ([string]$localText) -replace "`r`n", "`n"
+        if ($remoteNorm -eq $localNorm) { return $false }
+
         $remoteVer = ([regex]::Match($remote, '\$SCRIPT_VERSION\s*=\s*[''"]([^''"]+)[''"]')).Groups[1].Value
-        if (-not $remoteVer)              { return $false }
-        if ($remoteVer -eq $SCRIPT_VERSION) { return $false }
+        $localVer  = $SCRIPT_VERSION
 
         if (-not $silent) {
             Write-Host ""
-            Write-Host "  start-logsync.ps1 update available: $SCRIPT_VERSION -> $remoteVer" -ForegroundColor Yellow
+            $verStr = if ($remoteVer -and $remoteVer -ne $localVer) { "$localVer -> $remoteVer" } else { "content changed" }
+            Write-Host "  start-logsync.ps1 update available ($verStr)" -ForegroundColor Yellow
         }
 
         $tmp = "$PSCommandPath.tmp"
         Set-Content -LiteralPath $tmp -Value $remote -NoNewline
 
         # Sanity check: must look like our script (contains the version constant
-        # and the main run loop) before we atomically swap.
+        # and the Update-Agent function) before we atomically swap.
         $tmpContent = Get-Content $tmp -Raw
         if (($tmpContent -notmatch '\$SCRIPT_VERSION') -or ($tmpContent -notmatch 'Update-Agent')) {
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
@@ -305,7 +351,7 @@ function Update-Script([bool]$silent) {
 
         Move-Item -LiteralPath $tmp -Destination $PSCommandPath -Force
         if (-not $silent) {
-            Write-Host "  Script updated to $remoteVer. The new version takes effect on next launch." -ForegroundColor Green
+            Write-Host "  Script updated$(if ($remoteVer) { ' to ' + $remoteVer } else { '' }). New version takes effect on next launch." -ForegroundColor Green
         }
         return $true
     } catch {
