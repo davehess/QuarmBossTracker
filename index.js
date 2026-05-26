@@ -20,7 +20,7 @@ const {
   getAllPvpKills, clearPvpKill, getQuake, saveQuake, clearQuake,
   addPvpAlertHowler,
   hasSeenWelcome, markWelcomeSeen,
-  getRaidSession, clearRaidSession,
+  getRaidSession, clearRaidSession, accumulateSessionDamage,
   clearRaidNight,
   getAllLiveKills, clearLiveKill,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
@@ -2002,11 +2002,15 @@ async function _handleAgentUpload(req, res) {
               `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
 
   // ── Compute damage totals once (used by both parses.json and Supabase paths) ──
+  // Filter out noise before aggregating:
+  //   - "Eye of PLAYERNAME" — wizard/mage scout pets that attack your target (not player DPS)
+  //   - Cannibalize self-hits — shaman HP→mana conversion logged as self-damage
   const playerTotals = new Map();
   for (const ev of encounter.events) {
-    if (ev.type === 'damage' && ev.attacker) {
-      playerTotals.set(ev.attacker, (playerTotals.get(ev.attacker) || 0) + (ev.amount || 0));
-    }
+    if (ev.type !== 'damage' || !ev.attacker) continue;
+    if (/^Eye of /i.test(ev.attacker)) continue;                                         // skip Eye of X pets
+    if (ev.spell && /cannibali[sz]e/i.test(ev.spell) && ev.attacker === ev.target) continue; // skip self-cannibalizes
+    playerTotals.set(ev.attacker, (playerTotals.get(ev.attacker) || 0) + (ev.amount || 0));
   }
   const startedMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
   const endedMs   = encounter.ended_at   ? new Date(encounter.ended_at).getTime()   : startedMs;
@@ -2023,6 +2027,12 @@ async function _handleAgentUpload(req, res) {
     .map((p, i) => ({ ...p, rank: i + 1 }));
   const totalDamage = players.reduce((s, p) => s + p.damage, 0);
   const totalDps    = duration > 0 ? Math.round(totalDamage / duration) : 0;
+
+  // ── Accumulate into active /raidnight session (all encounters, not just bosses) ──
+  // sessionDamage lives inside raidSession in state.json — clears at midnight with the session.
+  if (players.length > 0) {
+    try { accumulateSessionDamage(players, duration); } catch (e) { /* non-fatal */ }
+  }
 
   // ── Match boss against bosses.json, then mirror /parse instance behavior:
   //    write to parses.json, record the kill, update the board ─────────────────

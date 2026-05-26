@@ -315,10 +315,32 @@ function markWelcomeSeen(userId) {
 }
 
 // ── Raid session ───────────────────────────────────────────────────────────────────────────────
-// { date, threadId, channelId, summaryMessageId, openedAt }
+// { date, threadId, channelId, summaryMessageId, openedAt, sessionDamage: { lowerName: { name, damage, duration, encounters } } }
 function getRaidSession()       { return loadState().raidSession || null; }
 function saveRaidSession(data)  { const s = loadState(); s.raidSession = data; saveState(s); }
 function clearRaidSession()     { const s = loadState(); s.raidSession = null; saveState(s); }
+
+// Accumulate per-player damage into the active raid session (called after every agent encounter upload).
+// players = [{ name, damage, duration }] — same shape as parses.json players array.
+// No-ops if no session is active.
+function accumulateSessionDamage(players, encounterDuration) {
+  if (!Array.isArray(players) || players.length === 0) return;
+  const s = loadState();
+  if (!s.raidSession) return;
+  if (!s.raidSession.sessionDamage) s.raidSession.sessionDamage = {};
+  const sd = s.raidSession.sessionDamage;
+  for (const p of players) {
+    const key = p.name.toLowerCase();
+    if (sd[key]) {
+      sd[key].damage     += p.damage;
+      sd[key].duration   += encounterDuration;
+      sd[key].encounters++;
+    } else {
+      sd[key] = { name: p.name, damage: p.damage, duration: encounterDuration, encounters: 1 };
+    }
+  }
+  saveState(s);
+}
 
 // ── Raid night (DKP tick tracking) ──────────────────────────────────────────────────────────────────
 // { date, raidId, name, poolId, ticks: { 1:{ tickId, description, postedAt, count }, ... } }
@@ -480,7 +502,7 @@ module.exports = {
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
-  getRaidSession, saveRaidSession, clearRaidSession,
+  getRaidSession, saveRaidSession, clearRaidSession, accumulateSessionDamage,
   getRaidNight, saveRaidNight, clearRaidNight,
   getAri, setAri, clearAri,
   getQuarmyLink, setQuarmyLink, clearQuarmyLink,

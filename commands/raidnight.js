@@ -78,14 +78,13 @@ function fmt(n) { return n.toLocaleString('en-US'); }
 
 function buildParseboardEmbed(label, raidNight, tonightParses) {
   delete require.cache[require.resolve('../data/bosses.json')];
-  const bosses = require('../data/bosses.json');
 
-  // Aggregate total damage and active seconds per player across all bosses tonight
+  // ── Boss Fights section — aggregated from parses.json boss kills ──────────────
   const playerMap = new Map();
   let totalNightDamage = 0;
   let totalDuration    = 0;
 
-  for (const [bossId, kills] of Object.entries(tonightParses)) {
+  for (const [, kills] of Object.entries(tonightParses)) {
     const latest = kills[kills.length - 1];
     totalNightDamage += latest.totalDamage || 0;
     totalDuration    += latest.duration    || 0;
@@ -109,7 +108,7 @@ function buildParseboardEmbed(label, raidNight, tonightParses) {
   const totalRaidDps = totalDuration > 0 ? Math.round(totalNightDamage / totalDuration) : 0;
   const bossCount    = Object.keys(tonightParses).length;
 
-  let table = '';
+  let bossTable = '';
   if (sorted.length > 0) {
     const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Total Dmg'.padStart(10)}  ${'Avg DPS'.padStart(7)}  Bosses`;
     const divider = '─'.repeat(hdr.length);
@@ -121,19 +120,45 @@ function buildParseboardEmbed(label, raidNight, tonightParses) {
       const bossCt = String(p.bosses).padStart(6);
       return `${rank}. ${name} ${dmg}  ${dps}  ${bossCt}`;
     });
-    table = '```\n' + [hdr, divider, ...rows].join('\n') + '\n```';
+    bossTable = '```\n' + [hdr, divider, ...rows].join('\n') + '\n```';
   } else {
-    table = '*No player data yet*';
+    bossTable = '*No boss parses yet*';
   }
 
-  const title = `📊 Raid Parseboard — ${label}`;
+  // ── All Night section — accumulated from all agent encounter uploads ──────────
+  // sessionDamage lives in state.json raidSession; Eye of X + Cannibalize already filtered.
+  const { getRaidSession } = require('../utils/state');
+  const session        = getRaidSession();
+  const sessionDamage  = session?.sessionDamage || {};
+  const allNightSorted = Object.values(sessionDamage).sort((a, b) => b.damage - a.damage);
+
+  let allNightTable = '';
+  if (allNightSorted.length > 0) {
+    const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Total Dmg'.padStart(10)}  ${'Avg DPS'.padStart(7)}  Enc`;
+    const divider = '─'.repeat(hdr.length);
+    const rows = allNightSorted.slice(0, 15).map((p, i) => {
+      const rank  = String(i + 1).padStart(2);
+      const name  = p.name.padEnd(20);
+      const dmg   = fmt(p.damage).padStart(10);
+      const dps   = ((p.duration > 0 ? Math.round(p.damage / p.duration) : 0) + '/s').padStart(7);
+      const encs  = String(p.encounters).padStart(3);
+      return `${rank}. ${name} ${dmg}  ${dps}  ${encs}`;
+    });
+    allNightTable = '```\n' + [hdr, divider, ...rows].join('\n') + '\n```';
+  } else {
+    allNightTable = '*No data yet — agent uploads accumulate here automatically*';
+  }
+
   return new EmbedBuilder()
     .setColor(raidNight ? 0xe74c3c : 0x95a5a6)
-    .setTitle(title)
+    .setTitle(`📊 Raid Parseboard — ${label}`)
     .setDescription(
       `**${bossCount}** bosses · Total: **${fmt(totalNightDamage)}** dmg · Raid DPS: **${fmt(totalRaidDps)}/s**`
     )
-    .addFields({ name: 'Player Rankings', value: table, inline: false })
+    .addFields(
+      { name: `Boss Fights (${bossCount})`, value: bossTable, inline: false },
+      { name: 'All Night (including trash)', value: allNightTable, inline: false },
+    )
     .setTimestamp();
 }
 
