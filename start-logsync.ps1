@@ -1,4 +1,4 @@
-# start-logsync.ps1 — Watch all recently-active EQ log files and stream encounter
+﻿# start-logsync.ps1 — Watch all recently-active EQ log files and stream encounter
 # data to the Wolf Pack bot.
 #
 # On first run this script copies itself into your EQ directory (which is

@@ -1,4 +1,4 @@
-# install-node.ps1 — Check for Node.js 20+ and install if missing
+﻿# install-node.ps1 — Check for Node.js 20+ and install if missing
 # Run via install-node.bat (handles UAC elevation automatically)
 
 $minVersion  = [Version]"20.0.0"
