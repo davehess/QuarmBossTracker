@@ -1,13 +1,5 @@
 # install-node.ps1 — Check for Node.js 20+ and install if missing
-# Right-click → "Run with PowerShell"  (self-elevates via UAC if needed)
-
-# ── Self-elevate if not already running as Administrator ──────────────────────
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    $self = $MyInvocation.MyCommand.Path
-    Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$self`"" -Verb RunAs
-    exit
-}
+# Run via install-node.bat (handles UAC elevation automatically)
 
 $minVersion  = [Version]"20.0.0"
 $nodeVersion = "20.19.1"
@@ -29,11 +21,7 @@ if ($node) {
     if ($current -ge $minVersion) {
         Write-Host "  OK  Node.js $raw is installed -- nothing to do." -ForegroundColor Green
         Write-Host ""
-        Write-Host "  Next steps:" -ForegroundColor White
-        Write-Host "    npm install" -ForegroundColor Yellow
-        Write-Host "    copy .env.example .env" -ForegroundColor Yellow
-        Write-Host "    notepad .env" -ForegroundColor Yellow
-        Write-Host "    npm start" -ForegroundColor Yellow
+        Write-Host "  Next step: double-click Parser.bat to start the log watcher." -ForegroundColor White
         Write-Host ""
         Read-Host "  Press Enter to close"
         exit 0
@@ -79,11 +67,7 @@ if ($verify -match "^v") {
     Write-Host ""
     Write-Host "  OK  Node.js $verify installed successfully." -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Next steps:" -ForegroundColor White
-    Write-Host "    npm install" -ForegroundColor Yellow
-    Write-Host "    copy .env.example .env" -ForegroundColor Yellow
-    Write-Host "    notepad .env" -ForegroundColor Yellow
-    Write-Host "    npm start" -ForegroundColor Yellow
+    Write-Host "  Next step: double-click Parser.bat to start the log watcher." -ForegroundColor White
 } else {
     Write-Host ""
     Write-Host "  ERROR: Installation may have failed." -ForegroundColor Red
