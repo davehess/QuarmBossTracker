@@ -22,13 +22,15 @@
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList }  = require('../utils/roles');
-const { getRaids, getRaid }                 = require('../utils/opendkp');
+const { getRaids, getRaid, getMostRecentRaid } = require('../utils/opendkp');
+const { setPendingLoot }                    = require('../utils/state');
 const {
   parseZealLoot,
   fetchPqdiDropTable,
   getDropHistory,
   enrichLootItems,
   buildLootAnnounceEmbed,
+  buildLootComponents,
 } = require('../utils/loot');
 
 function getBosses() {
@@ -131,11 +133,56 @@ module.exports = {
     // ── Enrich items with rarity labels ──────────────────────────────────────
     const enrichedItems = enrichLootItems(parsedItems, dropHistory, dropTable);
 
-    // ── Build and post embed ──────────────────────────────────────────────────
+    // ── Verify there's an active raid in OpenDKP to link auctions against ───
+    // OpenDKP auto-links a new auction to whatever raid is currently open
+    // for this client — no RaidId in the create-auction payload. If no raid
+    // is open, the auction would still post but with no DKP-charge target.
+    // We show the linked raid in the embed so officers can confirm at a glance.
+    let activeRaid = null;
+    if (process.env.OPENDKP_RAIDS_URL) {
+      try { activeRaid = await getMostRecentRaid(); }
+      catch (err) { console.warn('[loot] getMostRecentRaid failed:', err?.message); }
+    }
+
+    // ── Build embed + interactive button rows ─────────────────────────────────
     const bossName = boss?.name ?? null;
     const embed    = buildLootAnnounceEmbed(enrichedItems, bossName, bidMinutes);
+    if (activeRaid) {
+      embed.addFields({
+        name:  'Linked raid',
+        value: `**${activeRaid.Name || '?'}** · #${activeRaid.RaidId}`,
+        inline: false,
+      });
+    } else {
+      embed.setFooter({ text: '⚠ No active raid found in OpenDKP — start one before posting auctions.' });
+    }
+    const components = buildLootComponents(enrichedItems);
 
-    await interaction.editReply({ embeds: [embed] });
+    const sent = await interaction.editReply({ embeds: [embed], components });
+
+    // ── Persist the pending batch so button clicks can mutate it ──────────────
+    // Keyed by the announcement message ID; cleared on Post / Cancel / midnight.
+    if (sent?.id) {
+      setPendingLoot(sent.id, {
+        messageId:  sent.id,
+        channelId:  interaction.channelId,
+        officerId:  interaction.user.id,
+        items:      enrichedItems,
+        bossName,
+        bidMinutes,
+        activeRaidId:   activeRaid?.RaidId  || null,
+        activeRaidName: activeRaid?.Name    || null,
+        createdAt:  Date.now(),
+      });
+    }
+
+    // Warn if items were auto-capped at 20 (Discord button limit)
+    if (enrichedItems.length > 20) {
+      await interaction.followUp({
+        flags:   MessageFlags.Ephemeral,
+        content: `⚠ Only the first 20 items show remove-buttons (Discord limit). All ${enrichedItems.length} items will still be auctioned on Post.`,
+      });
+    }
 
     // ── Wishlist auto-bid notifications ──────────────────────────────────────
     // Look up wishlisters for each dropped item, post ephemeral DMs after a
@@ -199,33 +246,9 @@ module.exports = {
     }
 
     // ── OpenDKP Auction Creation ──────────────────────────────────────────────
-    // ⚠️  PENDING: Uncomment this block once the auction creation cURL is captured
-    //     and utils/opendkp.js createAuctions() is implemented.
-    //
-    // const raidId = interaction.options.getInteger('raid_id');  // TBD: how to get active raid
-    // if (raidId) {
-    //   try {
-    //     const { createAuctions, invalidateDropHistory } = require('../utils/opendkp');
-    //     const payload = {
-    //       items: enrichedItems.map(item => ({
-    //         ItemId:       item.gameItemId,
-    //         ItemName:     item.name,
-    //         GameItemId:   item.gameItemId,
-    //         ItemQuantity: item.quantity,
-    //         RaidId:       raidId,
-    //         PoolId:       parseInt(process.env.OPENDKP_POOL_ID || '5'),
-    //         ClientId:     process.env.OPENDKP_CLIENT_ID_AUCTIONS || '8fa8662b40c12',
-    //       })),
-    //     };
-    //     await createAuctions(payload);
-    //     // Invalidate drop history so new item counts on next /loot call
-    //     const { invalidateDropHistory: inv } = require('../utils/loot');
-    //     inv();
-    //   } catch (err) {
-    //     console.error('[loot] Auction creation failed:', err?.message);
-    //     // Non-fatal — embed already posted
-    //   }
-    // }
+    // Live: creation now happens when the officer clicks "📣 Post Auctions" on
+    // the button row.  See handleLootPost() in index.js.  Item removal happens
+    // via individual ✖ buttons.  See utils/loot.js buildLootComponents.
 
     // ── Rarity summary for officer context (ephemeral follow-up) ─────────────
     const newItems   = enrichedItems.filter(i => i.rarityLabel === '🆕 NEW');

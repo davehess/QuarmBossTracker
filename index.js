@@ -27,6 +27,7 @@ const {
   recordAgentUpload, clearAgentActivity,
   getPetOwners, addPetOwners, clearPetOwners,
   mergeWhoData,
+  clearAllPendingLoot,
   getAllLiveKills, clearLiveKill,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getHateBoardMessageId, setHateBoardMessageId,
@@ -124,6 +125,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('kill:'))               { await handleBoardButton(interaction); return; }
+    if (interaction.customId.startsWith('loot_rm:'))            { await handleLootRemove(interaction); return; }
+    if (interaction.customId === 'loot_post')                   { await handleLootPost(interaction); return; }
+    if (interaction.customId === 'loot_cancel')                 { await handleLootCancel(interaction); return; }
     if (interaction.customId.startsWith('confirm_kill_announce:')) { await handleConfirmKillAnnounce(interaction); return; }
     if (interaction.customId === 'cancel_kill_confirm')          { await interaction.update({ content: '↩️ Cancelled.', components: [] }); return; }
     if (interaction.customId === 'cancel_announce')             { await handleCancelAnnounce(interaction); return; }
@@ -287,6 +291,114 @@ async function handleBoardButton(interaction) {
     }).catch(() => {});
   }
   await postKillUpdate(interaction.client, process.env.TIMER_CHANNEL_ID, bossId).catch(console.warn);
+}
+
+// ── /loot button handlers ──────────────────────────────────────────────────
+// /loot posts an embed with one ✖ button per item + Post + Cancel.  These
+// handlers mutate state.pendingLoot[messageId] and re-render the message in
+// place via interaction.update().  See utils/loot.js buildLootComponents and
+// commands/loot.js execute() for how the batch is initialised.
+
+async function handleLootRemove(interaction) {
+  if (!hasAllowedRole(interaction.member)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+  }
+  const gameItemId = interaction.customId.replace('loot_rm:', '');
+  const msgId      = interaction.message.id;
+  const { removePendingLootItem } = require('./utils/state');
+  const updated = removePendingLootItem(msgId, gameItemId);
+  if (!updated) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ This loot batch has expired (state lost). Run `/loot` again.' });
+  }
+  // Rebuild embed + components against the trimmed item list
+  const { buildLootAnnounceEmbed, buildLootComponents } = require('./utils/loot');
+  const embed = buildLootAnnounceEmbed(updated.items, updated.bossName, updated.bidMinutes);
+  if (updated.activeRaidName) {
+    embed.addFields({
+      name:  'Linked raid',
+      value: `**${updated.activeRaidName}** · #${updated.activeRaidId}`,
+      inline: false,
+    });
+  }
+  await interaction.update({ embeds: [embed], components: buildLootComponents(updated.items) });
+}
+
+async function handleLootPost(interaction) {
+  if (!hasAllowedRole(interaction.member)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+  }
+  const msgId = interaction.message.id;
+  const { getPendingLoot, clearPendingLoot } = require('./utils/state');
+  const entry = getPendingLoot(msgId);
+  if (!entry) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ This loot batch has expired (state lost). Run `/loot` again.' });
+  }
+  if (!entry.items?.length) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ All items removed — nothing to post.' });
+  }
+
+  await interaction.deferUpdate();
+
+  try {
+    const { createAuctions } = require('./utils/opendkp');
+    const auctions = entry.items.map(item => ({
+      BidType:        'Open',
+      ItemQuantity:   item.quantity || 1,
+      Duration:       entry.bidMinutes,
+      Bids:           [],
+      Item:           { Name: item.name, GameItemId: item.gameItemId },
+      AllowDeletes:   true,
+      Auctioneer:     '',
+      AutoAdjustBids: 0,
+      MaximumBid:     100000,
+      MinimumBid:     1,
+      ItemId:         item.gameItemId,
+    }));
+    const result = await createAuctions(auctions);
+
+    // Rebuild the embed in "posted" green state, strip components
+    const { buildLootAnnounceEmbed } = require('./utils/loot');
+    const { EmbedBuilder } = require('discord.js');
+    const posted = buildLootAnnounceEmbed(entry.items, entry.bossName, entry.bidMinutes);
+    posted.setColor(0x57f287);
+    if (entry.activeRaidName) {
+      posted.addFields({
+        name: 'Linked raid',
+        value: `**${entry.activeRaidName}** · #${entry.activeRaidId}`,
+        inline: false,
+      });
+    }
+    posted.setFooter({ text: `✅ Posted ${entry.items.length} auction(s) — bidding open ${entry.bidMinutes}m on OpenDKP` });
+    await interaction.editReply({ embeds: [posted], components: [] });
+    clearPendingLoot(msgId);
+
+    // Invalidate cached drop history so next /loot recomputes rarity flags
+    try { require('./utils/loot').invalidateDropHistory(); } catch {}
+  } catch (err) {
+    console.error('[loot] createAuctions failed:', err);
+    await interaction.followUp({
+      flags: MessageFlags.Ephemeral,
+      content: `❌ Failed to post auctions to OpenDKP: ${err?.message || err}\nFix the issue and click Post again — items still queued.`,
+    });
+  }
+}
+
+async function handleLootCancel(interaction) {
+  if (!hasAllowedRole(interaction.member)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+  }
+  const msgId = interaction.message.id;
+  const { clearPendingLoot } = require('./utils/state');
+  clearPendingLoot(msgId);
+
+  const { EmbedBuilder } = require('discord.js');
+  const orig = interaction.message.embeds[0];
+  if (orig) {
+    const cancelled = EmbedBuilder.from(orig).setColor(0x808080).setFooter({ text: `🚫 Cancelled by ${interaction.user.username} — no auctions posted` });
+    await interaction.update({ embeds: [cancelled], components: [] });
+  } else {
+    await interaction.update({ content: '🚫 Cancelled.', embeds: [], components: [] });
+  }
 }
 
 // ── Confirm kill from /announce message ────────────────────────────────────
@@ -1717,6 +1829,7 @@ function scheduleMidnightSummary(readyClient) {
       clearAgentSessionCardId();
       clearAgentActivity();
       clearPetOwners();
+      clearAllPendingLoot();
 
       // ── Archive passed announce threads ─────────────────────────────────
       await archivePassedAnnounceThreads(readyClient);

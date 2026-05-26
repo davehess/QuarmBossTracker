@@ -299,6 +299,60 @@ async function parseQuarmyWishlist(quarmyUrl) {
   return null;
 }
 
+// Build the button rows for a /loot announcement:
+//   - one Secondary "✖ <Item Name>" button per item (click to remove from batch)
+//   - one Success "📣 Post Auctions (N)" button (fires createAuctions)
+//   - one Danger "🚫 Cancel" button (abandons the batch)
+//
+// Discord caps components at 5 rows × 5 buttons = 25 per message. We use up to
+// 4 rows (20 buttons) for item-remove buttons, leaving 1 row for the action
+// buttons. Items beyond 20 are auto-capped — caller should warn officers if
+// they pasted too many.
+function buildLootComponents(items) {
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+  const MAX_ITEM_BUTTONS = 20;
+  const cappedItems = items.slice(0, MAX_ITEM_BUTTONS);
+  const rows = [];
+  let currentRow = new ActionRowBuilder();
+
+  for (const item of cappedItems) {
+    if (currentRow.components.length >= 5) {
+      rows.push(currentRow);
+      currentRow = new ActionRowBuilder();
+    }
+    let label = item.name || '?';
+    if (item.rarityLabel?.startsWith('🆕')) label = `🆕 ${label}`;
+    else if (item.rarityLabel?.startsWith('💎')) label = `💎 ${label}`;
+    if (item.quantity > 1) label += ` ×${item.quantity}`;
+    // Button label max is 80 chars; cap conservatively and prefix with ✖ remove
+    label = `✖ ${label}`;
+    if (label.length > 78) label = label.slice(0, 77) + '…';
+    currentRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`loot_rm:${item.gameItemId}`)
+        .setLabel(label)
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+  if (currentRow.components.length > 0) rows.push(currentRow);
+
+  // Action row at the bottom (Post + Cancel)
+  const actionRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('loot_post')
+      .setLabel(`📣 Post Auctions (${cappedItems.length})`)
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(cappedItems.length === 0),
+    new ButtonBuilder()
+      .setCustomId('loot_cancel')
+      .setLabel('🚫 Cancel')
+      .setStyle(ButtonStyle.Danger),
+  );
+  rows.push(actionRow);
+
+  return rows;
+}
+
 module.exports = {
   parseZealLoot,
   fetchPqdiDropTable,
@@ -307,5 +361,6 @@ module.exports = {
   getItemRarityLabel,
   enrichLootItems,
   buildLootAnnounceEmbed,
+  buildLootComponents,
   parseQuarmyWishlist,
 };

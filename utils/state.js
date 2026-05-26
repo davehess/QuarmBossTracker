@@ -16,6 +16,7 @@ function _empty() {
     agentTestCards: {}, agentSessionCardId: null,
     petOwners: {},
     whoData: {},
+    pendingLoot: {},
   };
 }
 
@@ -79,6 +80,7 @@ function loadState() {
   if (raw.agentSessionCardId != null) s.agentSessionCardId = raw.agentSessionCardId;
   if (raw.petOwners)          s.petOwners          = raw.petOwners;
   if (raw.whoData)            s.whoData            = raw.whoData;
+  if (raw.pendingLoot)        s.pendingLoot        = raw.pendingLoot;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -583,6 +585,40 @@ function setGuildOverride(name, guild) {
 }
 function clearWhoData() { const s = loadState(); s.whoData = {}; saveState(s); }
 
+// pendingLoot: in-progress /loot batches waiting for officer confirmation.
+// Keyed by the Discord message ID of the loot announcement embed.
+// Cleared on Post / Cancel button press, and bulk-cleared at midnight to
+// reap orphans where the officer abandoned without clicking either button.
+//
+// Entry shape:
+//   { messageId, channelId, officerId, items: [...enrichedLootItem],
+//     bossName, bidMinutes, createdAt }
+function getPendingLoot(messageId)  { return loadState().pendingLoot?.[messageId] || null; }
+function getAllPendingLoot()         { return loadState().pendingLoot || {}; }
+function setPendingLoot(messageId, data) {
+  const s = loadState();
+  if (!s.pendingLoot) s.pendingLoot = {};
+  s.pendingLoot[messageId] = data;
+  saveState(s);
+}
+function removePendingLootItem(messageId, gameItemId) {
+  const s = loadState();
+  const entry = s.pendingLoot?.[messageId];
+  if (!entry) return null;
+  entry.items = entry.items.filter(i => String(i.gameItemId) !== String(gameItemId));
+  saveState(s);
+  return entry;
+}
+function clearPendingLoot(messageId) {
+  const s = loadState();
+  if (s.pendingLoot) { delete s.pendingLoot[messageId]; saveState(s); }
+}
+function clearAllPendingLoot() {
+  const s = loadState();
+  s.pendingLoot = {};
+  saveState(s);
+}
+
 function recordAgentUpload(character, bossName, eventCount) {
   if (!character) return;
   const s = loadState();
@@ -664,4 +700,6 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
   getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
+  getPendingLoot, getAllPendingLoot, setPendingLoot, removePendingLootItem,
+  clearPendingLoot, clearAllPendingLoot,
 };

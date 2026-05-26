@@ -319,6 +319,21 @@ async function getRaid(raidId) {
   return _get({ ..._raidsUrl(`/${raidId}`), headers: _readHeaders() });
 }
 
+// Convenience: fetch all raids, return the most recent by Timestamp.
+// Useful for /loot to confirm there's an open raid before creating auctions
+// (the auction endpoint auto-links to the active raid server-side; this lets
+// the bot show "Linking to raid: <name> #<id>" in the embed AND refuse to
+// post if there's no raid at all).
+//
+// Returns null when the API returns no raids.
+async function getMostRecentRaid() {
+  const raids = await getRaids();
+  if (!Array.isArray(raids) || raids.length === 0) return null;
+  return [...raids].sort((a, b) =>
+    new Date(b.Timestamp || 0) - new Date(a.Timestamp || 0)
+  )[0];
+}
+
 // PUT /beta/raids — create new raid
 async function createRaid(payload) {
   const headers = await _writeHeaders();
@@ -388,7 +403,7 @@ async function updateRaidById(raidId, raidObject) {
 }
 
 module.exports = {
-  getRaids, getRaid, createRaid, updateRaid, updateRaidById,
+  getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter,
   createAuctions, getAuctions, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
