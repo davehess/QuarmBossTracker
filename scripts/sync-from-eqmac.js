@@ -274,7 +274,7 @@ function* splitTuples(valuesStr) {
           else if (nxt === 'n') field += '\n';
           else if (nxt === 'r') field += '\r';
           else if (nxt === 't') field += '\t';
-          else if (nxt === '0') field += '\0';
+          else if (nxt === '0') { /* drop \0 — Postgres text cannot store null bytes (22P05) */ }
           else field += nxt;
           i += 2;
           continue;
