@@ -1,12 +1,28 @@
 # OpenDKP API Capture Playbook
 # For Claude Chrome Extension — capture missing network requests from a logged-in OpenDKP session.
 
+## ✅ STATUS: All write endpoints captured (2026-05-26)
+
+The bidding/auction surface in utils/opendkp.js is now fully wired up:
+
+  - createAuctions       PUT    /clients/{name}/auctions               (array body)
+  - restoreAuction       POST   /clients/{name}/auctions               (single object body, State=1)
+  - deleteAuction        DELETE /clients/{name}/auctions/{auctionId}   (no body)
+  - extendAuctions       POST   /clients/{name}/auctions/extendauctions (array body)
+  - endAuctions          POST   /clients/{name}/auctions/endauctions   (array body)
+  - submitBid            PUT    /clients/{name}/auctions/{auctionId}/bids
+  - cancelBid            DELETE /clients/{name}/auctions/{auctionId}/bids/{bidId} (body!)
+
+Still speculative (low priority):
+  - getAuctions          GET    /clients/{name}/auctions   (assumed path; standard REST)
+
+The sections below are kept for future capture sessions or schema changes.
+
 ## Context
 
-The Wolf Pack Quarm Bot has a working OpenDKP integration for raids, ticks, and roster sync,
-but THREE endpoints are still unconfirmed and gated on direct cURL capture from a real
-OpenDKP officer-account browser session. This document tells you exactly what to capture
-and how to report it.
+The Wolf Pack Quarm Bot has a working OpenDKP integration for raids, ticks, and roster sync.
+This document was originally for capturing the bidding/auction endpoints (now done) but
+remains useful as a reference for the capture format if anything else needs updating.
 
 Repo: davehess/QuarmBossTracker
 Implementation file: utils/opendkp.js

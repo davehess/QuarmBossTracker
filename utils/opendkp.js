@@ -146,30 +146,55 @@ async function createCharacter(payload) {
 }
 
 // ── Auction API ───────────────────────────────────────────────────────────────
-// PUT /clients/{name}/auctions — create an auction for one or more items.
+// PUT /clients/{name}/auctions — start one or more auctions.
 //
-// ⚠️  PENDING API CAPTURE: payload format not yet confirmed (500 on test with fake ItemId).
-//     Once a successful auction creation cURL is captured from the OpenDKP Bidding Tool,
-//     update this function with the correct payload structure.
+// Captured 2026-05-26 from TWO UI paths (auth token redacted):
+//   1. "Start Queued Auctions" button (Bidding Tool queue → start all)
+//   2. "Manual Start" button (direct start-auction-now action)
+// Both produce IDENTICAL network calls — there's just one create endpoint:
+//   PUT /clients/wolfpack/auctions
+//   Authorization: Bearer <Cognito ID token>
+//   Body (ARRAY — multiple auctions can be started in one call):
+//     [{
+//       "BidType":       "Open",
+//       "ItemQuantity":  1,
+//       "Duration":      3,
+//       "Bids":          [],
+//       "Item":          {"Name": "Backpack", "GameItemId": 17005},
+//       "AllowDeletes":  true,
+//       "Auctioneer":    "",
+//       "AutoAdjustBids": 0,
+//       "MaximumBid":    100000,
+//       "MinimumBid":    1,
+//       "ItemId":        17005
+//     }]
 //
-// Known required fields (from failed attempt + context):
-//   ItemId, ItemName, GameItemId, ItemQuantity, RaidId, PoolId, ClientId
+// Server fills in on response: AuctionId, ClientId, State, CreatedTimestamp /
+// EndTimestamp / UpdatedTimestamp, RaidId / RaidName (linked from active raid),
+// Notes, ItemTransactionIds. Auctioneer is filled from auth.
 //
-// payload: { items: [{ ItemId, ItemName, GameItemId, ItemQuantity }], raidId, poolId }
-async function createAuctions(payload) {
-  throw new Error(
-    'createAuctions: pending API capture. ' +
-    'Please submit a real bid in OpenDKP and capture the Network request, ' +
-    'then share the cURL so this function can be implemented.'
-  );
-  // ── Uncomment and update when confirmed ──
-  // const headers = await _bearerHeaders(true);
-  // const body = JSON.stringify(payload);
-  // return _post({
-  //   ..._clientUrl('/auctions'),
-  //   method: 'PUT',
-  //   headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
-  // }, body);
+// IMPORTANT: there is NO RaidId field in the request body. The server auto-links
+// the new auction to whatever raid is currently active under this client. So
+// before calling createAuctions(), make sure a raid exists (via createRaid).
+//
+// CRITICAL: ItemId and Item.GameItemId MUST be real EQ item IDs from the OpenDKP
+// catalog. An earlier test with a fake ItemId (31337) returned HTTP 500. Use the
+// item-autocomplete the Bidding Tool uses to discover valid IDs.
+//
+// payload: ARRAY of auction items, each:
+//   { BidType, ItemQuantity, Duration, Bids, Item, AllowDeletes,
+//     Auctioneer, AutoAdjustBids, MaximumBid, MinimumBid, ItemId }
+async function createAuctions(auctions) {
+  if (!Array.isArray(auctions) || auctions.length === 0) {
+    throw new Error('createAuctions: pass a non-empty array of auction objects');
+  }
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(auctions);
+  return _post({
+    ..._clientUrl('/auctions'),
+    method: 'PUT',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
 }
 
 // GET /clients/{name}/auctions — list active auctions
@@ -247,6 +272,42 @@ async function endAuctions(auctions) {
   }, body);
 }
 
+// POST /clients/{name}/auctions — restore (re-open) a previously-ended auction.
+// Captured cURL (2026-05-26): POST with body = single auction object (NOT array),
+// State=1 (reopened), Bids=[] (cleared). Lets officers undo an end-auction click.
+//
+// Note the API verb overloading on this base path:
+//   PUT  /auctions  with array  = create
+//   POST /auctions  with object = restore one
+//
+// Pass the full auction object (typically what getAuctions() returned, then
+// set Bids=[] and State=1 before sending).
+async function restoreAuction(auctionObject) {
+  if (!auctionObject || !auctionObject.AuctionId) {
+    throw new Error('restoreAuction: auctionObject with AuctionId is required');
+  }
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(auctionObject);
+  return _post({
+    ..._clientUrl('/auctions'),
+    method: 'POST',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
+// DELETE /clients/{name}/auctions/{auctionId} — permanently remove an auction.
+// No request body. Typically used to clean up an ended auction after winners
+// have been settled, or to discard a mistakenly-created auction.
+async function deleteAuction(auctionId) {
+  if (!auctionId) throw new Error('deleteAuction: auctionId is required');
+  const headers = await _bearerHeaders(); // no Content-Type since no body
+  return _post({
+    ..._clientUrl(`/auctions/${auctionId}`),
+    method: 'DELETE',
+    headers,
+  });
+}
+
 // ── Raids API ─────────────────────────────────────────────────────────────────
 // GET /beta/raids — all raids (no ticks detail)
 async function getRaids() {
@@ -283,6 +344,6 @@ async function updateRaid(payload) {
 module.exports = {
   getRaids, getRaid, createRaid, updateRaid,
   getCharacters, createCharacter,
-  createAuctions, getAuctions,
+  createAuctions, getAuctions, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
 };
