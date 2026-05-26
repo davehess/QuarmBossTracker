@@ -47,6 +47,10 @@ BORDER      = ( 80,  60,  20)
 DIVIDER     = ( 35,  35,  55)
 SPARK_Y     = (255, 225,  60)
 SPARK_W     = (255, 255, 200)
+BURST_FILL  = (215, 110,   8)
+BURST_RIM   = (255, 175,  40)
+BURST_OUT   = ( 55,  28,   4)
+BURST_TEXT  = (255, 250, 210)
 
 def lerp(a, b, t):  return a + (b - a) * t
 def lc(c1, c2, t):  return tuple(int(lerp(a, b, t)) for a, b in zip(c1, c2))
@@ -482,6 +486,65 @@ def draw_footer(draw, frame):
     draw.text((W-(bb2[2]-bb2[0])-18, fy),    tag, font=FONT_SMALL, fill=GRAY)
     draw.text((W-152, fy+15), "discord.gg/rtzZNxxT3", font=FONT_SMALL, fill=DARK_GRAY)
 
+# ── Spiky action burst ────────────────────────────────────────────────────────
+CTA_URL = "tinyurl.com/???"   # ← swap once short link is ready
+
+def draw_burst(img, draw, frame, url=CTA_URL):
+    """Comic-book starburst CTA badge, bottom-right, slow rotation."""
+    cx, cy   = W - 90, H - 108
+    r_out    = 74
+    r_in     = 46
+    n_points = 18
+    # very slow wobble rotation so it feels alive
+    rot = (frame / FRAMES) * math.pi * 0.18
+
+    # ── starburst polygon ─────────────────────────────────────────────────────
+    pts = []
+    for i in range(n_points * 2):
+        a = rot + i * math.pi / n_points
+        r = r_out if i % 2 == 0 else r_in
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+
+    # drop shadow
+    shadow_pts = [(x+4, y+4) for x,y in pts]
+    draw.polygon(shadow_pts, fill=(0,0,0,60))
+
+    # outer glow layer
+    layer = Image.new("RGBA", img.size, (0,0,0,0))
+    ld    = ImageDraw.Draw(layer)
+    ld.polygon(pts, fill=(*BURST_RIM, 80))
+    layer = layer.filter(ImageFilter.GaussianBlur(6))
+    img.paste(Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB"), (0,0))
+    draw = ImageDraw.Draw(img)
+
+    # main burst fill + rim
+    draw.polygon(pts, fill=BURST_FILL, outline=BURST_OUT)
+    # inner circle for text readability
+    draw.ellipse([cx-r_in+4, cy-r_in+4, cx+r_in-4, cy+r_in-4],
+                 fill=(195, 95, 5))
+
+    # ── text ──────────────────────────────────────────────────────────────────
+    lines = ["Install & run", "the parser", "today!"]
+    total_h = sum(draw.textbbox((0,0), l, font=FONT_BODY_B)[3] for l in lines) + 4
+    ty = cy - total_h // 2 - 8
+
+    for ln in lines:
+        bb  = draw.textbbox((0,0), ln, font=FONT_BODY_B)
+        lw  = bb[2] - bb[0]
+        lx  = cx - lw // 2
+        draw.text((lx+1, ty+1), ln, font=FONT_BODY_B, fill=BURST_OUT)
+        draw.text((lx,   ty),   ln, font=FONT_BODY_B, fill=BURST_TEXT)
+        ty += bb[3] - bb[1] + 2
+
+    # url below text
+    ty += 2
+    bb2 = draw.textbbox((0,0), url, font=FONT_SMALL)
+    ux  = cx - (bb2[2]-bb2[0]) // 2
+    draw.text((ux+1, ty+1), url, font=FONT_SMALL, fill=BURST_OUT)
+    draw.text((ux,   ty),   url, font=FONT_SMALL, fill=(255, 240, 150))
+
+    return ImageDraw.Draw(img)
+
 # ── Render ────────────────────────────────────────────────────────────────────
 def render_frame(f):
     img  = Image.new("RGB", (W,H), BG)
@@ -497,6 +560,7 @@ def render_frame(f):
     draw_tagline(draw, f)
     draw_bottom_strip(draw, f)
     draw_footer(draw, f)
+    draw = draw_burst(img, draw, f)
     return img
 
 print("Rendering frames...")
