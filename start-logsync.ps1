@@ -36,11 +36,9 @@ $AgentEntry = @(
     (Join-Path $PSScriptRoot "packages\wolfpack-logsync\index.js")
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-# Detect whether we have an interactive console.
-# Use -NonInteractive flag rather than stdin-redirect check; stdin is often
-# redirected even when launched interactively from a double-clicked bat file.
-$IsInteractive = [Environment]::UserInteractive -and
-                 (-not ([Environment]::GetCommandLineArgs() -contains '-NonInteractive'))
+# Detect interactive console: check -NonInteractive flag, not stdin redirect.
+# stdin is redirected even when launched from a double-clicked bat file.
+$IsInteractive = [Environment]::UserInteractive -and (([Environment]::GetCommandLineArgs() -join ' ') -notlike '*-NonInteractive*')
 
 # ── Common EQ install locations ───────────────────────────────────────────────
 # Scans every available drive root for these subfolder names.
