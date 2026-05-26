@@ -4,7 +4,7 @@
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 
-const PARSER_DOWNLOAD = 'https://tinyurl.com/WolfPackParse';
+const PARSER_DOWNLOAD = 'https://tinyurl.com/WolfPackP';
 const EQLOGPARSER_URL = 'https://github.com/kauffman12/EQLogParser/releases';
 
 module.exports = {
@@ -25,7 +25,11 @@ module.exports = {
             'Unzip anywhere and run **Parser.bat** — no install needed.',
             'It auto-detects your EQ folder and watches all active log files.',
             '',
-            'On first run you\'ll be asked for a **Token Password** — run `/token` in Discord to get it.',
+            '**First-run prompts (just press Enter at each unless you know better):**',
+            '• EQ path — accept the auto-detected `A:\\EQ` (or whatever it finds)',
+            '• Bot URL — **press Enter** to use the default Railway endpoint',
+            '• Agent token — paste the value from `/token` in Discord',
+            '• Startup preference — pick `[1]` Run automatically for hands-off setup',
             '',
             'After that: kills upload automatically in the background. No copy/paste needed.',
           ].join('\n'),

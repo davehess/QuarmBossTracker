@@ -14,6 +14,7 @@ function _empty() {
     seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {}, ari: null, quarmyLinks: {},
     auditEntries: [],
     agentTestCards: {}, agentSessionCardId: null,
+    petOwners: {},
   };
 }
 
@@ -75,6 +76,7 @@ function loadState() {
   if (raw.auditEntries)       s.auditEntries       = raw.auditEntries;
   if (raw.agentTestCards)     s.agentTestCards     = raw.agentTestCards;
   if (raw.agentSessionCardId != null) s.agentSessionCardId = raw.agentSessionCardId;
+  if (raw.petOwners)          s.petOwners          = raw.petOwners;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -492,6 +494,29 @@ function getAllAgentTestCards()     { return loadState().agentTestCards || {}; }
 // Used by /parseagents to show recent uploaders. Bounded to last 50 chars by
 // timestamp — older entries get evicted on each new upload from a fresh char.
 // Schema: { lowercaseName: { name, lastUpload, totalUploads, lastBoss, lastEventCount } }
+// petOwners is the cross-encounter, cross-parser map of pet-name → owner-name.
+// Built from the agent's encounter.pet_leaders uploads (which come from
+// "PetName says, 'My leader is OwnerName.'" lines in the EQ log). Once any
+// parser captures the declaration, every subsequent upload from any agent
+// benefits. Cleared at midnight — pet names are randomised at re-summon.
+function getPetOwners()              { return loadState().petOwners || {}; }
+function addPetOwners(petLeadersMap) {
+  if (!petLeadersMap || Object.keys(petLeadersMap).length === 0) return;
+  const s = loadState();
+  if (!s.petOwners) s.petOwners = {};
+  for (const [pet, owner] of Object.entries(petLeadersMap)) {
+    if (pet && owner) s.petOwners[pet.toLowerCase()] = owner;
+  }
+  saveState(s);
+}
+function setPetOwner(pet, owner) {
+  const s = loadState();
+  if (!s.petOwners) s.petOwners = {};
+  s.petOwners[pet.toLowerCase()] = owner;
+  saveState(s);
+}
+function clearPetOwners() { const s = loadState(); s.petOwners = {}; saveState(s); }
+
 function recordAgentUpload(character, bossName, eventCount) {
   if (!character) return;
   const s = loadState();
@@ -571,4 +596,5 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getAgentTestCard, getAllAgentTestCards, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
+  getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
 };

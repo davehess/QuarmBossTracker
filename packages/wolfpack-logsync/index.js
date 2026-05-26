@@ -432,8 +432,13 @@ function characterFromFilename(filepath) {
 
 class EncounterBuilder {
   constructor({ character, onFlush }) {
-    this.character = character;
-    this.onFlush   = onFlush;
+    this.character  = character;
+    this.onFlush    = onFlush;
+    // petLeaders is PERSISTENT across encounters — pets only declare their
+    // leader once when summoned, and they keep that owner until repop. If we
+    // wiped this on every encounter flush, a pet that was summoned during
+    // fight #1 would lose its owner mapping by fight #2.
+    this.petLeaders = {};        // lowercasePetName → ownerName
     this.reset();
   }
   reset() {
@@ -442,7 +447,7 @@ class EncounterBuilder {
     this.lastEvent  = null;
     this.targets    = new Map(); // defender → total damage dealt to it
     this.bossName   = null;
-    this.petLeaders = {};        // lowercasePetName → ownerName (built from pet_leader events)
+    // petLeaders intentionally NOT reset — persists for the agent's runtime
   }
   add(event) {
     if (!event) return;

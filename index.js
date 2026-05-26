@@ -25,6 +25,7 @@ const {
   getAgentTestCard, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
   recordAgentUpload, clearAgentActivity,
+  getPetOwners, addPetOwners, clearPetOwners,
   getAllLiveKills, clearLiveKill,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getHateBoardMessageId, setHateBoardMessageId,
@@ -1714,6 +1715,7 @@ function scheduleMidnightSummary(readyClient) {
       clearAgentTestCards();
       clearAgentSessionCardId();
       clearAgentActivity();
+      clearPetOwners();
 
       // ── Archive passed announce threads ─────────────────────────────────
       await archivePassedAnnounceThreads(readyClient);
@@ -2053,8 +2055,14 @@ async function _handleAgentUpload(req, res) {
   //
   // Pet leader attribution: the agent captures "PetName says, 'My leader is Owner.'"
   // and uploads them as encounter.pet_leaders = { petname: "Owner" }.
-  // We remap pet damage to the owner so pet DPS appears under the player's name.
-  const petLeaders = encounter.pet_leaders || {}; // { lowercasePetName: "OwnerName" }
+  //
+  // We merge any new declarations into the SERVER-PERSISTENT pet-owner map so
+  // that one parser catching the declaration helps ALL parsers attribute pet
+  // damage correctly going forward — even across encounters and across uploads
+  // from different characters. The persistent map is cleared at midnight.
+  const uploadedPetLeaders = encounter.pet_leaders || {};
+  try { addPetOwners(uploadedPetLeaders); } catch {}
+  const petLeaders = { ...getPetOwners(), ...uploadedPetLeaders };
   const playerTotals = new Map();
   for (const ev of encounter.events) {
     if (ev.type !== 'damage') continue;

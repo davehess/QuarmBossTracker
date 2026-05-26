@@ -450,23 +450,23 @@ def draw_bottom_strip(draw, frame):
     draw.line([14, y, W-14, y], fill=DIVIDER, width=1)
     y += 5
 
-    # "New in v2.1" dim label
-    draw.text((14, y), "New in v2.1:", font=FONT_MONO, fill=(68, 68, 90))
+    # "New in v2.1.10" dim label
+    draw.text((14, y), "New in v2.1.10:", font=FONT_MONO, fill=(68, 68, 90))
     y += 17
 
-    # auto-kills
-    draw.text((14, y), "Auto-kills", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
-    bb = draw.textbbox((0,0), "Auto-kills", font=FONT_BODY_B)
+    # DoT damage
+    draw.text((14, y), "DoT damage", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
+    bb = draw.textbbox((0,0), "DoT damage", font=FONT_BODY_B)
     x2 = 14 + bb[2] - bb[0] + 8
-    draw.text((x2, y), "— Parser uploads start the respawn timer for you",
+    draw.text((x2, y), "— Every tick credited; nukes & procs too",
               font=FONT_BODY, fill=LIGHT_GRAY)
     y += 20
 
-    # /parsestats
-    draw.text((14, y), "/parsestats", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep2))
-    bb2 = draw.textbbox((0,0), "/parsestats", font=FONT_BODY_B)
+    # Pets
+    draw.text((14, y), "Pet→owner",   font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep2))
+    bb2 = draw.textbbox((0,0), "Pet→owner", font=FONT_BODY_B)
     x3  = 14 + bb2[2] - bb2[0] + 8
-    draw.text((x3, y), "— Now shows every parse the agent uploads",
+    draw.text((x3, y), "— Pet damage automatically rolls into the owner",
               font=FONT_BODY, fill=LIGHT_GRAY)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
@@ -477,7 +477,7 @@ def draw_footer(draw, frame):
     draw.text((18, fy),    "@RaidBosses", font=FONT_BODY_B, fill=lc(TEAL_DIM,TEAL,ep))
     draw.text((18, fy+15), "Quarm Raid Timer Bot", font=FONT_SMALL, fill=DARK_GRAY)
 
-    ver = "v2.1.0  —  AUTO TIMERS"
+    ver = "v2.1.10  —  DoT DAMAGE"
     bb  = draw.textbbox((0,0),ver,font=FONT_BODY_B)
     vx  = (W-(bb[2]-bb[0]))//2
     draw.rectangle([vx-8,fy-2,vx+(bb[2]-bb[0])+8,fy+16], fill=(20,20,40))
@@ -599,6 +599,57 @@ def draw_burst(img, draw, frame, url=CTA_URL):
 
     return ImageDraw.Draw(img)
 
+# ── Secondary "Now includes DoT Damage!" starburst (top-right corner) ─────────
+def draw_dot_burst(img, draw, frame):
+    """Smaller diagonal starburst calling out the new DoT-damage capture feature."""
+    cx, cy   = W - 92, 90       # top-right corner
+    r_out    = 58
+    r_in     = 36
+    n_points = 14
+    # tilt + slow wobble so it pops against the rectangle layout
+    rot      = math.radians(-12) + (frame / FRAMES) * math.pi * 0.10
+
+    pts = []
+    for i in range(n_points * 2):
+        a = rot + i * math.pi / n_points
+        r = r_out if i % 2 == 0 else r_in
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+
+    # drop shadow
+    shadow_pts = [(x+3, y+3) for x,y in pts]
+    draw.polygon(shadow_pts, fill=(0,0,0,80))
+
+    # glow halo — green to differentiate from the main orange burst
+    GLOW = (90, 220, 110)
+    FILL = (32, 145, 60)
+    RIM  = (170, 240, 180)
+    OUT  = (8, 50, 22)
+    layer = Image.new("RGBA", img.size, (0,0,0,0))
+    ld    = ImageDraw.Draw(layer)
+    ld.polygon(pts, fill=(*RIM, 90))
+    layer = layer.filter(ImageFilter.GaussianBlur(5))
+    img.paste(Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB"), (0,0))
+    draw = ImageDraw.Draw(img)
+
+    draw.polygon(pts, fill=FILL, outline=OUT)
+    draw.ellipse([cx-r_in+1, cy-r_in+1, cx+r_in-1, cy+r_in-1], fill=(26, 110, 48))
+
+    # text — three short lines so they fit inside r_in
+    lines = ["NOW WITH", "DoT", "DAMAGE!"]
+    fonts = [FONT_SMALL, FONT_TITLE, FONT_SMALL]
+    bbs   = [draw.textbbox((0,0), l, font=f) for l, f in zip(lines, fonts)]
+    total_h = sum(bb[3] - bb[1] for bb in bbs) + 2 * 3
+    ty = cy - total_h // 2 - 4
+
+    for ln, f, bb in zip(lines, fonts, bbs):
+        lw = bb[2] - bb[0]
+        lx = cx - lw // 2
+        draw.text((lx+1, ty+1), ln, font=f, fill=OUT)
+        draw.text((lx,   ty),   ln, font=f, fill=(255, 255, 230))
+        ty += bb[3] - bb[1] + 3
+
+    return ImageDraw.Draw(img)
+
 # ── Render ────────────────────────────────────────────────────────────────────
 def render_frame(f):
     img  = Image.new("RGB", (W,H), BG)
@@ -618,6 +669,8 @@ def render_frame(f):
     draw_tagline(draw, f)
     draw_bottom_strip(draw, f)
     draw_footer(draw, f)
+    # DoT-damage callout burst — drawn LAST so it sits on top of everything
+    draw = draw_dot_burst(img, draw, f)
     return img
 
 print("Rendering frames...")

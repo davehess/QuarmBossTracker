@@ -256,14 +256,34 @@ if (-not $IsInteractive) {
 $cfg        = @{ EqDir = ""; BotUrl = ""; Token = "" }
 $isFirstRun = $false
 
-if ((Test-Path $ConfigFile) -and -not $Reset) {
+# Find an existing config file. Two locations are checked, in order:
+#   1. Next to this script — the post-install path inside the EQ dir
+#   2. Inside the auto-detected EQ folder — covers re-extracting the zip
+#      anywhere else (Downloads, Desktop, etc.) without losing saved settings
+$existingConfig = $null
+if (Test-Path $ConfigFile) {
+    $existingConfig = $ConfigFile
+} elseif (-not $Reset) {
+    $detected = Find-EqDir
+    if ($detected) {
+        $candidate = Join-Path $detected "logsync.config.json"
+        if (Test-Path $candidate) { $existingConfig = $candidate }
+    }
+}
+
+if ($existingConfig -and -not $Reset) {
     try {
-        $saved      = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+        $saved      = Get-Content $existingConfig -Raw | ConvertFrom-Json
         $cfg.EqDir  = $saved.EqDir
         $cfg.BotUrl = $saved.BotUrl
         $cfg.Token  = $saved.Token
+        $ConfigFile = $existingConfig
+        if ($existingConfig -ne (Join-Path $PSScriptRoot "logsync.config.json")) {
+            Write-Host "  Loaded saved settings: $existingConfig" -ForegroundColor DarkGray
+            Write-Host "  (no prompts needed -- run with -Setup to change)" -ForegroundColor DarkGray
+        }
     } catch {
-        Write-Host "  Could not read logsync.config.json -- re-prompting." -ForegroundColor Yellow
+        Write-Host "  Could not read $existingConfig -- re-prompting." -ForegroundColor Yellow
         $isFirstRun = $true
         $cfg        = @{ EqDir = ""; BotUrl = ""; Token = "" }
     }
