@@ -331,41 +331,31 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 
 ## Version Log
 
-### v2.0.0 — *in development* (feature branch: `claude/railway-deployment-setup-VIMHD`)
+### v2.0.4 — shipped to `main`
 
-**Theme:** Move from "Discord bot with JSON files" to "Discord bot + Postgres backend + multi-perspective parse aggregation + DKP loot pipeline." Versioned as 2.0 because the data layer fundamentally changes — `bosses.json` and `parses.json` stop being the source of truth and become local-cache mirrors of Supabase tables.
+**Theme:** Supabase backend, sealed-bid wishlist system, parse pipeline, lockout-driven timer recovery, and DKP loot foundation. Versioned 2.0 because the data layer fundamentally changes — `bosses.json` and `parses.json` stop being the source of truth and become local-cache mirrors of Supabase tables.
 
-**In scope for 2.0:**
+**What shipped:**
+- **Supabase backend** — Two-tier schema. Tier 1 mirrors EQMacEmu game data weekly via GitHub Actions. Tier 2 is guild-generated (encounters, contributions, loot drops, characters, wishlists, audit log). Full RLS — service_role only for writes, anon reads on public game data only.
+- **`/dkp`** — DKP lookup with family mode (main + alts), 60s cache.
+- **`/wishlist add|remove|show`** — Per-character BIS registration with AES-256-GCM encrypted sealed bids (`WISHLIST_BID_KEY`). Officers see bids during active auctions; other players see `🔒 sealed`.
+- **`/mywishlist`** — Self-only private view: decrypted bid amounts, previous drop history per item, DKP headroom vs current balance, overcommit warning.
+- **`/loot`** — Zeal paste parser, PQDI rarity labels (🆕 NEW / 💎 ULTRA RARE), officer-only wishlist match summary with sealed bids surfaced.
+- **`/parse`** — `type` option: `instance` (default, starts timer) / `open_world` / `pvp` (stats only). Multiple submissions for the same kill auto-merge. Completeness bar shown when Supabase has >1 contributor.
+- **`/parsehelp`** — Step-by-step EQLogParser setup guide, lockout confirmation, `/sll` recovery docs.
+- **`/sll`** — Paste `#showlootlockouts` output; bot parses every line, matches zone/boss names, shows preview with computed nextSpawn times, applies all on confirm. Lockout remaining = respawn remaining on Quarm exactly.
+- **`/encounter tonight|view|mine`** — Post-raid recap from Supabase encounter data.
+- **`wolfpack-logsync` agent** — Local Node.js log tail agent; privacy-filtered, zero npm deps, POSTs encounter data to bot's `/api/agent/encounter` endpoint.
+- **`parseTimeString()`** added to `utils/timer.js` (was imported but missing).
+- **`recordKill()` optional killedAt** — enables back-calculated kill time from lockout remaining.
+- **`/parsecontrib` deleted** — was redundant; `/parse` already auto-merges contributions via `find_or_create_encounter`.
 
-- **Supabase backend (`zhtoekwakucbckvatfky.supabase.co`):** Two-tier schema. Tier 1 mirrors authoritative game data from SecretsOTheP/EQMacEmu MySQL dumps (`eqemu_npc_types`, `eqemu_items`, `eqemu_loottable*`, `eqemu_lootdrop*`, `eqemu_zone`, `eqemu_spawn*`). Tier 2 is guild-generated data (encounters, contributions, loot drops, characters, wishlists, travel paths, officer notes, audit log).
-- **`bosses_local` replaces `data/bosses.json`:** Hand-curated 133-row JSON becomes an opt-in subset of `eqemu_npc_types`, joined with our overrides (nicknames, emoji, timer override, expansion bucket, path notes, strat notes). PoP launch flow becomes: officers `/addboss <npc_id>`, no JSON edits.
-- **PQDI scraping retired:** `/addboss` switches from HTML scraping to direct `eqemu_npc_types` lookup. Authoritative HP / AC / resists / see-invis / body type. Drop tables come from `eqemu_lootdrop_entries` joined via `loottable_id`.
-- **`/loot` rarity from authoritative drop tables:** ULTRA RARE detection uses `eqemu_lootdrop_entries.chance` instead of HTML regex. Guild drop history from `loot_drops` table.
-- **Weekly sync workflow:** GitHub Actions cron pulls latest `quarm_*.tar.gz` from EQMacEmu, extracts whitelisted tables, upserts to Supabase. Sync state committed to repo for git-audit trail of "what data version is the bot on."
-- **`/parsecontrib` command:** Multi-perspective parse contribution. Any guild member's EQLogParser "Send to EQ" paste matches to an existing encounter (±30min window) and merges via `merge_encounter_players()` RPC. Completeness score (`unique_attackers_seen / raid_size_expected`) shown back to contributor.
-- **Local log agent (`wolfpack-logsync`):** Node.js CLI that watches EQ log files, strips officer/tells/private channels locally (raw lines never leave the user's machine), extracts encounter events within time windows, POSTs filtered JSON to a bot ingestion endpoint. Single-file distribution for low-friction onboarding.
-- **Migration script:** One-time `data/bosses.json` → `bosses_local` import (fuzzy-match each name against `eqemu_npc_types`, store override deltas only).
-- **Defensive RLS:** Every Supabase table has RLS enabled by the migration itself; anon/authenticated default privileges revoked; public SELECT re-granted only on `eqemu_*` and `patch_notes`/`sync_meta`. Bot uses `service_role` (bypasses RLS). Web UI safe to build whenever.
-- **Rolled forward from 1.3.x:** `/register`, `/loot`, `/who` & `/whoall` OpenDKP links, DKP rootCharId, `/audit` undo, Dependabot, BSD-3-Clause license metadata.
-
-**Deferred to 2.1+:**
-
-- **Web UI** (Next.js or static + Supabase anon-key reads, RLS-gated). Per-raid-night encounter views, completeness leaderboard, bid history browser, patch notes feed (yaqds-style).
-- **OpenDKP auction creation:** `utils/opendkp.js createAuctions()` still stubbed pending API capture from the live Bidding Tool with a real item ID.
-- **Wishlist notifications:** Ephemeral DMs/mentions to guildies who have a dropped item wishlisted, with 10-15s delay after the loot embed posts.
-- **Quarmy wishlist parser:** `utils/loot.js parseQuarmyWishlist(url)` placeholder. Implement once Quarmy BIS page format is confirmed.
-- **Discord ↔ character mapping:** `/mycharacter <name>` to enable auto-resolved bidding without per-bid character selection.
-
-**Rollout sequence (in order):**
-
-1. Merge feature branch to `main` → Supabase auto-applies the schema via GitHub integration.
-2. Run sync workflow → `eqemu_*` tables populate.
-3. Run migration script → `bosses_local` populated from existing `bosses.json`.
-4. Officers exercise `/parse` + `/parsecontrib` for a few raids to validate multi-perspective merge.
-5. Distribute `wolfpack-logsync` CLI to interested raiders.
-6. Begin web UI work in parallel.
-
-Until step 1, the bot runs identically to 1.3.14 — all Supabase calls gracefully no-op.
+**Deferred to v2.1 (next raid Wednesday):**
+- **OpenDKP auction creation** — `createAuctions()` stubbed; need 3 cURL captures from the live Bidding Tool: create auction, submit bid, end/award. Capturing Wednesday night raid.
+- **`/bid`, `/bids`, `/award`** — In-raid tell-bid recording and loot award commands. Build immediately after API cURLs are captured.
+- **Quarmy wishlist import** — `parseQuarmyWishlist(url)` placeholder; implement once page format confirmed.
+- **Discord ↔ character mapping** — `/mycharacter <name>` for auto-resolved bidding.
+- **Web UI** — Next.js or static + Supabase anon-key reads, RLS-gated.
 
 **Shipped in this session (all on the feature branch, awaiting merge):**
 
