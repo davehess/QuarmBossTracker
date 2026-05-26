@@ -2211,6 +2211,25 @@ async function _handleAgentUpload(req, res) {
 
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
 
+        // ── Cross-contamination detection ────────────────────────────────────
+        // If we're posting a NEW (non-merged) card and there was a prior
+        // same-name card that ended very close to when this one started,
+        // we're almost certainly inside a multi-mob situation where the
+        // EQ log couldn't distinguish the two creatures. Flag both cards
+        // so officers know the per-card totals are approximate.
+        const CONTAMINATION_WINDOW_MS = 60 * 1000;
+        const exMsgId       = existing?.messageId || null;
+        const gapToPriorMs  = exEnd > 0 ? (startedMs - exEnd) : Infinity;
+        const isContaminated = !withinWindow && exMsgId && exEnd > 0
+          && gapToPriorMs < CONTAMINATION_WINDOW_MS
+          && gapToPriorMs >= -10_000;  // tolerate small clock skew
+
+        if (isContaminated) {
+          const gapSec = Math.max(1, Math.round(gapToPriorMs / 1000));
+          const warning = `\n\n⚠️ *Another \`${mobName}\` was killed ~${gapSec}s before this one. EQ logs can't tell same-named mobs apart, so a slice of damage may have cross-attributed between the two cards.*`;
+          card.setDescription((card.data.description || '') + warning);
+        }
+
         if (withinWindow && existing.messageId) {
           try {
             const existingMsg = await testThread.messages.fetch(existing.messageId);
@@ -2246,6 +2265,31 @@ async function _handleAgentUpload(req, res) {
             encounterEndedAt:   endedMs,
             perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
           });
+        }
+
+        // ── If contaminated, also retroactively warn on the prior card ────
+        // The new card got the warning at build time above. The prior card was
+        // posted before this kill existed, so we have to fetch and edit it.
+        // Idempotent: skip if our SENTINEL is already in the description.
+        if (isContaminated && exMsgId) {
+          const SENTINEL = `Another \`${mobName}\``;
+          try {
+            const prevMsg   = await testThread.messages.fetch(exMsgId);
+            const prevEmbed = prevMsg.embeds[0];
+            if (prevEmbed) {
+              const prevJson = (typeof prevEmbed.toJSON === 'function') ? prevEmbed.toJSON() : prevEmbed.data;
+              const prevDesc = prevJson?.description || '';
+              if (!prevDesc.includes(SENTINEL)) {
+                const gapSec  = Math.max(1, Math.round(gapToPriorMs / 1000));
+                const warning = `\n\n⚠️ *Another \`${mobName}\` was killed ~${gapSec}s after this one. EQ logs can't tell same-named mobs apart, so a slice of damage may have cross-attributed between the two cards.*`;
+                const updated = _TEB.from(prevEmbed);
+                updated.setDescription(prevDesc + warning);
+                await prevMsg.edit({ embeds: [updated] });
+              }
+            }
+          } catch {
+            // Non-critical — the new card still carries its own warning
+          }
         }
 
         // ── Session leaderboard card — edited in place after every encounter ─
