@@ -8,4 +8,4 @@
 :: After first run: use the Parser.bat that was copied to your EQ folder,
 ::   or use whatever shortcut / auto-start you chose during setup.
 
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0start-logsync.ps1"
+powershell.exe -NoExit -ExecutionPolicy Bypass -File "%~dp0start-logsync.ps1"
