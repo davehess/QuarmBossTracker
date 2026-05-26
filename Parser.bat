@@ -1,6 +1,11 @@
 @echo off
 :: Parser.bat — Wolf Pack EQ log streamer
-:: Double-click this to start Parser. No setup required — just run it.
-:: First time: will ask for your EQ directory and bot token, then save them.
+::
+:: First run (from the repo): installs Parser into your EQ directory, where
+::   Windows Defender exclusions already apply. Shortcuts and the auto-start
+::   task will point to your EQ folder copy from that point on.
+::
+:: After first run: use the Parser.bat that was copied to your EQ folder,
+::   or use whatever shortcut / auto-start you chose during setup.
 
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0start-logsync.ps1"

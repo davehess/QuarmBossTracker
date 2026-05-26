@@ -41,7 +41,7 @@ Double-click **`Parser.bat`** in the repo folder. That's it. No PowerShell execu
 
 Parser watches every recently-active EQ log file simultaneously (no need to pick a character) and uploads encounter data to the bot while you raid.
 
-**First run** — auto-detects your EQ directory across all drives (`C:\`, `D:\`, `E:\`, etc.) looking for `EverQuest`, `EQ`, `TAKP`, `TAKP2.2`, and standard install paths. Then asks for the bot URL and token (get these from an officer) and offers three startup options:
+**First run** — auto-detects your EQ directory across all drives (`C:\`, `D:\`, `E:\`, etc.) looking for `EverQuest`, `EQ`, `TAKP`, `TAKP2.2`, and standard install paths. Asks for the bot URL and token (get these from an officer), then **copies itself into your EQ directory** — which is typically already excluded from Windows Defender — and offers three startup options:
 
 ![Parser.bat first run — setup wizard](docs/screenshot-logsync-setup.png)
 
@@ -51,7 +51,7 @@ Parser watches every recently-active EQ log file simultaneously (no need to pick
 | **Desktop shortcut** | Adds a "Parser" shortcut to your desktop — double-click it before a raid. |
 | **Start menu** | Adds "Parser" under Start → All Apps. |
 
-Config is saved to `logsync.config.json` so subsequent runs (and the auto-start task) never prompt again.
+After first run the repo copy is no longer needed. Everything (`Parser.bat`, `start-logsync.ps1`, `wolfpack-logsync\index.js`, `logsync.config.json`) lives inside your EQ directory. Shortcuts and the scheduled task point there directly.
 
 **Subsequent runs:**
 

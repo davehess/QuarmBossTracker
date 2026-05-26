@@ -1,10 +1,9 @@
 # start-logsync.ps1 — Watch all recently-active EQ log files and stream encounter
 # data to the Wolf Pack bot.
 #
-# First run:  prompts for your EQ directory, bot URL, and token, saves them to
-#             logsync.config.json, then asks how you'd like Parser to start.
-#
-# After that: just run it — or it may already be running automatically.
+# On first run this script copies itself into your EQ directory (which is
+# typically excluded from Windows Defender), then stores all config and runs
+# from there. The repo copy is only needed once to bootstrap.
 #
 # Flags:
 #   -Setup           Re-run the startup wizard (change service/shortcut preference)
@@ -15,8 +14,8 @@
 #   -EqDir           Override the EQ directory without re-prompting
 
 param(
-    [string] $EqDir           = "",
-    [int]    $StaleAfterDays  = 30,
+    [string] $EqDir          = "",
+    [int]    $StaleAfterDays = 30,
     [switch] $DryRun,
     [switch] $Reset,
     [switch] $Setup,
@@ -25,16 +24,24 @@ param(
 
 $TaskName     = "WolfpackParser"
 $ShortcutName = "Parser.lnk"
-$ConfigFile   = Join-Path $PSScriptRoot "logsync.config.json"
-$AgentEntry   = Join-Path $PSScriptRoot "packages\wolfpack-logsync\index.js"
-$ScriptPath   = $MyInvocation.MyCommand.Path   # full path to this file
+
+# Config and agent live next to this script file.
+# After first-run install, $PSScriptRoot == the EQ directory.
+$ConfigFile = Join-Path $PSScriptRoot "logsync.config.json"
+
+# Agent: check next to this script first (post-install path), then fall back
+# to the repo's packages/ subfolder (bootstrap path).
+$AgentEntry = @(
+    (Join-Path $PSScriptRoot "wolfpack-logsync\index.js"),
+    (Join-Path $PSScriptRoot "packages\wolfpack-logsync\index.js")
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 # Detect whether we have an interactive console (false when run as a scheduled task)
 $IsInteractive = [Environment]::UserInteractive -and (-not [Console]::IsInputRedirected)
 
 # ── Common EQ install locations ───────────────────────────────────────────────
-# Checked in order; first match wins.
-# Also scans all available drive roots for EQ / TAKP / TAKP2.2 automatically.
+# Scans every available drive root for these subfolder names.
+# Confirms a match by requiring either log files or eqgame.exe.
 $CommonSubPaths = @(
     "EverQuest"
     "EQ"
@@ -57,14 +64,12 @@ function Write-Header {
 }
 
 function Find-EqDir {
-    # Enumerate every available drive, check common subfolder names at each root
     $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
               Where-Object { $_.Root -and (Test-Path $_.Root) }
     foreach ($drive in $drives) {
         foreach ($sub in $CommonSubPaths) {
             $candidate = Join-Path $drive.Root $sub
             if (Test-Path $candidate) {
-                # Confirm it looks like an EQ folder (has log files or eqgame.exe)
                 $hasLogs = (Get-ChildItem $candidate -Filter "eqlog_*_pq.proj.txt" -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
                 $hasExe  = Test-Path (Join-Path $candidate "eqgame.exe")
                 if ($hasLogs -or $hasExe) { return $candidate }
@@ -86,11 +91,48 @@ function Get-AllLogs([string]$dir) {
         Sort-Object LastWriteTime -Descending
 }
 
-# ── Startup wizard ────────────────────────────────────────────────────────────
-function Install-AsService {
-    # Register a Task Scheduler task that runs this script at every logon,
-    # hidden, with no console window.
-    $psArgs   = "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$ScriptPath`""
+# ── Install files into EQ directory ──────────────────────────────────────────
+# Called once on first run. Copies this script, Parser.bat, and the agent
+# into the EQ directory so everything runs from a Defender-excluded path.
+function Install-ToEqDir([string]$eqDir) {
+    $agentDest  = Join-Path $eqDir "wolfpack-logsync"
+    $scriptDest = Join-Path $eqDir "start-logsync.ps1"
+    $batDest    = Join-Path $eqDir "Parser.bat"
+
+    # Create wolfpack-logsync subfolder
+    if (-not (Test-Path $agentDest)) {
+        New-Item -ItemType Directory -Path $agentDest | Out-Null
+    }
+
+    # Copy agent index.js
+    if ($AgentEntry -and (Test-Path $AgentEntry)) {
+        Copy-Item $AgentEntry (Join-Path $agentDest "index.js") -Force
+    } else {
+        Write-Host "  WARNING: wolfpack-logsync\index.js not found — skipping agent copy." -ForegroundColor Yellow
+        Write-Host "           The repo's packages\wolfpack-logsync\index.js must be present." -ForegroundColor Yellow
+    }
+
+    # Copy this script
+    $thisScript = $MyInvocation.ScriptName
+    if ($thisScript -and (Test-Path $thisScript)) {
+        Copy-Item $thisScript $scriptDest -Force
+    }
+
+    # Write Parser.bat into EQ dir
+    Set-Content $batDest "@echo off
+:: Parser.bat -- Wolf Pack EQ log streamer
+:: Double-click to start. No setup required after first run.
+powershell.exe -ExecutionPolicy Bypass -File ""%~dp0start-logsync.ps1""
+"
+
+    Write-Host "  Installed Parser to: $eqDir" -ForegroundColor DarkGray
+    Write-Host "  (Running from Defender-excluded path)" -ForegroundColor DarkGray
+}
+
+# ── Startup wizard helpers ────────────────────────────────────────────────────
+function Install-AsService([string]$eqDir) {
+    $eqScript = Join-Path $eqDir "start-logsync.ps1"
+    $psArgs   = "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$eqScript`""
     $action   = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs
     $trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet `
@@ -112,36 +154,30 @@ function Install-AsService {
     Write-Host ""
     Write-Host "  OK  Parser will start automatically when you log into Windows." -ForegroundColor Green
     Write-Host "      It runs silently in the background -- no window to manage." -ForegroundColor DarkGray
-    Write-Host ""
     Write-Host "      To stop it:    Open Task Scheduler, find 'WolfpackParser', End Task." -ForegroundColor DarkGray
-    Write-Host "      To remove it:  .\start-logsync.ps1 -Remove" -ForegroundColor DarkGray
-    Write-Host "      To change it:  .\start-logsync.ps1 -Setup" -ForegroundColor DarkGray
+    Write-Host "      To remove it:  run .\start-logsync.ps1 -Remove  (from EQ folder)" -ForegroundColor DarkGray
+    Write-Host "      To change it:  run .\start-logsync.ps1 -Setup   (from EQ folder)" -ForegroundColor DarkGray
 }
 
-function Install-Shortcut([string]$folder, [string]$locationLabel) {
-    $batPath  = Join-Path $PSScriptRoot "Parser.bat"
+function Install-Shortcut([string]$folder, [string]$locationLabel, [string]$eqDir) {
+    $batPath  = Join-Path $eqDir "Parser.bat"
     $linkPath = Join-Path $folder $ShortcutName
     $shell    = New-Object -ComObject WScript.Shell
     $lnk      = $shell.CreateShortcut($linkPath)
-
-    # Point to Parser.bat — cmd.exe can open it directly, no execution policy needed
     $lnk.TargetPath       = $batPath
-    $lnk.WorkingDirectory = $PSScriptRoot
+    $lnk.WorkingDirectory = $eqDir
     $lnk.Description      = "Wolf Pack EQ -- wolfpack-logsync"
-
-    # Use eqgame.exe icon if available; otherwise the EQ folder icon; finally cmd icon
-    $eqExe = Join-Path $cfg.EqDir "eqgame.exe"
-    $lnk.IconLocation = if (Test-Path $eqExe) { "$eqExe,0" } else { "cmd.exe,0" }
+    $eqExe                = Join-Path $eqDir "eqgame.exe"
+    $lnk.IconLocation     = if (Test-Path $eqExe) { "$eqExe,0" } else { "cmd.exe,0" }
     $lnk.Save()
 
     Write-Host ""
     Write-Host "  OK  'Parser' shortcut added to your $locationLabel." -ForegroundColor Green
     Write-Host "      Double-click it anytime to start Parser." -ForegroundColor DarkGray
-    Write-Host "      To remove: .\start-logsync.ps1 -Remove" -ForegroundColor DarkGray
+    Write-Host "      To remove: run .\start-logsync.ps1 -Remove  (from EQ folder)" -ForegroundColor DarkGray
 }
 
-function Show-StartupWizard {
-    # Warn if already installed
+function Show-StartupWizard([string]$eqDir) {
     $hasTask    = $null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)
     $hasDesktop = Test-Path (Join-Path ([Environment]::GetFolderPath("Desktop")) $ShortcutName)
     $hasMenu    = Test-Path (Join-Path ([Environment]::GetFolderPath("Programs")) $ShortcutName)
@@ -149,8 +185,8 @@ function Show-StartupWizard {
     if ($hasTask -or $hasDesktop -or $hasMenu) {
         Write-Host "  Current setup:" -ForegroundColor White
         if ($hasTask)    { Write-Host "    * Scheduled task (auto-start)" -ForegroundColor Green }
-        if ($hasDesktop) { Write-Host "    * Desktop shortcut" -ForegroundColor Green }
-        if ($hasMenu)    { Write-Host "    * Start menu shortcut" -ForegroundColor Green }
+        if ($hasDesktop) { Write-Host "    * Desktop shortcut"            -ForegroundColor Green }
+        if ($hasMenu)    { Write-Host "    * Start menu shortcut"         -ForegroundColor Green }
         Write-Host ""
         Write-Host "  Choose a new option to replace the current setup," -ForegroundColor DarkGray
         Write-Host "  or run .\start-logsync.ps1 -Remove to uninstall everything." -ForegroundColor DarkGray
@@ -162,15 +198,15 @@ function Show-StartupWizard {
     Write-Host "  [1]  Run automatically  -- starts silently when you log into Windows" -ForegroundColor Cyan
     Write-Host "  [2]  Desktop shortcut   -- adds 'Parser' to your desktop to double-click" -ForegroundColor Cyan
     Write-Host "  [3]  Start menu         -- adds 'Parser' under Start > All Apps" -ForegroundColor Cyan
-    Write-Host "  [4]  Skip               -- I'll run .\start-logsync.ps1 manually each time" -ForegroundColor DarkGray
+    Write-Host "  [4]  Skip               -- I'll double-click Parser.bat manually each time" -ForegroundColor DarkGray
     Write-Host ""
 
     $choice = (Read-Host "  Choice [1-4]").Trim()
     switch ($choice) {
-        "1" { Install-AsService }
-        "2" { Install-Shortcut ([Environment]::GetFolderPath("Desktop")) "desktop" }
-        "3" { Install-Shortcut ([Environment]::GetFolderPath("Programs")) "Start menu" }
-        "4" { Write-Host "  Skipped. Run .\start-logsync.ps1 anytime to start Parser." -ForegroundColor DarkGray }
+        "1" { Install-AsService $eqDir }
+        "2" { Install-Shortcut ([Environment]::GetFolderPath("Desktop"))  "desktop"    $eqDir }
+        "3" { Install-Shortcut ([Environment]::GetFolderPath("Programs")) "Start menu" $eqDir }
+        "4" { Write-Host "  Skipped. Double-click Parser.bat in your EQ folder anytime." -ForegroundColor DarkGray }
         default { Write-Host "  No valid choice -- skipped." -ForegroundColor DarkGray }
     }
 }
@@ -201,9 +237,7 @@ if ($Remove) {
         $removed++
     }
 
-    if ($removed -eq 0) {
-        Write-Host "  Nothing to remove." -ForegroundColor DarkGray
-    }
+    if ($removed -eq 0) { Write-Host "  Nothing to remove." -ForegroundColor DarkGray }
     Write-Host ""
     exit 0
 }
@@ -211,10 +245,9 @@ if ($Remove) {
 # ── Load or build config ──────────────────────────────────────────────────────
 Write-Header
 
-# Non-interactive (running as scheduled task): require saved config — never prompt
 if (-not $IsInteractive) {
     if (-not (Test-Path $ConfigFile)) {
-        Write-Host "  ERROR: logsync.config.json not found. Run start-logsync.ps1 interactively first." -ForegroundColor Red
+        Write-Host "  ERROR: logsync.config.json not found. Run Parser.bat interactively first." -ForegroundColor Red
         exit 1
     }
 }
@@ -250,7 +283,7 @@ if (-not $cfg.EqDir -or -not (Test-Path $cfg.EqDir)) {
     if (-not $detected) {
         Write-Host ""
         Write-Host "  Enter the full path to your EverQuest folder." -ForegroundColor White
-        Write-Host "  (This is the folder that contains your eqlog_*.txt files.)" -ForegroundColor DarkGray
+        Write-Host "  (The folder containing your eqlog_*.txt files.)" -ForegroundColor DarkGray
         $detected = Read-Host "  EQ directory"
     }
     $cfg.EqDir = $detected.Trim('"').Trim()
@@ -259,10 +292,22 @@ if (-not $cfg.EqDir -or -not (Test-Path $cfg.EqDir)) {
 if (-not (Test-Path $cfg.EqDir)) {
     Write-Host ""
     Write-Host "  ERROR: Directory not found: $($cfg.EqDir)" -ForegroundColor Red
-    Write-Host "  Check the path and try again." -ForegroundColor Red
-    Write-Host ""
     if ($IsInteractive) { Read-Host "  Press Enter to close" }
     exit 1
+}
+
+# ── Install files into EQ directory (first run only) ──────────────────────────
+# Skip if we're already running from the EQ directory.
+$alreadyInEqDir = ($PSScriptRoot -ieq $cfg.EqDir)
+if ($isFirstRun -and -not $alreadyInEqDir) {
+    Write-Host ""
+    Install-ToEqDir $cfg.EqDir
+
+    # Switch config file to EQ dir so it's saved there
+    $ConfigFile = Join-Path $cfg.EqDir "logsync.config.json"
+
+    # Also update the agent path to the newly installed copy
+    $AgentEntry = Join-Path $cfg.EqDir "wolfpack-logsync\index.js"
 }
 
 # ── Bot URL ───────────────────────────────────────────────────────────────────
@@ -280,18 +325,18 @@ if (-not $cfg.Token) {
     $cfg.Token = (Read-Host "  Token").Trim()
 }
 
-# ── Save config ───────────────────────────────────────────────────────────────
+# ── Save config into EQ directory ─────────────────────────────────────────────
 $cfg | ConvertTo-Json | Set-Content $ConfigFile
 if ($isFirstRun) {
     Write-Host ""
-    Write-Host "  Config saved to logsync.config.json" -ForegroundColor DarkGray
+    Write-Host "  Config saved to: $ConfigFile" -ForegroundColor DarkGray
 }
 
 # ── Startup wizard (first run or -Setup) ──────────────────────────────────────
 if (($isFirstRun -or $Setup) -and $IsInteractive) {
     Write-Host ""
     Write-Host "  ── Startup preference ───────────────────────────────────────" -ForegroundColor DarkGray
-    Show-StartupWizard
+    Show-StartupWizard $cfg.EqDir
     Write-Host ""
 }
 
@@ -310,7 +355,7 @@ if ($allLogs.Count -eq 0) {
 }
 
 if ($activeLogs.Count -eq 0) {
-    if (-not $IsInteractive) { exit 0 }   # nothing to do, exit cleanly as service
+    if (-not $IsInteractive) { exit 0 }
     Write-Host "  No log files modified in the last $StaleAfterDays days." -ForegroundColor Yellow
     Write-Host "  Showing all $($allLogs.Count) log file(s) found:" -ForegroundColor White
     Write-Host ""
@@ -320,10 +365,7 @@ if ($activeLogs.Count -eq 0) {
     }
     Write-Host ""
     $ans = Read-Host "  Watch all of them anyway? [y/N]"
-    if ($ans -notmatch "^[Yy]") {
-        Write-Host "  Cancelled." -ForegroundColor DarkGray
-        exit 0
-    }
+    if ($ans -notmatch "^[Yy]") { Write-Host "  Cancelled." -ForegroundColor DarkGray; exit 0 }
     $activeLogs = $allLogs
 }
 
@@ -332,9 +374,9 @@ Write-Host "  Watching $($activeLogs.Count) log file(s):" -ForegroundColor White
 Write-Host ""
 foreach ($f in $activeLogs) {
     $age  = ((Get-Date) - $f.LastWriteTime)
-    $when = if     ($age.TotalMinutes -lt 60)  { "$([math]::Round($age.TotalMinutes))m ago" }
-            elseif ($age.TotalHours   -lt 24)  { "$([math]::Round($age.TotalHours))h ago" }
-            else                               { "$([math]::Round($age.TotalDays))d ago" }
+    $when = if     ($age.TotalMinutes -lt 60) { "$([math]::Round($age.TotalMinutes))m ago" }
+            elseif ($age.TotalHours   -lt 24) { "$([math]::Round($age.TotalHours))h ago" }
+            else                              { "$([math]::Round($age.TotalDays))d ago" }
     $char = if ($f.Name -match "eqlog_(.+)_pq\.proj\.txt") { $Matches[1] } else { $f.Name }
     $hot  = $age.TotalMinutes -lt 60
     Write-Host ("  {0}{1,-22} {2}" -f $(if ($hot) { " *" } else { "  " }), $char, $when) `
@@ -347,6 +389,14 @@ if (-not $DryRun) {
 }
 Write-Host "  Press Ctrl+C to stop." -ForegroundColor DarkGray
 Write-Host ""
+
+# ── Verify agent is present ───────────────────────────────────────────────────
+if (-not $AgentEntry -or -not (Test-Path $AgentEntry)) {
+    Write-Host "  ERROR: Agent not found at expected path." -ForegroundColor Red
+    Write-Host "         Run Parser.bat from the repo folder once to reinstall." -ForegroundColor Red
+    if ($IsInteractive) { Read-Host "  Press Enter to close" }
+    exit 1
+}
 
 # ── Build and run node command ────────────────────────────────────────────────
 $nodeArgs = @($AgentEntry)
