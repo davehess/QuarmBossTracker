@@ -607,9 +607,11 @@ const stats = {
   startedAt:       Date.now(),
   watchedLogs:     [],            // [{character, logPath, lastSeen}]
   recentParses:    [],            // last 8 uploads: {bossName, eventCount, totalDamage, spellDotDamage, when}
-  topDamageSaw:    [],            // top 5 high-damage events from others
-  topDamageDid:    [],            // top 5 high-damage events from the uploader
+  topDamageSaw:    [],            // top 5 high-damage events from others   (1 entry per attacker)
+  topDamageDid:    [],            // top 5 high-damage events from the uploader (1 entry per attacker)
   sessionEvents:   0,             // cumulative events parsed this run
+  sessionTotalDamage: 0,          // total damage across every parsed damage event
+  sessionDamageBy: {},            // { attackerName: cumulativeDamage }
   uploadCount:     0,
   uploadErrors:    0,
   lastUploadAt:    null,
@@ -665,12 +667,18 @@ function classifyDamage(event) {
 function recordEventForDashboard(event, character) {
   if (!event || event.type !== 'damage' || !event.amount) return;
   stats.sessionEvents++;
-  // Only track sizeable hits to keep the lists meaningful
-  if (event.amount < 500) return;
 
   const attacker = event.attacker || character || 'You';
   // Skip events that look like NPC-on-NPC (multi-word attacker with no pet leader)
   if (/\s/.test(attacker) && attacker !== character) return;
+
+  // Track session-wide damage totals across ALL hit sizes (not just big crits).
+  // Powers the "Damage done this session" right column.
+  stats.sessionTotalDamage += event.amount;
+  stats.sessionDamageBy[attacker] = (stats.sessionDamageBy[attacker] || 0) + event.amount;
+
+  // Top-damage lists only track sizeable hits to keep entries meaningful.
+  if (event.amount < 500) return;
 
   const item = {
     label:    classifyDamage(event),
@@ -683,7 +691,16 @@ function recordEventForDashboard(event, character) {
 
   const isMine = (event.attacker === null) || (event.attacker === character);
   const list   = isMine ? stats.topDamageDid : stats.topDamageSaw;
-  list.push(item);
+
+  // Dedupe by attacker — one row per player, keep their highest hit. Without
+  // this the same player's repeat crits stacked up and pushed everyone else
+  // off the top-5 list.
+  const existingIdx = list.findIndex(e => e.attacker.toLowerCase() === attacker.toLowerCase());
+  if (existingIdx >= 0) {
+    if (event.amount > list[existingIdx].amount) list[existingIdx] = item;
+  } else {
+    list.push(item);
+  }
   list.sort((a, b) => b.amount - a.amount);
   if (list.length > 5) list.length = 5;
 }
@@ -756,12 +773,15 @@ function pad(s, n) {
 let _dashboardEnabled = false;
 function renderDashboard() {
   if (!_dashboardEnabled) return;
+  // ASCII-only dashboard chars — cmd.exe with the default codepage renders
+  // em-dash, middle-dot, and arrow glyphs as blocks. Sticking to printable
+  // ASCII means the dashboard looks the same in cmd, PowerShell, and Terminal.
   const out = [];
   out.push(C.clear);
-  out.push(`${C.cyan}${C.bold}  Wolf Pack EQ — Parser (wolfpack-logsync)${C.reset}\n`);
-  out.push(`${C.gray}  ──────────────────────────────────────────${C.reset}\n`);
+  out.push(`${C.cyan}${C.bold}  Wolf Pack EQ - Parser (wolfpack-logsync)${C.reset}\n`);
+  out.push(`${C.gray}  ------------------------------------------${C.reset}\n`);
   out.push(`  ${C.dim}Current version ${C.reset}${C.bold}${AGENT_VERSION}${C.reset}`);
-  if (stats.uploadCount) out.push(`   ${C.dim}· ${stats.uploadCount} upload${stats.uploadCount === 1 ? '' : 's'} this session${C.reset}`);
+  if (stats.uploadCount) out.push(`   ${C.dim}| ${stats.uploadCount} upload${stats.uploadCount === 1 ? '' : 's'} this session${C.reset}`);
   out.push('\n\n');
 
   // Two-column layout: Recent Parses (left) vs Damage done this session (right)
@@ -771,20 +791,33 @@ function renderDashboard() {
 
   left.push(`${C.bold}${C.yellow}Recent Parses${C.reset}`);
   if (stats.recentParses.length === 0) {
-    left.push(`  ${C.dim}(no uploads yet){C.reset}`.replace('{C.reset}', C.reset));
+    left.push(`  ${C.dim}(no uploads yet)${C.reset}`);
   }
   for (const p of stats.recentParses.slice(0, 4)) {
-    left.push(`  ${C.green}↑${C.reset} ${pad(p.bossName, 26)} ${C.dim}(${p.eventCount} ev)${C.reset}`);
+    left.push(`  ${C.green}>${C.reset} ${pad(p.bossName, 26)} ${C.dim}(${p.eventCount} ev)${C.reset}`);
     left.push(`     ${C.bold}${fmtK(p.totalDamage)}${C.reset}  ${C.dim}(${fmtK(p.spellDotDamage)} spell/dot)${C.reset}`);
   }
 
+  // Right column: actual session damage totals (was just a log-file list).
   right.push(`${C.bold}${C.yellow}Damage done this session${C.reset}`);
+  right.push(`${C.dim}Total:${C.reset} ${C.bold}${fmtK(stats.sessionTotalDamage)}${C.reset}`);
+  const contributors = Object.entries(stats.sessionDamageBy)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+  if (contributors.length === 0) {
+    right.push(`  ${C.dim}(no damage yet)${C.reset}`);
+  } else {
+    for (const [name, dmg] of contributors) {
+      right.push(`  ${pad(name, 14)} ${C.bold}${fmtK(dmg)}${C.reset}`);
+    }
+  }
+  right.push('');
   right.push(`${C.dim}Watching ${stats.watchedLogs.length} log file(s):${C.reset}`);
   const recent = [...stats.watchedLogs].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 8);
   for (const w of recent) {
     const hot = (Date.now() - (w.lastSeen || 0)) < 60 * 60 * 1000;
     const dot = hot ? `${C.green}*${C.reset}` : ` `;
-    right.push(`  ${dot}${pad(w.character, 16)} ${C.dim}${fmtAgo(w.lastSeen)}${C.reset}`);
+    right.push(`  ${dot}${pad(w.character, 14)} ${C.dim}${fmtAgo(w.lastSeen)}${C.reset}`);
   }
 
   // Zip the two columns
@@ -798,16 +831,19 @@ function renderDashboard() {
   }
   out.push('\n');
 
-  // Top damage rows
+  // Top damage rows — short ASCII format, one entry per attacker.
+  //   "Player         123  Spell - ability"
   out.push(`  ${C.bold}${C.yellow}Top damage I saw${C.reset}${' '.repeat(LCOL - 16)}  ${C.bold}${C.yellow}Top damage I did${C.reset}\n`);
   const damRows = Math.max(stats.topDamageSaw.length, stats.topDamageDid.length, 2);
+  const fmtDamageRow = (e) => {
+    if (!e) return `${C.dim}(none yet)${C.reset}`;
+    const kind    = e.label.replace(' Crit', '');
+    const ability = e.ability ? ` ${C.dim}- ${e.ability}${C.reset}` : '';
+    return `${C.bold}${pad(e.attacker, 14)}${C.reset} ${C.green}${pad(fmtK(e.amount), 6)}${C.reset} ${C.dim}${kind}${C.reset}${ability}`;
+  };
   for (let i = 0; i < damRows; i++) {
-    const s = stats.topDamageSaw[i];
-    const d = stats.topDamageDid[i];
-    const lTxt = s ? `${C.dim}${s.label}:${C.reset} ${C.bold}${s.attacker}${C.reset} ${C.green}${fmtK(s.amount)}${C.reset} ${C.dim}— ${s.target}${s.ability ? ' · ' + s.ability : ''}${C.reset}`
-                   : `${C.dim}(none yet)${C.reset}`;
-    const rTxt = d ? `${C.dim}${d.label}:${C.reset} ${C.bold}${d.attacker}${C.reset} ${C.green}${fmtK(d.amount)}${C.reset} ${C.dim}— ${d.target}${d.ability ? ' · ' + d.ability : ''}${C.reset}`
-                   : `${C.dim}(none yet)${C.reset}`;
+    const lTxt = fmtDamageRow(stats.topDamageSaw[i]);
+    const rTxt = fmtDamageRow(stats.topDamageDid[i]);
     const lLen = lTxt.replace(/\x1b\[[0-9;]*m/g, '').length;
     out.push(`  ${lTxt}${' '.repeat(Math.max(0, LCOL - lLen))}  ${rTxt}\n`);
   }
@@ -821,7 +857,7 @@ function renderDashboard() {
   out.push(`     ${C.dim}Lifetime:${C.reset} ${C.bold}${stats.lifetime.totalEvents + stats.sessionEvents}${C.reset} ev / ${C.bold}${lifetimeMin}${C.reset} min\n`);
   out.push('\n');
 
-  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}·${C.reset}  ${C.cyan}[T]${C.reset} New Token  ${C.gray}·${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}·${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}|${C.reset}  ${C.cyan}[T]${C.reset} New Token  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -1054,8 +1090,13 @@ async function main() {
   // One encounter builder per log file (per character)
   const builders = args.logs.map(logPath => {
     const character = args.flags.character || characterFromFilename(logPath) || 'unknown';
-    // Register this log in the dashboard's watched list (lastSeen updates on each line)
-    stats.watchedLogs.push({ character, logPath, lastSeen: null });
+    // Register this log in the dashboard's watched list. Seed lastSeen from
+    // file mtime so the dashboard shows useful "ago" times immediately —
+    // without this seed, every log shows '?' until a fresh line arrives,
+    // which never happens for chars who aren't currently logged in.
+    let initialLastSeen = null;
+    try { initialLastSeen = fs.statSync(logPath).mtime.getTime(); } catch {}
+    stats.watchedLogs.push({ character, logPath, lastSeen: initialLastSeen });
     return {
       logPath,
       character,

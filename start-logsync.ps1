@@ -39,7 +39,7 @@ $AGENT_UPDATE_INTERVAL_HRS  = 12
 # NOT depend on this string — it compares full file content (normalized line
 # endings) so an update fires whenever the GitHub copy actually differs, even
 # if I forgot to bump the version.  The version is informational only.
-$SCRIPT_VERSION             = "2.2.2"
+$SCRIPT_VERSION             = "2.2.3"
 
 # Config and agent live next to this script file.
 # After first-run install, $PSScriptRoot == the EQ directory.
@@ -81,6 +81,20 @@ function Write-Header {
 }
 
 function Find-EqDir {
+    # First, check the parent of where this script lives — covers the very common
+    # case where users extract WolfPackParser.zip INSIDE their EQ install folder
+    # (e.g. C:\Users\X\Downloads\TAKP\WolfPackParser\). The previous version only
+    # scanned drive roots for known subpath names and missed nested installs.
+    if ($PSScriptRoot) {
+        $parent = Split-Path $PSScriptRoot -Parent
+        if ($parent -and (Test-Path $parent)) {
+            $hasLogs = (Get-ChildItem $parent -Filter "eqlog_*_pq.proj.txt" -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
+            $hasExe  = Test-Path (Join-Path $parent "eqgame.exe")
+            if ($hasLogs -or $hasExe) { return $parent }
+        }
+    }
+
+    # Then scan drive roots for the well-known install location names.
     $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
               Where-Object { $_.Root -and (Test-Path $_.Root) }
     foreach ($drive in $drives) {
@@ -148,6 +162,11 @@ powershell.exe -NoExit -ExecutionPolicy Bypass -File ""%~dp0start-logsync.ps1""
 
 # ── Startup wizard helpers ────────────────────────────────────────────────────
 function Install-AsService([string]$eqDir) {
+    if ([string]::IsNullOrWhiteSpace($eqDir) -or -not (Test-Path $eqDir)) {
+        Write-Host "  ERROR: Cannot install scheduled task — EQ directory is not set or doesn't exist." -ForegroundColor Red
+        Write-Host "         Re-run Parser.bat -Reset to enter your EQ folder again." -ForegroundColor DarkGray
+        return
+    }
     $eqScript = Join-Path $eqDir "start-logsync.ps1"
     $psArgs   = "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$eqScript`""
     $action   = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs
@@ -177,6 +196,11 @@ function Install-AsService([string]$eqDir) {
 }
 
 function Install-Shortcut([string]$folder, [string]$locationLabel, [string]$eqDir) {
+    if ([string]::IsNullOrWhiteSpace($eqDir) -or -not (Test-Path $eqDir)) {
+        Write-Host "  ERROR: Cannot install shortcut — EQ directory is not set or doesn't exist." -ForegroundColor Red
+        Write-Host "         Re-run Parser.bat -Reset to enter your EQ folder again." -ForegroundColor DarkGray
+        return
+    }
     $batPath  = Join-Path $eqDir "Parser.bat"
     $linkPath = Join-Path $folder $ShortcutName
     $shell    = New-Object -ComObject WScript.Shell
@@ -486,18 +510,35 @@ if (-not $cfg.EqDir -or -not (Test-Path $cfg.EqDir)) {
         $ans = Read-Host "  Use this path? [Y/n]"
         if ($ans -match "^[Nn]") { $detected = $null }
     }
-    if (-not $detected) {
+    # Re-prompt until we get a non-empty, existent path or the user explicitly
+    # aborts. Previously, hitting Enter at the manual prompt silently set
+    # $cfg.EqDir to '' and the rest of the flow crashed deep inside Install-AsService.
+    $attempts = 0
+    while (-not $detected -or [string]::IsNullOrWhiteSpace($detected) -or -not (Test-Path $detected.Trim('"').Trim())) {
+        if ($attempts -ge 3) {
+            Write-Host ""
+            Write-Host "  ERROR: No valid EverQuest folder provided after 3 attempts." -ForegroundColor Red
+            Write-Host "         Re-run Parser.bat once you know the path." -ForegroundColor DarkGray
+            if ($IsInteractive) { Read-Host "  Press Enter to close" }
+            exit 1
+        }
+        if ($attempts -gt 0 -and $detected) {
+            Write-Host "  Path not found: $detected" -ForegroundColor Yellow
+        }
         Write-Host ""
         Write-Host "  Enter the full path to your EverQuest folder." -ForegroundColor White
-        Write-Host "  (The folder containing your eqlog_*.txt files.)" -ForegroundColor DarkGray
+        Write-Host "  (The folder containing eqgame.exe and your eqlog_*.txt files.)" -ForegroundColor DarkGray
         $detected = Read-Host "  EQ directory"
+        $attempts++
     }
     $cfg.EqDir = $detected.Trim('"').Trim()
 }
 
-if (-not (Test-Path $cfg.EqDir)) {
+# Belt-and-braces: even after the loop, make absolutely sure $cfg.EqDir is
+# usable before we hand it to Install-ToEqDir / the scheduled-task wizard.
+if ([string]::IsNullOrWhiteSpace($cfg.EqDir) -or -not (Test-Path $cfg.EqDir)) {
     Write-Host ""
-    Write-Host "  ERROR: Directory not found: $($cfg.EqDir)" -ForegroundColor Red
+    Write-Host "  ERROR: Directory not found: '$($cfg.EqDir)'" -ForegroundColor Red
     if ($IsInteractive) { Read-Host "  Press Enter to close" }
     exit 1
 }
@@ -554,10 +595,12 @@ $activeLogs = Get-ActiveLogs $cfg.EqDir $StaleAfterDays
 $allLogs    = Get-AllLogs    $cfg.EqDir
 
 if ($allLogs.Count -eq 0) {
+    $shownDir = if ([string]::IsNullOrWhiteSpace($cfg.EqDir)) { '<unset>' } else { $cfg.EqDir }
     Write-Host "  ERROR: No eqlog_*_pq.proj.txt files found in:" -ForegroundColor Red
-    Write-Host "         $($cfg.EqDir)" -ForegroundColor Red
+    Write-Host "         $shownDir" -ForegroundColor Red
     Write-Host ""
-    Write-Host "  Make sure EQ logging is enabled: /log on" -ForegroundColor Yellow
+    Write-Host "  Make sure EQ logging is enabled in-game: /log on" -ForegroundColor Yellow
+    Write-Host "  Also verify the EQ path above is correct -- re-run Parser.bat -Reset to change it." -ForegroundColor Yellow
     Write-Host ""
     if ($IsInteractive) { Read-Host "  Press Enter to close" }
     exit 1
