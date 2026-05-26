@@ -56,7 +56,7 @@ module.exports = {
     )
     .addIntegerOption(opt =>
       opt.setName('bid_minutes')
-        .setDescription('Minutes before bidding closes (default: 20)')
+        .setDescription('Minutes before bidding closes (default from LOOT_DEFAULT_BID_MINUTES env, or 3)')
         .setRequired(false)
         .setMinValue(5)
         .setMaxValue(120)
@@ -88,7 +88,13 @@ module.exports = {
 
     const pasteText  = interaction.options.getString('paste');
     const bossId     = interaction.options.getString('boss');
-    const bidMinutes = interaction.options.getInteger('bid_minutes') ?? 20;
+    // Default bidding duration. OpenDKP's web UI defaults to 3 minutes; we
+    // mirror that here so the Discord timer matches the auction timer in
+    // OpenDKP. Officers can override per /loot via `bid_minutes:` or set a
+    // guild-wide default via the LOOT_DEFAULT_BID_MINUTES env var.
+    const envDefault = parseInt(process.env.LOOT_DEFAULT_BID_MINUTES || '', 10);
+    const defaultBidMinutes = Number.isFinite(envDefault) && envDefault >= 1 ? envDefault : 3;
+    const bidMinutes = interaction.options.getInteger('bid_minutes') ?? defaultBidMinutes;
 
     // ── Parse Zeal paste ──────────────────────────────────────────────────────
     const parsedItems = parseZealLoot(pasteText);
