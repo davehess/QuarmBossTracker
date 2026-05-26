@@ -3,7 +3,37 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 2.0.0-dev (feature branch) · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase
+**Version:** 2.0.4 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase
+
+---
+
+## Local Installation (Windows)
+
+### 1 — Check / install Node.js
+
+Right-click `install-node.ps1` in the repo root → **Run with PowerShell** (as Administrator).  
+The script checks whether Node.js 20+ is already present and installs it automatically if not.
+
+**First run — Node.js not installed:**
+
+![Installing Node.js](docs/screenshot-install.png)
+
+**Node.js already installed:**
+
+![Node.js already present](docs/screenshot-already-installed.png)
+
+### 2 — Configure and start
+
+Open a normal PowerShell or Command Prompt window in the repo folder:
+
+```powershell
+npm install
+copy .env.example .env
+notepad .env        # fill in your Discord token and channel IDs
+npm start
+```
+
+> **Tip:** the bot auto-registers slash commands on every startup — no separate deploy step needed.
 
 ---
 
@@ -174,13 +204,10 @@ docker-compose logs -f
 git pull && docker-compose down && docker-compose up -d --build
 ```
 
-### Local / Development
+### Local / Development (Windows)
 
-```bash
-npm install
-cp .env.example .env
-npm start
-```
+See [Local Installation](#local-installation-windows) at the top of this file.  
+The `install-node.ps1` script handles Node.js setup; then `npm install && npm start`.
 
 ---
 
