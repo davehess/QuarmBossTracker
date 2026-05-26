@@ -2195,6 +2195,20 @@ async function _handleAgentUpload(req, res) {
 
         const parsed = { duration: newDuration, totalDamage: newTotalDamage, totalDps: newTotalDps, players: mergedPlayers };
         const card   = buildParseEmbed(mobName, parsed, '🤖');
+
+        // Append the fight's start time to the title so back-to-back kills of
+        // the same mob ("a Shissar Revenant", "a Shissar Revenant") are
+        // distinguishable at a glance. Use the EARLIEST observed start on a
+        // merged card so it represents when the fight actually began, not
+        // when this particular perspective joined.
+        const displayStartMs = withinWindow ? Math.min(exStart, startedMs) : startedMs;
+        const startTimeStr   = new Date(displayStartMs).toLocaleTimeString('en-US', {
+          hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true,
+          timeZone: getDefaultTz(),
+        });
+        const origTitle = card.data.title || mobName;
+        card.setTitle(`${origTitle}  ·  ${startTimeStr}`);
+
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
 
         if (withinWindow && existing.messageId) {
