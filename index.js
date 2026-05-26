@@ -2071,6 +2071,28 @@ async function _handleAgentUpload(req, res) {
     try { accumulateSessionDamage(players, duration); } catch (e) { /* non-fatal */ }
   }
 
+  // ── Post human-readable parse card to AUTOPARSE_TEST_THREAD_ID ─────────────────
+  // Shows every encounter as it arrives — boss and trash — so officers can watch
+  // data quality in real-time without touching the live raid boards.
+  // Also the only visual output when STAGING_MODE=true.
+  const testThreadId = process.env.AUTOPARSE_TEST_THREAD_ID;
+  if (testThreadId && players.length > 0) {
+    try {
+      const testThread = await client.channels.fetch(testThreadId).catch(() => null);
+      if (testThread) {
+        const { buildParseEmbed } = require('./commands/parse');
+        const mobName  = encounter.boss_name || '? (unidentified mob)';
+        const stagingTag = process.env.STAGING_MODE === 'true' ? ' *(staging)*' : '';
+        const parsed = { duration, totalDamage, totalDps, players };
+        const card = buildParseEmbed(mobName, parsed, '🤖');
+        card.setFooter({ text: `Agent upload${stagingTag} · ${character || '?'} · ${encounter.events.length} events` });
+        await testThread.send({ embeds: [card] });
+      }
+    } catch (err) {
+      console.warn('[agent] test thread post failed:', err?.message);
+    }
+  }
+
   // ── Match boss against bosses.json, then mirror /parse instance behavior:
   //    write to parses.json, record the kill, update the board ─────────────────
   let matchedBoss = null;

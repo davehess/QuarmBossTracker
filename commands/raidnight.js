@@ -363,6 +363,7 @@ module.exports = {
 
   appendParseToSession,
   postNightSummaryToSession,
+  openSession,
   getTonightParses,
   buildSummaryEmbed,
   buildParseboardEmbed,

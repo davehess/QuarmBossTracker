@@ -11,7 +11,7 @@ const {
   EmbedBuilder, MessageFlags,
 } = require('discord.js');
 const https = require('https');
-const { addAnnounceMessageId, saveAnnounce } = require('../utils/state');
+const { addAnnounceMessageId, saveAnnounce, getRaidSession } = require('../utils/state');
 const { hasOfficerRole, officerRolesList, getAllowedRoles } = require('../utils/roles');
 const { parseUserTime, getDefaultTz, formatInDefaultTz } = require('../utils/timezone');
 const { isPopLocked } = require('../utils/config');
@@ -402,6 +402,20 @@ const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && !targets.
       organizer:     interaction.user.id,
       easterEggLevel: 0,
     });
+
+    // ── Auto-open a parse session in the announce thread ──────────────────────
+    // If no raid session is active yet, use this thread as tonight's session home.
+    // Agent uploads for this zone will append parse cards here automatically.
+    // /raidnight will honour the existing session and link here instead of creating a new thread.
+    if (raidThread && !getRaidSession()) {
+      try {
+        const { openSession, getTonightParses } = require('./raidnight');
+        await openSession(raidThread, raidThread.id, `${announceName} — ${plannedTimeStr}`, getTonightParses());
+        console.log(`[announce] parse session opened in thread ${raidThread.id} (${announceName})`);
+      } catch (err) {
+        console.warn('[announce] could not open parse session:', err?.message);
+      }
+    }
 
     await interaction.editReply(
       `✅ Announcement posted!` +

@@ -17,9 +17,18 @@ function getBosses() {
 }
 
 /**
- * Full post-kill update: refresh board, zone card, thread cooldown, summary, spawning tomorrow
+ * Full post-kill update: refresh board, zone card, thread cooldown, summary, spawning tomorrow.
+ *
+ * When STAGING_MODE=true, all board updates are suppressed so live Discord channels
+ * are untouched during testing. Data (state.json, parses.json, session accumulator,
+ * AUTOPARSE_TEST_THREAD_ID) still flows normally — only the public-facing board
+ * refreshes are skipped.
  */
 async function postKillUpdate(discordClient, channelId, bossId) {
+  if (process.env.STAGING_MODE === 'true') {
+    console.log(`[staging] board update suppressed for ${bossId} — set STAGING_MODE=false to go live`);
+    return;
+  }
   const bosses    = getBosses();
   const boss      = bosses.find((b) => b.id === bossId);
   if (!boss) return;
