@@ -474,14 +474,20 @@ const whoData = new Map(); // lowercaseName → { name, class, level, race, guil
 
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
-  whoData.set(ev.name.toLowerCase(), {
+  const k   = ev.name.toLowerCase();
+  const old = whoData.get(k) || {};
+  // Mirror server-side mergeWhoData: don't clobber known fields with nulls
+  // when the new row is /anon or /role. Class capture from parseEvent will
+  // never literally be 'ANONYMOUS' (the anonymous branch sets class=null),
+  // but the guard is kept for parity with the server's check.
+  whoData.set(k, {
     name:      ev.name,
-    class:     ev.class || null,
-    level:     ev.level || null,
-    race:      ev.race  || null,
-    guild:     ev.guild || null,
+    class:     (ev.class && ev.class !== 'ANONYMOUS') ? ev.class : (old.class || null),
+    level:     ev.level || old.level || null,
+    race:      ev.race  || old.race  || null,
+    guild:     ev.guild || old.guild || null,
     anonymous: !!ev.anonymous,
-    gm:        !!ev.gm,
+    gm:        !!ev.gm || !!old.gm,
     observedAt: ev.ts || new Date().toISOString(),
   });
 }
