@@ -19,3 +19,4 @@ raid-tick-*.txt
 *.log
 npm-debug.log*
 package-lock.json
+dist/
