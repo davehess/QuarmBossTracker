@@ -414,9 +414,15 @@ const TRANSFORMS = {
 function pick(cols, row, wanted) {
   const out = {};
   if (cols && cols.length) {
+    // Case-insensitive lookup: upstream EQMacEmu mixes cases across tables
+    // (e.g. `items.Name`, `npc_types.AC` vs `npc_types.name`). Build a
+    // lowercase → index map so transforms can use any case in their `wanted`
+    // list without breaking when upstream column casing differs.
+    const lcIndex = {};
+    for (let i = 0; i < cols.length; i++) lcIndex[cols[i].toLowerCase()] = i;
     for (const w of wanted) {
-      const idx = cols.indexOf(w);
-      if (idx !== -1) out[w] = row[idx];
+      const idx = lcIndex[w.toLowerCase()];
+      if (idx !== undefined) out[w] = row[idx];
     }
   } else {
     // No columns from INSERT — we can't reliably map. Just zip in order.
