@@ -868,6 +868,9 @@ function setupKeypressHandler() {
         fs.writeFileSync(marker, new Date().toISOString());
       } catch {}
       process.stdout.write(`${ANSI.yellow}\n  Restarting so you can enter a new token...${ANSI.reset}\n`);
+      process.stdout.write(`${ANSI.dim}  (If you don't get a token prompt, your start-logsync.ps1 is outdated.\n`);
+      process.stdout.write(`   Edit logsync.config.json and update "Token" by hand, or redownload\n`);
+      process.stdout.write(`   WolfPackParser.zip from the bot's announcement channel.)${ANSI.reset}\n`);
       process.exit(0);
     }
     if (key === 'i' || key === 'I') {

@@ -29,9 +29,15 @@ $ShortcutName = "Parser.lnk"
 
 # ── Auto-update configuration ─────────────────────────────────────────────────
 # We fetch the agent source straight from GitHub's main branch on the official
-# repo. If you fork or self-host, change $AGENT_RAW_URL to your own raw URL.
+# repo. If you fork or self-host, change *_RAW_URL to your own raw URL.
 $AGENT_RAW_URL              = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/index.js"
+$SCRIPT_RAW_URL             = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/start-logsync.ps1"
 $AGENT_UPDATE_INTERVAL_HRS  = 12
+
+# Bumped whenever this file changes shape (new markers, new flags, new flow).
+# Used by Update-Script to detect when the user's local copy is behind GitHub
+# and rewrite it in place.  Script changes take effect on the NEXT launch.
+$SCRIPT_VERSION             = "2.2.1"
 
 # Config and agent live next to this script file.
 # After first-run install, $PSScriptRoot == the EQ directory.
@@ -250,6 +256,61 @@ function Update-Agent([string]$agentPath, [bool]$silent) {
     } catch {
         if (-not $silent) {
             Write-Host "  Update check skipped: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
+        return $false
+    }
+}
+
+# ── Auto-update start-logsync.ps1 itself ─────────────────────────────────────
+# Fetches the raw .ps1 from GitHub, compares the embedded $SCRIPT_VERSION
+# constant. If newer, atomically rewrites THIS file. The replacement takes
+# effect on the NEXT launch — we don't try to re-exec ourselves mid-run
+# because that's a fragile pattern on Windows scheduled tasks and PSCommandPath
+# can be empty in some launch contexts.
+#
+# Without this function, agent code (index.js) can self-update but the
+# surrounding script can't — leading to version mismatches like a marker
+# the agent writes that the old script doesn't know how to act on.
+function Update-Script([bool]$silent) {
+    if ($NoUpdate)                     { return $false }
+    if ($cfg.AutoUpdate -eq $false)    { return $false }
+    if (-not $PSCommandPath)           { return $false }   # script run via -Command, can't self-update
+    if (-not (Test-Path $PSCommandPath)) { return $false }
+
+    try {
+        $resp   = Invoke-WebRequest -Uri $SCRIPT_RAW_URL -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $remote = $resp.Content
+        if (-not $remote) { return $false }
+
+        $remoteVer = ([regex]::Match($remote, '\$SCRIPT_VERSION\s*=\s*[''"]([^''"]+)[''"]')).Groups[1].Value
+        if (-not $remoteVer)              { return $false }
+        if ($remoteVer -eq $SCRIPT_VERSION) { return $false }
+
+        if (-not $silent) {
+            Write-Host ""
+            Write-Host "  start-logsync.ps1 update available: $SCRIPT_VERSION -> $remoteVer" -ForegroundColor Yellow
+        }
+
+        $tmp = "$PSCommandPath.tmp"
+        Set-Content -LiteralPath $tmp -Value $remote -NoNewline
+
+        # Sanity check: must look like our script (contains the version constant
+        # and the main run loop) before we atomically swap.
+        $tmpContent = Get-Content $tmp -Raw
+        if (($tmpContent -notmatch '\$SCRIPT_VERSION') -or ($tmpContent -notmatch 'Update-Agent')) {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            if (-not $silent) { Write-Host "  Script update failed: downloaded file looks corrupt." -ForegroundColor Red }
+            return $false
+        }
+
+        Move-Item -LiteralPath $tmp -Destination $PSCommandPath -Force
+        if (-not $silent) {
+            Write-Host "  Script updated to $remoteVer. The new version takes effect on next launch." -ForegroundColor Green
+        }
+        return $true
+    } catch {
+        if (-not $silent) {
+            Write-Host "  Script update check skipped: $($_.Exception.Message)" -ForegroundColor DarkGray
         }
         return $false
     }
@@ -515,6 +576,16 @@ if ($forceThisRun) {
 $updated = Update-Agent -agentPath $AgentEntry -silent:(-not $IsInteractive)
 if ($updated -and $IsInteractive) {
     Write-Host "  Re-launching with the new agent..." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+# Self-update start-logsync.ps1 itself.  The new copy takes effect on the
+# NEXT Parser.bat launch (Windows happily lets us overwrite the running script
+# since PowerShell loads it into memory at parse time, but mid-run re-exec is
+# fragile so we just rewrite and continue with the in-memory copy).
+$scriptUpdated = Update-Script -silent:(-not $IsInteractive)
+if ($scriptUpdated -and $IsInteractive) {
+    Write-Host "  (Continuing with the in-memory script; new version applies next launch.)" -ForegroundColor DarkGray
     Write-Host ""
 }
 
