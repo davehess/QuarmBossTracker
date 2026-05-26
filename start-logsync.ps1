@@ -36,8 +36,11 @@ $AgentEntry = @(
     (Join-Path $PSScriptRoot "packages\wolfpack-logsync\index.js")
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-# Detect whether we have an interactive console (false when run as a scheduled task)
-$IsInteractive = [Environment]::UserInteractive -and (-not [Console]::IsInputRedirected)
+# Detect whether we have an interactive console.
+# Use -NonInteractive flag rather than stdin-redirect check; stdin is often
+# redirected even when launched interactively from a double-clicked bat file.
+$IsInteractive = [Environment]::UserInteractive -and
+                 (-not ([Environment]::GetCommandLineArgs() -contains '-NonInteractive'))
 
 # ── Common EQ install locations ───────────────────────────────────────────────
 # Scans every available drive root for these subfolder names.
@@ -122,7 +125,7 @@ function Install-ToEqDir([string]$eqDir) {
     Set-Content $batDest "@echo off
 :: Parser.bat -- Wolf Pack EQ log streamer
 :: Double-click to start. No setup required after first run.
-powershell.exe -ExecutionPolicy Bypass -File ""%~dp0start-logsync.ps1""
+powershell.exe -NoExit -ExecutionPolicy Bypass -File ""%~dp0start-logsync.ps1""
 "
 
     Write-Host "  Installed Parser to: $eqDir" -ForegroundColor DarkGray
