@@ -38,7 +38,10 @@ LIGHT_GRAY  = (190, 190, 205)
 DARK_GRAY   = ( 55,  55,  65)
 TEAL        = ( 80, 200, 200)
 TEAL_DIM    = ( 40, 100, 100)
-RED_DIM     = (120,  30,  30)
+RED_DIM     = (130,  40,  40)
+RED_MED     = (180,  60,  60)
+GREEN_DIM   = ( 40, 120,  60)
+GREEN_MED   = ( 80, 190, 100)
 SMOKE       = (180, 180, 200, 120)
 
 def lerp(a, b, t):   return a + (b - a) * t
@@ -287,63 +290,88 @@ def draw_background(img, draw):
     draw.line([310, 70, 310, H-55], fill=(30, 30, 50), width=1)
 
 # ── Feature text block ────────────────────────────────────────────────────────
+def strikethrough(draw, text, xy, font, fill):
+    """Draw text with a horizontal line through the middle."""
+    draw.text(xy, text, font=font, fill=fill)
+    bb = draw.textbbox(xy, text, font=font)
+    mid_y = (bb[1] + bb[3]) // 2
+    draw.line([bb[0], mid_y, bb[2], mid_y], fill=fill, width=2)
+
 def draw_features(draw, frame):
-    eye_pulse = pulse(frame, speed=0.7, lo=0.55, hi=1.0)
-    tx = 325
+    ep  = pulse(frame, speed=0.7, lo=0.55, hi=1.0)
+    ep2 = pulse(frame, speed=0.5, lo=0.6,  hi=1.0)
+    tx  = 325
 
-    # ── section: Lockout → Timers (headline feature) ──────────────────────────
+    # ── OLD AND BUSTED ────────────────────────────────────────────────────────
     y = 78
+    strikethrough(draw, "  OLD AND BUSTED", (tx, y), FONT_TITLE, RED_MED)
+    y += 23
+
+    busted = [
+        ("✗", "Manual paste — forget to submit, you don't exist"),
+        ("✗", "DoT damage invisible to the rest of the guild"),
+        ("✗", "EQLogParser misses ticks outside its window"),
+    ]
+    for icon, txt in busted:
+        draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=RED_MED)
+        draw.text((tx+20, y), txt,  font=FONT_BODY,   fill=(130, 100, 100))
+        y += 18
+
+    # ── NEW HOTNESS ───────────────────────────────────────────────────────────
+    y += 10
+    draw.text((tx, y), "  NEW HOTNESS", font=FONT_TITLE,
+              fill=lc(GOLD_DIM, GOLD, ep))
+    y += 23
+
+    hotness = [
+        ("✓", "Log streams while you play — zero action needed"),
+        ("✓", "DoTs, procs, nukes — every tick captured"),
+        ("✓", "Multi-logger merges into one full picture"),
+    ]
+    for icon, txt in hotness:
+        draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=lc(GREEN_DIM, GREEN_MED, ep2))
+        draw.text((tx+20, y), txt,  font=FONT_BODY,   fill=LIGHT_GRAY)
+        y += 18
+
+    # ── tagline ───────────────────────────────────────────────────────────────
+    y += 6
+    tag = "Help the Pack see your full contribution!"
+    bb  = draw.textbbox((0,0), tag, font=FONT_BODY_B)
+    tw  = bb[2] - bb[0]
+    # center in the right column
+    col_w = W - tx - 18
+    tag_x = tx + (col_w - tw) // 2
+    # subtle glow
+    gc = lc(GOLD_DARK, GOLD, ep)
+    draw.text((tag_x+1, y+1), tag, font=FONT_BODY_B, fill=GOLD_DARK)
+    draw.text((tag_x,   y),   tag, font=FONT_BODY_B, fill=gc)
+    y += 22
+
+    # ── lockout timers ────────────────────────────────────────────────────────
+    y += 6
+    draw.line([tx, y, W-18, y], fill=(35, 35, 55), width=1)
+    y += 8
     draw.text((tx, y), "⏱  LOCKOUT → LIVE TIMERS", font=FONT_TITLE,
-              fill=lc(GOLD_DIM, GOLD, eye_pulse))
-    y += 22
-    lines = [
-        "Paste #showlootlockouts → /sll reads every line,",
-        "matches the boss, and sets exact respawn timers",
-        "for the whole raid in one shot. On Quarm, lockout",
-        "remaining = respawn remaining. No guessing.",
-    ]
-    for ln in lines:
+              fill=lc(GOLD_DIM, GOLD, ep))
+    y += 21
+    for ln in [
+        "Paste #showlootlockouts → /sll sets every",
+        "respawn timer instantly. Lockout remaining",
+        "= respawn remaining on Quarm. Exact, always.",
+    ]:
         draw.text((tx+6, y), ln, font=FONT_BODY, fill=LIGHT_GRAY)
         y += 17
 
-    # ── section: Parser ───────────────────────────────────────────────────────
+    # ── on deck ───────────────────────────────────────────────────────────────
     y += 8
-    draw.text((tx, y), "⚙  FULL GUILD DPS PICTURE", font=FONT_TITLE,
-              fill=lc(GOLD_DIM, GOLD, eye_pulse))
-    y += 22
-    lines2 = [
-        "Multiple EQLogParser submissions auto-merge into",
-        "one encounter — whoever submits, it combines.",
-        "Boss auto-detected. Coverage bar shows what %",
-        "of the raid is accounted for across all parses.",
-    ]
-    for ln in lines2:
-        draw.text((tx+6, y), ln, font=FONT_BODY, fill=LIGHT_GRAY)
-        y += 17
-
-    # ── section: Live streaming ────────────────────────────────────────────────
-    y += 8
-    draw.text((tx, y), "⚡  LIVE LOG STREAMING", font=FONT_TITLE,
-              fill=lc(GOLD_DIM, GOLD, eye_pulse))
-    y += 22
-    lines3 = [
-        "Parser.bat watches every active character log at",
-        "once. Installs to your EQ folder (Defender-safe),",
-        "auto-starts on Windows login. No config per raid.",
-    ]
-    for ln in lines3:
-        draw.text((tx+6, y), ln, font=FONT_BODY, fill=LIGHT_GRAY)
-        y += 17
-
-    # ── section: on deck ──────────────────────────────────────────────────────
+    draw.line([tx, y, W-18, y], fill=(35, 35, 55), width=1)
     y += 8
     draw.text((tx, y), "🔬  ON DECK — v2.1", font=FONT_TITLE, fill=GRAY)
-    y += 20
-    boring = [
+    y += 19
+    for ln in [
         "In-raid /bid · /award via OpenDKP auction API",
         "EQMacEmu DB sync → richer boss data, no scraping",
-    ]
-    for ln in boring:
+    ]:
         draw.text((tx+6, y), "·  " + ln, font=FONT_SMALL, fill=DARK_GRAY)
         y += 15
 
