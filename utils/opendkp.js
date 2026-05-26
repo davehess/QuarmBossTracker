@@ -7,7 +7,8 @@
 //   OPENDKP_RAIDS_URL        — API Gateway base URL for the raids resource
 //                              e.g. https://XXXXXXXX.execute-api.us-east-2.amazonaws.com
 //   OPENDKP_COGNITO_CLIENT_ID — Cognito App Client ID (from OpenDKP site JS, looks like: abc123xyz)
-//   OPENDKP_EMAIL            — officer/admin account email
+//   OPENDKP_USERNAME         — officer/admin OpenDKP login username (e.g. 'RaidBosses')
+//                              (legacy: OPENDKP_EMAIL still accepted but value must be a username)
 //   OPENDKP_PASSWORD         — officer/admin account password
 //   OPENDKP_POOL_ID          — DKP pool ID (default 5 = SoL)
 //   OPENDKP_API_URL          — base URL for the OpenDKP REST API (default: https://api.opendkp.com)
@@ -54,17 +55,22 @@ let _token = null, _tokenExpiry = 0;
 async function getAuthToken() {
   if (_token && Date.now() < _tokenExpiry) return _token;
 
+  // OpenDKP's Cognito user pool authenticates against the USERNAME field, not
+  // the email address.  OPENDKP_USERNAME is the preferred env var; we still
+  // accept the older OPENDKP_EMAIL name as a fallback so existing deployments
+  // don't break, but emails won't authenticate — the value must be the actual
+  // OpenDKP login username (e.g. 'RaidBosses') regardless of which var name.
   const cognitoClientId = process.env.OPENDKP_COGNITO_CLIENT_ID;
-  const email           = process.env.OPENDKP_EMAIL;
+  const username        = process.env.OPENDKP_USERNAME || process.env.OPENDKP_EMAIL;
   const password        = process.env.OPENDKP_PASSWORD;
 
-  if (!cognitoClientId || !email || !password) {
-    throw new Error('OPENDKP_COGNITO_CLIENT_ID, OPENDKP_EMAIL, OPENDKP_PASSWORD must be set');
+  if (!cognitoClientId || !username || !password) {
+    throw new Error('OPENDKP_COGNITO_CLIENT_ID, OPENDKP_USERNAME, OPENDKP_PASSWORD must be set');
   }
 
   const body = JSON.stringify({
     AuthFlow: 'USER_PASSWORD_AUTH',
-    AuthParameters: { USERNAME: email, PASSWORD: password },
+    AuthParameters: { USERNAME: username, PASSWORD: password },
     ClientId: cognitoClientId,
   });
 
