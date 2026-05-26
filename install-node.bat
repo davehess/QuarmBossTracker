@@ -1,12 +1,12 @@
 @echo off
 :: install-node.bat — Wolf Pack EQ Parser: Node.js installer
-:: Right-click → Run as administrator  (or double-click; UAC will appear)
+:: Double-click to run — UAC will appear if admin rights are needed
 
 :: ── Check for administrator rights ───────────────────────────────────────────
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Requesting administrator access...
-    powershell -Command "Start-Process -FilePath cmd.exe -ArgumentList '/c cd /d \"%~dp0\" ^&^& \"%~f0\"' -Verb RunAs"
+    :: Re-launch this bat file itself with elevation
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
     exit /b
 )
 
