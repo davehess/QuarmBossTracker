@@ -541,7 +541,7 @@ def draw_nameplates(img, draw, frame):
     return draw
 
 # ── Spiky action burst ────────────────────────────────────────────────────────
-CTA_URL = "tinyurl.com/WolfPackParser"
+CTA_URL = "tinyurl.com/WolfPackParse"
 
 def draw_burst(img, draw, frame, url=CTA_URL):
     """Comic-book starburst CTA badge, centered between the two robots at robot-body height."""
