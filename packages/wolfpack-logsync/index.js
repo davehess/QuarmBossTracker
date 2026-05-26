@@ -145,7 +145,9 @@ const DEFAULT_DROP_PATTERNS = [
   /\btells the raid,\s*['"]/i,
   /^\[.+\]\s+You say to your raid,/i,
 
-  // Public chat (allowed in principle, but not combat-relevant so we drop)
+  // Public chat (allowed in principle, but not combat-relevant so we drop).
+  // EXCEPTION: "PetName says, 'My leader is OwnerName.'" — handled by
+  // PRIORITY_KEEP_PATTERNS below, which is checked BEFORE this drop list.
   /\bsays?,\s*['"]/i,
   /\bsays out of character,\s*['"]/i,
   /\bshouts?,\s*['"]/i,
@@ -172,6 +174,14 @@ const DEFAULT_DROP_PATTERNS = [
   //   Note: NPC DoT ticks say "X has taken N" (third person), so this first-person
   //   form is safe to drop without losing any mob-damage data.
   /\byou have taken \d+ points? of damage/i,
+];
+
+// PRIORITY keeps — checked BEFORE the drop list. These override the drop patterns
+// for specific say messages that are combat-relevant despite being in public chat.
+// Currently: pet leader declarations, which identify which player owns which pet.
+//   EQ log format: "[Fri May 26 02:34:04 2026] Gobn says, 'My leader is Utoh.'"
+const PRIORITY_KEEP_PATTERNS = [
+  /\bsays,\s*['"]My leader is \w+\.?\s*['"]/i,
 ];
 
 // Lines we KEEP (positive list — combat events). Anything not matching here
@@ -222,8 +232,11 @@ function parseEqTimestamp(line) {
 
 // ── Filter (the privacy layer) ──────────────────────────────────────────────
 // Returns true if the line should be KEPT for further processing.
-function shouldKeep(line, drops = DEFAULT_DROP_PATTERNS, keeps = KEEP_PATTERNS) {
-  // Drop list wins — if any drop pattern matches, line is gone immediately.
+// Order: priority keeps (override drops) → drop list → keep list.
+function shouldKeep(line, drops = DEFAULT_DROP_PATTERNS, keeps = KEEP_PATTERNS, priorityKeeps = PRIORITY_KEEP_PATTERNS) {
+  // Priority keeps override the drop list (e.g. pet leader declarations inside /say)
+  for (const rx of priorityKeeps) if (rx.test(line)) return true;
+  // Drop list wins next — if any drop pattern matches, line is gone immediately.
   for (const rx of drops) if (rx.test(line)) return false;
   // Then keep list — only positively-identified combat lines are kept.
   for (const rx of keeps) if (rx.test(line)) return true;
@@ -358,6 +371,15 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'cast', attacker: m[1], ability: m[2] };
   }
 
+  // ── Pet leader declaration ────────────────────────────────────────────────
+  // "Gobn says, 'My leader is Utoh.'"
+  // Only reaches here because PRIORITY_KEEP_PATTERNS let the line through despite
+  // the general /says?/ drop pattern. Used to build a pet→owner attribution map.
+  m = line.match(/\]\s+(\S+)\s+says,\s*['"]My leader is (\w+)\.?\s*['"]/i);
+  if (m) {
+    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
+  }
+
   return null;
 }
 
@@ -388,14 +410,22 @@ class EncounterBuilder {
     this.reset();
   }
   reset() {
-    this.events    = [];
-    this.startedAt = null;
-    this.lastEvent = null;
-    this.targets   = new Map(); // defender → total damage dealt to it
-    this.bossName  = null;
+    this.events     = [];
+    this.startedAt  = null;
+    this.lastEvent  = null;
+    this.targets    = new Map(); // defender → total damage dealt to it
+    this.bossName   = null;
+    this.petLeaders = {};        // lowercasePetName → ownerName (built from pet_leader events)
   }
   add(event) {
     if (!event) return;
+
+    // Pet leader declarations update the map but don't count as combat events
+    if (event.type === 'pet_leader') {
+      this.petLeaders[event.pet.toLowerCase()] = event.owner;
+      return;
+    }
+
     if (!this.startedAt) this.startedAt = event.ts;
     this.lastEvent = event.ts;
     this.events.push(event);
@@ -448,10 +478,13 @@ class EncounterBuilder {
       agent_version: AGENT_VERSION,
       character:     this.character,
       encounter: {
-        started_at: this.startedAt,
-        ended_at:   this.lastEvent,
-        boss_name:  this.bossName,
-        events:     this.events,
+        started_at:  this.startedAt,
+        ended_at:    this.lastEvent,
+        boss_name:   this.bossName,
+        // pet_leaders: { lowercasePetName: "OwnerName" } — used server-side to attribute
+        // pet damage to the player owner. Empty object when no pets were detected.
+        pet_leaders: Object.keys(this.petLeaders).length > 0 ? { ...this.petLeaders } : undefined,
+        events:      this.events,
       },
     };
     this.onFlush(payload);

@@ -12,7 +12,8 @@ function _empty() {
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, liveKills: {}, quake: null, pvpAlerts: {},
     seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {}, ari: null, quarmyLinks: {},
-auditEntries: [],
+    auditEntries: [],
+    agentTestCards: {}, agentSessionCardId: null,
   };
 }
 
@@ -71,7 +72,9 @@ function loadState() {
   if (raw.hateBoards)         s.hateBoards         = raw.hateBoards;
   if (raw.ari !== undefined)  s.ari                = raw.ari;
   if (raw.quarmyLinks)        s.quarmyLinks        = raw.quarmyLinks;
-if (raw.auditEntries)       s.auditEntries       = raw.auditEntries;
+  if (raw.auditEntries)       s.auditEntries       = raw.auditEntries;
+  if (raw.agentTestCards)     s.agentTestCards     = raw.agentTestCards;
+  if (raw.agentSessionCardId != null) s.agentSessionCardId = raw.agentSessionCardId;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -470,6 +473,27 @@ function findLatestActiveAuditEntry(bossId, action) {
   return null;
 }
 
+// ── Agent test thread tracking ────────────────────────────────────────────────
+// agentTestCards: { bossKey: { messageId, timestamp, perspectives, players, duration, totalDamage } }
+// Tracks the most recent mob card in AUTOPARSE_TEST_THREAD_ID for edit-in-place dedup.
+// agentSessionCardId: messageId of the all-night session leaderboard card (edited in place).
+// Both are cleared at midnight (fresh thread/session each night).
+function getAgentTestCard(bossKey)  { return loadState().agentTestCards?.[bossKey] || null; }
+function setAgentTestCard(bossKey, data) {
+  const s = loadState();
+  if (!s.agentTestCards) s.agentTestCards = {};
+  s.agentTestCards[bossKey] = data;
+  saveState(s);
+}
+function clearAgentTestCards() {
+  const s = loadState();
+  s.agentTestCards = {};
+  saveState(s);
+}
+function getAgentSessionCardId()   { return loadState().agentSessionCardId || null; }
+function setAgentSessionCardId(id) { const s = loadState(); s.agentSessionCardId = id; saveState(s); }
+function clearAgentSessionCardId() { const s = loadState(); s.agentSessionCardId = null; saveState(s); }
+
 // Legacy compat
 function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
@@ -508,4 +532,6 @@ module.exports = {
   getQuarmyLink, setQuarmyLink, clearQuarmyLink,
 getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getAuditEntries, getAuditEntry, addAuditEntry, updateAuditEntryMsgId, markAuditEntryUndone, findLatestActiveAuditEntry,
+  getAgentTestCard, setAgentTestCard, clearAgentTestCards,
+  getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
 };

@@ -22,6 +22,8 @@ const {
   hasSeenWelcome, markWelcomeSeen,
   getRaidSession, clearRaidSession, accumulateSessionDamage,
   clearRaidNight,
+  getAgentTestCard, setAgentTestCard, clearAgentTestCards,
+  getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
   getAllLiveKills, clearLiveKill,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getHateBoardMessageId, setHateBoardMessageId,
@@ -1707,6 +1709,9 @@ function scheduleMidnightSummary(readyClient) {
       resetDailyKills();
       clearAnnounceMessageIds();
       clearRaidNight();
+      // Clear agent test thread tracking — fresh state for the new night
+      clearAgentTestCards();
+      clearAgentSessionCardId();
 
       // ── Archive passed announce threads ─────────────────────────────────
       await archivePassedAnnounceThreads(readyClient);
@@ -2034,19 +2039,33 @@ async function _handleAgentUpload(req, res) {
   // Filter out noise before aggregating:
   //   - "Eye of PLAYERNAME" — wizard/mage scout pets that attack your target (not player DPS)
   //   - Cannibalize self-hits — shaman HP→mana conversion logged as self-damage
+  //   - NPC-vs-NPC damage — e.g. "A Netherbian Drone hits A Netherbian Drone" (identified
+  //     by multi-word attacker name that isn't a known player pet via pet_leaders map)
   //
   // IMPORTANT: events from the uploading character's OWN perspective (melee, spells,
   // DoTs, archery) are parsed by the agent as attacker=null ("self / first person").
   // We re-attribute those to `character` so their damage isn't silently dropped.
+  //
+  // Pet leader attribution: the agent captures "PetName says, 'My leader is Owner.'"
+  // and uploads them as encounter.pet_leaders = { petname: "Owner" }.
+  // We remap pet damage to the owner so pet DPS appears under the player's name.
+  const petLeaders = encounter.pet_leaders || {}; // { lowercasePetName: "OwnerName" }
   const playerTotals = new Map();
   for (const ev of encounter.events) {
     if (ev.type !== 'damage') continue;
     const rawAttacker = ev.attacker;
     // Re-attribute first-person (null) events to the uploading character
-    const attacker = rawAttacker ?? character ?? null;
+    let attacker = rawAttacker ?? character ?? null;
     if (!attacker) continue;
-    if (/^Eye of /i.test(attacker)) continue;                                                    // skip Eye of X pets
+    if (/^Eye of /i.test(attacker)) continue;                                                    // skip Eye of X wizard/mage scout pets
     if (ev.spell && /cannibali[sz]e/i.test(ev.spell) && rawAttacker === ev.target) continue;    // skip self-cannibalizes
+    // Remap pet damage to owner if the agent captured a pet leader declaration
+    const petOwner = petLeaders[attacker.toLowerCase()];
+    if (petOwner) attacker = petOwner;
+    // Skip NPC-vs-NPC: multi-word attacker names that aren't a player character.
+    // Player names in EQ are always a single word. NPCs have spaces ("A Zombie").
+    // After pet remapping, only unowned NPC names still have spaces — those are noise.
+    if (/\s/.test(attacker)) continue;
     playerTotals.set(attacker, (playerTotals.get(attacker) || 0) + (ev.amount || 0));
   }
   const startedMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
@@ -2072,21 +2091,138 @@ async function _handleAgentUpload(req, res) {
   }
 
   // ── Post human-readable parse card to AUTOPARSE_TEST_THREAD_ID ─────────────────
-  // Shows every encounter as it arrives — boss and trash — so officers can watch
+  // Shows every encounter as it arrives — boss and trash — so officers can verify
   // data quality in real-time without touching the live raid boards.
-  // Also the only visual output when STAGING_MODE=true.
+  //
+  // Edit-in-place dedup: if the same mob is uploaded within 10 minutes (multiple
+  // parsers watching the same fight), we MERGE the player data (max damage per
+  // player wins) and EDIT the existing Discord message rather than posting a new one.
+  // The footer shows "N parsers merged · Name1, Name2" so dedup convergence is visible.
+  //
+  // Also posts/edits a session leaderboard card showing all-night running totals.
   const testThreadId = process.env.AUTOPARSE_TEST_THREAD_ID;
   if (testThreadId && players.length > 0) {
     try {
       const testThread = await client.channels.fetch(testThreadId).catch(() => null);
       if (testThread) {
         const { buildParseEmbed } = require('./commands/parse');
-        const mobName  = encounter.boss_name || '? (unidentified mob)';
+        const { EmbedBuilder: _TEB } = require('discord.js');
+
+        const mobName    = encounter.boss_name || '? (unidentified mob)';
         const stagingTag = process.env.STAGING_MODE === 'true' ? ' *(staging)*' : '';
-        const parsed = { duration, totalDamage, totalDps, players };
-        const card = buildParseEmbed(mobName, parsed, '🤖');
-        card.setFooter({ text: `Agent upload${stagingTag} · ${character || '?'} · ${encounter.events.length} events` });
-        await testThread.send({ embeds: [card] });
+        const TEN_MIN    = 10 * 60 * 1000;
+        // Key by slugified mob name so the same mob from multiple parsers shares a card
+        const bossKey    = (encounter.boss_name || 'unknown').toLowerCase().replace(/\W+/g, '_');
+
+        // ── Mob card — edit in place when same mob arrives within 10 min ─────
+        const existing      = getAgentTestCard(bossKey);
+        const withinWindow  = existing && (Date.now() - existing.timestamp) < TEN_MIN;
+
+        let mergedPlayers, perspectives, newDuration, newTotalDamage, newTotalDps;
+
+        if (withinWindow) {
+          // Merge: max damage per player wins across perspectives
+          const merged = new Map(existing.players.map(p => [p.name.toLowerCase(), { ...p }]));
+          for (const p of players) {
+            const k = p.name.toLowerCase();
+            const cur = merged.get(k);
+            if (!cur || p.damage > cur.damage) merged.set(k, { ...p });
+          }
+          newDuration    = Math.max(existing.duration, duration);
+          // Recalculate DPS for all merged players against the longest known fight duration
+          mergedPlayers  = [...merged.values()]
+            .sort((a, b) => b.damage - a.damage)
+            .map((p, i) => ({
+              ...p,
+              dps:  newDuration > 0 ? Math.round(p.damage / newDuration) : 0,
+              rank: i + 1,
+            }));
+          perspectives   = [...new Set([...existing.perspectives, character].filter(Boolean))];
+          newTotalDamage = mergedPlayers.reduce((s, p) => s + p.damage, 0);
+          newTotalDps    = newDuration > 0 ? Math.round(newTotalDamage / newDuration) : 0;
+        } else {
+          mergedPlayers  = players;
+          perspectives   = character ? [character] : [];
+          newDuration    = duration;
+          newTotalDamage = totalDamage;
+          newTotalDps    = totalDps;
+        }
+
+        const perspCount = perspectives.length;
+        const perspLabel = perspCount <= 1 ? '1 parser' : `${perspCount} parsers merged`;
+        const perspNames = perspectives.join(', ') || '?';
+
+        const parsed = { duration: newDuration, totalDamage: newTotalDamage, totalDps: newTotalDps, players: mergedPlayers };
+        const card   = buildParseEmbed(mobName, parsed, '🤖');
+        card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
+
+        if (withinWindow && existing.messageId) {
+          try {
+            const existingMsg = await testThread.messages.fetch(existing.messageId);
+            await existingMsg.edit({ embeds: [card] });
+            setAgentTestCard(bossKey, {
+              messageId:   existing.messageId,
+              timestamp:   existing.timestamp, // keep original window start
+              perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
+            });
+          } catch {
+            // Message gone — post fresh card
+            const sent = await testThread.send({ embeds: [card] });
+            setAgentTestCard(bossKey, {
+              messageId: sent.id, timestamp: Date.now(),
+              perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
+            });
+          }
+        } else {
+          const sent = await testThread.send({ embeds: [card] });
+          setAgentTestCard(bossKey, {
+            messageId: sent.id, timestamp: Date.now(),
+            perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
+          });
+        }
+
+        // ── Session leaderboard card — edited in place after every encounter ─
+        // Shows running all-night DPS totals when a /raidnight or /announce session
+        // is active. The card is posted once (on first encounter with an active session)
+        // and edited in place from then on.
+        const session    = getRaidSession();
+        const sessionDmg = session?.sessionDamage || {};
+        const allNight   = Object.values(sessionDmg).sort((a, b) => b.damage - a.damage).slice(0, 15);
+
+        if (allNight.length > 0) {
+          const maxDmg = allNight[0]?.damage || 1;
+          const rows = allNight.map((p, i) => {
+            const avgDps = p.duration > 0 ? Math.round(p.damage / p.duration) : 0;
+            const barLen = Math.round((p.damage / maxDmg) * 8);
+            const bar    = '█'.repeat(Math.max(0, barLen)) + '░'.repeat(Math.max(0, 8 - barLen));
+            const dmgStr = p.damage >= 1_000_000
+              ? `${(p.damage / 1_000_000).toFixed(2)}M`
+              : `${(p.damage / 1000).toFixed(1)}k`;
+            return `\`${String(i + 1).padStart(2)}\` ${bar} **${p.name}** — ${dmgStr} · ${avgDps}/s avg · ${p.encounters} enc`;
+          });
+
+          const sessionLabel = session?.label || 'Active Session';
+          const sessionCard  = new _TEB()
+            .setColor(0x5865F2)
+            .setTitle(`📊 All-Night Leaderboard — ${sessionLabel}`)
+            .setDescription(rows.join('\n'))
+            .setFooter({ text: 'Session totals · all encounters including trash · edits in place' })
+            .setTimestamp();
+
+          const sessionCardId = getAgentSessionCardId();
+          if (sessionCardId) {
+            try {
+              const sessionMsg = await testThread.messages.fetch(sessionCardId);
+              await sessionMsg.edit({ embeds: [sessionCard] });
+            } catch {
+              const sent = await testThread.send({ embeds: [sessionCard] });
+              setAgentSessionCardId(sent.id);
+            }
+          } else {
+            const sent = await testThread.send({ embeds: [sessionCard] });
+            setAgentSessionCardId(sent.id);
+          }
+        }
       }
     } catch (err) {
       console.warn('[agent] test thread post failed:', err?.message);
