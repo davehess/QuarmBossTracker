@@ -453,18 +453,27 @@ def draw_tagline(draw, frame):
 
 # ── Bottom strip ──────────────────────────────────────────────────────────────
 def draw_bottom_strip(draw, frame):
-    ep = pulse(frame, speed=0.5, lo=0.5, hi=1.0)
-    y  = H - 94
+    ep  = pulse(frame, speed=0.5, lo=0.5, hi=1.0)
+    ep2 = pulse(frame, speed=0.6, lo=0.5, hi=1.0)
+    y   = H - 100
 
     draw.line([14, y, W-14, y], fill=DIVIDER, width=1)
-    y += 7
+    y += 8
 
-    draw.text((14, y), "⏱", font=FONT_BODY_B, fill=lc(GOLD_DIM,GOLD,ep))
-    draw.text((32, y), "/sll — paste #showlootlockouts, sets every respawn timer instantly",
-              font=FONT_SMALL, fill=LIGHT_GRAY)
-    y += 17
-    draw.text((32, y), "🔬  On deck v2.1:  /bid · /award  ·  EQMacEmu DB sync",
-              font=FONT_SMALL, fill=DARK_GRAY)
+    # /register
+    draw.text((14, y), "/register", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
+    bb = draw.textbbox((0,0), "/register", font=FONT_BODY_B)
+    x2 = 14 + bb[2] - bb[0] + 8
+    draw.text((x2, y), "— Add your character to OpenDKP straight from Discord",
+              font=FONT_BODY, fill=LIGHT_GRAY)
+    y += 22
+
+    # /wishlist
+    draw.text((14, y), "/wishlist", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep2))
+    bb2 = draw.textbbox((0,0), "/wishlist", font=FONT_BODY_B)
+    x3  = 14 + bb2[2] - bb2[0] + 8
+    draw.text((x3, y), "— Build your BIS list with sealed, encrypted bid amounts",
+              font=FONT_BODY, fill=LIGHT_GRAY)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 def draw_footer(draw, frame):
