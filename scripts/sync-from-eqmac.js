@@ -178,8 +178,15 @@ async function findSqlFiles(extractDir) {
   return { mode: 'split', files: found };
 }
 
-// ── MySQL dump parser (just INSERT INTO statements) ─────────────────────────
+// ── MySQL dump parser (CREATE TABLE + INSERT INTO statements) ──────────────
 // Returns an async iterator of { table, columns: [...], row: [...] }.
+//
+// mysqldump's default INSERT form is bare: `INSERT INTO `t` VALUES (...)` with
+// NO inline column list. To map values to column names correctly we read the
+// CREATE TABLE statement that precedes the INSERTs and remember its column
+// order. Without this, position-based fallback would shove e.g. `long_name`
+// ("Acrylia Caverns") into a `zone_id` (int) slot and Postgres rejects it
+// with 22P02.
 async function* iterInserts(filePath) {
   let stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 256 * 1024 });
   if (filePath.endsWith('.gz')) {
@@ -187,8 +194,8 @@ async function* iterInserts(filePath) {
   }
 
   let buffer = '';
-  let columns = null;
   let currentTable = null;
+  const tableColumns = {}; // upstream table name → column order from CREATE TABLE
 
   for await (const chunk of stream) {
     buffer += chunk;
@@ -200,15 +207,33 @@ async function* iterInserts(filePath) {
       const stmt = buffer.slice(0, semiIdx + 1);
       buffer = buffer.slice(semiIdx + 2);
 
-      // Track current table from "INSERT INTO `tbl`"
+      // CREATE TABLE — capture column order. mysqldump formats one column per
+      // line as: `  `col_name` <type> ... ,` and constraint/key lines start
+      // with PRIMARY/UNIQUE/KEY/CONSTRAINT/FULLTEXT/FOREIGN (no leading backtick).
+      const createMatch = stmt.match(/^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(/i);
+      if (createMatch) {
+        const tname = createMatch[1];
+        const cols = [];
+        for (const line of stmt.split('\n')) {
+          const m = line.match(/^\s*`([^`]+)`\s+\S/);
+          if (m) cols.push(m[1]);
+        }
+        if (cols.length) tableColumns[tname] = cols;
+        continue;
+      }
+
+      // INSERT INTO `tbl` [(cols)] VALUES (...)
       const insMatch = stmt.match(/^\s*INSERT(?:\s+IGNORE)?\s+INTO\s+`?(\w+)`?(?:\s*\(([^)]*)\))?\s+VALUES\s*([\s\S]+);$/i);
       if (insMatch) {
         currentTable = insMatch[1];
         if (!WHITELIST[currentTable]) continue;
 
-        // Column names from "(col1, col2, ...)" if present
+        // Prefer inline column list; fall back to CREATE TABLE columns
+        let columns = null;
         if (insMatch[2]) {
           columns = insMatch[2].split(',').map(s => s.trim().replace(/`/g, ''));
+        } else if (tableColumns[currentTable]) {
+          columns = tableColumns[currentTable];
         }
 
         // Parse VALUES (...), (...), ... — each tuple is a row
