@@ -2134,21 +2134,30 @@ async function _handleAgentUpload(req, res) {
         const bossKey    = (encounter.boss_name || 'unknown').toLowerCase().replace(/\W+/g, '_');
 
         // ── Mob card — edit in place only for the SAME KILL ─────────────────
-        // Two parsers seeing the same fight emit encounters with near-identical
-        // ended_at timestamps (both flush on the boss-death event). Two SEPARATE
-        // kills of the same mob have ended_at minutes apart.
+        // Detection rule: two encounters are the "same kill" if their time
+        // ranges [started_at, ended_at] OVERLAP. This works whether or not
+        // the parser saw the death event:
+        //   - In-range parser flushes at death → range ends at death timestamp
+        //   - Out-of-range parser misses the death line → range ends at
+        //     last-damage + 60s idle, possibly much earlier — but it still
+        //     overlaps the in-range parser's range because both started
+        //     during the same fight
+        //   - Two SEPARATE kills of the same mob have disjoint ranges (the
+        //     mob has to respawn between them, which always takes time)
         //
-        // Old logic: any upload of <bossKey> within 10 minutes of the existing
-        // card was treated as a merge target. This wrongly folded e.g. two
-        // back-to-back trash kills into one card. Now we compare encounter
-        // ended_at proximity (90s tolerance for slightly-late-flushing parsers).
-        const SAME_KILL_WINDOW_MS = 90 * 1000;
-        const existing            = getAgentTestCard(bossKey);
-        const existingEndedAt     = existing?.encounterEndedAt || 0;
-        const isSameKill          = existing
-          && existingEndedAt > 0
-          && Math.abs(endedMs - existingEndedAt) < SAME_KILL_WINDOW_MS;
-        const withinWindow        = isSameKill;
+        // Strict-less-than on one boundary so back-to-back instant respawns
+        // at the exact same timestamp are treated as separate kills.
+        //
+        // Earlier attempt that only compared ended_at proximity broke for
+        // the out-of-range case — Utoh's encounter ended via idle flush
+        // ~minutes before Syrl's in-range parser saw the death event, so
+        // their ended_at gap exceeded any reasonable tolerance window.
+        const existing  = getAgentTestCard(bossKey);
+        const exStart   = existing?.encounterStartedAt || 0;
+        const exEnd     = existing?.encounterEndedAt   || 0;
+        const overlaps  = existing && exStart > 0 && exEnd > 0
+                          && (startedMs < exEnd) && (endedMs > exStart);
+        const withinWindow = overlaps;
 
         let mergedPlayers, perspectives, newDuration, newTotalDamage, newTotalDps;
 
@@ -2193,27 +2202,34 @@ async function _handleAgentUpload(req, res) {
             const existingMsg = await testThread.messages.fetch(existing.messageId);
             await existingMsg.edit({ embeds: [card] });
             setAgentTestCard(bossKey, {
-              messageId:        existing.messageId,
-              timestamp:        existing.timestamp, // keep original window start
-              encounterEndedAt: Math.max(existingEndedAt, endedMs),
+              messageId:          existing.messageId,
+              timestamp:          existing.timestamp, // keep original window start
+              // Extend the kill's time range to encompass both perspectives.
+              // A later parser joining mid-fight or an earlier one leaving
+              // early both contribute to widening the recognised window so
+              // a third late perspective still overlaps.
+              encounterStartedAt: Math.min(exStart, startedMs),
+              encounterEndedAt:   Math.max(exEnd, endedMs),
               perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
             });
           } catch {
             // Message gone — post fresh card
             const sent = await testThread.send({ embeds: [card] });
             setAgentTestCard(bossKey, {
-              messageId:        sent.id,
-              timestamp:        Date.now(),
-              encounterEndedAt: endedMs,
+              messageId:          sent.id,
+              timestamp:          Date.now(),
+              encounterStartedAt: startedMs,
+              encounterEndedAt:   endedMs,
               perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
             });
           }
         } else {
           const sent = await testThread.send({ embeds: [card] });
           setAgentTestCard(bossKey, {
-            messageId:        sent.id,
-            timestamp:        Date.now(),
-            encounterEndedAt: endedMs,
+            messageId:          sent.id,
+            timestamp:          Date.now(),
+            encounterStartedAt: startedMs,
+            encounterEndedAt:   endedMs,
             perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
           });
         }
