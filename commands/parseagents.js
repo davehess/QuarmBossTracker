@@ -22,7 +22,9 @@ module.exports = {
         flags: MessageFlags.Ephemeral,
         content:
           '📡 No agent uploads recorded yet.\n' +
-          'Download **WolfPackParser.zip** from <#PARSER_DOWNLOADS> and run it against your EQ log to start uploading.',
+          'Tracking starts the moment the bot receives its first upload — ' +
+          'wait for the next encounter to finish, then re-run `/parseagents`. ' +
+          'If nobody is running the WolfPackParser agent, ask an officer for the zip.',
       });
     }
 

@@ -15,6 +15,7 @@ const {
   getAllAgentTestCards, clearAgentTestCards,
   getAgentSessionCardId, clearAgentSessionCardId,
   getRaidSession, clearSessionDamage,
+  getAgentActivity, clearAgentActivity,
 } = require('../utils/state');
 
 module.exports = {
@@ -35,6 +36,7 @@ module.exports = {
     // Snapshot what we're about to clear so we can summarize it
     const session     = getRaidSession();
     const playerCount = Object.keys(session?.sessionDamage || {}).length;
+    const agentCount  = Object.keys(getAgentActivity()).length;
 
     // Collect message IDs to delete from the test thread (best-effort)
     const testThreadId = process.env.AUTOPARSE_TEST_THREAD_ID;
@@ -64,11 +66,13 @@ module.exports = {
     clearSessionDamage();
     clearAgentTestCards();
     clearAgentSessionCardId();
+    clearAgentActivity();
 
     const lines = [
       '✅ Auto-parse state reset.',
       `• Session damage cleared (${playerCount} player${playerCount === 1 ? '' : 's'} removed).`,
       `• Agent test thread cards cleared (${messageIds.length} tracked, ${deleted} deleted from Discord).`,
+      `• Agent activity cleared (${agentCount} character${agentCount === 1 ? '' : 's'} removed from /parseagents).`,
       session
         ? '• Raid session is still open — new uploads will rebuild the leaderboard from zero.'
         : '• No active raid session — agent uploads will continue to populate parses.json only.',
