@@ -146,18 +146,46 @@ render_terminal("screenshot-already-installed.png",
                 LINES_ALREADY)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Screenshot 3 — start-logsync.ps1 first run (config prompt + watching)
+# Screenshot 3 — Parser.bat first run: config + startup wizard
 # ─────────────────────────────────────────────────────────────────────────────
-LINES_LOGSYNC = [
-    ("PS C:\\QuarmBossTracker> .\\start-logsync.ps1", PROMPT_CLR),
+LINES_LOGSYNC_SETUP = [
+    ("C:\\QuarmBossTracker> Parser.bat", PROMPT_CLR),
     ("", WHITE),
-    ("  Wolf Pack EQ -- wolfpack-logsync", CYAN),
-    ("  ----------------------------------", DARK_GRAY),
+    ("  Wolf Pack EQ -- Parser (wolfpack-logsync)", CYAN),
+    ("  --------------------------------------------", DARK_GRAY),
     ("", WHITE),
-    ("  Found EQ at: C:\\Program Files (x86)\\Sony\\EverQuest", GREEN),
+    ("  Found EQ at: D:\\TAKP2.2", GREEN),
     ("  Use this path? [Y/n]: Y", GRAY),
     ("", WHITE),
     ("  Config saved to logsync.config.json", DARK_GRAY),
+    ("", WHITE),
+    ("  ── Startup preference ───────────────────────────────────────", DARK_GRAY),
+    ("", WHITE),
+    ("  How would you like Parser to start?", WHITE),
+    ("", WHITE),
+    ("  [1]  Run automatically  -- starts silently when you log into Windows", CYAN),
+    ("  [2]  Desktop shortcut   -- adds 'Parser' to your desktop to double-click", CYAN),
+    ("  [3]  Start menu         -- adds 'Parser' under Start > All Apps", CYAN),
+    ("  [4]  Skip               -- I'll run Parser.bat manually each time", GRAY),
+    ("", WHITE),
+    ("  Choice [1-4]: 2", GRAY),
+    ("", WHITE),
+    ("  OK  'Parser' shortcut added to your desktop.", GREEN),
+    ("      Double-click it anytime to start Parser.", DARK_GRAY),
+]
+
+render_terminal("screenshot-logsync-setup.png",
+                "C:\\QuarmBossTracker\\Parser.bat",
+                LINES_LOGSYNC_SETUP)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Screenshot 4 — Parser.bat subsequent run: watching logs
+# ─────────────────────────────────────────────────────────────────────────────
+LINES_LOGSYNC_RUN = [
+    ("C:\\QuarmBossTracker> Parser.bat", PROMPT_CLR),
+    ("", WHITE),
+    ("  Wolf Pack EQ -- Parser (wolfpack-logsync)", CYAN),
+    ("  --------------------------------------------", DARK_GRAY),
     ("", WHITE),
     ("  Watching 4 log file(s):", WHITE),
     ("", WHITE),
@@ -175,8 +203,8 @@ LINES_LOGSYNC = [
     ("  [Hitya] uploaded encounter: Lord Nagafen (200 OK)", GREEN),
 ]
 
-render_terminal("screenshot-logsync.png",
-                "Windows PowerShell",
-                LINES_LOGSYNC)
+render_terminal("screenshot-logsync-run.png",
+                "C:\\QuarmBossTracker\\Parser.bat",
+                LINES_LOGSYNC_RUN)
 
 print("Done.")

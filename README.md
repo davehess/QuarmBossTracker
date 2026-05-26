@@ -37,28 +37,40 @@ npm start
 
 ### 3 — Stream your EQ log (optional but recommended)
 
-`start-logsync.ps1` watches every recently-active log file in your EQ folder simultaneously — no need to pick a character. Run it while you raid and encounter data uploads automatically.
+Double-click **`Parser.bat`** in the repo folder. That's it. No PowerShell execution policy to fight with — the `.bat` file handles everything.
 
-```powershell
-.\start-logsync.ps1
-```
+Parser watches every recently-active EQ log file simultaneously (no need to pick a character) and uploads encounter data to the bot while you raid.
 
-**First run** — the script auto-detects your EQ directory, then asks for the bot URL and token (get these from an officer). Answers are saved to `logsync.config.json` so subsequent runs start immediately with no prompts.
+**First run** — auto-detects your EQ directory across all drives (`C:\`, `D:\`, `E:\`, etc.) looking for `EverQuest`, `EQ`, `TAKP`, `TAKP2.2`, and standard install paths. Then asks for the bot URL and token (get these from an officer) and offers three startup options:
 
-![start-logsync.ps1 first run](docs/screenshot-logsync.png)
+![Parser.bat first run — setup wizard](docs/screenshot-logsync-setup.png)
 
-**What gets watched:** any `eqlog_*_pq.proj.txt` file modified in the last 30 days. Active characters (updated in the last hour) are shown in green with a `*`. Inactive log files sit idle until that character logs in — no overhead.
+| Option | What it does |
+|--------|-------------|
+| **Run automatically** | Registers a Windows Task Scheduler task — Parser starts silently in the background every time you log into Windows. No window, no clicks needed. |
+| **Desktop shortcut** | Adds a "Parser" shortcut to your desktop — double-click it before a raid. |
+| **Start menu** | Adds "Parser" under Start → All Apps. |
 
-**Privacy:** all filtering happens locally before any upload. Officer chat, tells, guild chat, and custom channels are dropped at the byte level. Only combat events from detected boss encounters are sent.
+Config is saved to `logsync.config.json` so subsequent runs (and the auto-start task) never prompt again.
 
-**Flags:**
+**Subsequent runs:**
+
+![Parser.bat normal run](docs/screenshot-logsync-run.png)
+
+**What gets watched:** any `eqlog_*_pq.proj.txt` modified in the last 30 days. Characters active in the last hour show in green with `*`. Idle log files sit at zero cost until that character logs in.
+
+**Privacy:** all filtering is local. Officer chat, tells, guild chat, and custom channels are dropped before any upload. Only combat events from detected boss encounters are sent.
+
+**Flags** (pass via `start-logsync.ps1` directly if needed):
 
 | Flag | Description |
 |------|-------------|
-| `-DryRun` | Parse locally, print encounter summaries — nothing uploaded |
+| `-DryRun` | Parse locally, print summaries — nothing uploaded |
 | `-StaleAfterDays 7` | Tighten the "recently active" window (default: 30) |
-| `-EqDir "D:\EQ"` | Override EQ path without re-prompting |
-| `-Reset` | Forget saved config and re-prompt for everything |
+| `-EqDir "D:\TAKP"` | Override EQ path without re-prompting |
+| `-Setup` | Re-run the startup wizard (change auto-start/shortcut preference) |
+| `-Remove` | Remove the scheduled task and any shortcuts |
+| `-Reset` | Forget all saved config and start over |
 
 ---
 
