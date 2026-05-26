@@ -2,6 +2,10 @@
 # Run via install-node.bat (handles UAC elevation automatically)
 
 $minVersion  = [Version]"20.0.0"
+# MSI fallback version — must be a release that's actually on nodejs.org/dist.
+# Don't pin this in the winget call; the winget catalog moves forward and exact
+# point-release matches break ("No version found matching: 20.19.1") when newer
+# patches supersede this one. winget always gets the current LTS instead.
 $nodeVersion = "20.19.1"
 $nodeUrl     = "https://nodejs.org/dist/v$nodeVersion/node-v$nodeVersion-x64.msi"
 $msiPath     = "$env:TEMP\node-v20-x64.msi"
@@ -35,24 +39,44 @@ if ($node) {
 Write-Host ""
 
 # ── Try winget first (Windows 10 / 11 built-in) ───────────────────────────────
-$winget = Get-Command winget -ErrorAction SilentlyContinue
+$winget    = Get-Command winget -ErrorAction SilentlyContinue
+$wingetOk  = $false
 
 if ($winget) {
-    Write-Host "  Downloading via winget..." -ForegroundColor DarkGray
-    winget install `
+    Write-Host "  Installing Node.js LTS via winget..." -ForegroundColor DarkGray
+    # --source winget forces the official winget repo (skips the msstore
+    #   agreement prompt that confuses some users).
+    # NOTE: no --version pin — exact-version installs frequently fail when
+    #   the catalog moves on. winget will fetch whatever LTS is current.
+    & winget install `
         --id OpenJS.NodeJS.LTS `
-        --version $nodeVersion `
+        --source winget `
         --silent `
         --accept-package-agreements `
         --accept-source-agreements
-} else {
-    # ── Fall back to direct MSI download ─────────────────────────────────────
-    Write-Host "  winget not available -- downloading MSI directly..." -ForegroundColor DarkGray
+    if ($LASTEXITCODE -eq 0) {
+        $wingetOk = $true
+    } else {
+        Write-Host "  winget install returned exit $LASTEXITCODE -- falling back to direct MSI download." -ForegroundColor Yellow
+    }
+}
+
+if (-not $wingetOk) {
+    # ── Fall back to direct MSI download from nodejs.org ─────────────────────
+    Write-Host "  Downloading Node.js MSI from nodejs.org..." -ForegroundColor DarkGray
     Write-Host "  URL: $nodeUrl" -ForegroundColor DarkGray
-    Invoke-WebRequest -Uri $nodeUrl -OutFile $msiPath -UseBasicParsing
-    Write-Host "  Running silent installer..." -ForegroundColor DarkGray
-    Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /quiet /norestart" -Wait
-    Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+    try {
+        Invoke-WebRequest -Uri $nodeUrl -OutFile $msiPath -UseBasicParsing -ErrorAction Stop
+        Write-Host "  Running silent installer..." -ForegroundColor DarkGray
+        $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /quiet /norestart" -Wait -PassThru
+        Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+        if ($proc.ExitCode -ne 0) {
+            Write-Host "  msiexec returned exit code $($proc.ExitCode)" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  Direct download failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  Please download Node.js 20+ manually from https://nodejs.org and re-run Parser.bat." -ForegroundColor Red
+    }
 }
 
 # ── Refresh PATH so node is visible without restarting ───────────────────────
