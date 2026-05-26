@@ -436,8 +436,8 @@ def draw_tagline(draw, frame):
     tag = "Help the Pack see your full contribution!"
     bb  = draw.textbbox((0,0),tag,font=FONT_TITLE)
     tw  = bb[2]-bb[0]
-    tx  = W - tw - 14   # right-aligned, pairs with shiny-bot column
-    ty  = 180           # between column text and robot heads — clear of the center burst
+    tx  = (W - tw) // 2  # centered under the burst
+    ty  = 408            # just below robot feet (404) and burst bottom (380)
     draw.text((tx+1,ty+1), tag, font=FONT_TITLE, fill=GOLD_DARK)
     draw.text((tx,ty),     tag, font=FONT_TITLE, fill=lc(GOLD_DIM,GOLD,ep))
 
@@ -544,10 +544,10 @@ def draw_nameplates(img, draw, frame):
 CTA_URL = "tinyurl.com/WolfPackParser"
 
 def draw_burst(img, draw, frame, url=CTA_URL):
-    """Comic-book starburst CTA badge, centered between the two robots, slow rotation."""
-    cx, cy   = W // 2, H - 125   # dead center horizontally; sits between both bots
-    r_out    = 90
-    r_in     = 58
+    """Comic-book starburst CTA badge, centered between the two robots at robot-body height."""
+    cx, cy   = W // 2, 295   # vertically level with robot centers, in the gap between them
+    r_out    = 85
+    r_in     = 55
     n_points = 20
     # very slow wobble rotation so it feels alive
     rot = (frame / FRAMES) * math.pi * 0.18
@@ -574,7 +574,7 @@ def draw_burst(img, draw, frame, url=CTA_URL):
     # main burst fill + rim
     draw.polygon(pts, fill=BURST_FILL, outline=BURST_OUT)
     # inner circle for text readability
-    draw.ellipse([cx-r_in+2, cy-r_in+2, cx+r_in-2, cy+r_in-2],
+    draw.ellipse([cx-r_in+1, cy-r_in+1, cx+r_in-1, cy+r_in-1],
                  fill=(195, 95, 5))
 
     # ── text ──────────────────────────────────────────────────────────────────
