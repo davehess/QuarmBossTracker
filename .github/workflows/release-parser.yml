@@ -1,0 +1,109 @@
+name: Release Parser Package
+
+# Triggers on any v* tag push (e.g. git tag v2.0.4 && git push --tags)
+# or manually from the Actions tab.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release (e.g. v2.0.4)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create releases and upload assets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble WolfPackParser.zip
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          DIST="dist/WolfPackParser"
+          mkdir -p "$DIST/wolfpack-logsync"
+
+          # End-user files only — no bot source, no .env, no state
+          cp Parser.bat            "$DIST/"
+          cp install-node.ps1      "$DIST/"
+          cp start-logsync.ps1     "$DIST/"
+          cp packages/wolfpack-logsync/index.js      "$DIST/wolfpack-logsync/"
+          cp packages/wolfpack-logsync/package.json  "$DIST/wolfpack-logsync/"
+
+          # Plain-text quick-start guide inside the zip
+          cat > "$DIST/README.txt" <<'EOF'
+          Wolf Pack EQ Parser — Quick Start
+          ==================================
+
+          Step 1 (first time only)
+            Right-click install-node.ps1 → Run as Administrator
+            This checks whether Node.js is installed and installs it if not.
+            If you already have Node.js 18+, skip this step.
+
+          Step 2
+            Double-click Parser.bat
+            First run: it will locate your EQ directory and ask how you want
+            it to start (auto on login / desktop shortcut / Start menu / manual).
+            After that first setup it runs silently in the background whenever
+            EverQuest is open.
+
+          What it does
+            Watches your EQ log files and streams encounter data to the Wolf Pack
+            Quarm Bot. DoTs, nukes, procs — every tick counted automatically.
+            No more manual parse pasting.
+
+          Need help?
+            Discord : discord.gg/rtzZNxxT3
+            Installer: tinyurl.com/WolfPackParser
+          EOF
+
+          cd dist
+          zip -r WolfPackParser.zip WolfPackParser/
+          ls -lh WolfPackParser.zip
+
+      - name: Create GitHub Release and upload zip
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          gh release create "$TAG" \
+            --title "$TAG — Wolf Pack Parser" \
+            --notes "## Wolf Pack EQ Parser ${TAG}
+
+          Download \`WolfPackParser.zip\`, extract the folder anywhere, and double-click \`Parser.bat\`.
+
+          **First time?** Right-click \`install-node.ps1\` → Run as Administrator first.
+
+          ### What's inside
+          \`\`\`
+          WolfPackParser/
+          ├── Parser.bat            ← double-click to start
+          ├── install-node.ps1      ← run once as admin if you need Node.js
+          ├── start-logsync.ps1     ← called by Parser.bat automatically
+          ├── README.txt            ← quick-start guide
+          └── wolfpack-logsync/
+              └── index.js          ← zero-dependency log-watcher agent
+          \`\`\`
+
+          **Stable download link:** https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip
+          → always points to the newest release.
+
+          Join us: discord.gg/rtzZNxxT3" \
+            "dist/WolfPackParser.zip#WolfPackParser.zip" \
+            || \
+          gh release upload "$TAG" \
+            "dist/WolfPackParser.zip#WolfPackParser.zip" \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
