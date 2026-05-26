@@ -395,7 +395,7 @@ def draw_footer(draw, frame):
     tag = "Project Quarm  ·  Wolf Pack EQ"
     bb2 = draw.textbbox((0,0), tag, font=FONT_SMALL)
     draw.text((W - (bb2[2]-bb2[0]) - 18, fy),    tag, font=FONT_SMALL, fill=GRAY)
-    draw.text((W - 115, fy+15), "discord.gg/wolfpack", font=FONT_SMALL, fill=DARK_GRAY)
+    draw.text((W - 148, fy+15), "discord.gg/rtzZNxxT3", font=FONT_SMALL, fill=DARK_GRAY)
 
 # ── Robot label ───────────────────────────────────────────────────────────────
 def draw_robot_label(draw, frame):
