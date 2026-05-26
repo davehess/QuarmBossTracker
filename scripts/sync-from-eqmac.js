@@ -312,13 +312,16 @@ function* splitTuples(valuesStr) {
     }
     if (field.length || fields.length) fields.push(field.trim());
 
-    // Coerce values: 'NULL' → null, numeric strings → number, quoted strings → as-is
+    // Coerce values: 'NULL' → null, numeric strings → number, quoted strings → as-is.
+    // Belt-and-suspenders: strip U+0000 from any remaining string. The escape
+    // handler above already drops mysql \0 sequences, so this is defensive
+    // against any null byte that sneaks in via another path. Postgres text
+    // columns reject null bytes (22P05).
     yield fields.map(f => {
       if (f === 'NULL' || f === '') return null;
-      // Unquoted numeric?
       if (/^-?\d+$/.test(f)) return parseInt(f, 10);
       if (/^-?\d*\.\d+$/.test(f)) return parseFloat(f);
-      return f;
+      return f.replace(/\u0000/g, '');
     });
   }
 }
