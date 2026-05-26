@@ -38,6 +38,7 @@ jobs:
 
           # End-user files only — no bot source, no .env, no state
           cp Parser.bat            "$DIST/"
+          cp install-node.bat      "$DIST/"
           cp install-node.ps1      "$DIST/"
           cp start-logsync.ps1     "$DIST/"
           cp packages/wolfpack-logsync/index.js      "$DIST/wolfpack-logsync/"
@@ -49,7 +50,7 @@ jobs:
           ==================================
 
           Step 1 (first time only)
-            Right-click install-node.ps1 → Run as Administrator
+            Double-click install-node.bat (UAC will appear; click Yes)
             This checks whether Node.js is installed and installs it if not.
             If you already have Node.js 18+, skip this step.
 
