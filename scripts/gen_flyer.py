@@ -436,7 +436,7 @@ def draw_tagline(draw, frame):
     tag = "Help the Pack see your full contribution!"
     bb  = draw.textbbox((0,0),tag,font=FONT_TITLE)
     tw  = bb[2]-bb[0]
-    tx  = (W-tw)//2
+    tx  = W - tw - 14   # right-aligned so it sits under the shiny bot, clear of burst
     ty  = H - 116
     draw.text((tx+1,ty+1), tag, font=FONT_TITLE, fill=GOLD_DARK)
     draw.text((tx,ty),     tag, font=FONT_TITLE, fill=lc(GOLD_DIM,GOLD,ep))
@@ -445,10 +445,14 @@ def draw_tagline(draw, frame):
 def draw_bottom_strip(draw, frame):
     ep  = pulse(frame, speed=0.5, lo=0.5, hi=1.0)
     ep2 = pulse(frame, speed=0.6, lo=0.5, hi=1.0)
-    y   = H - 100
+    y   = H - 108
 
     draw.line([14, y, W-14, y], fill=DIVIDER, width=1)
-    y += 8
+    y += 5
+
+    # "Upcoming in v2.1" dim label
+    draw.text((14, y), "Upcoming in v2.1:", font=FONT_MONO, fill=(68, 68, 90))
+    y += 17
 
     # /register
     draw.text((14, y), "/register", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
@@ -456,13 +460,13 @@ def draw_bottom_strip(draw, frame):
     x2 = 14 + bb[2] - bb[0] + 8
     draw.text((x2, y), "— Add your character to OpenDKP straight from Discord",
               font=FONT_BODY, fill=LIGHT_GRAY)
-    y += 22
+    y += 20
 
     # /wishlist
     draw.text((14, y), "/wishlist", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep2))
     bb2 = draw.textbbox((0,0), "/wishlist", font=FONT_BODY_B)
     x3  = 14 + bb2[2] - bb2[0] + 8
-    draw.text((x3, y), "— Build your BIS list with sealed, encrypted bid amounts",
+    draw.text((x3, y), "— Build your BIS list and link your Quarmy profile",
               font=FONT_BODY, fill=LIGHT_GRAY)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
@@ -540,10 +544,10 @@ def draw_nameplates(img, draw, frame):
 CTA_URL = "tinyurl.com/WolfPackParser"
 
 def draw_burst(img, draw, frame, url=CTA_URL):
-    """Comic-book starburst CTA badge, bottom-right, slow rotation."""
-    cx, cy   = W - 100, H - 128
-    r_out    = 118
-    r_in     = 76
+    """Comic-book starburst CTA badge, left side over rusty bot, slow rotation."""
+    cx, cy   = 160, H - 120   # left side — clear of shiny v2.0 bot
+    r_out    = 100
+    r_in     = 65
     n_points = 20
     # very slow wobble rotation so it feels alive
     rot = (frame / FRAMES) * math.pi * 0.18
@@ -570,7 +574,7 @@ def draw_burst(img, draw, frame, url=CTA_URL):
     # main burst fill + rim
     draw.polygon(pts, fill=BURST_FILL, outline=BURST_OUT)
     # inner circle for text readability
-    draw.ellipse([cx-r_in+4, cy-r_in+4, cx+r_in-4, cy+r_in-4],
+    draw.ellipse([cx-r_in+3, cy-r_in+3, cx+r_in-3, cy+r_in-3],
                  fill=(195, 95, 5))
 
     # ── text ──────────────────────────────────────────────────────────────────
