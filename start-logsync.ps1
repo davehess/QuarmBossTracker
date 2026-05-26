@@ -39,7 +39,7 @@ $AGENT_UPDATE_INTERVAL_HRS  = 12
 # NOT depend on this string — it compares full file content (normalized line
 # endings) so an update fires whenever the GitHub copy actually differs, even
 # if I forgot to bump the version.  The version is informational only.
-$SCRIPT_VERSION             = "2.2.9"
+$SCRIPT_VERSION             = "2.3.0"
 
 # Config and agent live next to this script file.
 # After first-run install, $PSScriptRoot == the EQ directory.
@@ -280,8 +280,12 @@ function Update-Agent([string]$agentPath, [bool]$silent) {
         # Pull remote agent source + companion package.json (which carries the
         # version string the agent displays).  We update BOTH atomically so the
         # dashboard's displayed version always reflects the running code.
-        $resp     = Invoke-WebRequest -Uri $AGENT_RAW_URL     -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-        $respPkg  = Invoke-WebRequest -Uri $AGENT_PKG_RAW_URL -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        # Cache-bust query string: GitHub's raw URL is fronted by Fastly which
+        # can cache for up to 5 minutes after a push. The ?cb=<unixtime> makes
+        # the CDN key the URL uniquely each call, so [U] always sees current.
+        $cb       = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        $resp     = Invoke-WebRequest -Uri "$AGENT_RAW_URL`?cb=$cb"     -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $respPkg  = Invoke-WebRequest -Uri "$AGENT_PKG_RAW_URL`?cb=$cb" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
         $remote     = $resp.Content
         $remotePkg  = $respPkg.Content
         if (-not $remote) { return $false }
@@ -380,7 +384,9 @@ function Update-Script([bool]$silent) {
     if (-not (Test-Path $PSCommandPath)) { return $false }
 
     try {
-        $resp   = Invoke-WebRequest -Uri $SCRIPT_RAW_URL -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        # Same cache-bust trick as Update-Agent so [U] always sees current GitHub.
+        $cb     = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        $resp   = Invoke-WebRequest -Uri "$SCRIPT_RAW_URL`?cb=$cb" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
         $remote = $resp.Content
         if (-not $remote) { return $false }
 
@@ -747,11 +753,23 @@ while ($true) {
     & node @nodeArgs
     $exitCode = $LASTEXITCODE
 
-    # If the agent dropped an update marker, re-run Update-Agent with force and loop.
+    # If the agent dropped an update marker, force-pull from GitHub and loop.
+    # [U] runs BOTH Update-Agent and Update-Script with force=true and prints
+    # a clear status line either way so the user knows the press did something.
     if (Test-Path $forceMarker) {
         Remove-Item $forceMarker -Force -ErrorAction SilentlyContinue
         $ForceUpdate = $true
-        Update-Agent -agentPath $AgentEntry -silent:$false | Out-Null
+        Write-Host ""
+        Write-Host "  ── Forced update check ─────────────────────────────────────" -ForegroundColor Cyan
+        $agentUpdated  = Update-Agent  -agentPath $AgentEntry -silent:$false
+        $scriptUpdated = Update-Script -silent:$false
+        if (-not $agentUpdated -and -not $scriptUpdated) {
+            Write-Host "  Already up to date — nothing to fetch." -ForegroundColor DarkGray
+        }
+        if ($scriptUpdated) {
+            Write-Host "  Script updated; the new version takes effect on next launch." -ForegroundColor DarkGray
+        }
+        Write-Host ""
         Start-Sleep -Milliseconds 500
         continue
     }
