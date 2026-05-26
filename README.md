@@ -35,6 +35,31 @@ npm start
 
 > **Tip:** the bot auto-registers slash commands on every startup — no separate deploy step needed.
 
+### 3 — Stream your EQ log (optional but recommended)
+
+`start-logsync.ps1` watches every recently-active log file in your EQ folder simultaneously — no need to pick a character. Run it while you raid and encounter data uploads automatically.
+
+```powershell
+.\start-logsync.ps1
+```
+
+**First run** — the script auto-detects your EQ directory, then asks for the bot URL and token (get these from an officer). Answers are saved to `logsync.config.json` so subsequent runs start immediately with no prompts.
+
+![start-logsync.ps1 first run](docs/screenshot-logsync.png)
+
+**What gets watched:** any `eqlog_*_pq.proj.txt` file modified in the last 30 days. Active characters (updated in the last hour) are shown in green with a `*`. Inactive log files sit idle until that character logs in — no overhead.
+
+**Privacy:** all filtering happens locally before any upload. Officer chat, tells, guild chat, and custom channels are dropped at the byte level. Only combat events from detected boss encounters are sent.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-DryRun` | Parse locally, print encounter summaries — nothing uploaded |
+| `-StaleAfterDays 7` | Tighten the "recently active" window (default: 30) |
+| `-EqDir "D:\EQ"` | Override EQ path without re-prompting |
+| `-Reset` | Forget saved config and re-prompt for everything |
+
 ---
 
 ## Channel Layout

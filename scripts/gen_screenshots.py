@@ -145,4 +145,38 @@ render_terminal("screenshot-already-installed.png",
                 "Administrator: Windows PowerShell",
                 LINES_ALREADY)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Screenshot 3 — start-logsync.ps1 first run (config prompt + watching)
+# ─────────────────────────────────────────────────────────────────────────────
+LINES_LOGSYNC = [
+    ("PS C:\\QuarmBossTracker> .\\start-logsync.ps1", PROMPT_CLR),
+    ("", WHITE),
+    ("  Wolf Pack EQ -- wolfpack-logsync", CYAN),
+    ("  ----------------------------------", DARK_GRAY),
+    ("", WHITE),
+    ("  Found EQ at: C:\\Program Files (x86)\\Sony\\EverQuest", GREEN),
+    ("  Use this path? [Y/n]: Y", GRAY),
+    ("", WHITE),
+    ("  Config saved to logsync.config.json", DARK_GRAY),
+    ("", WHITE),
+    ("  Watching 4 log file(s):", WHITE),
+    ("", WHITE),
+    (" * Hitya                  3m ago", GREEN),
+    (" * Canopy                 8m ago", GREEN),
+    ("   Boxxxy                 2d ago", GRAY),
+    ("   Velvetina              5d ago", GRAY),
+    ("", WHITE),
+    ("  Uploading to: https://quarm-bot.up.railway.app/api/agent/encounter", DARK_GRAY),
+    ("  Press Ctrl+C to stop.", DARK_GRAY),
+    ("", WHITE),
+    ("  [logsync] tailing 4 files from end-of-file...", GRAY),
+    ("  [Hitya] encounter started: Lord Nagafen", YELLOW),
+    ("  [Hitya] 47 events buffered, 28 unique players", GRAY),
+    ("  [Hitya] uploaded encounter: Lord Nagafen (200 OK)", GREEN),
+]
+
+render_terminal("screenshot-logsync.png",
+                "Windows PowerShell",
+                LINES_LOGSYNC)
+
 print("Done.")
