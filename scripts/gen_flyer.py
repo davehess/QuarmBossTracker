@@ -399,11 +399,6 @@ def draw_left_col(img, draw, frame):
         draw.text((tx+22, y), txt,  font=FONT_BODY,   fill=(175,135,130))
         y += 21
 
-    # v1.4 label under robot
-    lbl = "v1.4  @RaidBosses"
-    bb  = draw.textbbox((0,0),lbl,font=FONT_SMALL)
-    lx  = (W//4+10) - (bb[2]-bb[0])//2
-    draw.text((lx, H-100), lbl, font=FONT_SMALL, fill=GRAY)
     return draw
 
 # ── Right column: NEW HOTNESS ─────────────────────────────────────────────────
@@ -433,11 +428,6 @@ def draw_right_col(img, draw, frame):
         draw.text((tx+22, y), txt,  font=FONT_BODY,   fill=OFF_WHITE)
         y += 21
 
-    # v2.0 label under robot
-    lbl = "v2.0  @RaidBosses"
-    bb  = draw.textbbox((0,0),lbl,font=FONT_SMALL)
-    lx  = (W*3//4-10) - (bb[2]-bb[0])//2
-    draw.text((lx, H-100), lbl, font=FONT_SMALL, fill=lc(TEAL_DIM,TEAL,ep))
     return draw
 
 # ── Tagline ───────────────────────────────────────────────────────────────────
@@ -495,15 +485,66 @@ def draw_footer(draw, frame):
     draw.text((W-(bb2[2]-bb2[0])-18, fy),    tag, font=FONT_SMALL, fill=GRAY)
     draw.text((W-152, fy+15), "discord.gg/rtzZNxxT3", font=FONT_SMALL, fill=DARK_GRAY)
 
+# ── EQ-style nameplates ───────────────────────────────────────────────────────
+# In EQ: character name floats above head, guild tag "<GuildName>" just below.
+def draw_nameplates(img, draw, frame):
+    s    = 1.02
+    ep   = pulse(frame, speed=0.5, lo=0.7, hi=1.0)
+    guild = "<Wolf Pack>"
+
+    specs = [
+        # (cx, cy, version_label, name_color, guild_color)
+        (W//4+10,   295, "v1.4",
+         (190, 160, 130),           # faded/worn white for rusty
+         (130, 100,  80)),          # muted teal-brown guild tag
+        (W*3//4-10, 295, "v2.0",
+         (230, 240, 255),           # bright blue-white for shiny
+         lc(TEAL_DIM, TEAL, ep)),   # pulsing teal guild tag
+    ]
+
+    for cx, cy, ver, name_col, guild_col in specs:
+        # antenna tip is at cy - int(42*s) - int(22*s)
+        tip_y   = cy - int(42*s) - int(22*s)
+        name_y  = tip_y - 32
+        guild_y = name_y + 18
+
+        # measure both strings
+        bb_n = draw.textbbox((0,0), ver,   font=FONT_BODY_B)
+        bb_g = draw.textbbox((0,0), guild, font=FONT_SMALL)
+        nw   = bb_n[2]-bb_n[0];  gw = bb_g[2]-bb_g[0]
+        pad  = 6
+
+        # dark semi-transparent backing bar (both lines)
+        bar_x1 = cx - max(nw, gw)//2 - pad
+        bar_x2 = cx + max(nw, gw)//2 + pad
+        bar_y1 = name_y - 3
+        bar_y2 = guild_y + (bb_g[3]-bb_g[1]) + 3
+
+        panel = Image.new("RGBA", img.size, (0,0,0,0))
+        pd    = ImageDraw.Draw(panel)
+        pd.rectangle([bar_x1, bar_y1, bar_x2, bar_y2], fill=(0,0,0,160))
+        img.paste(Image.alpha_composite(img.convert("RGBA"), panel).convert("RGB"), (0,0))
+        draw = ImageDraw.Draw(img)
+
+        # version name
+        draw.text((cx - nw//2 + 1, name_y+1),  ver,   font=FONT_BODY_B, fill=(0,0,0))
+        draw.text((cx - nw//2,     name_y),     ver,   font=FONT_BODY_B, fill=name_col)
+
+        # guild tag
+        draw.text((cx - gw//2 + 1, guild_y+1), guild, font=FONT_SMALL, fill=(0,0,0))
+        draw.text((cx - gw//2,     guild_y),   guild, font=FONT_SMALL, fill=guild_col)
+
+    return draw
+
 # ── Spiky action burst ────────────────────────────────────────────────────────
 CTA_URL = "tinyurl.com/WolfPackParser"
 
 def draw_burst(img, draw, frame, url=CTA_URL):
     """Comic-book starburst CTA badge, bottom-right, slow rotation."""
-    cx, cy   = W - 90, H - 108
-    r_out    = 74
-    r_in     = 46
-    n_points = 18
+    cx, cy   = W - 100, H - 128
+    r_out    = 118
+    r_in     = 76
+    n_points = 20
     # very slow wobble rotation so it feels alive
     rot = (frame / FRAMES) * math.pi * 0.18
 
@@ -534,23 +575,23 @@ def draw_burst(img, draw, frame, url=CTA_URL):
 
     # ── text ──────────────────────────────────────────────────────────────────
     lines = ["Install & run", "the parser", "today!"]
-    total_h = sum(draw.textbbox((0,0), l, font=FONT_BODY_B)[3] for l in lines) + 4
-    ty = cy - total_h // 2 - 8
+    total_h = sum(draw.textbbox((0,0), l, font=FONT_TITLE)[3] for l in lines) + 6
+    ty = cy - total_h // 2 - 10
 
     for ln in lines:
-        bb  = draw.textbbox((0,0), ln, font=FONT_BODY_B)
+        bb  = draw.textbbox((0,0), ln, font=FONT_TITLE)
         lw  = bb[2] - bb[0]
         lx  = cx - lw // 2
-        draw.text((lx+1, ty+1), ln, font=FONT_BODY_B, fill=BURST_OUT)
-        draw.text((lx,   ty),   ln, font=FONT_BODY_B, fill=BURST_TEXT)
-        ty += bb[3] - bb[1] + 2
+        draw.text((lx+1, ty+1), ln, font=FONT_TITLE, fill=BURST_OUT)
+        draw.text((lx,   ty),   ln, font=FONT_TITLE, fill=BURST_TEXT)
+        ty += bb[3] - bb[1] + 3
 
     # url below text
-    ty += 2
-    bb2 = draw.textbbox((0,0), url, font=FONT_SMALL)
+    ty += 4
+    bb2 = draw.textbbox((0,0), url, font=FONT_BODY_B)
     ux  = cx - (bb2[2]-bb2[0]) // 2
-    draw.text((ux+1, ty+1), url, font=FONT_SMALL, fill=BURST_OUT)
-    draw.text((ux,   ty),   url, font=FONT_SMALL, fill=(255, 240, 150))
+    draw.text((ux+1, ty+1), url, font=FONT_BODY_B, fill=BURST_OUT)
+    draw.text((ux,   ty),   url, font=FONT_BODY_B, fill=(255, 240, 150))
 
     return ImageDraw.Draw(img)
 
@@ -563,6 +604,7 @@ def render_frame(f):
 
     draw = draw_robot(img, draw, f, cx=W//4+10,   cy=295, s=1.02, style='rusty')
     draw = draw_robot(img, draw, f, cx=W*3//4-10, cy=295, s=1.02, style='shiny')
+    draw = draw_nameplates(img, draw, f)
 
     draw = draw_left_col(img, draw, f)
     draw = draw_right_col(img, draw, f)
