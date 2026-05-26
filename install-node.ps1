@@ -94,9 +94,18 @@ if ($verify -match "^v") {
     Write-Host "  Next step: double-click Parser.bat to start the log watcher." -ForegroundColor White
 } else {
     Write-Host ""
-    Write-Host "  ERROR: Installation may have failed." -ForegroundColor Red
-    Write-Host "  Restart this terminal and run the script again, or download" -ForegroundColor Red
-    Write-Host "  Node.js 20 manually from: https://nodejs.org" -ForegroundColor Red
+    Write-Host "  ERROR: Automatic installation failed." -ForegroundColor Red
+    Write-Host "  Opening the Node.js download page in your browser..." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Steps:" -ForegroundColor White
+    Write-Host "    1. Download the 'Windows Installer (.msi)' for the LTS version" -ForegroundColor White
+    Write-Host "    2. Run the installer (accept all defaults)" -ForegroundColor White
+    Write-Host "    3. Close this window and re-run Parser.bat" -ForegroundColor White
+    Write-Host ""
+    try { Start-Process "https://nodejs.org/en/download" } catch {
+        Write-Host "  Could not open browser automatically." -ForegroundColor DarkGray
+        Write-Host "  Open this URL manually: https://nodejs.org/en/download" -ForegroundColor DarkGray
+    }
 }
 
 Write-Host ""

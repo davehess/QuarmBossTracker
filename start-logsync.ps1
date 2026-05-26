@@ -39,7 +39,7 @@ $AGENT_UPDATE_INTERVAL_HRS  = 12
 # NOT depend on this string — it compares full file content (normalized line
 # endings) so an update fires whenever the GitHub copy actually differs, even
 # if I forgot to bump the version.  The version is informational only.
-$SCRIPT_VERSION             = "2.2.5"
+$SCRIPT_VERSION             = "2.2.6"
 
 # Config and agent live next to this script file.
 # After first-run install, $PSScriptRoot == the EQ directory.
