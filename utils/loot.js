@@ -50,8 +50,12 @@ function parseZealLoot(text) {
     if (!m) continue;
 
     const gameItemId = parseInt(m[1], 10);
-    const name       = m[2].trim();
-    const quantity   = m[3] ? parseInt(m[3], 10) : 1;
+    // Strip ASCII control characters (\x00-\x1f and \x7f DEL) that EverQuest
+    // injects into item links — typically  (DC2) wraps each linked item.
+    // Without this strip, names like "An eyeball" trail an invisible byte that
+    // Discord renders as a "☐" box on button labels.
+    const name = m[2].replace(/[\x00-\x1f\x7f]/g, '').trim();
+    const quantity = m[3] ? parseInt(m[3], 10) : 1;
 
     if (!gameItemId || !name) continue;
     items.push({ gameItemId, name, quantity });
