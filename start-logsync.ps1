@@ -19,11 +19,19 @@ param(
     [switch] $DryRun,
     [switch] $Reset,
     [switch] $Setup,
-    [switch] $Remove
+    [switch] $Remove,
+    [switch] $NoUpdate,
+    [switch] $ForceUpdate
 )
 
 $TaskName     = "WolfpackParser"
 $ShortcutName = "Parser.lnk"
+
+# ── Auto-update configuration ─────────────────────────────────────────────────
+# We fetch the agent source straight from GitHub's main branch on the official
+# repo. If you fork or self-host, change $AGENT_RAW_URL to your own raw URL.
+$AGENT_RAW_URL              = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/index.js"
+$AGENT_UPDATE_INTERVAL_HRS  = 12
 
 # Config and agent live next to this script file.
 # After first-run install, $PSScriptRoot == the EQ directory.
@@ -178,6 +186,75 @@ function Install-Shortcut([string]$folder, [string]$locationLabel, [string]$eqDi
     Write-Host "      To remove: run .\start-logsync.ps1 -Remove  (from EQ folder)" -ForegroundColor DarkGray
 }
 
+# ── Auto-update the agent from GitHub ────────────────────────────────────────
+# Fetches the raw index.js, compares its AGENT_VERSION against the local copy.
+# On mismatch: downloads to <agent>.tmp, validates it parses by looking for the
+# version string, then atomic-renames over the live file.
+#
+# Throttled to once every $AGENT_UPDATE_INTERVAL_HRS hours via a marker file in
+# the agent folder. -ForceUpdate bypasses the throttle. -NoUpdate skips entirely.
+#
+# Returns $true if the file was updated (caller should re-launch node).
+function Update-Agent([string]$agentPath, [bool]$silent) {
+    if ($NoUpdate)                    { return $false }
+    if (-not (Test-Path $agentPath))  { return $false }
+    if ($cfg.AutoUpdate -eq $false)   { return $false }   # opt-out via config
+
+    $agentDir   = Split-Path $agentPath -Parent
+    $markerFile = Join-Path $agentDir ".last-update-check"
+
+    if (-not $ForceUpdate -and (Test-Path $markerFile)) {
+        $age = (Get-Date) - (Get-Item $markerFile).LastWriteTime
+        if ($age.TotalHours -lt $AGENT_UPDATE_INTERVAL_HRS) { return $false }
+    }
+
+    try {
+        # Pull remote source
+        $resp = Invoke-WebRequest -Uri $AGENT_RAW_URL -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $remote = $resp.Content
+        if (-not $remote) { return $false }
+
+        $remoteVer = ([regex]::Match($remote, "AGENT_VERSION\s*=\s*['""]([^'""]+)['""]")).Groups[1].Value
+        $localContent = Get-Content $agentPath -Raw
+        $localVer  = ([regex]::Match($localContent, "AGENT_VERSION\s*=\s*['""]([^'""]+)['""]")).Groups[1].Value
+        if (-not $remoteVer) { return $false }
+
+        # Mark this check as done so we don't hammer GitHub
+        Set-Content $markerFile (Get-Date).ToString("o")
+
+        if ($remoteVer -eq $localVer -and -not $ForceUpdate) { return $false }
+
+        if (-not $silent) {
+            Write-Host ""
+            Write-Host "  Update available: agent $localVer -> $remoteVer" -ForegroundColor Yellow
+        }
+
+        # Atomic write: temp -> rename
+        $tmp = "$agentPath.tmp"
+        Set-Content -LiteralPath $tmp -Value $remote -NoNewline
+
+        # Sanity check: must contain AGENT_VERSION and EncounterBuilder so we
+        # don't atomically rename garbage on top of a working file.
+        $tmpContent = Get-Content $tmp -Raw
+        if (($tmpContent -notmatch "AGENT_VERSION") -or ($tmpContent -notmatch "EncounterBuilder")) {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            if (-not $silent) { Write-Host "  Update failed: downloaded file looks corrupt; keeping current version." -ForegroundColor Red }
+            return $false
+        }
+
+        Move-Item -LiteralPath $tmp -Destination $agentPath -Force
+        if (-not $silent) {
+            Write-Host "  Updated to $remoteVer." -ForegroundColor Green
+        }
+        return $true
+    } catch {
+        if (-not $silent) {
+            Write-Host "  Update check skipped: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
+        return $false
+    }
+}
+
 function Show-StartupWizard([string]$eqDir) {
     $hasTask    = $null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)
     $hasDesktop = Test-Path (Join-Path ([Environment]::GetFolderPath("Desktop")) $ShortcutName)
@@ -253,7 +330,7 @@ if (-not $IsInteractive) {
     }
 }
 
-$cfg        = @{ EqDir = ""; BotUrl = ""; Token = "" }
+$cfg        = @{ EqDir = ""; BotUrl = ""; Token = ""; AutoUpdate = $true }
 $isFirstRun = $false
 
 # Find an existing config file. Two locations are checked, in order:
@@ -277,6 +354,7 @@ if ($existingConfig -and -not $Reset) {
         $cfg.EqDir  = $saved.EqDir
         $cfg.BotUrl = $saved.BotUrl
         $cfg.Token  = $saved.Token
+        if ($null -ne $saved.AutoUpdate) { $cfg.AutoUpdate = [bool]$saved.AutoUpdate }
         $ConfigFile = $existingConfig
         if ($existingConfig -ne (Join-Path $PSScriptRoot "logsync.config.json")) {
             Write-Host "  Loaded saved settings: $existingConfig" -ForegroundColor DarkGray
@@ -420,6 +498,15 @@ if (-not $AgentEntry -or -not (Test-Path $AgentEntry)) {
     Write-Host "         Run Parser.bat from the repo folder once to reinstall." -ForegroundColor Red
     if ($IsInteractive) { Read-Host "  Press Enter to close" }
     exit 1
+}
+
+# ── Auto-update the agent (throttled, opt-out via -NoUpdate or config) ───────
+# Silent in scheduled-task mode so the task log stays quiet. The agent's own
+# next-launch picks up the new file because we always re-read AgentEntry below.
+$updated = Update-Agent -agentPath $AgentEntry -silent:(-not $IsInteractive)
+if ($updated -and $IsInteractive) {
+    Write-Host "  Re-launching with the new agent..." -ForegroundColor DarkGray
+    Write-Host ""
 }
 
 # ── Build and run node command ────────────────────────────────────────────────
