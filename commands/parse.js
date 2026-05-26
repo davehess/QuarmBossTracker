@@ -474,23 +474,21 @@ async function finishParse(interaction, bossId, boss, parsed) {
   parses[bossId].push(parseEntry);
   saveParses(parses);
 
-  // Best-effort Supabase write — non-blocking, gracefully no-ops in any of:
-  //   - Supabase env vars not set
-  //   - bosses_local not yet populated (early rollout, boss not opt-in)
-  //   - upstream eqemu_npc_types not yet synced
-  // The legacy parses.json + Discord-thread archive remain the source of truth
-  // until the Supabase tier has been verified populated.
+  // Best-effort Supabase write — now awaited so we can surface completeness info
+  // in the ephemeral reply. Still gracefully no-ops if Supabase is unconfigured
+  // or the boss isn't mapped in bosses_local yet.
+  let supabaseResult = null;
   try {
     const supabase = require('../utils/supabase');
     if (supabase.isEnabled()) {
-      supabase.recordParse({
+      supabaseResult = await supabase.recordParse({
         bossInternalId:       bossId,
         parsed,
         timestampMs:          parseEntry.timestamp,
         contributorDiscordId: interaction.user.id,
         contributorCharacter: parseEntry.submittedByName,
         source:               'eqlogparser_send_to_eq',
-      }).catch(err => console.warn('[parse] supabase write failed:', err?.message));
+      }).catch(err => { console.warn('[parse] supabase write failed:', err?.message); return null; });
     }
   } catch (err) {
     console.warn('[parse] supabase module load failed:', err?.message);
@@ -570,7 +568,34 @@ async function finishParse(interaction, bossId, boss, parsed) {
     );
   }
 
-  return embed;
+  // ── Build ephemeral reply content ──────────────────────────────────────────
+  // Base confirmation — note if this was merged with prior submissions
+  let replyLines = [];
+  if (group.length > 1) {
+    replyLines.push(`✅ Merged **${group.length}** submissions — **${mergedParsed.players.length}** unique players seen.`);
+  } else {
+    replyLines.push(`✅ Parse submitted — **${mergedParsed.players.length}** players, **${fmt(mergedParsed.totalDamage)}** dmg.`);
+  }
+
+  // Completeness score from Supabase (only shows when multiple contributors exist)
+  if (supabaseResult?.encounterId) {
+    try {
+      const supabase = require('../utils/supabase');
+      const completeness = await supabase.getEncounterCompleteness(supabaseResult.encounterId).catch(() => null);
+      if (completeness && completeness.contributor_count > 1) {
+        const score  = Math.round((completeness.completeness_score || 0) * 100);
+        const filled = Math.floor(score / 10);
+        const bar    = '█'.repeat(filled) + '░'.repeat(10 - filled);
+        replyLines.push(
+          `\`${bar}\` **${score}%** raid coverage · ` +
+          `${completeness.unique_attackers_seen}/${completeness.raid_size_expected} raiders · ` +
+          `${completeness.contributor_count} submitter${completeness.contributor_count === 1 ? '' : 's'}`
+        );
+      }
+    } catch {}
+  }
+
+  return replyLines.join('\n');
 }
 
 // ── Select-menu confirm handler ────────────────────────────────────────────────
@@ -585,7 +610,8 @@ async function handleParseConfirm(interaction) {
   const bosses = require('../data/bosses.json');
   const boss = bosses.find(b => b.id === bossId);
   await interaction.update({ content: `✅ Using **${boss?.name || bossId}**...`, components: [] });
-  await finishParse(interaction, bossId, boss, pending.parsed);
+  const reply = await finishParse(interaction, bossId, boss, pending.parsed);
+  await interaction.editReply({ content: reply }).catch(() => {});
 }
 
 module.exports = {
@@ -619,13 +645,13 @@ module.exports = {
     }
 
     if (result.exact) {
-      await finishParse(interaction, result.exact.id, result.exact, parsed);
-      return interaction.editReply({ content: '✅ Parse submitted!' });
+      const reply = await finishParse(interaction, result.exact.id, result.exact, parsed);
+      return interaction.editReply({ content: reply });
     }
 
     if (result.partial) {
-      await finishParse(interaction, result.partial.id, result.partial, parsed);
-      return interaction.editReply({ content: `✅ Parse submitted! (auto-matched to **${result.partial.name}** — use /parseboss to override)` });
+      const reply = await finishParse(interaction, result.partial.id, result.partial, parsed);
+      return interaction.editReply({ content: `${reply}\n*(auto-matched to **${result.partial.name}** — use /parseboss to override)*` });
     }
 
     // Multiple candidates — show select menu
