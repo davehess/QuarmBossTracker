@@ -39,7 +39,7 @@ $AGENT_UPDATE_INTERVAL_HRS  = 12
 # NOT depend on this string — it compares full file content (normalized line
 # endings) so an update fires whenever the GitHub copy actually differs, even
 # if I forgot to bump the version.  The version is informational only.
-$SCRIPT_VERSION             = "2.2.6"
+$SCRIPT_VERSION             = "2.2.7"
 
 # Config and agent live next to this script file.
 # After first-run install, $PSScriptRoot == the EQ directory.
@@ -80,21 +80,56 @@ function Write-Header {
     Write-Host ""
 }
 
+# ── UTF-8 file write (without BOM) ────────────────────────────────────────────
+# CRITICAL for files Node.js reads — Set-Content on Windows PowerShell 5.1
+# writes a UTF-8 BOM by default, which Node rejects in package.json with
+# ERR_INVALID_PACKAGE_CONFIG and may also break index.js loading.
+# .NET's UTF8Encoding($false) writes raw UTF-8 bytes with no BOM.
+function Write-Utf8NoBom([string]$path, [string]$content) {
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($path, $content, $enc)
+}
+
+# Strip a UTF-8 BOM (EF BB BF) from a file if present.  Heals files left
+# BOM-corrupted by earlier versions of this script that used Set-Content
+# (which adds a BOM by default on PowerShell 5.1).  Idempotent.
+function Remove-BomFromFile([string]$path) {
+    if (-not (Test-Path $path)) { return }
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            $content = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+            Write-Utf8NoBom $path $content
+        }
+    } catch { }
+}
+
 function Find-EqDir {
-    # First, check the parent of where this script lives — covers the very common
-    # case where users extract WolfPackParser.zip INSIDE their EQ install folder
-    # (e.g. C:\Users\X\Downloads\TAKP\WolfPackParser\). The previous version only
-    # scanned drive roots for known subpath names and missed nested installs.
+    # Walk UP from the script's folder looking for eqgame.exe (or log files).
+    # Covers all the common nested-install patterns:
+    #   C:\TAKP\WolfPackParser\               → eqgame.exe one level up
+    #   C:\Games\EQ\TAKP\WolfPackParser\      → eqgame.exe one level up
+    #   C:\Downloads\TAKP V2.1\WolfPackParser\ → eqgame.exe one level up
+    # We also check $PSScriptRoot itself in case the user dropped the agent
+    # files DIRECTLY into their EQ folder (without a subfolder).  Cap the walk
+    # at 5 levels to avoid scanning the whole drive.
     if ($PSScriptRoot) {
-        $parent = Split-Path $PSScriptRoot -Parent
-        if ($parent -and (Test-Path $parent)) {
-            $hasLogs = (Get-ChildItem $parent -Filter "eqlog_*_pq.proj.txt" -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
-            $hasExe  = Test-Path (Join-Path $parent "eqgame.exe")
-            if ($hasLogs -or $hasExe) { return $parent }
+        $here = $PSScriptRoot
+        for ($i = 0; $i -lt 5 -and $here; $i++) {
+            if (Test-Path $here) {
+                $hasLogs = (Get-ChildItem $here -Filter "eqlog_*_pq.proj.txt" -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
+                $hasExe  = Test-Path (Join-Path $here "eqgame.exe")
+                if ($hasLogs -or $hasExe) { return $here }
+            }
+            $next = Split-Path $here -Parent
+            if (-not $next -or $next -eq $here) { break }
+            $here = $next
         }
     }
 
-    # Then scan drive roots for the well-known install location names.
+    # Fallback: scan drive roots for the well-known install location names
+    # (C:\TAKP, C:\EverQuest, etc.) for users who launch from a totally
+    # unrelated folder.
     $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
               Where-Object { $_.Root -and (Test-Path $_.Root) }
     foreach ($drive in $drives) {
@@ -287,8 +322,11 @@ function Update-Agent([string]$agentPath, [bool]$silent) {
         }
 
         # Atomic write of index.js: temp -> rename
+        # Use UTF-8 NO BOM — PowerShell 5.1's Set-Content writes a BOM by
+        # default, which Node tolerates in JS files but rejects in package.json
+        # (ERR_INVALID_PACKAGE_CONFIG).  Keep both writes consistent.
         $tmp = "$agentPath.tmp"
-        Set-Content -LiteralPath $tmp -Value $remote -NoNewline
+        Write-Utf8NoBom $tmp $remote
 
         # Sanity check: must contain AGENT_VERSION and EncounterBuilder so we
         # don't atomically rename garbage on top of a working file.
@@ -302,9 +340,10 @@ function Update-Agent([string]$agentPath, [bool]$silent) {
         Move-Item -LiteralPath $tmp -Destination $agentPath -Force
 
         # Also update package.json so the agent reads the new version string.
+        # Must be UTF-8 NO BOM — Node throws ERR_INVALID_PACKAGE_CONFIG on a BOM.
         if ($pkgChanged -and $remotePkg) {
             $tmpPkg = "$pkgPath.tmp"
-            Set-Content -LiteralPath $tmpPkg -Value $remotePkg -NoNewline
+            Write-Utf8NoBom $tmpPkg $remotePkg
             if ((Get-Content $tmpPkg -Raw) -match '"version"') {
                 Move-Item -LiteralPath $tmpPkg -Destination $pkgPath -Force
             } else {
@@ -362,7 +401,7 @@ function Update-Script([bool]$silent) {
         }
 
         $tmp = "$PSCommandPath.tmp"
-        Set-Content -LiteralPath $tmp -Value $remote -NoNewline
+        Write-Utf8NoBom $tmp $remote
 
         # Sanity check: must look like our script (contains the version constant
         # and the Update-Agent function) before we atomically swap.
@@ -677,6 +716,16 @@ if ($scriptUpdated -and $IsInteractive) {
     Write-Host "  (Continuing with the in-memory script; new version applies next launch.)" -ForegroundColor DarkGray
     Write-Host ""
 }
+
+# ── Heal BOM-corrupted Node-readable files ───────────────────────────────────
+# Earlier script versions used Set-Content on Windows PowerShell 5.1, which
+# writes UTF-8 WITH a BOM by default.  Node tolerates BOM in .js files but
+# rejects it in package.json with ERR_INVALID_PACKAGE_CONFIG.  Strip any
+# leftover BOMs here so users who auto-updated under the broken version
+# recover automatically on next launch (no manual file editing needed).
+Remove-BomFromFile $AgentEntry
+$_pkgPath = Join-Path (Split-Path $AgentEntry) "package.json"
+Remove-BomFromFile $_pkgPath
 
 # ── Build and run node command ────────────────────────────────────────────────
 # We loop the node invocation so that pressing [U] in the dashboard (which
