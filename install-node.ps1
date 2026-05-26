@@ -1,7 +1,15 @@
 # install-node.ps1 — Check for Node.js 20+ and install if missing
-# Right-click → "Run with PowerShell" (as Administrator)
+# Right-click → "Run with PowerShell"  (self-elevates via UAC if needed)
 
-#Requires -RunAsAdministrator
+# ── Self-elevate if not already running as Administrator ──────────────────────
+if (-not ([Security.Principal.WindowsPrincipal]
+          [Security.Principal.WindowsIdentity]::GetCurrent()
+         ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Start-Process powershell.exe `
+        -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
+        -Verb RunAs
+    exit
+}
 
 $minVersion  = [Version]"20.0.0"
 $nodeVersion = "20.19.1"
