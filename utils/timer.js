@@ -71,28 +71,46 @@ function statusEmoji(nextSpawnMs) {
 }
 
 /**
- * Parse a human time string into milliseconds.
- * Accepts: "2h30m", "1d4h", "45m", "3d4h30m20s",
- *          "3 days, 4 hours, 30 minutes, and 20 seconds",
- *          "Expires in 1 Day, 4 Hours, 55 Minutes, and 38 Seconds"
- * Returns null if nothing matched.
+ * Parse a human-readable time string → milliseconds.
+ * Handles:
+ *   Short:  "3d4h30m20s", "2h30m", "45m", "1d"
+ *   Long:   "3 days, 4 hours, 30 minutes, and 20 seconds"
+ *   PQDI:   "Expires in 1 Day, 4 Hours, 55 Minutes, and 38 Seconds"
+ *   EQ SLL: "2 Days, 14 Hours, 22 Minutes, 5 Seconds Remaining"
+ *           "2 Days 14 Hours 22 Minutes"
+ * Returns ms or null if unparseable.
  */
-function parseTimeString(input) {
-  const s = input.replace(/expires\s+in\s*/i, '').replace(/,?\s*and\s*/gi, ' ').trim();
-  const patterns = [
-    { re: /(\d+)\s*(?:d(?:ay)?s?)/i,              mult: 86400000 },
-    { re: /(\d+)\s*(?:h(?:our)?s?)/i,             mult: 3600000  },
-    { re: /(\d+)\s*(?:m(?:in(?:ute)?)?s?)/i,      mult: 60000    },
-    { re: /(\d+)\s*(?:s(?:ec(?:ond)?)?s?)/i,      mult: 1000     },
-  ];
-  let totalMs = 0, matched = false;
-  for (const { re, mult } of patterns) {
-    const m = s.match(re);
-    if (m) { totalMs += parseInt(m[1]) * mult; matched = true; }
-  }
-  return matched ? totalMs : null;
-}
+function parseTimeString(str) {
+  if (!str) return null;
+  const s = str.trim()
+    .replace(/expires in\s*/i, '')
+    .replace(/remaining/i, '')
+    .replace(/\band\b/gi, '')
+    .trim();
 
+  // Short compact: 3d4h30m20s
+  const shortMatch = s.match(/^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i);
+  if (shortMatch && (shortMatch[1] || shortMatch[2] || shortMatch[3] || shortMatch[4])) {
+    const d = parseInt(shortMatch[1] || 0);
+    const h = parseInt(shortMatch[2] || 0);
+    const m = parseInt(shortMatch[3] || 0);
+    const sec = parseInt(shortMatch[4] || 0);
+    const ms = ((d * 24 + h) * 60 + m) * 60000 + sec * 1000;
+    return ms > 0 ? ms : null;
+  }
+
+  // Long / PQDI / EQ SLL format: "X Days, Y Hours, Z Minutes, W Seconds"
+  let ms = 0;
+  const dayM  = s.match(/(\d+)\s*days?/i);
+  const hourM = s.match(/(\d+)\s*hours?/i);
+  const minM  = s.match(/(\d+)\s*min(?:utes?)?/i);
+  const secM  = s.match(/(\d+)\s*sec(?:onds?)?/i);
+  if (dayM)  ms += parseInt(dayM[1])  * 86400000;
+  if (hourM) ms += parseInt(hourM[1]) * 3600000;
+  if (minM)  ms += parseInt(minM[1])  * 60000;
+  if (secM)  ms += parseInt(secM[1])  * 1000;
+  return ms > 0 ? ms : null;
+}
 
 module.exports = {
   calcNextSpawn,

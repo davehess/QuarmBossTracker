@@ -1,0 +1,54 @@
+name: Sync EQMacEmu Quarm DB
+
+on:
+  # Weekly Sunday 06:00 UTC (after typical Quarm weekend raids settle)
+  schedule:
+    - cron: '0 6 * * 0'
+  # Manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      dump_url:
+        description: 'Optional: specific tarball URL to use instead of the latest'
+        required: false
+
+permissions:
+  contents: write   # so we can commit data/sync_state.json back to the repo
+
+concurrency:
+  group: sync-quarm
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_GUILD_ID: ${{ secrets.SUPABASE_GUILD_ID }}
+      DUMP_URL_OVERRIDE: ${{ inputs.dump_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Sync upstream data
+        id: sync
+        run: node scripts/sync-from-eqmac.js
+
+      - name: Commit sync state if changed
+        run: |
+          if [[ -n "$(git status --porcelain data/sync_state.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/sync_state.json
+            git commit -m "sync: ${{ steps.sync.outputs.summary || 'EQMacEmu upstream' }}"
+            git push
+          else
+            echo "No sync_state.json change — skipping commit."
+          fi

@@ -154,6 +154,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (interaction.customId.startsWith('who_family:'))         { await handleWhoFamily(interaction); return; }
     if (interaction.customId.startsWith('audit_undo:'))         { await handleAuditUndo(interaction); return; }
+    if (interaction.customId.startsWith('sll_confirm:'))        { const { handleSllConfirm } = require('./commands/sll'); await handleSllConfirm(interaction); return; }
+    if (interaction.customId === 'sll_cancel')                  { const { handleSllCancel }  = require('./commands/sll'); await handleSllCancel(interaction);  return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;
@@ -1953,13 +1955,129 @@ async function consolidateNightlyParses(client) {
   }
 }
 
-// ── Health check server ───────────────────────────────────────────────────────
-// Railway's proxy times out idle connections (including Discord's WebSocket) if
-// there is no HTTP listener. This tiny server satisfies the health check.
+// ── HTTP server ───────────────────────────────────────────────────────────────
+// Health check (Railway proxy needs an HTTP listener) + endpoints for the
+// wolfpack-logsync local agent.
 const http = require('http');
-http.createServer((_, res) => { res.writeHead(200); res.end('OK'); })
+
+async function _handleAgentUpload(req, res) {
+  // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent uploads disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  // Read body (cap at 10MB for safety; encounters are typically <1MB)
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 10 * 1024 * 1024) {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'payload too large' }));
+    }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch (err) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid JSON' }));
+  }
+
+  // Shape: { agent_version, character, encounter: { started_at, ended_at, boss_name, events: [...] } }
+  const { character, encounter } = payload || {};
+  if (!encounter || !Array.isArray(encounter.events)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'missing encounter.events' }));
+  }
+
+  console.log(`[agent] upload from ${character || '?'}: ${encounter.events.length} events, ` +
+              `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
+
+  // Best-effort Supabase write. Falls through silently if Supabase isn't set up.
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled() && encounter.boss_name) {
+      // Try to resolve a local boss for this encounter (bosses_local internal_id).
+      // For now, just create/find an encounter keyed by boss_name as the
+      // internal_id. Real npc_id resolution happens once bosses_local is populated.
+      // We pass character as the contributor and synthesize a raw_parse from events.
+
+      // Synthesize per-character damage totals from events for the contribution
+      const playerTotals = new Map();
+      for (const ev of encounter.events) {
+        if (ev.type === 'damage' && ev.attacker) {
+          playerTotals.set(ev.attacker, (playerTotals.get(ev.attacker) || 0) + (ev.amount || 0));
+        }
+      }
+      const players = [...playerTotals.entries()]
+        .map(([name, dmg], i) => ({ rank: i + 1, name, damage: dmg, dps: 0, duration: 0 }))
+        .sort((a, b) => b.damage - a.damage)
+        .map((p, i) => ({ ...p, rank: i + 1 }));
+      const totalDamage = players.reduce((s, p) => s + p.damage, 0);
+
+      const rawParse = {
+        bossName: encounter.boss_name,
+        duration: encounter.started_at && encounter.ended_at
+          ? Math.round((new Date(encounter.ended_at) - new Date(encounter.started_at)) / 1000)
+          : 0,
+        totalDamage,
+        totalDps: 0,
+        players,
+        eventCount: encounter.events.length,
+      };
+
+      // Try to find a matching local boss by name (fallback when bosses_local empty)
+      const localMatches = await supabase.select(
+        'bosses_local',
+        `internal_id=eq.${encodeURIComponent((encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_'))}&select=npc_id,internal_id&limit=1`
+      );
+      if (Array.isArray(localMatches) && localMatches.length) {
+        const bossInternalId = localMatches[0].internal_id;
+        await supabase.recordParse({
+          bossInternalId,
+          parsed: rawParse,
+          timestampMs: new Date(encounter.started_at).getTime(),
+          contributorDiscordId: null,
+          contributorCharacter: character || null,
+          source: 'local_agent_v1',
+        }).catch(err => console.warn('[agent] recordParse failed:', err?.message));
+      } else {
+        console.log(`[agent] no bosses_local match for "${encounter.boss_name}" — encounter not persisted`);
+      }
+    }
+  } catch (err) {
+    console.warn('[agent] supabase write failed:', err?.message);
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, events_received: encounter.events.length }));
+}
+
+http.createServer(async (req, res) => {
+  // Agent upload endpoint
+  if (req.method === 'POST' && req.url === '/api/agent/encounter') {
+    try { return await _handleAgentUpload(req, res); }
+    catch (err) {
+      console.error('[agent] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Default: health check
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('OK');
+})
   .listen(process.env.PORT || 3000, () =>
-    console.log(`[health] HTTP check on :${process.env.PORT || 3000}`)
+    console.log(`[health] HTTP check + agent endpoint on :${process.env.PORT || 3000}`)
   );
 
 client.login(process.env.DISCORD_TOKEN);

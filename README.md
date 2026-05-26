@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 1.3.14 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway or Docker
+**Version:** 2.0.0-dev (feature branch) · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase
 
 ---
 
@@ -330,6 +330,52 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 ---
 
 ## Version Log
+
+### v2.0.4 — shipped to `main`
+
+**Theme:** Supabase backend, sealed-bid wishlist system, parse pipeline, lockout-driven timer recovery, and DKP loot foundation. Versioned 2.0 because the data layer fundamentally changes — `bosses.json` and `parses.json` stop being the source of truth and become local-cache mirrors of Supabase tables.
+
+**What shipped:**
+- **Supabase backend** — Two-tier schema. Tier 1 mirrors EQMacEmu game data weekly via GitHub Actions. Tier 2 is guild-generated (encounters, contributions, loot drops, characters, wishlists, audit log). Full RLS — service_role only for writes, anon reads on public game data only.
+- **`/dkp`** — DKP lookup with family mode (main + alts), 60s cache.
+- **`/wishlist add|remove|show`** — Per-character BIS registration with AES-256-GCM encrypted sealed bids (`WISHLIST_BID_KEY`). Officers see bids during active auctions; other players see `🔒 sealed`.
+- **`/mywishlist`** — Self-only private view: decrypted bid amounts, previous drop history per item, DKP headroom vs current balance, overcommit warning.
+- **`/loot`** — Zeal paste parser, PQDI rarity labels (🆕 NEW / 💎 ULTRA RARE), officer-only wishlist match summary with sealed bids surfaced.
+- **`/parse`** — `type` option: `instance` (default, starts timer) / `open_world` / `pvp` (stats only). Multiple submissions for the same kill auto-merge. Completeness bar shown when Supabase has >1 contributor.
+- **`/parsehelp`** — Step-by-step EQLogParser setup guide, lockout confirmation, `/sll` recovery docs.
+- **`/sll`** — Paste `#showlootlockouts` output; bot parses every line, matches zone/boss names, shows preview with computed nextSpawn times, applies all on confirm. Lockout remaining = respawn remaining on Quarm exactly.
+- **`/encounter tonight|view|mine`** — Post-raid recap from Supabase encounter data.
+- **`wolfpack-logsync` agent** — Local Node.js log tail agent; privacy-filtered, zero npm deps, POSTs encounter data to bot's `/api/agent/encounter` endpoint.
+- **`parseTimeString()`** added to `utils/timer.js` (was imported but missing).
+- **`recordKill()` optional killedAt** — enables back-calculated kill time from lockout remaining.
+- **`/parsecontrib` deleted** — was redundant; `/parse` already auto-merges contributions via `find_or_create_encounter`.
+
+**Deferred to v2.1 (next raid Wednesday):**
+- **OpenDKP auction creation** — `createAuctions()` stubbed; need 3 cURL captures from the live Bidding Tool: create auction, submit bid, end/award. Capturing Wednesday night raid.
+- **`/bid`, `/bids`, `/award`** — In-raid tell-bid recording and loot award commands. Build immediately after API cURLs are captured.
+- **Quarmy wishlist import** — `parseQuarmyWishlist(url)` placeholder; implement once page format confirmed.
+- **Discord ↔ character mapping** — `/mycharacter <name>` for auto-resolved bidding.
+- **Web UI** — Next.js or static + Supabase anon-key reads, RLS-gated.
+
+**Shipped in this session (all on the feature branch, awaiting merge):**
+
+- `supabase/migrations/20260525120000_initial_schema.sql` — full Tier 1 + Tier 2 schema with RLS-by-default, completeness view, RPC helpers
+- `scripts/sync-from-eqmac.js` + `.github/workflows/sync-quarm.yml` — weekly auto-sync of `quarm_*.tar.gz` upstream dumps with idempotent skip-if-unchanged
+- `scripts/migrate-bosses-to-supabase.js` — one-shot bosses.json → bosses_local importer with fuzzy-match review file for ambiguous bosses
+- `/dkp [character] [family]` — ephemeral DKP lookup, defaults to your Discord display name, 60s cache, family mode shows main+alts with total
+- `/wishlist add|remove|show` — async BIS registration with per-item DKP ceiling, priority, notes; auto-bid hook lives in /loot
+- `/encounter tonight|view|mine` — post-raid recap: every encounter, completeness bars, who was in vs missed, loot won
+- `/parsecontrib` — multi-perspective parse contribution; merges into encounter_players with max-damage rule and live completeness score
+- `packages/wolfpack-logsync/` — tail-mode EQ log agent (zero npm deps, single file, gigabyte-safe). Filters officer chat / tells / custom channels at the byte level before parsing. Comprehensive damage parser covering all observed verbs (slash, crush, pierce, bite, claw, gore, slam, sting, tail-whip, etc.) with proper -es/-s normalization.
+- `POST /api/agent/encounter` on the bot's existing HTTP server — bearer-auth agent ingest, synthesizes contributions row from event stream, gracefully no-ops if Supabase or `bosses_local` not yet populated
+- `/loot` extension — wishlist match surfacing when items drop; officer-visible follow-up names wishlisters (auto-bid placement gated on OpenDKP auction API capture)
+
+**Not yet shipped this session (next pass):**
+
+- `/addboss` rewrite to use `eqemu_npc_types` (current PQDI scraping still works)
+- OpenDKP auction creation (still pending API capture from live Bidding Tool)
+- `parseQuarmyWishlist` (need a quarmy.com BIS URL to test against)
+- `parseQuarmyInventory` (TSV format identified from `HityaQuarmy.txt`; useful for "you already own this" hints later)
 
 ### v1.3.14 (2026-05-25)
 - **`/loot` command (infrastructure):** New command for posting looted items for DKP bidding. Parses Zeal item paste (pipe, comma, or space-delimited; 7-digit EQ item IDs), checks guild drop history from OpenDKP (cached 1h), and optionally scrapes the boss's PQDI NPC page for drop rates.
