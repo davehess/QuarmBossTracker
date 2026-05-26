@@ -454,7 +454,13 @@ setInterval(() => {
 }, 30_000);
 
 // ── Shared finish-parse logic ─────────────────────────────────────────────────
-async function finishParse(interaction, bossId, boss, parsed) {
+// parseType: 'instance' | 'open_world' | 'pvp'
+//   instance   — guild instanced raid kill. Triggers respawn timer. DEFAULT.
+//   open_world — open-world kill (no lockout). Parse stored for stats only.
+//   pvp        — PvP kill. Parse stored for stats only.
+// Only 'instance' triggers recordKill() — the others record the DPS data
+// without starting a timer, since open-world/PvP spawns aren't on our timers.
+async function finishParse(interaction, bossId, boss, parsed, parseType = 'instance') {
   delete require.cache[require.resolve('../data/bosses.json')];
   const bosses = require('../data/bosses.json');
 
@@ -466,6 +472,7 @@ async function finishParse(interaction, bossId, boss, parsed) {
     totalDamage:      parsed.totalDamage,
     totalDps:         parsed.totalDps,
     players:          parsed.players,
+    parseType,        // stored so stats commands can filter by type
     discordMsgId:     null, // filled after logging
   };
 
@@ -529,12 +536,17 @@ async function finishParse(interaction, bossId, boss, parsed) {
     }
   }).catch(err => console.warn('[parse] Discord log failed:', err?.message));
 
-  // Auto-kill boss if not already on cooldown
+  // Auto-kill boss — ONLY for guild instance kills.
+  // open_world and pvp parses record stats but must NOT start a respawn timer,
+  // since we don't track open-world or PvP spawns on these boards.
   const { getBossState, recordKill } = require('../utils/state');
   const { postKillUpdate } = require('../utils/killops');
   const bossState = getBossState(bossId);
   const now = Date.now();
-  if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
+  if (parseType !== 'instance') {
+    // Non-instance parse: stats recorded, no timer change
+    // (fall through to reply building below)
+  } else if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
     const freshBoss = bosses.find(b => b.id === bossId);
     if (freshBoss) {
       recordKill(bossId, freshBoss.timerHours, interaction.user.id);
@@ -569,12 +581,14 @@ async function finishParse(interaction, bossId, boss, parsed) {
   }
 
   // ── Build ephemeral reply content ──────────────────────────────────────────
-  // Base confirmation — note if this was merged with prior submissions
+  const typeLabel = parseType === 'pvp' ? ' · 🗡️ PvP' : parseType === 'open_world' ? ' · 🌍 Open World' : '';
+  const timerNote = parseType !== 'instance' ? '\n*Stats recorded — no timer started (not a guild instance kill).*' : '';
+
   let replyLines = [];
   if (group.length > 1) {
-    replyLines.push(`✅ Merged **${group.length}** submissions — **${mergedParsed.players.length}** unique players seen.`);
+    replyLines.push(`✅ Merged **${group.length}** submissions — **${mergedParsed.players.length}** unique players seen${typeLabel}.${timerNote}`);
   } else {
-    replyLines.push(`✅ Parse submitted — **${mergedParsed.players.length}** players, **${fmt(mergedParsed.totalDamage)}** dmg.`);
+    replyLines.push(`✅ Parse submitted — **${mergedParsed.players.length}** players, **${fmt(mergedParsed.totalDamage)}** dmg${typeLabel}.${timerNote}`);
   }
 
   // Completeness score from Supabase (only shows when multiple contributors exist)
@@ -610,7 +624,7 @@ async function handleParseConfirm(interaction) {
   const bosses = require('../data/bosses.json');
   const boss = bosses.find(b => b.id === bossId);
   await interaction.update({ content: `✅ Using **${boss?.name || bossId}**...`, components: [] });
-  const reply = await finishParse(interaction, bossId, boss, pending.parsed);
+  const reply = await finishParse(interaction, bossId, boss, pending.parsed, pending.parseType ?? 'instance');
   await interaction.editReply({ content: reply }).catch(() => {});
 }
 
@@ -623,10 +637,21 @@ module.exports = {
         .setDescription('Paste the EQLogParser "Send to EQ" output')
         .setRequired(true)
         .setMaxLength(6000)
+    )
+    .addStringOption(opt =>
+      opt.setName('type')
+        .setDescription('Kill context — instance starts the respawn timer; others record stats only (default: instance)')
+        .setRequired(false)
+        .addChoices(
+          { name: '🏰 Guild Instance (default) — starts respawn timer', value: 'instance'   },
+          { name: '🌍 Open World — stats only, no timer',                value: 'open_world' },
+          { name: '🗡️ PvP — stats only, no timer',                      value: 'pvp'        },
+        )
     ),
 
   async execute(interaction) {
-    const rawData = interaction.options.getString('data');
+    const rawData   = interaction.options.getString('data');
+    const parseType = interaction.options.getString('type') ?? 'instance';
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -645,18 +670,18 @@ module.exports = {
     }
 
     if (result.exact) {
-      const reply = await finishParse(interaction, result.exact.id, result.exact, parsed);
+      const reply = await finishParse(interaction, result.exact.id, result.exact, parsed, parseType);
       return interaction.editReply({ content: reply });
     }
 
     if (result.partial) {
-      const reply = await finishParse(interaction, result.partial.id, result.partial, parsed);
+      const reply = await finishParse(interaction, result.partial.id, result.partial, parsed, parseType);
       return interaction.editReply({ content: `${reply}\n*(auto-matched to **${result.partial.name}** — use /parseboss to override)*` });
     }
 
     // Multiple candidates — show select menu
     if (result.candidates) {
-      pendingParses.set(interaction.user.id, { parsed, rawData, ts: Date.now() });
+      pendingParses.set(interaction.user.id, { parsed, rawData, parseType, ts: Date.now() });
 
       const select = new StringSelectMenuBuilder()
         .setCustomId('parseConfirm')
