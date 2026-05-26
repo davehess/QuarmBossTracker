@@ -323,6 +323,13 @@ function getRaidSession()       { return loadState().raidSession || null; }
 function saveRaidSession(data)  { const s = loadState(); s.raidSession = data; saveState(s); }
 function clearRaidSession()     { const s = loadState(); s.raidSession = null; saveState(s); }
 
+// Zero out the per-player session damage map without ending the session.
+// Used by /parsereset to wipe stale leaderboard data after testing.
+function clearSessionDamage() {
+  const s = loadState();
+  if (s.raidSession) { s.raidSession.sessionDamage = {}; saveState(s); }
+}
+
 // Accumulate per-player damage into the active raid session (called after every agent encounter upload).
 // players = [{ name, damage, duration }] — same shape as parses.json players array.
 // No-ops if no session is active.
@@ -479,6 +486,7 @@ function findLatestActiveAuditEntry(bossId, action) {
 // agentSessionCardId: messageId of the all-night session leaderboard card (edited in place).
 // Both are cleared at midnight (fresh thread/session each night).
 function getAgentTestCard(bossKey)  { return loadState().agentTestCards?.[bossKey] || null; }
+function getAllAgentTestCards()     { return loadState().agentTestCards || {}; }
 function setAgentTestCard(bossKey, data) {
   const s = loadState();
   if (!s.agentTestCards) s.agentTestCards = {};
@@ -526,12 +534,12 @@ module.exports = {
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
-  getRaidSession, saveRaidSession, clearRaidSession, accumulateSessionDamage,
+  getRaidSession, saveRaidSession, clearRaidSession, accumulateSessionDamage, clearSessionDamage,
   getRaidNight, saveRaidNight, clearRaidNight,
   getAri, setAri, clearAri,
   getQuarmyLink, setQuarmyLink, clearQuarmyLink,
 getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getAuditEntries, getAuditEntry, addAuditEntry, updateAuditEntryMsgId, markAuditEntryUndone, findLatestActiveAuditEntry,
-  getAgentTestCard, setAgentTestCard, clearAgentTestCards,
+  getAgentTestCard, getAllAgentTestCards, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
 };
