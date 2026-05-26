@@ -385,10 +385,12 @@ class EncounterBuilder {
     this.lastEvent = event.ts;
     this.events.push(event);
 
-    if (event.type === 'damage' && event.defender) {
+    // Track damage dealt TO targets — but exclude "YOU" / "you" so player-received
+    // damage never inflates a player-name into appearing to be the primary target.
+    if (event.type === 'damage' && event.defender && !/^you$/i.test(event.defender)) {
       this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
     }
-    if (event.type === 'death' && event.defender) {
+    if (event.type === 'death' && event.defender && !/^you$/i.test(event.defender)) {
       // If we just killed the most-damaged target, end the encounter
       let top = null, topDmg = -1;
       for (const [name, dmg] of this.targets) {
@@ -408,17 +410,24 @@ class EncounterBuilder {
     }
   }
   flush() {
-    if (this.events.length < 3) {
+    // Minimum event count — filters out "you took 7 hits and zoned" noise.
+    // Real fights (even fast trash kills) typically produce 15+ events.
+    if (this.events.length < 10) {
       this.reset();
       return;
     }
-    // Guess boss = top damaged target if not set
+    // Guess boss = top damaged target if not set by a death event
     if (!this.bossName) {
       let top = null, topDmg = -1;
       for (const [name, dmg] of this.targets) {
         if (dmg > topDmg) { top = name; topDmg = dmg; }
       }
       this.bossName = top;
+    }
+    // No identifiable target = nothing useful to upload (all-heal or background noise)
+    if (!this.bossName) {
+      this.reset();
+      return;
     }
     const payload = {
       agent_version: AGENT_VERSION,

@@ -2018,6 +2018,15 @@ async function _handleAgentUpload(req, res) {
     return res.end(JSON.stringify({ error: 'missing encounter.events' }));
   }
 
+  // Server-side noise guard (agent already filters these, but defend in depth).
+  // "YOU" means the player was identified as the primary target — received damage, no real mob.
+  // null/empty boss_name with few events = background noise or all-heal encounter.
+  const bossNameRaw = (encounter.boss_name || '').trim();
+  if (/^you$/i.test(bossNameRaw) || (!bossNameRaw && encounter.events.length < 20)) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, skipped: 'noise encounter' }));
+  }
+
   console.log(`[agent] upload from ${character || '?'}: ${encounter.events.length} events, ` +
               `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
 
