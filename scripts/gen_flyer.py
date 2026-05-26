@@ -450,8 +450,8 @@ def draw_bottom_strip(draw, frame):
     draw.line([14, y, W-14, y], fill=DIVIDER, width=1)
     y += 5
 
-    # "New in v2.1.10" dim label
-    draw.text((14, y), "New in v2.1.10:", font=FONT_MONO, fill=(68, 68, 90))
+    # "New in v2.2" dim label
+    draw.text((14, y), "New in v2.2:", font=FONT_MONO, fill=(68, 68, 90))
     y += 17
 
     # DoT damage
@@ -477,7 +477,7 @@ def draw_footer(draw, frame):
     draw.text((18, fy),    "@RaidBosses", font=FONT_BODY_B, fill=lc(TEAL_DIM,TEAL,ep))
     draw.text((18, fy+15), "Quarm Raid Timer Bot", font=FONT_SMALL, fill=DARK_GRAY)
 
-    ver = "v2.1.10  —  DoT DAMAGE"
+    ver = "v2.2.0  —  DoT DAMAGE"
     bb  = draw.textbbox((0,0),ver,font=FONT_BODY_B)
     vx  = (W-(bb[2]-bb[0]))//2
     draw.rectangle([vx-8,fy-2,vx+(bb[2]-bb[0])+8,fy+16], fill=(20,20,40))
@@ -501,7 +501,7 @@ def draw_nameplates(img, draw, frame):
         (W//4+10,   295, "v1.4",
          (190, 160, 130),           # faded/worn white for rusty
          (130, 100,  80)),          # muted teal-brown guild tag
-        (W*3//4-10, 295, "v2.0",
+        (W*3//4-10, 295, "v2.2",
          (230, 240, 255),           # bright blue-white for shiny
          lc(TEAL_DIM, TEAL, ep)),   # pulsing teal guild tag
     ]
@@ -599,12 +599,12 @@ def draw_burst(img, draw, frame, url=CTA_URL):
 
     return ImageDraw.Draw(img)
 
-# ── Secondary "Now includes DoT Damage!" starburst (top-right corner) ─────────
+# ── Secondary "Now includes DoT Damage!" starburst (far-right edge) ──────────
 def draw_dot_burst(img, draw, frame):
     """Smaller diagonal starburst calling out the new DoT-damage capture feature."""
-    cx, cy   = W - 92, 90       # top-right corner
-    r_out    = 58
-    r_in     = 36
+    cx, cy   = W - 60, 90       # far-right edge, 10px buffer from the canvas edge
+    r_out    = 50
+    r_in     = 32
     n_points = 14
     # tilt + slow wobble so it pops against the rectangle layout
     rot      = math.radians(-12) + (frame / FRAMES) * math.pi * 0.10
