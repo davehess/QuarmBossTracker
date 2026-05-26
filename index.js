@@ -2001,56 +2001,120 @@ async function _handleAgentUpload(req, res) {
   console.log(`[agent] upload from ${character || '?'}: ${encounter.events.length} events, ` +
               `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
 
-  // Best-effort Supabase write. Falls through silently if Supabase isn't set up.
+  // ── Compute damage totals once (used by both parses.json and Supabase paths) ──
+  const playerTotals = new Map();
+  for (const ev of encounter.events) {
+    if (ev.type === 'damage' && ev.attacker) {
+      playerTotals.set(ev.attacker, (playerTotals.get(ev.attacker) || 0) + (ev.amount || 0));
+    }
+  }
+  const startedMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
+  const endedMs   = encounter.ended_at   ? new Date(encounter.ended_at).getTime()   : startedMs;
+  const duration  = Math.max(0, Math.round((endedMs - startedMs) / 1000));
+  const players = [...playerTotals.entries()]
+    .map(([name, dmg]) => ({
+      name,
+      damage:   dmg,
+      duration,
+      dps:      duration > 0 ? Math.round(dmg / duration) : 0,
+      hasPets:  false,
+    }))
+    .sort((a, b) => b.damage - a.damage)
+    .map((p, i) => ({ ...p, rank: i + 1 }));
+  const totalDamage = players.reduce((s, p) => s + p.damage, 0);
+  const totalDps    = duration > 0 ? Math.round(totalDamage / duration) : 0;
+
+  // ── Match boss against bosses.json, then mirror /parse instance behavior:
+  //    write to parses.json, record the kill, update the board ─────────────────
+  let matchedBoss = null;
+  try {
+    if (encounter.boss_name) {
+      const { findBossFromName, loadParses, saveParses, logParseToDiscord } = require('./commands/parse');
+      matchedBoss = findBossFromName(encounter.boss_name, getBosses());
+
+      if (matchedBoss) {
+        const parseEntry = {
+          timestamp:       startedMs,
+          submittedBy:     `agent:${character || 'unknown'}`,
+          submittedByName: character || 'Agent',
+          duration,
+          totalDamage,
+          totalDps,
+          players,
+          parseType:       'instance',
+          source:          'wolfpack_agent',
+          discordMsgId:    null,
+        };
+
+        // Append to parses.json so /parsestats sees the upload
+        const parses = loadParses();
+        if (!parses[matchedBoss.id]) parses[matchedBoss.id] = [];
+        parses[matchedBoss.id].push(parseEntry);
+        saveParses(parses);
+
+        // Persist to Discord thread for survival across restarts
+        logParseToDiscord(client, matchedBoss.id, parseEntry).then(msg => {
+          if (msg?.id) {
+            const p2 = loadParses();
+            if (p2[matchedBoss.id]) {
+              const idx = p2[matchedBoss.id].findIndex(e =>
+                e.timestamp === parseEntry.timestamp && e.submittedBy === parseEntry.submittedBy);
+              if (idx !== -1) { p2[matchedBoss.id][idx].discordMsgId = msg.id; saveParses(p2); }
+            }
+          }
+        }).catch(err => console.warn('[agent] Discord log failed:', err?.message));
+
+        // Auto-record kill if boss isn't already on cooldown
+        const { getBossState, recordKill } = require('./utils/state');
+        const { postKillUpdate } = require('./utils/killops');
+        const bossState = getBossState(matchedBoss.id);
+        const now = Date.now();
+        if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
+          recordKill(matchedBoss.id, matchedBoss.timerHours, null);
+          postKillUpdate(client, process.env.TIMER_CHANNEL_ID, matchedBoss.id).catch(console.warn);
+          console.log(`[agent] auto-killed ${matchedBoss.name} from ${character || '?'} agent upload`);
+        } else {
+          console.log(`[agent] ${matchedBoss.name} already on cooldown — parse recorded, no timer change`);
+        }
+      } else {
+        console.log(`[agent] no bosses.json match for "${encounter.boss_name}" — parse not stored locally`);
+      }
+    }
+  } catch (err) {
+    console.warn('[agent] local parse write failed:', err?.message);
+  }
+
+  // ── Best-effort Supabase write. Falls through silently if Supabase isn't set up ──
   try {
     const supabase = require('./utils/supabase');
     if (supabase.isEnabled() && encounter.boss_name) {
-      // Try to resolve a local boss for this encounter (bosses_local internal_id).
-      // For now, just create/find an encounter keyed by boss_name as the
-      // internal_id. Real npc_id resolution happens once bosses_local is populated.
-      // We pass character as the contributor and synthesize a raw_parse from events.
-
-      // Synthesize per-character damage totals from events for the contribution
-      const playerTotals = new Map();
-      for (const ev of encounter.events) {
-        if (ev.type === 'damage' && ev.attacker) {
-          playerTotals.set(ev.attacker, (playerTotals.get(ev.attacker) || 0) + (ev.amount || 0));
-        }
-      }
-      const players = [...playerTotals.entries()]
-        .map(([name, dmg], i) => ({ rank: i + 1, name, damage: dmg, dps: 0, duration: 0 }))
-        .sort((a, b) => b.damage - a.damage)
-        .map((p, i) => ({ ...p, rank: i + 1 }));
-      const totalDamage = players.reduce((s, p) => s + p.damage, 0);
-
       const rawParse = {
-        bossName: encounter.boss_name,
-        duration: encounter.started_at && encounter.ended_at
-          ? Math.round((new Date(encounter.ended_at) - new Date(encounter.started_at)) / 1000)
-          : 0,
+        bossName:   encounter.boss_name,
+        duration,
         totalDamage,
-        totalDps: 0,
+        totalDps,
         players,
         eventCount: encounter.events.length,
       };
 
-      // Try to find a matching local boss by name (fallback when bosses_local empty)
+      // Prefer the bossId from bosses.json match; fall back to slugified name lookup
+      const slug = (encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_');
+      const bossInternalId = matchedBoss?.id || slug;
       const localMatches = await supabase.select(
         'bosses_local',
-        `internal_id=eq.${encodeURIComponent((encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_'))}&select=npc_id,internal_id&limit=1`
+        `internal_id=eq.${encodeURIComponent(bossInternalId)}&select=internal_id&limit=1`
       );
       if (Array.isArray(localMatches) && localMatches.length) {
-        const bossInternalId = localMatches[0].internal_id;
         await supabase.recordParse({
           bossInternalId,
           parsed: rawParse,
-          timestampMs: new Date(encounter.started_at).getTime(),
+          timestampMs: startedMs,
           contributorDiscordId: null,
           contributorCharacter: character || null,
           source: 'local_agent_v1',
         }).catch(err => console.warn('[agent] recordParse failed:', err?.message));
       } else {
-        console.log(`[agent] no bosses_local match for "${encounter.boss_name}" — encounter not persisted`);
+        console.log(`[agent] no bosses_local match for "${bossInternalId}" — encounter not persisted to Supabase`);
       }
     }
   } catch (err) {
@@ -2058,7 +2122,11 @@ async function _handleAgentUpload(req, res) {
   }
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, events_received: encounter.events.length }));
+  res.end(JSON.stringify({
+    ok: true,
+    events_received: encounter.events.length,
+    matched_boss:    matchedBoss?.id || null,
+  }));
 }
 
 http.createServer(async (req, res) => {
