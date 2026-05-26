@@ -24,6 +24,7 @@ const {
   clearRaidNight,
   getAgentTestCard, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
+  recordAgentUpload, clearAgentActivity,
   getAllLiveKills, clearLiveKill,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getHateBoardMessageId, setHateBoardMessageId,
@@ -1712,6 +1713,7 @@ function scheduleMidnightSummary(readyClient) {
       // Clear agent test thread tracking — fresh state for the new night
       clearAgentTestCards();
       clearAgentSessionCardId();
+      clearAgentActivity();
 
       // ── Archive passed announce threads ─────────────────────────────────
       await archivePassedAnnounceThreads(readyClient);
@@ -2034,6 +2036,9 @@ async function _handleAgentUpload(req, res) {
 
   console.log(`[agent] upload from ${character || '?'}: ${encounter.events.length} events, ` +
               `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
+
+  // Record per-character upload activity for /parseagents
+  try { recordAgentUpload(character, encounter.boss_name, encounter.events.length); } catch {}
 
   // ── Compute damage totals once (used by both parses.json and Supabase paths) ──
   // Filter out noise before aggregating:

@@ -487,6 +487,34 @@ function findLatestActiveAuditEntry(bossId, action) {
 // Both are cleared at midnight (fresh thread/session each night).
 function getAgentTestCard(bossKey)  { return loadState().agentTestCards?.[bossKey] || null; }
 function getAllAgentTestCards()     { return loadState().agentTestCards || {}; }
+
+// agentActivity tracks which characters have uploaded parses, when, and what.
+// Used by /parseagents to show recent uploaders. Bounded to last 50 chars by
+// timestamp — older entries get evicted on each new upload from a fresh char.
+// Schema: { lowercaseName: { name, lastUpload, totalUploads, lastBoss, lastEventCount } }
+function recordAgentUpload(character, bossName, eventCount) {
+  if (!character) return;
+  const s = loadState();
+  if (!s.agentActivity) s.agentActivity = {};
+  const k = character.toLowerCase();
+  const prev = s.agentActivity[k] || { name: character, totalUploads: 0 };
+  s.agentActivity[k] = {
+    name:           character,
+    lastUpload:     Date.now(),
+    totalUploads:   (prev.totalUploads || 0) + 1,
+    lastBoss:       bossName || prev.lastBoss || null,
+    lastEventCount: eventCount,
+  };
+  // Cap at 50 entries — drop the oldest by lastUpload
+  const entries = Object.entries(s.agentActivity);
+  if (entries.length > 50) {
+    const sorted = entries.sort((a, b) => (b[1].lastUpload || 0) - (a[1].lastUpload || 0));
+    s.agentActivity = Object.fromEntries(sorted.slice(0, 50));
+  }
+  saveState(s);
+}
+function getAgentActivity() { return loadState().agentActivity || {}; }
+function clearAgentActivity() { const s = loadState(); s.agentActivity = {}; saveState(s); }
 function setAgentTestCard(bossKey, data) {
   const s = loadState();
   if (!s.agentTestCards) s.agentTestCards = {};
@@ -542,4 +570,5 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getAuditEntries, getAuditEntry, addAuditEntry, updateAuditEntryMsgId, markAuditEntryUndone, findLatestActiveAuditEntry,
   getAgentTestCard, getAllAgentTestCards, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
+  recordAgentUpload, getAgentActivity, clearAgentActivity,
 };

@@ -207,7 +207,7 @@ const KEEP_PATTERNS = [
   /\bhas been slain by/i,
   /\byou have slain /i,
   /^\[.+\]\s+You died\./i,                        // /death of self
-  /\bdies\./i,
+  /\bdie[ds]\./i,                                 // "X died." (npc) or "X dies." (older variant)
   /\bhas been knocked unconscious/i,
   // DoT ticks and spell damage attributed to caster.
   // Quarm uses two forms (verified May 2026):
@@ -299,6 +299,33 @@ function parseEvent(line, ts) {
     'shoots?|fires?|throws?|flings?|' +                   // ranged: archery, throwing
     'hit|slash|crush|pierce|punch|kick|bash|backstab)';   // bare past-tense fallback
 
+  // ── Passive-voice spell hits and DoT-with-source ──────────────────────────
+  // CRITICAL: these MUST come before the generic verb regex below. The verb
+  // regex includes a bare "hit" past-tense fallback that would otherwise
+  // greedy-match "A Drone was hit by non-melee for 177" with attacker="A Drone was"
+  // and defender="by non-melee" — corrupting the encounter target map.
+  //
+  // Also: the DoT-with-source patterns use [^.]+\. to terminate the spell name
+  // at the next period (handles names with colons like "Ancient: Scourge of Nife").
+
+  // "X was hit by SPELL for N (points of) damage." (proc / unsourced spell hit)
+  m = line.match(/\]\s+(You|.+?)\s+(?:was|were)\s+hit\s+by\s+(.+?)\s+for\s+(\d+)(?:\s+points?\s+of)?\s+(?:non-melee\s+)?damage/i);
+  if (m) {
+    return { ts: tsIso, type: 'damage', attacker: null, defender: m[1] === 'You' ? null : m[1], ability: m[2], amount: parseInt(m[3], 10) };
+  }
+
+  // "X has taken N (points of) damage from your SPELLNAME." (DoT/spell from uploader)
+  m = line.match(/\]\s+(.+?)\s+has\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage\s+from\s+your\s+([^.]+)\./i);
+  if (m) {
+    return { ts: tsIso, type: 'damage', attacker: null /* self */, defender: m[1], ability: m[3].trim(), amount: parseInt(m[2], 10) };
+  }
+
+  // "X has taken N (points of) damage from PlayerName's SPELLNAME." (DoT/spell from third party)
+  m = line.match(/\]\s+(.+?)\s+has\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage\s+from\s+(\S+?)(?:`s|'s)\s+([^.]+)\./i);
+  if (m) {
+    return { ts: tsIso, type: 'damage', attacker: m[3], defender: m[1], ability: m[4].trim(), amount: parseInt(m[2], 10) };
+  }
+
   // "You <verb> X for N points of damage." (player attacking, second-person)
   m = line.match(new RegExp(`\\]\\s+You\\s+${ATTACK_VERBS_RX}\\s+(.+?)\\s+for\\s+(\\d+)(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+(?:non-melee\\s+)?damage`, 'i'));
   if (m) {
@@ -324,30 +351,6 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: 'non-melee', amount: parseInt(m[3], 10) };
   }
 
-  // "X was hit by SPELL for N (points of) damage." (proc / unsourced spell hit)
-  // Must allow multi-word defenders ("A Netherbian Drone") and the optional
-  // " points of " infix that appears in many Quarm log forms.
-  m = line.match(/\]\s+(You|.+?)\s+(?:was|were)\s+hit\s+by\s+(.+?)\s+for\s+(\d+)(?:\s+points?\s+of)?\s+(?:non-melee\s+)?damage/i);
-  if (m) {
-    return { ts: tsIso, type: 'damage', attacker: null, defender: m[1] === 'You' ? null : m[1], ability: m[2], amount: parseInt(m[3], 10) };
-  }
-
-  // ── DoT / spell damage with named source ──────────────────────────────────
-  // These must come BEFORE the generic "has taken N (points of) damage" regex,
-  // otherwise the generic one wins and we lose the spell attribution.
-  //
-  // "X has taken N (points of) damage from your SPELLNAME."   → uploader's spell
-  // "X has taken N (points of) damage from PlayerName's SPELLNAME." → third party's spell
-  // The optional ".\s*$" anchor lets us include colons in spell names like "Ancient: Scourge of Nife".
-  m = line.match(/\]\s+(.+?)\s+has\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage\s+from\s+your\s+(.+?)\.\s*$/i);
-  if (m) {
-    return { ts: tsIso, type: 'damage', attacker: null /* self */, defender: m[1], ability: m[3], amount: parseInt(m[2], 10) };
-  }
-  m = line.match(/\]\s+(.+?)\s+has\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage\s+from\s+(\S+?)(?:`s|'s)\s+(.+?)\.\s*$/i);
-  if (m) {
-    return { ts: tsIso, type: 'damage', attacker: m[3], defender: m[1], ability: m[4], amount: parseInt(m[2], 10) };
-  }
-
   // "X has taken N (points of) damage." (generic DoT tick — no source mentioned)
   m = line.match(/\]\s+(.+?)\s+has(?:\s+been\s+\w+\.\s+\1)?\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage/i);
   if (m) {
@@ -369,7 +372,8 @@ function parseEvent(line, ts) {
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null /* self */ };
   }
-  m = line.match(/\]\s+(.+?)\s+dies\./i);
+  // "X died." (Quarm/most modern EQ format) or "X dies." (older variant)
+  m = line.match(/\]\s+(.+?)\s+die[ds]\./i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null };
   }
