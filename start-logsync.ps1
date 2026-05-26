@@ -324,7 +324,8 @@ if (-not $cfg.BotUrl) {
 # ── Token ─────────────────────────────────────────────────────────────────────
 if (-not $cfg.Token) {
     Write-Host ""
-    Write-Host "  Agent token -- ask an officer for this." -ForegroundColor White
+    Write-Host "  Agent token (password)" -ForegroundColor White
+    Write-Host "  Run /token in Discord to get the current value." -ForegroundColor DarkGray
     $cfg.Token = (Read-Host "  Token").Trim()
 }
 
