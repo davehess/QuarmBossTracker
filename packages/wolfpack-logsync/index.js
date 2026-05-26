@@ -54,7 +54,7 @@ const http  = require('http');
 const { URL } = require('url');
 
 const AGENT_VERSION = '0.1.0';
-const DEFAULT_BOT_URL = process.env.WOLFPACK_BOT_URL || 'https://quarm-bot.up.railway.app/api/agent/encounter';
+const DEFAULT_BOT_URL = process.env.WOLFPACK_BOT_URL || 'https://wolfpackparse.up.railway.app/api/agent/encounter';
 
 // ── CLI args ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {

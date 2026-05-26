@@ -315,7 +315,7 @@ if ($isFirstRun -and -not $alreadyInEqDir) {
 if (-not $cfg.BotUrl) {
     Write-Host ""
     Write-Host "  Bot upload URL -- ask an officer for this." -ForegroundColor White
-    Write-Host "  Example: https://quarm-bot.up.railway.app/api/agent/encounter" -ForegroundColor DarkGray
+    Write-Host "  Example: https://wolfpackparse.up.railway.app/api/agent/encounter" -ForegroundColor DarkGray
     $cfg.BotUrl = (Read-Host "  Bot URL").Trim()
 }
 
