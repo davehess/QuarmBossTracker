@@ -1,473 +1,506 @@
 #!/usr/bin/env python3
 """
 gen_flyer.py — Animated release flyer for Wolf Pack's Quarm Bot v2.0
-Outputs: docs/flyer-v2.gif (animated, Discord-shareable)
+Two-robot layout: rusty v1.4 (left) vs shiny v2.0 (right)
 """
 
-import math, os
+import math, os, random
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-# ── Canvas & animation ────────────────────────────────────────────────────────
-W, H      = 820, 520
-FRAMES    = 36          # one full gear rotation
-FRAME_MS  = 65          # ~15 fps
+W, H      = 860, 540
+FRAMES    = 36
+FRAME_MS  = 65
 
-OUT_DIR   = os.path.join(os.path.dirname(__file__), '..', 'docs')
+OUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'docs')
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 BG          = (7,  9, 20)
-STAR_C      = (160, 170, 200)
-BORDER      = (80,  60, 20)
 GOLD        = (255, 200,  40)
 GOLD_DIM    = (160, 120,  10)
 GOLD_DARK   = ( 80,  55,   5)
 AMBER       = (255, 170,   0)
 AMBER_GLOW  = (255, 230, 100)
 BRONZE      = (175, 105,  35)
-BRONZE_LT   = (210, 140,  55)
+BRONZE_LT   = (215, 150,  65)
 BRONZE_DK   = ( 90,  50,  15)
 COPPER      = (150,  80,  25)
 DARK_METAL  = ( 45,  28,  10)
-STEEL       = (130, 140, 155)
-STEEL_DK    = ( 70,  78,  88)
+CHROME      = (195, 210, 225)
+CHROME_LT   = (235, 245, 255)
+CHROME_DK   = (120, 132, 148)
+RUST        = (155,  65,  18)
+RUST_LT     = (190,  95,  40)
+RUST_DK     = ( 72,  28,   8)
+RUST_SPOT   = ( 95,  42,  12)
+TEAL        = ( 80, 200, 200)
+TEAL_DIM    = ( 40, 100, 100)
 WHITE       = (255, 255, 255)
 OFF_WHITE   = (220, 220, 235)
 GRAY        = (140, 140, 155)
 LIGHT_GRAY  = (190, 190, 205)
 DARK_GRAY   = ( 55,  55,  65)
-TEAL        = ( 80, 200, 200)
-TEAL_DIM    = ( 40, 100, 100)
-RED_DIM     = (130,  40,  40)
 RED_MED     = (180,  60,  60)
-GREEN_DIM   = ( 40, 120,  60)
 GREEN_MED   = ( 80, 190, 100)
-SMOKE       = (180, 180, 200, 120)
+GREEN_DIM   = ( 40, 110,  60)
+BORDER      = ( 80,  60,  20)
+DIVIDER     = ( 35,  35,  55)
+SPARK_Y     = (255, 225,  60)
+SPARK_W     = (255, 255, 200)
 
-def lerp(a, b, t):   return a + (b - a) * t
-def lc(c1, c2, t):   return tuple(int(lerp(a, b, t)) for a, b in zip(c1, c2))
+def lerp(a, b, t):  return a + (b - a) * t
+def lc(c1, c2, t):  return tuple(int(lerp(a, b, t)) for a, b in zip(c1, c2))
 def pulse(frame, speed=1.0, lo=0.0, hi=1.0):
     t = (math.sin(frame / FRAMES * 2 * math.pi * speed) + 1) / 2
     return lo + t * (hi - lo)
 
 # ── Fonts ─────────────────────────────────────────────────────────────────────
 def load_font(size, bold=False):
-    candidates = []
+    cands = []
     if bold:
-        candidates = [
-            "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
-            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-        ]
-    candidates += [
-        "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
-    for p in candidates:
+        cands = ["/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+                 "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf"]
+    cands += ["/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+    for p in cands:
         if os.path.exists(p):
             return ImageFont.truetype(p, size)
     return ImageFont.load_default()
 
 def load_mono(size):
-    for p in [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-    ]:
+    for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"]:
         if os.path.exists(p):
             return ImageFont.truetype(p, size)
     return ImageFont.load_default()
 
 FONT_EPIC   = load_font(46, bold=True)
-FONT_TITLE  = load_font(17, bold=True)
-FONT_BODY   = load_font(14)
-FONT_BODY_B = load_font(14, bold=True)
-FONT_SMALL  = load_font(12)
-FONT_MONO   = load_mono(12)
+FONT_TITLE  = load_font(15, bold=True)
+FONT_BODY   = load_font(13)
+FONT_BODY_B = load_font(13, bold=True)
+FONT_SMALL  = load_font(11)
+FONT_MONO   = load_mono(11)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def centered_text(draw, text, y, font, fill, img_w=W):
-    bb  = draw.textbbox((0, 0), text, font=font)
-    tw  = bb[2] - bb[0]
-    draw.text(((img_w - tw) // 2, y), text, font=font, fill=fill)
+def star_field(draw, seed=42):
+    rng = random.Random(seed)
+    for _ in range(130):
+        x = rng.randint(0, W); y = rng.randint(0, H)
+        b = rng.randint(50, 140); r = rng.choice([1,1,1,2])
+        draw.ellipse([x-r,y-r,x+r,y+r], fill=(b,b,b+15))
 
-def shadow_text(draw, text, xy, font, fill, shadow=(0,0,0), offset=(2,2)):
-    draw.text((xy[0]+offset[0], xy[1]+offset[1]), text, font=font, fill=shadow)
-    draw.text(xy, text, font=font, fill=fill)
-
-def glow_text(img, draw, text, xy, font, fill, glow_col, radius=4):
-    """Draw text with a soft glow by compositing a blurred layer."""
+def glow_blit(img, draw, text, xy, font, fill, glow_col, radius=5):
     layer = Image.new("RGBA", img.size, (0,0,0,0))
     ld    = ImageDraw.Draw(layer)
-    ld.text(xy, text, font=font, fill=glow_col + (200,))
+    ld.text(xy, text, font=font, fill=glow_col+(180,))
     layer = layer.filter(ImageFilter.GaussianBlur(radius))
     img.paste(Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB"), (0,0))
-    draw  = ImageDraw.Draw(img)    # refresh draw after paste
-    draw.text(xy, text, font=font, fill=fill)
+    draw2 = ImageDraw.Draw(img)
+    draw2.text(xy, text, font=font, fill=fill)
+    return draw2
+
+def ellipse_glow(img, cx, cy, rx, ry, color, radius=6):
+    layer = Image.new("RGBA", img.size, (0,0,0,0))
+    ld    = ImageDraw.Draw(layer)
+    ld.ellipse([cx-rx,cy-ry,cx+rx,cy+ry], fill=color+(130,))
+    layer = layer.filter(ImageFilter.GaussianBlur(radius))
+    img.paste(Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB"), (0,0))
     return ImageDraw.Draw(img)
 
-def star_field(draw, seed=42):
-    import random; rng = random.Random(seed)
-    for _ in range(120):
-        x = rng.randint(0, W)
-        y = rng.randint(0, H)
-        b = rng.randint(60, 160)
-        r = rng.choice([1, 1, 1, 2])
-        draw.ellipse([x-r, y-r, x+r, y+r], fill=(b, b, b+20))
+def strikethrough(draw, text, xy, font, fill):
+    draw.text(xy, text, font=font, fill=fill)
+    bb = draw.textbbox(xy, text, font=font)
+    my = (bb[1]+bb[3])//2
+    draw.line([bb[0], my, bb[2], my], fill=fill, width=2)
 
-# ── Gear drawing ──────────────────────────────────────────────────────────────
+# ── Gear ─────────────────────────────────────────────────────────────────────
 def draw_gear(draw, cx, cy, outer_r, num_teeth, tooth_h, angle,
-              body_col, rim_col, hub_col, spoke_col, n_spokes=4):
+              body, rim, hub, spoke, n_spokes=4):
     # teeth
     for i in range(num_teeth):
-        ta   = angle + 2*math.pi*i/num_teeth
-        hw   = math.pi/num_teeth * 0.55
-        pts  = []
-        for da, r in [(-hw, outer_r-1), (-hw*0.65, outer_r+tooth_h),
-                       (hw*0.65, outer_r+tooth_h), (hw, outer_r-1)]:
-            a = ta + da
-            pts.append((cx + r*math.cos(a), cy + r*math.sin(a)))
-        draw.polygon(pts, fill=rim_col)
-    # body disc
-    draw.ellipse([cx-outer_r, cy-outer_r, cx+outer_r, cy+outer_r], fill=body_col)
-    # spokes
-    hub_r = outer_r * 0.32
+        ta = angle + 2*math.pi*i/num_teeth
+        hw = math.pi/num_teeth * 0.5
+        pts = []
+        for da, r in [(-hw,outer_r-1),(-hw*.6,outer_r+tooth_h),
+                       (hw*.6,outer_r+tooth_h),(hw,outer_r-1)]:
+            a=ta+da; pts.append((cx+r*math.cos(a), cy+r*math.sin(a)))
+        draw.polygon(pts, fill=rim)
+    draw.ellipse([cx-outer_r,cy-outer_r,cx+outer_r,cy+outer_r], fill=body)
+    hub_r = outer_r*.32
     for i in range(n_spokes):
-        a  = angle + i * math.pi / n_spokes
-        x1 = cx + hub_r * math.cos(a);  y1 = cy + hub_r * math.sin(a)
-        x2 = cx + outer_r*.82*math.cos(a); y2 = cy + outer_r*.82*math.sin(a)
-        draw.line([x1,y1,x2,y2], fill=spoke_col, width=max(1,outer_r//10))
-    # hub
-    draw.ellipse([cx-hub_r,cy-hub_r,cx+hub_r,cy+hub_r], fill=hub_col)
-    # axle pin
-    pin = max(2, outer_r//8)
+        a = angle + i*math.pi/n_spokes
+        draw.line([(cx+hub_r*math.cos(a), cy+hub_r*math.sin(a)),
+                   (cx+outer_r*.82*math.cos(a), cy+outer_r*.82*math.sin(a))],
+                  fill=spoke, width=max(1,int(outer_r//10)))
+    draw.ellipse([cx-hub_r,cy-hub_r,cx+hub_r,cy+hub_r], fill=hub)
+    pin = max(2,int(outer_r//8))
     draw.ellipse([cx-pin,cy-pin,cx+pin,cy+pin], fill=DARK_METAL)
 
-# ── Clockwork robot ───────────────────────────────────────────────────────────
-# Robot is centered at (RX, RY)
-RX, RY = 168, 295
+# ── Robot ─────────────────────────────────────────────────────────────────────
+# style: 'rusty' or 'shiny'
+FLICKER = [0.9,0.12,0.88,0.05,0.92,0.22,0.68,0.08,0.96,0.06,0.82,0.28,
+           0.91,0.04,0.78,0.18,0.85,0.10,0.93,0.15,0.70,0.09,0.87,0.20]
 
-def draw_robot(img, draw, frame):
-    angle     = 2*math.pi * frame/FRAMES      # main gear rotation
-    angle2    = -angle * 1.6                   # counter-rotating small gear
-    eye_glow  = pulse(frame, speed=0.7, lo=0.4, hi=1.0)
-    blink     = frame in (8, 9)               # blink frames
+def draw_robot(img, draw, frame, cx, cy, s=0.82, style='shiny'):
+    """Draw a clockwork robot. s=scale, style='rusty'|'shiny'."""
+    i = lambda v: int(v * s)
 
-    # ── shadow ────────────────────────────────────────────────────────────────
-    for r,a in [(38,30),(28,18),(18,10)]:
-        draw.ellipse([RX-r, RY+90-a//2, RX+r, RY+90+a//2],
-                     fill=(0,0,0, 60 if r==38 else 40 if r==28 else 20))
+    # ── Style-dependent params ────────────────────────────────────────────────
+    if style == 'rusty':
+        BC, BL, BD = RUST, RUST_LT, RUST_DK      # body colors
+        GC, GR, GH, GS = RUST_DK,(50,22,5),RUST_SPOT,RUST_LT
+        angle  = 2*math.pi*frame/FRAMES * 0.55    # slow, sluggish
+        angle2 = -angle*1.3
+        eye_l  = FLICKER[frame % len(FLICKER)]    # flickering left eye
+        eye_r  = None                              # dead right eye
+        blink  = False
+    else:
+        BC, BL, BD = BRONZE, BRONZE_LT, BRONZE_DK
+        GC, GR, GH, GS = BRONZE_DK, DARK_METAL, COPPER, BRONZE_LT
+        angle  = 2*math.pi*frame/FRAMES
+        angle2 = -angle*1.6
+        gp     = pulse(frame, speed=0.7, lo=0.45, hi=1.0)
+        eye_l  = gp
+        eye_r  = gp
+        blink  = frame in (8,9)
 
-    # ── legs ──────────────────────────────────────────────────────────────────
-    for lx in (RX-22, RX+10):
-        draw.rectangle([lx, RY+62, lx+16, RY+90], fill=BRONZE_DK)
-        draw.rectangle([lx-2, RY+85, lx+18, RY+96], fill=BRONZE)   # foot
-        draw.rectangle([lx+3, RY+65, lx+10, RY+85], fill=COPPER)   # shin panel
+    # shadow
+    for sr,sa in [(i(38),30),(i(28),18),(i(18),10)]:
+        draw.ellipse([cx-sr,cy+i(90)-sa//2,cx+sr,cy+i(90)+sa//2],
+                     fill=(0,0,0,55 if sr==i(38) else 35 if sr==i(28) else 18))
 
-    # ── body ──────────────────────────────────────────────────────────────────
-    bx1,by1,bx2,by2 = RX-35, RY+18, RX+35, RY+68
-    draw.rectangle([bx1,by1,bx2,by2], fill=BRONZE)
-    draw.rectangle([bx1+2,by1+2,bx2-2,by2-2], fill=COPPER)
-    # panel lines
-    draw.line([bx1+6,by1+8, bx2-6,by1+8], fill=BRONZE_DK, width=1)
-    draw.line([bx1+6,by2-8, bx2-6,by2-8], fill=BRONZE_DK, width=1)
-    # rivets
-    for rx2,ry2 in [(bx1+7,by1+5),(bx2-7,by1+5),(bx1+7,by2-5),(bx2-7,by2-5)]:
-        draw.ellipse([rx2-2,ry2-2,rx2+2,ry2+2], fill=BRONZE_LT)
+    # ── Legs ──────────────────────────────────────────────────────────────────
+    for lx in (cx-i(22), cx+i(6)):
+        lc2 = lx
+        draw.rectangle([lc2, cy+i(62), lc2+i(16), cy+i(90)], fill=BD)
+        draw.rectangle([lc2-i(2), cy+i(85), lc2+i(18), cy+i(96)], fill=BC)
+        draw.rectangle([lc2+i(3), cy+i(65), lc2+i(10), cy+i(85)], fill=BL if style=='shiny' else RUST_SPOT)
 
-    # chest gear (large, rotating)
-    draw_gear(draw, RX, RY+40, 18, 10, 4, angle,
-              BRONZE_DK, DARK_METAL, COPPER, BRONZE_LT, n_spokes=5)
-    # small side gear (counter-rotating)
-    draw_gear(draw, RX+28, RY+35, 9, 7, 3, angle2,
-              COPPER, DARK_METAL, BRONZE_DK, BRONZE_LT, n_spokes=4)
+    # ── Body ──────────────────────────────────────────────────────────────────
+    bx1,by1,bx2,by2 = cx-i(35),cy+i(18),cx+i(35),cy+i(68)
+    draw.rectangle([bx1,by1,bx2,by2], fill=BC)
+    draw.rectangle([bx1+i(2),by1+i(2),bx2-i(2),by2-i(2)], fill=BL if style=='shiny' else BC)
 
-    # ── arms ──────────────────────────────────────────────────────────────────
-    arm_swing = math.sin(angle * 0.5) * 4
-    for side, sx in [(-1, RX-35), (1, RX+35)]:
-        ay = int(RY + 25 + arm_swing * side)
-        draw.rectangle([sx - (12 if side<0 else 0), ay,
-                        sx + (0 if side<0 else 12), ay+30], fill=BRONZE)
-        draw.rectangle([sx - (10 if side<0 else 2), ay+2,
-                        sx + (-2 if side<0 else 10), ay+28], fill=COPPER)
-        # claw hand
-        hand_y = ay + 30
-        hand_x = sx - 8 if side < 0 else sx + 4
+    if style == 'shiny':
+        # chrome highlight edges
+        draw.line([bx1+i(2),by1+i(2),bx2-i(2),by1+i(2)], fill=CHROME_LT, width=1)
+        draw.line([bx1+i(2),by1+i(2),bx1+i(2),by2-i(2)], fill=CHROME,    width=1)
+    else:
+        # rust spots on body
+        rng = random.Random(77)
+        for _ in range(7):
+            rx2 = bx1+i(6)+int(rng.uniform(0,i(54)))
+            ry2 = by1+i(4)+int(rng.uniform(0,i(40)))
+            rr  = int(rng.uniform(i(2),i(6)))
+            draw.ellipse([rx2-rr,ry2-rr,rx2+rr,ry2+rr], fill=RUST_SPOT)
+
+    # panel lines + rivets
+    draw.line([bx1+i(6),by1+i(8),bx2-i(6),by1+i(8)], fill=BD, width=1)
+    draw.line([bx1+i(6),by2-i(8),bx2-i(6),by2-i(8)], fill=BD, width=1)
+    for rx2,ry2 in [(bx1+i(6),by1+i(5)),(bx2-i(6),by1+i(5)),
+                    (bx1+i(6),by2-i(5)),(bx2-i(6),by2-i(5))]:
+        draw.ellipse([rx2-i(2),ry2-i(2),rx2+i(2),ry2+i(2)], fill=BL)
+
+    # chest gear
+    draw_gear(draw, cx, cy+i(40), i(17), 10, i(4), angle, GC, GR, GH, GS, n_spokes=5)
+    draw_gear(draw, cx+i(28), cy+i(35), i(9), 7, i(3), angle2, GC, GR, GH, GS, n_spokes=4)
+
+    # ── Arms ──────────────────────────────────────────────────────────────────
+    arm_sw = math.sin(angle*0.5) * i(4)
+    for side in (-1, 1):
+        ax = cx - i(35) if side < 0 else cx + i(23)
+        ay = int(cy + i(25) + arm_sw * side)
+        draw.rectangle([ax, ay, ax+i(12), ay+i(30)], fill=BC)
+        draw.rectangle([ax+i(2), ay+i(2), ax+i(10), ay+i(28)], fill=BL if style=='shiny' else BC)
+        hx2 = ax if side < 0 else ax + i(4)
         for fi in range(3):
-            fx = hand_x + fi*4 - 2
-            draw.rectangle([fx, hand_y, fx+3, hand_y+6+(fi%2)*3],
-                           fill=BRONZE_DK)
+            fx = hx2 + fi*i(4)
+            draw.rectangle([fx, ay+i(30), fx+i(3), ay+i(30)+i(6+(fi%2)*3)], fill=BD)
 
-    # ── neck ──────────────────────────────────────────────────────────────────
-    draw.rectangle([RX-8, RY+8, RX+8, RY+20], fill=BRONZE_DK)
-    draw.rectangle([RX-5, RY+10, RX+5, RY+20], fill=STEEL_DK)
+    # ── Neck ──────────────────────────────────────────────────────────────────
+    draw.rectangle([cx-i(8),cy+i(8),cx+i(8),cy+i(20)], fill=BD)
 
-    # ── head ──────────────────────────────────────────────────────────────────
-    hx1,hy1,hx2,hy2 = RX-32, RY-42, RX+32, RY+10
-    draw.rectangle([hx1,hy1,hx2,hy2], fill=BRONZE)
-    draw.rectangle([hx1+2,hy1+2,hx2-2,hy2-2], fill=COPPER)
-    # forehead panel
-    draw.rectangle([hx1+6,hy1+4,hx2-6,hy1+14], fill=BRONZE_DK)
+    # ── Head ──────────────────────────────────────────────────────────────────
+    hx1,hy1,hx2,hy2 = cx-i(32),cy-i(42),cx+i(32),cy+i(10)
+    draw.rectangle([hx1,hy1,hx2,hy2], fill=BC)
+    draw.rectangle([hx1+i(2),hy1+i(2),hx2-i(2),hy2-i(2)], fill=BL if style=='shiny' else BC)
+    if style == 'shiny':
+        draw.line([hx1+i(2),hy1+i(2),hx2-i(2),hy1+i(2)], fill=CHROME_LT, width=1)
+        draw.line([hx1+i(2),hy1+i(2),hx1+i(2),hy2-i(2)], fill=CHROME,    width=1)
+    else:
+        # rust patch on forehead
+        draw.ellipse([cx-i(15),hy1+i(5),cx+i(10),hy1+i(18)], fill=RUST_SPOT)
+    draw.rectangle([hx1+i(6),hy1+i(4),hx2-i(6),hy1+i(14)], fill=BD)
+
     # ear bolts
-    for ex in (hx1-3, hx2+1):
-        draw.rectangle([ex, RY-20, ex+4, RY-5], fill=STEEL)
-        draw.ellipse([ex-1,RY-22,ex+5,RY-17], fill=STEEL_DK)
+    for ex in (hx1-i(3), hx2+i(1)):
+        draw.rectangle([ex,cy-i(20),ex+i(4),cy-i(5)], fill=CHROME_DK if style=='shiny' else RUST_DK)
+        draw.ellipse([ex-i(1),cy-i(22),ex+i(5),cy-i(17)], fill=CHROME_DK if style=='shiny' else RUST_DK)
 
-    # antenna
-    draw.line([RX, hy1, RX, hy1-22], fill=BRONZE_LT, width=2)
-    draw.line([RX-8, hy1-22, RX+8, hy1-22], fill=BRONZE_LT, width=2)
-    glow_r = int(4 + eye_glow * 2)
-    gc = lc(AMBER, AMBER_GLOW, eye_glow)
-    draw.ellipse([RX-glow_r, hy1-22-glow_r, RX+glow_r, hy1-22+glow_r], fill=gc)
+    # ── Antenna ───────────────────────────────────────────────────────────────
+    if style == 'rusty':
+        # bent antenna, drooping to the right
+        ax1,ay1 = cx, hy1
+        ax2,ay2 = cx+i(14), hy1-i(14)
+        draw.line([ax1,ay1,ax2,ay2], fill=RUST_LT, width=i(2))
+        draw.line([ax2-i(6),ay2-i(2),ax2+i(6),ay2+i(2)], fill=RUST_LT, width=i(2))
+        # dim flickering tip
+        tip_brightness = max(0.05, eye_l * 0.6)
+        tc = lc(RUST_DK, (220,140,30), tip_brightness)
+        draw.ellipse([ax2-i(4),ay2-i(4),ax2+i(4),ay2+i(4)], fill=tc)
+    else:
+        # straight glowing antenna
+        draw.line([cx,hy1,cx,hy1-i(22)], fill=BRONZE_LT, width=i(2))
+        draw.line([cx-i(8),hy1-i(22),cx+i(8),hy1-i(22)], fill=BRONZE_LT, width=i(2))
+        gr   = int(i(4) + eye_l*i(3))
+        gtip = lc(AMBER, AMBER_GLOW, eye_l)
+        draw = ellipse_glow(img, cx, hy1-i(22), gr+i(2), gr+i(2), gtip, radius=5)
+        draw.ellipse([cx-gr,hy1-i(22)-gr,cx+gr,hy1-i(22)+gr], fill=gtip)
 
-    # ── eyes ──────────────────────────────────────────────────────────────────
-    for ex in (RX-14, RX+14):
-        ey = RY - 22
-        ec = lc(AMBER, AMBER_GLOW, eye_glow)
-        if blink:
-            # blink: draw horizontal line instead
-            draw.rectangle([ex-9, ey-1, ex+9, ey+1], fill=BRONZE_DK)
+    # ── Eyes ──────────────────────────────────────────────────────────────────
+    eye_positions = [(cx-i(14), eye_l), (cx+i(14), eye_r)]
+    ey = cy - i(22)
+
+    for ex, eg in eye_positions:
+        if eg is None:
+            # dead eye — dark socket with cracks
+            draw.ellipse([ex-i(10),ey-i(7),ex+i(10),ey+i(7)], fill=DARK_METAL)
+            draw.ellipse([ex-i(7), ey-i(5),ex+i(7), ey+i(5)], fill=(15,8,5))
+            # crack lines
+            draw.line([ex-i(3),ey-i(5),ex+i(2),ey+i(4)], fill=RUST_DK, width=1)
+            draw.line([ex-i(1),ey-i(4),ex-i(4),ey+i(3)], fill=RUST_DK, width=1)
+        elif blink:
+            draw.rectangle([ex-i(9),ey-i(1),ex+i(9),ey+i(1)], fill=BD)
         else:
-            # outer glow
-            gr = int(11 + eye_glow*3)
-            glow_col = (*ec, 80)
-            gl = Image.new("RGBA", img.size, (0,0,0,0))
-            gd = ImageDraw.Draw(gl)
-            gd.ellipse([ex-gr,ey-gr//2-2,ex+gr,ey+gr//2+2], fill=glow_col)
-            gl = gl.filter(ImageFilter.GaussianBlur(5))
-            img.paste(Image.alpha_composite(img.convert("RGBA"), gl).convert("RGB"), (0,0))
-            draw = ImageDraw.Draw(img)
-            # eye socket
-            draw.ellipse([ex-10,ey-7,ex+10,ey+7], fill=DARK_METAL)
-            # iris
-            iris_c = lc(AMBER, AMBER_GLOW, eye_glow)
-            draw.ellipse([ex-7,ey-5,ex+7,ey+5], fill=iris_c)
-            # pupil
-            draw.ellipse([ex-3,ey-2,ex+3,ey+2], fill=DARK_METAL)
-            # glint
-            draw.ellipse([ex-5,ey-4,ex-2,ey-1], fill=(255,255,200))
+            ec  = lc(AMBER, AMBER_GLOW, eg)
+            gr2 = int(i(10) + eg*i(4))
+            draw = ellipse_glow(img, ex, ey, gr2, gr2//2+i(2), ec, radius=6)
+            draw.ellipse([ex-i(10),ey-i(7),ex+i(10),ey+i(7)], fill=DARK_METAL)
+            draw.ellipse([ex-i(7), ey-i(5),ex+i(7), ey+i(5)], fill=lc(AMBER, AMBER_GLOW, eg))
+            draw.ellipse([ex-i(3), ey-i(2),ex+i(3), ey+i(2)], fill=DARK_METAL)
+            draw.ellipse([ex-i(5), ey-i(4),ex-i(2), ey-i(1)], fill=(255,255,200))
 
-    # ── mouth / speaker grille ────────────────────────────────────────────────
+    # ── Sparks (rusty left eye shorting out) ──────────────────────────────────
+    if style == 'rusty' and FLICKER[frame % len(FLICKER)] < 0.18:
+        srng = random.Random(frame * 13 + 7)
+        for _ in range(5):
+            sa  = srng.uniform(0, 2*math.pi)
+            sl  = srng.uniform(i(3), i(11))
+            scl = SPARK_W if srng.random() > 0.4 else SPARK_Y
+            draw.line([(cx-i(14), ey),
+                       (cx-i(14)+int(sl*math.cos(sa)), ey+int(sl*math.sin(sa)))],
+                      fill=scl, width=1)
+
+    # ── Mouth grille ──────────────────────────────────────────────────────────
     for mi in range(5):
-        mx = hx1 + 8 + mi*9
-        draw.line([mx, hy2-10, mx, hy2-4], fill=DARK_METAL, width=2)
+        mx = hx1 + i(8) + mi*i(9)
+        if style == 'shiny':
+            # happy — center teeth taller, slight upturn
+            ht = i(8) if mi in (1,2,3) else i(5)
+            draw.line([mx, hy2-i(12), mx, hy2-i(12)+ht], fill=DARK_METAL, width=i(2))
+        else:
+            # sad — droop at edges
+            droop = int(abs(mi-2)*i(3))
+            draw.line([mx, hy2-i(10)+droop, mx, hy2-i(4)+droop], fill=BD, width=i(2))
 
-    # ── steam puff (every ~18 frames) ─────────────────────────────────────────
+    # ── Steam puff ────────────────────────────────────────────────────────────
     pf = frame % 18
-    if pf < 5:
-        alpha = int(180 * (1 - pf/5))
-        py    = hy1 - 18 - pf*6
-        pr    = 4 + pf*2
+    if pf < 5 and style == 'shiny':
+        alpha = int(160*(1-pf/5))
+        py    = hy1 - i(18) - pf*i(6)
+        pr    = i(4) + pf*i(2)
         puff  = Image.new("RGBA", img.size, (0,0,0,0))
         pd    = ImageDraw.Draw(puff)
-        pd.ellipse([RX-8-pr, py-pr, RX-8+pr, py+pr], fill=(200,200,220,alpha))
-        pd.ellipse([RX+2, py-pr+2, RX+2+pr+4, py+pr-2], fill=(200,200,220,alpha//2))
-        img.paste(Image.alpha_composite(img.convert("RGBA"), puff).convert("RGB"), (0,0))
+        pd.ellipse([cx-i(8)-pr,py-pr,cx-i(8)+pr,py+pr], fill=(200,200,220,alpha))
+        pd.ellipse([cx+i(2),py-pr+i(2),cx+i(2)+pr+i(4),py+pr-i(2)],
+                   fill=(200,200,220,alpha//2))
+        img.paste(Image.alpha_composite(img.convert("RGBA"),puff).convert("RGB"),(0,0))
         draw = ImageDraw.Draw(img)
 
-    return draw   # return refreshed draw handle
+    # ── Rusty smoke puff (dark, intermittent) ─────────────────────────────────
+    pf2 = frame % 24
+    if pf2 < 4 and style == 'rusty':
+        alpha = int(100*(1-pf2/4))
+        if style == 'rusty':
+            ant_tip = (cx+i(14), hy1-i(14))
+        py2 = ant_tip[1] - pf2*i(5)
+        pr2 = i(3) + pf2*i(2)
+        puff2 = Image.new("RGBA", img.size, (0,0,0,0))
+        pd2   = ImageDraw.Draw(puff2)
+        pd2.ellipse([ant_tip[0]-pr2, py2-pr2, ant_tip[0]+pr2, py2+pr2],
+                    fill=(80,55,35,alpha))
+        img.paste(Image.alpha_composite(img.convert("RGBA"),puff2).convert("RGB"),(0,0))
+        draw = ImageDraw.Draw(img)
+
+    return draw
 
 # ── Background ────────────────────────────────────────────────────────────────
 def draw_background(img, draw):
-    draw.rectangle([0, 0, W, H], fill=BG)
+    draw.rectangle([0,0,W,H], fill=BG)
     star_field(draw)
+    for t,col in [(2,GOLD_DARK),(4,BORDER)]:
+        draw.rectangle([t,t,W-t,H-t], outline=col, width=1)
+    draw.rectangle([0,0,W,62], fill=(14,14,30))
+    draw.line([0,62,W,62], fill=GOLD_DARK, width=1)
+    draw.rectangle([0,H-50,W,H], fill=(14,14,30))
+    draw.line([0,H-50,W,H-50], fill=GOLD_DARK, width=1)
+    # center vertical divider
+    draw.line([W//2, 68, W//2, H-56], fill=(28,28,48), width=1)
 
-    # decorative border — double line
-    for t, col in [(2, GOLD_DARK), (4, BORDER)]:
-        draw.rectangle([t, t, W-t, H-t], outline=col, width=1)
+# ── Header ────────────────────────────────────────────────────────────────────
+def draw_header(img, draw, frame):
+    ep    = pulse(frame, speed=0.4, lo=0.7, hi=1.0)
+    title = "Wolf Pack's Quarm Bot"
+    bb    = draw.textbbox((0,0), title, font=FONT_EPIC)
+    tw    = bb[2]-bb[0]
+    tx    = (W-tw)//2
+    ty    = 8
 
-    # top metallic band
-    draw.rectangle([0, 0, W, 62], fill=(14, 14, 30))
-    draw.line([0, 62, W, 62], fill=GOLD_DARK, width=1)
+    layer = Image.new("RGBA", img.size, (0,0,0,0))
+    ld    = ImageDraw.Draw(layer)
+    ld.text((tx,ty), title, font=FONT_EPIC, fill=(*lc(GOLD_DIM,GOLD,ep),160))
+    layer = layer.filter(ImageFilter.GaussianBlur(6))
+    img.paste(Image.alpha_composite(img.convert("RGBA"),layer).convert("RGB"),(0,0))
+    draw  = ImageDraw.Draw(img)
+    draw.text((tx+2,ty+2), title, font=FONT_EPIC, fill=GOLD_DARK)
+    draw.text((tx,ty),     title, font=FONT_EPIC, fill=lc(GOLD_DIM,GOLD,ep))
+    return ImageDraw.Draw(img)
 
-    # bottom band
-    draw.rectangle([0, H-48, W, H], fill=(14, 14, 30))
-    draw.line([0, H-48, W, H-48], fill=GOLD_DARK, width=1)
+# ── Left column: OLD AND BUSTED ───────────────────────────────────────────────
+def draw_left_col(draw, frame):
+    tx  = 18
+    mid = W//2 - 12   # right edge of left column
+    y   = 70
 
-    # faint vertical divider between robot area and text area
-    draw.line([310, 70, 310, H-55], fill=(30, 30, 50), width=1)
-
-# ── Feature text block ────────────────────────────────────────────────────────
-def strikethrough(draw, text, xy, font, fill):
-    """Draw text with a horizontal line through the middle."""
-    draw.text(xy, text, font=font, fill=fill)
-    bb = draw.textbbox(xy, text, font=font)
-    mid_y = (bb[1] + bb[3]) // 2
-    draw.line([bb[0], mid_y, bb[2], mid_y], fill=fill, width=2)
-
-def draw_features(draw, frame):
-    ep  = pulse(frame, speed=0.7, lo=0.55, hi=1.0)
-    ep2 = pulse(frame, speed=0.5, lo=0.6,  hi=1.0)
-    tx  = 325
-
-    # ── OLD AND BUSTED ────────────────────────────────────────────────────────
-    y = 78
     strikethrough(draw, "  OLD AND BUSTED", (tx, y), FONT_TITLE, RED_MED)
-    y += 23
+    y += 24
 
     busted = [
-        ("✗", "Manual paste — forget to submit, you don't exist"),
-        ("✗", "DoT damage invisible to the rest of the guild"),
-        ("✗", "EQLogParser misses ticks outside its window"),
+        ("✗", "Manual paste — miss it, you don't exist"),
+        ("✗", "DoTs invisible to the rest of the guild"),
+        ("✗", "Timers guessed, never exact"),
     ]
     for icon, txt in busted:
         draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=RED_MED)
-        draw.text((tx+20, y), txt,  font=FONT_BODY,   fill=(130, 100, 100))
-        y += 18
+        draw.text((tx+20, y), txt,  font=FONT_BODY,   fill=(130,100,100))
+        y += 19
 
-    # ── NEW HOTNESS ───────────────────────────────────────────────────────────
-    y += 10
-    draw.text((tx, y), "  NEW HOTNESS", font=FONT_TITLE,
-              fill=lc(GOLD_DIM, GOLD, ep))
-    y += 23
+    # v1.4 label under robot
+    lbl = "v1.4  @RaidBosses"
+    bb  = draw.textbbox((0,0),lbl,font=FONT_SMALL)
+    lx  = (W//4) - (bb[2]-bb[0])//2
+    draw.text((lx, H-98), lbl, font=FONT_SMALL, fill=GRAY)
+
+# ── Right column: NEW HOTNESS ─────────────────────────────────────────────────
+def draw_right_col(draw, frame):
+    ep  = pulse(frame, speed=0.5, lo=0.6, hi=1.0)
+    ep2 = pulse(frame, speed=0.7, lo=0.55, hi=1.0)
+    tx  = W//2 + 12
+    y   = 70
+
+    draw.text((tx, y), "  NEW HOTNESS", font=FONT_TITLE, fill=lc(GOLD_DIM,GOLD,ep))
+    y += 24
 
     hotness = [
-        ("✓", "Log streams while you play — zero action needed"),
-        ("✓", "DoTs, procs, nukes — every tick captured"),
-        ("✓", "Multi-logger merges into one full picture"),
+        ("✓", "Log streams live — zero action needed"),
+        ("✓", "DoTs, procs, nukes — every tick counted"),
+        ("✓", "Paste lockouts → exact timers, instantly"),
     ]
     for icon, txt in hotness:
-        draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=lc(GREEN_DIM, GREEN_MED, ep2))
+        draw.text((tx+4,  y), icon, font=FONT_BODY_B, fill=lc(GREEN_DIM,GREEN_MED,ep2))
         draw.text((tx+20, y), txt,  font=FONT_BODY,   fill=LIGHT_GRAY)
-        y += 18
+        y += 19
 
-    # ── tagline ───────────────────────────────────────────────────────────────
-    y += 6
+    # v2.0 label under robot
+    lbl = "v2.0  @RaidBosses"
+    bb  = draw.textbbox((0,0),lbl,font=FONT_SMALL)
+    lx  = (W*3//4) - (bb[2]-bb[0])//2
+    draw.text((lx, H-98), lbl, font=FONT_SMALL, fill=lc(TEAL_DIM,TEAL,ep))
+
+# ── Tagline ───────────────────────────────────────────────────────────────────
+def draw_tagline(draw, frame):
+    ep  = pulse(frame, speed=0.45, lo=0.6, hi=1.0)
     tag = "Help the Pack see your full contribution!"
-    bb  = draw.textbbox((0,0), tag, font=FONT_BODY_B)
-    tw  = bb[2] - bb[0]
-    # center in the right column
-    col_w = W - tx - 18
-    tag_x = tx + (col_w - tw) // 2
-    # subtle glow
-    gc = lc(GOLD_DARK, GOLD, ep)
-    draw.text((tag_x+1, y+1), tag, font=FONT_BODY_B, fill=GOLD_DARK)
-    draw.text((tag_x,   y),   tag, font=FONT_BODY_B, fill=gc)
-    y += 22
+    bb  = draw.textbbox((0,0),tag,font=FONT_BODY_B)
+    tw  = bb[2]-bb[0]
+    tx  = (W-tw)//2
+    ty  = H - 112
+    draw.text((tx+1,ty+1), tag, font=FONT_BODY_B, fill=GOLD_DARK)
+    draw.text((tx,ty),     tag, font=FONT_BODY_B, fill=lc(GOLD_DIM,GOLD,ep))
 
-    # ── lockout timers ────────────────────────────────────────────────────────
-    y += 6
-    draw.line([tx, y, W-18, y], fill=(35, 35, 55), width=1)
+# ── Bottom strip ──────────────────────────────────────────────────────────────
+def draw_bottom_strip(draw, frame):
+    ep = pulse(frame, speed=0.5, lo=0.5, hi=1.0)
+    y  = H - 88
+
+    draw.line([18, y, W-18, y], fill=DIVIDER, width=1)
     y += 8
-    draw.text((tx, y), "⏱  LOCKOUT → LIVE TIMERS", font=FONT_TITLE,
-              fill=lc(GOLD_DIM, GOLD, ep))
-    y += 21
-    for ln in [
-        "Paste #showlootlockouts → /sll sets every",
-        "respawn timer instantly. Lockout remaining",
-        "= respawn remaining on Quarm. Exact, always.",
-    ]:
-        draw.text((tx+6, y), ln, font=FONT_BODY, fill=LIGHT_GRAY)
-        y += 17
 
-    # ── on deck ───────────────────────────────────────────────────────────────
-    y += 8
-    draw.line([tx, y, W-18, y], fill=(35, 35, 55), width=1)
-    y += 8
-    draw.text((tx, y), "🔬  ON DECK — v2.1", font=FONT_TITLE, fill=GRAY)
-    y += 19
-    for ln in [
-        "In-raid /bid · /award via OpenDKP auction API",
-        "EQMacEmu DB sync → richer boss data, no scraping",
-    ]:
-        draw.text((tx+6, y), "·  " + ln, font=FONT_SMALL, fill=DARK_GRAY)
-        y += 15
+    # left: lockout timers
+    draw.text((18, y), "⏱", font=FONT_BODY_B, fill=lc(GOLD_DIM,GOLD,ep))
+    draw.text((34, y), "Paste #showlootlockouts  →  /sll sets every boss timer in one shot",
+              font=FONT_SMALL, fill=LIGHT_GRAY)
+    y += 17
+    draw.text((34, y), "Lockout remaining = respawn remaining on Quarm. Always exact.",
+              font=FONT_SMALL, fill=GRAY)
 
-# ── Title & header ────────────────────────────────────────────────────────────
-def draw_header(img, draw, frame):
-    ep = pulse(frame, speed=0.4, lo=0.7, hi=1.0)
-    title = "Wolf Pack's Quarm Bot"
+    # right half: on deck
+    tx = W//2 + 18
+    y  = H - 88 + 9
+    draw.text((tx, y), "🔬  On deck — v2.1:", font=FONT_SMALL, fill=DARK_GRAY)
+    y += 16
+    draw.text((tx, y), "In-raid /bid · /award  ·  EQMacEmu DB sync",
+              font=FONT_SMALL, fill=DARK_GRAY)
 
-    # measure
-    bb  = draw.textbbox((0,0), title, font=FONT_EPIC)
-    tw  = bb[2] - bb[0]
-    tx  = (W - tw) // 2
-    ty  = 8
-
-    # glow layer
-    layer = Image.new("RGBA", img.size, (0,0,0,0))
-    ld    = ImageDraw.Draw(layer)
-    gc    = (*lc(GOLD_DIM, GOLD, ep), 160)
-    ld.text((tx, ty), title, font=FONT_EPIC, fill=gc)
-    layer = layer.filter(ImageFilter.GaussianBlur(6))
-    img.paste(Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB"), (0,0))
-    draw  = ImageDraw.Draw(img)
-
-    # shadow
-    draw.text((tx+2, ty+2), title, font=FONT_EPIC, fill=GOLD_DARK)
-    # main text
-    draw.text((tx, ty), title, font=FONT_EPIC, fill=lc(GOLD_DIM, GOLD, ep))
-
-    return ImageDraw.Draw(img)
-
+# ── Footer ────────────────────────────────────────────────────────────────────
 def draw_footer(draw, frame):
     ep = pulse(frame, speed=0.5, lo=0.5, hi=1.0)
-    fy = H - 40
+    fy = H - 42
 
-    # left: @RaidBosses
-    rb_col = lc(TEAL_DIM, TEAL, ep)
-    draw.text((18, fy), "@RaidBosses", font=FONT_BODY_B, fill=rb_col)
-    draw.text((18, fy+15), "Quarm Raid Timer Bot", font=FONT_SMALL, fill=GRAY)
+    draw.text((18, fy),    "@RaidBosses", font=FONT_BODY_B, fill=lc(TEAL_DIM,TEAL,ep))
+    draw.text((18, fy+15), "Quarm Raid Timer Bot", font=FONT_SMALL, fill=DARK_GRAY)
 
-    # center: version badge
     ver = "v2.0.4  —  PARSER UPDATE"
-    bb  = draw.textbbox((0,0), ver, font=FONT_BODY_B)
-    vx  = (W - (bb[2]-bb[0])) // 2
-    draw.rectangle([vx-8, fy-2, vx+(bb[2]-bb[0])+8, fy+16], fill=(20,20,40))
-    draw.rectangle([vx-8, fy-2, vx+(bb[2]-bb[0])+8, fy+16], outline=GOLD_DARK, width=1)
-    draw.text((vx, fy), ver, font=FONT_BODY_B, fill=GOLD)
+    bb  = draw.textbbox((0,0),ver,font=FONT_BODY_B)
+    vx  = (W-(bb[2]-bb[0]))//2
+    draw.rectangle([vx-8,fy-2,vx+(bb[2]-bb[0])+8,fy+16], fill=(20,20,40))
+    draw.rectangle([vx-8,fy-2,vx+(bb[2]-bb[0])+8,fy+16], outline=GOLD_DARK, width=1)
+    draw.text((vx,fy), ver, font=FONT_BODY_B, fill=GOLD)
 
-    # right: tagline
-    tag = "Project Quarm  ·  Wolf Pack EQ"
-    bb2 = draw.textbbox((0,0), tag, font=FONT_SMALL)
-    draw.text((W - (bb2[2]-bb2[0]) - 18, fy),    tag, font=FONT_SMALL, fill=GRAY)
-    draw.text((W - 162, fy+15), "tinyurl.com/WolfPackEQ", font=FONT_SMALL, fill=DARK_GRAY)
+    tag = "tinyurl.com/WolfPackEQ"
+    bb2 = draw.textbbox((0,0),tag,font=FONT_SMALL)
+    draw.text((W-(bb2[2]-bb2[0])-18, fy),    tag, font=FONT_SMALL, fill=GRAY)
+    draw.text((W-152, fy+15), "discord.gg/rtzZNxxT3", font=FONT_SMALL, fill=DARK_GRAY)
 
-# ── Robot label ───────────────────────────────────────────────────────────────
-def draw_robot_label(draw, frame):
-    ep   = pulse(frame, speed=0.6, lo=0.5, hi=1.0)
-    col  = lc(TEAL_DIM, TEAL, ep)
-    lbl  = "@RaidBosses"
-    bb   = draw.textbbox((0,0), lbl, font=FONT_BODY_B)
-    lx   = RX - (bb[2]-bb[0])//2
-    draw.text((lx, RY+100), lbl, font=FONT_BODY_B, fill=col)
-
-    sub  = "EQ Clockwork  ·  Raid Tracker"
-    bb2  = draw.textbbox((0,0), sub, font=FONT_SMALL)
-    sx   = RX - (bb2[2]-bb2[0])//2
-    draw.text((sx, RY+116), sub, font=FONT_SMALL, fill=DARK_GRAY)
-
-# ── Main render loop ──────────────────────────────────────────────────────────
-def render_frame(frame_num):
-    img  = Image.new("RGB", (W, H), BG)
+# ── Render ────────────────────────────────────────────────────────────────────
+def render_frame(f):
+    img  = Image.new("RGB", (W,H), BG)
     draw = ImageDraw.Draw(img)
-
     draw_background(img, draw)
-    draw = draw_header(img, draw, frame_num)
+    draw = draw_header(img, draw, f)
 
-    draw = draw_robot(img, draw, frame_num)
-    draw_robot_label(draw, frame_num)
-    draw_features(draw, frame_num)
-    draw_footer(draw, frame_num)
+    draw = draw_robot(img, draw, f, cx=W//4,   cy=290, s=0.80, style='rusty')
+    draw = draw_robot(img, draw, f, cx=W*3//4, cy=290, s=0.80, style='shiny')
 
+    draw_left_col(draw, f)
+    draw_right_col(draw, f)
+    draw_tagline(draw, f)
+    draw_bottom_strip(draw, f)
+    draw_footer(draw, f)
     return img
 
 print("Rendering frames...")
 frames = []
 for f in range(FRAMES):
-    print(f"  frame {f+1}/{FRAMES}", end="\r")
+    print(f"  {f+1}/{FRAMES}", end="\r")
     frames.append(render_frame(f))
 
-print("\nSaving GIF...")
-out_path = os.path.join(OUT_DIR, "flyer-v2.gif")
-frames[0].save(
-    out_path,
-    save_all=True,
-    append_images=frames[1:],
-    duration=FRAME_MS,
-    loop=0,
-    optimize=False,
-)
-print(f"Done → {out_path}")
+out = os.path.join(OUT_DIR, "flyer-v2.gif")
+print(f"\nSaving → {out}")
+frames[0].save(out, save_all=True, append_images=frames[1:],
+               duration=FRAME_MS, loop=0, optimize=False)
+print("Done.")
