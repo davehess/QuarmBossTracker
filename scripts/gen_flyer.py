@@ -487,7 +487,7 @@ def draw_footer(draw, frame):
     draw.text((W-152, fy+15), "discord.gg/rtzZNxxT3", font=FONT_SMALL, fill=DARK_GRAY)
 
 # ── Spiky action burst ────────────────────────────────────────────────────────
-CTA_URL = "tinyurl.com/???"   # ← swap once short link is ready
+CTA_URL = "tinyurl.com/WolfPackParser"
 
 def draw_burst(img, draw, frame, url=CTA_URL):
     """Comic-book starburst CTA badge, bottom-right, slow rotation."""
