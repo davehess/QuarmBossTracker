@@ -151,6 +151,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (interaction.customId.startsWith('who_family:'))         { await handleWhoFamily(interaction); return; }
     if (interaction.customId.startsWith('audit_undo:'))         { await handleAuditUndo(interaction); return; }
+    if (interaction.customId.startsWith('sll_confirm:'))        { const { handleSllConfirm } = require('./commands/sll'); await handleSllConfirm(interaction); return; }
+    if (interaction.customId === 'sll_cancel')                  { const { handleSllCancel }  = require('./commands/sll'); await handleSllCancel(interaction);  return; }
     return;
   }
   if (!interaction.isChatInputCommand()) return;

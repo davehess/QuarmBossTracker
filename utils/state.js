@@ -93,9 +93,9 @@ function saveState(state) {
 }
 
 // ── Boss kills ──────────────────────────────────────────────────────────────────────────────
-function recordKill(bossId, timerHours, killedBy) {
+function recordKill(bossId, timerHours, killedBy, killedAtOverride) {
   const state     = loadState();
-  const killedAt  = Date.now();
+  const killedAt  = killedAtOverride || Date.now();
   const nextSpawn = killedAt + timerHours * 3600000;
   state.bosses[bossId] = { killedAt, nextSpawn, killedBy };
   state.dailyKills.push({ bossId, killedAt, killedBy });
