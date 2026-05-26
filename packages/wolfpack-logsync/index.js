@@ -181,7 +181,7 @@ const DEFAULT_DROP_PATTERNS = [
 // Currently: pet leader declarations, which identify which player owns which pet.
 //   EQ log format: "[Fri May 26 02:34:04 2026] Gobn says, 'My leader is Utoh.'"
 const PRIORITY_KEEP_PATTERNS = [
-  /\bsays,\s*['"]My leader is \w+\.?\s*['"]/i,
+  /\bsays,?\s*['"]My leader is \w+/i,
 ];
 
 // Lines we KEEP (positive list — combat events). Anything not matching here
@@ -399,10 +399,13 @@ function parseEvent(line, ts) {
   }
 
   // ── Pet leader declaration ────────────────────────────────────────────────
-  // "Gobn says, 'My leader is Utoh.'"
+  // Covers both forms that EQ produces:
+  //   summon time: "Gobn says, 'My leader is Utoh.'"
+  //   /pet leader: "Gobn says, 'My leader is Utoh, Master.'"   (extra ', Master')
+  // The capture stops at the owner name (\w+) so trailing decoration is ignored.
   // Only reaches here because PRIORITY_KEEP_PATTERNS let the line through despite
   // the general /says?/ drop pattern. Used to build a pet→owner attribution map.
-  m = line.match(/\]\s+(\S+)\s+says,\s*['"]My leader is (\w+)\.?\s*['"]/i);
+  m = line.match(/\]\s+(\S+)\s+says,?\s*['"]My leader is (\w+)/i);
   if (m) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
   }
@@ -754,7 +757,7 @@ function renderDashboard() {
   out.push(`     ${C.dim}Lifetime:${C.reset} ${C.bold}${stats.lifetime.totalEvents + stats.sessionEvents}${C.reset} ev / ${C.bold}${lifetimeMin}${C.reset} min\n`);
   out.push('\n');
 
-  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}·${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}·${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}·${C.reset}  ${C.cyan}[T]${C.reset} New Token  ${C.gray}·${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}·${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -795,6 +798,16 @@ function setupKeypressHandler() {
         fs.writeFileSync(marker, new Date().toISOString());
       } catch {}
       process.stdout.write(`${ANSI.yellow}\n  Restarting to apply update...${ANSI.reset}\n`);
+      process.exit(0);
+    }
+    if (key === 't' || key === 'T') {
+      // Drop a marker so start-logsync.ps1 will prompt for a new token
+      // and rewrite logsync.config.json before relaunching node.
+      try {
+        const marker = path.join(__dirname, '.update-token-on-restart');
+        fs.writeFileSync(marker, new Date().toISOString());
+      } catch {}
+      process.stdout.write(`${ANSI.yellow}\n  Restarting so you can enter a new token...${ANSI.reset}\n`);
       process.exit(0);
     }
     if (key === 'i' || key === 'I') {

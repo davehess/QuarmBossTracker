@@ -23,3 +23,4 @@ dist/
 packages/wolfpack-logsync/logsync.stats.json
 packages/wolfpack-logsync/.last-update-check
 packages/wolfpack-logsync/.force-update-on-restart
+packages/wolfpack-logsync/.update-token-on-restart

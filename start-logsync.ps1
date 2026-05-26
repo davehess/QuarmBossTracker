@@ -546,5 +546,27 @@ while ($true) {
         Start-Sleep -Milliseconds 500
         continue
     }
+
+    # If the agent dropped a token-update marker, prompt for a new token,
+    # rewrite logsync.config.json, then loop.
+    $tokenMarker = Join-Path (Split-Path $AgentEntry) ".update-token-on-restart"
+    if (Test-Path $tokenMarker) {
+        Remove-Item $tokenMarker -Force -ErrorAction SilentlyContinue
+        Write-Host ""
+        Write-Host "  ── New agent token ────────────────────────────────────────" -ForegroundColor Cyan
+        Write-Host "  Paste the new value from /token in Discord." -ForegroundColor DarkGray
+        Write-Host "  Press Enter alone to keep the current token." -ForegroundColor DarkGray
+        $newToken = (Read-Host "  Token").Trim()
+        if ($newToken) {
+            $cfg.Token = $newToken
+            $cfg | ConvertTo-Json | Set-Content $ConfigFile
+            Write-Host "  Token updated." -ForegroundColor Green
+        } else {
+            Write-Host "  Kept existing token." -ForegroundColor DarkGray
+        }
+        Write-Host ""
+        Start-Sleep -Milliseconds 300
+        continue
+    }
     break
 }
