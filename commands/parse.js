@@ -176,10 +176,14 @@ const CLASS_EMOJI = {
 
 function aggregateByClass(players) {
   const { getCharacter } = require('../utils/roster');
+  const { getWhoEntry }  = require('../utils/state');
   const classMap = new Map();
   for (const p of players) {
     const char = getCharacter(p.name);
-    const cls  = char?.class || 'Unknown';
+    const who  = getWhoEntry(p.name);
+    // Roster is curated (OpenDKP), so we trust it first. Fall back to /who
+    // observations from the wolfpack-logsync agent for non-guildies / Zek.
+    const cls  = char?.class || who?.class || 'Unknown';
     if (!classMap.has(cls)) {
       classMap.set(cls, { class: cls, emoji: CLASS_EMOJI[cls] || '❓', totalDamage: 0, totalDps: 0, count: 0, totalDuration: 0 });
     }

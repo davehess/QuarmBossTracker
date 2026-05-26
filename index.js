@@ -26,6 +26,7 @@ const {
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
   recordAgentUpload, clearAgentActivity,
   getPetOwners, addPetOwners, clearPetOwners,
+  mergeWhoData,
   getAllLiveKills, clearLiveKill,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getHateBoardMessageId, setHateBoardMessageId,
@@ -2063,6 +2064,12 @@ async function _handleAgentUpload(req, res) {
   const uploadedPetLeaders = encounter.pet_leaders || {};
   try { addPetOwners(uploadedPetLeaders); } catch {}
   const petLeaders = { ...getPetOwners(), ...uploadedPetLeaders };
+
+  // Merge any /who observations from this upload into the persistent player
+  // database. Used downstream for class labels in parse embeds and /whois.
+  if (Array.isArray(encounter.who_data) && encounter.who_data.length > 0) {
+    try { mergeWhoData(encounter.who_data); } catch {}
+  }
   const playerTotals = new Map();
   for (const ev of encounter.events) {
     if (ev.type !== 'damage') continue;

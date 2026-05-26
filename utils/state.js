@@ -15,6 +15,7 @@ function _empty() {
     auditEntries: [],
     agentTestCards: {}, agentSessionCardId: null,
     petOwners: {},
+    whoData: {},
   };
 }
 
@@ -77,6 +78,7 @@ function loadState() {
   if (raw.agentTestCards)     s.agentTestCards     = raw.agentTestCards;
   if (raw.agentSessionCardId != null) s.agentSessionCardId = raw.agentSessionCardId;
   if (raw.petOwners)          s.petOwners          = raw.petOwners;
+  if (raw.whoData)            s.whoData            = raw.whoData;
 
   const bossCount = Object.keys(s.bosses).length;
   if (bossCount > 0) {
@@ -517,6 +519,70 @@ function setPetOwner(pet, owner) {
 }
 function clearPetOwners() { const s = loadState(); s.petOwners = {}; saveState(s); }
 
+// whoData is a persistent map of every character we've seen in any /who output
+// uploaded by an agent. Used by /whois, /markzek, and the /parsestats embed to
+// label players with their class even when they aren't in the OpenDKP roster.
+//
+// Schema per entry:
+//   { name, class, level, race, guild, anonymous, gm, is_zek, firstSeen, lastSeen }
+//
+// This map is NEVER cleared at midnight — we keep observed players forever.
+// Manual cleanup must go through clearWhoData() (no UI for that yet by design).
+function getWhoData()      { return loadState().whoData || {}; }
+function getWhoEntry(name) {
+  if (!name) return null;
+  return loadState().whoData?.[String(name).toLowerCase()] || null;
+}
+function mergeWhoData(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const s = loadState();
+  if (!s.whoData) s.whoData = {};
+  const now = new Date().toISOString();
+  for (const r of rows) {
+    if (!r || !r.name) continue;
+    const k   = r.name.toLowerCase();
+    const old = s.whoData[k] || {};
+    // Sticky is_zek: once a character is flagged, they stay flagged unless
+    // an officer explicitly clears it via /markzek. Also auto-flag anyone
+    // whose observed guild is literally "Zek".
+    const autoZek = (r.guild && /^zek$/i.test(r.guild)) ? true : false;
+    s.whoData[k] = {
+      name:       r.name,
+      class:      (r.class && r.class !== 'ANONYMOUS') ? r.class : (old.class || null),
+      level:      r.level ?? old.level ?? null,
+      race:       r.race  ?? old.race  ?? null,
+      guild:      r.guild ?? old.guild ?? null,
+      anonymous:  !!r.anonymous,
+      gm:         !!r.gm || !!old.gm,
+      is_zek:     old.is_zek || autoZek,
+      firstSeen:  old.firstSeen || r.observedAt || now,
+      lastSeen:   r.observedAt || now,
+    };
+  }
+  saveState(s);
+}
+function setZekFlag(name, isZek) {
+  const s = loadState();
+  if (!s.whoData) s.whoData = {};
+  const k = String(name).toLowerCase();
+  if (!s.whoData[k]) s.whoData[k] = { name, firstSeen: new Date().toISOString() };
+  s.whoData[k].is_zek = !!isZek;
+  s.whoData[k].lastSeen = s.whoData[k].lastSeen || new Date().toISOString();
+  saveState(s);
+  return s.whoData[k];
+}
+function setGuildOverride(name, guild) {
+  const s = loadState();
+  if (!s.whoData) s.whoData = {};
+  const k = String(name).toLowerCase();
+  if (!s.whoData[k]) s.whoData[k] = { name, firstSeen: new Date().toISOString() };
+  s.whoData[k].guild = guild || null;
+  if (guild && /^zek$/i.test(guild)) s.whoData[k].is_zek = true;
+  saveState(s);
+  return s.whoData[k];
+}
+function clearWhoData() { const s = loadState(); s.whoData = {}; saveState(s); }
+
 function recordAgentUpload(character, bossName, eventCount) {
   if (!character) return;
   const s = loadState();
@@ -597,4 +663,5 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
+  getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
 };

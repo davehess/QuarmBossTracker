@@ -182,6 +182,9 @@ const DEFAULT_DROP_PATTERNS = [
 //   EQ log format: "[Fri May 26 02:34:04 2026] Gobn says, 'My leader is Utoh.'"
 const PRIORITY_KEEP_PATTERNS = [
   /\bsays,?\s*['"]My leader is \w+/i,
+  // /who output lines — '[60 Storm Warden] Alice (Wood Elf) <Wolf Pack>' etc.
+  // Listed here so they can never be dropped by some future broad filter.
+  /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
 ];
 
 // Lines we KEEP (positive list — combat events). Anything not matching here
@@ -223,6 +226,9 @@ const KEEP_PATTERNS = [
   /\bresisted your/i,
   /\byour .+ has worn off/i,
   /\bhas fainted/i,
+  // /who output — needed so these survive shouldKeep() and reach parseEvent.
+  // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
+  /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
 ];
 
 // EQ timestamp parser
@@ -410,6 +416,31 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
   }
 
+  // ── /who output line ──────────────────────────────────────────────────────
+  // Matches a row of the EQ /who report. Examples (post-timestamp):
+  //   "[60 Storm Warden] Alice (Wood Elf) <Wolf Pack>"
+  //   "[60 Storm Warden (Recruit)] Carol (Wood Elf) <Wolf Pack>"   (rank suffix)
+  //   "[ANONYMOUS] Charlie"
+  //   "[ANONYMOUS] Eve <Wolf Pack>"
+  //   "AFK [60 Druid] Bob (Wood Elf) <Wolf Pack>"
+  //   "[GM] Sysop"
+  // Class capture stops at ']' or '(' so multi-word classes like
+  // "Storm Warden" / "Master Wizard" parse correctly and ranks are dropped.
+  m = line.match(/\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:(\d+)\s+([^\]\(]+?)(?:\s*\([^)]+\))?|(ANONYMOUS)|(GM))\s*\]\s+(\w+)(?:\s+\(([^)]+)\))?(?:\s+<([^>]+)>)?/i);
+  if (m) {
+    return {
+      ts:        tsIso,
+      type:      'who',
+      name:      m[5],
+      level:     m[1] ? parseInt(m[1], 10) : null,
+      class:     m[2] ? m[2].trim() : null,
+      anonymous: !!m[3],
+      gm:        !!m[4],
+      race:      m[6] || null,
+      guild:     m[7] || null,
+    };
+  }
+
   return null;
 }
 
@@ -432,6 +463,24 @@ function characterFromFilename(filepath) {
 // "Primary target" = the most-damaged NPC defender within the active window.
 //
 // On end, the encounter is flushed (upload or dry-run print) and state resets.
+
+// Module-level /who observation buffer. Lives for the agent's process lifetime
+// so /who output captured between encounters still ships with the next upload.
+const whoData = new Map(); // lowercaseName → { name, class, level, race, guild, anonymous, gm, observedAt }
+
+function recordWhoEvent(ev) {
+  if (!ev || !ev.name) return;
+  whoData.set(ev.name.toLowerCase(), {
+    name:      ev.name,
+    class:     ev.class || null,
+    level:     ev.level || null,
+    race:      ev.race  || null,
+    guild:     ev.guild || null,
+    anonymous: !!ev.anonymous,
+    gm:        !!ev.gm,
+    observedAt: ev.ts || new Date().toISOString(),
+  });
+}
 
 class EncounterBuilder {
   constructor({ character, onFlush }) {
@@ -458,6 +507,13 @@ class EncounterBuilder {
     // Pet leader declarations update the map but don't count as combat events
     if (event.type === 'pet_leader') {
       this.petLeaders[event.pet.toLowerCase()] = event.owner;
+      return;
+    }
+
+    // /who output rows are metadata, not combat — accumulate into the module
+    // buffer and ship in the next encounter upload.
+    if (event.type === 'who') {
+      recordWhoEvent(event);
       return;
     }
 
@@ -522,6 +578,10 @@ class EncounterBuilder {
         // pet_leaders: { lowercasePetName: "OwnerName" } — used server-side to attribute
         // pet damage to the player owner. Empty object when no pets were detected.
         pet_leaders: Object.keys(this.petLeaders).length > 0 ? { ...this.petLeaders } : undefined,
+        // who_data: snapshot of every /who row this agent has observed since startup.
+        // Server upserts into state.whoData so class/level/guild is available for
+        // /parsestats embeds and /whois lookups even for non-guildies.
+        who_data:    whoData.size > 0 ? Array.from(whoData.values()) : undefined,
         events:      this.events,
       },
     };
