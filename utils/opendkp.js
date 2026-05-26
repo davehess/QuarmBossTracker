@@ -180,6 +180,73 @@ async function getAuctions() {
   return _get({ ..._clientUrl('/auctions'), headers });
 }
 
+// PUT /clients/{name}/auctions/{auctionId}/bids — submit a bid on an active auction.
+// Captured cURL (2026-05-26, auth token redacted):
+//   PUT /clients/wolfpack/auctions/993920/bids
+//   Authorization: Bearer <Cognito ID token>
+//   Body: {"CharacterId":108064,"SessionId":993920,"Rank":"Officer","Priority":1,"Value":1}
+//
+// SessionId in the body equals the {auctionId} segment in the URL — both required.
+// Rank: bidder's guild rank (Officer / Member / Recruit / Raid Alt / etc.).
+// Priority: tier multiplier (1 = standard).  Value: DKP amount.
+async function submitBid(auctionId, payload) {
+  if (!auctionId) throw new Error('submitBid: auctionId is required');
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(payload);
+  return _post({
+    ..._clientUrl(`/auctions/${auctionId}/bids`),
+    method: 'PUT',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
+// DELETE /clients/{name}/auctions/{auctionId}/bids/{bidId} — cancel a placed bid.
+// Unusual: DELETE carries a JSON body with the full bid object (matches captured cURL).
+// Pass the bid object as returned from getAuctions(); the server keys off BidId.
+async function cancelBid(auctionId, bidId, bidObject) {
+  if (!auctionId || !bidId) throw new Error('cancelBid: auctionId and bidId are required');
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(bidObject);
+  return _post({
+    ..._clientUrl(`/auctions/${auctionId}/bids/${bidId}`),
+    method: 'DELETE',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
+// POST /clients/{name}/auctions/extendauctions — extend the timer on one or more auctions.
+// Body is an ARRAY of full auction objects (pass through what getAuctions() returned).
+// Server keys off AuctionId; other fields (Duration, MaximumBid, etc.) describe the
+// post-extend state.
+async function extendAuctions(auctions) {
+  if (!Array.isArray(auctions) || auctions.length === 0) {
+    throw new Error('extendAuctions: pass a non-empty array of auction objects');
+  }
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(auctions);
+  return _post({
+    ..._clientUrl('/auctions/extendauctions'),
+    method: 'POST',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
+// POST /clients/{name}/auctions/endauctions — close out one or more auctions.
+// Same shape as extendAuctions: array of full auction objects.  Server records the
+// winning bid(s), deducts DKP, and marks the auction closed.
+async function endAuctions(auctions) {
+  if (!Array.isArray(auctions) || auctions.length === 0) {
+    throw new Error('endAuctions: pass a non-empty array of auction objects');
+  }
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(auctions);
+  return _post({
+    ..._clientUrl('/auctions/endauctions'),
+    method: 'POST',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
 // ── Raids API ─────────────────────────────────────────────────────────────────
 // GET /beta/raids — all raids (no ticks detail)
 async function getRaids() {
@@ -217,4 +284,5 @@ module.exports = {
   getRaids, getRaid, createRaid, updateRaid,
   getCharacters, createCharacter,
   createAuctions, getAuctions,
+  submitBid, cancelBid, extendAuctions, endAuctions,
 };
