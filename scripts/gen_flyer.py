@@ -454,9 +454,9 @@ def draw_bottom_strip(draw, frame):
     draw.text((14, y), "New in v2.2:", font=FONT_MONO, fill=(68, 68, 90))
     y += 17
 
-    # DoT damage
-    draw.text((14, y), "DoT damage", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
-    bb = draw.textbbox((0,0), "DoT damage", font=FONT_BODY_B)
+    # DOT damage
+    draw.text((14, y), "DOT damage", font=FONT_BODY_B, fill=lc(GOLD_DIM, GOLD, ep))
+    bb = draw.textbbox((0,0), "DOT damage", font=FONT_BODY_B)
     x2 = 14 + bb[2] - bb[0] + 8
     draw.text((x2, y), "— Every tick credited; nukes & procs too",
               font=FONT_BODY, fill=LIGHT_GRAY)
@@ -477,7 +477,7 @@ def draw_footer(draw, frame):
     draw.text((18, fy),    "@RaidBosses", font=FONT_BODY_B, fill=lc(TEAL_DIM,TEAL,ep))
     draw.text((18, fy+15), "Quarm Raid Timer Bot", font=FONT_SMALL, fill=DARK_GRAY)
 
-    ver = "v2.2.0  —  DoT DAMAGE"
+    ver = "v2.2.0  —  DOT DAMAGE"
     bb  = draw.textbbox((0,0),ver,font=FONT_BODY_B)
     vx  = (W-(bb[2]-bb[0]))//2
     draw.rectangle([vx-8,fy-2,vx+(bb[2]-bb[0])+8,fy+16], fill=(20,20,40))
@@ -635,7 +635,7 @@ def draw_dot_burst(img, draw, frame):
     draw.ellipse([cx-r_in+1, cy-r_in+1, cx+r_in-1, cy+r_in-1], fill=(26, 110, 48))
 
     # text — three short lines so they fit inside r_in
-    lines = ["NOW WITH", "DoT", "DAMAGE!"]
+    lines = ["NOW WITH", "DOT", "DAMAGE!"]
     fonts = [FONT_SMALL, FONT_TITLE, FONT_SMALL]
     bbs   = [draw.textbbox((0,0), l, font=f) for l, f in zip(lines, fonts)]
     total_h = sum(bb[3] - bb[1] for bb in bbs) + 2 * 3
