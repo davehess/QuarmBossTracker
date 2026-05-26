@@ -2141,10 +2141,26 @@ async function _handleAgentUpload(req, res) {
     return res.end(JSON.stringify({ error: 'missing encounter.events' }));
   }
 
+  // ── Process /who data FIRST (before noise filter) ─────────────────────────
+  // who-only uploads have no events and no boss_name — they'd otherwise be
+  // rejected by the noise filter below. Merge into state.whoData so /whois
+  // sees the new entries even when no combat happened recently.
+  const uploadedWhoData = encounter.who_data;
+  if (Array.isArray(uploadedWhoData) && uploadedWhoData.length > 0) {
+    try { mergeWhoData(uploadedWhoData); } catch {}
+  }
+
   // Server-side noise guard (agent already filters these, but defend in depth).
   // "YOU" means the player was identified as the primary target — received damage, no real mob.
   // null/empty boss_name with few events = background noise or all-heal encounter.
+  // Exception: who-only uploads (empty events + non-empty who_data) are valid;
+  // we've already merged the whoData above, so just exit cleanly.
   const bossNameRaw = (encounter.boss_name || '').trim();
+  const hasWhoOnly  = (encounter.events.length === 0) && Array.isArray(uploadedWhoData) && uploadedWhoData.length > 0;
+  if (hasWhoOnly) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, who_merged: uploadedWhoData.length }));
+  }
   if (/^you$/i.test(bossNameRaw) || (!bossNameRaw && encounter.events.length < 20)) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, skipped: 'noise encounter' }));
@@ -2178,11 +2194,7 @@ async function _handleAgentUpload(req, res) {
   try { addPetOwners(uploadedPetLeaders); } catch {}
   const petLeaders = { ...getPetOwners(), ...uploadedPetLeaders };
 
-  // Merge any /who observations from this upload into the persistent player
-  // database. Used downstream for class labels in parse embeds and /whois.
-  if (Array.isArray(encounter.who_data) && encounter.who_data.length > 0) {
-    try { mergeWhoData(encounter.who_data); } catch {}
-  }
+  // (who_data merge already happened above, before the noise filter.)
   const playerTotals = new Map();
   for (const ev of encounter.events) {
     if (ev.type !== 'damage') continue;

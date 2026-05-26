@@ -1119,10 +1119,39 @@ async function main() {
     setupKeypressHandler();
   }
 
-  // Idle ticker — flushes encounters that have gone quiet
+  // Idle ticker — flushes encounters that have gone quiet, AND periodically
+  // pushes the /who buffer to the server even without a combat encounter.
+  // Without the who-only flush, /whois on Discord can't find recently-observed
+  // characters until the parser next kills something.
+  let _whoDataLastSize  = 0;
+  let _whoDataLastFlush = 0;
   setInterval(() => {
     const now = Date.now();
     for (const b of builders) b.builder.tickIdle(now);
+
+    // Who-only flush: 5-second debounce after the buffer grows. Sends an
+    // empty-encounter payload (no boss_name, no events) with the full
+    // whoData snapshot — the server merges it into state.whoData and
+    // /whois starts seeing the new entries within ~5-10 seconds of /who.
+    if (whoData.size > _whoDataLastSize && (now - _whoDataLastFlush) >= 5000) {
+      _whoDataLastSize  = whoData.size;
+      _whoDataLastFlush = now;
+      const character  = builders[0]?.character || 'unknown';
+      const iso        = new Date(now).toISOString();
+      uploadEncounter({
+        agent_version: AGENT_VERSION,
+        character,
+        encounter: {
+          started_at: iso,
+          ended_at:   iso,
+          boss_name:  null,
+          events:     [],
+          who_data:   Array.from(whoData.values()),
+        },
+      }, { botUrl, token, dryRun }).catch(err => {
+        if (!_dashboardEnabled) console.warn(`[who flush] ${err.message}`);
+      });
+    }
   }, 5000);
 
   // Backfill mode
