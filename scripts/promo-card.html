@@ -11,7 +11,7 @@
     background: #0d1117;
     font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
     padding: 32px;
-    width: 900px;
+    width: 920px;
   }
 
   .card {
@@ -25,53 +25,23 @@
   .header {
     background: linear-gradient(135deg, #1a2332 0%, #0f1923 50%, #1a1a2e 100%);
     border-bottom: 1px solid #30363d;
-    padding: 28px 32px 24px;
+    padding: 26px 32px 22px;
     display: flex;
     align-items: center;
     gap: 20px;
   }
-
-  .header-icon {
-    font-size: 48px;
-    line-height: 1;
-    flex-shrink: 0;
-  }
-
+  .header-icon { font-size: 52px; line-height: 1; flex-shrink: 0; }
   .header-text h1 {
-    font-size: 26px;
-    font-weight: 800;
-    color: #e6edf3;
-    letter-spacing: -0.5px;
-    line-height: 1.1;
+    font-size: 28px; font-weight: 800; color: #e6edf3;
+    letter-spacing: -0.5px; line-height: 1.1;
   }
-
-  .header-text h1 span.accent {
-    color: #58a6ff;
-  }
-
-  .header-text .tagline {
-    font-size: 14px;
-    color: #7d8590;
-    margin-top: 5px;
-    font-weight: 500;
-  }
-
-  .badge-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-  }
-
+  .header-text h1 span.accent { color: #58a6ff; }
+  .header-text .tagline { font-size: 14px; color: #7d8590; margin-top: 5px; font-weight: 500; }
+  .badge-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
   }
   .badge.green  { background: #1a3826; color: #3fb950; border: 1px solid #2ea043; }
   .badge.blue   { background: #0d2137; color: #58a6ff; border: 1px solid #1f6feb; }
@@ -79,202 +49,155 @@
   .badge.yellow { background: #2d2208; color: #e3b341; border: 1px solid #9e6a03; }
 
   /* ── Body ── */
-  .body {
-    padding: 24px 32px 28px;
+  .body { padding: 22px 28px 26px; }
+
+  /* ── Role section header ── */
+  .roles-header {
+    text-align: center;
+    font-size: 11px; font-weight: 700; letter-spacing: 1.4px;
+    text-transform: uppercase; color: #7d8590;
+    margin-bottom: 14px;
+  }
+  .roles-header strong { color: #e6edf3; }
+
+  /* ── 3-column role grid ── */
+  .roles-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+
+  .role-card {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .role-card.dps     { border-top: 3px solid #e3b341; }
+  .role-card.tank    { border-top: 3px solid #58a6ff; }
+  .role-card.healer  { border-top: 3px solid #3fb950; }
+
+  .role-header {
+    padding: 13px 16px 10px;
+    border-bottom: 1px solid #21262d;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .role-emoji { font-size: 22px; }
+  .role-title { font-size: 14px; font-weight: 800; color: #e6edf3; }
+  .role-sub   { font-size: 11px; color: #7d8590; margin-top: 1px; }
+
+  .role-body { padding: 12px 16px 14px; }
+
+  .role-feature {
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 6px 0;
+    border-bottom: 1px solid #161b22;
+    font-size: 12.5px; color: #c9d1d9; line-height: 1.4;
+  }
+  .role-feature:last-child { border-bottom: none; padding-bottom: 0; }
+  .role-feature .rf-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; width: 18px; text-align: center; }
+  .role-feature strong { color: #e6edf3; font-weight: 600; display: block; }
+  .role-feature .rf-sub { color: #7d8590; font-size: 11px; }
+
+  /* ── Bottom 3-col grid ── */
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr 1fr;
+    gap: 14px;
+    margin-bottom: 20px;
   }
 
   .section {
     background: #0d1117;
     border: 1px solid #21262d;
     border-radius: 12px;
-    padding: 18px 20px;
-  }
-
-  .section.full-width {
-    grid-column: 1 / -1;
+    padding: 16px 18px;
   }
 
   .section-title {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    margin-bottom: 14px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 7px;
   }
-
-  .section-title.green  { color: #3fb950; }
   .section-title.blue   { color: #58a6ff; }
   .section-title.red    { color: #f85149; }
-  .section-title.purple { color: #bc8cff; }
-  .section-title.yellow { color: #e3b341; }
+  .section-title.green  { color: #3fb950; }
 
-  /* ── What it does ── */
+  /* How it works */
   .step-list { list-style: none; }
   .step-list li {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 6px 0;
-    font-size: 13.5px;
-    color: #c9d1d9;
-    line-height: 1.4;
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 5px 0; font-size: 12.5px; color: #c9d1d9; line-height: 1.4;
     border-bottom: 1px solid #21262d;
   }
   .step-list li:last-child { border-bottom: none; }
-  .step-icon {
-    font-size: 15px;
-    flex-shrink: 0;
-    margin-top: 1px;
-    width: 20px;
-    text-align: center;
-  }
+  .step-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; width: 18px; text-align: center; }
   .step-text strong { color: #e6edf3; font-weight: 600; }
 
-  /* ── Privacy ── */
-  .privacy-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 7px;
-  }
-
-  .privacy-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-    color: #c9d1d9;
-    background: #161b22;
-    border: 1px solid #21262d;
-    border-radius: 7px;
-    padding: 7px 10px;
-  }
-
-  .privacy-row .block-icon {
-    font-size: 13px;
-    flex-shrink: 0;
-    color: #f85149;
-  }
-  .privacy-row .check-icon {
-    font-size: 13px;
-    flex-shrink: 0;
-    color: #3fb950;
-  }
-  .privacy-row .label { font-weight: 500; }
-  .privacy-row .sub { color: #7d8590; font-size: 11px; margin-left: auto; white-space: nowrap; }
-
-  .privacy-note {
-    margin-top: 12px;
-    font-size: 12px;
-    color: #7d8590;
-    line-height: 1.5;
-  }
-  .privacy-note strong { color: #c9d1d9; }
-
-  /* ── Resources ── */
-  .resource-big {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    margin-bottom: 6px;
-  }
-  .resource-big .value {
-    font-size: 36px;
-    font-weight: 800;
-    color: #3fb950;
-    letter-spacing: -1px;
-    line-height: 1;
-  }
-  .resource-big .unit {
-    font-size: 16px;
-    color: #7d8590;
-    font-weight: 600;
-  }
-  .resource-label {
-    font-size: 12px;
-    color: #7d8590;
-    margin-bottom: 16px;
-  }
-
-  .resource-divider {
-    height: 1px;
-    background: #21262d;
-    margin: 14px 0;
-  }
-
-  .resource-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 13px;
-    padding: 5px 0;
-  }
-  .resource-row .r-label { color: #7d8590; }
-  .resource-row .r-val   { color: #3fb950; font-weight: 700; }
-
-  /* ── Unlocks ── */
-  .unlock-list { list-style: none; }
-  .unlock-list li {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 7px 0;
-    font-size: 13px;
-    color: #c9d1d9;
-    line-height: 1.4;
+  /* Privacy */
+  .priv-item {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 0; font-size: 12.5px; color: #c9d1d9;
     border-bottom: 1px solid #21262d;
   }
-  .unlock-list li:last-child { border-bottom: none; }
-  .unlock-icon { flex-shrink: 0; font-size: 16px; width: 22px; text-align: center; margin-top: 1px; }
-  .unlock-text strong { color: #e6edf3; font-weight: 600; }
-  .unlock-text .sub-text { color: #7d8590; font-size: 11.5px; display: block; margin-top: 2px; }
-
-  /* ── Command ── */
-  .command-box {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    padding: 14px 18px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 16px;
+  .priv-item:last-child { border-bottom: none; }
+  .priv-x { color: #f85149; font-size: 12px; font-weight: 700; flex-shrink: 0; width: 14px; }
+  .priv-check { color: #3fb950; font-size: 12px; font-weight: 700; flex-shrink: 0; width: 14px; }
+  .priv-label { flex: 1; }
+  .priv-tag {
+    font-size: 10px; color: #484f58; background: #161b22;
+    border: 1px solid #21262d; border-radius: 4px; padding: 1px 6px;
+    white-space: nowrap;
   }
-  .cmd-prompt { color: #3fb950; font-size: 14px; font-weight: 700; font-family: 'Consolas', 'SF Mono', monospace; }
-  .cmd-text   { color: #e6edf3; font-size: 13px; font-family: 'Consolas', 'SF Mono', monospace; flex: 1; }
-  .cmd-text .arg { color: #58a6ff; }
-  .cmd-text .val { color: #a5d6ff; }
-  .cmd-text .flag { color: #bc8cff; }
+
+  /* Resources */
+  .res-big {
+    display: flex; align-items: baseline; gap: 5px; margin-bottom: 4px;
+  }
+  .res-big .value { font-size: 34px; font-weight: 800; color: #3fb950; letter-spacing: -1px; line-height: 1; }
+  .res-big .unit  { font-size: 15px; color: #7d8590; font-weight: 600; }
+  .res-caption { font-size: 11px; color: #7d8590; margin-bottom: 12px; }
+  .res-divider { height: 1px; background: #21262d; margin: 10px 0; }
+  .res-row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; padding: 4px 0;
+  }
+  .res-row .rl { color: #7d8590; }
+  .res-row .rv { color: #3fb950; font-weight: 700; }
 
   /* ── Multi-parser callout ── */
   .callout {
     background: linear-gradient(135deg, #162032 0%, #0f1923 100%);
     border: 1px solid #1f6feb;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 14px 18px;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
+    display: flex; align-items: flex-start; gap: 12px;
+    margin-bottom: 14px;
   }
   .callout-icon { font-size: 22px; flex-shrink: 0; margin-top: 1px; }
-  .callout-text { font-size: 13px; color: #c9d1d9; line-height: 1.5; }
+  .callout-text { font-size: 13px; color: #c9d1d9; line-height: 1.55; }
   .callout-text strong { color: #e6edf3; }
+
+  /* ── Command box ── */
+  .cmd-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #58a6ff; margin-bottom: 7px; }
+  .command-box {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 12px 16px; display: flex; align-items: center; gap: 10px;
+  }
+  .cmd-prompt { color: #3fb950; font-size: 13px; font-weight: 700; font-family: 'Consolas', 'SF Mono', monospace; }
+  .cmd-text   { color: #e6edf3; font-size: 12.5px; font-family: 'Consolas', 'SF Mono', monospace; flex: 1; }
+  .cmd-text .arg  { color: #58a6ff; }
+  .cmd-text .val  { color: #a5d6ff; }
+  .cmd-text .flag { color: #bc8cff; }
 
   /* ── Footer ── */
   .footer {
-    background: #0d1117;
-    border-top: 1px solid #21262d;
-    padding: 14px 32px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    background: #0d1117; border-top: 1px solid #21262d;
+    padding: 13px 28px;
+    display: flex; align-items: center; justify-content: space-between;
   }
-  .footer-left { font-size: 12px; color: #7d8590; }
+  .footer-left  { font-size: 12px; color: #7d8590; }
   .footer-left strong { color: #c9d1d9; }
   .footer-right { font-size: 11px; color: #484f58; }
 </style>
@@ -287,182 +210,235 @@
     <div class="header-icon">🐺</div>
     <div class="header-text">
       <h1>wolfpack-<span class="accent">logsync</span></h1>
-      <div class="tagline">Auto-upload your EQ parse. No copy-paste. No clipboard. Just kill the boss.</div>
+      <div class="tagline">Your log file → parse card, automatically. DPS · Tanks · Healers all get their own stats.</div>
       <div class="badge-row">
         <span class="badge green">✓ Zero dependencies</span>
         <span class="badge blue">⚡ Node.js only</span>
         <span class="badge purple">🔒 Privacy first</span>
-        <span class="badge yellow">🗂 Single file</span>
+        <span class="badge yellow">🗂 Single file · ~45 MB RAM</span>
       </div>
     </div>
   </div>
 
-  <!-- ── BODY GRID ── -->
   <div class="body">
 
-    <!-- How it works -->
-    <div class="section">
-      <div class="section-title blue">⚙️ &nbsp;How It Works</div>
-      <ul class="step-list">
-        <li>
-          <span class="step-icon">📄</span>
-          <span class="step-text"><strong>Tails your EQ log</strong> from the end of file forward — never reads your full multi-GB log</span>
-        </li>
-        <li>
-          <span class="step-icon">🔍</span>
-          <span class="step-text"><strong>Detects combat events</strong> as they happen — damage, heals, deaths, casts</span>
-        </li>
-        <li>
-          <span class="step-icon">🚫</span>
-          <span class="step-text"><strong>Strips private channels</strong> locally at the byte level, before any parsing</span>
-        </li>
-        <li>
-          <span class="step-icon">📤</span>
-          <span class="step-text"><strong>Uploads compact JSON</strong> to the bot at the end of each fight — nothing else</span>
-        </li>
-        <li>
-          <span class="step-icon">🤖</span>
-          <span class="step-text"><strong>Bot posts the parse card</strong> automatically — DPS, healers, deaths, gaps</span>
-        </li>
-      </ul>
+    <!-- ── ROLE GRID ── -->
+    <div class="roles-header"><strong>What every role gets from running it</strong></div>
+    <div class="roles-grid">
+
+      <!-- DPS -->
+      <div class="role-card dps">
+        <div class="role-header">
+          <span class="role-emoji">⚔️</span>
+          <div>
+            <div class="role-title">DPS</div>
+            <div class="role-sub">Warriors · Rogues · Wizards · Monks · all of you</div>
+          </div>
+        </div>
+        <div class="role-body">
+          <div class="role-feature">
+            <span class="rf-icon">📊</span>
+            <div>
+              <strong>Auto parse card</strong>
+              <span class="rf-sub">Posts on boss death — no copy-paste ever</span>
+            </div>
+          </div>
+          <div class="role-feature">
+            <span class="rf-icon">🏆</span>
+            <div>
+              <strong>Real rankings</strong>
+              <span class="rf-sub">Damage · DPS · time in combat</span>
+            </div>
+          </div>
+          <div class="role-feature">
+            <span class="rf-icon">🐾</span>
+            <div>
+              <strong>Pet attribution</strong>
+              <span class="rf-sub">Enc/Mage/BST pet damage credited to owner</span>
+            </div>
+          </div>
+          <div class="role-feature">
+            <span class="rf-icon">🎯</span>
+            <div>
+              <strong>Raid night tag</strong>
+              <span class="rf-sub">Sun/Wed/Thu parses marked for /parsestats</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TANKS -->
+      <div class="role-card tank">
+        <div class="role-header">
+          <span class="role-emoji">🛡️</span>
+          <div>
+            <div class="role-title">Tanks</div>
+            <div class="role-sub">Warriors · Paladins · Shadow Knights</div>
+          </div>
+        </div>
+        <div class="role-body">
+          <div class="role-feature">
+            <span class="rf-icon">📉</span>
+            <div>
+              <strong>Damage taken per tank</strong>
+              <span class="rf-sub">Hits, misses, dodges, parries, blocks tracked</span>
+            </div>
+          </div>
+          <div class="role-feature">
+            <span class="rf-icon">💀</span>
+            <div>
+              <strong>Death scoreboard</strong>
+              <span class="rf-sub">Who died and when — per fight</span>
+            </div>
+          </div>
+          <div class="role-feature">
+            <span class="rf-icon">⚔️</span>
+            <div>
+              <strong>Riposte death flags</strong>
+              <span class="rf-sub">Pal/SK deaths from boss riposte get ⚔️ — relevant for tanking AA advice</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HEALERS -->
+      <div class="role-card healer">
+        <div class="role-header">
+          <span class="role-emoji">🩺</span>
+          <div>
+            <div class="role-title">Healers</div>
+            <div class="role-sub">Clerics · Druids · Shamans</div>
+          </div>
+        </div>
+        <div class="role-body">
+          <div class="role-feature">
+            <span class="rf-icon">📋</span>
+            <div>
+              <strong>Healer leaderboard</strong>
+              <span class="rf-sub">Total healed · tick count · heal targets</span>
+            </div>
+          </div>
+          <div class="role-feature">
+            <span class="rf-icon">🔗</span>
+            <div>
+              <strong>CH chain tracking</strong>
+              <span class="rf-sub">See how many heals each cleric landed on the main tank</span>
+            </div>
+          </div>
+          <div class="role-feature">
+            <span class="rf-icon">⚠️</span>
+            <div>
+              <strong>Heal gap warnings</strong>
+              <span class="rf-sub">Flags stretches &gt;8s without a heal landing on main tank — missed CH ticks visible</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /.roles-grid -->
+
+    <!-- ── BOTTOM GRID ── -->
+    <div class="bottom-grid">
+
+      <!-- How it works -->
+      <div class="section">
+        <div class="section-title blue">⚙️ &nbsp;How It Works</div>
+        <ul class="step-list">
+          <li>
+            <span class="step-icon">📄</span>
+            <span class="step-text"><strong>Tails your EQ log</strong> from end-of-file — never reads your multi-GB history</span>
+          </li>
+          <li>
+            <span class="step-icon">🚫</span>
+            <span class="step-text"><strong>Strips private channels</strong> locally, before any parsing or upload</span>
+          </li>
+          <li>
+            <span class="step-icon">📤</span>
+            <span class="step-text"><strong>Uploads compact JSON</strong> per fight — just combat events, nothing else</span>
+          </li>
+          <li>
+            <span class="step-icon">🤖</span>
+            <span class="step-text"><strong>Bot posts the card</strong> automatically on boss death</span>
+          </li>
+          <li>
+            <span class="step-icon">🤝</span>
+            <span class="step-text"><strong>Multi-perspective merge</strong> — more parsers = more complete picture</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Privacy -->
+      <div class="section">
+        <div class="section-title red">🔒 &nbsp;Privacy</div>
+        <div class="priv-item">
+          <span class="priv-x">✕</span>
+          <span class="priv-label">Officer chat</span>
+          <span class="priv-tag">never parsed</span>
+        </div>
+        <div class="priv-item">
+          <span class="priv-x">✕</span>
+          <span class="priv-label">Tells</span>
+          <span class="priv-tag">never parsed</span>
+        </div>
+        <div class="priv-item">
+          <span class="priv-x">✕</span>
+          <span class="priv-label">Guild chat</span>
+          <span class="priv-tag">never parsed</span>
+        </div>
+        <div class="priv-item">
+          <span class="priv-x">✕</span>
+          <span class="priv-label">Group chat</span>
+          <span class="priv-tag">never parsed</span>
+        </div>
+        <div class="priv-item">
+          <span class="priv-x">✕</span>
+          <span class="priv-label">Raid say</span>
+          <span class="priv-tag">never parsed</span>
+        </div>
+        <div class="priv-item" style="padding-top:7px;">
+          <span class="priv-check">✓</span>
+          <span class="priv-label" style="color:#3fb950; font-weight:600;">Combat events only</span>
+        </div>
+        <div style="margin-top:10px; font-size:11px; color:#7d8590; line-height:1.5;">
+          Private channels filtered at the <strong style="color:#c9d1d9;">byte level</strong> — before parsing, before buffering. Nothing from those lines ever leaves your machine.
+        </div>
+      </div>
+
+      <!-- Resources -->
+      <div class="section">
+        <div class="section-title green">📈 &nbsp;Resource Impact</div>
+        <div class="res-big">
+          <span class="value">45</span>
+          <span class="unit">MB RAM</span>
+        </div>
+        <div class="res-caption">measured live on a Wolf Pack member's machine</div>
+        <div class="res-divider"></div>
+        <div class="res-row"><span class="rl">CPU usage</span>       <span class="rv">~0.1%</span></div>
+        <div class="res-row"><span class="rl">Network per fight</span><span class="rv">&lt; 5 KB</span></div>
+        <div class="res-row"><span class="rl">Disk writes</span>      <span class="rv">none</span></div>
+        <div class="res-row"><span class="rl">npm install</span>      <span class="rv">not needed</span></div>
+        <div class="res-row"><span class="rl">Reads old log?</span>   <span class="rv">never</span></div>
+        <div class="res-row"><span class="rl">Startup time</span>     <span class="rv">&lt; 1 s</span></div>
+      </div>
+
+    </div><!-- /.bottom-grid -->
+
+    <!-- ── MULTI-PARSER + COMMAND ── -->
+    <div class="callout">
+      <span class="callout-icon">🤝</span>
+      <div class="callout-text">
+        <strong>The more parsers running, the better the picture.</strong> Every perspective fills in damage events, heal targets, and death timing that others may have missed. If only one healer's running the agent, the card only shows what that one log saw. Everyone running it means complete CH chain data, complete DPS, complete death tracking.
+      </div>
     </div>
 
-    <!-- What you unlock -->
-    <div class="section">
-      <div class="section-title purple">✨ &nbsp;What You Unlock</div>
-      <ul class="unlock-list">
-        <li>
-          <span class="unlock-icon">📊</span>
-          <div class="unlock-text">
-            <strong>Live parse cards</strong>
-            <span class="sub-text">DPS rankings auto-post on boss death — no /parse needed</span>
-          </div>
-        </li>
-        <li>
-          <span class="unlock-icon">🩺</span>
-          <div class="unlock-text">
-            <strong>Healer leaderboard</strong>
-            <span class="sub-text">Total healed · ticks · targets · CH chain visibility</span>
-          </div>
-        </li>
-        <li>
-          <span class="unlock-icon">⚠️</span>
-          <div class="unlock-text">
-            <strong>Heal gap warnings</strong>
-            <span class="sub-text">Detects stretches >8s without a heal on the main tank</span>
-          </div>
-        </li>
-        <li>
-          <span class="unlock-icon">💀</span>
-          <div class="unlock-text">
-            <strong>Death scoreboard</strong>
-            <span class="sub-text">Per-fight deaths + ⚔️ flags Paladin/SK riposte deaths</span>
-          </div>
-        </li>
-        <li>
-          <span class="unlock-icon">🎯</span>
-          <div class="unlock-text">
-            <strong>Raid night tagging</strong>
-            <span class="sub-text">Sun/Wed/Thu parses tagged for /parsestats filtering</span>
-          </div>
-        </li>
-      </ul>
-    </div>
-
-    <!-- Privacy -->
-    <div class="section">
-      <div class="section-title red">🔒 &nbsp;Privacy Guarantee</div>
-      <div class="privacy-grid">
-        <div class="privacy-row">
-          <span class="block-icon">✕</span>
-          <span class="label">Officer chat</span>
-          <span class="sub">dropped first</span>
-        </div>
-        <div class="privacy-row">
-          <span class="block-icon">✕</span>
-          <span class="label">Tells</span>
-          <span class="sub">dropped first</span>
-        </div>
-        <div class="privacy-row">
-          <span class="block-icon">✕</span>
-          <span class="label">Guild chat</span>
-          <span class="sub">dropped first</span>
-        </div>
-        <div class="privacy-row">
-          <span class="block-icon">✕</span>
-          <span class="label">Raid say</span>
-          <span class="sub">dropped first</span>
-        </div>
-        <div class="privacy-row">
-          <span class="block-icon">✕</span>
-          <span class="label">Group chat</span>
-          <span class="sub">dropped first</span>
-        </div>
-        <div class="privacy-row">
-          <span class="check-icon">✓</span>
-          <span class="label">Combat only</span>
-          <span class="sub">what's sent</span>
-        </div>
-      </div>
-      <div class="privacy-note">
-        Private channels are filtered at the <strong>byte level</strong> before any parsing or buffering. Nothing from those channels is ever parsed, stored, or uploaded. Only damage, heal, and death events leave your machine.
-      </div>
-    </div>
-
-    <!-- Resources -->
-    <div class="section">
-      <div class="section-title green">📈 &nbsp;Resource Impact</div>
-      <div class="resource-big">
-        <span class="value">45</span>
-        <span class="unit">MB RAM</span>
-      </div>
-      <div class="resource-label">measured on a live raid night (wolf pack member's machine)</div>
-      <div class="resource-divider"></div>
-      <div class="resource-row">
-        <span class="r-label">CPU usage</span>
-        <span class="r-val">~0.1%</span>
-      </div>
-      <div class="resource-row">
-        <span class="r-label">Network (per fight)</span>
-        <span class="r-val">&lt; 5 KB</span>
-      </div>
-      <div class="resource-row">
-        <span class="r-label">Disk writes</span>
-        <span class="r-val">none</span>
-      </div>
-      <div class="resource-row">
-        <span class="r-label">Dependencies</span>
-        <span class="r-val">zero</span>
-      </div>
-      <div class="resource-row">
-        <span class="r-label">Startup time</span>
-        <span class="r-val">&lt; 1s</span>
-      </div>
-      <div class="resource-row">
-        <span class="r-label">Reads existing log?</span>
-        <span class="r-val">never</span>
-      </div>
-    </div>
-
-    <!-- Multi-parser + command -->
-    <div class="section full-width">
-      <div class="callout" style="margin-bottom: 18px;">
-        <span class="callout-icon">🤝</span>
-        <div class="callout-text">
-          <strong>More parsers = more complete data.</strong> When multiple guild members run wolfpack-logsync on the same boss fight, the bot automatically merges all perspectives into one card. Each parser sees different heal targets, different damage events — combined they give a much more accurate picture of the raid.
-        </div>
-      </div>
-
-      <div class="section-title blue" style="margin-bottom: 8px;">▶ &nbsp;One Command to Run</div>
-      <div style="font-size: 12px; color: #7d8590; margin-bottom: 2px;">Requires Node.js 18+ (already on most machines). Runs in a terminal alongside EQ.</div>
-      <div class="command-box">
-        <span class="cmd-prompt">$</span>
-        <span class="cmd-text">
-          node wolfpack-logsync
-          <span class="arg"> --log </span><span class="val">"C:\EverQuest\Logs\eqlog_YourName_pq.proj.txt"</span>
-          <span class="flag"> --watch</span>
-        </span>
-      </div>
+    <div class="cmd-label">▶ &nbsp;One command — runs alongside EQ in a terminal</div>
+    <div class="command-box">
+      <span class="cmd-prompt">$</span>
+      <span class="cmd-text">
+        node wolfpack-logsync
+        <span class="arg"> --log </span><span class="val">"C:\EverQuest\Logs\eqlog_YourName_pq.proj.txt"</span>
+        <span class="flag"> --watch</span>
+      </span>
     </div>
 
   </div><!-- /.body -->
