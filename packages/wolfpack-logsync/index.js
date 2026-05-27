@@ -634,6 +634,36 @@ function characterFromFilename(filepath) {
 // so /who output captured between encounters still ships with the next upload.
 const whoData = new Map(); // lowercaseName → { name, class, level, race, guild, anonymous, gm, observedAt }
 
+// Names confirmed to be players (not NPCs). Built from multiple positive
+// sources — once a name lands here, all downstream player-only trackers
+// (tank stats, threat, deaths, DEEPS, session damage) trust it.
+//
+// Quarm NPCs frequently have single-word capitalized names (Nillipuss, Yelinak,
+// etc.) so the cheap "single-word + capital first letter" heuristic produces
+// false positives. We whitelist confirmed players instead.
+const confirmedPlayers = new Set();   // lowercase names
+function isConfirmedPlayer(name) {
+  if (!name) return false;
+  // Multi-word names with lowercase start (NPCs like "a netherbian drone")
+  if (/^[a-z]/.test(name)) return false;
+  const lower = name.toLowerCase();
+  if (confirmedPlayers.has(lower)) return true;
+  // Watched character (uploader's own log)
+  if (stats.watchedLogs && stats.watchedLogs.some(w => (w.character || '').toLowerCase() === lower)) {
+    confirmedPlayers.add(lower); return true;
+  }
+  // Seen via /who
+  if (whoData.has(lower)) { confirmedPlayers.add(lower); return true; }
+  // Has cast a heal (NPCs don't appear in EQ's third-person heal lines normally)
+  if (stats.sessionHealers && stats.sessionHealers[name]) {
+    confirmedPlayers.add(lower); return true;
+  }
+  return false;
+}
+function confirmPlayer(name) {
+  if (name) confirmedPlayers.add(String(name).toLowerCase());
+}
+
 // Module-level pet owner tracker. Persists for the whole agent session so pet
 // declarations (which only fire once at summon / charm time) are never lost.
 // petNameLower → Set<ownerName>  (one-to-many: charm pets can cycle through owners)
@@ -660,6 +690,8 @@ function recordWhoEvent(ev) {
     gm:        !!ev.gm || !!old.gm,
     observedAt: ev.ts || new Date().toISOString(),
   });
+  // Anyone we /who'd is a player — whitelist for downstream tank/death tracking
+  confirmPlayer(ev.name);
 }
 
 class EncounterBuilder {
@@ -729,12 +761,12 @@ class EncounterBuilder {
     const s = this.defenderStats.get(name);
     s[key] = (s[key] || 0) + (amount || 1);
 
-    // Mirror player-only stats to stats.sessionDefenders LIVE so the dashboard
-    // reflects damage taken even when an encounter doesn't end in a kill —
-    // wipes, escapes, gating out, etc. would otherwise be invisible since the
-    // old code only rolled defender stats into session state on flush().
-    // Single-word names = player characters; NPCs (multi-word) are excluded.
-    if (!/\s/.test(name)) {
+    // Mirror to stats.sessionDefenders LIVE so the dashboard reflects damage
+    // taken even when an encounter doesn't end in a kill. ONLY for confirmed
+    // players — Quarm NPCs like 'Nillipuss' have single-word capitalised names
+    // and would otherwise show up as tanks. isConfirmedPlayer whitelists from
+    // /who, watchedLogs, healers, and chat speakers.
+    if (isConfirmedPlayer(name)) {
       if (!stats.sessionDefenders[name]) {
         stats.sessionDefenders[name] = {
           damageTaken: 0, hits: 0, ripostes: 0, ripostedFor: 0,
@@ -1069,10 +1101,13 @@ class EncounterBuilder {
       const defName = (rawDef === null || /^you$/i.test(rawDef || ''))
         ? (this.character || 'You')
         : rawDef;
-      // Is this a player? Single-word + starts uppercase, or is the uploader.
+      // Is this a player? The uploader always is; otherwise require the
+      // confirmed-player whitelist (whoData / chat speakers / healers /
+      // watched logs) so single-word NPC names like 'Nillipuss' don't get
+      // counted as a player death.
       const isPlayer = !!defName && (
         defName === this.character ||
-        (!/\s/.test(defName) && /^[A-Z]/.test(defName))
+        isConfirmedPlayer(defName)
       );
       if (isPlayer) {
         const deathTs      = Date.parse(event.ts) || Date.now();
@@ -1615,6 +1650,7 @@ function _serializeForDashboard() {
     latestAgentVersion: stats.latestAgentVersion,
     currentEncounterThreat: stats.currentEncounterThreat,
     characterInventories:   stats.characterInventories,
+    hiddenLoadoutChars:     [...(_optinState.hiddenLoadoutChars || [])],
     sessionDeeps:           stats.sessionDeeps,
     requestedCharacters: stats.requestedCharacters,
     lifetime:           stats.lifetime,
@@ -1875,14 +1911,20 @@ function renderTanks(s) {
   }
 
   // ── Character loadouts — parsed from <Char>-Inventory.txt files in EQ dir
-  const invs = Object.entries(s.characterInventories || {});
-  if (invs.length > 0) {
+  const invsAll = Object.entries(s.characterInventories || {});
+  const hidden = new Set((s.hiddenLoadoutChars || []).map(c => c.toLowerCase()));
+  // Sort once so order is stable across hide/show toggles
+  invsAll.sort((a, b) => a[0].localeCompare(b[0]));
+  const invs       = invsAll.filter(([c]) => !hidden.has(c.toLowerCase()));
+  const hiddenList = invsAll.filter(([c]) =>  hidden.has(c.toLowerCase()));
+  if (invsAll.length > 0) {
     h += '<div class="card wide"><h2>🗡️ Weapon Loadouts</h2>';
     h += '<div class="subtle">Parsed from <code>/output inventory</code> files in the EQ directory. ' +
-         'Phase 2: cross-reference item IDs with proc DB for theoretical TPS.</div>';
+         'Phase 2: cross-reference item IDs with proc DB for theoretical TPS. ' +
+         'Click ⊘ to hide alts you do not care about.</div>';
     h += '<table style="margin-top:6px">' +
-         '<tr><th>Character</th><th>Primary</th><th>Secondary</th><th>Range</th><th>Updated</th></tr>';
-    for (const [char, inv] of invs.sort((a, b) => a[0].localeCompare(b[0]))) {
+         '<tr><th>Character</th><th>Primary</th><th>Secondary</th><th>Range</th><th>Updated</th><th></th></tr>';
+    for (const [char, inv] of invs) {
       const pqdiLink = (item) => {
         if (!item) return '<span class="dim">—</span>';
         if (item.id) return '<a href="https://www.pqdi.cc/item/' + item.id + '" target="_blank" style="color:var(--blue)">' + esc(item.name) + '</a>';
@@ -1899,11 +1941,21 @@ function renderTanks(s) {
            '<td>' + pqdiLink(inv.weapons?.primary)   + '</td>' +
            '<td>' + pqdiLink(inv.weapons?.secondary) + '</td>' +
            '<td>' + pqdiLink(inv.weapons?.range)     + '</td>' +
-           '<td class="dim">' + updatedStr + '</td></tr>';
+           '<td class="dim">' + updatedStr + '</td>' +
+           '<td><button data-hide-char="' + esc(char) + '" title="Hide this character" style="background:transparent;border:0;color:var(--dim);cursor:pointer;font-size:13px">⊘</button></td></tr>';
     }
     h += '</table>';
+    if (hiddenList.length > 0) {
+      h += '<details style="margin-top:10px"><summary class="dim" style="cursor:pointer">Hidden (' + hiddenList.length + ') — click to expand</summary>';
+      h += '<table><tr><th>Character</th><th></th></tr>';
+      for (const [char] of hiddenList) {
+        h += '<tr><td class="dim">' + esc(char) + '</td>' +
+             '<td><button data-show-char="' + esc(char) + '" style="background:transparent;border:0;color:var(--blue);cursor:pointer;font-size:11px">[show]</button></td></tr>';
+      }
+      h += '</table></details>';
+    }
     h += '<div class="subtle" style="margin-top:6px">Tip: run <code>/output inventory</code> in-game to refresh. ' +
-         'Files are auto-detected from <code>' + esc(invs[0][1]._path?.split(/[/\\\\]/).slice(0, -1).join('\\\\') || '') + '</code></div>';
+         'Files are auto-detected from <code>' + esc(invsAll[0][1]._path?.split(/[/\\\\]/).slice(0, -1).join('\\\\') || '') + '</code></div>';
     h += '</div>';
   }
 
@@ -1945,6 +1997,17 @@ function renderTanks(s) {
   h += '</div>';
   h += '</div>';
   document.getElementById('tanks').innerHTML = h;
+  // Wire the hide/show character buttons in the Weapon Loadouts table
+  document.querySelectorAll('[data-hide-char]').forEach(b => b.addEventListener('click', async () => {
+    await fetch('/api/loadouts/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'hide', chars: [b.dataset.hideChar] }) });
+    refresh();
+  }));
+  document.querySelectorAll('[data-show-char]').forEach(b => b.addEventListener('click', async () => {
+    await fetch('/api/loadouts/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'show', chars: [b.dataset.showChar] }) });
+    refresh();
+  }));
 }
 
 function renderHealers(s) {
@@ -2100,7 +2163,7 @@ function renderOptin(o) {
 
   let h = '<div class="card wide"><h2>Historical Log Opt-in — ' + _optinPane[0].toUpperCase()+_optinPane.slice(1) +
           ' (' + list.length + ')</h2>';
-  h += '<div class="subtle">Chat-only backfill — no combat parses created from legacy logs. ' +
+  h += '<div class="subtle">Backfill captures guild/raid chat + boss-matched combat kills (tagged with raid-window status). ' +
        '<span style="color:var(--blue)">Blue</span> = requested by the bot.</div>';
   // Toolbar
   h += '<div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center">' +
@@ -2128,29 +2191,45 @@ function renderOptin(o) {
            (b.totalBytes ? Math.floor(b.bytePos/b.totalBytes*100)+'%' : '?') +
            ', ' + b.chatCount + ' chat lines)').join(' · ') + '</div>';
   }
-  // File table
-  h += '<table><tr><th></th><th>Character</th><th>File</th><th>Size</th><th>Modified</th><th>Resume</th></tr>';
+  // Group files by character so 'Hitya' with eqlog_Hitya_pq.proj.txt and
+  // eqlog_Hitya_pq.proj.txt2 (the rolled-over backup) show under one header.
+  const byChar = {};
   for (const f of list) {
-    const fname = f.path.split(/[/\\\\]/).pop();
-    const nameColor = f.requested ? 'var(--blue)' : (f.isAlt ? 'var(--dim)' : 'var(--orange)');
-    const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
-    const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
-    const ageStr = ageDays === null ? '?' : ageDays<1 ? 'today' : ageDays<30 ? ageDays+'d ago' : ageDays<365 ? Math.floor(ageDays/30)+'mo ago' : Math.floor(ageDays/365)+'y ago';
-    let resumeStr = '';
-    if (f.resume?.complete) resumeStr = '<span style="color:var(--green)">✓ done</span>';
-    else if (f.resume?.bytePos > 0 && f.sizeBytes) {
-      const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
-      resumeStr = '<span style="color:var(--gold)">' + pct + '% (line ' + (f.resume.lineNum || '?') + ')</span>';
-    }
-    if (f.active) resumeStr = '<span style="color:var(--green)">⏳ running</span>';
-    h += '<tr>' +
-         '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + (f.selected?'checked':'') + '></td>' +
-         '<td style="color:' + nameColor + '">' + esc(f.character) + '</td>' +
-         '<td class="dim">' + esc(fname) + '</td>' +
-         '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
-         '<td class="dim">' + ageStr + '</td>' +
-         '<td>' + resumeStr + '</td>' +
-         '</tr>';
+    (byChar[f.character] = byChar[f.character] || []).push(f);
+  }
+  const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
+
+  h += '<table><tr><th></th><th>Character</th><th>File(s)</th><th>Size</th><th>Modified</th><th>Resume</th></tr>';
+  for (const char of Object.keys(byChar)) {
+    const files = byChar[char];
+    const first = files[0];
+    const nameColor = first.requested ? 'var(--blue)' : (first.isAlt ? 'var(--dim)' : 'var(--orange)');
+    files.forEach((f, idx) => {
+      const fname = f.path.split(/[/\\\\]/).pop();
+      const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
+      const ageStr = ageDays === null ? '?' : ageDays<1 ? 'today' : ageDays<30 ? ageDays+'d ago' : ageDays<365 ? Math.floor(ageDays/30)+'mo ago' : Math.floor(ageDays/365)+'y ago';
+      let resumeStr = '';
+      if (f.resume?.complete) resumeStr = '<span style="color:var(--green)">✓ done</span>';
+      else if (f.resume?.bytePos > 0 && f.sizeBytes) {
+        const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
+        resumeStr = '<span style="color:var(--gold)">' + pct + '% (line ' + (f.resume.lineNum || '?') + ')</span>';
+      }
+      if (f.active) resumeStr = '<span style="color:var(--green)">⏳ running</span>';
+      // For the SECOND+ file in the group, show the file row indented and
+      // skip the character name (it's already in the row above).
+      const charCell = idx === 0
+        ? '<td style="color:' + nameColor + ';font-weight:bold">' + esc(char) + (files.length > 1 ? ' <span class="dim" style="font-weight:normal">(' + files.length + ' files)</span>' : '') + '</td>'
+        : '<td></td>';
+      const fnameStyle = idx === 0 ? 'class="dim"' : 'class="dim" style="padding-left:18px"';
+      h += '<tr>' +
+           '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + (f.selected?'checked':'') + '></td>' +
+           charCell +
+           '<td ' + fnameStyle + '>' + esc(fname) + (f.isAlt ? ' <span class="dim" style="font-size:11px">(alt)</span>' : '') + '</td>' +
+           '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
+           '<td class="dim">' + ageStr + '</td>' +
+           '<td>' + resumeStr + '</td>' +
+           '</tr>';
+    });
   }
   h += '</table></div>';
   const root = document.getElementById('optin');
@@ -2288,6 +2367,22 @@ function startWebDashboard(port) {
           process.exit(0);
         }, 250);  // let the response flush
         return;
+      }
+      if (req.url === '/api/loadouts/hide' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const chars = Array.isArray(payload?.chars) ? payload.chars : [];
+        const action = payload?.action;
+        for (const c of chars) {
+          const key = String(c).toLowerCase();
+          if (action === 'show') _optinState.hiddenLoadoutChars.delete(key);
+          else                   _optinState.hiddenLoadoutChars.add(key);
+        }
+        _saveOptInState();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, hidden: [..._optinState.hiddenLoadoutChars] }));
       }
       if (req.url === '/api/optin' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2851,6 +2946,8 @@ const _optinState = {
   progress: {},
   // Ignored file paths (persisted across runs)
   ignoredPaths: new Set(),
+  // Character names hidden from the Tank/Weapon Loadouts view
+  hiddenLoadoutChars: new Set(),
 };
 
 function _optinSortFn() {
@@ -2875,15 +2972,17 @@ function _resortOptIn() {
 function _loadOptInState() {
   try {
     const raw = JSON.parse(fs.readFileSync(OPTIN_STATE_FILE, 'utf8'));
-    _optinState.progress     = raw.progress     || {};
-    _optinState.ignoredPaths = new Set(raw.ignoredPaths || []);
+    _optinState.progress             = raw.progress             || {};
+    _optinState.ignoredPaths         = new Set(raw.ignoredPaths || []);
+    _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
   } catch { /* missing or unreadable — fresh state */ }
 }
 function _saveOptInState() {
   try {
     fs.writeFileSync(OPTIN_STATE_FILE, JSON.stringify({
-      progress:     _optinState.progress,
-      ignoredPaths: [..._optinState.ignoredPaths],
+      progress:           _optinState.progress,
+      ignoredPaths:       [..._optinState.ignoredPaths],
+      hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
     }, null, 2));
   } catch { /* non-fatal */ }
 }
@@ -2953,7 +3052,9 @@ function scanInventoryFiles() {
   for (const name of entries) {
     const m = name.match(INVENTORY_FILENAME_RX);
     if (!m) continue;
-    const character = m[1];
+    // Normalise to PascalCase — EQ filenames can come in mixed casing
+    // (hitya / HITYA / Hitya); display as 'Hitya' for consistency.
+    const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
     const fullPath = path.join(dir, name);
     try {
       const stat = fs.statSync(fullPath);
@@ -3001,7 +3102,8 @@ function _scanOptInFiles() {
     const alreadyWatched = stats.watchedLogs.some(w => w.logPath === fullPath);
     if (alreadyWatched && !altM) continue;  // show alt files even if somehow watched
 
-    const char = match[1];
+    // Normalise to PascalCase so 'hitya', 'HITYA', and 'Hitya' all group together
+    const char = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
     let sizeMb = 0, sizeBytes = 0, mtime = null;
     try {
       const st = fs.statSync(fullPath);
@@ -4490,7 +4592,14 @@ async function main() {
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
-        if (chatMsg) { chatBuffer.push(chatMsg); return; }
+        if (chatMsg) {
+          // Anyone speaking in guild/raid chat is, by definition, a player —
+          // add to the whitelist so their incoming damage / deaths show up on
+          // the Tank dashboard (NPCs never use /gu or /rs).
+          confirmPlayer(chatMsg.speaker);
+          chatBuffer.push(chatMsg);
+          return;
+        }
 
         // ── Normal combat filter ───────────────────────────────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
