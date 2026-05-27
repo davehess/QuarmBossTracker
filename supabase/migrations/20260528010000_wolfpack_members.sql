@@ -33,6 +33,11 @@ CREATE INDEX IF NOT EXISTS wolfpack_members_is_member_idx ON wolfpack_members (i
 -- key with this policy to scope to the signed-in user.
 ALTER TABLE wolfpack_members ENABLE ROW LEVEL SECURITY;
 
+-- Without this GRANT the RLS policy never engages — PostgREST returns 0
+-- rows even for the row's owner. Combined with the policy below, the
+-- effective access is "your own row, nothing else".
+GRANT SELECT ON wolfpack_members TO authenticated;
+
 DROP POLICY IF EXISTS wolfpack_members_self_read ON wolfpack_members;
 CREATE POLICY wolfpack_members_self_read
   ON wolfpack_members

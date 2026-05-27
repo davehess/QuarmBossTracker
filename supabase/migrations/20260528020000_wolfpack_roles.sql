@@ -22,6 +22,8 @@ CREATE INDEX IF NOT EXISTS wolfpack_roles_name_idx ON wolfpack_roles (name);
 -- app to resolve names without needing the service role key on every page.
 ALTER TABLE wolfpack_roles ENABLE ROW LEVEL SECURITY;
 
+GRANT SELECT ON wolfpack_roles TO anon, authenticated;
+
 DROP POLICY IF EXISTS wolfpack_roles_public_read ON wolfpack_roles;
 CREATE POLICY wolfpack_roles_public_read
   ON wolfpack_roles
