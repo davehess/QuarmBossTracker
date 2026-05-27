@@ -131,16 +131,18 @@ Privacy:
 // (everything after the timestamp). EncounterBuilder.add() iterates this list.
 const SOURCELESS_SPELLS = [
   {
-    name:     'Dirge of the Sleepwalker',
+    // Lvl 30 bard direct-damage song. Cast: "You throw your head back and
+    // moan a desperate dirge." Damage delivered on next server tick as a
+    // generic "X was hit by non-melee for N" line with no caster attribution.
+    name:     "Denon`s Desperate Dirge",
     class:    'Bard',
     castSelf: /\]\s+You\s+throw\s+your\s+head\s+back\s+and\s+moan\s+a\s+desperate\s+dirge\./i,
     tickMs:   7000,
   },
   {
-    // "Let loose a piercing blast" is shared flavor for multiple bard dirges
-    // (Piercing/Imploring/Ervaj`s/Pied Piper variants). When we can't easily
-    // differentiate by tick damage we lump them under one label.
-    name:     'Piercing Dirge',
+    // "Let loose a piercing blast" — exact spell name not yet confirmed (likely
+    // a higher-level bard DD). Placeholder label until verified in-game.
+    name:     'Dirge (piercing blast)',
     class:    'Bard',
     castSelf: /\]\s+You\s+throw\s+your\s+head\s+back\s+and\s+let\s+loose\s+a\s+piercing\s+blast\./i,
     tickMs:   7000,
@@ -283,6 +285,10 @@ const KEEP_PATTERNS = [
   // so the EncounterBuilder can attribute the next "was hit by non-melee" to
   // the bard's specific dirge (damage lands 3-6s later on the server tick).
   /\byou\s+throw\s+your\s+head\s+back\s+and/i,
+  // Avoidance / miss lines — "X tries to <verb> Y, but misses!" / "but Y dodges!" etc.
+  // Needed for tanking stats (avoidance %, hits-taken, accuracy). The parseEvent
+  // handler classifies each into miss/dodge/parry/riposte/block/invulnerable.
+  /\b(?:tries|try)\s+to\s+\w+\s+.+?,\s+but\s+/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -412,6 +418,44 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+(.+?)\s+hit\s+(.+?)\s+for\s+(\d+)\s+points?\s+of\s+non-melee\s+damage/i);
   if (m) {
     return { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: 'non-melee', amount: parseInt(m[3], 10) };
+  }
+
+  // ── Avoidance / accuracy ──────────────────────────────────────────────────
+  // Every "X tries to <verb> Y, but ..." line tells us either an attacker missed
+  // or a defender avoided via dodge / parry / riposte / block. We emit a single
+  // 'avoid' event type with a `kind` discriminator; aggregation downstream
+  // computes avoidance% per defender and accuracy% per attacker.
+  //
+  // First-person attacker:  "You try to slash X, but X parries!"  /  "but miss!"
+  // Third-person:           "<Name> tries to slash X, but X dodges!"  /  "but misses!"
+  //
+  // Reason text variants (case-insensitive match on key word):
+  //   miss / misses                → miss
+  //   dodges                       → dodge
+  //   parries                      → parry
+  //   ripostes                     → riposte
+  //   blocks (with their shield)?  → block
+  //   is INVULNERABLE              → invulnerable
+  function _classifyAvoid(reasonText) {
+    const r = String(reasonText || '').toLowerCase();
+    if (/\bdodge/.test(r))         return 'dodge';
+    if (/\bparr/.test(r))          return 'parry';
+    if (/\bripost/.test(r))        return 'riposte';
+    if (/\bblock/.test(r))         return 'block';
+    if (/\binvulnerable/.test(r))  return 'invulnerable';
+    return 'miss';
+  }
+
+  // First-person: "You try to <verb> X, but ..."
+  m = line.match(new RegExp(`\\]\\s+You\\s+try\\s+to\\s+${ATTACK_VERBS_RX}\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
+  if (m) {
+    return { ts: tsIso, type: 'avoid', attacker: null /* self */, defender: m[1], kind: _classifyAvoid(m[2]) };
+  }
+
+  // Third-person: "<Name> tries to <verb> X, but ..."
+  m = line.match(new RegExp(`\\]\\s+(.+?)\\s+tries\\s+to\\s+${ATTACK_VERBS_RX}\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
+  if (m) {
+    return { ts: tsIso, type: 'avoid', attacker: m[1], defender: m[2], kind: _classifyAvoid(m[3]) };
   }
 
   // "X has taken N (points of) damage." (generic DoT tick — no source mentioned)
@@ -589,7 +633,37 @@ class EncounterBuilder {
     this.lastEvent  = null;
     this.targets    = new Map(); // defender → total damage dealt to it
     this.bossName   = null;
+    // Defender stats: per-target tanking + accuracy data, scoped to this encounter.
+    // defenderStats[name] = { hits, damageTaken, dodges, parries, ripostes, blocks, misses, invulns }
+    // Keyed by exact name as it appears in the log. Tanks have many entries against
+    // them; NPCs being attacked also accumulate so we get DPS-side accuracy too.
+    this.defenderStats = new Map();
+    // Healer totals: heal-source name → { healed, ticks, targets:Set<name> }
+    // Captured from "X has been healed by Y for N points" lines. Lets the
+    // server build heal leaderboards without re-scanning every event.
+    this.healerStats   = new Map();
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
+  }
+  _bumpDefender(name, key, amount) {
+    if (!name) return;
+    if (!this.defenderStats.has(name)) {
+      this.defenderStats.set(name, {
+        hits: 0, damageTaken: 0,
+        misses: 0, dodges: 0, parries: 0, ripostes: 0, blocks: 0, invulns: 0,
+      });
+    }
+    const s = this.defenderStats.get(name);
+    s[key] = (s[key] || 0) + (amount || 1);
+  }
+  _bumpHealer(healer, target, amount) {
+    if (!healer || !amount) return;
+    if (!this.healerStats.has(healer)) {
+      this.healerStats.set(healer, { healed: 0, ticks: 0, targets: new Set() });
+    }
+    const s = this.healerStats.get(healer);
+    s.healed += amount;
+    s.ticks  += 1;
+    if (target) s.targets.add(target);
   }
   add(event) {
     if (!event) return;
@@ -655,6 +729,35 @@ class EncounterBuilder {
     if (event.type === 'damage' && event.defender && !/^you$/i.test(event.defender)) {
       this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
     }
+
+    // Per-defender stats — feeds tanking analytics (avoidance %, damage taken,
+    // accuracy of incoming hits). Normalise "You"/"YOU" to the uploader so we
+    // can compare incoming damage across parsers cleanly.
+    if (event.type === 'damage' && event.defender) {
+      const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
+      this._bumpDefender(def, 'hits',        1);
+      this._bumpDefender(def, 'damageTaken', event.amount || 0);
+    }
+    if (event.type === 'avoid' && event.defender) {
+      const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
+      const k = event.kind || 'miss';
+      const col = k === 'miss' ? 'misses'
+                : k === 'dodge' ? 'dodges'
+                : k === 'parry' ? 'parries'
+                : k === 'riposte' ? 'ripostes'
+                : k === 'block' ? 'blocks'
+                : k === 'invulnerable' ? 'invulns'
+                : null;
+      if (col) this._bumpDefender(def, col, 1);
+    }
+    // Healer totals — every "X has been healed by Y for N" line. First-person
+    // ("You heal X for N") would need a separate parseEvent pattern; for now we
+    // capture third-person heals which cover most CH-chain visibility from
+    // non-cleric perspectives.
+    if (event.type === 'heal' && (event.attacker || this.character)) {
+      const healer = event.attacker || this.character;
+      this._bumpHealer(healer, event.defender, event.amount || 0);
+    }
     if (event.type === 'death' && event.defender && !/^you$/i.test(event.defender)) {
       // If we just killed the most-damaged target, end the encounter
       let top = null, topDmg = -1;
@@ -708,6 +811,19 @@ class EncounterBuilder {
         // Server upserts into state.whoData so class/level/guild is available for
         // /parsestats embeds and /whois lookups even for non-guildies.
         who_data:    whoData.size > 0 ? Array.from(whoData.values()) : undefined,
+        // Per-defender stats — hits-taken, damage-taken, dodges/parries/ripostes/blocks/misses.
+        // Server uses this to build tanking leaderboards and incoming-accuracy analytics
+        // without having to re-aggregate the raw event stream.
+        defenders:   this.defenderStats.size > 0
+          ? [...this.defenderStats.entries()].map(([name, s]) => ({ name, ...s }))
+          : undefined,
+        // Heal totals per healer — { name, healed, ticks, targets: [name, ...] }.
+        // Lets the server build healer leaderboards (CH-chain visibility especially).
+        healers:     this.healerStats.size > 0
+          ? [...this.healerStats.entries()].map(([name, s]) => ({
+              name, healed: s.healed, ticks: s.ticks, targets: [...s.targets]
+            }))
+          : undefined,
         events:      this.events,
       },
     };
