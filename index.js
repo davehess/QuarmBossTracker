@@ -2151,6 +2151,14 @@ function getChatThreadId(channel, eraKey) {
   return process.env[envName] || null;
 }
 
+// "Current era" = whatever era we're in right now (based on system clock).
+// Messages from the current era go to the main channel, NOT the era thread.
+// When the next era starts, old current-era content stops posting to main and
+// starts routing to its reserved thread automatically.
+function getCurrentEra() {
+  return getEraForTimestamp(Date.now());
+}
+
 async function _handleAgentChat(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -2210,12 +2218,17 @@ async function _handleAgentChat(req, res) {
     const { channel, speaker, text, ts: msgTs, who: uploadedWho } = msg || {};
     if (!channel || !speaker || !text) continue;
 
-    // Era-aware routing: pick the era thread for this message's timestamp.
-    // If no era thread is configured, fall back to the main channel.
+    // Era-aware routing:
+    //   - Messages from the CURRENT era go to the main channel (in order)
+    //   - Messages from PAST eras go to that era's reserved thread
+    // When a new era starts, today's "current" becomes yesterday's past and its
+    // content automatically routes to the matching era thread.
     const era       = getEraForTimestamp(msgTs);
-    const threadId  = getChatThreadId(channel, era.key);
+    const current   = getCurrentEra();
     const fallback  = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
-    const channelId = threadId || fallback;
+    const channelId = era.key === current.key
+      ? fallback                                          // current era → main channel
+      : (getChatThreadId(channel, era.key) || fallback);  // past era → thread (or main if unset)
     if (!channelId) continue; // channel not configured — silently skip
 
     // Dedup: same speaker + text within 5s = multiple parsers saw same line
