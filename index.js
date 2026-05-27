@@ -88,6 +88,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
+  const { startWolfpackMembersSync } = require('./utils/wolfpackMembers');
+  startWolfpackMembersSync(readyClient);
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 });
 
