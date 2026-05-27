@@ -1199,19 +1199,24 @@ function recordEventForDashboard(event, character) {
     when:     Date.now(),
   };
 
-  const list   = isMine ? stats.topDamageDid : stats.topDamageSaw;
+  // topDamageSaw = highest hit from ANY source this session (including self).
+  // topDamageDid = highest hit from the uploader only.
+  // This way solo encounters still populate the left column.
+  const lists = isMine
+    ? [stats.topDamageDid, stats.topDamageSaw]   // mine → both columns
+    : [stats.topDamageSaw];                        // others → left column only
 
-  // Dedupe by attacker — one row per player, keep their highest hit. Without
-  // this the same player's repeat crits stacked up and pushed everyone else
-  // off the top-5 list.
-  const existingIdx = list.findIndex(e => e.attacker.toLowerCase() === attacker.toLowerCase());
-  if (existingIdx >= 0) {
-    if (event.amount > list[existingIdx].amount) list[existingIdx] = item;
-  } else {
-    list.push(item);
+  for (const list of lists) {
+    // Dedupe by attacker — one row per player, keep their highest hit.
+    const existingIdx = list.findIndex(e => e.attacker.toLowerCase() === attacker.toLowerCase());
+    if (existingIdx >= 0) {
+      if (event.amount > list[existingIdx].amount) list[existingIdx] = item;
+    } else {
+      list.push(item);
+    }
+    list.sort((a, b) => b.amount - a.amount);
+    if (list.length > 5) list.length = 5;
   }
-  list.sort((a, b) => b.amount - a.amount);
-  if (list.length > 5) list.length = 5;
 }
 
 function recordUploadForDashboard(payload, character) {
