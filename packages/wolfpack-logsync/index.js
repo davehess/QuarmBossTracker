@@ -1321,6 +1321,9 @@ const stats = {
   // currentEncounterThreat: live threat snapshot for the active encounter
   // (null when no fight is active). { bossName, startedAt, perPlayer: { name: { swing, proc, spell, heal, total } } }
   currentEncounterThreat: null,
+  // characterInventories: parsed /output inventory files for each known character.
+  // { [characterName]: { weapons: { primary, secondary, range, ammo }, worn: {...}, _updatedAt, _path } }
+  characterInventories: {},
   requestedCharacters:  [],         // characters the server needs for parse completeness
   lastUploadAt:    null,
   lifetime: {                     // persisted across restarts
@@ -1538,6 +1541,7 @@ function _serializeForDashboard() {
     updateAvailable:    stats.updateAvailable,
     latestAgentVersion: stats.latestAgentVersion,
     currentEncounterThreat: stats.currentEncounterThreat,
+    characterInventories:   stats.characterInventories,
     requestedCharacters: stats.requestedCharacters,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
@@ -1760,6 +1764,39 @@ function renderTanks(s) {
            '<td class="dim" style="font-size:11px">' + procs + '</td></tr>';
     }
     h += '</table></div>';
+  }
+
+  // ── Character loadouts — parsed from <Char>-Inventory.txt files in EQ dir
+  const invs = Object.entries(s.characterInventories || {});
+  if (invs.length > 0) {
+    h += '<div class="card wide"><h2>🗡️ Weapon Loadouts</h2>';
+    h += '<div class="subtle">Parsed from <code>/output inventory</code> files in the EQ directory. ' +
+         'Phase 2: cross-reference item IDs with proc DB for theoretical TPS.</div>';
+    h += '<table style="margin-top:6px">' +
+         '<tr><th>Character</th><th>Primary</th><th>Secondary</th><th>Range</th><th>Updated</th></tr>';
+    for (const [char, inv] of invs.sort((a, b) => a[0].localeCompare(b[0]))) {
+      const pqdiLink = (item) => {
+        if (!item) return '<span class="dim">—</span>';
+        if (item.id) return '<a href="https://www.pqdi.cc/item/' + item.id + '" target="_blank" style="color:var(--blue)">' + esc(item.name) + '</a>';
+        return esc(item.name);
+      };
+      const updatedAgo = inv._updatedAt
+        ? Math.floor((Date.now() - new Date(inv._updatedAt).getTime()) / 86400000)
+        : null;
+      const updatedStr = updatedAgo === null ? '?'
+        : updatedAgo < 1 ? 'today'
+        : updatedAgo < 30 ? updatedAgo + 'd ago'
+        : updatedAgo + 'd ago';
+      h += '<tr><td class="name">' + esc(char) + '</td>' +
+           '<td>' + pqdiLink(inv.weapons?.primary)   + '</td>' +
+           '<td>' + pqdiLink(inv.weapons?.secondary) + '</td>' +
+           '<td>' + pqdiLink(inv.weapons?.range)     + '</td>' +
+           '<td class="dim">' + updatedStr + '</td></tr>';
+    }
+    h += '</table>';
+    h += '<div class="subtle" style="margin-top:6px">Tip: run <code>/output inventory</code> in-game to refresh. ' +
+         'Files are auto-detected from <code>' + esc(invs[0][1]._path?.split(/[/\\\\]/).slice(0, -1).join('\\\\') || '') + '</code></div>';
+    h += '</div>';
   }
 
   const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
@@ -2674,6 +2711,85 @@ function _saveOptInState() {
       ignoredPaths: [..._optinState.ignoredPaths],
     }, null, 2));
   } catch { /* non-fatal */ }
+}
+
+// ── Inventory file ingestion ──────────────────────────────────────────────
+// EQ's /output inventory command writes <Character>-Inventory.txt to the EQ
+// install dir. Tab-separated columns: Location, Name, ID, Count, Slots.
+// We extract weapon slots (Primary/Secondary/Range/Ammo) for the threat
+// calculator — Phase 2 will join item IDs against a weapon DB (DMG/Delay/proc)
+// to model theoretical TPS, but for now even just knowing the names is useful
+// for the dashboard.
+//
+// We refresh on startup and every 5 minutes — inventories don't change often
+// but we want to catch when a tank swaps weapons mid-session.
+
+const INVENTORY_FILENAME_RX = /^([A-Za-z]+)-Inventory\.txt$/i;
+const INVENTORY_WEAPON_SLOTS = new Set(['Primary', 'Secondary', 'Range', 'Ammo']);
+// Container slots we also pull so future expansion can show bags.
+const INVENTORY_WORN_SLOTS = new Set([
+  'Charm','Ear','Head','Face','Neck','Shoulders','Arms','Back','Wrist','Range',
+  'Hands','Primary','Secondary','Fingers','Chest','Legs','Feet','Waist','Power Source','Ammo',
+]);
+
+function parseInventoryFile(text) {
+  const inv = { worn: {}, weapons: {} };
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line) continue;
+    // Skip header — first column is literally 'Location'
+    if (/^Location\b/i.test(line)) continue;
+    const cols = line.split('\t');
+    if (cols.length < 2) continue;
+    const loc      = (cols[0] || '').trim();
+    const itemName = (cols[1] || '').trim();
+    const itemId   = parseInt(cols[2], 10);
+    const count    = parseInt(cols[3], 10) || 1;
+    if (!loc || !itemName || itemName === '-' || itemName.toLowerCase() === 'empty') continue;
+
+    const entry = { name: itemName, id: Number.isFinite(itemId) ? itemId : null, count };
+    if (INVENTORY_WEAPON_SLOTS.has(loc)) {
+      inv.weapons[loc.toLowerCase()] = entry;
+    }
+    if (INVENTORY_WORN_SLOTS.has(loc)) {
+      inv.worn[loc] = entry;
+    }
+  }
+  return inv;
+}
+
+function scanInventoryFiles() {
+  // Scan the same directory the live logs are in — EQ writes inventories there.
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return {};
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return {}; }
+
+  const out = {};
+  for (const name of entries) {
+    const m = name.match(INVENTORY_FILENAME_RX);
+    if (!m) continue;
+    const character = m[1];
+    const fullPath = path.join(dir, name);
+    try {
+      const stat = fs.statSync(fullPath);
+      const text = fs.readFileSync(fullPath, 'utf8');
+      const inv  = parseInventoryFile(text);
+      inv._path      = fullPath;
+      inv._updatedAt = stat.mtime.toISOString();
+      inv._sizeBytes = stat.size;
+      out[character] = inv;
+    } catch (err) {
+      // skip unreadable files
+    }
+  }
+  return out;
+}
+
+function refreshInventories() {
+  try { stats.characterInventories = scanInventoryFiles(); }
+  catch { /* non-fatal */ }
 }
 
 function _scanOptInFiles() {
@@ -3968,6 +4084,12 @@ async function main() {
     stats._sessionRestoredBanner = true;
     stats._sessionRestoredAt     = Date.now();
   }
+
+  // Inventory scan — pick up any <Char>-Inventory.txt files in the log dir
+  // so tanks' weapon loadouts can be surfaced + (Phase 2) cross-referenced
+  // against a proc database for theoretical TPS.
+  refreshInventories();
+  setInterval(refreshInventories, 5 * 60_000);
 
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter
