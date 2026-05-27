@@ -1727,7 +1727,7 @@ function renderHeader(s) {
     try { await fetch('/api/update', { method: 'POST' }); } catch {}
     document.body.insertAdjacentHTML('afterbegin',
       '<div class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
-      'Restarting agent... this page will reload automatically once it\\'s back up.</div>');
+      'Restarting agent... this page will reload automatically once the server is back up.</div>');
     // Poll until the server comes back
     let tries = 0;
     const t = setInterval(async () => {
@@ -2110,7 +2110,7 @@ function renderOptin(o) {
   // File table
   h += '<table><tr><th></th><th>Character</th><th>File</th><th>Size</th><th>Modified</th><th>Resume</th></tr>';
   for (const f of list) {
-    const fname = f.path.split(/[/\\]/).pop();
+    const fname = f.path.split(/[/\\\\]/).pop();
     const nameColor = f.requested ? 'var(--blue)' : (f.isAlt ? 'var(--dim)' : 'var(--orange)');
     const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
     const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
