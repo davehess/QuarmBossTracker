@@ -59,7 +59,7 @@ After first run the repo copy is no longer needed. Everything (`Parser.bat`, `st
 
 **What gets watched:** any `eqlog_*_pq.proj.txt` modified in the last 30 days. Characters active in the last hour show in green with `*`. Idle log files sit at zero cost until that character logs in.
 
-**Privacy:** all filtering is local. Officer chat, tells, guild chat, and custom channels are dropped before any upload. Only combat events from detected boss encounters are sent.
+**Privacy:** all filtering is local. Officer chat, tells, group chat, and custom channels are dropped before any upload — they never leave your machine. Guild chat (`/gu`) and raid chat (`/rs`) are forwarded to read-only Discord channels (`#in-game-guild-chat`, `#in-game-raid-chat`). Only combat events from detected boss encounters are uploaded to the parse endpoint.
 
 **Flags** (pass via `start-logsync.ps1` directly if needed):
 
