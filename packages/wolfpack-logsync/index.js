@@ -1354,7 +1354,7 @@ function renderDashboard() {
   // Top damage rows — short ASCII format, one entry per attacker.
   //   "Player         123  Spell - ability"
   out.push(`  ${C.bold}${C.yellow}Top damage I saw${C.reset}${' '.repeat(LCOL - 16)}  ${C.bold}${C.yellow}Top damage I did${C.reset}\n`);
-  const damRows = Math.max(stats.topDamageSaw.length, stats.topDamageDid.length, 2);
+  const damRows = Math.max(stats.topDamageSaw.length, stats.topDamageDid.length, 5);
   const fmtDamageRow = (e) => {
     if (!e) return `${C.dim}(none yet)${C.reset}`;
     const kind    = e.label.replace(' Crit', '');
@@ -1369,16 +1369,7 @@ function renderDashboard() {
   }
   out.push('\n');
 
-  // Stats lines
-  const sessionMin = Math.max(1, Math.round((Date.now() - stats.startedAt) / 60000));
-  const lifetimeMin = stats.lifetime.totalMinutes + sessionMin;
-  out.push(`  ${C.dim}This session:${C.reset} ${C.bold}${stats.sessionEvents}${C.reset} events in ${C.bold}${sessionMin}${C.reset} min`);
-  out.push(`     ${C.dim}Top session:${C.reset} ${C.bold}${stats.lifetime.topSessionEvents}${C.reset} ev / ${C.bold}${stats.lifetime.topSessionMinutes}${C.reset} min`);
-  out.push(`     ${C.dim}Lifetime:${C.reset} ${C.bold}${stats.lifetime.totalEvents + stats.sessionEvents}${C.reset} ev / ${C.bold}${lifetimeMin}${C.reset} min\n`);
-  out.push(`  ${C.dim}/who unique:${C.reset}  ${C.bold}${whoData.size}${C.reset} characters observed this session ${C.dim}(lv5+ only)${C.reset}\n`);
-  out.push('\n');
-
-  out.push(`  ${C.cyan}[T]${C.reset} Tanks  ${C.gray}|${C.reset}  ${C.cyan}[H]${C.reset} Healers  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}|${C.reset}  ${C.cyan}[U]${C.reset} Update  ${C.gray}|${C.reset}  ${C.cyan}[K]${C.reset} Token  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  out.push(`  ${C.cyan}[T]${C.reset} Tanks  ${C.gray}|${C.reset}  ${C.cyan}[H]${C.reset} Healers  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info / Stats  ${C.gray}|${C.reset}  ${C.cyan}[U]${C.reset} Update  ${C.gray}|${C.reset}  ${C.cyan}[K]${C.reset} Token  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -1514,12 +1505,19 @@ function setupKeypressHandler() {
 
 function showInfo() {
   const out = [];
+  const sessionMin  = Math.max(1, Math.round((Date.now() - stats.startedAt) / 60000));
+  const lifetimeMin = stats.lifetime.totalMinutes + sessionMin;
+
   out.push(`\n${C.bold}${C.cyan}Parser info${C.reset}\n`);
+  out.push(`  ${C.dim}This session:${C.reset} ${C.bold}${stats.sessionEvents}${C.reset} events in ${C.bold}${sessionMin}${C.reset} min`);
+  out.push(`     ${C.dim}Top session:${C.reset} ${C.bold}${stats.lifetime.topSessionEvents}${C.reset} ev / ${C.bold}${stats.lifetime.topSessionMinutes}${C.reset} min`);
+  out.push(`     ${C.dim}Lifetime:${C.reset} ${C.bold}${stats.lifetime.totalEvents + stats.sessionEvents}${C.reset} ev / ${C.bold}${lifetimeMin}${C.reset} min\n`);
+  out.push(`  ${C.dim}/who unique:${C.reset}  ${C.bold}${whoData.size}${C.reset} characters observed this session ${C.dim}(lv5+ only)${C.reset}\n`);
+  out.push('\n');
   out.push(`  Agent version: ${C.bold}${AGENT_VERSION}${C.reset}\n`);
   out.push(`  Stats file:    ${STATS_FILE}\n`);
   out.push(`  Uploads this session: ${stats.uploadCount} (${stats.uploadErrors} errors)\n`);
   out.push(`  Watched logs:  ${stats.watchedLogs.length}\n`);
-  out.push(`  /who unique (lv5+, this session): ${whoData.size} characters\n`);
   out.push(`  Known pets this session: ${knownPetOwners.size}\n`);
   out.push(`  Lifetime first seen: ${stats.lifetime.firstSeenAt}\n`);
 
