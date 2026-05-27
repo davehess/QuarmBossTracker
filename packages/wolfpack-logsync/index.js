@@ -76,6 +76,7 @@ function parseArgs(argv) {
     else if (a === '--character') out.flags.character = argv[++i];
     else if (a === '--config')    out.flags.config = argv[++i];
     else if (a === '--web-port')  out.flags.webPort = parseInt(argv[++i], 10) || 7777;
+    else if (a === '--no-service-check') out.flags.noServiceCheck = true;
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
     else if (a === '--version') { console.log(AGENT_VERSION); process.exit(0); }
     else console.warn(`[warn] unknown arg: ${a}`);
@@ -288,6 +289,12 @@ const KEEP_PATTERNS = [
   // Needed for tanking stats (avoidance %, hits-taken, accuracy). The parseEvent
   // handler classifies each into miss/dodge/parry/riposte/block/invulnerable.
   /\bgoes on a RAMPAGE against\b/i,               // rampage announcements
+  // Monk mend skill outcomes — counted on the dashboard for Monk players.
+  // "You mend your wounds and heal some damage." / "considerable damage." (crit)
+  // "You magically mend your wounds and heal..." (alternate phrasing)
+  // "You fail to mend your wounds." (failed attempt)
+  /\byou\s+(?:magically\s+)?mend\s+your\s+wounds/i,
+  /\byou\s+(?:try\s+to\s+|fail\s+to\s+)?mend\s+your\s+wounds/i,
   /\b(?:tries|try)\s+to\s+\w+\s+.+?,\s+but\s+/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
@@ -427,6 +434,19 @@ function parseEvent(line, ts) {
   // 'rampage' event; EncounterBuilder records the hit against the named target.
   m = line.match(/\]\s+(.+?)\s+goes on a RAMPAGE against\s+(.+?)!/i);
   if (m) return { ts: tsIso, type: 'rampage', attacker: m[1], defender: m[2] };
+
+  // ── Monk Mending Skill ───────────────────────────────────────────────────
+  // EQ Monk's "Mending" self-heal — three possible outcomes:
+  //   "You mend your wounds and heal considerable damage." → critical mend
+  //   "You mend your wounds and heal some damage."         → regular success
+  //   "You fail to mend your wounds."                       → failed attempt
+  // ("magically" prefix may appear on crits — match permissively)
+  if (/\]\s+You\s+(?:magically\s+)?mend\s+your\s+wounds\s+and\s+heal\s+considerable\s+damage/i.test(line))
+    return { ts: tsIso, type: 'mend', outcome: 'crit' };
+  if (/\]\s+You\s+(?:magically\s+)?mend\s+your\s+wounds\s+and\s+heal\s+some\s+damage/i.test(line))
+    return { ts: tsIso, type: 'mend', outcome: 'regular' };
+  if (/\]\s+You\s+(?:try\s+to\s+|fail\s+to\s+)?mend\s+your\s+wounds(?![\s,]+and)/i.test(line))
+    return { ts: tsIso, type: 'mend', outcome: 'fail' };
 
   // ── Avoidance / accuracy ──────────────────────────────────────────────────
   // Every "X tries to <verb> Y, but ..." line tells us either an attacker missed
@@ -743,6 +763,17 @@ class EncounterBuilder {
     }
 
     // ── Rampage handling ──────────────────────────────────────────────────────
+    // ── Monk Mend ────────────────────────────────────────────────────────────
+    // Counter-only event — not added to this.events, doesn't gate startedAt.
+    // Crit rate is a per-character session stat surfaced on the Info screen.
+    if (event.type === 'mend') {
+      stats.sessionMends.attempts++;
+      if (event.outcome === 'crit')        { stats.sessionMends.crit++;    stats.sessionMends.success++; }
+      else if (event.outcome === 'regular'){ stats.sessionMends.success++; }
+      else if (event.outcome === 'fail')   { stats.sessionMends.fail++; }
+      return;
+    }
+
     // "X goes on a RAMPAGE against Y!" — each line names both attacker and target.
     // We count this directly as a rampage hit on the named defender (no need for
     // a time-window approach since the target is explicit in the log line).
@@ -1175,6 +1206,9 @@ const stats = {
   // sessionDefenders: per-tank incoming-damage totals accumulated this session.
   // { defenderName: { damageTaken, hits, ripostes, ripostedFor } }
   sessionDefenders: {},
+  // sessionMends: Monk Mending skill counts — { attempts, success, crit, fail }
+  // Only the uploader's own mends are counted (mend lines start "You mend...").
+  sessionMends:    { attempts: 0, success: 0, crit: 0, fail: 0 },
   // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
   // { mobName: { [abilityName]: { count, totalDmg } } }
   sessionProcs:    {},
@@ -1211,6 +1245,62 @@ function loadStats() {
 const SESSION_FILE   = path.join(__dirname, 'logsync.session.json');
 const SESSION_TTL_MS = 10 * 60 * 1000;
 
+// ── PID/service file ───────────────────────────────────────────────────────
+// Written on startup when a process is going to act as the long-lived agent.
+// Lets a second invocation detect an existing service and either show its
+// dashboard or exit gracefully instead of double-tailing the same log files.
+const PID_FILE = path.join(__dirname, 'logsync.pid.json');
+
+function writePidFile(webPort) {
+  try {
+    fs.writeFileSync(PID_FILE, JSON.stringify({
+      pid:          process.pid,
+      webPort:      webPort || null,
+      startedAt:    new Date().toISOString(),
+      agentVersion: AGENT_VERSION,
+    }, null, 2));
+  } catch { /* non-fatal */ }
+}
+function removePidFile() {
+  try { fs.unlinkSync(PID_FILE); } catch {}
+}
+
+// Read PID file; return null if missing or stale (process no longer exists).
+function readActivePid() {
+  try {
+    if (!fs.existsSync(PID_FILE)) return null;
+    const raw = JSON.parse(fs.readFileSync(PID_FILE, 'utf8'));
+    if (!raw.pid) return null;
+    // process.kill(pid, 0) throws if the process is dead — that's the probe.
+    try { process.kill(raw.pid, 0); }
+    catch { removePidFile(); return null; }
+    return raw;
+  } catch { return null; }
+}
+
+// Probe the existing service's web dashboard to confirm it's our agent and
+// not a random process that happens to own the PID.
+async function probeWebDashboard(port) {
+  return new Promise((resolve) => {
+    if (!port) return resolve(false);
+    const req = http.request({
+      hostname: '127.0.0.1', port, path: '/api/state', method: 'GET', timeout: 1500,
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          resolve(!!(j && j.version));
+        } catch { resolve(false); }
+      });
+    });
+    req.on('error',   () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+}
+
 function saveSessionState() {
   try {
     // healerStats has Set fields; abilityStats is a Map. JSON-encode each.
@@ -1236,6 +1326,7 @@ function saveSessionState() {
       sessionHealers:     healersOut,
       sessionProcs:       stats.sessionProcs,
       sessionDeaths:      stats.sessionDeaths,
+      sessionMends:       stats.sessionMends,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       uploadCount:        stats.uploadCount,
       uploadErrors:       stats.uploadErrors,
@@ -1266,6 +1357,7 @@ function loadSessionState() {
     if (raw.sessionDefenders)   stats.sessionDefenders   = raw.sessionDefenders;
     if (raw.sessionProcs)       stats.sessionProcs       = raw.sessionProcs;
     if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
+    if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
     if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
     if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
     if (raw.lastUploadAt)       stats.lastUploadAt       = raw.lastUploadAt;
@@ -1318,6 +1410,7 @@ function _serializeForDashboard() {
     sessionHealers:     healersOut,
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
+    sessionMends:       stats.sessionMends,
     abilityStats:       Object.fromEntries(stats.abilityStats),
     watchedLogs:        stats.watchedLogs,
     uploadCount:        stats.uploadCount,
@@ -1518,7 +1611,20 @@ function renderPets(s) {
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   const lifetimeMin = (s.lifetime?.totalMinutes||0) + sessionMin;
-  let h = '<div class="grid"><div class="card"><h2>Parser Info</h2>';
+  let h = '<div class="grid">';
+  // 🥋 Monk Mending — only if attempts > 0
+  const m = s.sessionMends || {};
+  if (m.attempts > 0) {
+    const critPct = m.success > 0 ? Math.round(m.crit / m.success * 100) : 0;
+    const failPct = Math.round(m.fail / m.attempts * 100);
+    h += '<div class="card"><h2>🥋 Monk Mending</h2><table>' +
+         '<tr><td>Attempts</td><td class="num">' + m.attempts + '</td></tr>' +
+         '<tr><td>Successful</td><td class="num">' + m.success + '</td></tr>' +
+         '<tr><td>Critical</td><td class="num" style="color:var(--green)">' + m.crit + ' <span class="dim">(' + critPct + '% of successes)</span></td></tr>' +
+         '<tr><td>Failed</td><td class="num" style="color:var(--red)">' + m.fail + ' <span class="dim">(' + failPct + '% of attempts)</span></td></tr>' +
+         '</table></div>';
+  }
+  h += '<div class="card"><h2>Parser Info</h2>';
   h += '<div>Agent v' + esc(s.version) + '</div>';
   h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
   h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
@@ -1719,6 +1825,8 @@ const ANSI = {
   red:    '\x1b[31m',
   gray:   '\x1b[90m',
   white:  '\x1b[37m',
+  blue:   '\x1b[34m',
+  magenta:'\x1b[35m',
 };
 const C = ANSI; // shorthand
 
@@ -1835,7 +1943,7 @@ function renderDashboard() {
   const uHint = stats.updateAvailable
     ? `${C.bold}${C.yellow}[U] ★ UPDATE AVAILABLE — press to install${C.reset}`
     : `${C.cyan}[U]${C.reset} Update`;
-  out.push(`  ${C.cyan}[T]${C.reset} Tanks  ${C.gray}|${C.reset}  ${C.cyan}[H]${C.reset} Healers  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info / Stats  ${C.gray}|${C.reset}  ${uHint}  ${C.gray}|${C.reset}  ${C.cyan}[O]${C.reset} Opt-in logs  ${C.gray}|${C.reset}  ${C.cyan}[K]${C.reset} Token  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  out.push(`  ${C.cyan}[T]${C.reset} Tanks  ${C.gray}|${C.reset}  ${C.cyan}[H]${C.reset} Healers  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info / Stats  ${C.gray}|${C.reset}  ${uHint}  ${C.gray}|${C.reset}  ${C.cyan}[O]${C.reset} Opt-in logs  ${C.gray}|${C.reset}  ${C.bold}${C.green}[B]${C.reset} Background service  ${C.gray}|${C.reset}  ${C.cyan}[K]${C.reset} Token  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -1990,6 +2098,41 @@ function setupKeypressHandler() {
     if (key === 'i' || key === 'I') _enterView('info',    showInfo);
     if (key === 'p' || key === 'P') _enterView('pets',    showPets);
     if (key === 'o' || key === 'O') _enterView('optin',   showOptIn);
+    // [B] — detach into a background service and exit this window. The new
+    // process runs hidden (no cmd.exe window on Windows) and opens the web
+    // dashboard. Re-opening parser.bat will detect the running service and
+    // just show its dashboard URL instead of double-tailing.
+    // (Was [S] in v2.3.20 — moved to [B] so [S] is free for opt-in sort.)
+    if (key === 'b' || key === 'B') {
+      try { saveSessionState(); } catch {}
+      const { spawn } = require('child_process');
+      // Strip --web-port from original args (if present) and force one
+      const webPort = 7777;
+      const filteredArgs = [];
+      for (let i = 2; i < process.argv.length; i++) {
+        const a = process.argv[i];
+        if (a === '--web-port') { i++; continue; }      // drop value too
+        if (a === '--no-service-check') continue;
+        filteredArgs.push(a);
+      }
+      filteredArgs.push('--web-port', String(webPort));
+      filteredArgs.push('--no-service-check');           // child IS the service
+      try {
+        const child = spawn(process.execPath, [__filename, ...filteredArgs], {
+          detached:    true,
+          stdio:       'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+        process.stdout.write(`\n${ANSI.green}  ✓ Service started in background (pid ${child.pid})${ANSI.reset}\n`);
+        process.stdout.write(`  ${ANSI.cyan}Dashboard:${ANSI.reset} http://localhost:${webPort}\n`);
+        process.stdout.write(`  ${ANSI.dim}This window will close — reopen parser.bat anytime to see the dashboard URL.${ANSI.reset}\n`);
+        // Don't remove PID file — child will write its own. Give it a moment to register.
+        setTimeout(() => process.exit(0), 1500);
+      } catch (err) {
+        process.stdout.write(`\n${ANSI.red}  ✗ Could not start background service: ${err.message}${ANSI.reset}\n`);
+      }
+    }
   });
 }
 
@@ -2015,11 +2158,32 @@ const _optinState = {
   cursor:   0,
   pane:     'active',  // 'active' | 'ignored'
   scanned:  false,
+  // Sort mode for both panes — cycle with [S] in opt-in view
+  sortMode: 'date',    // 'date' | 'size' | 'alpha'
   // Per-file backfill progress (persisted): { [path]: { bytePos, totalBytes, lineNum, updatedAt, character } }
   progress: {},
   // Ignored file paths (persisted across runs)
   ignoredPaths: new Set(),
 };
+
+function _optinSortFn() {
+  // Requested files always float to the top; then by current sort mode.
+  const fns = {
+    date:  (a, b) => (b.mtime || 0) - (a.mtime || 0) || (b.sizeBytes || 0) - (a.sizeBytes || 0),
+    size:  (a, b) => (b.sizeBytes || 0) - (a.sizeBytes || 0) || (b.mtime || 0) - (a.mtime || 0),
+    alpha: (a, b) => a.character.toLowerCase().localeCompare(b.character.toLowerCase()),
+  };
+  const byMode = fns[_optinState.sortMode] || fns.date;
+  return (a, b) => {
+    if (a.requested !== b.requested) return a.requested ? -1 : 1;
+    return byMode(a, b);
+  };
+}
+function _resortOptIn() {
+  const fn = _optinSortFn();
+  _optinState.files.sort(fn);
+  _optinState.ignored.sort(fn);
+}
 
 function _loadOptInState() {
   try {
@@ -2088,15 +2252,7 @@ function _scanOptInFiles() {
     else                                         _optinState.files.push(file);
   }
 
-  // Sort active: requested first, then mtime desc (newest first), then size desc
-  const sortFn = (a, b) => {
-    if (a.requested !== b.requested) return a.requested ? -1 : 1;
-    const dt = (b.mtime || 0) - (a.mtime || 0);
-    if (dt) return dt;
-    return (b.sizeBytes || 0) - (a.sizeBytes || 0);
-  };
-  _optinState.files.sort(sortFn);
-  _optinState.ignored.sort(sortFn);
+  _resortOptIn();
   _optinState.scanned = true;
   _optinState.cursor  = 0;
 }
@@ -2141,6 +2297,14 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress) {
   });
 }
 
+function _fmtFileSize(bytes) {
+  if (!bytes || bytes < 1) return '0';
+  if (bytes < 1024)     return bytes + 'B';
+  if (bytes < 1048576)  return (bytes / 1024).toFixed(0) + 'KB';
+  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + 'MB';
+  return (bytes / 1073741824).toFixed(2) + 'GB';
+}
+
 function _fmtAgoDate(d) {
   if (!d) return '?';
   const days = Math.floor((Date.now() - d.getTime()) / 86400000);
@@ -2172,7 +2336,7 @@ function _renderOptinList(list, label, cursor, showResume) {
       // never started
     }
     out.push(`  ${cur}${sel} ${nameColor}${pad(f.character, 14)}${C.reset} ` +
-             `${C.dim}${pad(fname, 32)}${C.reset} ${pad(f.sizeMb + 'MB', 8)} ${pad(dateStr, 11)} ${resumeStr}${alt}\n`);
+             `${C.dim}${pad(fname, 32)}${C.reset} ${pad(_fmtFileSize(f.sizeBytes), 8)} ${pad(dateStr, 11)} ${resumeStr}${alt}\n`);
   });
   return out.join('');
 }
@@ -2181,7 +2345,7 @@ function showOptIn() {
   if (!_optinState.scanned) _scanOptInFiles();
 
   const out = [];
-  out.push(`${C.clear}\n${C.bold}${C.cyan}  Historical Log Opt-in — ${_optinState.pane === 'active' ? 'Active' : 'Ignored'} (${_optinState.pane === 'active' ? _optinState.files.length : _optinState.ignored.length})${C.reset}\n`);
+  out.push(`${C.clear}\n${C.bold}${C.cyan}  Historical Log Opt-in — ${_optinState.pane === 'active' ? 'Active' : 'Ignored'} (${_optinState.pane === 'active' ? _optinState.files.length : _optinState.ignored.length})${C.reset}   ${C.dim}sort: ${C.reset}${C.yellow}${_optinState.sortMode}${C.reset}\n`);
   out.push(`  ${C.dim}Chat-only backfill — no combat parses created from legacy logs. Files in ${C.blue}blue${C.reset}${C.dim} are requested by the bot.${C.reset}\n\n`);
 
   const list = _optinState.pane === 'active' ? _optinState.files : _optinState.ignored;
@@ -2192,9 +2356,9 @@ function showOptIn() {
   if (_optinState.pane === 'active') {
     out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[A]${C.reset} Select all  ${C.cyan}[X]${C.reset} Ignore highlighted  `);
     out.push(`${selCount > 0 ? `${C.bold}${C.green}[B]${C.reset} Backfill (${selCount})` : `${C.dim}[B] Backfill${C.reset}`}  `);
-    out.push(`${C.cyan}[V]${C.reset} View ignored (${_optinState.ignored.length})  ${C.cyan}[D]${C.reset} Back\n`);
+    out.push(`${C.cyan}[S]${C.reset} Sort (${_optinState.sortMode})  ${C.cyan}[V]${C.reset} View ignored (${_optinState.ignored.length})  ${C.cyan}[D]${C.reset} Back\n`);
   } else {
-    out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[R]${C.reset} Restore selected  ${C.cyan}[V]${C.reset} Back to active  ${C.cyan}[D]${C.reset} Back to dashboard\n`);
+    out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[R]${C.reset} Restore selected  ${C.cyan}[S]${C.reset} Sort (${_optinState.sortMode})  ${C.cyan}[V]${C.reset} Back to active  ${C.cyan}[D]${C.reset} Back\n`);
   }
 
   process.stdout.write(out.join(''));
@@ -2227,6 +2391,15 @@ function showOptIn() {
       }
       if (key === 'v' || key === 'V') {
         _optinState.pane  = _optinState.pane === 'active' ? 'ignored' : 'active';
+        _optinState.cursor = 0;
+        showOptIn(); return;
+      }
+      if (key === 's' || key === 'S') {
+        // Cycle the sort mode: date → size → alpha → date
+        const modes = ['date', 'size', 'alpha'];
+        const idx   = modes.indexOf(_optinState.sortMode);
+        _optinState.sortMode = modes[(idx + 1) % modes.length];
+        _resortOptIn();
         _optinState.cursor = 0;
         showOptIn(); return;
       }
@@ -2403,6 +2576,18 @@ function showInfo() {
     out.push(`\n${C.bold}${C.cyan}  🎵 Bard Songs (combined)${C.reset}\n`);
     out.push(`  ${C.dim}${bardEntries.length} song(s) tracked separately above — combined:${C.reset}\n`);
     out.push(`  ${pad('all dirges + chants', 36)} ${C.bold}${pad(fmtK(bardTotal), 8)}${C.reset} ${pad(String(bardHits), 6)} ${pad(fmtK(bardAvg), 7)}\n`);
+  }
+
+  // ── 🥋 Monk Mending — only shown if the uploader attempted at least one mend
+  const m = stats.sessionMends || {};
+  if (m.attempts > 0) {
+    const critPct  = m.success > 0 ? Math.round(m.crit / m.success * 100) : 0;
+    const failPct  = Math.round(m.fail / m.attempts * 100);
+    out.push(`\n${C.bold}${C.yellow}  🥋 Monk Mending (this session)${C.reset}\n`);
+    out.push(`  ${pad('Attempts', 14)} ${C.bold}${m.attempts}${C.reset}\n`);
+    out.push(`  ${pad('Successful', 14)} ${C.bold}${m.success}${C.reset} ${C.dim}(${m.attempts - m.fail - m.success === 0 ? '' : ''}${Math.round(m.success / m.attempts * 100)}%)${C.reset}\n`);
+    out.push(`  ${pad('Critical', 14)} ${C.bold}${C.green}${m.crit}${C.reset} ${C.dim}(${critPct}% of successful)${C.reset}\n`);
+    out.push(`  ${pad('Failed', 14)} ${C.bold}${C.red}${m.fail}${C.reset} ${C.dim}(${failPct}% of attempts)${C.reset}\n`);
   }
 
   // ── ☠️ Hall of Shame — session death scoreboard ────────────────────────────
@@ -3110,6 +3295,34 @@ async function main() {
     process.exit(1);
   }
 
+  // ── Single-instance check ─────────────────────────────────────────────────
+  // If a background service is already running, don't double-tail the logs —
+  // just point the user at the dashboard URL and exit. The check is skipped
+  // when started with --no-service-check (so the service spawn itself works).
+  if (!args.flags.noServiceCheck) {
+    const active = readActivePid();
+    if (active && active.pid !== process.pid) {
+      const live = active.webPort ? await probeWebDashboard(active.webPort) : false;
+      if (live) {
+        const url = `http://localhost:${active.webPort}`;
+        console.log(`\n  ${ANSI.green}✓ Service already running${ANSI.reset} (pid ${active.pid}, v${active.agentVersion}, since ${active.startedAt}).`);
+        console.log(`  ${ANSI.cyan}Dashboard:${ANSI.reset} ${url}`);
+        console.log(`  ${ANSI.dim}Feel free to close this window — the service keeps running in the background.${ANSI.reset}`);
+        console.log(`  ${ANSI.dim}To stop the service, kill pid ${active.pid} or delete logsync.pid.json.${ANSI.reset}\n`);
+        // Try to open the browser, then exit
+        try {
+          const opener = process.platform === 'win32' ? `start ${url}`
+                       : process.platform === 'darwin' ? `open ${url}`
+                       : `xdg-open ${url}`;
+          require('child_process').exec(opener);
+        } catch {}
+        process.exit(0);
+      }
+      // PID exists but web dashboard isn't responding — stale, clean it up
+      removePidFile();
+    }
+  }
+
   // Load optional config (custom drop patterns, etc.)
   let dropPatterns = DEFAULT_DROP_PATTERNS;
   let keepPatterns = KEEP_PATTERNS;
@@ -3146,6 +3359,11 @@ async function main() {
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
   if (args.flags.webPort) {
     startWebDashboard(args.flags.webPort);
+    writePidFile(args.flags.webPort);
+    // Best-effort cleanup so a stale PID doesn't block the next launch
+    process.on('exit',    () => removePidFile());
+    process.on('SIGINT',  () => { removePidFile(); process.exit(0); });
+    process.on('SIGTERM', () => { removePidFile(); process.exit(0); });
   }
   // Backstop save every 60s so a hard crash loses at most a minute.
   setInterval(() => {
