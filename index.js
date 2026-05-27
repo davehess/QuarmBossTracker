@@ -2334,17 +2334,33 @@ async function _handleAgentUpload(req, res) {
         let mergedPlayers, perspectives, newDuration, newTotalDamage, newTotalDps;
 
         if (withinWindow) {
-          // Merge: max damage per player wins across perspectives
+          // Two distinct merge semantics:
+          //   - Concurrent parsers (overlap): two views of the SAME fight → MAX damage per
+          //     player wins (each parser may have missed some events, the higher count is
+          //     more complete). Duration: take the longest observed window.
+          //   - Sequential kills (back-to-back, gap < 60s): SEPARATE fights of the same mob
+          //     → SUM damage per player (kill 1 + kill 2 = total) AND sum durations. This
+          //     makes 54 Shadel Bandit pulls aggregate into one accurate card instead of
+          //     each new pull overwriting the prior one because its single-fight damage
+          //     happened to be higher.
+          const isSequentialOnly = sequential && !overlaps;
           const merged = new Map(existing.players.map(p => [p.name.toLowerCase(), { ...p }]));
           for (const p of players) {
-            const k = p.name.toLowerCase();
+            const k   = p.name.toLowerCase();
             const cur = merged.get(k);
-            if (!cur || p.damage > cur.damage) merged.set(k, { ...p });
+            if (isSequentialOnly && cur) {
+              merged.set(k, {
+                ...cur,
+                damage:       (cur.damage       || 0) + (p.damage       || 0),
+                directDamage: (cur.directDamage || 0) + (p.directDamage || 0),
+                petDamage:    (cur.petDamage    || 0) + (p.petDamage    || 0),
+                hasPets:      cur.hasPets || p.hasPets,
+              });
+            } else if (!cur || p.damage > cur.damage) {
+              merged.set(k, { ...p });
+            }
           }
-          // For concurrent parsers (overlapping), use the longest duration — they watched the
-          // same fight and the longer window is more accurate. For sequential kills (back-to-back
-          // pulls), sum the durations — they're separate fights whose totals should add up.
-          newDuration    = sequential && !overlaps
+          newDuration = isSequentialOnly
             ? (existing.duration || 0) + duration
             : Math.max(existing.duration, duration);
           // Recalculate DPS for all merged players against the longest known fight duration

@@ -634,6 +634,11 @@ const stats = {
   sessionEvents:   0,             // cumulative events parsed this run
   sessionTotalDamage: 0,          // total damage across every parsed damage event
   sessionDamageBy: {},            // { attackerName: cumulativeDamage }
+  // abilityStats: per-ability totals for the UPLOADER ONLY — used by the info
+  // screen to show song/dirge/melee breakdowns. Mainly useful for bards who
+  // can otherwise only guess at how much each song is contributing.
+  // Map<abilityName, { count, total, lastSeen }>
+  abilityStats:    new Map(),
   uploadCount:     0,
   uploadErrors:    0,
   lastUploadAt:    null,
@@ -699,6 +704,21 @@ function recordEventForDashboard(event, character) {
   stats.sessionTotalDamage += event.amount;
   stats.sessionDamageBy[attacker] = (stats.sessionDamageBy[attacker] || 0) + event.amount;
 
+  // Per-ability totals for the info screen — UPLOADER ONLY.
+  // First-person events arrive with event.attacker===null (re-attributed to character).
+  // Third-person events from the same character are explicitly named.
+  // This catches: song DoTs ("from your Tuyen`s Chant of Frost"), dirges
+  // ("was hit by non-melee" with attacker=null), melee verbs, casts.
+  const isMine = (event.attacker === null) || (event.attacker === character);
+  if (isMine && event.amount > 0) {
+    const ability = event.ability || '(unknown)';
+    const cur = stats.abilityStats.get(ability) || { count: 0, total: 0 };
+    cur.count++;
+    cur.total += event.amount;
+    cur.lastSeen = Date.now();
+    stats.abilityStats.set(ability, cur);
+  }
+
   // Top-damage lists only track sizeable hits to keep entries meaningful.
   if (event.amount < 500) return;
 
@@ -711,7 +731,6 @@ function recordEventForDashboard(event, character) {
     when:     Date.now(),
   };
 
-  const isMine = (event.attacker === null) || (event.attacker === character);
   const list   = isMine ? stats.topDamageDid : stats.topDamageSaw;
 
   // Dedupe by attacker — one row per player, keep their highest hit. Without
@@ -795,6 +814,8 @@ function pad(s, n) {
 let _dashboardEnabled = false;
 function renderDashboard() {
   if (!_dashboardEnabled) return;
+  // Don't overwrite info/pets views when the periodic redraw fires.
+  if (_viewMode !== 'dashboard') return;
   // ASCII-only dashboard chars — cmd.exe with the default codepage renders
   // em-dash, middle-dot, and arrow glyphs as blocks. Sticking to printable
   // ASCII means the dashboard looks the same in cmd, PowerShell, and Terminal.
@@ -895,31 +916,83 @@ function scheduleRender() {
   _renderTimer = setTimeout(() => { _renderTimer = null; renderDashboard(); }, 250);
 }
 
-// Raw-mode keypress handler. Supports:
-//   U / u  → write a sentinel file so start-logsync.ps1 picks up the request
-//            on next launch; then exit the process so the scheduled task /
-//            shortcut relaunches us with the new agent code
-//   I / i  → flip into info view (next keypress returns to dashboard)
-//   Ctrl+C → exit cleanly
-let _viewMode = 'dashboard'; // 'dashboard' | 'info' | 'pets'
+// Raw-mode keypress handler. View modes:
+//   dashboard  → live updating, always default
+//   info       → I once (5s auto-revert); I again to LOCK; 3rd press → exit
+//   pets       → P once (5s auto-revert); P again to LOCK; 3rd press → exit
+//   Any other key while in info/pets exits immediately.
+let _viewMode    = 'dashboard'; // 'dashboard' | 'info' | 'pets'
+let _viewLocked  = false;       // true = auto-revert cancelled, key required to exit
+let _viewTimer   = null;        // active setTimeout for 5s auto-revert
+
+function _clearViewTimer() {
+  if (_viewTimer) { clearTimeout(_viewTimer); _viewTimer = null; }
+}
+function _scheduleAutoRevert() {
+  _clearViewTimer();
+  _viewTimer = setTimeout(() => {
+    _viewTimer = null;
+    if (_viewMode !== 'dashboard' && !_viewLocked) {
+      _viewMode   = 'dashboard';
+      _viewLocked = false;
+      renderDashboard();
+    }
+  }, 5000);
+}
+function _enterView(mode, renderFn) {
+  _viewMode   = mode;
+  _viewLocked = false;
+  process.stdout.write(ANSI.clear);
+  renderFn();
+  _scheduleAutoRevert();
+}
+function _lockView(renderFn) {
+  _viewLocked = true;
+  _clearViewTimer();
+  process.stdout.write(ANSI.clear);
+  renderFn();
+}
+function _exitView() {
+  _clearViewTimer();
+  _viewMode   = 'dashboard';
+  _viewLocked = false;
+  renderDashboard();
+}
+
 function setupKeypressHandler() {
   if (!process.stdin.isTTY) return;
   try { process.stdin.setRawMode(true); } catch { return; }
   process.stdin.resume();
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (key) => {
-    if (_viewMode === 'info' || _viewMode === 'pets') {
-      _viewMode = 'dashboard';
-      renderDashboard();
-      return;
-    }
-    if (key === '') { // Ctrl+C
+    // Ctrl+C always exits
+    if (key === '\u0003') {
       process.stdout.write(`${ANSI.reset}\nExiting.\n`);
       process.exit(0);
     }
+
+    if (_viewMode === 'info') {
+      if (key === 'i' || key === 'I') {
+        if (_viewLocked) _exitView();
+        else _lockView(showInfo);
+      } else {
+        _exitView();
+      }
+      return;
+    }
+
+    if (_viewMode === 'pets') {
+      if (key === 'p' || key === 'P') {
+        if (_viewLocked) _exitView();
+        else _lockView(showPets);
+      } else {
+        _exitView();
+      }
+      return;
+    }
+
+    // Dashboard mode
     if (key === 'u' || key === 'U') {
-      // Write a marker file then exit; start-logsync.ps1 sees the marker
-      // and re-runs Update-Agent with -ForceUpdate before relaunching node.
       try {
         const marker = path.join(__dirname, '.force-update-on-restart');
         fs.writeFileSync(marker, new Date().toISOString());
@@ -928,8 +1001,6 @@ function setupKeypressHandler() {
       process.exit(0);
     }
     if (key === 't' || key === 'T') {
-      // Drop a marker so start-logsync.ps1 will prompt for a new token
-      // and rewrite logsync.config.json before relaunching node.
       try {
         const marker = path.join(__dirname, '.update-token-on-restart');
         fs.writeFileSync(marker, new Date().toISOString());
@@ -940,16 +1011,8 @@ function setupKeypressHandler() {
       process.stdout.write(`   WolfPackParser.zip from the bot's announcement channel.)${ANSI.reset}\n`);
       process.exit(0);
     }
-    if (key === 'i' || key === 'I') {
-      _viewMode = 'info';
-      process.stdout.write(ANSI.clear);
-      showInfo();
-    }
-    if (key === 'p' || key === 'P') {
-      _viewMode = 'pets';
-      process.stdout.write(ANSI.clear);
-      showPets();
-    }
+    if (key === 'i' || key === 'I') _enterView('info', showInfo);
+    if (key === 'p' || key === 'P') _enterView('pets', showPets);
   });
 }
 
@@ -963,7 +1026,29 @@ function showInfo() {
   out.push(`  /who unique (lv5+, this session): ${whoData.size} characters\n`);
   out.push(`  Known pets this session: ${knownPetOwners.size}\n`);
   out.push(`  Lifetime first seen: ${stats.lifetime.firstSeenAt}\n`);
-  out.push(`\n  Press any key to return to the dashboard.\n`);
+
+  // Per-ability breakdown — bards especially benefit from seeing each song
+  // and dirge counted independently. Sorted by total damage descending.
+  const abilities = [...stats.abilityStats.entries()]
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, 14);
+
+  out.push(`\n${C.bold}${C.yellow}  Top Abilities (uploader, this session)${C.reset}\n`);
+  if (abilities.length === 0) {
+    out.push(`  ${C.dim}(no damage events parsed yet)${C.reset}\n`);
+  } else {
+    out.push(`  ${C.dim}${pad('Ability', 36)} ${pad('Total', 8)} ${pad('Hits', 6)} ${pad('Avg', 7)}${C.reset}\n`);
+    for (const [ability, s] of abilities) {
+      const avg   = s.count > 0 ? Math.round(s.total / s.count) : 0;
+      const label = ability === 'non-melee' ? `${ability} (dirges/procs)` : ability;
+      out.push(`  ${pad(label, 36)} ${C.bold}${pad(fmtK(s.total), 8)}${C.reset} ${pad(String(s.count), 6)} ${pad(fmtK(avg), 7)}\n`);
+    }
+  }
+
+  const lockedHint = _viewLocked
+    ? `${C.green}LOCKED${C.reset} — I or any other key → back to dashboard`
+    : `auto-revert in 5s   |   ${C.cyan}I${C.reset} again → lock here   |   any other key → back`;
+  out.push(`\n  ${C.dim}${lockedHint}${C.reset}\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -1035,7 +1120,10 @@ function showPets() {
   out.push(`\n`);
   out.push(`  ${C.dim}Note: summon pets declare automatically. Charm pets (bard/enc)${C.reset}\n`);
   out.push(`  ${C.dim}do NOT declare — their damage won't appear here or in parses.${C.reset}\n`);
-  out.push(`\n  ${C.cyan}[P]${C.reset} or any key → back to dashboard\n`);
+  const lockedHint = _viewLocked
+    ? `${C.green}LOCKED${C.reset} — P or any other key → back to dashboard`
+    : `auto-revert in 5s   |   ${C.cyan}P${C.reset} again → lock here   |   any other key → back`;
+  out.push(`\n  ${C.dim}${lockedHint}${C.reset}\n`);
   process.stdout.write(out.join(''));
 }
 
