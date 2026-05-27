@@ -498,25 +498,45 @@ function getAllAgentTestCards()     { return loadState().agentTestCards || {}; }
 // Used by /parseagents to show recent uploaders. Bounded to last 50 chars by
 // timestamp — older entries get evicted on each new upload from a fresh char.
 // Schema: { lowercaseName: { name, lastUpload, totalUploads, lastBoss, lastEventCount } }
-// petOwners is the cross-encounter, cross-parser map of pet-name → owner-name.
+// petOwners is the cross-encounter, cross-parser map of pet-name → [owner, …].
 // Built from the agent's encounter.pet_leaders uploads (which come from
 // "PetName says, 'My leader is OwnerName.'" lines in the EQ log). Once any
 // parser captures the declaration, every subsequent upload from any agent
 // benefits. Cleared at midnight — pet names are randomised at re-summon.
-function getPetOwners()              { return loadState().petOwners || {}; }
+//
+// Schema: { petNameLower: [ownerName, …] }
+// Multiple owners arise when a charmed mob was owned by different enchanters in
+// the same encounter (same pet name, different /pet leader lines).  Pet damage
+// is divided equally across all known owners so each enchanter gets fair credit.
+//
+// Migration: old entries stored a bare string; the helpers below normalise on
+// first read/write so the format converges to the array schema silently.
+function _petNormalise(val) {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string' && val) return [val];
+  return [];
+}
+function getPetOwners() { return loadState().petOwners || {}; }
 function addPetOwners(petLeadersMap) {
   if (!petLeadersMap || Object.keys(petLeadersMap).length === 0) return;
   const s = loadState();
   if (!s.petOwners) s.petOwners = {};
   for (const [pet, owner] of Object.entries(petLeadersMap)) {
-    if (pet && owner) s.petOwners[pet.toLowerCase()] = owner;
+    if (!pet || !owner) continue;
+    const key  = pet.toLowerCase();
+    const list = _petNormalise(s.petOwners[key]);
+    if (!list.includes(owner)) list.push(owner);
+    s.petOwners[key] = list;
   }
   saveState(s);
 }
 function setPetOwner(pet, owner) {
   const s = loadState();
   if (!s.petOwners) s.petOwners = {};
-  s.petOwners[pet.toLowerCase()] = owner;
+  const key  = pet.toLowerCase();
+  const list = _petNormalise(s.petOwners[key]);
+  if (!list.includes(owner)) list.push(owner);
+  s.petOwners[key] = list;
   saveState(s);
 }
 function clearPetOwners() { const s = loadState(); s.petOwners = {}; saveState(s); }

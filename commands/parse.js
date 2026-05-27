@@ -295,6 +295,20 @@ async function handleParseBreakdown(interaction) {
     )
     .setTimestamp();
 
+  // Pet Attribution — only shown when at least one player has attributed pet damage.
+  // Helps distinguish "Bstie's own DPS" from "Bstie's charmed-mob DPS".
+  const petPlayers = parsed.players.filter(p => p.petDamage > 0);
+  if (petPlayers.length > 0) {
+    const petLines = petPlayers.map(p => {
+      const direct = p.directDamage ?? (p.damage - p.petDamage);
+      const pct    = p.damage > 0 ? Math.round((p.petDamage / p.damage) * 100) : 0;
+      return `**${p.name}** — ${fmt(direct)} direct + ${fmt(p.petDamage)} pet *(${pct}% from pet)*`;
+    });
+    let petValue = petLines.join('\n');
+    if (petValue.length > 1020) petValue = petValue.slice(0, 1017) + '…';
+    embed.addFields({ name: '🐾 Pet Attribution', value: petValue, inline: false });
+  }
+
   return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
 }
 
@@ -350,8 +364,9 @@ async function logParseToDiscord(client, bossId, parseEntry) {
     dmg: parseEntry.totalDamage,
     dps: parseEntry.totalDps,
     by:  parseEntry.submittedByName,
-    p:   parseEntry.players.map(({ name, hasPets, damage, dps, duration }) => ({
+    p:   parseEntry.players.map(({ name, hasPets, damage, dps, duration, petDamage }) => ({
       n: name, ...(hasPets ? { hp: 1 } : {}), d: damage, dps, dur: duration,
+      ...(petDamage > 0 ? { pd: petDamage } : {}),
     })),
   };
   const msg = await thread.send({
@@ -406,6 +421,8 @@ async function loadParsesFromDiscord(client) {
           discordMsgId:    msg.id,
           players: (data.p || []).map(p => ({
             name: p.n, hasPets: !!(p.hp), damage: p.d, dps: p.dps, duration: p.dur,
+            petDamage:    p.pd || 0,
+            directDamage: p.pd ? (p.d - p.pd) : p.d,
           })),
         });
       } catch {}

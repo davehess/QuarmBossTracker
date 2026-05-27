@@ -2192,38 +2192,67 @@ async function _handleAgentUpload(req, res) {
   // from different characters. The persistent map is cleared at midnight.
   const uploadedPetLeaders = encounter.pet_leaders || {};
   try { addPetOwners(uploadedPetLeaders); } catch {}
-  const petLeaders = { ...getPetOwners(), ...uploadedPetLeaders };
+  // Normalise petLeaders to { petNameLower: [owner, …] } so every lookup returns an array.
+  // Values from state.json may be old-schema strings or new-schema arrays; uploadedPetLeaders
+  // (from the agent) is always { petName: singleOwnerString }.
+  const rawPetLeaders = { ...getPetOwners(), ...uploadedPetLeaders };
+  const petLeaders = {};  // petNameLower → [owner, …]
+  for (const [pet, val] of Object.entries(rawPetLeaders)) {
+    const owners = Array.isArray(val) ? val : (val ? [val] : []);
+    if (owners.length) petLeaders[pet.toLowerCase()] = owners;
+  }
 
   // (who_data merge already happened above, before the noise filter.)
+  // playerTotals: name → { direct, pet }
+  // direct = damage the player dealt themselves; pet = share of pet damage attributed to them.
+  // Pet damage is divided equally across all /pet-leader owners of that pet name.
   const playerTotals = new Map();
+  const _addDmg = (name, amount, isPet) => {
+    if (!playerTotals.has(name)) playerTotals.set(name, { direct: 0, pet: 0 });
+    const e = playerTotals.get(name);
+    if (isPet) e.pet += amount; else e.direct += amount;
+  };
   for (const ev of encounter.events) {
     if (ev.type !== 'damage') continue;
     const rawAttacker = ev.attacker;
     // Re-attribute first-person (null) events to the uploading character
-    let attacker = rawAttacker ?? character ?? null;
+    const attacker = rawAttacker ?? character ?? null;
     if (!attacker) continue;
     if (/^Eye of /i.test(attacker)) continue;                                                    // skip Eye of X wizard/mage scout pets
     if (ev.spell && /cannibali[sz]e/i.test(ev.spell) && rawAttacker === ev.target) continue;    // skip self-cannibalizes
-    // Remap pet damage to owner if the agent captured a pet leader declaration
-    const petOwner = petLeaders[attacker.toLowerCase()];
-    if (petOwner) attacker = petOwner;
-    // Skip NPC-vs-NPC: multi-word attacker names that aren't a player character.
-    // Player names in EQ are always a single word. NPCs have spaces ("A Zombie").
-    // After pet remapping, only unowned NPC names still have spaces — those are noise.
-    if (/\s/.test(attacker)) continue;
-    playerTotals.set(attacker, (playerTotals.get(attacker) || 0) + (ev.amount || 0));
+    const amount = ev.amount || 0;
+    const owners = petLeaders[attacker.toLowerCase()];
+    if (owners) {
+      // Known pet — divide its damage equally among all declared owners.
+      // Filter out any NPC owner names (have spaces) just in case.
+      const validOwners = owners.filter(o => !/\s/.test(o));
+      if (validOwners.length > 0) {
+        const share = amount / validOwners.length;
+        for (const owner of validOwners) _addDmg(owner, share, true);
+      }
+      // If no valid owners, treat as unattributed noise (same as unknown pet).
+    } else {
+      // Direct player damage — skip if multi-word (NPC attacker noise).
+      if (/\s/.test(attacker)) continue;
+      _addDmg(attacker, amount, false);
+    }
   }
   const startedMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
   const endedMs   = encounter.ended_at   ? new Date(encounter.ended_at).getTime()   : startedMs;
   const duration  = Math.max(0, Math.round((endedMs - startedMs) / 1000));
   const players = [...playerTotals.entries()]
-    .map(([name, dmg]) => ({
-      name,
-      damage:   dmg,
-      duration,
-      dps:      duration > 0 ? Math.round(dmg / duration) : 0,
-      hasPets:  false,
-    }))
+    .map(([name, { direct, pet }]) => {
+      const totalDmg = Math.round(direct + pet);
+      return {
+        name,
+        damage:       totalDmg,
+        directDamage: Math.round(direct),
+        petDamage:    Math.round(pet),
+        hasPets:      pet > 0,
+        duration,
+        dps:          duration > 0 ? Math.round(totalDmg / duration) : 0,
+      };
+    })
     .sort((a, b) => b.damage - a.damage)
     .map((p, i) => ({ ...p, rank: i + 1 }));
   const totalDamage = players.reduce((s, p) => s + p.damage, 0);
