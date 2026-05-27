@@ -415,7 +415,11 @@ function parseEvent(line, ts) {
   // The capture stops at the owner name (\w+) so trailing decoration is ignored.
   // Only reaches here because PRIORITY_KEEP_PATTERNS let the line through despite
   // the general /says?/ drop pattern. Used to build a pet→owner attribution map.
-  m = line.match(/\]\s+(\S+)\s+says,?\s*['"]My leader is (\w+)/i);
+  //
+  // IMPORTANT: pet names may be multi-word (e.g. "a Shadel Bandit"). Use (.+?)
+  // lazy match between '] ' and ' says' to capture the full name, not just the
+  // first token. (\S+) would capture only "a" for "a Shadel Bandit says, ...".
+  m = line.match(/\]\s+(.+?)\s+says,?\s*['"]My leader is (\w+)/i);
   if (m) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
   }

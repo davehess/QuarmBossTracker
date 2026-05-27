@@ -2193,13 +2193,19 @@ async function _handleAgentUpload(req, res) {
   const uploadedPetLeaders = encounter.pet_leaders || {};
   try { addPetOwners(uploadedPetLeaders); } catch {}
   // Normalise petLeaders to { petNameLower: [owner, …] } so every lookup returns an array.
-  // Values from state.json may be old-schema strings or new-schema arrays; uploadedPetLeaders
-  // (from the agent) is always { petName: singleOwnerString }.
-  const rawPetLeaders = { ...getPetOwners(), ...uploadedPetLeaders };
+  // Build by starting from state (already-normalised arrays via addPetOwners) then layering
+  // in the upload's string values. Never spread the two maps together — that would overwrite
+  // state arrays with the upload string, silently dropping previously-accumulated owners.
   const petLeaders = {};  // petNameLower → [owner, …]
-  for (const [pet, val] of Object.entries(rawPetLeaders)) {
-    const owners = Array.isArray(val) ? val : (val ? [val] : []);
+  for (const [pet, val] of Object.entries(getPetOwners())) {
+    const owners = Array.isArray(val) ? [...val] : (val ? [val] : []);
     if (owners.length) petLeaders[pet.toLowerCase()] = owners;
+  }
+  for (const [pet, owner] of Object.entries(uploadedPetLeaders)) {
+    if (!pet || !owner) continue;
+    const key = pet.toLowerCase();
+    if (!petLeaders[key]) petLeaders[key] = [];
+    if (!petLeaders[key].includes(owner)) petLeaders[key].push(owner);
   }
 
   // (who_data merge already happened above, before the noise filter.)
