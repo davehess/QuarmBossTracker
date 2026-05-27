@@ -77,6 +77,7 @@ function parseArgs(argv) {
     else if (a === '--config')    out.flags.config = argv[++i];
     else if (a === '--web-port')  out.flags.webPort = parseInt(argv[++i], 10) || 7777;
     else if (a === '--no-service-check') out.flags.noServiceCheck = true;
+    else if (a === '--no-auto-open')     out.flags.noAutoOpen     = true;
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
     else if (a === '--version') { console.log(AGENT_VERSION); process.exit(0); }
     else console.warn(`[warn] unknown arg: ${a}`);
@@ -106,6 +107,7 @@ Options:
   --config <json-path>   custom config file with channel filters
   --web-port <port>      enable embedded web dashboard at http://localhost:<port>
                          (binds 127.0.0.1 only; useful when running as a service)
+  --no-auto-open         skip auto-opening the browser when --web-port is set
   --dry-run              don't upload — print encounter summaries instead
   -h, --help             this help
   --version              print version
@@ -699,6 +701,22 @@ class EncounterBuilder {
     }
     const s = this.defenderStats.get(name);
     s[key] = (s[key] || 0) + (amount || 1);
+
+    // Mirror player-only stats to stats.sessionDefenders LIVE so the dashboard
+    // reflects damage taken even when an encounter doesn't end in a kill —
+    // wipes, escapes, gating out, etc. would otherwise be invisible since the
+    // old code only rolled defender stats into session state on flush().
+    // Single-word names = player characters; NPCs (multi-word) are excluded.
+    if (!/\s/.test(name)) {
+      if (!stats.sessionDefenders[name]) {
+        stats.sessionDefenders[name] = {
+          damageTaken: 0, hits: 0, ripostes: 0, ripostedFor: 0,
+          rampageHits: 0, rampageDmg: 0, invulnAvoidedDmg: 0,
+        };
+      }
+      const sd = stats.sessionDefenders[name];
+      sd[key] = (sd[key] || 0) + (amount || 1);
+    }
   }
   _bumpHealer(healer, target, amount) {
     if (!healer || !amount) return;
@@ -1123,22 +1141,15 @@ class EncounterBuilder {
     };
     // ── Accumulate into session stats ─────────────────────────────────────
     // Defender stats (tanks) — single-word names only (skip NPCs)
+    // Defender stats now stream live into stats.sessionDefenders via
+    // _bumpDefender, so dashboard reflects damage taken even when a fight
+    // ends without a kill (wipes, gating out, etc.). We only need flush()
+    // to add invulnAvoidedDmg here because it requires the per-encounter
+    // bossMaxMelee × invulns product.
     for (const [name, s] of this.defenderStats) {
       if (/\s/.test(name)) continue;
-      if (!stats.sessionDefenders[name]) {
-        stats.sessionDefenders[name] = {
-          damageTaken: 0, hits: 0, ripostes: 0, ripostedFor: 0,
-          rampageHits: 0, rampageDmg: 0, invulnAvoidedDmg: 0,
-        };
-      }
+      if (!stats.sessionDefenders[name]) continue;  // already initialised live
       const sd = stats.sessionDefenders[name];
-      sd.damageTaken      = (sd.damageTaken      || 0) + (s.damageTaken  || 0);
-      sd.hits             = (sd.hits             || 0) + (s.hits         || 0);
-      sd.ripostes         = (sd.ripostes         || 0) + (s.ripostes     || 0);
-      sd.ripostedFor      = (sd.ripostedFor      || 0) + (s.ripostedFor  || 0);
-      sd.rampageHits      = (sd.rampageHits      || 0) + (s.rampageHits  || 0);
-      sd.rampageDmg       = (sd.rampageDmg       || 0) + (s.rampageDmg   || 0);
-      // Invuln avoided: invulns × boss max melee for this fight = estimated avoided damage.
       sd.invulnAvoidedDmg = (sd.invulnAvoidedDmg || 0)
                           + (s.invulns || 0) * (this.bossMaxMelee || 0);
     }
@@ -1276,6 +1287,20 @@ function readActivePid() {
     catch { removePidFile(); return null; }
     return raw;
   } catch { return null; }
+}
+
+// Cross-platform "open a URL in the default browser" — non-blocking, errors
+// swallowed so a missing browser binary doesn't crash the agent. On Windows
+// the empty quoted string after `start` is the window title slot (without it
+// `start "http://..."` would interpret the URL as the title).
+function openDashboardInBrowser(port) {
+  const url = `http://localhost:${port}`;
+  try {
+    const { exec } = require('child_process');
+    if (process.platform === 'win32')      exec(`start "" "${url}"`);
+    else if (process.platform === 'darwin') exec(`open "${url}"`);
+    else                                    exec(`xdg-open "${url}"`);
+  } catch { /* non-fatal */ }
 }
 
 // Probe the existing service's web dashboard to confirm it's our agent and
@@ -2113,10 +2138,12 @@ function setupKeypressHandler() {
         const a = process.argv[i];
         if (a === '--web-port') { i++; continue; }      // drop value too
         if (a === '--no-service-check') continue;
+        if (a === '--no-auto-open')     continue;
         filteredArgs.push(a);
       }
       filteredArgs.push('--web-port', String(webPort));
       filteredArgs.push('--no-service-check');           // child IS the service
+      filteredArgs.push('--no-auto-open');               // parent will open the browser
       try {
         const child = spawn(process.execPath, [__filename, ...filteredArgs], {
           detached:    true,
@@ -2126,9 +2153,13 @@ function setupKeypressHandler() {
         child.unref();
         process.stdout.write(`\n${ANSI.green}  ✓ Service started in background (pid ${child.pid})${ANSI.reset}\n`);
         process.stdout.write(`  ${ANSI.cyan}Dashboard:${ANSI.reset} http://localhost:${webPort}\n`);
-        process.stdout.write(`  ${ANSI.dim}This window will close — reopen parser.bat anytime to see the dashboard URL.${ANSI.reset}\n`);
-        // Don't remove PID file — child will write its own. Give it a moment to register.
-        setTimeout(() => process.exit(0), 1500);
+        process.stdout.write(`  ${ANSI.dim}Opening browser… this window will close in a moment.${ANSI.reset}\n`);
+        // Give the child ~1.5s to bind the port, then open the browser, then exit.
+        // The child has --no-auto-open so it won't double-open.
+        setTimeout(() => {
+          openDashboardInBrowser(webPort);
+          setTimeout(() => process.exit(0), 500);
+        }, 1500);
       } catch (err) {
         process.stdout.write(`\n${ANSI.red}  ✗ Could not start background service: ${err.message}${ANSI.reset}\n`);
       }
@@ -3309,13 +3340,8 @@ async function main() {
         console.log(`  ${ANSI.cyan}Dashboard:${ANSI.reset} ${url}`);
         console.log(`  ${ANSI.dim}Feel free to close this window — the service keeps running in the background.${ANSI.reset}`);
         console.log(`  ${ANSI.dim}To stop the service, kill pid ${active.pid} or delete logsync.pid.json.${ANSI.reset}\n`);
-        // Try to open the browser, then exit
-        try {
-          const opener = process.platform === 'win32' ? `start ${url}`
-                       : process.platform === 'darwin' ? `open ${url}`
-                       : `xdg-open ${url}`;
-          require('child_process').exec(opener);
-        } catch {}
+        // Auto-open the dashboard in the user's default browser
+        openDashboardInBrowser(active.webPort);
         process.exit(0);
       }
       // PID exists but web dashboard isn't responding — stale, clean it up
@@ -3364,6 +3390,13 @@ async function main() {
     process.on('exit',    () => removePidFile());
     process.on('SIGINT',  () => { removePidFile(); process.exit(0); });
     process.on('SIGTERM', () => { removePidFile(); process.exit(0); });
+    // Auto-open the browser on FRESH starts only — skip if we just resumed
+    // (i.e. this is a [U] auto-restart or quick Ctrl+C relaunch). Also skip
+    // when --no-auto-open is set for headless / CI scenarios.
+    if (!_sessionRestored && !args.flags.noAutoOpen) {
+      // Small delay so the listener has bound and the page returns 200
+      setTimeout(() => openDashboardInBrowser(args.flags.webPort), 800);
+    }
   }
   // Backstop save every 60s so a hard crash loses at most a minute.
   setInterval(() => {
