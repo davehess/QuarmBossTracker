@@ -75,6 +75,7 @@ function parseArgs(argv) {
     else if (a === '--token')   out.flags.token  = argv[++i];
     else if (a === '--character') out.flags.character = argv[++i];
     else if (a === '--config')    out.flags.config = argv[++i];
+    else if (a === '--web-port')  out.flags.webPort = parseInt(argv[++i], 10) || 7777;
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
     else if (a === '--version') { console.log(AGENT_VERSION); process.exit(0); }
     else console.warn(`[warn] unknown arg: ${a}`);
@@ -102,6 +103,8 @@ Options:
   --token <token>        upload shared secret (default: env WOLFPACK_TOKEN)
   --character <name>     override character (default: parse from filename)
   --config <json-path>   custom config file with channel filters
+  --web-port <port>      enable embedded web dashboard at http://localhost:<port>
+                         (binds 127.0.0.1 only; useful when running as a service)
   --dry-run              don't upload — print encounter summaries instead
   -h, --help             this help
   --version              print version
@@ -1283,6 +1286,301 @@ function loadSessionState() {
     try { fs.unlinkSync(SESSION_FILE); } catch {}
     return true;
   } catch { return false; }
+}
+
+// ── Web dashboard (--web-port) ─────────────────────────────────────────────
+// Embedded HTTP server on 127.0.0.1 that serves a single self-contained HTML
+// page. The page polls /api/state every 2s and renders the same data the TUI
+// shows. Lets users run logsync as a Windows service / scheduled task with no
+// visible window and browse the dashboard on demand.
+//
+// Binds 127.0.0.1 only — never exposes the dashboard to the network.
+
+function _serializeForDashboard() {
+  const healersOut = {};
+  for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
+    healersOut[name] = {
+      healed:  s.healed || 0,
+      ticks:   s.ticks  || 0,
+      targets: [...(s.targets || [])],
+    };
+  }
+  return {
+    version:            AGENT_VERSION,
+    startedAt:          stats.startedAt,
+    sessionEvents:      stats.sessionEvents,
+    sessionTotalDamage: stats.sessionTotalDamage,
+    sessionDamageBy:    stats.sessionDamageBy,
+    recentParses:       stats.recentParses,
+    topDamageSaw:       stats.topDamageSaw,
+    topDamageDid:       stats.topDamageDid,
+    sessionDefenders:   stats.sessionDefenders,
+    sessionHealers:     healersOut,
+    sessionProcs:       stats.sessionProcs,
+    sessionDeaths:      stats.sessionDeaths,
+    abilityStats:       Object.fromEntries(stats.abilityStats),
+    watchedLogs:        stats.watchedLogs,
+    uploadCount:        stats.uploadCount,
+    uploadErrors:       stats.uploadErrors,
+    updateAvailable:    stats.updateAvailable,
+    requestedCharacters: stats.requestedCharacters,
+    lifetime:           stats.lifetime,
+    sessionResumed:     !!stats._sessionRestoredBanner,
+    knownPets:          [...knownPetOwners.entries()].map(([pet, owners]) => ({ pet, owners: [...owners] })),
+  };
+}
+
+const WEB_HTML = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Wolf Pack EQ — Parser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --dim:#6e7681;
+        --blue:#58a6ff; --gold:#d29922; --green:#56d364; --red:#f85149; --orange:#ffa657; }
+* { box-sizing:border-box }
+body { background:var(--bg); color:var(--text); font-family:'Cascadia Code',Consolas,monospace; margin:0; padding:16px; }
+h1 { color:var(--blue); margin:0 0 4px 0; font-size:22px; }
+h2 { color:var(--gold); border-bottom:1px solid var(--border); padding-bottom:6px; margin:0 0 12px 0; font-size:14px; text-transform:uppercase; letter-spacing:.05em; }
+h3 { color:var(--dim); margin:0 0 8px 0; font-size:12px; font-weight:normal; text-transform:uppercase; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:14px; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; }
+.card.wide { grid-column:1/-1 }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th,td { text-align:left; padding:3px 8px; }
+th { color:var(--dim); font-weight:normal; font-size:11px; text-transform:uppercase; }
+tr:hover td { background:#1f242c }
+.num { text-align:right; color:var(--green); font-variant-numeric:tabular-nums; }
+.name { color:var(--orange) }
+.dim { color:var(--dim) }
+.dot { color:var(--green) }
+.nav { display:flex; gap:6px; margin:12px 0; flex-wrap:wrap; }
+.nav button { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12px; }
+.nav button:hover { background:#30363d }
+.nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
+.section { display:none } .section.active { display:block }
+.banner { padding:8px 12px; border-radius:6px; margin:0 0 10px 0; font-size:13px; }
+.banner.update { background:#9e6a03; color:#fff }
+.banner.resumed { background:#1a7f37; color:#fff }
+.subtle { color:var(--dim); font-size:12px; margin:4px 0 12px 0; }
+.tag { background:#1f6feb22; color:var(--blue); padding:2px 6px; border-radius:4px; font-size:11px; }
+.tag.ramp { background:#9e6a0322; color:var(--gold) }
+.tag.invuln { background:#1a7f3722; color:var(--green) }
+.pet { color:var(--blue) }
+</style></head><body>
+<h1>🐺 Wolf Pack EQ — Parser</h1>
+<div class="subtle" id="header"></div>
+<div class="nav">
+  <button class="active" data-tab="dash">Dashboard</button>
+  <button data-tab="tanks">Tanks</button>
+  <button data-tab="healers">Healers</button>
+  <button data-tab="pets">Pets</button>
+  <button data-tab="info">Info / Stats</button>
+</div>
+<div id="dash" class="section active"></div>
+<div id="tanks" class="section"></div>
+<div id="healers" class="section"></div>
+<div id="pets" class="section"></div>
+<div id="info" class="section"></div>
+<script>
+function fmtK(n) { n=Number(n||0); if (n<1000) return String(n); if (n<1e6) return (n/1000).toFixed(2)+'K'; return (n/1e6).toFixed(2)+'M'; }
+function fmtAgo(ms) { if(!ms) return '?'; const d=Date.now()-ms; if(d<60000)return Math.floor(d/1000)+'s ago'; if(d<3600000)return Math.floor(d/60000)+'m ago'; if(d<86400000)return Math.floor(d/3600000)+'h ago'; return Math.floor(d/86400000)+'d ago'; }
+function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]); }
+
+function renderHeader(s) {
+  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  let h = '';
+  if (s.updateAvailable) h += '<div class="banner update">★ Update available — restart agent to install</div>';
+  if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
+  h += '<div>v' + esc(s.version) + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min</div>';
+  document.getElementById('header').innerHTML = h;
+}
+
+function renderDash(s) {
+  let h = '<div class="grid">';
+  // Recent parses
+  h += '<div class="card"><h2>Recent Parses</h2>';
+  if (!s.recentParses?.length) h += '<div class="dim">(no uploads yet)</div>';
+  else {
+    h += '<table>';
+    for (const p of s.recentParses.slice(0,5)) {
+      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
+           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // Session damage
+  h += '<div class="card"><h2>Damage Done This Session</h2>';
+  h += '<div style="font-size:16px;margin-bottom:8px">Total: <span class="num">' + fmtK(s.sessionTotalDamage) + '</span></div>';
+  const contribs = Object.entries(s.sessionDamageBy||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  if (contribs.length) {
+    h += '<table>';
+    for (const [n,d] of contribs) h += '<tr><td class="name">' + esc(n) + '</td><td class="num">' + fmtK(d) + '</td></tr>';
+    h += '</table>';
+  }
+  h += '</div>';
+  // Watched logs
+  h += '<div class="card"><h2>Watched Logs (' + (s.watchedLogs?.length||0) + ')</h2><table>';
+  const recent = [...(s.watchedLogs||[])].sort((a,b)=>(b.lastSeen||0)-(a.lastSeen||0)).slice(0,15);
+  for (const w of recent) {
+    const hot = w.lastSeen && (Date.now()-w.lastSeen) < 3600000;
+    h += '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') +
+         '<span class="name">' + esc(w.character) + '</span></td>' +
+         '<td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
+  }
+  h += '</table></div>';
+  // Top damage
+  h += '<div class="card wide"><h2>Top Damage This Session</h2>' +
+       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">';
+  for (const [list, title] of [[s.topDamageSaw, 'I saw'], [s.topDamageDid, 'I did']]) {
+    h += '<div><h3>' + title + '</h3>';
+    if (!list?.length) h += '<div class="dim">(none yet)</div>';
+    else for (const e of list) {
+      h += '<div><span class="name">' + esc(e.attacker) + '</span> ' +
+           '<span class="num">' + fmtK(e.amount) + '</span> ' +
+           '<span class="dim">' + esc(e.label||'') + (e.ability ? ' — ' + esc(e.ability) : '') + '</span></div>';
+    }
+    h += '</div>';
+  }
+  h += '</div></div>';
+  h += '</div>';
+  document.getElementById('dash').innerHTML = h;
+}
+
+function renderTanks(s) {
+  let h = '<div class="grid">';
+  const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
+  h += '<div class="card wide"><h2>Incoming Damage</h2>';
+  if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
+  else {
+    h += '<table><tr><th>Tank</th><th>Dmg Taken</th><th>Hits</th><th>Ramp Hits</th><th>Ramp Dmg</th><th>Invuln Avoided</th><th>Riposted For</th></tr>';
+    for (const [n, d] of defs.slice(0,12)) {
+      h += '<tr><td class="name">' + esc(n) + '</td>' +
+           '<td class="num">' + fmtK(d.damageTaken) + '</td>' +
+           '<td class="num">' + (d.hits||0) + '</td>' +
+           '<td class="num">' + (d.rampageHits ? '<span class="tag ramp">'+d.rampageHits+'</span>' : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (d.rampageDmg ? fmtK(d.rampageDmg) : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (d.invulnAvoidedDmg ? '<span class="tag invuln">'+fmtK(d.invulnAvoidedDmg)+'</span>' : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + fmtK(d.ripostedFor||0) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // Mob procs
+  h += '<div class="card wide"><h2>Mob Procs / Special Abilities</h2>';
+  const mobs = Object.entries(s.sessionProcs||{});
+  if (!mobs.length) h += '<div class="dim">No proc events observed yet.</div>';
+  else for (const [mob, abs] of mobs) {
+    h += '<h3 style="color:var(--orange);margin-top:10px">' + esc(mob) + '</h3><table>';
+    const sorted = Object.entries(abs).sort((a,b)=>b[1].count-a[1].count);
+    for (const [ab, st] of sorted) {
+      h += '<tr><td>' + esc(ab) + '</td><td class="num">' + st.count + 'x</td><td class="num">' + fmtK(st.totalDmg) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // Deaths
+  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
+  h += '<div class="card"><h2>Deaths This Session</h2>';
+  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
+  else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
+  h += '</div>';
+  h += '</div>';
+  document.getElementById('tanks').innerHTML = h;
+}
+
+function renderHealers(s) {
+  let h = '<div class="grid"><div class="card wide"><h2>Healers This Session</h2>';
+  const healers = Object.entries(s.sessionHealers||{}).sort((a,b)=>b[1].healed-a[1].healed);
+  if (!healers.length) h += '<div class="dim">No healing parsed yet.</div>';
+  else {
+    h += '<table><tr><th>Healer</th><th>Healed</th><th>Ticks</th><th>Targets</th></tr>';
+    for (const [n, st] of healers.slice(0,15)) {
+      h += '<tr><td class="name">' + esc(n) + '</td>' +
+           '<td class="num">' + fmtK(st.healed) + '</td>' +
+           '<td class="num">' + (st.ticks||0) + '</td>' +
+           '<td class="dim">' + (st.targets||[]).map(esc).slice(0,6).join(', ') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div></div>';
+  document.getElementById('healers').innerHTML = h;
+}
+
+function renderPets(s) {
+  let h = '<div class="card"><h2>Known Pets This Session</h2>';
+  const pets = (s.knownPets||[]);
+  if (!pets.length) h += '<div class="dim">No pets observed yet.</div>';
+  else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>'; for (const p of pets) h += '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; h += '</table>'; }
+  h += '</div>';
+  document.getElementById('pets').innerHTML = h;
+}
+
+function renderInfo(s) {
+  const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  const lifetimeMin = (s.lifetime?.totalMinutes||0) + sessionMin;
+  let h = '<div class="grid"><div class="card"><h2>Parser Info</h2>';
+  h += '<div>Agent v' + esc(s.version) + '</div>';
+  h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
+  h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
+  h += '<div>This session: ' + s.sessionEvents + ' events / ' + sessionMin + ' min</div>';
+  h += '<div>Top session: ' + (s.lifetime?.topSessionEvents||0) + ' ev / ' + (s.lifetime?.topSessionMinutes||0) + ' min</div>';
+  h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
+  if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
+  h += '</div>';
+  // Top abilities
+  const abs = Object.entries(s.abilityStats||{}).sort((a,b)=>b[1].total-a[1].total).slice(0,20);
+  h += '<div class="card wide"><h2>Top Abilities (uploader)</h2>';
+  if (!abs.length) h += '<div class="dim">(no damage events parsed yet)</div>';
+  else {
+    h += '<table><tr><th>Ability</th><th>Total</th><th>Hits</th><th>Avg</th></tr>';
+    for (const [ab, st] of abs) {
+      const label = ab === 'non-melee' ? ab + ' (DS / DoT / procs)' : ab;
+      const avg = st.count > 0 ? Math.round(st.total / st.count) : 0;
+      h += '<tr><td>' + esc(label) + '</td><td class="num">' + fmtK(st.total) + '</td><td class="num">' + st.count + '</td><td class="num">' + fmtK(avg) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  h += '</div>';
+  document.getElementById('info').innerHTML = h;
+}
+
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    renderHeader(s); renderDash(s); renderTanks(s); renderHealers(s); renderPets(s); renderInfo(s);
+  } catch (e) { /* network blip — just retry next tick */ }
+}
+
+document.querySelectorAll('.nav button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById(b.dataset.tab).classList.add('active');
+}));
+refresh(); setInterval(refresh, 2000);
+</script></body></html>`;
+
+function startWebDashboard(port) {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/' || req.url === '/index.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(WEB_HTML);
+    } else if (req.url === '/api/state') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(_serializeForDashboard()));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('not found');
+    }
+  });
+  server.on('error', (err) => {
+    console.warn(`[web-dashboard] could not bind to port ${port}: ${err.message}`);
+  });
+  // Bind to 127.0.0.1 only — never expose to network.
+  server.listen(port, '127.0.0.1', () => {
+    if (!_dashboardEnabled) console.log(`[web-dashboard] http://localhost:${port}`);
+  });
 }
 
 let _saveTimer = null;
@@ -2844,6 +3142,11 @@ async function main() {
   // last 10 minutes (typical for [U] update-and-restart, or quick Ctrl+C).
   const _sessionRestored = loadSessionState();
   if (_sessionRestored) stats._sessionRestoredBanner = true;
+
+  // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
+  if (args.flags.webPort) {
+    startWebDashboard(args.flags.webPort);
+  }
   // Backstop save every 60s so a hard crash loses at most a minute.
   setInterval(() => {
     if (stats.sessionEvents > 0 || stats.uploadCount > 0) {
