@@ -342,19 +342,38 @@ async function saveRosterToThread(client, roster, threadId, headerTitle, members
   try {
     const thread = await client.channels.fetch(threadId);
 
-    // Delete all previous bot messages
-    const msgs = await thread.messages.fetch({ limit: 100 });
-    for (const msg of msgs.values()) {
+    // Collect existing bot messages by category, oldest first.
+    // We edit in place wherever possible — new thread.send() pings subscribers,
+    // message.edit() does not.
+    const fetched = await thread.messages.fetch({ limit: 100 });
+    const pool = { header: [], members: [], data: [] };
+    for (const msg of [...fetched.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp)) {
       if (msg.author.id !== client.user.id) continue;
       const t = msg.embeds[0]?.title;
-      if (t === headerTitle || t === membersTitle || t === dataTitle) await msg.delete().catch(() => {});
+      if (t === headerTitle)  pool.header.push(msg);
+      else if (t === membersTitle) pool.members.push(msg);
+      else if (t === dataTitle)    pool.data.push(msg);
     }
+
+    // Edit the next available existing message or post a new one.
+    const upsert = async (bucket, embed) => {
+      if (bucket.length > 0) {
+        const msg = bucket.shift();
+        await msg.edit({ embeds: [embed] }).catch(() => thread.send({ embeds: [embed] }));
+      } else {
+        await thread.send({ embeds: [embed] });
+      }
+    };
+    // Delete any leftover messages whose slot is no longer needed.
+    const cleanup = async (bucket) => {
+      for (const msg of bucket) await msg.delete().catch(() => {});
+    };
 
     const { mainCount, altCount } = _rosterCounts(roster);
     const importTs = importedAt ? `<t:${Math.floor(importedAt.getTime() / 1000)}:F>` : 'unknown';
 
-    // 1. Header
-    await thread.send({ embeds: [
+    // 1. Header (always exactly 1)
+    await upsert(pool.header,
       new EmbedBuilder()
         .setTitle(headerTitle)
         .setColor(0x5865f2)
@@ -364,33 +383,37 @@ async function saveRosterToThread(client, roster, threadId, headerTitle, members
           { name: 'Alts',  value: String(altCount),  inline: true },
           { name: 'Last Imported', value: `By **${importerName || 'unknown'}** on ${importTs}`, inline: false },
         )
-        .setTimestamp(importedAt || undefined),
-    ]});
+        .setTimestamp(importedAt || undefined)
+    );
+    await cleanup(pool.header);
 
-    // 2. One message per class (mains then alts)
+    // 2. One message per class group (mains then alts)
     const classDescs = _buildMemberEmbeds(roster);
     for (let i = 0; i < classDescs.length; i++) {
-      await thread.send({ embeds: [
+      await upsert(pool.members,
         new EmbedBuilder()
           .setTitle(membersTitle)
           .setColor(0x5865f2)
           .setDescription(classDescs[i])
-          .setFooter({ text: `${i + 1}/${classDescs.length}` }),
-      ]});
+          .setFooter({ text: `${i + 1}/${classDescs.length}` })
+      );
     }
+    await cleanup(pool.members);
 
     // 3. JSON data chunks (for bot reload)
     const dataChunks = _chunkJson(roster);
     for (let i = 0; i < dataChunks.length; i++) {
-      await thread.send({ embeds: [
+      await upsert(pool.data,
         new EmbedBuilder()
           .setTitle(dataTitle)
           .setColor(0x2b2d31)
           .setDescription(JSON.stringify(dataChunks[i]))
           .setFooter({ text: `chunk ${i + 1}/${dataChunks.length} · imported by ${importerName || 'unknown'}` })
-          .setTimestamp(importedAt || undefined),
-      ]});
+          .setTimestamp(importedAt || undefined)
+      );
     }
+    await cleanup(pool.data);
+
   } catch (err) {
     console.warn('[roster] Could not save to thread:', err?.message);
   }
