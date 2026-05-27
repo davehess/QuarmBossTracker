@@ -2270,14 +2270,16 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
 // this code ever runs — they never reach parseChatLine.
 
 const CHAT_LINE_PATTERNS = [
-  // "Cory tells the guild, 'message'"
+  // Third-person guild: "Cory tells the guild, 'message'"
   { rx: /^\[.+?\]\s+(\w+) tells the guild,\s*['"](.+?)['"]\s*$/, channel: 'guild', self: false },
-  // "You say to your guild, 'message'"
-  { rx: /^\[.+?\]\s+You say to your guild,\s*['"](.+?)['"]\s*$/, channel: 'guild', self: true },
-  // "Hitya tells the raid, 'message'"
+  // First-person guild: "You say to your guild, 'message'" (Quarm) or
+  //                      "You tell your guild, 'message'" (some EQ variants)
+  { rx: /^\[.+?\]\s+You (?:say to|tell) your guild,\s*['"](.+?)['"]\s*$/, channel: 'guild', self: true },
+  // Third-person raid: "Hitya tells the raid, 'message'"
   { rx: /^\[.+?\]\s+(\w+) tells the raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: false },
-  // "You say to your raid, 'message'"
-  { rx: /^\[.+?\]\s+You say to your raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: true },
+  // First-person raid: EQ logs this as "You tell your raid" (NOT "say to your")
+  //                    — accept both verbs to cover client variations.
+  { rx: /^\[.+?\]\s+You (?:tell|say to) your raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: true },
 ];
 
 // ── Druzzil Ro instance-kill announcements ─────────────────────────────────
