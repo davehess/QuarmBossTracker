@@ -2234,13 +2234,15 @@ async function _handleAgentChat(req, res) {
       out = out.replace(EQ_ITEM_LINK_RX, (_, blob, name) => {
         if (/[\[\]()]/.test(name)) return name;
         const id = _itemIdFromBlob(blob);
-        return id ? `[${name}](https://www.pqdi.cc/item/${id})` : name;
+        // Bare URL in angle brackets — Discord auto-linkifies and `<>` suppresses
+        // the embed preview, more obvious to click than masked-link syntax.
+        return id ? `${name} <https://www.pqdi.cc/item/${id}>` : name;
       }).replace(/\x12/g, '');
     }
     out = out.replace(EQ_STRIPPED_LINK_RX, (match, blob, name) => {
       if (/[\[\]()]/.test(name)) return match;
       const id = _itemIdFromBlob(blob);
-      return id ? `[${name}](https://www.pqdi.cc/item/${id})` : match;
+      return id ? `${name} <https://www.pqdi.cc/item/${id}>` : match;
     });
     return out;
   }

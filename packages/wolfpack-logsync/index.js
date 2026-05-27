@@ -2382,16 +2382,17 @@ function transformEqItemLinks(text) {
     out = out.replace(EQ_ITEM_LINK_RX, (_, blob, name) => {
       if (/[\[\]()]/.test(name)) return name;
       const id = _extractItemId(blob);
-      return id ? `[${name}](https://www.pqdi.cc/item/${id})` : name;
+      // Bare URL in angle brackets — Discord auto-linkifies, the `<>` suppresses
+      // the URL preview embed so chat stays compact. More visibly clickable than
+      // masked-link `[name](url)` syntax which renders too subtly.
+      return id ? `${name} <https://www.pqdi.cc/item/${id}>` : name;
     }).replace(/\x12/g, '');
   }
-  // Pass 2: Discord-stripped form (delimiters already lost). Only match when
-  // the hex blob length is in the typical link range (6-10) and the following
-  // text is item-name-cased. Reduces false positives on plain numeric chat.
+  // Pass 2: Discord-stripped form (delimiters already lost)
   out = out.replace(EQ_STRIPPED_LINK_RX, (match, blob, name) => {
     if (/[\[\]()]/.test(name)) return match;
     const id = _extractItemId(blob);
-    return id ? `[${name}](https://www.pqdi.cc/item/${id})` : match;
+    return id ? `${name} <https://www.pqdi.cc/item/${id}>` : match;
   });
   return out;
 }
