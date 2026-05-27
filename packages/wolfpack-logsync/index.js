@@ -310,6 +310,11 @@ const KEEP_PATTERNS = [
   // Needed for tanking stats (avoidance %, hits-taken, accuracy). The parseEvent
   // handler classifies each into miss/dodge/parry/riposte/block/invulnerable.
   /\bgoes on a RAMPAGE against\b/i,               // rampage announcements
+  // Bandolier swap events — track active weapon set per character
+  /\bLoading bandolier set \[/i,
+  /\bBandolier set \[.+?\] is already equipped/i,
+  /\bcanceling set load\b/i,
+  /\bYou are too busy to equip bandolier set!/i,
   // Monk mend skill outcomes — counted on the dashboard for Monk players.
   // "You mend your wounds and heal some damage." / "considerable damage." (crit)
   // "You magically mend your wounds and heal..." (alternate phrasing)
@@ -455,6 +460,24 @@ function parseEvent(line, ts) {
   // 'rampage' event; EncounterBuilder records the hit against the named target.
   m = line.match(/\]\s+(.+?)\s+goes on a RAMPAGE against\s+(.+?)!/i);
   if (m) return { ts: tsIso, type: 'rampage', attacker: m[1], defender: m[2] };
+
+  // ── Bandolier swap events ───────────────────────────────────────────────
+  // EQ writes a line whenever the player runs /bandolier load <name>:
+  //   "Loading bandolier set [emp]"            — load attempt
+  //   "Bandolier set [1] is already equipped"  — confirms current set name
+  //   "You are too busy to equip bandolier set!"
+  //   "Item with ID [21809] not found in inventory for bandolier set [caen], canceling set load."
+  //   "No empty inventory slot to unequip Nature Walker's Scimitar, canceling set load."
+  m = line.match(/\]\s+Loading bandolier set \[(.+?)\]/i);
+  if (m) return { ts: tsIso, type: 'bandolier', action: 'loading', setName: m[1] };
+  m = line.match(/\]\s+Bandolier set \[(.+?)\] is already equipped/i);
+  if (m) return { ts: tsIso, type: 'bandolier', action: 'already_equipped', setName: m[1] };
+  m = line.match(/\]\s+Item with ID \[(\d+)\] not found in inventory for bandolier set \[(.+?)\], canceling set load/i);
+  if (m) return { ts: tsIso, type: 'bandolier', action: 'missing_item', itemId: parseInt(m[1], 10), setName: m[2] };
+  m = line.match(/\]\s+No empty inventory slot to unequip (.+?), canceling set load/i);
+  if (m) return { ts: tsIso, type: 'bandolier', action: 'no_slot', item: m[1] };
+  if (/\]\s+You are too busy to equip bandolier set!/i.test(line))
+    return { ts: tsIso, type: 'bandolier', action: 'too_busy' };
 
   // ── Monk Mending Skill ───────────────────────────────────────────────────
   // EQ Monk's "Mending" self-heal — three possible outcomes:
@@ -899,6 +922,26 @@ class EncounterBuilder {
     }
 
     // ── Rampage handling ──────────────────────────────────────────────────────
+    // ── Bandolier swaps ──────────────────────────────────────────────────────
+    // Track the currently-equipped set per character. 'loading' or
+    // 'already_equipped' both update active. 'too_busy' / 'missing_item' /
+    // 'no_slot' are kept as the last-known failure for the dashboard hint.
+    if (event.type === 'bandolier') {
+      const char = this.character || 'unknown';
+      const prev = stats.activeBandolier[char] || {};
+      if (event.action === 'loading' || event.action === 'already_equipped') {
+        stats.activeBandolier[char] = {
+          name: event.setName, ts: event.ts, status: 'equipped',
+        };
+      } else {
+        stats.activeBandolier[char] = {
+          name: prev.name || null, ts: event.ts, status: event.action,
+          lastError: event.item || event.itemId || event.setName || null,
+        };
+      }
+      return;
+    }
+
     // ── Monk Mend ────────────────────────────────────────────────────────────
     // Counter-only event — not added to this.events, doesn't gate startedAt.
     // Crit rate is a per-character session stat surfaced on the Info screen.
@@ -1412,6 +1455,9 @@ const stats = {
   // { [name]: { melee, spell, proc, dot: { count, total, max }, crits: { total, melee, spell, bonusDmg } } }
   // Live-updated; surfaced on the DEEPS tab.
   sessionDeeps:    {},
+  // activeBandolier: most-recently-loaded bandolier set per character.
+  // { [character]: { name, ts, status } }  status: 'equipped' | 'too_busy' | 'missing_item' | 'no_slot'
+  activeBandolier: {},
   // characterInventories: parsed /output inventory files for each known character.
   // { [characterName]: { weapons: { primary, secondary, range, ammo }, worn: {...}, _updatedAt, _path } }
   characterInventories: {},
@@ -1651,6 +1697,7 @@ function _serializeForDashboard() {
     currentEncounterThreat: stats.currentEncounterThreat,
     characterInventories:   stats.characterInventories,
     hiddenLoadoutChars:     [...(_optinState.hiddenLoadoutChars || [])],
+    activeBandolier:        stats.activeBandolier,
     sessionDeeps:           stats.sessionDeeps,
     requestedCharacters: stats.requestedCharacters,
     lifetime:           stats.lifetime,
@@ -1937,12 +1984,52 @@ function renderTanks(s) {
         : updatedAgo < 1 ? 'today'
         : updatedAgo < 30 ? updatedAgo + 'd ago'
         : updatedAgo + 'd ago';
-      h += '<tr><td class="name">' + esc(char) + '</td>' +
+      const active = (s.activeBandolier || {})[char];
+      const activeBadge = active && active.name
+        ? ' <span class="tag" title="last-loaded bandolier set">⚔ ' + esc(active.name) + (active.status !== 'equipped' ? ' <span style="color:var(--red)">(' + esc(active.status) + ')</span>' : '') + '</span>'
+        : '';
+      h += '<tr><td class="name">' + esc(char) + activeBadge + '</td>' +
            '<td>' + pqdiLink(inv.weapons?.primary)   + '</td>' +
            '<td>' + pqdiLink(inv.weapons?.secondary) + '</td>' +
            '<td>' + pqdiLink(inv.weapons?.range)     + '</td>' +
            '<td class="dim">' + updatedStr + '</td>' +
            '<td><button data-hide-char="' + esc(char) + '" title="Hide this character" style="background:transparent;border:0;color:var(--dim);cursor:pointer;font-size:13px">⊘</button></td></tr>';
+
+      // Bandolier sets — display as a sub-row with a select dropdown so the
+      // user can browse their saved loadouts and pick which one to display.
+      if (inv.bandolier && Object.keys(inv.bandolier).length > 0) {
+        const setNames = Object.keys(inv.bandolier);
+        const defaultSet = (active && active.name && inv.bandolier[active.name]) ? active.name : setNames[0];
+        h += '<tr class="bandolier-row" data-char="' + esc(char) + '"><td colspan="6" style="padding:6px 16px 10px;border-top:1px dashed var(--border)">';
+        h += '<span class="dim" style="font-size:11px">Bandolier set:</span> ';
+        h += '<select data-bandolier-char="' + esc(char) + '" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-family:inherit;font-size:12px">';
+        for (const sn of setNames) {
+          h += '<option value="' + esc(sn) + '"' + (sn === defaultSet ? ' selected' : '') + '>' + esc(sn) + '</option>';
+        }
+        h += '</select> ';
+        // Render the selected set inline using a div the change-handler updates
+        const renderSet = (setName) => {
+          const set = inv.bandolier[setName] || {};
+          const slot = (item) => {
+            if (!item) return '<span class="dim">—</span>';
+            const url = 'https://www.pqdi.cc/item/' + item.id;
+            return '<a href="' + url + '" target="_blank" style="color:var(--blue)">' + esc(item.name) + '</a>';
+          };
+          return '<span class="dim">MH:</span> ' + slot(set.primary)
+               + ' <span class="dim">OH:</span> ' + slot(set.secondary)
+               + ' <span class="dim">Range:</span> ' + slot(set.range)
+               + ' <span class="dim">Ammo:</span> ' + slot(set.ammo);
+        };
+        // JSON blob stashed in a data-attribute on the display span so the
+        // change handler can look up the selected set without another fetch.
+        // Pre-encoded with attr-safe quotes; HTML-escape just the quote marks.
+        const bandolierJson = JSON.stringify(inv.bandolier)
+          .replace(/&/g, '&amp;').replace(/'/g, '&apos;').replace(/"/g, '&quot;');
+        h += '<span class="bandolier-display" data-char="' + esc(char) + '" ' +
+             'data-bandolier="' + bandolierJson + '" ' +
+             'style="font-size:12px;margin-left:6px">' + renderSet(defaultSet) + '</span>';
+        h += '</td></tr>';
+      }
     }
     h += '</table>';
     if (hiddenList.length > 0) {
@@ -2008,6 +2095,25 @@ function renderTanks(s) {
       body: JSON.stringify({ action: 'show', chars: [b.dataset.showChar] }) });
     refresh();
   }));
+  // Wire bandolier dropdowns — re-render the slot summary span when the
+  // user picks a different set from the dropdown.
+  document.querySelectorAll('[data-bandolier-char]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const char = sel.dataset.bandolierChar;
+      const display = document.querySelector('[data-bandolier][data-char="' + char + '"]');
+      if (!display) return;
+      let sets; try { sets = JSON.parse(display.dataset.bandolier); } catch { return; }
+      const set = sets[sel.value] || {};
+      const slot = (item) => {
+        if (!item) return '<span class="dim">&mdash;</span>';
+        return '<a href="https://www.pqdi.cc/item/' + item.id + '" target="_blank" style="color:var(--blue)">' + esc(item.name) + '</a>';
+      };
+      display.innerHTML = '<span class="dim">MH:</span> ' + slot(set.primary)
+                       + ' <span class="dim">OH:</span> ' + slot(set.secondary)
+                       + ' <span class="dim">Range:</span> ' + slot(set.range)
+                       + ' <span class="dim">Ammo:</span> ' + slot(set.ammo);
+    });
+  });
 }
 
 function renderHealers(s) {
@@ -2999,12 +3105,46 @@ function _saveOptInState() {
 // but we want to catch when a tank swaps weapons mid-session.
 
 const INVENTORY_FILENAME_RX = /^([A-Za-z]+)-Inventory\.txt$/i;
+// Bandolier sets — `/output bandolier` writes <Char>_bandolier.ini next to the
+// inventory file. INI sections are set names; rows are slot → item ID. Slots:
+// 0 = Primary, 1 = Secondary, 2 = Range, 3 = Ammo. Value 0 = empty.
+const BANDOLIER_FILENAME_RX = /^([A-Za-z]+)_bandolier\.ini$/i;
 const INVENTORY_WEAPON_SLOTS = new Set(['Primary', 'Secondary', 'Range', 'Ammo']);
 // Container slots we also pull so future expansion can show bags.
 const INVENTORY_WORN_SLOTS = new Set([
   'Charm','Ear','Head','Face','Neck','Shoulders','Arms','Back','Wrist','Range',
   'Hands','Primary','Secondary','Fingers','Chest','Legs','Feet','Waist','Power Source','Ammo',
 ]);
+
+function parseBandolierFile(text) {
+  // INI-ish format observed in Hitya_bandolier.ini:
+  //   [setname]
+  //   0=27315
+  //   1=26860
+  //   2=30565
+  //   3=21809
+  // Slot index 0..3 → primary/secondary/range/ammo. Value 0 = empty.
+  const SLOTS = ['primary', 'secondary', 'range', 'ammo'];
+  const sets = {};
+  let current = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith(';') || line.startsWith('#')) continue;
+    const section = line.match(/^\[(.+?)\]$/);
+    if (section) {
+      current = section[1];
+      sets[current] = { primary: null, secondary: null, range: null, ammo: null };
+      continue;
+    }
+    if (!current) continue;
+    const kv = line.match(/^(\d+)\s*=\s*(\d+)/);
+    if (!kv) continue;
+    const slot = SLOTS[parseInt(kv[1], 10)];
+    const id   = parseInt(kv[2], 10);
+    if (slot && id > 0) sets[current][slot] = id;
+  }
+  return sets;
+}
 
 function parseInventoryFile(text) {
   // Verified against real Hitya inventory:
@@ -3049,12 +3189,13 @@ function scanInventoryFiles() {
   try { entries = fs.readdirSync(dir); } catch { return {}; }
 
   const out = {};
+  const pascal = s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+
+  // First pass — inventory files
   for (const name of entries) {
     const m = name.match(INVENTORY_FILENAME_RX);
     if (!m) continue;
-    // Normalise to PascalCase — EQ filenames can come in mixed casing
-    // (hitya / HITYA / Hitya); display as 'Hitya' for consistency.
-    const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    const character = pascal(m[1]);
     const fullPath = path.join(dir, name);
     try {
       const stat = fs.statSync(fullPath);
@@ -3064,9 +3205,36 @@ function scanInventoryFiles() {
       inv._updatedAt = stat.mtime.toISOString();
       inv._sizeBytes = stat.size;
       out[character] = inv;
-    } catch (err) {
-      // skip unreadable files
-    }
+    } catch { /* unreadable */ }
+  }
+
+  // Second pass — bandolier .ini files. Attach to the inventory entry so we
+  // can resolve item IDs to names from the same character's inventory.
+  for (const name of entries) {
+    const m = name.match(BANDOLIER_FILENAME_RX);
+    if (!m) continue;
+    const character = pascal(m[1]);
+    const fullPath = path.join(dir, name);
+    try {
+      const text = fs.readFileSync(fullPath, 'utf8');
+      const sets = parseBandolierFile(text);
+      if (!out[character]) out[character] = { worn: {}, weapons: {}, bagged: [] };
+      // Build id → name map from this character's known items so we can
+      // present each bandolier slot with the friendly name + PQDI URL.
+      const inv = out[character];
+      const idToName = new Map();
+      for (const slot of Object.values(inv.worn || {}))    if (slot.id) idToName.set(slot.id, slot.name);
+      for (const item of inv.bagged || [])                 if (item.id) idToName.set(item.id, item.name);
+      const enriched = {};
+      for (const [setName, set] of Object.entries(sets)) {
+        enriched[setName] = {};
+        for (const [slot, id] of Object.entries(set)) {
+          enriched[setName][slot] = id ? { id, name: idToName.get(id) || ('Item #' + id) } : null;
+        }
+      }
+      inv.bandolier      = enriched;
+      inv._bandolierPath = fullPath;
+    } catch { /* unreadable */ }
   }
   return out;
 }
