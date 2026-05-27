@@ -1197,6 +1197,94 @@ function loadStats() {
   if (!stats.lifetime.firstSeenAt) stats.lifetime.firstSeenAt = new Date().toISOString();
 }
 
+// ── Session-state persistence ──────────────────────────────────────────────
+// On graceful exit (especially [U] update-and-restart), snapshot the live
+// session — recent parses, top hits, ability stats, healers/defenders/procs —
+// to disk so the post-restart agent can pick up where it left off instead of
+// resetting "Recent Parses" and "Top damage" to empty.
+//
+// The snapshot expires after 10 minutes: any longer than that, it's not "the
+// same session" anymore and we want a clean dashboard.
+const SESSION_FILE   = path.join(__dirname, 'logsync.session.json');
+const SESSION_TTL_MS = 10 * 60 * 1000;
+
+function saveSessionState() {
+  try {
+    // healerStats has Set fields; abilityStats is a Map. JSON-encode each.
+    const healersOut = {};
+    for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
+      healersOut[name] = {
+        healed:  s.healed || 0,
+        ticks:   s.ticks  || 0,
+        targets: [...(s.targets || [])],
+      };
+    }
+    const payload = {
+      savedAt:            Date.now(),
+      agentVersion:       AGENT_VERSION,
+      startedAt:          stats.startedAt,
+      sessionEvents:      stats.sessionEvents,
+      sessionTotalDamage: stats.sessionTotalDamage,
+      sessionDamageBy:    stats.sessionDamageBy,
+      recentParses:       stats.recentParses,
+      topDamageSaw:       stats.topDamageSaw,
+      topDamageDid:       stats.topDamageDid,
+      sessionDefenders:   stats.sessionDefenders,
+      sessionHealers:     healersOut,
+      sessionProcs:       stats.sessionProcs,
+      sessionDeaths:      stats.sessionDeaths,
+      abilityStats:       Object.fromEntries(stats.abilityStats),
+      uploadCount:        stats.uploadCount,
+      uploadErrors:       stats.uploadErrors,
+      lastUploadAt:       stats.lastUploadAt,
+    };
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(payload));
+  } catch { /* non-fatal */ }
+}
+
+// Returns true if a recent session was restored. Caller can render a banner.
+function loadSessionState() {
+  try {
+    if (!fs.existsSync(SESSION_FILE)) return false;
+    const stat = fs.statSync(SESSION_FILE);
+    const age = Date.now() - stat.mtime.getTime();
+    if (age > SESSION_TTL_MS) {
+      try { fs.unlinkSync(SESSION_FILE); } catch {}
+      return false;
+    }
+    const raw = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+    if (raw.startedAt)          stats.startedAt          = raw.startedAt;
+    if (raw.sessionEvents)      stats.sessionEvents      = raw.sessionEvents;
+    if (raw.sessionTotalDamage) stats.sessionTotalDamage = raw.sessionTotalDamage;
+    if (raw.sessionDamageBy)    stats.sessionDamageBy    = raw.sessionDamageBy;
+    if (raw.recentParses)       stats.recentParses       = raw.recentParses;
+    if (raw.topDamageSaw)       stats.topDamageSaw       = raw.topDamageSaw;
+    if (raw.topDamageDid)       stats.topDamageDid       = raw.topDamageDid;
+    if (raw.sessionDefenders)   stats.sessionDefenders   = raw.sessionDefenders;
+    if (raw.sessionProcs)       stats.sessionProcs       = raw.sessionProcs;
+    if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
+    if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
+    if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
+    if (raw.lastUploadAt)       stats.lastUploadAt       = raw.lastUploadAt;
+    if (raw.sessionHealers) {
+      stats.sessionHealers = {};
+      for (const [name, s] of Object.entries(raw.sessionHealers)) {
+        stats.sessionHealers[name] = {
+          healed:  s.healed || 0,
+          ticks:   s.ticks  || 0,
+          targets: new Set(s.targets || []),
+        };
+      }
+    }
+    if (raw.abilityStats) {
+      stats.abilityStats = new Map(Object.entries(raw.abilityStats));
+    }
+    // Consume the file so the next clean exit must explicitly re-write it
+    try { fs.unlinkSync(SESSION_FILE); } catch {}
+    return true;
+  } catch { return false; }
+}
+
 let _saveTimer = null;
 function saveStatsSoon() {
   if (_saveTimer) return;
@@ -1257,8 +1345,11 @@ function recordEventForDashboard(event, character) {
     stats.abilityStats.set(ability, cur);
   }
 
-  // Top-damage lists only track sizeable hits to keep entries meaningful.
-  if (event.amount < 500) return;
+  // Top-damage lists thresholds — use a much lower bar for the uploader's own
+  // hits so solo / low-level / non-raid content still populates "Top damage I
+  // did". A monk at 60 might never exceed 500 per hit but still wants to see
+  // their crits and big swings on the dashboard.
+  if (event.amount < (isMine ? 50 : 250)) return;
 
   const item = {
     label:    classifyDamage(event),
@@ -1368,6 +1459,7 @@ function renderDashboard() {
   out.push(`${C.gray}  ------------------------------------------${C.reset}\n`);
   out.push(`  ${C.dim}Current version ${C.reset}${C.bold}${AGENT_VERSION}${C.reset}`);
   if (stats.uploadCount) out.push(`   ${C.dim}| ${stats.uploadCount} upload${stats.uploadCount === 1 ? '' : 's'} this session${C.reset}`);
+  if (stats._sessionRestoredBanner) out.push(`   ${C.green}↻ session resumed${C.reset}`);
   out.push('\n\n');
 
   // Two-column layout: Recent Parses (left) vs Damage done this session (right)
@@ -1521,6 +1613,7 @@ function setupKeypressHandler() {
   process.stdin.on('data', (key) => {
     // Ctrl+C always exits
     if (key === '\u0003') {
+      try { saveSessionState(); } catch {}
       process.stdout.write(`${ANSI.reset}\nExiting.\n`);
       process.exit(0);
     }
@@ -1571,14 +1664,19 @@ function setupKeypressHandler() {
     // Dashboard mode
     if (key === 'u' || key === 'U') {
       try {
+        // Snapshot the live session so the new version's startup restores
+        // recent parses, top hits, ability stats, etc. instead of resetting.
+        saveSessionState();
         const marker = path.join(__dirname, '.force-update-on-restart');
         fs.writeFileSync(marker, new Date().toISOString());
       } catch {}
       process.stdout.write(`${ANSI.yellow}\n  Restarting to apply update...${ANSI.reset}\n`);
+      process.stdout.write(`${ANSI.dim}  (Session will resume — recent parses + top hits preserved.)${ANSI.reset}\n`);
       process.exit(0);
     }
     if (key === 'k' || key === 'K') {
       try {
+        saveSessionState();
         const marker = path.join(__dirname, '.update-token-on-restart');
         fs.writeFileSync(marker, new Date().toISOString());
       } catch {}
@@ -1968,6 +2066,21 @@ function showInfo() {
     .sort((a, b) => b[1].total - a[1].total)
     .slice(0, 14);
 
+  // Identify bard songs so we can show an aggregate counter separately —
+  // dirges/chants/discord songs all contribute to a bard's effective DPS but
+  // get scattered across the top-abilities table by individual song name.
+  const BARD_SONG_NAMES = new Set([
+    ...SOURCELESS_SPELLS.map(s => s.name.toLowerCase()),
+    ...BARD_SONGS.map(s => s.name.toLowerCase()),
+  ]);
+  function _isBardSong(name) {
+    if (!name) return false;
+    const lower = name.toLowerCase();
+    if (BARD_SONG_NAMES.has(lower)) return true;
+    // Catch-all for less common song titles
+    return /\b(dirge|chant of|discord|dissonance|cessation|bereavement|assonance)\b/i.test(lower);
+  }
+
   out.push(`\n${C.bold}${C.yellow}  Top Abilities (uploader, this session)${C.reset}\n`);
   if (abilities.length === 0) {
     out.push(`  ${C.dim}(no damage events parsed yet)${C.reset}\n`);
@@ -1975,9 +2088,23 @@ function showInfo() {
     out.push(`  ${C.dim}${pad('Ability', 36)} ${pad('Total', 8)} ${pad('Hits', 6)} ${pad('Avg', 7)}${C.reset}\n`);
     for (const [ability, s] of abilities) {
       const avg   = s.count > 0 ? Math.round(s.total / s.count) : 0;
-      const label = ability === 'non-melee' ? `${ability} (dirges/procs)` : ability;
+      // "non-melee" is the EQ damage type for damage shields, DoTs, and procs —
+      // NOT for dirges. Dirges are correctly attributed to the song name (e.g.
+      // "Denon's Desperate Dirge") via lastDirgeCast correlation upstream.
+      const label = ability === 'non-melee' ? `${ability} (DS / DoT / procs)` : ability;
       out.push(`  ${pad(label, 36)} ${C.bold}${pad(fmtK(s.total), 8)}${C.reset} ${pad(String(s.count), 6)} ${pad(fmtK(avg), 7)}\n`);
     }
+  }
+
+  // ── 🎵 Bard Songs aggregate — sums all dirges/chants/discord songs into one row ──
+  const bardEntries = [...stats.abilityStats.entries()].filter(([name]) => _isBardSong(name));
+  if (bardEntries.length > 0) {
+    let bardTotal = 0, bardHits = 0;
+    for (const [, s] of bardEntries) { bardTotal += s.total; bardHits += s.count; }
+    const bardAvg = bardHits > 0 ? Math.round(bardTotal / bardHits) : 0;
+    out.push(`\n${C.bold}${C.cyan}  🎵 Bard Songs (combined)${C.reset}\n`);
+    out.push(`  ${C.dim}${bardEntries.length} song(s) tracked separately above — combined:${C.reset}\n`);
+    out.push(`  ${pad('all dirges + chants', 36)} ${C.bold}${pad(fmtK(bardTotal), 8)}${C.reset} ${pad(String(bardHits), 6)} ${pad(fmtK(bardAvg), 7)}\n`);
   }
 
   // ── ☠️ Hall of Shame — session death scoreboard ────────────────────────────
@@ -2713,6 +2840,16 @@ async function main() {
 
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();
+  // Restore in-flight session state if the previous run snapshotted within the
+  // last 10 minutes (typical for [U] update-and-restart, or quick Ctrl+C).
+  const _sessionRestored = loadSessionState();
+  if (_sessionRestored) stats._sessionRestoredBanner = true;
+  // Backstop save every 60s so a hard crash loses at most a minute.
+  setInterval(() => {
+    if (stats.sessionEvents > 0 || stats.uploadCount > 0) {
+      try { saveSessionState(); } catch {}
+    }
+  }, 60_000);
 
   // One encounter builder per log file (per character)
   const builders = args.logs.map(logPath => {
