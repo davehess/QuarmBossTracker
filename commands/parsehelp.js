@@ -4,7 +4,7 @@
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 
-const PARSER_DOWNLOAD = 'https://tinyurl.com/WolfPackP';
+const PARSER_DOWNLOAD = 'https://parser.wolfpack.quest';
 const EQLOGPARSER_URL = 'https://github.com/kauffman12/EQLogParser/releases';
 
 module.exports = {
