@@ -2178,7 +2178,7 @@ async function refreshOptin() {
 async function refresh() {
   try {
     const s = await (await fetch('/api/state')).json();
-    renderHeader(s); renderDash(s); renderTanks(s); renderHealers(s); renderPets(s); renderInfo(s);
+    renderHeader(s); renderDash(s); renderTanks(s); renderHealers(s); renderDeeps(s); renderPets(s); renderInfo(s);
   } catch (e) { /* network blip — just retry next tick */ }
 }
 
