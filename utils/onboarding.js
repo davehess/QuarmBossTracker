@@ -241,10 +241,13 @@ function buildWelcomeEmbed() {
         inline: false,
       },
       {
-        name: '📊 Parses',
+        name: '📊 Parses (auto or manual)',
         value:
-          'After every kill, paste your EQLogParser output into `/parse` — the bot auto-detects the boss, ' +
-          'posts a DPS breakdown, and tracks your numbers over time. Hit the button below to learn more.',
+          'Easiest path: install **WolfPackParser** — it tails your eqlog and auto-uploads every kill ' +
+          'with no copy/paste, plus live guild/raid chat relay, tank dashboards, and a web UI. ' +
+          'Download: https://tinyurl.com/WolfPackP · `/parsehelp` for setup.\n' +
+          'Prefer manual? Paste your EQLogParser output into `/parse` — boss is auto-detected. ' +
+          'Hit "I want to be top deeps" for the full rundown.',
         inline: false,
       },
       {
@@ -282,8 +285,10 @@ function buildOrganizerEmbed() {
       {
         name: '📊 Parse Tracking',
         value: [
-          'After each kill, paste your EQLogParser output into `/parse` — the boss is auto-detected.',
+          'Push raiders toward **WolfPackParser** — it auto-uploads every kill so you don\'t chase missing parses.',
+          'Download: https://tinyurl.com/WolfPackP · `/parsehelp` for setup. Manual fallback: paste into `/parse`.',
           'Use `/parsestats <boss>` for the DPS scoreboard, `/parsenight` for a full-night summary.',
+          '`/parseagents` shows who\'s currently uploading via the agent.',
         ].join('\n'),
         inline: false,
       },
@@ -308,39 +313,54 @@ function buildParseOverviewEmbed() {
     .setColor(0x2ecc71)
     .setTitle('📊 So you want to be top deeps?')
     .setDescription(
-      'The parse system tracks DPS across every kill. Here\'s how to use it:'
+      'Two ways to track DPS — automatic (recommended) or manual.'
     )
     .addFields(
       {
-        name: '1️⃣ Submit a parse after every kill',
+        name: '🐺 Recommended: WolfPackParser (logsync agent)',
         value:
-          'Open **EQLogParser**, filter to the fight, then paste the output into:\n' +
+          'Drop the manual /parse pasting — the parser tails your `eqlog_*.txt` ' +
+          'automatically and uploads every kill in real time. Bonus features:\n' +
+          '• Live guild/raid chat → `#in-game-guild-chat` and `#in-game-raid-chat` (per-era threaded)\n' +
+          '• Tank dashboard with rampage, invuln-avoided, riposte deaths\n' +
+          '• Healer dashboard with CH chain gap warnings\n' +
+          '• Per-dirge / per-song breakdown for bards\n' +
+          '• Monk mend tracker (attempts / crits / fail rate)\n' +
+          '• Web dashboard at `http://localhost:7777` — runs as a background service\n' +
+          '• Charm-aware fight timing for pet/dotter classes\n' +
+          `**Download:** https://tinyurl.com/WolfPackP · run \`/parsehelp\` for setup`,
+        inline: false,
+      },
+      {
+        name: '✋ Manual fallback: paste from EQLogParser',
+        value:
+          'No agent installed? Open **EQLogParser**, filter to the fight, then paste:\n' +
           '`/parse <data>` — boss is auto-detected from the mob name\n' +
           '`/parseboss <boss> <data>` — use this if auto-detect picks the wrong boss\n' +
           '`/parsenight <data>` — paste a Combined EQLogParser string to submit a full night at once',
         inline: false,
       },
       {
-        name: '2️⃣ Check the scoreboard',
+        name: '📈 Check the scoreboard',
         value:
           '`/parsestats <boss>` — DPS rankings for that boss across all recorded kills, plus your personal best and average\n' +
           '`/parsenight` — full-night DPS summary across every kill from tonight',
         inline: false,
       },
       {
-        name: '3️⃣ Live raid threads',
+        name: '🧵 Live raid threads',
         value:
           '`/raidnight` — opens a raid thread with a rolling live scoreboard that updates as parses come in',
         inline: false,
       },
       {
-        name: 'AoE fights',
+        name: '💥 AoE fights',
         value:
           '`/parseaoe <data>` — combines AoE parses within a 5-minute window so tank/DPS contributions aren\'t split',
         inline: false,
       },
     )
-    .setFooter({ text: 'Run /raidbosshelp for the full command reference' });
+    .setFooter({ text: 'Run /raidbosshelp for the full command reference · /parsehelp for parser setup' });
 }
 
 function buildWelcomeComponents(version) {

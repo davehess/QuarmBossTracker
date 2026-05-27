@@ -1443,7 +1443,11 @@ function _serializeForDashboard() {
     updateAvailable:    stats.updateAvailable,
     requestedCharacters: stats.requestedCharacters,
     lifetime:           stats.lifetime,
-    sessionResumed:     !!stats._sessionRestoredBanner,
+    // Only surface the resume banner for the first 2 minutes after restore —
+    // after that the user knows, and a stale banner is just noise.
+    sessionResumed:     !!stats._sessionRestoredBanner
+                        && stats._sessionRestoredAt
+                        && (Date.now() - stats._sessionRestoredAt) < 120_000,
     knownPets:          [...knownPetOwners.entries()].map(([pet, owners]) => ({ pet, owners: [...owners] })),
   };
 }
@@ -1870,6 +1874,19 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeForDashboard()));
       }
+      if (req.url === '/api/shutdown' && req.method === 'POST') {
+        // Save session + drop PID file + exit. Used by parser.bat re-launches
+        // when the user picks "kill the service" so they can take over the
+        // window OR exit cleanly.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, message: 'shutting down' }));
+        setTimeout(() => {
+          try { saveSessionState(); } catch {}
+          removePidFile();
+          process.exit(0);
+        }, 250);
+        return;
+      }
       if (req.url === '/api/update' && req.method === 'POST') {
         // Same behavior as [U] press: save session, write update marker,
         // exit. The wrapper script (start-logsync.ps1) sees the marker and
@@ -2136,7 +2153,10 @@ function renderDashboard() {
   out.push(`${C.gray}  ------------------------------------------${C.reset}\n`);
   out.push(`  ${C.dim}Current version ${C.reset}${C.bold}${AGENT_VERSION}${C.reset}`);
   if (stats.uploadCount) out.push(`   ${C.dim}| ${stats.uploadCount} upload${stats.uploadCount === 1 ? '' : 's'} this session${C.reset}`);
-  if (stats._sessionRestoredBanner) out.push(`   ${C.green}↻ session resumed${C.reset}`);
+  if (stats._sessionRestoredBanner && stats._sessionRestoredAt
+      && (Date.now() - stats._sessionRestoredAt) < 120_000) {
+    out.push(`   ${C.green}↻ session resumed${C.reset}`);
+  }
   out.push('\n\n');
 
   // Two-column layout: Recent Parses (left) vs Damage done this session (right)
@@ -3613,14 +3633,79 @@ async function main() {
         const url = `http://localhost:${active.webPort}`;
         console.log(`\n  ${ANSI.green}✓ Service already running${ANSI.reset} (pid ${active.pid}, v${active.agentVersion}, since ${active.startedAt}).`);
         console.log(`  ${ANSI.cyan}Dashboard:${ANSI.reset} ${url}`);
-        console.log(`  ${ANSI.dim}Feel free to close this window — the service keeps running in the background.${ANSI.reset}`);
-        console.log(`  ${ANSI.dim}To stop the service, kill pid ${active.pid} or delete logsync.pid.json.${ANSI.reset}\n`);
-        // Auto-open the dashboard in the user's default browser
+        // Open the dashboard in either path so the user always sees state.
         openDashboardInBrowser(active.webPort);
-        process.exit(0);
+
+        // Non-TTY (auto-restart, CI, redirected stdout) — exit silently
+        if (!process.stdin.isTTY) process.exit(0);
+
+        console.log(`\n  ${ANSI.bold}What do you want to do?${ANSI.reset}`);
+        console.log(`    ${ANSI.cyan}[V]${ANSI.reset} View dashboard, leave service running ${ANSI.dim}(default — auto-selects in 10s)${ANSI.reset}`);
+        console.log(`    ${ANSI.cyan}[K]${ANSI.reset} Kill the service entirely`);
+        console.log(`    ${ANSI.cyan}[R]${ANSI.reset} Kill the service and resume in this window`);
+        console.log('');
+
+        const choice = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve('v'), 10_000);
+          try { process.stdin.setRawMode(true); } catch {}
+          process.stdin.resume();
+          process.stdin.setEncoding('utf8');
+          const onData = (data) => {
+            const k = data.toString().toLowerCase();
+            if (k === 'v' || k === 'k' || k === 'r' || k === '\x03') {
+              clearTimeout(timer);
+              process.stdin.removeListener('data', onData);
+              try { process.stdin.setRawMode(false); } catch {}
+              resolve(k === '\x03' ? 'v' : k);
+            }
+          };
+          process.stdin.on('data', onData);
+        });
+
+        if (choice === 'v') {
+          console.log(`  ${ANSI.dim}Service kept running. Feel free to close this window.${ANSI.reset}\n`);
+          process.exit(0);
+        }
+
+        // K or R: ask the service to shut down cleanly via /api/shutdown
+        console.log(`  ${ANSI.yellow}Asking service (pid ${active.pid}) to shut down...${ANSI.reset}`);
+        const shutdownOk = await new Promise((resolve) => {
+          const req = http.request({
+            hostname: '127.0.0.1', port: active.webPort, path: '/api/shutdown',
+            method: 'POST', timeout: 3000,
+          }, (res) => { res.resume(); resolve(res.statusCode === 200); });
+          req.on('error',   () => resolve(false));
+          req.on('timeout', () => { req.destroy(); resolve(false); });
+          req.end();
+        });
+        if (!shutdownOk) {
+          // Fallback: force-kill the PID
+          console.log(`  ${ANSI.dim}Shutdown endpoint didn't respond — force-killing pid ${active.pid}${ANSI.reset}`);
+          try { process.kill(active.pid, 'SIGTERM'); } catch {}
+          // Give the OS a moment, then SIGKILL if still alive
+          await new Promise(r => setTimeout(r, 1500));
+          try { process.kill(active.pid, 0); try { process.kill(active.pid, 'SIGKILL'); } catch {} } catch {}
+        }
+        // Wait for PID to actually exit (max 5s)
+        for (let i = 0; i < 25; i++) {
+          try { process.kill(active.pid, 0); }
+          catch { break; }   // process gone
+          await new Promise(r => setTimeout(r, 200));
+        }
+        removePidFile();
+        console.log(`  ${ANSI.green}✓ Service stopped.${ANSI.reset}`);
+
+        if (choice === 'k') {
+          console.log(`  ${ANSI.dim}This window will close now.${ANSI.reset}\n`);
+          process.exit(0);
+        }
+        // choice === 'r': fall through and continue normal startup —
+        // loadSessionState() will pick up where the killed service left off.
+        console.log(`  ${ANSI.cyan}Resuming agent in this window...${ANSI.reset}\n`);
+      } else {
+        // PID exists but web dashboard isn't responding — stale, clean it up
+        removePidFile();
       }
-      // PID exists but web dashboard isn't responding — stale, clean it up
-      removePidFile();
     }
   }
 
@@ -3655,7 +3740,10 @@ async function main() {
   // Restore in-flight session state if the previous run snapshotted within the
   // last 10 minutes (typical for [U] update-and-restart, or quick Ctrl+C).
   const _sessionRestored = loadSessionState();
-  if (_sessionRestored) stats._sessionRestoredBanner = true;
+  if (_sessionRestored) {
+    stats._sessionRestoredBanner = true;
+    stats._sessionRestoredAt     = Date.now();
+  }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
   if (args.flags.webPort) {
