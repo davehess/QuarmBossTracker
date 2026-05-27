@@ -325,7 +325,7 @@ async function handleParseBreakdown(interaction) {
  *   isRaidWindow: bool — tag the footer with a 🎯 badge when this is an official night
  */
 function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
-  const { healers, defenders, isRaidWindow } = extras;
+  const { healers, defenders, isRaidWindow, deaths, healGaps } = extras;
 
   const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(7)}  ${'DPS'.padStart(7)}  Time`;
   const divider = '─'.repeat(hdr.length);
@@ -365,6 +365,8 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
   // ── 🩺 Healers section ────────────────────────────────────────────────────
   // Rendered when healer data is present (requires uploader to be in the fight
   // and their log must contain "X has been healed by Y for N" lines).
+  // Heal chain gap warning is appended when gaps >8s were detected on the
+  // primary tank (8s = ~2 missed CH ticks in Luclin-era chain healing).
   if (Array.isArray(healers) && healers.length > 0) {
     const sorted = [...healers].sort((a, b) => b.healed - a.healed).slice(0, 10);
     const healHdr  = `${'#'.padStart(2)}  ${'Healer'.padEnd(16)} ${'Total'.padStart(8)}  ${'Ticks'.padStart(5)}`;
@@ -376,38 +378,35 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
       const extra  = (h.targets?.length > 0) ? `  → ${h.targets.slice(0, 3).join(', ')}` : '';
       return `${String(i + 1).padStart(2)}. ${name} ${total}  ${ticks}${extra}`;
     });
-    // Trim if too long for Discord field limit
+    // Reserve ~80 chars for an optional gap warning appended below the table
     const wrapH = (r) => '```\n' + [healHdr, healDiv, ...r].join('\n') + '\n```';
-    while (healRows.length > 0 && wrapH(healRows).length > 1024) healRows.pop();
-    embed.addFields({ name: '🩺 Healers', value: wrapH(healRows), inline: false });
+    const gapNote = healGaps?.count > 0
+      ? `\n> ⚠️ **${healGaps.count}** heal gap${healGaps.count !== 1 ? 's' : ''} on **${healGaps.tank}** (longest: **${Math.round(healGaps.maxGapMs / 1000)}s**)`
+      : '';
+    const reserved = gapNote.length;
+    while (healRows.length > 0 && (wrapH(healRows).length + reserved) > 1024) healRows.pop();
+    embed.addFields({ name: '🩺 Healers', value: wrapH(healRows) + gapNote, inline: false });
   }
 
-  // ── ⚔️ Riposte damage section ─────────────────────────────────────────────
-  // Only shown when at least one tank has measurable riposte damage. High values
-  // (≥10% of incoming) indicate a fight where a Knight (paladin/SK) would reduce
-  // damage from boss ripostes compared to a Warrior.
-  if (Array.isArray(defenders) && defenders.length > 0) {
-    const withRiposte = [...defenders]
-      .filter(d => (d.ripostedFor || 0) > 0)
-      .sort((a, b) => b.ripostedFor - a.ripostedFor);
-    if (withRiposte.length > 0) {
-      const riposteRows = withRiposte.slice(0, 4).map(d => {
-        const pct  = d.damageTaken > 0 ? Math.round(d.ripostedFor / d.damageTaken * 100) : 0;
-        const name = (d.name || '?').slice(0, 14).padEnd(14);
-        const dmg  = fmt(d.ripostedFor).padStart(8);
-        return `${name} ${dmg}  (${String(pct).padStart(2)}% of ${fmt(d.damageTaken)} incoming)`;
-      });
-      const topPct = withRiposte[0].damageTaken > 0
-        ? Math.round(withRiposte[0].ripostedFor / withRiposte[0].damageTaken * 100) : 0;
-      const knightNote = topPct >= 10
-        ? '\n> ⚔️ *High riposte %: a Knight tank would take less damage on this mob.*'
+  // ── 💀 Deaths section ─────────────────────────────────────────────────────
+  // Shows each player who died during the fight. Knights (Paladin/SK) who died
+  // from a confirmed boss riposte get ⚔️ — ripostes proc from the attacker's
+  // melee swings and a Knight avoids them entirely (Riposte avoidance AA).
+  // Counts >1 shown when the same player died multiple times (rare but happens
+  // on charm-break wipes or multi-pull trash).
+  const KNIGHT_CLASSES = new Set(['Paladin', 'Shadow Knight']);
+  if (Array.isArray(deaths) && deaths.length > 0) {
+    const deathLines = deaths.map(d => {
+      const count       = (d.count || 1) > 1 ? ` ×${d.count}` : '';
+      const cls         = d.class ? ` *(${d.class})*` : '';
+      const riposteFlag = d.riposteDeath
+        ? (KNIGHT_CLASSES.has(d.class) ? ' ⚔️ *riposte — Knight avoids*' : ' ⚔️ *riposte*')
         : '';
-      // Wrap only when there's no knightNote (adds to char count)
-      const riposteValue = '```\n' + riposteRows.join('\n') + '\n```' + knightNote;
-      if (riposteValue.length <= 1024) {
-        embed.addFields({ name: '🛡️ Riposte Damage', value: riposteValue, inline: false });
-      }
-    }
+      return `**${d.name}**${count}${cls}${riposteFlag}`;
+    });
+    let deathValue = deathLines.join('\n');
+    if (deathValue.length > 1020) deathValue = deathValue.slice(0, 1017) + '…';
+    embed.addFields({ name: '💀 Deaths', value: deathValue, inline: false });
   }
 
   return embed;

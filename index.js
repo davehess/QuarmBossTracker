@@ -2250,7 +2250,11 @@ async function _handleAgentUpload(req, res) {
   }
   const startedMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
   const endedMs   = encounter.ended_at   ? new Date(encounter.ended_at).getTime()   : startedMs;
-  const duration  = Math.max(0, Math.round((endedMs - startedMs) / 1000));
+  // Prefer active_duration_s (gap-trimmed, excludes charm-phase inactivity) when
+  // the agent sends it. Fall back to naive wall-clock range for older agent versions.
+  const duration  = encounter.active_duration_s != null
+    ? Math.max(1, Math.round(encounter.active_duration_s))
+    : Math.max(0, Math.round((endedMs - startedMs) / 1000));
   const players = [...playerTotals.entries()]
     .map(([name, { direct, pet }]) => {
       const totalDmg = Math.round(direct + pet);
@@ -2283,6 +2287,8 @@ async function _handleAgentUpload(req, res) {
   // Extract them here so we can merge across parsers and feed to the parse card.
   const uploadedHealers   = Array.isArray(encounter.healers)   ? encounter.healers   : [];
   const uploadedDefenders = Array.isArray(encounter.defenders) ? encounter.defenders : [];
+  const uploadedDeaths    = Array.isArray(encounter.deaths)    ? encounter.deaths    : [];
+  const uploadedHealGaps  = encounter.heal_gaps || null;
 
   // ── Accumulate into active /raidnight session (all encounters, not just bosses) ──
   // sessionDamage lives inside raidSession in state.json — clears at midnight with the session.
@@ -2346,7 +2352,7 @@ async function _handleAgentUpload(req, res) {
                             && (startedMs - exEnd) < 60_000;   // gap < 60s = same session
         const withinWindow = overlaps || sequential;
 
-        let mergedPlayers, mergedHealers, mergedDefenders, perspectives, newDuration, newTotalDamage, newTotalDps;
+        let mergedPlayers, mergedHealers, mergedDefenders, mergedDeaths, mergedHealGaps, perspectives, newDuration, newTotalDamage, newTotalDps;
 
         if (withinWindow) {
           // Two distinct merge semantics:
@@ -2437,10 +2443,40 @@ async function _handleAgentUpload(req, res) {
             }
             mergedDefenders = [...dMap.values()].sort((a, b) => b.damageTaken - a.damageTaken);
           }
+
+          // ── Merge deaths ─────────────────────────────────────────────────
+          // Aggregate by player name: SUM death counts across parsers, OR the
+          // riposteDeath flag (any parser seeing the riposte is sufficient).
+          {
+            const dMap2 = new Map((existing.deaths || []).map(d => [d.name.toLowerCase(), { ...d }]));
+            for (const d of uploadedDeaths) {
+              const k = (d.name || '').toLowerCase();
+              const cur = dMap2.get(k);
+              if (cur) {
+                dMap2.set(k, {
+                  ...cur,
+                  count:        (cur.count || 1) + 1,
+                  riposteDeath: cur.riposteDeath || !!d.riposteDeath,
+                  class:        cur.class || d.class || null,
+                });
+              } else {
+                dMap2.set(k, { ...d, count: 1 });
+              }
+            }
+            mergedDeaths = [...dMap2.values()].sort((a, b) => (b.count || 1) - (a.count || 1));
+          }
+          // Heal gaps: keep the most severe (highest count, or highest maxGapMs as tiebreak)
+          mergedHealGaps = uploadedHealGaps && (
+            !existing.healGaps ||
+            uploadedHealGaps.count > (existing.healGaps?.count || 0) ||
+            (uploadedHealGaps.count === (existing.healGaps?.count || 0) && uploadedHealGaps.maxGapMs > (existing.healGaps?.maxGapMs || 0))
+          ) ? uploadedHealGaps : (existing.healGaps || null);
         } else {
           mergedPlayers   = players;
           mergedHealers   = [...uploadedHealers];
           mergedDefenders = [...uploadedDefenders];
+          mergedDeaths    = uploadedDeaths.map(d => ({ ...d, count: 1 }));
+          mergedHealGaps  = uploadedHealGaps;
           perspectives    = character ? [character] : [];
           newDuration     = duration;
           newTotalDamage  = totalDamage;
@@ -2455,6 +2491,8 @@ async function _handleAgentUpload(req, res) {
         const card   = buildParseEmbed(mobName, parsed, '🤖', {
           healers:      mergedHealers.length   > 0 ? mergedHealers   : undefined,
           defenders:    mergedDefenders.length > 0 ? mergedDefenders : undefined,
+          deaths:       mergedDeaths?.length   > 0 ? mergedDeaths    : undefined,
+          healGaps:     mergedHealGaps || undefined,
           isRaidWindow,
         });
 
@@ -2502,10 +2540,12 @@ async function _handleAgentUpload(req, res) {
           players:    mergedPlayers,
           duration:   newDuration,
           totalDamage: newTotalDamage,
-          // Persist healer + defender aggregates so future parsers merging
-          // into this card start with the accumulated totals.
+          // Persist healer, defender, death, and heal-gap aggregates so future
+          // parsers merging into this card start with the accumulated data.
           healers:    mergedHealers.length   > 0 ? mergedHealers   : [],
           defenders:  mergedDefenders.length > 0 ? mergedDefenders : [],
+          deaths:     mergedDeaths?.length   > 0 ? mergedDeaths    : [],
+          healGaps:   mergedHealGaps || null,
         });
 
         if (withinWindow && existing.messageId) {

@@ -645,7 +645,13 @@ class EncounterBuilder {
     // where Y attacks X within ~1.5s IS the riposte counter-hit. We tag it so
     // the tank can see total damage-from-ripostes per fight.
     //   key: `${attacker}→${defender}` → { ts: ms }
-    this.pendingRipostes = new Map();
+    this.pendingRipostes  = new Map();
+    // deaths: player deaths observed in this encounter.
+    // [{ name, ts, riposteDeath: bool, class: string|null }]
+    this.deaths           = [];
+    // recentRiposteDmg: name → timestamp of most recent confirmed riposte hit.
+    // Used to attribute a death as a "riposte kill" if death follows within 3s.
+    this.recentRiposteDmg = new Map();
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   _bumpDefender(name, key, amount) {
@@ -783,6 +789,8 @@ class EncounterBuilder {
         const now = Date.parse(event.ts) || Date.now();
         if (now - ts <= 1500) {
           this._bumpDefender(defNorm, 'ripostedFor', event.amount || 0);
+          // Record timestamp so a death within 3s can be flagged as riposte kill
+          this.recentRiposteDmg.set(defNorm, now);
         }
         this.pendingRipostes.delete(key);  // consume
       }
@@ -795,6 +803,38 @@ class EncounterBuilder {
       const healer = event.attacker || this.character;
       this._bumpHealer(healer, event.defender, event.amount || 0);
     }
+    // ── Player death tracking ────────────────────────────────────────────────
+    // Record deaths of player characters in this.deaths[] and the session
+    // scoreboard (stats.sessionDeaths). Also detect riposte kills:
+    // if a confirmed riposte hit landed on this player within the last 3s,
+    // flag it as riposteDeath so the parse card can highlight it for Knights.
+    //
+    // Player heuristic: single-word name starting with a capital letter.
+    // EQ NPC names are always multi-word ("A Shadel Bandit", "An Elder Vah Shir")
+    // or start with lowercase ("a spirit", "an undead"). Player names are proper
+    // nouns — single capitalised word.
+    if (event.type === 'death') {
+      const rawDef  = event.defender;
+      // Normalise "You died." first-person form to the character name
+      const defName = (rawDef === null || /^you$/i.test(rawDef || ''))
+        ? (this.character || 'You')
+        : rawDef;
+      // Is this a player? Single-word + starts uppercase, or is the uploader.
+      const isPlayer = !!defName && (
+        defName === this.character ||
+        (!/\s/.test(defName) && /^[A-Z]/.test(defName))
+      );
+      if (isPlayer) {
+        const deathTs      = Date.parse(event.ts) || Date.now();
+        const lastRip      = this.recentRiposteDmg.get(defName);
+        const riposteDeath = !!lastRip && (deathTs - lastRip) <= 3000;
+        const whoEntry     = whoData.get(defName.toLowerCase());
+        const charClass    = whoEntry?.class?.trim() || null;
+        this.deaths.push({ name: defName, ts: event.ts, riposteDeath, class: charClass });
+        stats.sessionDeaths[defName] = (stats.sessionDeaths[defName] || 0) + 1;
+      }
+    }
+
     if (event.type === 'death' && event.defender && !/^you$/i.test(event.defender)) {
       // If we just killed the most-damaged target, end the encounter
       let top = null, topDmg = -1;
@@ -834,6 +874,58 @@ class EncounterBuilder {
       this.reset();
       return;
     }
+    // ── Heal chain gap analysis ────────────────────────────────────────────
+    // Identify stretches where the primary tank went >8s without a heal while
+    // actively taking damage. CH chains should tick every 3-4s in Luclin; a gap
+    // >8s means at least one or two heals were missed. A gap of >15s is a genuine
+    // danger window (tank likely burning through buffs + HoT to survive).
+    //
+    // "Primary tank" = the player character with the highest damageTaken this fight.
+    // We filter defenderStats to exclude multi-word names (NPCs), then take the top.
+    //
+    // Heal events in this.events have defender = target. If the parser IS the tank,
+    // their heals are logged as "You have been healed..." with defender="You", so we
+    // also check for "You" matching the character name.
+    let _healGaps = null;
+    if (this.healerStats.size > 0 && this.defenderStats.size > 0) {
+      // Find the player taking the most incoming damage (primary tank candidate)
+      let topTank = null, topDmg = -1;
+      for (const [name, s] of this.defenderStats) {
+        // Only consider single-word names (player characters)
+        if (/\s/.test(name)) continue;
+        if ((s.damageTaken || 0) > topDmg) { topTank = name; topDmg = s.damageTaken; }
+      }
+      if (topTank && topDmg >= 500) {
+        // Collect timestamps of all heal events landing on this tank
+        const healTimes = this.events
+          .filter(e => {
+            if (e.type !== 'heal') return false;
+            const def = e.defender || '';
+            return def === topTank ||
+              (topTank === this.character && /^you$/i.test(def));
+          })
+          .map(e => Date.parse(e.ts) || 0)
+          .filter(Boolean)
+          .sort((a, b) => a - b);
+
+        if (healTimes.length >= 2) {
+          const GAP_MS = 8000;  // 8s = ~2 missed CH ticks
+          const gaps = [];
+          for (let i = 1; i < healTimes.length; i++) {
+            const g = healTimes[i] - healTimes[i - 1];
+            if (g > GAP_MS) gaps.push(g);
+          }
+          if (gaps.length > 0) {
+            _healGaps = {
+              tank:      topTank,
+              count:     gaps.length,
+              maxGapMs:  Math.max(...gaps),
+            };
+          }
+        }
+      }
+    }
+
     // ── Raid window detection ──────────────────────────────────────────────
     // Official Wolf Pack EQ raid nights: Sun/Wed/Thu 8:30–11:30 pm Eastern.
     // Computed from the encounter's start timestamp so backfill uploads are also
@@ -861,6 +953,35 @@ class EncounterBuilder {
       } catch { /* non-fatal — Intl not available in all envs */ }
     }
 
+    // ── Active combat duration ─────────────────────────────────────────────────
+    // Gap-trimmed: sums continuous combat windows, ignoring gaps >30s (charm phases).
+    // A bard's DoT songs tick on charmed mobs every 6s, which would keep the naive
+    // startedAt→lastEvent window open for the ENTIRE charm duration. By ignoring
+    // gaps >30s we get "time the mob was actually being fought" instead of
+    // "time the mob was on screen including charm downtime".
+    //
+    // Falls back to the naive wall-clock range when fewer than 2 combat events exist.
+    const _allEventTimes = this.events
+      .filter(e => e.type === 'damage' || e.type === 'avoid')
+      .map(e => Date.parse(e.ts) || 0).filter(Boolean).sort((a, b) => a - b);
+    const _startMs = this.startedAt ? new Date(this.startedAt).getTime() : Date.now();
+    const _endMs   = this.lastEvent  ? new Date(this.lastEvent).getTime()  : _startMs;
+    let _activeDurationMs = 0;
+    if (_allEventTimes.length >= 2) {
+      const CHARM_GAP_MS = 30_000;
+      let _winStart = _allEventTimes[0];
+      for (let i = 1; i < _allEventTimes.length; i++) {
+        if (_allEventTimes[i] - _allEventTimes[i - 1] > CHARM_GAP_MS) {
+          _activeDurationMs += _allEventTimes[i - 1] - _winStart;
+          _winStart = _allEventTimes[i];
+        }
+      }
+      _activeDurationMs += _allEventTimes[_allEventTimes.length - 1] - _winStart;
+    } else {
+      _activeDurationMs = Math.max(0, _endMs - _startMs);
+    }
+    const activeDurationS = Math.max(1, Math.round(_activeDurationMs / 1000));
+
     const payload = {
       agent_version: AGENT_VERSION,
       character:     this.character,
@@ -868,6 +989,11 @@ class EncounterBuilder {
         started_at:    this.startedAt,
         ended_at:      this.lastEvent,
         boss_name:     this.bossName,
+        // active_duration_s: gap-trimmed combat seconds that excludes charm-phase
+        // inactivity. Use this in preference to (ended_at - started_at) to avoid
+        // inflated DPS denominators on fights where a pet was charmed and DoT ticks
+        // continued landing on it while the mob wasn't being actively engaged.
+        active_duration_s: activeDurationS,
         // is_raid_window: true when the encounter falls inside an official guild raid
         // night (Sun/Wed/Thu 8:30–11:30 pm Eastern). Server stores this with parse
         // entries for /parsestats raid_only filtering and future /guildreport.
@@ -892,6 +1018,16 @@ class EncounterBuilder {
               name, healed: s.healed, ticks: s.ticks, targets: [...s.targets]
             }))
           : undefined,
+        // Player deaths in this encounter.
+        // [{ name, ts, riposteDeath: bool, class: string|null }]
+        // riposteDeath = true when a confirmed riposte hit landed on this player
+        // within 3s before they died — used to flag Knights (Paladin/SK) who
+        // die from boss counter-attacks.
+        deaths:      this.deaths.length > 0 ? [...this.deaths] : undefined,
+        // Heal chain gap analysis — longest stretches without a heal on the primary tank.
+        // { tank: name, count: N, maxGapMs: N }
+        // null/undefined when no healer data was observed or gaps < 8s.
+        heal_gaps:   _healGaps || undefined,
         events:      this.events,
       },
     };
@@ -923,6 +1059,11 @@ const stats = {
   // can otherwise only guess at how much each song is contributing.
   // Map<abilityName, { count, total, lastSeen }>
   abilityStats:    new Map(),
+  // sessionDeaths: running death count per player name this session.
+  // Powers the "Hall of Shame" on the Info screen and the per-encounter
+  // deaths field in uploaded parse cards.
+  // { playerName: count }
+  sessionDeaths:   {},
   uploadCount:     0,
   uploadErrors:    0,
   lastUploadAt:    null,
@@ -1326,6 +1467,20 @@ function showInfo() {
       const avg   = s.count > 0 ? Math.round(s.total / s.count) : 0;
       const label = ability === 'non-melee' ? `${ability} (dirges/procs)` : ability;
       out.push(`  ${pad(label, 36)} ${C.bold}${pad(fmtK(s.total), 8)}${C.reset} ${pad(String(s.count), 6)} ${pad(fmtK(avg), 7)}\n`);
+    }
+  }
+
+  // ── ☠️ Hall of Shame — session death scoreboard ────────────────────────────
+  const deathEntries = Object.entries(stats.sessionDeaths || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  out.push(`\n${C.bold}${C.red}  ☠️  Hall of Shame (deaths this session)${C.reset}\n`);
+  if (deathEntries.length === 0) {
+    out.push(`  ${C.dim}No deaths yet. Very respectable.${C.reset}\n`);
+  } else {
+    for (const [name, count] of deathEntries) {
+      const skulls = count >= 5 ? ' 💀💀💀💀💀' : ' 💀'.repeat(count);
+      out.push(`  ${pad(name, 18)} ${C.bold}${C.red}${count}${C.reset} death${count === 1 ? '' : 's'}${C.dim}${skulls}${C.reset}\n`);
     }
   }
 
