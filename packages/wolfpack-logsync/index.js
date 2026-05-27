@@ -1492,12 +1492,14 @@ tr:hover td { background:#1f242c }
   <button data-tab="healers">Healers</button>
   <button data-tab="pets">Pets</button>
   <button data-tab="info">Info / Stats</button>
+  <button data-tab="optin">Opt-in Logs</button>
 </div>
 <div id="dash" class="section active"></div>
 <div id="tanks" class="section"></div>
 <div id="healers" class="section"></div>
 <div id="pets" class="section"></div>
 <div id="info" class="section"></div>
+<div id="optin" class="section"></div>
 <script>
 function fmtK(n) { n=Number(n||0); if (n<1000) return String(n); if (n<1e6) return (n/1000).toFixed(2)+'K'; return (n/1e6).toFixed(2)+'M'; }
 function fmtAgo(ms) { if(!ms) return '?'; const d=Date.now()-ms; if(d<60000)return Math.floor(d/1000)+'s ago'; if(d<3600000)return Math.floor(d/60000)+'m ago'; if(d<86400000)return Math.floor(d/3600000)+'h ago'; return Math.floor(d/86400000)+'d ago'; }
@@ -1506,10 +1508,26 @@ function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<'
 function renderHeader(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   let h = '';
-  if (s.updateAvailable) h += '<div class="banner update">★ Update available — restart agent to install</div>';
+  if (s.updateAvailable) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
   h += '<div>v' + esc(s.version) + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min</div>';
   document.getElementById('header').innerHTML = h;
+  const u = document.getElementById('updateBtn');
+  if (u) u.addEventListener('click', async () => {
+    if (!confirm('Update agent now? Session will be saved and resumed automatically.')) return;
+    u.disabled = true; u.textContent = 'Restarting...';
+    try { await fetch('/api/update', { method: 'POST' }); } catch {}
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
+      'Restarting agent... this page will reload automatically once it\\'s back up.</div>');
+    // Poll until the server comes back
+    let tries = 0;
+    const t = setInterval(async () => {
+      tries++;
+      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); } } catch {}
+      if (tries > 60) clearInterval(t);  // give up after ~60s
+    }, 1000);
+  });
 }
 
 function renderDash(s) {
@@ -1676,6 +1694,118 @@ function renderInfo(s) {
   document.getElementById('info').innerHTML = h;
 }
 
+let _optinPane = 'active';   // 'active' | 'ignored' — UI-only, server uses its own
+async function postOptin(action, extra) {
+  try {
+    const r = await fetch('/api/optin', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...(extra || {}) }) });
+    return await r.json();
+  } catch { return null; }
+}
+
+function renderOptin(o) {
+  if (!o) { document.getElementById('optin').innerHTML = '<div class="dim">Loading...</div>'; return; }
+  const list = _optinPane === 'active' ? o.files : o.ignored;
+  const selCount = (o.files||[]).filter(f => f.selected).length;
+
+  let h = '<div class="card wide"><h2>Historical Log Opt-in — ' + _optinPane[0].toUpperCase()+_optinPane.slice(1) +
+          ' (' + list.length + ')</h2>';
+  h += '<div class="subtle">Chat-only backfill — no combat parses created from legacy logs. ' +
+       '<span style="color:var(--blue)">Blue</span> = requested by the bot.</div>';
+  // Toolbar
+  h += '<div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center">' +
+       '<button data-act="pane-active"  class="' + (_optinPane==='active'?'active':'') + '">Active (' + (o.files?.length||0) + ')</button>' +
+       '<button data-act="pane-ignored" class="' + (_optinPane==='ignored'?'active':'') + '">Ignored (' + (o.ignored?.length||0) + ')</button>' +
+       '<span style="flex:1"></span>' +
+       'Sort: <select id="sortMode">' +
+         ['date','size','alpha'].map(m => '<option value="'+m+'"' + (o.sortMode===m?' selected':'') + '>'+m+'</option>').join('') +
+       '</select>' +
+       '<button data-act="select-all">Select all</button>' +
+       '<button data-act="select-none">Clear</button>' +
+       '<button data-act="rescan">Rescan dir</button>' +
+       (_optinPane==='active'
+         ? '<button data-act="backfill" ' + (selCount===0?'disabled':'') + ' style="background:#1a7f37;border-color:#1a7f37;color:#fff">' +
+             (selCount>0 ? 'Backfill '+selCount+' selected' : 'Backfill selected') + '</button>'
+         : '<button data-act="restore" ' + (selCount===0?'disabled':'') + '>Restore selected</button>') +
+       (_optinPane==='active'
+         ? '<button data-act="ignore" ' + (selCount===0?'disabled':'') + '>Ignore selected</button>'
+         : '') +
+       '</div>';
+  // Active backfills banner
+  if ((o.activeBackfills||[]).length > 0) {
+    h += '<div class="banner resumed">⏳ Running: ' +
+         o.activeBackfills.map(b => esc(b.character) + ' (' +
+           (b.totalBytes ? Math.floor(b.bytePos/b.totalBytes*100)+'%' : '?') +
+           ', ' + b.chatCount + ' chat lines)').join(' · ') + '</div>';
+  }
+  // File table
+  h += '<table><tr><th></th><th>Character</th><th>File</th><th>Size</th><th>Modified</th><th>Resume</th></tr>';
+  for (const f of list) {
+    const fname = f.path.split(/[/\\]/).pop();
+    const nameColor = f.requested ? 'var(--blue)' : (f.isAlt ? 'var(--dim)' : 'var(--orange)');
+    const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
+    const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
+    const ageStr = ageDays === null ? '?' : ageDays<1 ? 'today' : ageDays<30 ? ageDays+'d ago' : ageDays<365 ? Math.floor(ageDays/30)+'mo ago' : Math.floor(ageDays/365)+'y ago';
+    let resumeStr = '';
+    if (f.resume?.complete) resumeStr = '<span style="color:var(--green)">✓ done</span>';
+    else if (f.resume?.bytePos > 0 && f.sizeBytes) {
+      const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
+      resumeStr = '<span style="color:var(--gold)">' + pct + '% (line ' + (f.resume.lineNum || '?') + ')</span>';
+    }
+    if (f.active) resumeStr = '<span style="color:var(--green)">⏳ running</span>';
+    h += '<tr>' +
+         '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + (f.selected?'checked':'') + '></td>' +
+         '<td style="color:' + nameColor + '">' + esc(f.character) + '</td>' +
+         '<td class="dim">' + esc(fname) + '</td>' +
+         '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
+         '<td class="dim">' + ageStr + '</td>' +
+         '<td>' + resumeStr + '</td>' +
+         '</tr>';
+  }
+  h += '</table></div>';
+  const root = document.getElementById('optin');
+  root.innerHTML = h;
+
+  // Wire interactions
+  root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      await postOptin(cb.checked ? 'select' : 'deselect', { paths: [cb.dataset.path] });
+      refreshOptin();
+    });
+  });
+  root.querySelectorAll('button[data-act]').forEach(b => {
+    b.addEventListener('click', async () => {
+      const act = b.dataset.act;
+      if (act === 'pane-active')  { _optinPane = 'active';  refreshOptin(); return; }
+      if (act === 'pane-ignored') { _optinPane = 'ignored'; refreshOptin(); return; }
+      if (act === 'select-all')   { await postOptin('select-all');   refreshOptin(); return; }
+      if (act === 'select-none')  { await postOptin('select-none');  refreshOptin(); return; }
+      if (act === 'rescan')       { await postOptin('rescan');       refreshOptin(); return; }
+      if (act === 'backfill') {
+        const paths = [...root.querySelectorAll('input[type=checkbox][data-path]:checked')].map(x => x.dataset.path);
+        if (paths.length > 0 && confirm('Start chat-only backfill on ' + paths.length + ' file(s)?')) {
+          await postOptin('backfill', { paths });
+        }
+        refreshOptin(); return;
+      }
+      if (act === 'ignore' || act === 'restore') {
+        const paths = [...root.querySelectorAll('input[type=checkbox][data-path]:checked')].map(x => x.dataset.path);
+        if (paths.length > 0) await postOptin(act, { paths });
+        refreshOptin(); return;
+      }
+    });
+  });
+  const sel = root.querySelector('#sortMode');
+  if (sel) sel.addEventListener('change', async () => { await postOptin('sort', { mode: sel.value }); refreshOptin(); });
+}
+
+async function refreshOptin() {
+  try {
+    const o = await (await fetch('/api/optin')).json();
+    renderOptin(o);
+  } catch { renderOptin(null); }
+}
+
 async function refresh() {
   try {
     const s = await (await fetch('/api/state')).json();
@@ -1688,21 +1818,137 @@ document.querySelectorAll('.nav button').forEach(b => b.addEventListener('click'
   document.querySelectorAll('.section').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   document.getElementById(b.dataset.tab).classList.add('active');
+  if (b.dataset.tab === 'optin') refreshOptin();
 }));
 refresh(); setInterval(refresh, 2000);
+// Refresh opt-in every 3s while its tab is active (for live backfill progress)
+setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
 </script></body></html>`;
 
+async function _readBody(req, max = 64 * 1024) {
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > max) throw new Error('payload too large');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function _serializeOptinForWeb() {
+  if (!_optinState.scanned) _scanOptInFiles();
+  const mapFile = (f) => ({
+    path:      f.path,
+    character: f.character,
+    isAlt:     f.isAlt,
+    sizeBytes: f.sizeBytes,
+    sizeMb:    f.sizeMb,
+    mtime:     f.mtime ? f.mtime.getTime() : null,
+    selected:  !!f.selected,
+    requested: !!f.requested,
+    resume:    f.resume || null,
+    active:    _activeBackfills.has(f.path),
+    activeStatus: _activeBackfills.get(f.path) || null,
+  });
+  return {
+    sortMode: _optinState.sortMode,
+    pane:     _optinState.pane,
+    files:    _optinState.files.map(mapFile),
+    ignored:  _optinState.ignored.map(mapFile),
+    activeBackfills: [..._activeBackfills.values()],
+  };
+}
+
 function startWebDashboard(port) {
-  const server = http.createServer((req, res) => {
-    if (req.url === '/' || req.url === '/index.html') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(WEB_HTML);
-    } else if (req.url === '/api/state') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(_serializeForDashboard()));
-    } else {
+  const server = http.createServer(async (req, res) => {
+    try {
+      if (req.url === '/' || req.url === '/index.html') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(WEB_HTML);
+      }
+      if (req.url === '/api/state') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_serializeForDashboard()));
+      }
+      if (req.url === '/api/update' && req.method === 'POST') {
+        // Same behavior as [U] press: save session, write update marker,
+        // exit. The wrapper script (start-logsync.ps1) sees the marker and
+        // downloads + relaunches the new version.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, message: 'restarting' }));
+        setTimeout(() => {
+          try { saveSessionState(); } catch {}
+          try {
+            const marker = path.join(__dirname, '.force-update-on-restart');
+            fs.writeFileSync(marker, new Date().toISOString());
+          } catch {}
+          process.exit(0);
+        }, 250);  // let the response flush
+        return;
+      }
+      if (req.url === '/api/optin' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_serializeOptinForWeb()));
+      }
+      if (req.url === '/api/optin' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+
+        const action = payload?.action;
+        const paths  = Array.isArray(payload?.paths) ? payload.paths : [];
+        const all    = [..._optinState.files, ..._optinState.ignored];
+        const byPath = new Map(all.map(f => [f.path, f]));
+
+        if (action === 'select') {
+          for (const p of paths) { const f = byPath.get(p); if (f) f.selected = true; }
+        } else if (action === 'deselect') {
+          for (const p of paths) { const f = byPath.get(p); if (f) f.selected = false; }
+        } else if (action === 'select-all') {
+          for (const f of _optinState.files) f.selected = true;
+        } else if (action === 'select-none') {
+          for (const f of _optinState.files) f.selected = false;
+        } else if (action === 'ignore') {
+          for (const p of paths) _optinState.ignoredPaths.add(p);
+          _saveOptInState();
+          _optinState.scanned = false;
+          _scanOptInFiles();
+        } else if (action === 'restore') {
+          for (const p of paths) _optinState.ignoredPaths.delete(p);
+          _saveOptInState();
+          _optinState.scanned = false;
+          _scanOptInFiles();
+        } else if (action === 'sort') {
+          const mode = payload.mode;
+          if (mode === 'date' || mode === 'size' || mode === 'alpha') {
+            _optinState.sortMode = mode;
+            _resortOptIn();
+          }
+        } else if (action === 'rescan') {
+          _optinState.scanned = false;
+          _scanOptInFiles();
+        } else if (action === 'backfill') {
+          const targets = paths.length > 0
+            ? paths.map(p => byPath.get(p)).filter(Boolean)
+            : _optinState.files.filter(f => f.selected);
+          if (targets.length > 0) {
+            runOptinBackfill(targets, {
+              log: (m) => console.log(`[optin] ${m}`),
+            });
+          }
+        } else {
+          res.writeHead(400); return res.end(JSON.stringify({ error: 'unknown action' }));
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_serializeOptinForWeb()));
+      }
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('not found');
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
     }
   });
   server.on('error', (err) => {
@@ -2328,6 +2574,90 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress) {
   });
 }
 
+// ── Shared opt-in backfill driver — usable from both [O] keypress and the
+// web dashboard. Files arg is an array of opt-in file records (path, character,
+// sizeBytes). Returns a per-file status array via the optional `onStatus(...)`
+// callback as work progresses, and a promise that resolves when all done.
+const _activeBackfills = new Map();   // path → { startedAt, chatCount, status }
+
+function runOptinBackfill(files, opts = {}) {
+  const onStatus = opts.onStatus || (() => {});
+  const log = opts.log || (() => {});
+  const { botUrl, token, dryRun } = _uploadOpts || {};
+
+  log(`Starting chat-only backfill on ${files.length} file(s)...`);
+
+  for (const f of files) {
+    if (_activeBackfills.has(f.path)) {
+      log(`  Skipping ${f.character} — backfill already in progress`);
+      continue;
+    }
+    const status = { character: f.character, path: f.path, chatCount: 0,
+                     startedAt: Date.now(), state: 'running', bytePos: 0, totalBytes: f.sizeBytes || 0 };
+    _activeBackfills.set(f.path, status);
+    onStatus(status);
+
+    const chatBatch = [];
+    const flushChat = async (force) => {
+      if (chatBatch.length === 0) return;
+      if (!force && chatBatch.length < 500) return;
+      const batch = chatBatch.splice(0);
+      await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
+    };
+
+    (async () => {
+      const stored    = _optinState.progress[f.path];
+      const startByte = stored?.bytePos || 0;
+      const totalBytes = f.sizeBytes || 0;
+      status.bytePos = startByte;
+      if (startByte > 0) {
+        log(`  Resuming ${f.character} from ${Math.floor(startByte/Math.max(totalBytes,1)*100)}% (${startByte} bytes)`);
+      } else {
+        log(`  Backfilling ${f.character} from ${f.path}...`);
+      }
+      try {
+        await readFromBytePos(f.path, startByte,
+          (line) => {
+            // CHAT-ONLY. Legacy logs should not create parses.
+            const chatMsg = parseChatLine(line, f.character);
+            if (chatMsg) {
+              chatBatch.push({ ...chatMsg, uploadedBy: f.character });
+              status.chatCount++;
+              if (chatBatch.length >= 500) flushChat(true).catch(() => {});
+            }
+          },
+          ({ bytePos, lineNum }) => {
+            status.bytePos = bytePos;
+            status.lineNum = lineNum;
+            _optinState.progress[f.path] = {
+              bytePos, lineNum, totalBytes,
+              character: f.character,
+              updatedAt: new Date().toISOString(),
+            };
+            _saveOptInState();
+            onStatus(status);
+          });
+        await flushChat(true).catch(() => {});
+        _optinState.progress[f.path] = {
+          bytePos: totalBytes, lineNum: -1, totalBytes,
+          character: f.character,
+          updatedAt: new Date().toISOString(), complete: true,
+        };
+        _saveOptInState();
+        status.state = 'done';
+        log(`  ✓ Done: ${f.character} (${status.chatCount} chat lines stored)`);
+      } catch (err) {
+        status.state = 'error';
+        status.error = err.message;
+        log(`  ✗ ${f.character}: ${err.message}`);
+      }
+      _activeBackfills.delete(f.path);
+      onStatus(status);
+      scheduleRender();
+    })();
+  }
+}
+
 function _fmtFileSize(bytes) {
   if (!bytes || bytes < 1) return '0';
   if (bytes < 1024)     return bytes + 'B';
@@ -2472,65 +2802,10 @@ function showOptIn() {
         _optinState.scanned = false;
         _exitView();
 
-        process.stdout.write(`\n${C.bold}${C.yellow}  Starting chat-only backfill on ${chosen.length} file(s)...${C.reset}\n`);
-        process.stdout.write(`  ${C.dim}(Combat events from legacy logs are SKIPPED — only guild/raid chat is captured.${C.reset}\n`);
-        process.stdout.write(`  ${C.dim} Resume position is saved every ~256KB so interruptions don't restart from zero.)${C.reset}\n`);
-
-        const { botUrl, token, dryRun } = _uploadOpts || {};
-        for (const f of chosen) {
-          const char     = f.character;
-          const chatBatch = [];
-          let   chatCount = 0;
-          const flushChat = async (force) => {
-            if (chatBatch.length === 0) return;
-            if (!force && chatBatch.length < 500) return;
-            const batch = chatBatch.splice(0);
-            await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
-          };
-          (async () => {
-            // Resume from stored byte position if present
-            const stored      = _optinState.progress[f.path];
-            const startByte   = stored?.bytePos || 0;
-            const totalBytes  = f.sizeBytes || 0;
-            if (startByte > 0) {
-              process.stdout.write(`  ${C.dim}Resuming ${char} from ${Math.floor(startByte / totalBytes * 100)}% (${startByte} bytes)${C.reset}\n`);
-            } else {
-              process.stdout.write(`  ${C.dim}Backfilling ${char} from ${f.path}...${C.reset}\n`);
-            }
-            try {
-              await readFromBytePos(f.path, startByte,
-                (line) => {
-                  // CHAT-ONLY. No combat events. No EncounterBuilder. Legacy logs
-                  // should not create parses — the user already saw the kills live.
-                  const chatMsg = parseChatLine(line, char);
-                  if (chatMsg) {
-                    chatBatch.push({ ...chatMsg, uploadedBy: char });
-                    chatCount++;
-                    if (chatBatch.length >= 500) flushChat(true).catch(() => {});
-                  }
-                },
-                ({ bytePos, lineNum }) => {
-                  _optinState.progress[f.path] = {
-                    bytePos, lineNum, totalBytes,
-                    character: char,
-                    updatedAt: new Date().toISOString(),
-                  };
-                  _saveOptInState();
-                });
-              await flushChat(true).catch(() => {});
-              // Mark complete by setting bytePos = totalBytes (or zero out to clear)
-              _optinState.progress[f.path] = {
-                bytePos: totalBytes, lineNum: -1, totalBytes, character: char,
-                updatedAt: new Date().toISOString(), complete: true,
-              };
-              _saveOptInState();
-              process.stdout.write(`  ${C.green}✓ Done: ${char}${C.reset} ${C.dim}(${chatCount} chat lines stored)${C.reset}\n`);
-            } catch (err) {
-              process.stdout.write(`  ${C.red}✗ ${char}: ${err.message}${C.reset}\n`);
-            }
-            scheduleRender();
-          })();
-        }
+        runOptinBackfill(chosen, {
+          log: (msg) => process.stdout.write(`  ${C.dim}${msg}${C.reset}\n`),
+        });
+        process.stdout.write(`  ${C.dim}(Combat events SKIPPED — chat only. Resume saved every ~256KB.)${C.reset}\n`);
         return;
       }
       if (key === 'd' || key === 'D' || key === '\x03') {
