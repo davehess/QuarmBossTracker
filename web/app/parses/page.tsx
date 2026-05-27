@@ -5,22 +5,21 @@
 // this page is the read-only browser for them. Filters come later — start
 // with a "last 20 parses" board to validate the column shapes.
 import { redirect } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 
+// Reads encounters using the SIGNED-IN user's Supabase client so RLS
+// resolves to the `authenticated` role (not anon). The initial-schema
+// migration revokes all from anon by default — gated pages must use the
+// server client.
 async function loadRecentParses() {
-  // Probe a couple of candidate table names — the bot has migrated through
-  // a few schemas. Whichever returns rows wins.
-  const tables = ['encounters', 'parses'];
-  for (const t of tables) {
-    const { data, error } = await supabase
-      .from(t)
-      .select('*')
-      .order('started_at', { ascending: false })
-      .limit(20);
-    if (!error && data) return { table: t, rows: data, error: null };
-  }
-  return { table: null, rows: [], error: 'No parse table found (tried: encounters, parses)' };
+  const supabase = supabaseServer();
+  const { data, error } = await supabase
+    .from('encounters')
+    .select('id, started_at, duration_sec, npc_id, total_damage, total_dps, zone_short')
+    .order('started_at', { ascending: false })
+    .limit(20);
+  if (error) return { rows: [], error: error.message };
+  return { rows: data || [], error: null };
 }
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +28,7 @@ export default async function ParsesPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/parses');
 
-  const { table, rows, error } = await loadRecentParses();
+  const { rows, error } = await loadRecentParses();
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -44,7 +43,9 @@ export default async function ParsesPage() {
         {error && <div className="text-red text-sm">{error}</div>}
         {!error && rows.length === 0 && (
           <div className="text-dim text-sm">
-            No parses found in <code>{table}</code> yet.
+            No parses uploaded yet. The agent posts to <code>/api/agent/encounter</code>
+            after each fight — confirm the agent has the bot URL configured and the
+            boss exists in <code>bosses_local</code>.
           </div>
         )}
         {rows.length > 0 && (

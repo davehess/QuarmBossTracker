@@ -11,7 +11,6 @@
 // For now we render a placeholder showing the SHAPE of the data so the
 // page structure is reviewable end-to-end.
 import { redirect } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 
 // Sample query to validate the table chain — once inventories are uploading
@@ -22,6 +21,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 // Orders by damage desc so the end-game gear (Primal Velium-tier, Vex Thal
 // drops) surfaces first.
 async function loadItemSamples() {
+  const supabase = supabaseServer();
   const { data, error } = await supabase
     .from('item_with_proc')
     .select('item_id, item_name, damage, delay, proc_spell_id, proc_spell_name, proc_hate_hint')
