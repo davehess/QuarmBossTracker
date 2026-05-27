@@ -14,11 +14,16 @@ CREATE TABLE IF NOT EXISTS wolfpack_members (
   nickname       TEXT,
   global_name    TEXT,
   avatar_url     TEXT,
-  roles          TEXT[] DEFAULT '{}',
+  roles          TEXT[] DEFAULT '{}',    -- Discord role IDs
+  role_names     TEXT[] DEFAULT '{}',    -- resolved role names (filled by web OAuth callback)
   is_member      BOOLEAN NOT NULL DEFAULT TRUE,
   joined_at      TIMESTAMPTZ,
   refreshed_at   TIMESTAMPTZ DEFAULT now()
 );
+
+-- Idempotent guard for upgrades: if the table predates the role_names
+-- column (created by the v0 migration), add it now.
+ALTER TABLE wolfpack_members ADD COLUMN IF NOT EXISTS role_names TEXT[] DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS wolfpack_members_user_id_idx ON wolfpack_members (user_id);
 CREATE INDEX IF NOT EXISTS wolfpack_members_is_member_idx ON wolfpack_members (is_member);

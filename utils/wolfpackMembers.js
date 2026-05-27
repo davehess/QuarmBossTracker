@@ -16,9 +16,13 @@ const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // Map a Discord.js GuildMember to a wolfpack_members row. Strips @everyone
 // from the roles array (its ID equals the guild ID by Discord convention).
+// Resolves role names from guild.roles.cache so rows are useful before the
+// user has ever signed in to the web app.
 function memberToRow(guild, m) {
   const everyoneId = guild.id;
-  const roles = [...m.roles.cache.keys()].filter(r => r !== everyoneId);
+  const memberRoles = [...m.roles.cache.values()].filter(r => r.id !== everyoneId);
+  const roles      = memberRoles.map(r => r.id);
+  const role_names = memberRoles.map(r => r.name);
   const nickname = m.nickname || m.user.globalName || m.user.username;
   return {
     discord_id:   m.id,
@@ -26,14 +30,35 @@ function memberToRow(guild, m) {
     global_name:  m.user.globalName || null,
     avatar_url:   m.displayAvatarURL({ size: 64 }),
     roles,
+    role_names,
     is_member:    true,
     joined_at:    m.joinedAt ? m.joinedAt.toISOString() : null,
     refreshed_at: new Date().toISOString(),
   };
 }
 
+// Roles catalog — small enough to upsert in one call.
+async function syncWolfpackRoles(guild) {
+  const everyoneId = guild.id;
+  const roleRows = [...guild.roles.cache.values()]
+    .filter(r => r.id !== everyoneId)  // skip @everyone
+    .map(r => ({
+      role_id:      r.id,
+      name:         r.name,
+      color:        r.color,
+      position:     r.position,
+      managed:      r.managed,
+      refreshed_at: new Date().toISOString(),
+    }));
+
+  if (roleRows.length === 0) return 0;
+  const result = await upsert('wolfpack_roles', roleRows, 'role_id');
+  return result ? roleRows.length : 0;
+}
+
 // One-shot sync — fetches all members and upserts in batches of 100 so we
-// don't overrun PostgREST's payload limit on big guilds.
+// don't overrun PostgREST's payload limit on big guilds. Also writes the
+// guild's full role catalog so the web app can resolve role IDs to names.
 async function syncWolfpackMembers(client) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.warn('[members-sync] Supabase env not set — skipping');
@@ -52,6 +77,11 @@ async function syncWolfpackMembers(client) {
     return { synced: 0, skipped: true };
   }
 
+  // Roles first — the web callback joins to this to resolve role names
+  // before checking ALLOWED_ROLE_NAMES, so it needs to land before any
+  // members try to sign in.
+  const rolesSynced = await syncWolfpackRoles(guild);
+
   const members = await guild.members.fetch();
   const rows = members
     .filter(m => !m.user.bot)                  // exclude bots
@@ -67,8 +97,8 @@ async function syncWolfpackMembers(client) {
     if (result) written += chunk.length;
   }
 
-  console.log(`[members-sync] upserted ${written}/${rows.length} members from ${guild.name}`);
-  return { synced: written, total: rows.length };
+  console.log(`[members-sync] upserted ${written}/${rows.length} members + ${rolesSynced} roles from ${guild.name}`);
+  return { synced: written, total: rows.length, roles: rolesSynced };
 }
 
 // Kick off the recurring sync. Returns a function that cancels the interval.

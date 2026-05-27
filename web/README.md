@@ -99,15 +99,21 @@ The site uses **Supabase Auth** with the **Discord provider**. End-to-end wiring
 ### Notes
 - Scopes requested: `identify guilds.members.read`. We only read the user's
   membership in the Wolf Pack EQ guild — no DMs, no other servers, no message history.
-- **Guild-membership gating is enforced** at the callback route. Users not in
-  our Discord guild (ID `DISCORD_GUILD_ID`) get bounced back to sign-in with
-  an error. Membership + server nickname + roles are stored in `wolfpack_members`.
+- **Two gates apply at sign-in:**
+  1. **Guild membership** — user must be in `DISCORD_GUILD_ID` (checked via
+     Discord's API).
+  2. **Role membership** — user must have one of the roles listed in
+     `ALLOWED_ROLE_NAMES` (same env var the bot uses for officer/raid
+     commands). Role IDs from Discord are resolved to names via the
+     `wolfpack_roles` catalog the bot syncs every 6 hours.
 - Display name shown in the header is the **server nickname**, falling back to
   the global Discord name if no server nickname is set.
 - Sessions are HTTP-only cookies refreshed by `middleware.ts` on every request.
-- Required server-side env vars: `SUPABASE_SERVICE_ROLE_KEY` (to upsert the
-  membership row at sign-in time) and `DISCORD_GUILD_ID` (the guild to check
-  membership in). Set both in Vercel Project Settings → Environment Variables.
+- Required server-side env vars on Vercel:
+  - `SUPABASE_SERVICE_ROLE_KEY` — upsert membership rows past RLS
+  - `DISCORD_GUILD_ID` — guild to check membership in
+  - `ALLOWED_ROLE_NAMES` — comma-separated allow-list (set to same value
+    Railway uses for the bot)
 
 ## Pages
 

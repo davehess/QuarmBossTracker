@@ -72,6 +72,37 @@ export async function GET(req: NextRequest) {
     SR,
     { auth: { persistSession: false } },
   );
+
+  // Resolve the user's role IDs to role names via wolfpack_roles (synced
+  // by the bot every 6h). Then gate against ALLOWED_ROLE_NAMES — same
+  // env var the Discord bot uses for officer/raid commands.
+  const allowedNames = (process.env.ALLOWED_ROLE_NAMES || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  let userRoleNames: string[] = [];
+  if (member.roles.length > 0) {
+    const { data: roleRows } = await admin
+      .from('wolfpack_roles')
+      .select('role_id, name')
+      .in('role_id', member.roles);
+    userRoleNames = (roleRows || []).map((r: any) => r.name);
+  }
+
+  if (allowedNames.length > 0) {
+    const hasAllowedRole = userRoleNames.some(n => allowedNames.includes(n));
+    if (!hasAllowedRole) {
+      await supabase.auth.signOut();
+      const have = userRoleNames.length ? userRoleNames.join(', ') : '(none)';
+      return NextResponse.redirect(
+        `${url.origin}/auth/signin?error=${encodeURIComponent(
+          `You need one of these roles to sign in: ${allowedNames.join(', ')}. You have: ${have}.`,
+        )}`,
+      );
+    }
+  }
+
   const { error: upsertError } = await admin.from('wolfpack_members').upsert({
     discord_id:   member.user.id,
     user_id:      data.session.user.id,
@@ -79,6 +110,7 @@ export async function GET(req: NextRequest) {
     global_name:  member.user.global_name,
     avatar_url:   memberAvatarUrl(member),
     roles:        member.roles,
+    role_names:   userRoleNames,
     is_member:    true,
     joined_at:    member.joined_at,
     refreshed_at: new Date().toISOString(),
