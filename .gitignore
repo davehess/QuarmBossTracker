@@ -3,6 +3,7 @@ data/state.json
 data/state.json.tmp
 data/parses.json
 data/parses.json.tmp
+data/historical_chat.jsonl
 
 # Environment
 .env

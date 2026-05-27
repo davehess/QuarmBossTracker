@@ -2441,8 +2441,94 @@ async function _handleAgentBossKill(req, res) {
 // ── /sll lockout relay ─────────────────────────────────────────────────────
 // Receives parsed /sll output from the agent.  RULE: "Available" entries are
 // silently ignored — they mean THIS character has no lockout, but the guild
-// timer set from another character's kill is still authoritative.  Only active
-// lockout entries (with remaining time) are used to set/refine timers.
+// ── Historical chat ingestion ─────────────────────────────────────────────
+// Receives batches of guild/raid chat lines from the agent's [O] backfill flow.
+// Store-only: writes to data/historical_chat.jsonl (append-only) and best-effort
+// inserts into the Supabase chat_messages table. Does NOT relay to Discord —
+// that's the job of the live /api/agent/chat endpoint.
+//
+// The JSONL store is the canonical record; Supabase is for SQL queries.
+const HISTORICAL_CHAT_PATH = require('path').join(__dirname, 'data', 'historical_chat.jsonl');
+
+async function _handleAgentHistoricalChat(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'historical chat disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 4 * 1024 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  if (messages.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+
+  // Append to JSONL — best-effort, fail open
+  const fsmod = require('fs');
+  const lines = messages
+    .filter(m => m && m.channel && m.speaker && m.text && m.ts)
+    .map(m => JSON.stringify({
+      ts:       m.ts,
+      channel:  m.channel,
+      speaker:  m.speaker,
+      text:     m.text,
+      who:      m.who || null,
+      uploaded_by: m.uploadedBy || null,
+    }));
+
+  if (lines.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+
+  try {
+    fsmod.appendFileSync(HISTORICAL_CHAT_PATH, lines.join('\n') + '\n', 'utf8');
+  } catch (err) {
+    console.warn('[historical-chat] JSONL append failed:', err?.message);
+  }
+
+  // Best-effort Supabase mirror
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      const rows = lines.map((_, i) => {
+        const m = messages.filter(x => x && x.channel && x.speaker && x.text && x.ts)[i];
+        return {
+          ts:          m.ts,
+          channel:     m.channel,
+          speaker:     m.speaker,
+          text:        m.text.slice(0, 2000),
+          who:         m.who || null,
+          uploaded_by: m.uploadedBy || null,
+          guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
+        };
+      });
+      // upsert with on_conflict so re-runs of the same backfill don't double-count.
+      // The chat_messages table needs a UNIQUE (guild_id, ts, channel, speaker, text) index.
+      await supabase.upsert('chat_messages', rows, 'guild_id,ts,channel,speaker,text')
+        .catch(err => console.warn('[historical-chat] supabase upsert failed:', err?.message));
+    }
+  } catch (err) {
+    console.warn('[historical-chat] supabase mirror failed:', err?.message);
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, stored: lines.length }));
+}
+
 async function _handleAgentLockout(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -3156,6 +3242,11 @@ async function _handleAgentUpload(req, res) {
     console.warn('[agent] supabase write failed:', err?.message);
   }
 
+  // Characters the bot wants extra coverage on (comma-separated env var).
+  // Agents highlight these in blue on the [O] historical opt-in screen.
+  const requestedChars = (process.env.REQUESTED_AGENT_CHARACTERS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     ok: true,
@@ -3164,6 +3255,7 @@ async function _handleAgentUpload(req, res) {
     // Advertise the current expected agent version so agents can show an update prompt.
     // Set LATEST_AGENT_VERSION env var when deploying a new agent build.
     latest_agent_version:  process.env.LATEST_AGENT_VERSION || null,
+    requested_characters:  requestedChars,
   }));
 }
 
@@ -3213,6 +3305,16 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentLockout(req, res); }
     catch (err) {
       console.error('[lockout] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Historical chat ingestion — backfill writes to data/historical_chat.jsonl + Supabase
+  if (req.method === 'POST' && req.url === '/api/agent/historical_chat') {
+    try { return await _handleAgentHistoricalChat(req, res); }
+    catch (err) {
+      console.error('[historical-chat] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

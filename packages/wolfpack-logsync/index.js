@@ -1714,10 +1714,12 @@ function showOptIn() {
           _optinState.scanned = false;
           _exitView();
           process.stdout.write(`\n${C.bold}${C.yellow}  Starting backfill on ${chosen.length} file(s)...${C.reset}\n`);
-          // Trigger backfill — spawn one readWindow per selected file using
-          // the same upload pipeline as --since mode. Since we're already
-          // running in watch mode we do this concurrently on the side.
-          const since = new Date(Date.now() - 90 * 24 * 3600000).toISOString(); // up to 90 days
+          process.stdout.write(`  ${C.dim}(Combat → /encounter · Chat → /historical_chat · no Discord posting)${C.reset}\n`);
+          // Trigger backfill — spawn one readWindow per selected file. Combat events
+          // go to the normal encounter pipeline; guild/raid chat lines go to the
+          // historical store endpoint and are NOT relayed to Discord (so we can
+          // see the data before committing to thread fills).
+          // No date cutoff — read the entire file. EQ logs commonly cover years.
           const { botUrl, token, dryRun } = _uploadOpts || {};
           for (const f of chosen) {
             const char = f.character;
@@ -1727,9 +1729,25 @@ function showOptIn() {
               character: char,
               onFlush: p => uploadEncounter(p, { botUrl, token, dryRun }).catch(() => {}),
             });
+            const chatBatch  = [];
+            let   chatCount  = 0;
+            const flushChat  = async (force) => {
+              if (chatBatch.length === 0) return;
+              if (!force && chatBatch.length < 500) return;
+              const batch = chatBatch.splice(0);
+              await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
+            };
             (async () => {
               process.stdout.write(`  ${C.dim}Backfilling ${char} from ${f.path}...${C.reset}\n`);
-              await readWindow(f.path, new Date(since), new Date(), line => {
+              await readWindow(f.path, new Date(0), new Date(), line => {
+                // Capture chat lines BEFORE the combat filter (chat doesn't pass shouldKeep)
+                const chatMsg = parseChatLine(line, char);
+                if (chatMsg) {
+                  chatBatch.push({ ...chatMsg, uploadedBy: char });
+                  chatCount++;
+                  if (chatBatch.length >= 500) flushChat(true).catch(() => {});
+                  return;
+                }
                 if (shouldKeep(line, drops, keeps)) {
                   const ts = parseEqTimestamp(line);
                   const ev = parseEvent(line, ts);
@@ -1737,7 +1755,8 @@ function showOptIn() {
                 }
               }).catch(e => console.warn(`[optin backfill] ${char}: ${e.message}`));
               bldr.flush();
-              process.stdout.write(`  ${C.green}✓ Done: ${char}${C.reset}\n`);
+              await flushChat(true).catch(() => {});
+              process.stdout.write(`  ${C.green}✓ Done: ${char}${C.reset} ${C.dim}(${chatCount} chat lines stored)${C.reset}\n`);
               scheduleRender();
             })();
           }
@@ -2333,6 +2352,15 @@ function uploadDruzzilKills(kills, { botUrl, token, dryRun }) {
   }
   return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/bosskill'), token,
     { agent_version: AGENT_VERSION, kills });
+}
+
+function uploadHistoricalChat(messages, { botUrl, token, dryRun }) {
+  if (dryRun) {
+    console.log(`[historical-chat] ${messages.length} chat lines (dry-run)`);
+    return Promise.resolve({ stored: messages.length });
+  }
+  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/historical_chat'), token,
+    { agent_version: AGENT_VERSION, messages });
 }
 
 function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
