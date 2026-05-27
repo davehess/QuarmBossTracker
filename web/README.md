@@ -1,5 +1,7 @@
 # Wolf Pack EQ — Tracker (web)
 
+**Production:** <https://wolfpack.quest>
+
 Next.js 14 (App Router) + Tailwind + Supabase. Vercel-hosted companion to the
 Discord bot and the local agent dashboard. Reads from the same Supabase the
 bot writes to.
@@ -39,10 +41,26 @@ Open <http://localhost:3000>.
 
 1. Connect this repo on vercel.com → **Add New Project**.
 2. **Root directory:** `web` (very important — it's a monorepo).
-3. Set env vars in Vercel project settings:
+3. Set env vars in Vercel project settings (Production scope):
+   - `NEXT_PUBLIC_SITE_URL=https://wolfpack.quest`
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 4. Deploy. Vercel auto-detects Next.js 14.
+
+## Custom domain (wolfpack.quest)
+
+1. Vercel project → **Settings → Domains** → add `wolfpack.quest` and `www.wolfpack.quest`.
+2. Vercel shows you DNS records to add at your registrar:
+   - `A` record `@` → `76.76.21.21`
+   - `CNAME` record `www` → `cname.vercel-dns.com`
+3. Vercel issues TLS certs automatically once DNS propagates (usually a few minutes).
+4. In **Domain → Edit**, set `wolfpack.quest` as the **primary** domain; the
+   `www` host redirects to it.
+
+Once the domain is live, also set the Discord OAuth redirect URI to
+`https://wolfpack.quest/auth/callback` in:
+- Discord developer portal (your app → OAuth2 → Redirects)
+- Supabase Auth → Providers → Discord → Redirect URLs
 
 ## Pages
 

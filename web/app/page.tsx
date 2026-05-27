@@ -4,7 +4,7 @@ export default function HomePage() {
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
-        <h2 className="text-xl text-gold mb-3">What this is</h2>
+        <h2 className="text-xl text-gold mb-3">Welcome to <span className="text-blue">wolfpack.quest</span></h2>
         <p className="text-sm leading-6">
           The guild-wide companion to the Wolf Pack Discord bot. Shared parses, full
           loadout library, theoretical TPS planner. The local agent dashboard at{' '}

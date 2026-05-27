@@ -2,9 +2,24 @@ import './globals.css';
 import type { Metadata } from 'next';
 import Nav from '@/components/Nav';
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://wolfpack.quest';
+
 export const metadata: Metadata = {
-  title:       'Wolf Pack EQ — Tracker',
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default:  'Wolf Pack EQ — Tracker',
+    template: '%s · Wolf Pack EQ',
+  },
   description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
+  openGraph: {
+    title:       'Wolf Pack EQ — Tracker',
+    description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
+    url:         SITE_URL,
+    siteName:    'Wolf Pack EQ',
+    type:        'website',
+  },
+  twitter: { card: 'summary' },
+  icons: { icon: '/favicon.ico' },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
