@@ -1371,7 +1371,10 @@ function renderDashboard() {
   out.push('\n\n');
 
   // Two-column layout: Recent Parses (left) vs Damage done this session (right)
-  const LCOL = 50; // left column width
+  // Adapt to terminal width so wide windows don't strand everything in the top-left.
+  // Clamp to [40, 100] so neither column gets absurdly narrow or wide.
+  const TERM_COLS = process.stdout.columns || 100;
+  const LCOL = Math.max(40, Math.min(100, Math.floor((TERM_COLS - 4) / 2)));
   const left  = [];
   const right = [];
 
@@ -1465,6 +1468,11 @@ let _viewTimer   = null;        // active setTimeout for 5s auto-revert
 function _clearViewTimer() {
   if (_viewTimer) { clearTimeout(_viewTimer); _viewTimer = null; }
 }
+// 30s = enough time to actually read the screen. Reset on every key the user
+// presses inside the view (see keyboard handler), so spamming the same key
+// keeps the view open instead of bouncing back to the dashboard.
+const VIEW_AUTO_REVERT_MS = 30000;
+
 function _scheduleAutoRevert() {
   _clearViewTimer();
   _viewTimer = setTimeout(() => {
@@ -1474,7 +1482,12 @@ function _scheduleAutoRevert() {
       _viewLocked = false;
       renderDashboard();
     }
-  }, 5000);
+  }, VIEW_AUTO_REVERT_MS);
+}
+// Called from any keypress that should keep the held view alive (e.g. user
+// hit the same view key again, or pressed navigation keys in opt-in).
+function _bumpViewTimer() {
+  if (_viewMode !== 'dashboard' && !_viewLocked) _scheduleAutoRevert();
 }
 function _enterView(mode, renderFn) {
   _viewMode   = mode;
@@ -1501,12 +1514,19 @@ function setupKeypressHandler() {
   try { process.stdin.setRawMode(true); } catch { return; }
   process.stdin.resume();
   process.stdin.setEncoding('utf8');
+  // Redraw on terminal resize so the dashboard re-flows to the new column count.
+  process.stdout.on('resize', () => {
+    if (_viewMode === 'dashboard') scheduleRender();
+  });
   process.stdin.on('data', (key) => {
     // Ctrl+C always exits
     if (key === '\u0003') {
       process.stdout.write(`${ANSI.reset}\nExiting.\n`);
       process.exit(0);
     }
+    // Any keypress inside a held view restarts the 30s auto-revert clock so
+    // mashing keys doesn't kick you back to the dashboard mid-read.
+    _bumpViewTimer();
 
     if (_viewMode === 'info') {
       if (key === 'i' || key === 'I') {
@@ -1579,22 +1599,52 @@ function setupKeypressHandler() {
 
 // ── [O] Historical log opt-in ───────────────────────────────────────────────
 // Scans the EQ log directory for all log files including backup/alternate names
-// (eqlog_Name_pq.proj.txt2, .txt.bak, etc.). Shows a selectable list.
-// Files highlighted in blue are ones the bot has flagged as wanted for parse
-// completeness (via stats.requestedCharacters, populated from server response).
-// User presses [A] to select all, number keys or arrow+space to toggle,
-// [Enter] / [B] to start backfill on selected files.
+// (eqlog_Name_pq.proj.txt2, .txt.bak, etc.).
 //
-// Selection state is ephemeral (not persisted) — intentionally lightweight.
+// Two-pane UI:
+//   Active pane  — current candidates; navigate, toggle, drop to ignored.
+//   Ignored pane — dropped files; restore one (or all) back to active.
+//
+// Per-file resume tracking: every 5s during backfill we persist `bytePos` to
+// disk so an interrupted run can pick up where it left off on the next launch.
+//
+// Backfill purpose: legacy logs are CHAT ONLY — combat events are skipped so
+// we don't pollute parse history with months-old encounters.
+
+const OPTIN_STATE_FILE = path.join(__dirname, 'logsync.optin.json');
 
 const _optinState = {
-  files:    [],        // { path, character, isAlt, sizeMb, mtime, selected, requested }
+  files:    [],        // active list  { path, character, isAlt, sizeMb, mtime, selected, requested, resume }
+  ignored:  [],        // dropped list (same shape; selected is unused)
   cursor:   0,
+  pane:     'active',  // 'active' | 'ignored'
   scanned:  false,
+  // Per-file backfill progress (persisted): { [path]: { bytePos, totalBytes, lineNum, updatedAt, character } }
+  progress: {},
+  // Ignored file paths (persisted across runs)
+  ignoredPaths: new Set(),
 };
 
+function _loadOptInState() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(OPTIN_STATE_FILE, 'utf8'));
+    _optinState.progress     = raw.progress     || {};
+    _optinState.ignoredPaths = new Set(raw.ignoredPaths || []);
+  } catch { /* missing or unreadable — fresh state */ }
+}
+function _saveOptInState() {
+  try {
+    fs.writeFileSync(OPTIN_STATE_FILE, JSON.stringify({
+      progress:     _optinState.progress,
+      ignoredPaths: [..._optinState.ignoredPaths],
+    }, null, 2));
+  } catch { /* non-fatal */ }
+}
+
 function _scanOptInFiles() {
-  _optinState.files = [];
+  _loadOptInState();
+  _optinState.files   = [];
+  _optinState.ignored = [];
   // Derive scan directory from the first watched log path
   const firstLog = stats.watchedLogs[0]?.logPath;
   if (!firstLog) return;
@@ -1618,29 +1668,39 @@ function _scanOptInFiles() {
     if (alreadyWatched && !altM) continue;  // show alt files even if somehow watched
 
     const char = match[1];
-    let sizeMb = 0, mtime = null;
+    let sizeMb = 0, sizeBytes = 0, mtime = null;
     try {
       const st = fs.statSync(fullPath);
-      sizeMb = Math.round(st.size / 1048576 * 10) / 10;
-      mtime  = st.mtime;
+      sizeBytes = st.size;
+      sizeMb    = Math.round(st.size / 1048576 * 10) / 10;
+      mtime     = st.mtime;
     } catch {}
 
-    _optinState.files.push({
+    const file = {
       path:      fullPath,
       character: char,
       isAlt:     !!altM,
       sizeMb,
+      sizeBytes,
       mtime,
       selected:  false,
       requested: requested.has(char.toLowerCase()),
-    });
+      resume:    _optinState.progress[fullPath] || null,
+    };
+
+    if (_optinState.ignoredPaths.has(fullPath)) _optinState.ignored.push(file);
+    else                                         _optinState.files.push(file);
   }
 
-  // Sort: requested first, then by mtime descending (most recently modified)
-  _optinState.files.sort((a, b) => {
+  // Sort active: requested first, then mtime desc (newest first), then size desc
+  const sortFn = (a, b) => {
     if (a.requested !== b.requested) return a.requested ? -1 : 1;
-    return (b.mtime || 0) - (a.mtime || 0);
-  });
+    const dt = (b.mtime || 0) - (a.mtime || 0);
+    if (dt) return dt;
+    return (b.sizeBytes || 0) - (a.sizeBytes || 0);
+  };
+  _optinState.files.sort(sortFn);
+  _optinState.ignored.sort(sortFn);
   _optinState.scanned = true;
   _optinState.cursor  = 0;
 }
@@ -1648,37 +1708,98 @@ function _scanOptInFiles() {
 // Separate keypress handler for the opt-in view (replaces the normal one while active)
 let _optinKeyHandler = null;
 
+// Read entire file with byte-position tracking; supports resume from a stored offset.
+// onLine(line) is called for each line; onProgress({ bytePos, totalBytes, lineNum }) is called every ~256KB.
+async function readFromBytePos(logPath, startBytePos, onLine, onProgress) {
+  return new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(logPath, {
+      encoding:      'utf8',
+      highWaterMark: 1 << 16,
+      start:         startBytePos || 0,
+    });
+    let buf = '';
+    let bytePos = startBytePos || 0;
+    let lineNum = 0;
+    let sinceLastProgress = 0;
+    let cancelled = false;
+
+    stream.on('data', chunk => {
+      if (cancelled) return;
+      bytePos          += Buffer.byteLength(chunk, 'utf8');
+      sinceLastProgress += Buffer.byteLength(chunk, 'utf8');
+      buf += chunk;
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        lineNum++;
+        try { onLine(line); } catch { /* swallow */ }
+      }
+      if (sinceLastProgress >= 262144 && onProgress) {  // every 256KB
+        sinceLastProgress = 0;
+        try { onProgress({ bytePos, lineNum }); } catch {}
+      }
+    });
+    stream.on('end',   () => { if (onProgress) try { onProgress({ bytePos, lineNum }); } catch {} ; resolve({ bytePos, lineNum }); });
+    stream.on('close', () => resolve({ bytePos, lineNum }));
+    stream.on('error', reject);
+  });
+}
+
+function _fmtAgoDate(d) {
+  if (!d) return '?';
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days < 1)   return 'today';
+  if (days < 30)  return `${days}d ago`;
+  if (days < 365) return `${Math.floor(days/30)}mo ago`;
+  return `${Math.floor(days/365)}y ago`;
+}
+
+function _renderOptinList(list, label, cursor, showResume) {
+  const out = [];
+  if (list.length === 0) {
+    out.push(`  ${C.dim}(${label} list is empty)${C.reset}\n`);
+    return out.join('');
+  }
+  out.push(`  ${C.dim}${pad('', 3)} ${pad('Character', 14)} ${pad('File', 32)} ${pad('Size', 8)} ${pad('Modified', 11)} ${showResume ? 'Resume' : ''}${C.reset}\n`);
+  list.forEach((f, i) => {
+    const sel  = f.selected ? `${C.green}[✓]${C.reset}` : `${C.dim}[ ]${C.reset}`;
+    const cur  = i === cursor ? `${C.yellow}▶${C.reset}` : ' ';
+    const alt  = f.isAlt ? ` ${C.dim}(alt)${C.reset}` : '';
+    const nameColor = f.requested ? C.blue : (f.isAlt ? C.dim : C.reset);
+    const dateStr = _fmtAgoDate(f.mtime);
+    const fname   = path.basename(f.path);
+    let resumeStr = '';
+    if (showResume && f.resume && f.resume.bytePos > 0 && f.sizeBytes) {
+      const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
+      resumeStr = `${C.yellow}${pct}% (line ${f.resume.lineNum || '?'})${C.reset}`;
+    } else if (showResume && f.resume === undefined) {
+      // never started
+    }
+    out.push(`  ${cur}${sel} ${nameColor}${pad(f.character, 14)}${C.reset} ` +
+             `${C.dim}${pad(fname, 32)}${C.reset} ${pad(f.sizeMb + 'MB', 8)} ${pad(dateStr, 11)} ${resumeStr}${alt}\n`);
+  });
+  return out.join('');
+}
+
 function showOptIn() {
   if (!_optinState.scanned) _scanOptInFiles();
 
   const out = [];
-  out.push(`${C.clear}\n${C.bold}${C.cyan}  Historical Log Opt-in${C.reset}\n`);
-  out.push(`  ${C.dim}Select log files to backfill. Files highlighted in ${C.blue}blue${C.reset}${C.dim} are requested for parse completeness.${C.reset}\n\n`);
+  out.push(`${C.clear}\n${C.bold}${C.cyan}  Historical Log Opt-in — ${_optinState.pane === 'active' ? 'Active' : 'Ignored'} (${_optinState.pane === 'active' ? _optinState.files.length : _optinState.ignored.length})${C.reset}\n`);
+  out.push(`  ${C.dim}Chat-only backfill — no combat parses created from legacy logs. Files in ${C.blue}blue${C.reset}${C.dim} are requested by the bot.${C.reset}\n\n`);
 
-  if (_optinState.files.length === 0) {
-    out.push(`  ${C.dim}No additional log files found in the EQ directory.${C.reset}\n`);
-    out.push(`  ${C.dim}(Active logs are already being watched.)${C.reset}\n\n`);
-    out.push(`  ${C.cyan}[D]${C.reset} Back to dashboard\n`);
-    process.stdout.write(out.join(''));
-    return;
+  const list = _optinState.pane === 'active' ? _optinState.files : _optinState.ignored;
+  out.push(_renderOptinList(list, _optinState.pane, _optinState.cursor, _optinState.pane === 'active'));
+
+  const selCount = list.filter(f => f.selected).length;
+  out.push('\n');
+  if (_optinState.pane === 'active') {
+    out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[A]${C.reset} Select all  ${C.cyan}[X]${C.reset} Ignore highlighted  `);
+    out.push(`${selCount > 0 ? `${C.bold}${C.green}[B]${C.reset} Backfill (${selCount})` : `${C.dim}[B] Backfill${C.reset}`}  `);
+    out.push(`${C.cyan}[V]${C.reset} View ignored (${_optinState.ignored.length})  ${C.cyan}[D]${C.reset} Back\n`);
+  } else {
+    out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[R]${C.reset} Restore selected  ${C.cyan}[V]${C.reset} Back to active  ${C.cyan}[D]${C.reset} Back to dashboard\n`);
   }
-
-  out.push(`  ${C.dim}${pad('', 3)} ${pad('Character', 16)} ${pad('File', 34)} ${pad('Size', 7)} Last Modified${C.reset}\n`);
-  _optinState.files.forEach((f, i) => {
-    const sel  = f.selected ? `${C.green}[✓]${C.reset}` : `${C.dim}[ ]${C.reset}`;
-    const cur  = i === _optinState.cursor ? `${C.yellow}▶${C.reset}` : ' ';
-    const alt  = f.isAlt ? `${C.dim}(alt)${C.reset}` : '';
-    const nameColor = f.requested ? C.blue : (f.isAlt ? C.dim : C.reset);
-    const dateStr = f.mtime ? f.mtime.toLocaleDateString() : '?';
-    const fname   = path.basename(f.path);
-    out.push(`  ${cur}${sel} ${nameColor}${pad(f.character, 16)}${C.reset} ` +
-             `${C.dim}${pad(fname, 34)}${C.reset} ${pad(f.sizeMb + 'MB', 7)} ${dateStr} ${alt}\n`);
-  });
-
-  const selCount = _optinState.files.filter(f => f.selected).length;
-  out.push(`\n  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[A]${C.reset} Select all  `);
-  out.push(`${selCount > 0 ? `${C.bold}${C.green}[B]${C.reset} Start backfill (${selCount} files)` : `${C.dim}[B] Start backfill${C.reset}`}  `);
-  out.push(`${C.cyan}[D]${C.reset} Back\n`);
 
   process.stdout.write(out.join(''));
 
@@ -1686,80 +1807,129 @@ function showOptIn() {
   if (!_optinKeyHandler && process.stdin.isTTY) {
     process.stdin.setRawMode(true);
     _optinKeyHandler = (data) => {
+      _bumpViewTimer();
       const key = data.toString();
       const ESC = '\x1b';
-      if (key === `${ESC}[A`) { // up
+      const list = _optinState.pane === 'active' ? _optinState.files : _optinState.ignored;
+
+      if (key === `${ESC}[A`) {  // up arrow
         _optinState.cursor = Math.max(0, _optinState.cursor - 1);
         showOptIn(); return;
       }
-      if (key === `${ESC}[B`) { // down — but [B] also means "start backfill" when NOT arrow
-        _optinState.cursor = Math.min(_optinState.files.length - 1, _optinState.cursor + 1);
+      if (key === `${ESC}[B`) {  // down arrow
+        _optinState.cursor = Math.min(Math.max(list.length - 1, 0), _optinState.cursor + 1);
         showOptIn(); return;
       }
       if (key === ' ') {
-        if (_optinState.files[_optinState.cursor])
-          _optinState.files[_optinState.cursor].selected ^= true;
+        if (list[_optinState.cursor]) list[_optinState.cursor].selected ^= true;
         showOptIn(); return;
       }
       if (key === 'a' || key === 'A') {
-        const allSelected = _optinState.files.every(f => f.selected);
-        _optinState.files.forEach(f => { f.selected = !allSelected; });
+        const all = list.every(f => f.selected);
+        list.forEach(f => { f.selected = !all; });
+        showOptIn(); return;
+      }
+      if (key === 'v' || key === 'V') {
+        _optinState.pane  = _optinState.pane === 'active' ? 'ignored' : 'active';
+        _optinState.cursor = 0;
+        showOptIn(); return;
+      }
+      if (key === 'x' || key === 'X') {
+        // Ignore the highlighted file (or all selected) — move to ignored pane.
+        if (_optinState.pane !== 'active') { showOptIn(); return; }
+        const toIgnore = _optinState.files.filter(f => f.selected);
+        const targets  = toIgnore.length > 0 ? toIgnore : [_optinState.files[_optinState.cursor]].filter(Boolean);
+        for (const f of targets) {
+          _optinState.ignoredPaths.add(f.path);
+          f.selected = false;
+        }
+        _saveOptInState();
+        // Re-scan to rebuild the two panes
+        _optinState.scanned = false;
+        showOptIn(); return;
+      }
+      if (key === 'r' || key === 'R') {
+        // Restore highlighted (or all selected) ignored files back to active.
+        if (_optinState.pane !== 'ignored') { showOptIn(); return; }
+        const toRestore = _optinState.ignored.filter(f => f.selected);
+        const targets   = toRestore.length > 0 ? toRestore : [_optinState.ignored[_optinState.cursor]].filter(Boolean);
+        for (const f of targets) {
+          _optinState.ignoredPaths.delete(f.path);
+          f.selected = false;
+        }
+        _saveOptInState();
+        _optinState.scanned = false;
         showOptIn(); return;
       }
       if (key === 'b' || key === 'B') {
+        // Only start backfill from the active pane
+        if (_optinState.pane !== 'active') { showOptIn(); return; }
         const chosen = _optinState.files.filter(f => f.selected);
-        if (chosen.length > 0) {
-          process.removeListener('data', _optinKeyHandler);
-          _optinKeyHandler = null;
-          _optinState.scanned = false;
-          _exitView();
-          process.stdout.write(`\n${C.bold}${C.yellow}  Starting backfill on ${chosen.length} file(s)...${C.reset}\n`);
-          process.stdout.write(`  ${C.dim}(Combat → /encounter · Chat → /historical_chat · no Discord posting)${C.reset}\n`);
-          // Trigger backfill — spawn one readWindow per selected file. Combat events
-          // go to the normal encounter pipeline; guild/raid chat lines go to the
-          // historical store endpoint and are NOT relayed to Discord (so we can
-          // see the data before committing to thread fills).
-          // No date cutoff — read the entire file. EQ logs commonly cover years.
-          const { botUrl, token, dryRun } = _uploadOpts || {};
-          for (const f of chosen) {
-            const char = f.character;
-            const drops = DEFAULT_DROP_PATTERNS;
-            const keeps = KEEP_PATTERNS;
-            const bldr  = new EncounterBuilder({
-              character: char,
-              onFlush: p => uploadEncounter(p, { botUrl, token, dryRun }).catch(() => {}),
-            });
-            const chatBatch  = [];
-            let   chatCount  = 0;
-            const flushChat  = async (force) => {
-              if (chatBatch.length === 0) return;
-              if (!force && chatBatch.length < 500) return;
-              const batch = chatBatch.splice(0);
-              await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
-            };
-            (async () => {
+        if (chosen.length === 0) return;
+
+        process.removeListener('data', _optinKeyHandler);
+        _optinKeyHandler = null;
+        _optinState.scanned = false;
+        _exitView();
+
+        process.stdout.write(`\n${C.bold}${C.yellow}  Starting chat-only backfill on ${chosen.length} file(s)...${C.reset}\n`);
+        process.stdout.write(`  ${C.dim}(Combat events from legacy logs are SKIPPED — only guild/raid chat is captured.${C.reset}\n`);
+        process.stdout.write(`  ${C.dim} Resume position is saved every ~256KB so interruptions don't restart from zero.)${C.reset}\n`);
+
+        const { botUrl, token, dryRun } = _uploadOpts || {};
+        for (const f of chosen) {
+          const char     = f.character;
+          const chatBatch = [];
+          let   chatCount = 0;
+          const flushChat = async (force) => {
+            if (chatBatch.length === 0) return;
+            if (!force && chatBatch.length < 500) return;
+            const batch = chatBatch.splice(0);
+            await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
+          };
+          (async () => {
+            // Resume from stored byte position if present
+            const stored      = _optinState.progress[f.path];
+            const startByte   = stored?.bytePos || 0;
+            const totalBytes  = f.sizeBytes || 0;
+            if (startByte > 0) {
+              process.stdout.write(`  ${C.dim}Resuming ${char} from ${Math.floor(startByte / totalBytes * 100)}% (${startByte} bytes)${C.reset}\n`);
+            } else {
               process.stdout.write(`  ${C.dim}Backfilling ${char} from ${f.path}...${C.reset}\n`);
-              await readWindow(f.path, new Date(0), new Date(), line => {
-                // Capture chat lines BEFORE the combat filter (chat doesn't pass shouldKeep)
-                const chatMsg = parseChatLine(line, char);
-                if (chatMsg) {
-                  chatBatch.push({ ...chatMsg, uploadedBy: char });
-                  chatCount++;
-                  if (chatBatch.length >= 500) flushChat(true).catch(() => {});
-                  return;
-                }
-                if (shouldKeep(line, drops, keeps)) {
-                  const ts = parseEqTimestamp(line);
-                  const ev = parseEvent(line, ts);
-                  if (ev) bldr.add(ev);
-                }
-              }).catch(e => console.warn(`[optin backfill] ${char}: ${e.message}`));
-              bldr.flush();
+            }
+            try {
+              await readFromBytePos(f.path, startByte,
+                (line) => {
+                  // CHAT-ONLY. No combat events. No EncounterBuilder. Legacy logs
+                  // should not create parses — the user already saw the kills live.
+                  const chatMsg = parseChatLine(line, char);
+                  if (chatMsg) {
+                    chatBatch.push({ ...chatMsg, uploadedBy: char });
+                    chatCount++;
+                    if (chatBatch.length >= 500) flushChat(true).catch(() => {});
+                  }
+                },
+                ({ bytePos, lineNum }) => {
+                  _optinState.progress[f.path] = {
+                    bytePos, lineNum, totalBytes,
+                    character: char,
+                    updatedAt: new Date().toISOString(),
+                  };
+                  _saveOptInState();
+                });
               await flushChat(true).catch(() => {});
+              // Mark complete by setting bytePos = totalBytes (or zero out to clear)
+              _optinState.progress[f.path] = {
+                bytePos: totalBytes, lineNum: -1, totalBytes, character: char,
+                updatedAt: new Date().toISOString(), complete: true,
+              };
+              _saveOptInState();
               process.stdout.write(`  ${C.green}✓ Done: ${char}${C.reset} ${C.dim}(${chatCount} chat lines stored)${C.reset}\n`);
-              scheduleRender();
-            })();
-          }
+            } catch (err) {
+              process.stdout.write(`  ${C.red}✗ ${char}: ${err.message}${C.reset}\n`);
+            }
+            scheduleRender();
+          })();
         }
         return;
       }
@@ -1841,7 +2011,8 @@ function showPets() {
   const myChars = new Set(stats.watchedLogs.map(w => (w.character || '').toLowerCase()));
 
   // Two-column layout: left = all known pets, right = "My pet" (owned by watched chars)
-  const LCOL = 44;
+  const TERM_COLS = process.stdout.columns || 100;
+  const LCOL = Math.max(40, Math.min(100, Math.floor((TERM_COLS - 4) / 2)));
   const left  = [];
   const right = [];
 
