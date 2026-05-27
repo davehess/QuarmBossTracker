@@ -1698,22 +1698,43 @@ function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<'
 
 function renderHeader(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  const hasNewer = s.updateAvailable && s.latestAgentVersion
+                && s.latestAgentVersion !== s.version
+                && _isNewerVersion(s.latestAgentVersion, s.version);
   let h = '';
-  if (s.updateAvailable) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
+  if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
-  // Version line — inline diff when a newer version is available so users
-  // immediately see they're behind without needing to scroll or read the banner.
+  // Version line — always renders an update-now button on the right so users
+  // can trigger a restart-and-pull-latest at any time, even when the bot
+  // hasn't (yet) advertised a newer version via polling.
   let versionStr;
-  if (s.updateAvailable && s.latestAgentVersion && s.latestAgentVersion !== s.version
-      && _isNewerVersion(s.latestAgentVersion, s.version)) {
+  if (hasNewer) {
     versionStr = 'v' + esc(s.version) +
                  ' <span style="color:var(--gold)">→ v' + esc(s.latestAgentVersion) + ' available</span>' +
                  ' <a href="#" id="inlineUpdateBtn" style="color:var(--blue);margin-left:6px">[install]</a>';
   } else {
     versionStr = 'v' + esc(s.version);
   }
-  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min</div>';
+  const alwaysBtn = '<button id="manualUpdateBtn" style="margin-left:12px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="Save session, restart agent, pull the latest version">'
+                  + (hasNewer ? '↻ Restart now' : '↻ Check for update') + '</button>';
+  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + alwaysBtn + '</div>';
   document.getElementById('header').innerHTML = h;
+  // Always-visible 'Restart now / Check for update' button mirrors the install flow
+  const manual = document.getElementById('manualUpdateBtn');
+  if (manual) manual.addEventListener('click', async () => {
+    if (!confirm('Restart agent and pull the latest version? Session will be saved and resumed.')) return;
+    manual.disabled = true; manual.textContent = 'Restarting...';
+    try { await fetch('/api/update', { method: 'POST' }); } catch {}
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
+      'Restarting agent... this page will reload automatically once the server is back up.</div>');
+    let tries = 0;
+    const t = setInterval(async () => {
+      tries++;
+      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); } } catch {}
+      if (tries > 60) clearInterval(t);
+    }, 1000);
+  });
   // Inline [install] link mirrors the banner Install button
   const inline = document.getElementById('inlineUpdateBtn');
   if (inline) inline.addEventListener('click', (e) => {
