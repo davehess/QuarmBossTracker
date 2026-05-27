@@ -1995,39 +1995,48 @@ function renderTanks(s) {
            '<td class="dim">' + updatedStr + '</td>' +
            '<td><button data-hide-char="' + esc(char) + '" title="Hide this character" style="background:transparent;border:0;color:var(--dim);cursor:pointer;font-size:13px">⊘</button></td></tr>';
 
-      // Bandolier sets — display as a sub-row with a select dropdown so the
-      // user can browse their saved loadouts and pick which one to display.
+      // Bandolier sets — sub-row laid out as a 4-cell grid (MH / OH / Range
+      // / Ammo) so long item names wrap inside their cell rather than
+      // pushing the next slot off the right edge of the page.
       if (inv.bandolier && Object.keys(inv.bandolier).length > 0) {
         const setNames = Object.keys(inv.bandolier);
         const defaultSet = (active && active.name && inv.bandolier[active.name]) ? active.name : setNames[0];
         h += '<tr class="bandolier-row" data-char="' + esc(char) + '"><td colspan="6" style="padding:6px 16px 10px;border-top:1px dashed var(--border)">';
-        h += '<span class="dim" style="font-size:11px">Bandolier set:</span> ';
-        h += '<select data-bandolier-char="' + esc(char) + '" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-family:inherit;font-size:12px">';
+        h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+        h += '<span class="dim" style="font-size:11px;flex-shrink:0">Bandolier set:</span>';
+        h += '<select data-bandolier-char="' + esc(char) + '" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-family:inherit;font-size:12px;max-width:200px">';
         for (const sn of setNames) {
           h += '<option value="' + esc(sn) + '"' + (sn === defaultSet ? ' selected' : '') + '>' + esc(sn) + '</option>';
         }
-        h += '</select> ';
-        // Render the selected set inline using a div the change-handler updates
+        h += '</select>';
+        h += '</div>';
+        // Each slot is a chip: label on top, item underneath, fixed-width column
+        // so long item names wrap cleanly instead of shoving the next slot off.
         const renderSet = (setName) => {
           const set = inv.bandolier[setName] || {};
-          const slot = (item) => {
-            if (!item) return '<span class="dim">—</span>';
-            const url = 'https://www.pqdi.cc/item/' + item.id;
-            return '<a href="' + url + '" target="_blank" style="color:var(--blue)">' + esc(item.name) + '</a>';
+          const slot = (label, item) => {
+            const value = item
+              ? '<a href="https://www.pqdi.cc/item/' + item.id + '" target="_blank" style="color:var(--blue);text-decoration:none;line-height:1.3;display:block;word-break:break-word">' + esc(item.name) + '</a>'
+              : '<span class="dim">—</span>';
+            return '<div style="display:flex;flex-direction:column;gap:2px;min-width:0">' +
+                   '<span class="dim" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">' + label + '</span>' +
+                   '<div style="font-size:12px">' + value + '</div>' +
+                   '</div>';
           };
-          return '<span class="dim">MH:</span> ' + slot(set.primary)
-               + ' <span class="dim">OH:</span> ' + slot(set.secondary)
-               + ' <span class="dim">Range:</span> ' + slot(set.range)
-               + ' <span class="dim">Ammo:</span> ' + slot(set.ammo);
+          return '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding-left:4px">' +
+                 slot('Main', set.primary) +
+                 slot('Off',  set.secondary) +
+                 slot('Range',set.range) +
+                 slot('Ammo', set.ammo) +
+                 '</div>';
         };
         // JSON blob stashed in a data-attribute on the display span so the
         // change handler can look up the selected set without another fetch.
         // Pre-encoded with attr-safe quotes; HTML-escape just the quote marks.
         const bandolierJson = JSON.stringify(inv.bandolier)
           .replace(/&/g, '&amp;').replace(/'/g, '&apos;').replace(/"/g, '&quot;');
-        h += '<span class="bandolier-display" data-char="' + esc(char) + '" ' +
-             'data-bandolier="' + bandolierJson + '" ' +
-             'style="font-size:12px;margin-left:6px">' + renderSet(defaultSet) + '</span>';
+        h += '<div class="bandolier-display" data-char="' + esc(char) + '" ' +
+             'data-bandolier="' + bandolierJson + '">' + renderSet(defaultSet) + '</div>';
         h += '</td></tr>';
       }
     }
@@ -2095,8 +2104,9 @@ function renderTanks(s) {
       body: JSON.stringify({ action: 'show', chars: [b.dataset.showChar] }) });
     refresh();
   }));
-  // Wire bandolier dropdowns — re-render the slot summary span when the
-  // user picks a different set from the dropdown.
+  // Wire bandolier dropdowns — re-render the 4-cell grid when the user
+  // picks a different set. Must mirror the server-side renderSet so
+  // long item names continue to wrap inside their column.
   document.querySelectorAll('[data-bandolier-char]').forEach(sel => {
     sel.addEventListener('change', () => {
       const char = sel.dataset.bandolierChar;
@@ -2104,14 +2114,21 @@ function renderTanks(s) {
       if (!display) return;
       let sets; try { sets = JSON.parse(display.dataset.bandolier); } catch { return; }
       const set = sets[sel.value] || {};
-      const slot = (item) => {
-        if (!item) return '<span class="dim">&mdash;</span>';
-        return '<a href="https://www.pqdi.cc/item/' + item.id + '" target="_blank" style="color:var(--blue)">' + esc(item.name) + '</a>';
+      const cell = (label, item) => {
+        const value = item
+          ? '<a href="https://www.pqdi.cc/item/' + item.id + '" target="_blank" style="color:var(--blue);text-decoration:none;line-height:1.3;display:block;word-break:break-word">' + esc(item.name) + '</a>'
+          : '<span class="dim">&mdash;</span>';
+        return '<div style="display:flex;flex-direction:column;gap:2px;min-width:0">' +
+               '<span class="dim" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">' + label + '</span>' +
+               '<div style="font-size:12px">' + value + '</div>' +
+               '</div>';
       };
-      display.innerHTML = '<span class="dim">MH:</span> ' + slot(set.primary)
-                       + ' <span class="dim">OH:</span> ' + slot(set.secondary)
-                       + ' <span class="dim">Range:</span> ' + slot(set.range)
-                       + ' <span class="dim">Ammo:</span> ' + slot(set.ammo);
+      display.innerHTML = '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding-left:4px">' +
+                         cell('Main', set.primary) +
+                         cell('Off',  set.secondary) +
+                         cell('Range',set.range) +
+                         cell('Ammo', set.ammo) +
+                         '</div>';
     });
   });
 }
@@ -4445,20 +4462,26 @@ async function main() {
         const url = `http://localhost:${active.webPort}`;
         console.log(`\n  ${ANSI.green}✓ Service already running${ANSI.reset} (pid ${active.pid}, v${active.agentVersion}, since ${active.startedAt}).`);
         console.log(`  ${ANSI.cyan}Dashboard:${ANSI.reset} ${url}`);
-        // Open the dashboard in either path so the user always sees state.
-        openDashboardInBrowser(active.webPort);
 
-        // Non-TTY (auto-restart, CI, redirected stdout) — exit silently
-        if (!process.stdin.isTTY) process.exit(0);
+        // Non-TTY (auto-restart, CI, redirected stdout) — open browser and
+        // exit silently. TTY users get the prompt first; the browser is only
+        // launched after they pick V (or the timeout defaults to V) so the
+        // prompt isn't stolen by the OS focus-change to the browser window.
+        if (!process.stdin.isTTY) {
+          openDashboardInBrowser(active.webPort);
+          process.exit(0);
+        }
 
         console.log(`\n  ${ANSI.bold}What do you want to do?${ANSI.reset}`);
-        console.log(`    ${ANSI.cyan}[V]${ANSI.reset} View dashboard, leave service running ${ANSI.dim}(default — auto-selects in 10s)${ANSI.reset}`);
+        console.log(`    ${ANSI.cyan}[V]${ANSI.reset} View dashboard, leave service running ${ANSI.dim}(default — auto-selects in 30s)${ANSI.reset}`);
         console.log(`    ${ANSI.cyan}[K]${ANSI.reset} Kill the service entirely`);
         console.log(`    ${ANSI.cyan}[R]${ANSI.reset} Kill the service and resume in this window`);
         console.log('');
 
         const choice = await new Promise((resolve) => {
-          const timer = setTimeout(() => resolve('v'), 10_000);
+          // 30s so the user has time to read the options without the browser
+          // stealing focus mid-decision.
+          const timer = setTimeout(() => resolve('v'), 30_000);
           try { process.stdin.setRawMode(true); } catch {}
           process.stdin.resume();
           process.stdin.setEncoding('utf8');
@@ -4475,6 +4498,8 @@ async function main() {
         });
 
         if (choice === 'v') {
+          // Now safe to open the browser — the user already made their pick.
+          openDashboardInBrowser(active.webPort);
           console.log(`  ${ANSI.dim}Service kept running. Feel free to close this window.${ANSI.reset}\n`);
           process.exit(0);
         }
@@ -4533,14 +4558,16 @@ async function main() {
         const url = `http://localhost:${probePort}`;
         console.log(`\n  ${ANSI.yellow}⚠ Another agent is already serving ${url}${ANSI.reset}`);
         console.log(`  ${ANSI.dim}(No PID file — likely an older version that didn't write one.)${ANSI.reset}`);
-        openDashboardInBrowser(probePort);
-        if (!process.stdin.isTTY) process.exit(0);
+        if (!process.stdin.isTTY) {
+          openDashboardInBrowser(probePort);
+          process.exit(0);
+        }
         console.log(`\n  ${ANSI.bold}What do you want to do?${ANSI.reset}`);
-        console.log(`    ${ANSI.cyan}[V]${ANSI.reset} View dashboard, leave it running ${ANSI.dim}(default — auto in 10s)${ANSI.reset}`);
+        console.log(`    ${ANSI.cyan}[V]${ANSI.reset} View dashboard, leave it running ${ANSI.dim}(default — auto in 30s)${ANSI.reset}`);
         console.log(`    ${ANSI.cyan}[K]${ANSI.reset} Kill it (asks via /api/shutdown, falls back to manual)`);
         console.log(`    ${ANSI.cyan}[R]${ANSI.reset} Kill it and resume in this window\n`);
         const choice = await new Promise((resolve) => {
-          const timer = setTimeout(() => resolve('v'), 10_000);
+          const timer = setTimeout(() => resolve('v'), 30_000);
           try { process.stdin.setRawMode(true); } catch {}
           process.stdin.resume();
           process.stdin.setEncoding('utf8');
@@ -4556,6 +4583,7 @@ async function main() {
           process.stdin.on('data', onData);
         });
         if (choice === 'v') {
+          openDashboardInBrowser(probePort);
           console.log(`  ${ANSI.dim}Other service kept running. Closing this window.${ANSI.reset}\n`);
           process.exit(0);
         }
