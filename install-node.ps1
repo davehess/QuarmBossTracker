@@ -1,5 +1,6 @@
 ﻿# install-node.ps1 — Check for Node.js 20+ and install if missing
-# Run via install-node.bat (handles UAC elevation automatically)
+# Run via RUN-FIRST-for-Node.js.bat (handles UAC elevation automatically).
+# Direct invocation only needed for Mac/Linux or non-standard setups.
 
 $minVersion  = [Version]"20.0.0"
 # MSI fallback version — must be a release that's actually on nodejs.org/dist.

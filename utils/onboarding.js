@@ -244,8 +244,9 @@ function buildWelcomeEmbed() {
         name: '📊 Parses (auto or manual)',
         value:
           'Easiest path: install **WolfPackParser** — it tails your eqlog and auto-uploads every kill ' +
-          'with no copy/paste, plus live guild/raid chat relay, tank dashboards, and a web UI. ' +
-          'Download: https://tinyurl.com/WolfPackP · `/parsehelp` for setup.\n' +
+          'with no copy/paste, plus live guild/raid chat relay, tank dashboards, and a web UI.\n' +
+          '**Download:** https://tinyurl.com/WolfPackP · unzip · double-click **`RUN-FIRST-for-Node.js.bat`** ' +
+          'once · then **`Parser.bat`**. Full walkthrough: `/parsehelp`.\n' +
           'Prefer manual? Paste your EQLogParser output into `/parse` — boss is auto-detected. ' +
           'Hit "I want to be top deeps" for the full rundown.',
         inline: false,
@@ -328,7 +329,9 @@ function buildParseOverviewEmbed() {
           '• Monk mend tracker (attempts / crits / fail rate)\n' +
           '• Web dashboard at `http://localhost:7777` — runs as a background service\n' +
           '• Charm-aware fight timing for pet/dotter classes\n' +
-          `**Download:** https://tinyurl.com/WolfPackP · run \`/parsehelp\` for setup`,
+          `**Download:** https://tinyurl.com/WolfPackP\n` +
+          `**Install:** unzip → double-click \`RUN-FIRST-for-Node.js.bat\` (once) → then \`Parser.bat\`\n` +
+          `**Walkthrough:** \`/parsehelp\``,
         inline: false,
       },
       {

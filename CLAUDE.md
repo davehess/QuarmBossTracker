@@ -1,5 +1,5 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 2.2.27  
+**Version:** 2.2.28  
 **Runtime:** Node.js 20, discord.js v14  
 **Deployment:** Railway (primary) or Docker  
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`

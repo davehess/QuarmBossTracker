@@ -3,16 +3,17 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Version:** 2.2.24 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase
+**Version:** 2.2.27 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase
 
 ---
 
 ## Local Installation (Windows)
 
-### 1 — Check / install Node.js
+### 1 — Install Node.js
 
-Right-click `install-node.ps1` in the repo root → **Run with PowerShell** (as Administrator).  
+Double-click **`RUN-FIRST-for-Node.js.bat`** in the repo root. Approve the UAC prompt.
 The script checks whether Node.js 20+ is already present and installs it automatically if not.
+You only need to do this once per machine.
 
 **First run — Node.js not installed:**
 
@@ -243,8 +244,8 @@ git pull && docker-compose down && docker-compose up -d --build
 
 ### Local / Development (Windows)
 
-See [Local Installation](#local-installation-windows) at the top of this file.  
-The `install-node.ps1` script handles Node.js setup; then `npm install && npm start`.
+See [Local Installation](#local-installation-windows) at the top of this file.
+Double-click `RUN-FIRST-for-Node.js.bat` for Node.js, then `npm install && npm start`.
 
 ---
 

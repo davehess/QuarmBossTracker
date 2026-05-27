@@ -1,6 +1,11 @@
 @echo off
-:: install-node.bat — Wolf Pack EQ Parser: Node.js installer
-:: Double-click to run — UAC will appear if admin rights are needed
+:: RUN-FIRST-for-Node.js.bat — Wolf Pack EQ Parser: Node.js installer
+::
+:: Run this ONCE before Parser.bat. It installs Node.js 20 (required to
+:: run the agent). After it finishes, double-click Parser.bat.
+::
+:: Double-click to run — UAC will appear so the installer can write to
+:: Program Files. Approve it.
 
 :: ── Check for administrator rights ───────────────────────────────────────────
 net session >nul 2>&1

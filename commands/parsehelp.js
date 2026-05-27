@@ -21,8 +21,15 @@ module.exports = {
         {
           name: '🤖  Option 1 — Wolf Pack Parser (Automatic, Recommended)',
           value: [
-            `Download: **${PARSER_DOWNLOAD}**`,
-            'Unzip anywhere and run **Parser.bat** — no install needed.',
+            `Download: **${PARSER_DOWNLOAD}** · unzip anywhere on your drive.`,
+            '',
+            '**Step 1 — Install Node.js (one time per machine):**',
+            'Double-click **`RUN-FIRST-for-Node.js.bat`** in the unzipped folder.',
+            'Approve the UAC prompt. The script auto-installs Node.js 20 if missing,',
+            'or confirms you already have it and closes.',
+            '',
+            '**Step 2 — Run the parser:**',
+            'Double-click **`Parser.bat`** in the same folder.',
             'It auto-detects your EQ folder and watches all active log files.',
             '',
             '**First-run prompts (just press Enter at each unless you know better):**',
