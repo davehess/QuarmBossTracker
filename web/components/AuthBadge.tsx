@@ -1,6 +1,6 @@
-// Server component — reads the current Supabase session and renders either
-// a Sign In link or a small avatar + Sign Out form. Lives in the page
-// header alongside Nav.
+// Server component — reads the current Supabase session, joins to the
+// wolfpack_members row (server nickname + avatar override), and renders
+// either a Sign In link or a small avatar + Sign Out form.
 import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
 
@@ -19,9 +19,17 @@ export default async function AuthBadge() {
     );
   }
 
+  // Pull the server nickname + avatar from wolfpack_members. RLS scopes
+  // the read to the signed-in user's own row.
+  const { data: pack } = await supabase
+    .from('wolfpack_members')
+    .select('nickname, avatar_url')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
   const meta = (user.user_metadata || {}) as { full_name?: string; name?: string; avatar_url?: string };
-  const name = meta.full_name || meta.name || user.email || 'Wolf';
-  const avatar = meta.avatar_url;
+  const name = pack?.nickname || meta.full_name || meta.name || user.email || 'Wolf';
+  const avatar = pack?.avatar_url || meta.avatar_url;
 
   return (
     <form action="/auth/signout" method="post" className="flex items-center gap-2">

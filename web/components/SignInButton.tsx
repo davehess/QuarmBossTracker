@@ -13,7 +13,7 @@ export default function SignInButton({ next }: { next: string }) {
       provider: 'discord',
       options: {
         redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(next)}`,
-        scopes: 'identify',
+        scopes: 'identify guilds.members.read',
       },
     });
     if (error) {

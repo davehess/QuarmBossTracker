@@ -97,9 +97,17 @@ The site uses **Supabase Auth** with the **Discord provider**. End-to-end wiring
 3. The header now shows your Discord avatar + a **Sign out** button.
 
 ### Notes
-- Scopes requested: `identify` only (Discord ID + username + avatar). No DMs, no guild reads.
-- Guild-membership gating (only Wolf Pack members can sign in) is a follow-up; right now any Discord user can sign in but only members will have data joined to them downstream.
+- Scopes requested: `identify guilds.members.read`. We only read the user's
+  membership in the Wolf Pack EQ guild — no DMs, no other servers, no message history.
+- **Guild-membership gating is enforced** at the callback route. Users not in
+  our Discord guild (ID `DISCORD_GUILD_ID`) get bounced back to sign-in with
+  an error. Membership + server nickname + roles are stored in `wolfpack_members`.
+- Display name shown in the header is the **server nickname**, falling back to
+  the global Discord name if no server nickname is set.
 - Sessions are HTTP-only cookies refreshed by `middleware.ts` on every request.
+- Required server-side env vars: `SUPABASE_SERVICE_ROLE_KEY` (to upsert the
+  membership row at sign-in time) and `DISCORD_GUILD_ID` (the guild to check
+  membership in). Set both in Vercel Project Settings → Environment Variables.
 
 ## Pages
 

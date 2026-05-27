@@ -1,20 +1,79 @@
 // OAuth callback — Supabase Auth sends Discord users here with a ?code=...
-// query param after consent. We exchange the code for a session cookie and
-// redirect to the originally-requested page (or home).
+// query param after consent. Flow:
+//   1. Exchange the code for a Supabase session (sets HTTP-only cookie)
+//   2. Use the Discord provider_token from the session to hit
+//      GET /users/@me/guilds/{guild_id}/member — confirms guild membership
+//      and gives us the server nickname + roles
+//   3. If not in our guild → sign out, redirect to /auth/signin with error
+//   4. Else → upsert into wolfpack_members (server-side, service role key)
+//      and redirect to the originally-requested page
 import { NextResponse, type NextRequest } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
+import { fetchGuildMember, memberAvatarUrl, memberDisplayName } from '@/lib/discord';
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
   const next = url.searchParams.get('next') || '/';
 
-  if (code) {
-    const supabase = supabaseServer();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) {
-      return NextResponse.redirect(`${url.origin}/auth/signin?error=${encodeURIComponent(error.message)}`);
-    }
+  if (!code) {
+    return NextResponse.redirect(`${url.origin}/auth/signin?error=missing_code`);
+  }
+
+  const supabase = supabaseServer();
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+  if (error || !data.session) {
+    return NextResponse.redirect(
+      `${url.origin}/auth/signin?error=${encodeURIComponent(error?.message || 'session_failed')}`,
+    );
+  }
+
+  const providerToken = data.session.provider_token;
+  if (!providerToken) {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(
+      `${url.origin}/auth/signin?error=no_provider_token`,
+    );
+  }
+
+  let member;
+  try {
+    member = await fetchGuildMember(providerToken);
+  } catch (e: any) {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(
+      `${url.origin}/auth/signin?error=${encodeURIComponent('discord_api: ' + e.message)}`,
+    );
+  }
+
+  if (!member) {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(
+      `${url.origin}/auth/signin?error=${encodeURIComponent('Not a Wolf Pack EQ member — sign in with the Discord account you use in our server.')}`,
+    );
+  }
+
+  // Upsert membership row. Uses the service role key so this row gets
+  // written regardless of the user's own RLS scope.
+  const SR = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (SR) {
+    const admin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      SR,
+      { auth: { persistSession: false } },
+    );
+    await admin.from('wolfpack_members').upsert({
+      discord_id:   member.user.id,
+      user_id:      data.session.user.id,
+      nickname:     memberDisplayName(member),
+      global_name:  member.user.global_name,
+      avatar_url:   memberAvatarUrl(member),
+      roles:        member.roles,
+      is_member:    true,
+      joined_at:    member.joined_at,
+      refreshed_at: new Date().toISOString(),
+    }, { onConflict: 'discord_id' });
   }
 
   return NextResponse.redirect(`${url.origin}${next}`);
