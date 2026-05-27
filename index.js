@@ -2257,6 +2257,13 @@ async function _handleAgentChat(req, res) {
       const id = _itemIdFromBlob(blob);
       return id ? `${name} <https://www.pqdi.cc/item/${id}>` : match;
     });
+    // Final fallback: some EQ clients write item names to the log WITHOUT the
+    // hex-blob metadata at all. Match recognized item names against the PQDI
+    // name → id snapshot so they still get linkified.
+    try {
+      const itemNameDb = require('./utils/itemNameDb');
+      if (itemNameDb.size() > 0) out = itemNameDb.linkifyByName(out);
+    } catch { /* db missing — silently skip */ }
     return out;
   }
 

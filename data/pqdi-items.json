@@ -1,0 +1,5 @@
+{
+  "_comment": "PQDI item name → item ID lookup. Used as a fallback for chat-link rendering when the EQ log doesn't contain the \\x12 link metadata. Populate via scripts/scrape-pqdi-items.js. Lowercase keys; case-insensitive match.",
+  "a lucid shard": 8729,
+  "abashi's rod of disempowerment": 9131
+}
