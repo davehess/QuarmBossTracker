@@ -284,7 +284,7 @@ const KEEP_PATTERNS = [
   // Avoidance / miss lines — "X tries to <verb> Y, but misses!" / "but Y dodges!" etc.
   // Needed for tanking stats (avoidance %, hits-taken, accuracy). The parseEvent
   // handler classifies each into miss/dodge/parry/riposte/block/invulnerable.
-  /\bis on the Rampage!/i,                       // rampage announcements
+  /\bgoes on a RAMPAGE against\b/i,               // rampage announcements
   /\b(?:tries|try)\s+to\s+\w+\s+.+?,\s+but\s+/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
@@ -418,10 +418,12 @@ function parseEvent(line, ts) {
   }
 
   // ── Rampage announcement ─────────────────────────────────────────────────
-  // "[timestamp] Bossname is on the Rampage!" — the next burst of hits within
-  // ~5s are rampage hits (boss attacks multiple/all nearby targets).
-  m = line.match(/\]\s+(.+?)\s+is on the Rampage!/i);
-  if (m) return { ts: tsIso, type: 'rampage', attacker: m[1] };
+  // "[timestamp] Bossname goes on a RAMPAGE against Target!" — each rampage line
+  // names both the attacker AND the target it's hitting, so it's both an
+  // announcement and the hit assignment in one line. We emit it as a single
+  // 'rampage' event; EncounterBuilder records the hit against the named target.
+  m = line.match(/\]\s+(.+?)\s+goes on a RAMPAGE against\s+(.+?)!/i);
+  if (m) return { ts: tsIso, type: 'rampage', attacker: m[1], defender: m[2] };
 
   // ── Avoidance / accuracy ──────────────────────────────────────────────────
   // Every "X tries to <verb> Y, but ..." line tells us either an attacker missed
@@ -658,8 +660,9 @@ class EncounterBuilder {
     // Rampage tracking — bossMaxMelee used for invuln avoided-damage calc.
     // _rampageTs: timestamp of the most recent "is on the Rampage!" line.
     // Hits landing within 5s of that line are tagged as rampage hits.
-    this._rampageTs   = null;
-    this.bossMaxMelee = 0;
+    this._rampageTs     = null;
+    this._rampageTarget = null;
+    this.bossMaxMelee   = 0;
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   _bumpDefender(name, key, amount) {
@@ -737,21 +740,34 @@ class EncounterBuilder {
     }
 
     // ── Rampage handling ──────────────────────────────────────────────────────
-    // "is on the Rampage!" sets a 5s window; hits landing inside it are tagged.
-    // The event itself is NOT added to this.events (it's metadata, not combat).
+    // "X goes on a RAMPAGE against Y!" — each line names both attacker and target.
+    // We count this directly as a rampage hit on the named defender (no need for
+    // a time-window approach since the target is explicit in the log line).
+    // The event is NOT added to this.events (it's an announcement, not raw damage).
     if (event.type === 'rampage') {
-      this._rampageTs = Date.parse(event.ts) || Date.now();
       if (!this.startedAt) this.startedAt = event.ts;
       this.lastEvent = event.ts;
+      if (event.defender) {
+        const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
+        this._bumpDefender(def, 'rampageHits', 1);
+        // We don't know the exact rampage damage from the announcement line alone —
+        // the actual hit lines will follow and be counted in damageTaken normally.
+        // rampageDmg is accumulated from tagged damage events below.
+      }
+      this._rampageTs = Date.parse(event.ts) || Date.now();
+      this._rampageTarget = event.defender || null;
       return;
     }
-    // Tag damage events that arrive within 5s of a rampage announcement.
-    if (event.type === 'damage' && this._rampageTs) {
-      const evTs = Date.parse(event.ts) || Date.now();
-      if (evTs - this._rampageTs <= 5000) {
+    // Tag the immediately following damage event for this rampage target (within 3s).
+    // Quarm logs typically show the RAMPAGE line then the damage line milliseconds later.
+    if (event.type === 'damage' && this._rampageTs && this._rampageTarget) {
+      const evTs  = Date.parse(event.ts) || Date.now();
+      const tgt   = /^you$/i.test(event.defender || '') ? (this.character || 'You') : (event.defender || '');
+      const isTgt = tgt.toLowerCase() === this._rampageTarget.toLowerCase();
+      if (isTgt && evTs - this._rampageTs <= 3000) {
         event.isRampage = true;
-      } else {
-        this._rampageTs = null;
+        this._rampageTs     = null;
+        this._rampageTarget = null;
       }
     }
     // Track the boss's highest melee hit for invulnerable-avoided-damage calc.
