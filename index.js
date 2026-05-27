@@ -2151,6 +2151,22 @@ async function _handleAgentChat(req, res) {
   const raidChId  = process.env.RAID_CHAT_CHANNEL_ID;
   let posted = 0;
 
+  // Sanitize chat text before posting to Discord:
+  //   - Strip @everyone / @here — would ping the entire server/channel
+  //   - Strip all @mentions (<@id>, <@!id>, <#id>, <@&id>) — role/user/channel pings
+  //   - Strip backticks — prevents code-block injection that can swallow subsequent lines
+  //   - Truncate to 400 chars — EQ chat is typically <100 chars; 400 is generous
+  function sanitizeChatText(raw) {
+    return String(raw || '')
+      .replace(/@(everyone|here)\b/gi, '[@$1]')        // neutralise mass pings
+      .replace(/<@[!&]?\d+>/g, '[mention]')             // neutralise user/role pings
+      .replace(/<#\d+>/g, '[channel]')                  // neutralise channel links
+      .replace(/`/g, 'ˋ')                          // replace backtick with modifier letter grave
+      .replace(/\\/g, '\\\\')                           // escape stray backslashes
+      .slice(0, 400)
+      .trim();
+  }
+
   for (const msg of messages) {
     const { channel, speaker, text, who: uploadedWho } = msg || {};
     if (!channel || !speaker || !text) continue;
@@ -2174,7 +2190,10 @@ async function _handleAgentChat(req, res) {
       const ch = await client.channels.fetch(channelId).catch(() => null);
       if (!ch) continue;
       // Format matches Quarm's #ingame-general style:  "**Name** [60 Race Class]: message"
-      await ch.send(`**${speaker}**${whoTag}: ${text}`);
+      // Both speaker name and text are sanitized — no @pings, no code-block injection.
+      const safeSpeaker = sanitizeChatText(speaker).replace(/\*/g, '');  // strip bold markers from name
+      const safeText    = sanitizeChatText(text);
+      await ch.send(`**${safeSpeaker}**${whoTag}: ${safeText}`);
       posted++;
     } catch (err) {
       console.warn(`[chat-relay] failed to post to ${channel}:`, err?.message);
