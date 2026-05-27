@@ -55,25 +55,40 @@ export async function GET(req: NextRequest) {
   }
 
   // Upsert membership row. Uses the service role key so this row gets
-  // written regardless of the user's own RLS scope.
+  // written regardless of the user's own RLS scope. We treat both a
+  // missing key and a failed upsert as hard sign-in errors — silently
+  // skipping means AuthBadge falls back to the global Discord info,
+  // which looks like the gating "didn't take".
   const SR = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (SR) {
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      SR,
-      { auth: { persistSession: false } },
+  if (!SR) {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(
+      `${url.origin}/auth/signin?error=${encodeURIComponent('SUPABASE_SERVICE_ROLE_KEY not set on the server — ask an admin to configure Vercel env vars.')}`,
     );
-    await admin.from('wolfpack_members').upsert({
-      discord_id:   member.user.id,
-      user_id:      data.session.user.id,
-      nickname:     memberDisplayName(member),
-      global_name:  member.user.global_name,
-      avatar_url:   memberAvatarUrl(member),
-      roles:        member.roles,
-      is_member:    true,
-      joined_at:    member.joined_at,
-      refreshed_at: new Date().toISOString(),
-    }, { onConflict: 'discord_id' });
+  }
+
+  const admin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    SR,
+    { auth: { persistSession: false } },
+  );
+  const { error: upsertError } = await admin.from('wolfpack_members').upsert({
+    discord_id:   member.user.id,
+    user_id:      data.session.user.id,
+    nickname:     memberDisplayName(member),
+    global_name:  member.user.global_name,
+    avatar_url:   memberAvatarUrl(member),
+    roles:        member.roles,
+    is_member:    true,
+    joined_at:    member.joined_at,
+    refreshed_at: new Date().toISOString(),
+  }, { onConflict: 'discord_id' });
+
+  if (upsertError) {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(
+      `${url.origin}/auth/signin?error=${encodeURIComponent('member_upsert: ' + upsertError.message)}`,
+    );
   }
 
   return NextResponse.redirect(`${url.origin}${next}`);
