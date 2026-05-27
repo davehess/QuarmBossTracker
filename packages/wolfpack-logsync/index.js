@@ -676,6 +676,14 @@ class EncounterBuilder {
     // the tank can see total damage-from-ripostes per fight.
     //   key: `${attacker}→${defender}` → { ts: ms }
     this.pendingRipostes  = new Map();
+    // ── Live threat tracking (Phase 1) ───────────────────────────────────────
+    // Per-player estimated threat accumulated for this encounter. Approximate
+    // weights derived from EQ aggro behavior: melee swings ≈ 1 hate per damage
+    // point; weapon procs (non-melee from named attacker) ≈ 1.3x; named spells
+    // ≈ 1.5x; heals ≈ 0.5 hate per heal point. Real values depend on spell
+    // hate tables we don't have client-side — these proxies are good enough
+    // to rank players and warn when a DPS is closing on the tank.
+    this.threatBy = new Map();  // attacker → { swing, proc, spell, heal }
     // deaths: player deaths observed in this encounter.
     // [{ name, ts, riposteDeath: bool, class: string|null }]
     this.deaths           = [];
@@ -718,6 +726,31 @@ class EncounterBuilder {
       sd[key] = (sd[key] || 0) + (amount || 1);
     }
   }
+  // Snapshot current encounter's threat picture into stats.currentEncounterThreat
+  // so dashboard renderers can display a live threat meter without poking
+  // EncounterBuilder internals.
+  _publishLiveThreat() {
+    if (this.threatBy.size === 0) {
+      stats.currentEncounterThreat = null;
+      return;
+    }
+    const perPlayer = {};
+    for (const [name, t] of this.threatBy) {
+      perPlayer[name] = {
+        swing: Math.round(t.swing),
+        proc:  Math.round(t.proc),
+        spell: Math.round(t.spell),
+        heal:  Math.round(t.heal),
+        total: Math.round(t.swing + t.proc + t.spell + t.heal),
+      };
+    }
+    stats.currentEncounterThreat = {
+      bossName:  this.bossName,
+      startedAt: this.startedAt,
+      perPlayer,
+    };
+  }
+
   _bumpHealer(healer, target, amount) {
     if (!healer || !amount) return;
     if (!this.healerStats.has(healer)) {
@@ -838,11 +871,35 @@ class EncounterBuilder {
 
     // Dashboard tracking — sees every parsed damage event, not just uploaded ones
     try { recordEventForDashboard(event, this.character); } catch {}
+    try { this._publishLiveThreat(); } catch {}
 
     // Track damage dealt TO targets — but exclude "YOU" / "you" so player-received
     // damage never inflates a player-name into appearing to be the primary target.
     if (event.type === 'damage' && event.defender && !/^you$/i.test(event.defender)) {
       this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+    }
+
+    // Live threat tracking — bump per-player threat for damage dealt
+    if (event.type === 'damage' && event.amount > 0) {
+      const rawAtk = event.attacker;
+      const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
+        ? (this.character || 'You')
+        : rawAtk;
+      // Skip NPC-on-NPC (multi-word attacker that isn't the uploader)
+      if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+        if (!this.threatBy.has(attacker)) {
+          this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0 });
+        }
+        const t = this.threatBy.get(attacker);
+        const a = (event.ability || '').toLowerCase();
+        if (MELEE_ABILITIES.has(a) || a === 'hit') {
+          t.swing += event.amount;                 // 1 hate per damage (proxy)
+        } else if (a === 'non-melee' || a === 'dot' || a === '') {
+          t.proc  += event.amount * 1.3;           // procs / DS-style hate
+        } else {
+          t.spell += event.amount * 1.5;           // named spells / songs / dirges
+        }
+      }
     }
 
     // Per-defender stats — feeds tanking analytics (avoidance %, damage taken,
@@ -910,6 +967,13 @@ class EncounterBuilder {
     if (event.type === 'heal' && (event.attacker || this.character)) {
       const healer = event.attacker || this.character;
       this._bumpHealer(healer, event.defender, event.amount || 0);
+      // Live threat: heals generate hate roughly 0.5 per heal point in Luclin-era
+      if (healer && event.amount > 0 && (!/\s/.test(healer) || healer === this.character)) {
+        if (!this.threatBy.has(healer)) {
+          this.threatBy.set(healer, { swing: 0, proc: 0, spell: 0, heal: 0 });
+        }
+        this.threatBy.get(healer).heal += event.amount * 0.5;
+      }
     }
     // ── Player death tracking ────────────────────────────────────────────────
     // Record deaths of player characters in this.deaths[] and the session
@@ -1228,6 +1292,9 @@ const stats = {
   updateAvailable:      false,      // true when server reports a newer agent version
   latestAgentVersion:   null,       // the server-advertised version (e.g. '2.3.24')
   latestVersionCheckedAt: null,     // last poll timestamp (ms)
+  // currentEncounterThreat: live threat snapshot for the active encounter
+  // (null when no fight is active). { bossName, startedAt, perPlayer: { name: { swing, proc, spell, heal, total } } }
+  currentEncounterThreat: null,
   requestedCharacters:  [],         // characters the server needs for parse completeness
   lastUploadAt:    null,
   lifetime: {                     // persisted across restarts
@@ -1444,6 +1511,7 @@ function _serializeForDashboard() {
     uploadErrors:       stats.uploadErrors,
     updateAvailable:    stats.updateAvailable,
     latestAgentVersion: stats.latestAgentVersion,
+    currentEncounterThreat: stats.currentEncounterThreat,
     requestedCharacters: stats.requestedCharacters,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
@@ -1587,6 +1655,39 @@ function renderDash(s) {
          '<td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
   }
   h += '</table></div>';
+
+  // ── Live Threat (current encounter) ─────────────────────────────────────
+  const et = s.currentEncounterThreat;
+  if (et && et.perPlayer && Object.keys(et.perPlayer).length > 0) {
+    const ranked = Object.entries(et.perPlayer)
+      .sort((a, b) => b[1].total - a[1].total)
+      .slice(0, 12);
+    const topT = ranked[0]?.[1].total || 1;
+    h += '<div class="card wide"><h2>⚔️ Live Threat — ' + esc(et.bossName || 'current fight') + '</h2>';
+    h += '<div class="subtle">Estimated from observable damage + heals (Phase 1 proxy). Real spell/proc hate tables not yet wired up.</div>';
+    h += '<table style="margin-top:6px"><tr><th></th><th>Player</th><th>Threat</th><th style="width:40%">Bar</th><th>Breakdown</th></tr>';
+    for (let i = 0; i < ranked.length; i++) {
+      const [name, t] = ranked[i];
+      const pct = Math.max(2, Math.round(t.total / topT * 100));
+      const rank = i + 1;
+      // Warn if a non-top player is within 90% of #1 (aggro risk)
+      const closeRisk = i > 0 && t.total / topT >= 0.9;
+      const barColor = i === 0 ? '#1f6feb' : (closeRisk ? '#f85149' : '#56d364');
+      const parts = [];
+      if (t.swing) parts.push('swing ' + fmtK(t.swing));
+      if (t.proc)  parts.push('proc ' + fmtK(t.proc));
+      if (t.spell) parts.push('spell ' + fmtK(t.spell));
+      if (t.heal)  parts.push('heal ' + fmtK(t.heal));
+      h += '<tr><td class="dim">' + rank + '</td>' +
+           '<td class="name">' + esc(name) + (closeRisk ? ' <span style="color:var(--red);font-size:11px">⚠ aggro risk</span>' : '') + '</td>' +
+           '<td class="num">' + fmtK(t.total) + '</td>' +
+           '<td><div style="background:#1f242c;border-radius:4px;height:14px;overflow:hidden">' +
+             '<div style="background:' + barColor + ';height:100%;width:' + pct + '%"></div></div></td>' +
+           '<td class="dim" style="font-size:11px">' + parts.join(' · ') + '</td></tr>';
+    }
+    h += '</table></div>';
+  }
+
   // Top damage
   h += '<div class="card wide"><h2>Top Damage This Session</h2>' +
        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">';
@@ -1607,6 +1708,29 @@ function renderDash(s) {
 
 function renderTanks(s) {
   let h = '<div class="grid">';
+
+  // ── Threat detail for the current fight — shows the swing/proc/spell/heal
+  // breakdown per player so tanks can see WHERE their threat comes from and
+  // whether a Wizard's nukes are about to pull. Phase-2 hook: add Quarmy
+  // build URL + theoretical TPS from weapon stats.
+  const et = s.currentEncounterThreat;
+  if (et && et.perPlayer && Object.keys(et.perPlayer).length > 0) {
+    const ranked = Object.entries(et.perPlayer).sort((a, b) => b[1].total - a[1].total);
+    h += '<div class="card wide"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + '</h2>';
+    h += '<div class="subtle">Per-source breakdown. Phase-2 will add Quarmy build links + theoretical TPS from weapon procs/haste.</div>';
+    h += '<table style="margin-top:6px">' +
+         '<tr><th>Player</th><th>Total</th><th>Swing</th><th>Proc</th><th>Spell</th><th>Heal</th></tr>';
+    for (const [name, t] of ranked) {
+      h += '<tr><td class="name">' + esc(name) + '</td>' +
+           '<td class="num"><b>' + fmtK(t.total) + '</b></td>' +
+           '<td class="num">' + (t.swing ? fmtK(t.swing) : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (t.proc  ? fmtK(t.proc)  : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (t.spell ? fmtK(t.spell) : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (t.heal  ? fmtK(t.heal)  : '<span class="dim">—</span>') + '</td></tr>';
+    }
+    h += '</table></div>';
+  }
+
   const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
   h += '<div class="card wide"><h2>Incoming Damage</h2>';
   if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
