@@ -188,17 +188,13 @@ const DEFAULT_DROP_PATTERNS = [
   /\btells you,\s*['"]/i,
   /\byou told \w+,\s*['"]/i,
 
-  // Guild chat both directions
-  /\btells the guild,\s*['"]/i,
-  /^\[.+\]\s+You say to your guild,/i,
-
-  // Group chat both directions
+  // Group chat both directions — genuinely private (small group, not guild-wide)
   /\btells the group,\s*['"]/i,
   /^\[.+\]\s+You say to your group,/i,
 
-  // Raid chat both directions
-  /\btells the raid,\s*['"]/i,
-  /^\[.+\]\s+You say to your raid,/i,
+  // Note: guild chat (/g, "tells the guild") and raid chat (/r, "tells the raid") are
+  // intentionally NOT filtered here. These channels are shared among the whole guild
+  // and are not private. Future versions may parse them for loot callouts, CH triggers, etc.
 
   // Public chat (allowed in principle, but not combat-relevant so we drop).
   // EXCEPTION: "PetName says, 'My leader is OwnerName.'" — handled by
@@ -1031,6 +1027,44 @@ class EncounterBuilder {
         events:      this.events,
       },
     };
+    // ── Accumulate into session stats ─────────────────────────────────────
+    // Defender stats (tanks) — single-word names only (skip NPCs)
+    for (const [name, s] of this.defenderStats) {
+      if (/\s/.test(name)) continue;
+      if (!stats.sessionDefenders[name]) {
+        stats.sessionDefenders[name] = { damageTaken: 0, hits: 0, ripostes: 0, ripostedFor: 0 };
+      }
+      const sd = stats.sessionDefenders[name];
+      sd.damageTaken = (sd.damageTaken || 0) + (s.damageTaken || 0);
+      sd.hits        = (sd.hits        || 0) + (s.hits        || 0);
+      sd.ripostes    = (sd.ripostes    || 0) + (s.ripostes    || 0);
+      sd.ripostedFor = (sd.ripostedFor || 0) + (s.ripostedFor || 0);
+    }
+    // Healer stats
+    for (const [name, s] of this.healerStats) {
+      if (!stats.sessionHealers[name]) {
+        stats.sessionHealers[name] = { healed: 0, ticks: 0, targets: new Set() };
+      }
+      const sh = stats.sessionHealers[name];
+      sh.healed = (sh.healed || 0) + (s.healed || 0);
+      sh.ticks  = (sh.ticks  || 0) + (s.ticks  || 0);
+      for (const t of s.targets) sh.targets.add(t);
+    }
+    // Mob proc counter — non-melee abilities that mobs used against players
+    if (this.bossName) {
+      for (const e of this.events) {
+        if (e.type !== 'damage' || !e.attacker || !e.ability) continue;
+        if (e.attacker !== this.bossName) continue;
+        const aLower = e.ability.toLowerCase();
+        if (MELEE_ABILITIES.has(aLower) || aLower === 'hit') continue;
+        if (!stats.sessionProcs[this.bossName]) stats.sessionProcs[this.bossName] = {};
+        const mob = stats.sessionProcs[this.bossName];
+        if (!mob[e.ability]) mob[e.ability] = { count: 0, totalDmg: 0 };
+        mob[e.ability].count++;
+        mob[e.ability].totalDmg += e.amount || 0;
+      }
+    }
+
     this.onFlush(payload);
     this.reset();
   }
@@ -1064,6 +1098,15 @@ const stats = {
   // deaths field in uploaded parse cards.
   // { playerName: count }
   sessionDeaths:   {},
+  // sessionHealers: per-healer healing totals accumulated across all fights this session.
+  // { healerName: { healed, ticks, targets: Set<string> } }
+  sessionHealers:  {},
+  // sessionDefenders: per-tank incoming-damage totals accumulated this session.
+  // { defenderName: { damageTaken, hits, ripostes, ripostedFor } }
+  sessionDefenders: {},
+  // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
+  // { mobName: { [abilityName]: { count, totalDmg } } }
+  sessionProcs:    {},
   uploadCount:     0,
   uploadErrors:    0,
   lastUploadAt:    null,
@@ -1330,7 +1373,7 @@ function renderDashboard() {
   out.push(`  ${C.dim}/who unique:${C.reset}  ${C.bold}${whoData.size}${C.reset} characters observed this session ${C.dim}(lv5+ only)${C.reset}\n`);
   out.push('\n');
 
-  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}|${C.reset}  ${C.cyan}[T]${C.reset} New Token  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  out.push(`  ${C.cyan}[T]${C.reset} Tanks  ${C.gray}|${C.reset}  ${C.cyan}[H]${C.reset} Healers  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}|${C.reset}  ${C.cyan}[U]${C.reset} Update  ${C.gray}|${C.reset}  ${C.cyan}[K]${C.reset} Token  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -1346,7 +1389,7 @@ function scheduleRender() {
 //   info       → I once (5s auto-revert); I again to LOCK; 3rd press → exit
 //   pets       → P once (5s auto-revert); P again to LOCK; 3rd press → exit
 //   Any other key while in info/pets exits immediately.
-let _viewMode    = 'dashboard'; // 'dashboard' | 'info' | 'pets'
+let _viewMode    = 'dashboard'; // 'dashboard' | 'info' | 'pets' | 'tanks' | 'healers'
 let _viewLocked  = false;       // true = auto-revert cancelled, key required to exit
 let _viewTimer   = null;        // active setTimeout for 5s auto-revert
 
@@ -1416,6 +1459,26 @@ function setupKeypressHandler() {
       return;
     }
 
+    if (_viewMode === 'tanks') {
+      if (key === 't' || key === 'T') {
+        if (_viewLocked) _exitView();
+        else _lockView(showTanks);
+      } else {
+        _exitView();
+      }
+      return;
+    }
+
+    if (_viewMode === 'healers') {
+      if (key === 'h' || key === 'H') {
+        if (_viewLocked) _exitView();
+        else _lockView(showHealers);
+      } else {
+        _exitView();
+      }
+      return;
+    }
+
     // Dashboard mode
     if (key === 'u' || key === 'U') {
       try {
@@ -1425,7 +1488,7 @@ function setupKeypressHandler() {
       process.stdout.write(`${ANSI.yellow}\n  Restarting to apply update...${ANSI.reset}\n`);
       process.exit(0);
     }
-    if (key === 't' || key === 'T') {
+    if (key === 'k' || key === 'K') {
       try {
         const marker = path.join(__dirname, '.update-token-on-restart');
         fs.writeFileSync(marker, new Date().toISOString());
@@ -1436,8 +1499,11 @@ function setupKeypressHandler() {
       process.stdout.write(`   WolfPackParser.zip from the bot's announcement channel.)${ANSI.reset}\n`);
       process.exit(0);
     }
-    if (key === 'i' || key === 'I') _enterView('info', showInfo);
-    if (key === 'p' || key === 'P') _enterView('pets', showPets);
+    if (key === 'd' || key === 'D') _exitView();           // D = back to dashboard
+    if (key === 't' || key === 'T') _enterView('tanks',   showTanks);
+    if (key === 'h' || key === 'H') _enterView('healers', showHealers);
+    if (key === 'i' || key === 'I') _enterView('info',    showInfo);
+    if (key === 'p' || key === 'P') _enterView('pets',    showPets);
   });
 }
 
@@ -1566,6 +1632,108 @@ function showPets() {
   process.stdout.write(out.join(''));
 }
 
+function showTanks() {
+  const out = [];
+  out.push(C.clear);
+  out.push(`${C.cyan}${C.bold}  Wolf Pack EQ - Tank Dashboard${C.reset}\n`);
+  out.push(`${C.gray}  ------------------------------------------${C.reset}\n\n`);
+
+  // Per-tank session totals
+  const defenders = Object.entries(stats.sessionDefenders)
+    .sort((a, b) => b[1].damageTaken - a[1].damageTaken);
+  out.push(`${C.bold}${C.blue}  Incoming Damage (this session)${C.reset}\n`);
+  if (defenders.length === 0) {
+    out.push(`  ${C.dim}No tanking data yet — join a fight first.${C.reset}\n`);
+  } else {
+    out.push(`  ${C.dim}${pad('Tank', 16)} ${pad('Dmg Taken', 10)} ${pad('Hits', 5)} ${pad('Ripostes', 9)} ${pad('Riposted For', 12)}${C.reset}\n`);
+    for (const [name, s] of defenders.slice(0, 8)) {
+      out.push(`  ${pad(name, 16)} ${C.bold}${pad(fmtK(s.damageTaken), 10)}${C.reset} ` +
+               `${pad(String(s.hits || 0), 5)} ${pad(String(s.ripostes || 0), 9)} ${pad(fmtK(s.ripostedFor || 0), 12)}\n`);
+    }
+  }
+
+  // Mob proc / special ability counter
+  out.push(`\n${C.bold}${C.yellow}  Mob Procs / Special Abilities (this session)${C.reset}\n`);
+  const procMobs = Object.entries(stats.sessionProcs);
+  if (procMobs.length === 0) {
+    out.push(`  ${C.dim}No proc events observed yet.${C.reset}\n`);
+  } else {
+    for (const [mob, abilities] of procMobs) {
+      out.push(`  ${C.bold}${mob}${C.reset}\n`);
+      const sorted = Object.entries(abilities).sort((a, b) => b[1].count - a[1].count);
+      for (const [ability, s] of sorted.slice(0, 8)) {
+        const avg = s.count > 0 ? Math.round(s.totalDmg / s.count) : 0;
+        out.push(`    ${pad(ability, 30)} ${C.bold}${pad(String(s.count), 3)}${C.reset}x  ` +
+                 `${pad(fmtK(s.totalDmg), 8)} total  ${pad(fmtK(avg), 6)} avg\n`);
+      }
+    }
+  }
+
+  // Deaths
+  const deathEntries = Object.entries(stats.sessionDeaths || {})
+    .sort((a, b) => b[1] - a[1]).slice(0, 8);
+  out.push(`\n${C.bold}${C.red}  Deaths This Session${C.reset}\n`);
+  if (deathEntries.length === 0) {
+    out.push(`  ${C.dim}Nobody died. Very respectable.${C.reset}\n`);
+  } else {
+    for (const [name, count] of deathEntries) {
+      out.push(`  ${pad(name, 18)} ${C.bold}${C.red}${count}${C.reset} death${count === 1 ? '' : 's'}\n`);
+    }
+  }
+
+  const lockedHint = _viewLocked
+    ? `${C.green}LOCKED${C.reset} — T or any other key -> back to dashboard`
+    : `auto-revert in 5s   |   ${C.cyan}T${C.reset} again -> lock   |   ${C.cyan}D${C.reset} -> dashboard   |   any other key -> back`;
+  out.push(`\n  ${C.dim}${lockedHint}${C.reset}\n`);
+  process.stdout.write(out.join(''));
+}
+
+function showHealers() {
+  const out = [];
+  out.push(C.clear);
+  out.push(`${C.cyan}${C.bold}  Wolf Pack EQ - Healing Dashboard${C.reset}\n`);
+  out.push(`${C.gray}  ------------------------------------------${C.reset}\n\n`);
+
+  const healerEntries = Object.entries(stats.sessionHealers)
+    .sort((a, b) => b[1].healed - a[1].healed);
+
+  out.push(`${C.bold}${C.green}  Healer Totals (this session)${C.reset}\n`);
+  if (healerEntries.length === 0) {
+    out.push(`  ${C.dim}No healing data yet — join a fight first.${C.reset}\n`);
+  } else {
+    out.push(`  ${C.dim}${pad('Healer', 18)} ${pad('Total Healed', 12)} ${pad('Ticks', 5)}  Targets${C.reset}\n`);
+    for (const [name, s] of healerEntries.slice(0, 10)) {
+      const targets = s.targets instanceof Set ? [...s.targets] : (s.targets || []);
+      const targetStr = targets.slice(0, 4).join(', ');
+      out.push(`  ${pad(name, 18)} ${C.bold}${pad(fmtK(s.healed), 12)}${C.reset} ${pad(String(s.ticks || 0), 5)}  ${C.dim}${targetStr}${C.reset}\n`);
+    }
+  }
+
+  // Top heal targets — who is receiving the most attention (indicates MT/OT)
+  out.push(`\n${C.bold}${C.yellow}  Top Heal Targets (who's getting healed)${C.reset}\n`);
+  const targetMap = {};
+  for (const [, s] of healerEntries) {
+    const targets = s.targets instanceof Set ? [...s.targets] : (s.targets || []);
+    for (const t of targets) targetMap[t] = (targetMap[t] || 0) + 1;
+  }
+  const sortedTargets = Object.entries(targetMap).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  if (sortedTargets.length === 0) {
+    out.push(`  ${C.dim}(no data yet)${C.reset}\n`);
+  } else {
+    for (const [target, healerCount] of sortedTargets) {
+      const defData = stats.sessionDefenders[target];
+      const dmgNote = defData ? `  ${C.dim}(took ${fmtK(defData.damageTaken)} dmg incoming)${C.reset}` : '';
+      out.push(`  ${pad(target, 18)} healed by ${C.bold}${healerCount}${C.reset} healer${healerCount !== 1 ? 's' : ''}${dmgNote}\n`);
+    }
+  }
+
+  const lockedHint = _viewLocked
+    ? `${C.green}LOCKED${C.reset} — H or any other key -> back to dashboard`
+    : `auto-revert in 5s   |   ${C.cyan}H${C.reset} again -> lock   |   ${C.cyan}D${C.reset} -> dashboard   |   any other key -> back`;
+  out.push(`\n  ${C.dim}${lockedHint}${C.reset}\n`);
+  process.stdout.write(out.join(''));
+}
+
 // ── Upload ──────────────────────────────────────────────────────────────────
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
   if (dryRun) {
@@ -1611,6 +1779,92 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
     req.on('error', reject);
     req.write(body);
     req.end();
+  });
+}
+
+// ── Guild / Raid chat relay ───────────────────────────────────────────────────
+// Guild (/g) and raid (/r) chat lines pass the shouldKeep filter (they are NOT
+// dropped) but produce no combat events. We capture them here, attach the /who
+// class+level decoration, and flush to the bot's /api/agent/chat endpoint every
+// 5 seconds so the bot can relay them to read-only Discord channels.
+//
+// Officer chat, tells, and group chat are still dropped at the byte level before
+// this code ever runs — they never reach parseChatLine.
+
+const CHAT_LINE_PATTERNS = [
+  // "Cory tells the guild, 'message'"
+  { rx: /^\[.+?\]\s+(\w+) tells the guild,\s*['"](.+?)['"]\s*$/, channel: 'guild', self: false },
+  // "You say to your guild, 'message'"
+  { rx: /^\[.+?\]\s+You say to your guild,\s*['"](.+?)['"]\s*$/, channel: 'guild', self: true },
+  // "Hitya tells the raid, 'message'"
+  { rx: /^\[.+?\]\s+(\w+) tells the raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: false },
+  // "You say to your raid, 'message'"
+  { rx: /^\[.+?\]\s+You say to your raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: true },
+];
+
+function parseChatLine(line, selfName) {
+  for (const { rx, channel, self: isSelf } of CHAT_LINE_PATTERNS) {
+    const m = line.match(rx);
+    if (!m) continue;
+    const ts      = parseEqTimestamp(line);
+    const speaker = isSelf ? (selfName || 'You') : m[1];
+    const text    = isSelf ? m[1] : m[2];
+    const who     = whoData.get(speaker.toLowerCase()) || null;
+    return {
+      channel,
+      speaker,
+      text,
+      ts:  ts ? ts.toISOString() : new Date().toISOString(),
+      who: who ? { name: who.name, level: who.level, race: who.race, class: who.class } : null,
+    };
+  }
+  return null;
+}
+
+const chatBuffer   = [];          // pending messages waiting for next flush
+let _uploadOpts    = null;        // set in main() once botUrl/token are known
+let _chatRelayOn   = false;       // true once the 5s relay interval is running
+
+function startChatRelay() {
+  if (_chatRelayOn) return;
+  _chatRelayOn = true;
+  setInterval(() => {
+    if (!_uploadOpts || chatBuffer.length === 0) return;
+    const messages = chatBuffer.splice(0);
+    uploadChat(messages, _uploadOpts).catch(() => {});
+  }, 5000);
+}
+
+function uploadChat(messages, { botUrl, token, dryRun }) {
+  if (dryRun) {
+    for (const m of messages) {
+      console.log(`[chat:${m.channel}] <${m.speaker}> ${m.text}`);
+    }
+    return Promise.resolve();
+  }
+  // Derive chat URL: swap '/encounter' for '/chat' at the end of botUrl
+  const chatUrl = botUrl.replace(/\/encounter(\?.*)?$/, '/chat');
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(chatUrl);
+      const mod = url.protocol === 'https:' ? https : http;
+      const body = JSON.stringify({ agent_version: AGENT_VERSION, messages });
+      const req  = mod.request({
+        method:   'POST',
+        hostname: url.hostname,
+        port:     url.port,
+        path:     url.pathname + url.search,
+        headers: {
+          'Content-Type':   'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          'User-Agent':     `wolfpack-logsync/${AGENT_VERSION}`,
+        },
+      }, res => { res.resume(); resolve(); });
+      req.on('error', () => resolve());
+      req.write(body);
+      req.end();
+    } catch { resolve(); }
   });
 }
 
@@ -1717,6 +1971,9 @@ async function main() {
     console.warn('⚠️  No --token / WOLFPACK_TOKEN set. Uploads will likely fail auth.');
   }
 
+  // Make opts available to the chat relay flush (module-level so the interval can see them)
+  _uploadOpts = { botUrl, token, dryRun };
+
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();
 
@@ -1809,11 +2066,16 @@ async function main() {
   // Watch mode (default for live raids)
   if (args.flags.watch || (!args.flags.once && !args.flags.since)) {
     if (!_dashboardEnabled) console.log(`Watching ${builders.length} log file(s). Press Ctrl+C to stop.`);
+    startChatRelay();  // start the 5s guild/raid chat flush interval
     for (const b of builders) {
       const watched = stats.watchedLogs.find(w => w.logPath === b.logPath);
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
+        // Capture guild/raid chat BEFORE passing to combat parser — these lines
+        // produce no combat events but are relayed to Discord channels.
+        const chatMsg = parseChatLine(line, b.character);
+        if (chatMsg) { chatBuffer.push(chatMsg); return; }
         const ts = parseEqTimestamp(line);
         const ev = parseEvent(line, ts);
         if (ev) b.builder.add(ev);

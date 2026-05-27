@@ -2103,6 +2103,88 @@ async function consolidateNightlyParses(client) {
 // wolfpack-logsync local agent.
 const http = require('http');
 
+// ── Guild/raid chat relay dedup cache ─────────────────────────────────────────
+// Multiple parsers watching the same raid will all see the same chat lines.
+// Keep a 5-second fingerprint cache so each unique message posts to Discord once.
+const _chatDedup = new Map(); // key: "channel|speaker|text" → timestamp
+setInterval(() => {
+  const cutoff = Date.now() - 5000;
+  for (const [k, v] of _chatDedup) if (v < cutoff) _chatDedup.delete(k);
+}, 10_000);
+
+async function _handleAgentChat(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'chat relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'payload too large' }));
+    }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid JSON' }));
+  }
+
+  const messages = payload?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, posted: 0 }));
+  }
+
+  const guildChId = process.env.GUILD_CHAT_CHANNEL_ID;
+  const raidChId  = process.env.RAID_CHAT_CHANNEL_ID;
+  let posted = 0;
+
+  for (const msg of messages) {
+    const { channel, speaker, text, who: uploadedWho } = msg || {};
+    if (!channel || !speaker || !text) continue;
+
+    const channelId = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
+    if (!channelId) continue; // channel not configured — silently skip
+
+    // Dedup: same speaker + text within 5s = multiple parsers saw same line
+    const key = `${channel}|${speaker.toLowerCase()}|${text}`;
+    if (_chatDedup.has(key)) continue;
+    _chatDedup.set(key, Date.now());
+
+    // Class/level tag: try server-side whoData first, fall back to what the agent sent
+    const { getWhoEntry } = require('./utils/state');
+    const whoEntry = getWhoEntry(speaker) || uploadedWho || null;
+    const whoTag   = whoEntry
+      ? ` [${[whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean).join(' ')}]`
+      : '';
+
+    try {
+      const ch = await client.channels.fetch(channelId).catch(() => null);
+      if (!ch) continue;
+      // Format matches Quarm's #ingame-general style:  "**Name** [60 Race Class]: message"
+      await ch.send(`**${speaker}**${whoTag}: ${text}`);
+      posted++;
+    } catch (err) {
+      console.warn(`[chat-relay] failed to post to ${channel}:`, err?.message);
+    }
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, posted }));
+}
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
@@ -2755,6 +2837,16 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentUpload(req, res); }
     catch (err) {
       console.error('[agent] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Guild/raid chat relay endpoint — forwards in-game chat to Discord channels
+  if (req.method === 'POST' && req.url === '/api/agent/chat') {
+    try { return await _handleAgentChat(req, res); }
+    catch (err) {
+      console.error('[chat-relay] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
