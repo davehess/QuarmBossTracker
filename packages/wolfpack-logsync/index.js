@@ -474,6 +474,9 @@ const whoData = new Map(); // lowercaseName → { name, class, level, race, guil
 
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
+  // Skip level 1-4 characters — these are almost always traders parked in EC/WC.
+  // We only filter when we KNOW the level (null = anonymous, still kept).
+  if (ev.level !== null && ev.level !== undefined && ev.level < 5) return;
   const k   = ev.name.toLowerCase();
   const old = whoData.get(k) || {};
   // Mirror server-side mergeWhoData: don't clobber known fields with nulls
@@ -861,6 +864,7 @@ function renderDashboard() {
   out.push(`  ${C.dim}This session:${C.reset} ${C.bold}${stats.sessionEvents}${C.reset} events in ${C.bold}${sessionMin}${C.reset} min`);
   out.push(`     ${C.dim}Top session:${C.reset} ${C.bold}${stats.lifetime.topSessionEvents}${C.reset} ev / ${C.bold}${stats.lifetime.topSessionMinutes}${C.reset} min`);
   out.push(`     ${C.dim}Lifetime:${C.reset} ${C.bold}${stats.lifetime.totalEvents + stats.sessionEvents}${C.reset} ev / ${C.bold}${lifetimeMin}${C.reset} min\n`);
+  out.push(`  ${C.dim}/who unique:${C.reset}  ${C.bold}${whoData.size}${C.reset} characters observed this session ${C.dim}(lv5+ only)${C.reset}\n`);
   out.push('\n');
 
   out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}|${C.reset}  ${C.cyan}[T]${C.reset} New Token  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
@@ -934,6 +938,7 @@ function showInfo() {
   out.push(`  Stats file:    ${STATS_FILE}\n`);
   out.push(`  Uploads this session: ${stats.uploadCount} (${stats.uploadErrors} errors)\n`);
   out.push(`  Watched logs:  ${stats.watchedLogs.length}\n`);
+  out.push(`  /who unique (lv5+, this session): ${whoData.size} characters\n`);
   out.push(`  Lifetime first seen: ${stats.lifetime.firstSeenAt}\n`);
   out.push(`\n  Press any key to return to the dashboard.\n`);
   process.stdout.write(out.join(''));

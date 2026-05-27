@@ -562,6 +562,9 @@ function mergeWhoData(rows) {
   const now = new Date().toISOString();
   for (const r of rows) {
     if (!r || !r.name) continue;
+    // Skip level 1-4 characters — traders parked in EC/WC with no combat activity.
+    // Only filter when level is known; anonymous rows (level = null) are kept.
+    if (r.level !== null && r.level !== undefined && r.level < 5) continue;
     const k   = r.name.toLowerCase();
     const old = s.whoData[k] || {};
     // Sticky is_zek: once a character is flagged, they stay flagged unless
