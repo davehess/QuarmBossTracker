@@ -2327,10 +2327,22 @@ function renderOptin(o) {
         ? '<td style="color:' + nameColor + ';font-weight:bold">' + esc(char) + (files.length > 1 ? ' <span class="dim" style="font-weight:normal">(' + files.length + ' files)</span>' : '') + '</td>'
         : '<td></td>';
       const fnameStyle = idx === 0 ? 'class="dim"' : 'class="dim" style="padding-left:18px"';
-      h += '<tr>' +
-           '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + (f.selected?'checked':'') + '></td>' +
+      // Live-tailed files can't be backfilled (would duplicate events) —
+      // disable the checkbox and show a "live" badge so the user knows
+      // we're already covering this character in real time.
+      const cbAttrs = f.isWatched
+        ? 'disabled title="This file is being tailed live — backfill would duplicate events"'
+        : (f.selected ? 'checked' : '');
+      const liveBadge = f.isWatched
+        ? ' <span style="color:var(--green);font-size:11px">● live</span>'
+        : '';
+      const altBadge = f.isAlt
+        ? ' <span class="dim" style="font-size:11px">(alt)</span>'
+        : '';
+      h += '<tr' + (f.isWatched ? ' style="opacity:0.7"' : '') + '>' +
+           '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + cbAttrs + '></td>' +
            charCell +
-           '<td ' + fnameStyle + '>' + esc(fname) + (f.isAlt ? ' <span class="dim" style="font-size:11px">(alt)</span>' : '') + '</td>' +
+           '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + '</td>' +
            '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
            '<td class="dim">' + ageStr + '</td>' +
            '<td>' + resumeStr + '</td>' +
@@ -2506,11 +2518,13 @@ function startWebDashboard(port) {
         const byPath = new Map(all.map(f => [f.path, f]));
 
         if (action === 'select') {
-          for (const p of paths) { const f = byPath.get(p); if (f) f.selected = true; }
+          // Don't allow selecting live-tailed files — backfilling them
+          // would duplicate events into the parse pipeline.
+          for (const p of paths) { const f = byPath.get(p); if (f && !f.isWatched) f.selected = true; }
         } else if (action === 'deselect') {
           for (const p of paths) { const f = byPath.get(p); if (f) f.selected = false; }
         } else if (action === 'select-all') {
-          for (const f of _optinState.files) f.selected = true;
+          for (const f of _optinState.files) if (!f.isWatched) f.selected = true;
         } else if (action === 'select-none') {
           for (const f of _optinState.files) f.selected = false;
         } else if (action === 'ignore') {
@@ -3265,10 +3279,12 @@ function _scanOptInFiles() {
     const match = stdM || altM;
     if (!match) continue;
 
-    // Skip files already being tailed live (they're in the main watch list)
+    // Files already being tailed live are still listed here (so the user
+    // can see all their characters), but marked isWatched=true so the UI
+    // can render a "live" badge and disable the backfill checkbox —
+    // backfilling a live file would duplicate events.
     const fullPath = path.join(dir, name);
-    const alreadyWatched = stats.watchedLogs.some(w => w.logPath === fullPath);
-    if (alreadyWatched && !altM) continue;  // show alt files even if somehow watched
+    const isWatched = stats.watchedLogs.some(w => w.logPath === fullPath);
 
     // Normalise to PascalCase so 'hitya', 'HITYA', and 'Hitya' all group together
     const char = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
@@ -3284,6 +3300,7 @@ function _scanOptInFiles() {
       path:      fullPath,
       character: char,
       isAlt:     !!altM,
+      isWatched,
       sizeMb,
       sizeBytes,
       mtime,
@@ -3450,10 +3467,14 @@ function _renderOptinList(list, label, cursor, showResume) {
   }
   out.push(`  ${C.dim}${pad('', 3)} ${pad('Character', 14)} ${pad('File', 32)} ${pad('Size', 8)} ${pad('Modified', 11)} ${showResume ? 'Resume' : ''}${C.reset}\n`);
   list.forEach((f, i) => {
-    const sel  = f.selected ? `${C.green}[✓]${C.reset}` : `${C.dim}[ ]${C.reset}`;
+    // Live-tailed files can't be backfilled — show a locked checkbox.
+    const sel  = f.isWatched
+      ? `${C.dim}[~]${C.reset}`
+      : (f.selected ? `${C.green}[✓]${C.reset}` : `${C.dim}[ ]${C.reset}`);
     const cur  = i === cursor ? `${C.yellow}▶${C.reset}` : ' ';
     const alt  = f.isAlt ? ` ${C.dim}(alt)${C.reset}` : '';
-    const nameColor = f.requested ? C.blue : (f.isAlt ? C.dim : C.reset);
+    const live = f.isWatched ? ` ${C.green}● live${C.reset}` : '';
+    const nameColor = f.requested ? C.blue : (f.isWatched ? C.green : (f.isAlt ? C.dim : C.reset));
     const dateStr = _fmtAgoDate(f.mtime);
     const fname   = path.basename(f.path);
     let resumeStr = '';
@@ -3464,7 +3485,7 @@ function _renderOptinList(list, label, cursor, showResume) {
       // never started
     }
     out.push(`  ${cur}${sel} ${nameColor}${pad(f.character, 14)}${C.reset} ` +
-             `${C.dim}${pad(fname, 32)}${C.reset} ${pad(_fmtFileSize(f.sizeBytes), 8)} ${pad(dateStr, 11)} ${resumeStr}${alt}\n`);
+             `${C.dim}${pad(fname, 32)}${C.reset} ${pad(_fmtFileSize(f.sizeBytes), 8)} ${pad(dateStr, 11)} ${resumeStr}${alt}${live}\n`);
   });
   return out.join('');
 }
