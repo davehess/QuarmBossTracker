@@ -748,6 +748,39 @@ class EncounterBuilder {
   // Snapshot current encounter's threat picture into stats.currentEncounterThreat
   // so dashboard renderers can display a live threat meter without poking
   // EncounterBuilder internals.
+  // Per-attacker DPS breakdown bucket — initialised lazily, updated live by
+  // damage and critical events. Used by the DEEPS tab.
+  _bumpDeeps(attacker, category, amount, abilityName) {
+    if (!attacker) return;
+    if (!stats.sessionDeeps[attacker]) {
+      stats.sessionDeeps[attacker] = {
+        melee: { count: 0, total: 0, max: 0 },
+        spell: { count: 0, total: 0, max: 0 },
+        proc:  { count: 0, total: 0, max: 0 },
+        dot:   { count: 0, total: 0, max: 0 },
+        crits: { count: 0, bonusDmg: 0, maxBonus: 0 },
+        topAbilities: {},  // { abilityName: { count, total } } — top hits per attacker
+      };
+    }
+    const d = stats.sessionDeeps[attacker];
+    if (category === 'crit') {
+      d.crits.count++;
+      d.crits.bonusDmg += amount;
+      if (amount > d.crits.maxBonus) d.crits.maxBonus = amount;
+      return;
+    }
+    if (!d[category]) return;
+    d[category].count++;
+    d[category].total += amount;
+    if (amount > d[category].max) d[category].max = amount;
+    // Per-ability rollup (only when the ability is named — skip generic 'hit')
+    if (abilityName && abilityName !== 'hit') {
+      const ab = d.topAbilities[abilityName] || (d.topAbilities[abilityName] = { count: 0, total: 0 });
+      ab.count++;
+      ab.total += amount;
+    }
+  }
+
   _publishLiveThreat() {
     if (this.threatBy.size === 0) {
       stats.currentEncounterThreat = null;
@@ -899,7 +932,10 @@ class EncounterBuilder {
       this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
     }
 
-    // Live threat tracking — bump per-player threat for damage dealt
+    // Live threat tracking + DEEPS tracking — both bump per-player counters
+    // on every damage event. Threat = hate proxy for tank monitoring; DEEPS
+    // = damage breakdown by category (melee / spell / proc / dot) for the
+    // DPS scoreboard tab.
     if (event.type === 'damage' && event.amount > 0) {
       const rawAtk = event.attacker;
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
@@ -912,19 +948,35 @@ class EncounterBuilder {
         }
         const t = this.threatBy.get(attacker);
         const a = (event.ability || '').toLowerCase();
-        // PROC_HATE catalog takes precedence — known threat procs use their
-        // flat hate value (e.g. Enraging Blow = 700 hate per trigger) rather
-        // than a damage-proxy. Also count occurrences for the breakdown.
+        // Categorize for DEEPS tracking — same buckets the threat code uses
+        let deepsCategory;
+        if (MELEE_ABILITIES.has(a) || a === 'hit') deepsCategory = 'melee';
+        else if (a === 'dot')                       deepsCategory = 'dot';
+        else if (a === 'non-melee' || a === '')     deepsCategory = 'proc';
+        else                                        deepsCategory = 'spell';
+        this._bumpDeeps(attacker, deepsCategory, event.amount, event.ability);
+        // PROC_HATE catalog takes precedence for threat — known threat procs
+        // use their flat hate value (e.g. Enraging Blow = 700 hate per trigger)
+        // rather than a damage-proxy. Also count occurrences for the breakdown.
         if (a && PROC_HATE[a] !== undefined) {
           t.proc += PROC_HATE[a];
           t.procDetail[event.ability] = (t.procDetail[event.ability] || 0) + 1;
-        } else if (MELEE_ABILITIES.has(a) || a === 'hit') {
+        } else if (deepsCategory === 'melee') {
           t.swing += event.amount;                 // 1 hate per damage (proxy)
-        } else if (a === 'non-melee' || a === 'dot' || a === '') {
+        } else if (deepsCategory === 'proc' || deepsCategory === 'dot') {
           t.proc  += event.amount * 1.3;           // unnamed procs / DS-style
         } else {
           t.spell += event.amount * 1.5;           // named spells / songs / dirges
         }
+      }
+    }
+    // Crit attribution for DEEPS — increment count + bonus damage when we see
+    // a "X Scores a critical hit!(N)" event. Categorize as melee vs spell by
+    // looking at the player's prior 1 second of activity (heuristic).
+    if (event.type === 'critical' && event.attacker && event.amount > 0) {
+      const attacker = /^you$/i.test(event.attacker) ? (this.character || 'You') : event.attacker;
+      if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+        this._bumpDeeps(attacker, 'crit', event.amount, null);
       }
     }
 
@@ -1321,6 +1373,10 @@ const stats = {
   // currentEncounterThreat: live threat snapshot for the active encounter
   // (null when no fight is active). { bossName, startedAt, perPlayer: { name: { swing, proc, spell, heal, total } } }
   currentEncounterThreat: null,
+  // sessionDeeps: per-attacker DPS breakdown across all encounters this session.
+  // { [name]: { melee, spell, proc, dot: { count, total, max }, crits: { total, melee, spell, bonusDmg } } }
+  // Live-updated; surfaced on the DEEPS tab.
+  sessionDeeps:    {},
   // characterInventories: parsed /output inventory files for each known character.
   // { [characterName]: { weapons: { primary, secondary, range, ammo }, worn: {...}, _updatedAt, _path } }
   characterInventories: {},
@@ -1391,6 +1447,21 @@ function readActivePid() {
 // swallowed so a missing browser binary doesn't crash the agent. On Windows
 // the empty quoted string after `start` is the window title slot (without it
 // `start "http://..."` would interpret the URL as the title).
+// Strict semver-style comparison so we don't flag "update available" when
+// the local agent is actually NEWER than what the bot is advertising
+// (e.g. you're running a dev/test build with a higher version number).
+// Returns true only when `a` is strictly greater than `b`.
+function isNewerVersion(a, b) {
+  if (!a || !b) return false;
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return false;
+}
+
 function openDashboardInBrowser(port) {
   const url = `http://localhost:${port}`;
   try {
@@ -1450,6 +1521,7 @@ function saveSessionState() {
       sessionProcs:       stats.sessionProcs,
       sessionDeaths:      stats.sessionDeaths,
       sessionMends:       stats.sessionMends,
+      sessionDeeps:       stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       uploadCount:        stats.uploadCount,
       uploadErrors:       stats.uploadErrors,
@@ -1481,6 +1553,7 @@ function loadSessionState() {
     if (raw.sessionProcs)       stats.sessionProcs       = raw.sessionProcs;
     if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
     if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
+    if (raw.sessionDeeps)       stats.sessionDeeps       = raw.sessionDeeps;
     if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
     if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
     if (raw.lastUploadAt)       stats.lastUploadAt       = raw.lastUploadAt;
@@ -1542,6 +1615,7 @@ function _serializeForDashboard() {
     latestAgentVersion: stats.latestAgentVersion,
     currentEncounterThreat: stats.currentEncounterThreat,
     characterInventories:   stats.characterInventories,
+    sessionDeeps:           stats.sessionDeeps,
     requestedCharacters: stats.requestedCharacters,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
@@ -1595,6 +1669,7 @@ tr:hover td { background:#1f242c }
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="tanks">Tanks</button>
   <button data-tab="healers">Healers</button>
+  <button data-tab="deeps">DEEPS</button>
   <button data-tab="pets">Pets</button>
   <button data-tab="info">Info / Stats</button>
   <button data-tab="optin">Opt-in Logs</button>
@@ -1602,10 +1677,21 @@ tr:hover td { background:#1f242c }
 <div id="dash" class="section active"></div>
 <div id="tanks" class="section"></div>
 <div id="healers" class="section"></div>
+<div id="deeps" class="section"></div>
 <div id="pets" class="section"></div>
 <div id="info" class="section"></div>
 <div id="optin" class="section"></div>
 <script>
+function _isNewerVersion(a, b) {
+  if (!a || !b) return false;
+  const pa = String(a).split('.').map(n => parseInt(n,10)||0);
+  const pb = String(b).split('.').map(n => parseInt(n,10)||0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i]||0) > (pb[i]||0)) return true;
+    if ((pa[i]||0) < (pb[i]||0)) return false;
+  }
+  return false;
+}
 function fmtK(n) { n=Number(n||0); if (n<1000) return String(n); if (n<1e6) return (n/1000).toFixed(2)+'K'; return (n/1e6).toFixed(2)+'M'; }
 function fmtAgo(ms) { if(!ms) return '?'; const d=Date.now()-ms; if(d<60000)return Math.floor(d/1000)+'s ago'; if(d<3600000)return Math.floor(d/60000)+'m ago'; if(d<86400000)return Math.floor(d/3600000)+'h ago'; return Math.floor(d/86400000)+'d ago'; }
 function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]); }
@@ -1618,7 +1704,8 @@ function renderHeader(s) {
   // Version line — inline diff when a newer version is available so users
   // immediately see they're behind without needing to scroll or read the banner.
   let versionStr;
-  if (s.updateAvailable && s.latestAgentVersion && s.latestAgentVersion !== s.version) {
+  if (s.updateAvailable && s.latestAgentVersion && s.latestAgentVersion !== s.version
+      && _isNewerVersion(s.latestAgentVersion, s.version)) {
     versionStr = 'v' + esc(s.version) +
                  ' <span style="color:var(--gold)">→ v' + esc(s.latestAgentVersion) + ' available</span>' +
                  ' <a href="#" id="inlineUpdateBtn" style="color:var(--blue);margin-left:6px">[install]</a>';
@@ -1855,6 +1942,73 @@ function renderHealers(s) {
   }
   h += '</div></div>';
   document.getElementById('healers').innerHTML = h;
+}
+
+function renderDeeps(s) {
+  let h = '<div class="grid"><div class="card wide"><h2>💥 DEEPS — Damage Breakdown (this session)</h2>';
+  h += '<div class="subtle">Per-attacker melee / spell / proc / DoT damage and crit stats. Names with spaces (NPCs) are filtered out.</div>';
+  const entries = Object.entries(s.sessionDeeps || {})
+    .map(([n, d]) => {
+      const total = (d.melee?.total||0) + (d.spell?.total||0) + (d.proc?.total||0) + (d.dot?.total||0);
+      return [n, d, total];
+    })
+    .sort((a, b) => b[2] - a[2]);
+  if (entries.length === 0) {
+    h += '<div class="dim" style="margin-top:10px">No damage events yet — join a fight first.</div>';
+  } else {
+    h += '<table style="margin-top:6px">' +
+         '<tr><th>Player</th><th>Total</th><th>Melee</th><th>Spell</th><th>Proc</th><th>DoT</th><th>Crits</th><th>Crit dmg</th></tr>';
+    for (const [name, d, total] of entries) {
+      const fmtCat = (b) => {
+        if (!b || !b.count) return '<span class="dim">—</span>';
+        const avg = Math.round(b.total / b.count);
+        return '<span class="num">' + fmtK(b.total) + '</span>' +
+               ' <span class="dim" style="font-size:11px">×' + b.count + ' avg ' + fmtK(avg) + ' max ' + fmtK(b.max) + '</span>';
+      };
+      const critPct = ((d.melee?.count||0) + (d.spell?.count||0)) > 0
+        ? Math.round((d.crits?.count||0) / ((d.melee?.count||0) + (d.spell?.count||0)) * 100)
+        : 0;
+      h += '<tr>' +
+           '<td class="name">' + esc(name) + '</td>' +
+           '<td class="num"><b>' + fmtK(total) + '</b></td>' +
+           '<td>' + fmtCat(d.melee) + '</td>' +
+           '<td>' + fmtCat(d.spell) + '</td>' +
+           '<td>' + fmtCat(d.proc)  + '</td>' +
+           '<td>' + fmtCat(d.dot)   + '</td>' +
+           '<td class="num">' + (d.crits?.count
+                                   ? '<span style="color:var(--gold)">' + d.crits.count + '</span> <span class="dim" style="font-size:11px">' + critPct + '%</span>'
+                                   : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (d.crits?.bonusDmg
+                                   ? '<span style="color:var(--gold)">+' + fmtK(d.crits.bonusDmg) + '</span> <span class="dim" style="font-size:11px">max +' + fmtK(d.crits.maxBonus) + '</span>'
+                                   : '<span class="dim">—</span>') + '</td>' +
+           '</tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // Per-player top abilities (rolled up by ability name)
+  const withAbilities = entries.filter(([, d]) => d.topAbilities && Object.keys(d.topAbilities).length > 0);
+  if (withAbilities.length > 0) {
+    h += '<div class="card wide"><h2>🎯 Top Abilities per Player</h2>';
+    h += '<div class="subtle">Aggregated by named ability across the session. Hits, total damage, average.</div>';
+    for (const [name, d] of withAbilities.slice(0, 10)) {
+      const abs = Object.entries(d.topAbilities).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
+      h += '<h3 style="color:var(--orange);margin-top:14px">' + esc(name) + '</h3>';
+      h += '<table><tr><th>Ability</th><th>Total</th><th>Hits</th><th>Avg</th></tr>';
+      for (const [ab, st] of abs) {
+        const avg = st.count > 0 ? Math.round(st.total / st.count) : 0;
+        const label = ab === 'non-melee' ? ab + ' (DS / DoT / procs)' : ab;
+        h += '<tr><td>' + esc(label) + '</td><td class="num"><b>' + fmtK(st.total) + '</b></td>' +
+             '<td class="num">' + st.count + '</td><td class="num">' + fmtK(avg) + '</td></tr>';
+      }
+      h += '</table>';
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
+  document.getElementById('deeps').innerHTML = h;
 }
 
 function renderPets(s) {
@@ -2364,7 +2518,7 @@ function renderDashboard() {
   out.push(`${C.gray}  ------------------------------------------${C.reset}\n`);
   out.push(`  ${C.dim}Current version ${C.reset}${C.bold}${AGENT_VERSION}${C.reset}`);
   // Inline new-version badge next to the current version
-  if (stats.updateAvailable && stats.latestAgentVersion && stats.latestAgentVersion !== AGENT_VERSION) {
+  if (stats.updateAvailable && isNewerVersion(stats.latestAgentVersion, AGENT_VERSION)) {
     out.push(`  ${C.bold}${C.yellow}→ v${stats.latestAgentVersion} available${C.reset} ${C.dim}([U] to install)${C.reset}`);
   }
   if (stats.uploadCount) out.push(`   ${C.dim}| ${stats.uploadCount} upload${stats.uploadCount === 1 ? '' : 's'} this session${C.reset}`);
@@ -2733,7 +2887,11 @@ const INVENTORY_WORN_SLOTS = new Set([
 ]);
 
 function parseInventoryFile(text) {
-  const inv = { worn: {}, weapons: {} };
+  // Verified against real Hitya inventory:
+  //   - Tab-separated: Location, Name, ID, Count, Slots
+  //   - Empty slots use literal 'Empty' with ID 0
+  //   - Bag contents follow `<bag>-Slot<n>` pattern, e.g. 'General1-Slot1'
+  const inv = { worn: {}, weapons: {}, bagged: [] };
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
     if (!line) continue;
@@ -2753,6 +2911,10 @@ function parseInventoryFile(text) {
     }
     if (INVENTORY_WORN_SLOTS.has(loc)) {
       inv.worn[loc] = entry;
+    }
+    // Bag contents — Phase-2 lets tanks pick alternate weapons from their bags
+    if (/^General\d+-Slot\d+$/.test(loc)) {
+      inv.bagged.push({ ...entry, loc });
     }
   }
   return inv;
@@ -3473,9 +3635,8 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
             if (resp.latest_agent_version) {
               stats.latestAgentVersion    = resp.latest_agent_version;
               stats.latestVersionCheckedAt = Date.now();
-              if (resp.latest_agent_version !== AGENT_VERSION) {
-                stats.updateAvailable = true;
-              }
+              // Only flag when the server's version is strictly newer than ours.
+              stats.updateAvailable = isNewerVersion(resp.latest_agent_version, AGENT_VERSION);
             }
             if (Array.isArray(resp.requested_characters)) {
               stats.requestedCharacters = resp.requested_characters;
@@ -3844,9 +4005,8 @@ function pollLatestVersion({ botUrl }) {
             if (resp.latest_agent_version) {
               stats.latestAgentVersion     = resp.latest_agent_version;
               stats.latestVersionCheckedAt = Date.now();
-              if (resp.latest_agent_version !== AGENT_VERSION) {
-                stats.updateAvailable = true;
-              }
+              // Only flag when the server's version is strictly newer than ours.
+              stats.updateAvailable = isNewerVersion(resp.latest_agent_version, AGENT_VERSION);
               scheduleRender();
             }
             resolve();
@@ -4045,6 +4205,77 @@ async function main() {
       } else {
         // PID exists but web dashboard isn't responding — stale, clean it up
         removePidFile();
+      }
+    }
+
+    // ── Port-probe fallback ────────────────────────────────────────────────
+    // Older agent versions (pre-v2.3.20) didn't write a PID file, so the
+    // check above won't detect them. Probe the default web port directly —
+    // if SOMETHING is serving /api/state on 127.0.0.1:7777, assume it's an
+    // ancient agent and offer the same V/K/R prompt so we don't end up with
+    // two processes silently fighting for the port.
+    if (!args.flags.noServiceCheck) {
+      const probePort = args.flags.webPort || 7777;
+      const probeLive = await probeWebDashboard(probePort);
+      if (probeLive) {
+        const url = `http://localhost:${probePort}`;
+        console.log(`\n  ${ANSI.yellow}⚠ Another agent is already serving ${url}${ANSI.reset}`);
+        console.log(`  ${ANSI.dim}(No PID file — likely an older version that didn't write one.)${ANSI.reset}`);
+        openDashboardInBrowser(probePort);
+        if (!process.stdin.isTTY) process.exit(0);
+        console.log(`\n  ${ANSI.bold}What do you want to do?${ANSI.reset}`);
+        console.log(`    ${ANSI.cyan}[V]${ANSI.reset} View dashboard, leave it running ${ANSI.dim}(default — auto in 10s)${ANSI.reset}`);
+        console.log(`    ${ANSI.cyan}[K]${ANSI.reset} Kill it (asks via /api/shutdown, falls back to manual)`);
+        console.log(`    ${ANSI.cyan}[R]${ANSI.reset} Kill it and resume in this window\n`);
+        const choice = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve('v'), 10_000);
+          try { process.stdin.setRawMode(true); } catch {}
+          process.stdin.resume();
+          process.stdin.setEncoding('utf8');
+          const onData = (data) => {
+            const k = data.toString().toLowerCase();
+            if (k === 'v' || k === 'k' || k === 'r' || k === '\x03') {
+              clearTimeout(timer);
+              process.stdin.removeListener('data', onData);
+              try { process.stdin.setRawMode(false); } catch {}
+              resolve(k === '\x03' ? 'v' : k);
+            }
+          };
+          process.stdin.on('data', onData);
+        });
+        if (choice === 'v') {
+          console.log(`  ${ANSI.dim}Other service kept running. Closing this window.${ANSI.reset}\n`);
+          process.exit(0);
+        }
+        // Try graceful shutdown via /api/shutdown
+        console.log(`  ${ANSI.yellow}Asking the other agent to shut down...${ANSI.reset}`);
+        const shutdownOk = await new Promise((resolve) => {
+          const req = http.request({
+            hostname: '127.0.0.1', port: probePort, path: '/api/shutdown',
+            method: 'POST', timeout: 3000,
+          }, (res) => { res.resume(); resolve(res.statusCode === 200); });
+          req.on('error',   () => resolve(false));
+          req.on('timeout', () => { req.destroy(); resolve(false); });
+          req.end();
+        });
+        if (!shutdownOk) {
+          console.log(`  ${ANSI.red}✗ The other agent doesn't have /api/shutdown (likely too old).${ANSI.reset}`);
+          console.log(`  ${ANSI.dim}Find the PID with:   netstat -ano | findstr :${probePort}${ANSI.reset}`);
+          console.log(`  ${ANSI.dim}Kill it with:        taskkill /F /PID <pid>${ANSI.reset}`);
+          console.log(`  ${ANSI.dim}Then re-run parser.bat.${ANSI.reset}\n`);
+          process.exit(0);
+        }
+        // Wait for port to free up
+        for (let i = 0; i < 25; i++) {
+          if (!(await probeWebDashboard(probePort))) break;
+          await new Promise(r => setTimeout(r, 200));
+        }
+        console.log(`  ${ANSI.green}✓ Other agent stopped.${ANSI.reset}`);
+        if (choice === 'k') {
+          console.log(`  ${ANSI.dim}This window will close now.${ANSI.reset}\n`);
+          process.exit(0);
+        }
+        console.log(`  ${ANSI.cyan}Resuming agent in this window...${ANSI.reset}\n`);
       }
     }
   }

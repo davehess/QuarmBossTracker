@@ -8,6 +8,19 @@ const {
 const fs   = require('fs');
 const path = require('path');
 
+// Auto-derive the canonical agent version from the agent's own package.json
+// so deploys don't need a manual LATEST_AGENT_VERSION env var bump. The env
+// var still wins when set (canary rollouts / pinning an older version).
+let _cachedAgentVersion = null;
+function _currentAgentVersion() {
+  if (process.env.LATEST_AGENT_VERSION) return process.env.LATEST_AGENT_VERSION;
+  if (_cachedAgentVersion) return _cachedAgentVersion;
+  try {
+    _cachedAgentVersion = require('./packages/wolfpack-logsync/package.json').version || null;
+  } catch { _cachedAgentVersion = null; }
+  return _cachedAgentVersion;
+}
+
 const {
   getAllState, recordKill, clearKill,
   getZoneCard, setZoneCard, clearZoneCard,
@@ -3291,19 +3304,25 @@ async function _handleAgentUpload(req, res) {
     matched_boss:          matchedBoss?.id || null,
     // Advertise the current expected agent version so agents can show an update prompt.
     // Set LATEST_AGENT_VERSION env var when deploying a new agent build.
-    latest_agent_version:  process.env.LATEST_AGENT_VERSION || null,
+    latest_agent_version:  _currentAgentVersion(),
     requested_characters:  requestedChars,
   }));
 }
 
 http.createServer(async (req, res) => {
   // Agent upload endpoint
+  // Auto-derive the current agent version from the agent's package.json so we
+  // don't have to bump a LATEST_AGENT_VERSION env var every release. The env
+  // var still takes precedence if set (e.g. for canary rollouts).
+  // Cached on first call since the file doesn't change between deploys.
+  // (Defined at module scope below.)
+
   // Lightweight version probe — agents poll this every ~10 minutes to learn
   // about new releases without needing to upload an encounter first.
   if (req.method === 'GET' && req.url === '/api/agent/latest-version') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
-      latest_agent_version: process.env.LATEST_AGENT_VERSION || null,
+      latest_agent_version: _currentAgentVersion(),
     }));
   }
 
