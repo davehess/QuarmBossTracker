@@ -113,6 +113,55 @@ Privacy:
 `);
 }
 
+// ── Spell catalog ────────────────────────────────────────────────────────────
+// Bard dirges and other "sourceless" spells deliver their damage as a generic
+// "X was hit by non-melee for N" line with NO caster attribution. To credit
+// the right player + ability we have to capture the CAST flavor text and
+// attribute the next matching damage event within one server tick (~6-7s).
+//
+// Each entry:
+//   name       — display name used in the agent's ability tracker and parses
+//   class      — character class (informational)
+//   castSelf   — regex matched against RAW log lines, first-person cast text
+//   tickMs     — max window between cast and damage event to count it (one tick = 6s,
+//                we allow a little slack for clock drift between game and log time)
+//
+// Want to add a spell? Just append an entry. To find the cast text, fire the
+// spell in EQ with /log on and copy the exact flavor line from eqlog_*.txt
+// (everything after the timestamp). EncounterBuilder.add() iterates this list.
+const SOURCELESS_SPELLS = [
+  {
+    name:     'Dirge of the Sleepwalker',
+    class:    'Bard',
+    castSelf: /\]\s+You\s+throw\s+your\s+head\s+back\s+and\s+moan\s+a\s+desperate\s+dirge\./i,
+    tickMs:   7000,
+  },
+  {
+    // "Let loose a piercing blast" is shared flavor for multiple bard dirges
+    // (Piercing/Imploring/Ervaj`s/Pied Piper variants). When we can't easily
+    // differentiate by tick damage we lump them under one label.
+    name:     'Piercing Dirge',
+    class:    'Bard',
+    castSelf: /\]\s+You\s+throw\s+your\s+head\s+back\s+and\s+let\s+loose\s+a\s+piercing\s+blast\./i,
+    tickMs:   7000,
+  },
+];
+
+// Bard DoT songs — auto-captured by the generic "X has taken N damage from
+// your <SongName>" parser. No special handling needed in parseEvent because
+// the source IS named in every tick line. Catalogued here for reference and
+// so the info screen / Discord card can flag bard-specific abilities.
+//   baseTick = damage per tick at standard rank (approximate; rank/AA/items vary it)
+const BARD_SONGS = [
+  { name: 'Selo`s Chords of Cessation', baseTick: 57 },
+  { name: 'Chords of Dissonance',       baseTick: 30 },
+  { name: 'Denon`s Disruptive Discord', baseTick: 34 },
+  { name: 'Denon`s Bereavement',        baseTick: 54 },
+  { name: 'Tuyen`s Chant of Flame',     baseTick: 80 },
+  { name: 'Tuyen`s Chant of Frost',     baseTick: 80 },
+  { name: "Angstlich's Assonance",      baseTick: 45 },
+];
+
 // ── Config ───────────────────────────────────────────────────────────────────
 // These regexes match RAW log lines that should never be parsed, much less
 // uploaded. Match-and-discard happens before any other processing.
@@ -230,6 +279,10 @@ const KEEP_PATTERNS = [
   /\bresisted your/i,
   /\byour .+ has worn off/i,
   /\bhas fainted/i,
+  // Bard dirges — no "You begin casting" prefix, just this flavor text. Needed
+  // so the EncounterBuilder can attribute the next "was hit by non-melee" to
+  // the bard's specific dirge (damage lands 3-6s later on the server tick).
+  /\byou\s+throw\s+your\s+head\s+back\s+and/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -408,6 +461,18 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'cast', attacker: m[1], ability: m[2] };
   }
 
+  // ── Sourceless spell cast detection (bard dirges & similar) ──────────────
+  // Walks the SOURCELESS_SPELLS catalog and emits a `dirge_cast` event with
+  // the spell name. EncounterBuilder uses the cast timestamp to attribute the
+  // next "X was hit by non-melee for N" damage event (within spell.tickMs) to
+  // the named ability — otherwise these spells appear as anonymous "non-melee"
+  // damage with no caster, defeating per-ability attribution for bards.
+  for (const spell of SOURCELESS_SPELLS) {
+    if (spell.castSelf.test(line)) {
+      return { ts: tsIso, type: 'dirge_cast', attacker: null, ability: spell.name, tickMs: spell.tickMs };
+    }
+  }
+
   // ── Pet leader declaration ────────────────────────────────────────────────
   // Covers both forms that EQ produces:
   //   summon time: "Gobn says, 'My leader is Utoh.'"
@@ -512,7 +577,10 @@ class EncounterBuilder {
     // leader once when summoned, and they keep that owner until repop. If we
     // wiped this on every encounter flush, a pet that was summoned during
     // fight #1 would lose its owner mapping by fight #2.
-    this.petLeaders = {};        // lowercasePetName → ownerName
+    this.petLeaders     = {};         // lowercasePetName → ownerName
+    // lastDirgeCast persists across encounters too — a bard might fire a dirge
+    // right before an encounter starts and the damage tick lands inside it.
+    this.lastDirgeCast  = null;       // { ts: ms, name: string } | null
     this.reset();
   }
   reset() {
@@ -521,7 +589,7 @@ class EncounterBuilder {
     this.lastEvent  = null;
     this.targets    = new Map(); // defender → total damage dealt to it
     this.bossName   = null;
-    // petLeaders intentionally NOT reset — persists for the agent's runtime
+    // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   add(event) {
     if (!event) return;
@@ -536,11 +604,43 @@ class EncounterBuilder {
       return;
     }
 
+    // Bard dirge cast — track for attribution on the next "was hit by non-melee" hit.
+    // The dirge damage lands on the next server tick (typically 3-6s later) as
+    // "X was hit by non-melee for N" with no caster attribution. We rewrite the
+    // ability name to the specific dirge when the matching damage event arrives.
+    if (event.type === 'dirge_cast') {
+      this.lastDirgeCast = {
+        ts:     Date.parse(event.ts) || Date.now(),
+        name:   event.ability,
+        tickMs: event.tickMs || 7000,
+      };
+      return;
+    }
+
     // /who output rows are metadata, not combat — accumulate into the module
     // buffer and ship in the next encounter upload.
     if (event.type === 'who') {
       recordWhoEvent(event);
       return;
+    }
+
+    // Dirge attribution: ambiguous "was hit by non-melee" damage events (attacker=null,
+    // ability='non-melee') get retagged to the most recent dirge cast if it landed
+    // within the next server tick window (~7s). Each dirge cast is "consumed" by the
+    // first matching hit so back-to-back dirges don't all credit the latest one.
+    if (event.type === 'damage'
+        && event.attacker === null
+        && event.ability === 'non-melee'
+        && this.lastDirgeCast) {
+      const evTs   = Date.parse(event.ts) || Date.now();
+      const window = this.lastDirgeCast.tickMs || 7000;
+      if (evTs - this.lastDirgeCast.ts <= window) {
+        event.ability = this.lastDirgeCast.name;
+        this.lastDirgeCast = null;   // consume
+      } else if (evTs - this.lastDirgeCast.ts > window + 5000) {
+        // stale — drop it so future hits aren't wrongly credited
+        this.lastDirgeCast = null;
+      }
     }
 
     if (!this.startedAt) this.startedAt = event.ts;
@@ -1412,6 +1512,7 @@ module.exports = {
   AGENT_VERSION,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
+  SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename,
 };
 
