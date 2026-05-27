@@ -3102,8 +3102,11 @@ async function _handleAgentUpload(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     ok: true,
-    events_received: encounter.events.length,
-    matched_boss:    matchedBoss?.id || null,
+    events_received:       encounter.events.length,
+    matched_boss:          matchedBoss?.id || null,
+    // Advertise the current expected agent version so agents can show an update prompt.
+    // Set LATEST_AGENT_VERSION env var when deploying a new agent build.
+    latest_agent_version:  process.env.LATEST_AGENT_VERSION || null,
   }));
 }
 

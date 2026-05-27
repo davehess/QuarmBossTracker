@@ -284,6 +284,7 @@ const KEEP_PATTERNS = [
   // Avoidance / miss lines — "X tries to <verb> Y, but misses!" / "but Y dodges!" etc.
   // Needed for tanking stats (avoidance %, hits-taken, accuracy). The parseEvent
   // handler classifies each into miss/dodge/parry/riposte/block/invulnerable.
+  /\bis on the Rampage!/i,                       // rampage announcements
   /\b(?:tries|try)\s+to\s+\w+\s+.+?,\s+but\s+/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
@@ -415,6 +416,12 @@ function parseEvent(line, ts) {
   if (m) {
     return { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: 'non-melee', amount: parseInt(m[3], 10) };
   }
+
+  // ── Rampage announcement ─────────────────────────────────────────────────
+  // "[timestamp] Bossname is on the Rampage!" — the next burst of hits within
+  // ~5s are rampage hits (boss attacks multiple/all nearby targets).
+  m = line.match(/\]\s+(.+?)\s+is on the Rampage!/i);
+  if (m) return { ts: tsIso, type: 'rampage', attacker: m[1] };
 
   // ── Avoidance / accuracy ──────────────────────────────────────────────────
   // Every "X tries to <verb> Y, but ..." line tells us either an attacker missed
@@ -648,6 +655,11 @@ class EncounterBuilder {
     // recentRiposteDmg: name → timestamp of most recent confirmed riposte hit.
     // Used to attribute a death as a "riposte kill" if death follows within 3s.
     this.recentRiposteDmg = new Map();
+    // Rampage tracking — bossMaxMelee used for invuln avoided-damage calc.
+    // _rampageTs: timestamp of the most recent "is on the Rampage!" line.
+    // Hits landing within 5s of that line are tagged as rampage hits.
+    this._rampageTs   = null;
+    this.bossMaxMelee = 0;
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   _bumpDefender(name, key, amount) {
@@ -656,7 +668,7 @@ class EncounterBuilder {
       this.defenderStats.set(name, {
         hits: 0, damageTaken: 0,
         misses: 0, dodges: 0, parries: 0, ripostes: 0, blocks: 0, invulns: 0,
-        ripostedFor: 0,
+        ripostedFor: 0, rampageHits: 0, rampageDmg: 0,
       });
     }
     const s = this.defenderStats.get(name);
@@ -724,6 +736,34 @@ class EncounterBuilder {
       }
     }
 
+    // ── Rampage handling ──────────────────────────────────────────────────────
+    // "is on the Rampage!" sets a 5s window; hits landing inside it are tagged.
+    // The event itself is NOT added to this.events (it's metadata, not combat).
+    if (event.type === 'rampage') {
+      this._rampageTs = Date.parse(event.ts) || Date.now();
+      if (!this.startedAt) this.startedAt = event.ts;
+      this.lastEvent = event.ts;
+      return;
+    }
+    // Tag damage events that arrive within 5s of a rampage announcement.
+    if (event.type === 'damage' && this._rampageTs) {
+      const evTs = Date.parse(event.ts) || Date.now();
+      if (evTs - this._rampageTs <= 5000) {
+        event.isRampage = true;
+      } else {
+        this._rampageTs = null;
+      }
+    }
+    // Track the boss's highest melee hit for invulnerable-avoided-damage calc.
+    // Only count melee verbs (hit/slash/bash etc.) — not proc/spell damage.
+    if (event.type === 'damage' && event.attacker && event.amount) {
+      if (MELEE_ABILITIES.has((event.ability || '').toLowerCase()) || event.ability === 'hit') {
+        if (!this.bossName || event.attacker === this.bossName) {
+          this.bossMaxMelee = Math.max(this.bossMaxMelee, event.amount);
+        }
+      }
+    }
+
     if (!this.startedAt) this.startedAt = event.ts;
     this.lastEvent = event.ts;
     this.events.push(event);
@@ -744,6 +784,10 @@ class EncounterBuilder {
       const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
       this._bumpDefender(def, 'hits',        1);
       this._bumpDefender(def, 'damageTaken', event.amount || 0);
+      if (event.isRampage) {
+        this._bumpDefender(def, 'rampageHits', 1);
+        this._bumpDefender(def, 'rampageDmg',  event.amount || 0);
+      }
     }
     if (event.type === 'avoid' && event.defender) {
       const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
@@ -1032,13 +1076,21 @@ class EncounterBuilder {
     for (const [name, s] of this.defenderStats) {
       if (/\s/.test(name)) continue;
       if (!stats.sessionDefenders[name]) {
-        stats.sessionDefenders[name] = { damageTaken: 0, hits: 0, ripostes: 0, ripostedFor: 0 };
+        stats.sessionDefenders[name] = {
+          damageTaken: 0, hits: 0, ripostes: 0, ripostedFor: 0,
+          rampageHits: 0, rampageDmg: 0, invulnAvoidedDmg: 0,
+        };
       }
       const sd = stats.sessionDefenders[name];
-      sd.damageTaken = (sd.damageTaken || 0) + (s.damageTaken || 0);
-      sd.hits        = (sd.hits        || 0) + (s.hits        || 0);
-      sd.ripostes    = (sd.ripostes    || 0) + (s.ripostes    || 0);
-      sd.ripostedFor = (sd.ripostedFor || 0) + (s.ripostedFor || 0);
+      sd.damageTaken      = (sd.damageTaken      || 0) + (s.damageTaken  || 0);
+      sd.hits             = (sd.hits             || 0) + (s.hits         || 0);
+      sd.ripostes         = (sd.ripostes         || 0) + (s.ripostes     || 0);
+      sd.ripostedFor      = (sd.ripostedFor      || 0) + (s.ripostedFor  || 0);
+      sd.rampageHits      = (sd.rampageHits      || 0) + (s.rampageHits  || 0);
+      sd.rampageDmg       = (sd.rampageDmg       || 0) + (s.rampageDmg   || 0);
+      // Invuln avoided: invulns × boss max melee for this fight = estimated avoided damage.
+      sd.invulnAvoidedDmg = (sd.invulnAvoidedDmg || 0)
+                          + (s.invulns || 0) * (this.bossMaxMelee || 0);
     }
     // Healer stats
     for (const [name, s] of this.healerStats) {
@@ -1109,6 +1161,8 @@ const stats = {
   sessionProcs:    {},
   uploadCount:     0,
   uploadErrors:    0,
+  updateAvailable:      false,      // true when server reports a newer agent version
+  requestedCharacters:  [],         // characters the server needs for parse completeness
   lastUploadAt:    null,
   lifetime: {                     // persisted across restarts
     totalEvents:       0,
@@ -1369,7 +1423,10 @@ function renderDashboard() {
   }
   out.push('\n');
 
-  out.push(`  ${C.cyan}[T]${C.reset} Tanks  ${C.gray}|${C.reset}  ${C.cyan}[H]${C.reset} Healers  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info / Stats  ${C.gray}|${C.reset}  ${C.cyan}[U]${C.reset} Update  ${C.gray}|${C.reset}  ${C.cyan}[K]${C.reset} Token  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  const uHint = stats.updateAvailable
+    ? `${C.bold}${C.yellow}[U] ★ UPDATE AVAILABLE — press to install${C.reset}`
+    : `${C.cyan}[U]${C.reset} Update`;
+  out.push(`  ${C.cyan}[T]${C.reset} Tanks  ${C.gray}|${C.reset}  ${C.cyan}[H]${C.reset} Healers  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info / Stats  ${C.gray}|${C.reset}  ${uHint}  ${C.gray}|${C.reset}  ${C.cyan}[O]${C.reset} Opt-in logs  ${C.gray}|${C.reset}  ${C.cyan}[K]${C.reset} Token  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -1500,7 +1557,186 @@ function setupKeypressHandler() {
     if (key === 'h' || key === 'H') _enterView('healers', showHealers);
     if (key === 'i' || key === 'I') _enterView('info',    showInfo);
     if (key === 'p' || key === 'P') _enterView('pets',    showPets);
+    if (key === 'o' || key === 'O') _enterView('optin',   showOptIn);
   });
+}
+
+// ── [O] Historical log opt-in ───────────────────────────────────────────────
+// Scans the EQ log directory for all log files including backup/alternate names
+// (eqlog_Name_pq.proj.txt2, .txt.bak, etc.). Shows a selectable list.
+// Files highlighted in blue are ones the bot has flagged as wanted for parse
+// completeness (via stats.requestedCharacters, populated from server response).
+// User presses [A] to select all, number keys or arrow+space to toggle,
+// [Enter] / [B] to start backfill on selected files.
+//
+// Selection state is ephemeral (not persisted) — intentionally lightweight.
+
+const _optinState = {
+  files:    [],        // { path, character, isAlt, sizeMb, mtime, selected, requested }
+  cursor:   0,
+  scanned:  false,
+};
+
+function _scanOptInFiles() {
+  _optinState.files = [];
+  // Derive scan directory from the first watched log path
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return;
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+
+  const requested = new Set((stats.requestedCharacters || []).map(n => n.toLowerCase()));
+
+  for (const name of entries) {
+    // Standard logs: eqlog_Name_pq.proj.txt
+    const stdM = name.match(/^eqlog_([^_]+)_pq\.proj\.txt$/i);
+    // Alternate/backup: eqlog_Name_pq.proj.txt2, .txt.bak, .txt.old, etc.
+    const altM = !stdM && name.match(/^eqlog_([^_]+)_pq\.proj\.txt[\d.a-z]+$/i);
+    const match = stdM || altM;
+    if (!match) continue;
+
+    // Skip files already being tailed live (they're in the main watch list)
+    const fullPath = path.join(dir, name);
+    const alreadyWatched = stats.watchedLogs.some(w => w.logPath === fullPath);
+    if (alreadyWatched && !altM) continue;  // show alt files even if somehow watched
+
+    const char = match[1];
+    let sizeMb = 0, mtime = null;
+    try {
+      const st = fs.statSync(fullPath);
+      sizeMb = Math.round(st.size / 1048576 * 10) / 10;
+      mtime  = st.mtime;
+    } catch {}
+
+    _optinState.files.push({
+      path:      fullPath,
+      character: char,
+      isAlt:     !!altM,
+      sizeMb,
+      mtime,
+      selected:  false,
+      requested: requested.has(char.toLowerCase()),
+    });
+  }
+
+  // Sort: requested first, then by mtime descending (most recently modified)
+  _optinState.files.sort((a, b) => {
+    if (a.requested !== b.requested) return a.requested ? -1 : 1;
+    return (b.mtime || 0) - (a.mtime || 0);
+  });
+  _optinState.scanned = true;
+  _optinState.cursor  = 0;
+}
+
+// Separate keypress handler for the opt-in view (replaces the normal one while active)
+let _optinKeyHandler = null;
+
+function showOptIn() {
+  if (!_optinState.scanned) _scanOptInFiles();
+
+  const out = [];
+  out.push(`${C.clear}\n${C.bold}${C.cyan}  Historical Log Opt-in${C.reset}\n`);
+  out.push(`  ${C.dim}Select log files to backfill. Files highlighted in ${C.blue}blue${C.reset}${C.dim} are requested for parse completeness.${C.reset}\n\n`);
+
+  if (_optinState.files.length === 0) {
+    out.push(`  ${C.dim}No additional log files found in the EQ directory.${C.reset}\n`);
+    out.push(`  ${C.dim}(Active logs are already being watched.)${C.reset}\n\n`);
+    out.push(`  ${C.cyan}[D]${C.reset} Back to dashboard\n`);
+    process.stdout.write(out.join(''));
+    return;
+  }
+
+  out.push(`  ${C.dim}${pad('', 3)} ${pad('Character', 16)} ${pad('File', 34)} ${pad('Size', 7)} Last Modified${C.reset}\n`);
+  _optinState.files.forEach((f, i) => {
+    const sel  = f.selected ? `${C.green}[✓]${C.reset}` : `${C.dim}[ ]${C.reset}`;
+    const cur  = i === _optinState.cursor ? `${C.yellow}▶${C.reset}` : ' ';
+    const alt  = f.isAlt ? `${C.dim}(alt)${C.reset}` : '';
+    const nameColor = f.requested ? C.blue : (f.isAlt ? C.dim : C.reset);
+    const dateStr = f.mtime ? f.mtime.toLocaleDateString() : '?';
+    const fname   = path.basename(f.path);
+    out.push(`  ${cur}${sel} ${nameColor}${pad(f.character, 16)}${C.reset} ` +
+             `${C.dim}${pad(fname, 34)}${C.reset} ${pad(f.sizeMb + 'MB', 7)} ${dateStr} ${alt}\n`);
+  });
+
+  const selCount = _optinState.files.filter(f => f.selected).length;
+  out.push(`\n  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[A]${C.reset} Select all  `);
+  out.push(`${selCount > 0 ? `${C.bold}${C.green}[B]${C.reset} Start backfill (${selCount} files)` : `${C.dim}[B] Start backfill${C.reset}`}  `);
+  out.push(`${C.cyan}[D]${C.reset} Back\n`);
+
+  process.stdout.write(out.join(''));
+
+  // Install opt-in specific keypress handler
+  if (!_optinKeyHandler && process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    _optinKeyHandler = (data) => {
+      const key = data.toString();
+      const ESC = '\x1b';
+      if (key === `${ESC}[A`) { // up
+        _optinState.cursor = Math.max(0, _optinState.cursor - 1);
+        showOptIn(); return;
+      }
+      if (key === `${ESC}[B`) { // down — but [B] also means "start backfill" when NOT arrow
+        _optinState.cursor = Math.min(_optinState.files.length - 1, _optinState.cursor + 1);
+        showOptIn(); return;
+      }
+      if (key === ' ') {
+        if (_optinState.files[_optinState.cursor])
+          _optinState.files[_optinState.cursor].selected ^= true;
+        showOptIn(); return;
+      }
+      if (key === 'a' || key === 'A') {
+        const allSelected = _optinState.files.every(f => f.selected);
+        _optinState.files.forEach(f => { f.selected = !allSelected; });
+        showOptIn(); return;
+      }
+      if (key === 'b' || key === 'B') {
+        const chosen = _optinState.files.filter(f => f.selected);
+        if (chosen.length > 0) {
+          process.removeListener('data', _optinKeyHandler);
+          _optinKeyHandler = null;
+          _optinState.scanned = false;
+          _exitView();
+          process.stdout.write(`\n${C.bold}${C.yellow}  Starting backfill on ${chosen.length} file(s)...${C.reset}\n`);
+          // Trigger backfill — spawn one readWindow per selected file using
+          // the same upload pipeline as --since mode. Since we're already
+          // running in watch mode we do this concurrently on the side.
+          const since = new Date(Date.now() - 90 * 24 * 3600000).toISOString(); // up to 90 days
+          const { botUrl, token, dryRun } = _uploadOpts || {};
+          for (const f of chosen) {
+            const char = f.character;
+            const drops = DEFAULT_DROP_PATTERNS;
+            const keeps = KEEP_PATTERNS;
+            const bldr  = new EncounterBuilder({
+              character: char,
+              onFlush: p => uploadEncounter(p, { botUrl, token, dryRun }).catch(() => {}),
+            });
+            (async () => {
+              process.stdout.write(`  ${C.dim}Backfilling ${char} from ${f.path}...${C.reset}\n`);
+              await readWindow(f.path, new Date(since), new Date(), line => {
+                if (shouldKeep(line, drops, keeps)) {
+                  const ts = parseEqTimestamp(line);
+                  const ev = parseEvent(line, ts);
+                  if (ev) bldr.add(ev);
+                }
+              }).catch(e => console.warn(`[optin backfill] ${char}: ${e.message}`));
+              bldr.flush();
+              process.stdout.write(`  ${C.green}✓ Done: ${char}${C.reset}\n`);
+              scheduleRender();
+            })();
+          }
+        }
+        return;
+      }
+      if (key === 'd' || key === 'D' || key === '\x03') {
+        process.removeListener('data', _optinKeyHandler);
+        _optinKeyHandler = null;
+        _optinState.scanned = false;
+        _exitView();
+      }
+    };
+    process.stdin.on('data', _optinKeyHandler);
+  }
 }
 
 function showInfo() {
@@ -1648,10 +1884,33 @@ function showTanks() {
   if (defenders.length === 0) {
     out.push(`  ${C.dim}No tanking data yet — join a fight first.${C.reset}\n`);
   } else {
-    out.push(`  ${C.dim}${pad('Tank', 16)} ${pad('Dmg Taken', 10)} ${pad('Hits', 5)} ${pad('Ripostes', 9)} ${pad('Riposted For', 12)}${C.reset}\n`);
+    out.push(`  ${C.dim}${pad('Tank', 14)} ${pad('Dmg Taken', 9)} ${pad('Hits', 5)} ` +
+             `${pad('Ramp Hits', 9)} ${pad('Ramp Dmg', 9)} ` +
+             `${pad('Invuln Avoided', 14)} ${pad('Riposted For', 12)}${C.reset}\n`);
     for (const [name, s] of defenders.slice(0, 8)) {
-      out.push(`  ${pad(name, 16)} ${C.bold}${pad(fmtK(s.damageTaken), 10)}${C.reset} ` +
-               `${pad(String(s.hits || 0), 5)} ${pad(String(s.ripostes || 0), 9)} ${pad(fmtK(s.ripostedFor || 0), 12)}\n`);
+      const invulnStr = s.invulnAvoidedDmg > 0
+        ? `${C.green}${pad(fmtK(s.invulnAvoidedDmg), 14)}${C.reset}`
+        : `${C.dim}${pad('—', 14)}${C.reset}`;
+      const rampStr = s.rampageHits > 0
+        ? `${C.yellow}${pad(String(s.rampageHits), 9)}${C.reset} ${C.yellow}${pad(fmtK(s.rampageDmg), 9)}${C.reset}`
+        : `${C.dim}${pad('—', 9)}${C.reset} ${C.dim}${pad('—', 9)}${C.reset}`;
+      out.push(`  ${pad(name, 14)} ${C.bold}${pad(fmtK(s.damageTaken), 9)}${C.reset} ` +
+               `${pad(String(s.hits || 0), 5)} ${rampStr} ${invulnStr} ` +
+               `${pad(fmtK(s.ripostedFor || 0), 12)}\n`);
+    }
+  }
+
+  // Rampage targets this session — who absorbed rampage hits
+  const rampTargets = Object.entries(stats.sessionDefenders)
+    .filter(([, s]) => (s.rampageHits || 0) > 0)
+    .sort((a, b) => b[1].rampageDmg - a[1].rampageDmg);
+  if (rampTargets.length > 0) {
+    out.push(`\n${C.bold}${C.yellow}  Rampage Targets (this session)${C.reset}\n`);
+    out.push(`  ${C.dim}${pad('Player', 14)} ${pad('Hits', 6)} ${pad('Total Dmg', 10)} ${pad('Avg/Hit', 8)}${C.reset}\n`);
+    for (const [name, s] of rampTargets.slice(0, 8)) {
+      const avg = s.rampageHits > 0 ? Math.round(s.rampageDmg / s.rampageHits) : 0;
+      out.push(`  ${pad(name, 14)} ${C.bold}${pad(String(s.rampageHits), 6)}${C.reset} ` +
+               `${C.yellow}${pad(fmtK(s.rampageDmg), 10)}${C.reset} ${pad(fmtK(avg), 8)}\n`);
     }
   }
 
@@ -1772,6 +2031,16 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
           reject(new Error(`HTTP ${res.statusCode}`));
         } else {
           const e = payload.encounter;
+          // Check if server is advertising a newer agent version
+          try {
+            const resp = JSON.parse(data);
+            if (resp.latest_agent_version && resp.latest_agent_version !== AGENT_VERSION) {
+              stats.updateAvailable = true;
+            }
+            if (Array.isArray(resp.requested_characters)) {
+              stats.requestedCharacters = resp.requested_characters;
+            }
+          } catch { /* non-fatal */ }
           recordUploadForDashboard(payload, payload.character);
           if (!_dashboardEnabled) console.log(`✓ uploaded ${e.boss_name || '?'} (${e.events.length} events)`);
           scheduleRender();
