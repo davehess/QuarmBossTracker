@@ -75,13 +75,19 @@ The site uses **Supabase Auth** with the **Discord provider**. End-to-end wiring
 
 ### 2. Supabase Dashboard
 
-1. Open the same project the bot uses → **Authentication → Providers**.
-2. Find **Discord** → toggle **Enable**.
+1. Open the same project the bot uses → **Authentication → Sign In / Providers**
+   (NOT "OAuth Server" — that section is for making Supabase itself act as an
+   identity provider for other apps, which is the opposite direction).
+2. Scroll to the provider list → click **Discord** → toggle **Enable**.
 3. Paste the Client ID + Client Secret from step 1.
-4. Under **Site URL** (Authentication → URL Configuration) set `https://wolfpack.quest`.
-5. Under **Redirect URLs** add:
-   - `https://wolfpack.quest/auth/callback`
-   - `http://localhost:3000/auth/callback` (for local dev)
+4. Copy the **Callback URL (for OAuth)** Supabase shows you here — looks like
+   `https://<your-project>.supabase.co/auth/v1/callback`. That's the value
+   that goes in Discord Dev Portal → OAuth2 → Redirects (step 1 above).
+5. Go to **Authentication → URL Configuration**:
+   - **Site URL:** `https://wolfpack.quest`
+   - **Redirect URLs** (add both):
+     - `https://wolfpack.quest/auth/callback`
+     - `http://localhost:3000/auth/callback` (for local dev)
 6. Save.
 
 ### 3. Verify
