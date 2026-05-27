@@ -2112,6 +2112,45 @@ setInterval(() => {
   for (const [k, v] of _chatDedup) if (v < cutoff) _chatDedup.delete(k);
 }, 10_000);
 
+// ── Era boundaries for chat thread routing ─────────────────────────────────
+// Each chat message is routed to the era thread matching its timestamp.
+// Set <CHANNEL>_CHAT_<ERA>_THREAD_ID env vars to enable era threading;
+// any unset thread falls back to the main GUILD_CHAT_CHANNEL_ID / RAID_CHAT_CHANNEL_ID.
+//
+// Era starts (Quarm progression):
+//   Classic        — Oct 1, 2023
+//   Kunark         — Jul 1, 2024
+//   Velious        — Apr 1, 2025
+//   Luclin         — Oct 1, 2025
+//   Planes of Power — Oct 1, 2026
+const ERA_BOUNDARIES = [
+  // Descending order — first match wins
+  { thresholdMs: Date.UTC(2026, 9, 1), era: 'PoP',     key: 'POP'     },
+  { thresholdMs: Date.UTC(2025, 9, 1), era: 'Luclin',  key: 'LUCLIN'  },
+  { thresholdMs: Date.UTC(2025, 3, 1), era: 'Velious', key: 'VELIOUS' },
+  { thresholdMs: Date.UTC(2024, 6, 1), era: 'Kunark',  key: 'KUNARK'  },
+  { thresholdMs: 0,                    era: 'Classic', key: 'CLASSIC' },
+];
+
+function getEraForTimestamp(ts) {
+  const ms = ts instanceof Date ? ts.getTime()
+            : typeof ts === 'string' ? Date.parse(ts)
+            : typeof ts === 'number' ? ts
+            : NaN;
+  if (!ms || isNaN(ms)) return ERA_BOUNDARIES[0];
+  for (const b of ERA_BOUNDARIES) {
+    if (ms >= b.thresholdMs) return b;
+  }
+  return ERA_BOUNDARIES[ERA_BOUNDARIES.length - 1];
+}
+
+function getChatThreadId(channel, eraKey) {
+  // channel: 'guild' | 'raid' | 'pvp'
+  // eraKey:  'CLASSIC' | 'KUNARK' | 'VELIOUS' | 'LUCLIN' | 'POP'
+  const envName = `${channel.toUpperCase()}_CHAT_${eraKey}_THREAD_ID`;
+  return process.env[envName] || null;
+}
+
 async function _handleAgentChat(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -2168,10 +2207,15 @@ async function _handleAgentChat(req, res) {
   }
 
   for (const msg of messages) {
-    const { channel, speaker, text, who: uploadedWho } = msg || {};
+    const { channel, speaker, text, ts: msgTs, who: uploadedWho } = msg || {};
     if (!channel || !speaker || !text) continue;
 
-    const channelId = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
+    // Era-aware routing: pick the era thread for this message's timestamp.
+    // If no era thread is configured, fall back to the main channel.
+    const era       = getEraForTimestamp(msgTs);
+    const threadId  = getChatThreadId(channel, era.key);
+    const fallback  = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
+    const channelId = threadId || fallback;
     if (!channelId) continue; // channel not configured — silently skip
 
     // Dedup: same speaker + text within 5s = multiple parsers saw same line
