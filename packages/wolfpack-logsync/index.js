@@ -1802,6 +1802,65 @@ const CHAT_LINE_PATTERNS = [
   { rx: /^\[.+?\]\s+You say to your raid,\s*['"](.+?)['"]\s*$/, channel: 'raid', self: true },
 ];
 
+// ── Druzzil Ro instance-kill announcements ─────────────────────────────────
+// Server god broadcasts guild kills: "Druzzil Ro tells the guild, 'Emma of <Wolf Pack> has killed Boss in Zone!'"
+// Routed to the raid channel + triggers an auto-timer in the bot.
+// NOTE: "Druzzil Ro" has a space so it never matches the single-word (\w+) guild chat pattern above.
+const DRUZZIL_KILL_RX = /^\[(.+?)\]\s+Druzzil Ro tells the guild,\s*['"](\w+) of <(.+?)> has killed (.+?) in (.+?)!['"]/;
+
+// ── PVP Druzzil Ro broadcast announcements ─────────────────────────────────
+// Server god broadcasts player deaths: "PVP Druzzil Ro BROADCASTS, 'text'"
+// Two kill-type sub-patterns determine Wolf Pack involvement:
+const PVP_BROADCAST_RX    = /^\[(.+?)\]\s+PVP Druzzil Ro BROADCASTS,\s*['"](.+?)['"]\s*$/;
+const PVP_PLAYER_KILL_RX  = /^(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_NPC_KILL_RX     = /^(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+
+function parseDruzzilKill(line) {
+  const m = DRUZZIL_KILL_RX.exec(line);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    character: m[2],
+    guild:     m[3],
+    boss:      m[4],
+    zone:      m[5],
+    ts:        ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
+function parsePvpBroadcast(line) {
+  const m = PVP_BROADCAST_RX.exec(line);
+  if (!m) return null;
+  const ts   = parseEqTimestamp(line);
+  const text = m[2];
+
+  let killType = 'npc';
+  let victim = null, victimGuild = null, killer = null, killerGuild = null, zone = null;
+
+  const ppk = PVP_PLAYER_KILL_RX.exec(text);
+  if (ppk) {
+    killType    = 'pvp';
+    victim      = ppk[1]; victimGuild  = ppk[2];
+    killer      = ppk[3]; killerGuild  = ppk[4];
+    zone        = ppk[5];
+  } else {
+    const npck = PVP_NPC_KILL_RX.exec(text);
+    if (npck) {
+      victim      = npck[1]; victimGuild = npck[2];
+      zone        = npck[4];
+    }
+  }
+
+  return {
+    ts: ts ? ts.toISOString() : new Date().toISOString(),
+    text,
+    killType,
+    victim, victimGuild,
+    killer, killerGuild,
+    zone,
+  };
+}
+
 function parseChatLine(line, selfName) {
   for (const { rx, channel, self: isSelf } of CHAT_LINE_PATTERNS) {
     const m = line.match(rx);
@@ -1821,17 +1880,91 @@ function parseChatLine(line, selfName) {
   return null;
 }
 
-const chatBuffer   = [];          // pending messages waiting for next flush
-let _uploadOpts    = null;        // set in main() once botUrl/token are known
-let _chatRelayOn   = false;       // true once the 5s relay interval is running
+// ── /sll lockout parser ────────────────────────────────────────────────────
+// EQ /sll output in the log:
+//   [timestamp] === Current Loot Lockouts ===
+//   [timestamp] == Boss Name: Available          ← no lockout — SKIP, never clears guild timer
+//   [timestamp] == Boss Name: Xd Yh Zm Ws        ← active lockout with remaining time
+//   [timestamp] == Boss Name: X days Y hours     ← alternate phrasing
+//
+// We capture the section header so we know subsequent == lines belong to /sll.
+// "Available" entries are filtered here — only active lockouts reach the bot.
+
+let _inLockoutSection = false;    // true while reading /sll output lines
+let _lockoutBuffer    = [];       // accumulates active lockout entries
+
+const SLL_HEADER_RX  = /^\[.+?\]\s+===\s+Current(?:\s+Loot)?\s+Lockouts?\s+===/i;
+const SLL_ENTRY_RX   = /^\[.+?\]\s+==\s+(.+?):\s+(.+?)\s*$/;
+
+// Parse a lockout time string into milliseconds remaining.
+// Handles: "3d 14h 22m 5s", "3 days 14 hours", "14 hours 30 minutes", etc.
+// Returns null if the string is "Available" or unrecognised.
+function parseLockoutRemaining(raw) {
+  const s = (raw || '').trim();
+  if (/^available$/i.test(s)) return null;   // "Available" → skip
+
+  let ms = 0;
+  const dMatch = s.match(/(\d+)\s*d(?:ays?)?/i);
+  const hMatch = s.match(/(\d+)\s*h(?:ours?)?/i);
+  const mMatch = s.match(/(\d+)\s*m(?:in(?:utes?)?)?/i);
+  const sMatch = s.match(/(\d+)\s*s(?:ec(?:onds?)?)?/i);
+
+  if (!dMatch && !hMatch && !mMatch && !sMatch) return null;  // unrecognised format
+
+  if (dMatch) ms += parseInt(dMatch[1], 10) * 86400000;
+  if (hMatch) ms += parseInt(hMatch[1], 10) * 3600000;
+  if (mMatch) ms += parseInt(mMatch[1], 10) * 60000;
+  if (sMatch) ms += parseInt(sMatch[1], 10) * 1000;
+
+  return ms > 0 ? ms : null;
+}
+
+function parseSllLine(line) {
+  // Detect the section header — start capturing
+  if (SLL_HEADER_RX.test(line)) {
+    _inLockoutSection = true;
+    return null;
+  }
+  // Stop capturing on any non-== line that isn't a lockout entry
+  if (_inLockoutSection) {
+    const m = SLL_ENTRY_RX.exec(line);
+    if (!m) {
+      // Could be "=== Current Legacy Item Lockouts ===" or end of section
+      if (/^\[.+?\]\s+===/i.test(line)) {
+        // Another section header — stay in section mode
+        return null;
+      }
+      _inLockoutSection = false;
+      return null;
+    }
+    const bossName     = m[1].trim();
+    const remainingMs  = parseLockoutRemaining(m[2]);
+    if (remainingMs === null) return null;   // "Available" or unrecognised — skip
+    return { bossName, remainingMs };
+  }
+  return null;
+}
+
+const chatBuffer        = [];   // pending guild/raid chat lines
+const pvpBuffer         = [];   // pending PVP broadcast lines
+const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
+// _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
+let _uploadOpts    = null;      // set in main() once botUrl/token are known
+let _chatRelayOn   = false;     // true once the 5s relay interval is running
 
 function startChatRelay() {
   if (_chatRelayOn) return;
   _chatRelayOn = true;
   setInterval(() => {
-    if (!_uploadOpts || chatBuffer.length === 0) return;
-    const messages = chatBuffer.splice(0);
-    uploadChat(messages, _uploadOpts).catch(() => {});
+    if (!_uploadOpts) return;
+    if (chatBuffer.length > 0)
+      uploadChat(chatBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (pvpBuffer.length > 0)
+      uploadPvp(pvpBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (druzzilKillBuffer.length > 0)
+      uploadDruzzilKills(druzzilKillBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (_lockoutBuffer.length > 0)
+      uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
   }, 5000);
 }
 
@@ -1866,6 +1999,64 @@ function uploadChat(messages, { botUrl, token, dryRun }) {
       req.end();
     } catch { resolve(); }
   });
+}
+
+// Shared low-level HTTP POST helper for agent relay endpoints.
+function _agentPost(fullUrl, token, body) {
+  return new Promise((resolve) => {
+    try {
+      const u   = new URL(fullUrl);
+      const mod = u.protocol === 'https:' ? https : http;
+      const str = JSON.stringify(body);
+      const req = mod.request({
+        method:   'POST',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname + u.search,
+        headers: {
+          'Content-Type':   'application/json',
+          'Content-Length': Buffer.byteLength(str),
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          'User-Agent':     `wolfpack-logsync/${AGENT_VERSION}`,
+        },
+      }, res => { res.resume(); resolve(); });
+      req.on('error', () => resolve());
+      req.write(str);
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
+function uploadPvp(broadcasts, { botUrl, token, dryRun }) {
+  if (dryRun) {
+    for (const b of broadcasts)
+      console.log(`[pvp] ${b.killType === 'pvp' ? '⚔️' : '☠️'} ${b.text}`);
+    return Promise.resolve();
+  }
+  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/pvp'), token,
+    { agent_version: AGENT_VERSION, broadcasts });
+}
+
+function uploadDruzzilKills(kills, { botUrl, token, dryRun }) {
+  if (dryRun) {
+    for (const k of kills)
+      console.log(`[raid-kill] ${k.character} of <${k.guild}> killed ${k.boss} in ${k.zone}`);
+    return Promise.resolve();
+  }
+  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/bosskill'), token,
+    { agent_version: AGENT_VERSION, kills });
+}
+
+function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
+  // Attach the character name so the bot can store it as killedBy
+  const enriched = entries.map(e => ({ ...e, character: character || 'unknown' }));
+  if (dryRun) {
+    for (const e of enriched)
+      console.log(`[lockout] ${e.bossName}: ${Math.round(e.remainingMs / 3600000)}h remaining`);
+    return Promise.resolve();
+  }
+  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/lockout'), token,
+    { agent_version: AGENT_VERSION, entries: enriched });
 }
 
 // ── File watcher (tail mode) ────────────────────────────────────────────────
@@ -2071,11 +2262,32 @@ async function main() {
       const watched = stats.watchedLogs.find(w => w.logPath === b.logPath);
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
-        if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
-        // Capture guild/raid chat BEFORE passing to combat parser — these lines
-        // produce no combat events but are relayed to Discord channels.
+
+        // ── Special relay lines: checked BEFORE the combat filter ──────────
+        // These are NOT combat events and won't pass shouldKeep(), but we
+        // still want to capture and relay them to Discord.
+
+        // /sll lockout output → bot timer (Available entries silently skipped)
+        const lockoutEntry = parseSllLine(line);
+        if (lockoutEntry) { _lockoutBuffer.push({ ...lockoutEntry, character: b.character }); return; }
+        // Even if parseSllLine returned null we may have toggled _inLockoutSection;
+        // only bail early if we're inside a lockout block (line was consumed).
+        if (_inLockoutSection && /^\[.+?\]\s+==/i.test(line)) return;
+
+        // Druzzil Ro instance-kill announcement → boss timer + raid channel
+        const druzzilKill = parseDruzzilKill(line);
+        if (druzzilKill) { druzzilKillBuffer.push(druzzilKill); return; }
+
+        // PVP Druzzil Ro broadcast → PVP channel (with howl/backup logic in bot)
+        const pvpBcast = parsePvpBroadcast(line);
+        if (pvpBcast) { pvpBuffer.push(pvpBcast); return; }
+
+        // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
         if (chatMsg) { chatBuffer.push(chatMsg); return; }
+
+        // ── Normal combat filter ───────────────────────────────────────────
+        if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ts = parseEqTimestamp(line);
         const ev = parseEvent(line, ts);
         if (ev) b.builder.add(ev);

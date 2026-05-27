@@ -2204,6 +2204,263 @@ async function _handleAgentChat(req, res) {
   res.end(JSON.stringify({ ok: true, posted }));
 }
 
+// ── PVP broadcast relay ────────────────────────────────────────────────────
+// Receives PVP Druzzil Ro broadcasts from the agent and routes them to
+// PVP_CHANNEL_ID (or PVP_THREAD_ID).  Kill-type logic:
+//   pvp + killerGuild === Wolf Pack → celebratory post with Howl button
+//   pvp + victimGuild === Wolf Pack → backup alert with @PVP role ping
+//   npc (or other)                 → plain death notice
+const WP_GUILD_NAME = process.env.PVP_GUILD_NAME || 'Wolf Pack';
+
+async function _handleAgentPvp(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'pvp relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 64 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const broadcasts = Array.isArray(payload?.broadcasts) ? payload.broadcasts : [];
+  if (broadcasts.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, posted: 0 }));
+  }
+
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  if (!pvpTargetId) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, posted: 0, note: 'PVP_CHANNEL_ID unset' }));
+  }
+
+  const { buildHowlRow } = require('./commands/pvpalert');
+  const pvpRoleName = process.env.PVP_ROLE || 'PVP';
+
+  let posted = 0;
+  for (const b of broadcasts) {
+    const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
+    try {
+      const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
+      if (!ch) continue;
+
+      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME;  // WP member got a kill
+      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME;  // WP member died
+
+      let content;
+      if (isWpKill) {
+        // Celebrate — Wolf Pack got a PvP kill
+        content = `⚔️ **${killer}** of <${killerGuild}> killed **${victim}** of <${victimGuild}> in ${zone}! AWROOOO!`;
+      } else if (isWpDeath) {
+        // Request backup — Wolf Pack member was killed
+        const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
+        const mention = pvpRole ? `<@&${pvpRole.id}> ` : '';
+        content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
+      } else {
+        // NPC kill or other guild — plain notice
+        content = `☠️ ${text}`;
+      }
+
+      const sent = await ch.send({ content });
+
+      // Attach Howl button for player-vs-player kills only
+      if (killType === 'pvp') {
+        await sent.edit({ content, components: [buildHowlRow(sent.id)] });
+      }
+      posted++;
+    } catch (err) {
+      console.warn('[pvp-relay] failed to post:', err?.message);
+    }
+  }
+
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, posted }));
+}
+
+// ── Druzzil Ro boss-kill auto-timer ───────────────────────────────────────
+// Receives instance kill announcements from the agent.  For each:
+//   1. Match boss name against bosses.json (by name or nickname)
+//   2. Record kill + trigger full postKillUpdate refresh
+//   3. Post human-readable confirmation to RAID_CHAT_CHANNEL_ID with next-spawn time
+async function _handleAgentBossKill(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'boss-kill relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 64 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const kills = Array.isArray(payload?.kills) ? payload.kills : [];
+  if (kills.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, set: 0 }));
+  }
+
+  const { recordKill } = require('./utils/state');
+  const { postKillUpdate } = require('./utils/killops');
+  const { discordRelativeTime } = require('./utils/timer');
+  const channelId  = process.env.TIMER_CHANNEL_ID;
+  const raidChId   = process.env.RAID_CHAT_CHANNEL_ID;
+
+  let set = 0;
+  for (const kill of kills) {
+    const { character, guild, boss: bossName, zone, ts } = kill || {};
+    if (!bossName) continue;
+
+    delete require.cache[require.resolve('./data/bosses.json')];
+    const bosses = require('./data/bosses.json');
+    const nameLower = bossName.toLowerCase();
+    const boss = bosses.find(b =>
+      b.name.toLowerCase() === nameLower ||
+      (b.nicknames || []).some(n => n.toLowerCase() === nameLower)
+    );
+
+    const killedAt = ts ? Date.parse(ts) : Date.now();
+
+    if (boss) {
+      // Record kill and refresh all tracker cards
+      recordKill(boss.id, boss.timerHours, character, killedAt);
+      const nextSpawn = killedAt + boss.timerHours * 3600000;
+      if (channelId) {
+        postKillUpdate(client, channelId, boss.id).catch(e =>
+          console.warn('[bosskill] postKillUpdate error:', e?.message));
+      }
+      // Announce in raid channel with next-spawn time
+      if (raidChId) {
+        try {
+          const ch = await client.channels.fetch(raidChId).catch(() => null);
+          if (ch) {
+            await ch.send(
+              `⚔️ **${character}** of <${guild}> killed **${boss.name}** in ${zone} — ` +
+              `next spawn ${discordRelativeTime(nextSpawn)} ✅`
+            );
+          }
+        } catch (err) { console.warn('[bosskill] raid-channel post error:', err?.message); }
+      }
+      set++;
+    } else {
+      // Boss not in database — still post to raid channel as FYI
+      if (raidChId) {
+        try {
+          const ch = await client.channels.fetch(raidChId).catch(() => null);
+          if (ch) {
+            await ch.send(
+              `⚔️ **${character}** of <${guild}> killed **${bossName}** in ${zone} ` +
+              `*(not in timer database — use \`/addboss\` to add it)*`
+            );
+          }
+        } catch (err) { console.warn('[bosskill] raid-channel post error:', err?.message); }
+      }
+    }
+  }
+
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, set }));
+}
+
+// ── /sll lockout relay ─────────────────────────────────────────────────────
+// Receives parsed /sll output from the agent.  RULE: "Available" entries are
+// silently ignored — they mean THIS character has no lockout, but the guild
+// timer set from another character's kill is still authoritative.  Only active
+// lockout entries (with remaining time) are used to set/refine timers.
+async function _handleAgentLockout(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'lockout relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 64 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  // entries: [{ bossName, remainingMs, character }]
+  // "Available" entries are filtered out at the agent before sending — only
+  // active lockouts arrive here.
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+  if (entries.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, set: 0 }));
+  }
+
+  const { recordKill, getBossState, overrideTimer } = require('./utils/state');
+  const { postKillUpdate } = require('./utils/killops');
+  const channelId = process.env.TIMER_CHANNEL_ID;
+
+  let set = 0;
+  for (const entry of entries) {
+    const { bossName, remainingMs, character } = entry || {};
+    if (!bossName || typeof remainingMs !== 'number') continue;
+
+    delete require.cache[require.resolve('./data/bosses.json')];
+    const bosses    = require('./data/bosses.json');
+    const nameLower = bossName.toLowerCase();
+    const boss      = bosses.find(b =>
+      b.name.toLowerCase() === nameLower ||
+      (b.nicknames || []).some(n => n.toLowerCase() === nameLower)
+    );
+    if (!boss) continue;
+
+    const nextSpawn   = Date.now() + remainingMs;
+    const existing    = getBossState(boss.id);
+
+    if (existing) {
+      // Guild timer already running — only refine it if the lockout suggests
+      // the real spawn is LATER (i.e., our timer might be too early).
+      // Never move it earlier from a single character's lockout.
+      if (nextSpawn > existing.nextSpawn) {
+        overrideTimer(boss.id, nextSpawn);
+        if (channelId) postKillUpdate(client, channelId, boss.id).catch(() => {});
+        set++;
+      }
+      // If nextSpawn ≤ existing.nextSpawn: guild timer is already correct or
+      // more conservative — leave it alone.
+    } else {
+      // No guild timer at all — back-calculate a synthetic kill time and record it.
+      const killedAt = nextSpawn - boss.timerHours * 3600000;
+      recordKill(boss.id, boss.timerHours, character, killedAt);
+      if (channelId) postKillUpdate(client, channelId, boss.id).catch(() => {});
+      set++;
+    }
+  }
+
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, set }));
+}
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
@@ -2866,6 +3123,36 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentChat(req, res); }
     catch (err) {
       console.error('[chat-relay] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // PVP broadcast relay — posts PvP kills/deaths to PVP_CHANNEL_ID
+  if (req.method === 'POST' && req.url === '/api/agent/pvp') {
+    try { return await _handleAgentPvp(req, res); }
+    catch (err) {
+      console.error('[pvp-relay] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Druzzil Ro boss-kill relay — auto-sets spawn timers from instance kill announcements
+  if (req.method === 'POST' && req.url === '/api/agent/bosskill') {
+    try { return await _handleAgentBossKill(req, res); }
+    catch (err) {
+      console.error('[bosskill] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // /sll lockout relay — sets timers from active personal lockouts (never clears on "Available")
+  if (req.method === 'POST' && req.url === '/api/agent/lockout') {
+    try { return await _handleAgentLockout(req, res); }
+    catch (err) {
+      console.error('[lockout] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
