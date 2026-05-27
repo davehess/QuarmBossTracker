@@ -192,7 +192,7 @@ const DEFAULT_DROP_PATTERNS = [
   /\btells the group,\s*['"]/i,
   /^\[.+\]\s+You say to your group,/i,
 
-  // Note: guild chat (/g, "tells the guild") and raid chat (/r, "tells the raid") are
+  // Note: guild chat (/gu, "tells the guild") and raid chat (/rs, "tells the raid") are
   // intentionally NOT filtered here. These channels are shared among the whole guild
   // and are not private. Future versions may parse them for loot callouts, CH triggers, etc.
 
@@ -1783,7 +1783,7 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
 }
 
 // ── Guild / Raid chat relay ───────────────────────────────────────────────────
-// Guild (/g) and raid (/r) chat lines pass the shouldKeep filter (they are NOT
+// Guild (/gu) and raid (/rs) chat lines pass the shouldKeep filter (they are NOT
 // dropped) but produce no combat events. We capture them here, attach the /who
 // class+level decoration, and flush to the bot's /api/agent/chat endpoint every
 // 5 seconds so the bot can relay them to read-only Discord channels.
