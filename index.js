@@ -3298,6 +3298,15 @@ async function _handleAgentUpload(req, res) {
 
 http.createServer(async (req, res) => {
   // Agent upload endpoint
+  // Lightweight version probe — agents poll this every ~10 minutes to learn
+  // about new releases without needing to upload an encounter first.
+  if (req.method === 'GET' && req.url === '/api/agent/latest-version') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      latest_agent_version: process.env.LATEST_AGENT_VERSION || null,
+    }));
+  }
+
   if (req.method === 'POST' && req.url === '/api/agent/encounter') {
     try { return await _handleAgentUpload(req, res); }
     catch (err) {

@@ -1226,6 +1226,8 @@ const stats = {
   uploadCount:     0,
   uploadErrors:    0,
   updateAvailable:      false,      // true when server reports a newer agent version
+  latestAgentVersion:   null,       // the server-advertised version (e.g. '2.3.24')
+  latestVersionCheckedAt: null,     // last poll timestamp (ms)
   requestedCharacters:  [],         // characters the server needs for parse completeness
   lastUploadAt:    null,
   lifetime: {                     // persisted across restarts
@@ -1441,6 +1443,7 @@ function _serializeForDashboard() {
     uploadCount:        stats.uploadCount,
     uploadErrors:       stats.uploadErrors,
     updateAvailable:    stats.updateAvailable,
+    latestAgentVersion: stats.latestAgentVersion,
     requestedCharacters: stats.requestedCharacters,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
@@ -1514,8 +1517,24 @@ function renderHeader(s) {
   let h = '';
   if (s.updateAvailable) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
-  h += '<div>v' + esc(s.version) + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min</div>';
+  // Version line — inline diff when a newer version is available so users
+  // immediately see they're behind without needing to scroll or read the banner.
+  let versionStr;
+  if (s.updateAvailable && s.latestAgentVersion && s.latestAgentVersion !== s.version) {
+    versionStr = 'v' + esc(s.version) +
+                 ' <span style="color:var(--gold)">→ v' + esc(s.latestAgentVersion) + ' available</span>' +
+                 ' <a href="#" id="inlineUpdateBtn" style="color:var(--blue);margin-left:6px">[install]</a>';
+  } else {
+    versionStr = 'v' + esc(s.version);
+  }
+  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min</div>';
   document.getElementById('header').innerHTML = h;
+  // Inline [install] link mirrors the banner Install button
+  const inline = document.getElementById('inlineUpdateBtn');
+  if (inline) inline.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('updateBtn')?.click();
+  });
   const u = document.getElementById('updateBtn');
   if (u) u.addEventListener('click', async () => {
     if (!confirm('Update agent now? Session will be saved and resumed automatically.')) return;
@@ -2152,6 +2171,10 @@ function renderDashboard() {
   out.push(`${C.cyan}${C.bold}  Wolf Pack EQ - Parser (wolfpack-logsync)${C.reset}\n`);
   out.push(`${C.gray}  ------------------------------------------${C.reset}\n`);
   out.push(`  ${C.dim}Current version ${C.reset}${C.bold}${AGENT_VERSION}${C.reset}`);
+  // Inline new-version badge next to the current version
+  if (stats.updateAvailable && stats.latestAgentVersion && stats.latestAgentVersion !== AGENT_VERSION) {
+    out.push(`  ${C.bold}${C.yellow}→ v${stats.latestAgentVersion} available${C.reset} ${C.dim}([U] to install)${C.reset}`);
+  }
   if (stats.uploadCount) out.push(`   ${C.dim}| ${stats.uploadCount} upload${stats.uploadCount === 1 ? '' : 's'} this session${C.reset}`);
   if (stats._sessionRestoredBanner && stats._sessionRestoredAt
       && (Date.now() - stats._sessionRestoredAt) < 120_000) {
@@ -3176,8 +3199,12 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
           // Check if server is advertising a newer agent version
           try {
             const resp = JSON.parse(data);
-            if (resp.latest_agent_version && resp.latest_agent_version !== AGENT_VERSION) {
-              stats.updateAvailable = true;
+            if (resp.latest_agent_version) {
+              stats.latestAgentVersion    = resp.latest_agent_version;
+              stats.latestVersionCheckedAt = Date.now();
+              if (resp.latest_agent_version !== AGENT_VERSION) {
+                stats.updateAvailable = true;
+              }
             }
             if (Array.isArray(resp.requested_characters)) {
               stats.requestedCharacters = resp.requested_characters;
@@ -3520,6 +3547,48 @@ function uploadDruzzilKills(kills, { botUrl, token, dryRun }) {
     { agent_version: AGENT_VERSION, kills });
 }
 
+// Polls the bot for the latest agent version without needing an encounter
+// upload to surface the info. Called every ~10 min from main(). Idle agents
+// (raid not currently running) still learn about new releases promptly.
+function pollLatestVersion({ botUrl }) {
+  if (!botUrl) return;
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/latest-version');
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method: 'GET',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname + u.search,
+        headers:  { 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+        timeout:  5000,
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const resp = JSON.parse(data);
+            if (resp.latest_agent_version) {
+              stats.latestAgentVersion     = resp.latest_agent_version;
+              stats.latestVersionCheckedAt = Date.now();
+              if (resp.latest_agent_version !== AGENT_VERSION) {
+                stats.updateAvailable = true;
+              }
+              scheduleRender();
+            }
+            resolve();
+          } catch { resolve(); }
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
 function uploadHistoricalChat(messages, { botUrl, token, dryRun }) {
   if (dryRun) {
     console.log(`[historical-chat] ${messages.length} chat lines (dry-run)`);
@@ -3743,6 +3812,14 @@ async function main() {
   if (_sessionRestored) {
     stats._sessionRestoredBanner = true;
     stats._sessionRestoredAt     = Date.now();
+  }
+
+  // Version polling — reach out to the bot every 10 min so idle agents
+  // still learn about new releases promptly (without needing an encounter
+  // upload to surface latest_agent_version).
+  if (botUrl) {
+    pollLatestVersion({ botUrl });
+    setInterval(() => pollLatestVersion({ botUrl }), 10 * 60_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
