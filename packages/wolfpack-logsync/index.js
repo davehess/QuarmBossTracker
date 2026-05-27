@@ -634,14 +634,18 @@ class EncounterBuilder {
     this.targets    = new Map(); // defender → total damage dealt to it
     this.bossName   = null;
     // Defender stats: per-target tanking + accuracy data, scoped to this encounter.
-    // defenderStats[name] = { hits, damageTaken, dodges, parries, ripostes, blocks, misses, invulns }
-    // Keyed by exact name as it appears in the log. Tanks have many entries against
-    // them; NPCs being attacked also accumulate so we get DPS-side accuracy too.
+    // Per-defender shape:
+    //   { hits, damageTaken, misses, dodges, parries, ripostes, blocks, invulns,
+    //     ripostedFor }   // damage taken from ripostes specifically — high values
+    //                     // suggest a Knight tank would mitigate better
     this.defenderStats = new Map();
     // Healer totals: heal-source name → { healed, ticks, targets:Set<name> }
-    // Captured from "X has been healed by Y for N points" lines. Lets the
-    // server build heal leaderboards without re-scanning every event.
     this.healerStats   = new Map();
+    // Pending riposte: when X attacks Y and Y ripostes, the next damage event
+    // where Y attacks X within ~1.5s IS the riposte counter-hit. We tag it so
+    // the tank can see total damage-from-ripostes per fight.
+    //   key: `${attacker}→${defender}` → { ts: ms }
+    this.pendingRipostes = new Map();
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   _bumpDefender(name, key, amount) {
@@ -650,6 +654,7 @@ class EncounterBuilder {
       this.defenderStats.set(name, {
         hits: 0, damageTaken: 0,
         misses: 0, dodges: 0, parries: 0, ripostes: 0, blocks: 0, invulns: 0,
+        ripostedFor: 0,
       });
     }
     const s = this.defenderStats.get(name);
@@ -749,6 +754,38 @@ class EncounterBuilder {
                 : k === 'invulnerable' ? 'invulns'
                 : null;
       if (col) this._bumpDefender(def, col, 1);
+
+      // On a riposte, the defender is about to counter-attack the original attacker.
+      // Track that so we can credit the next damage event (def → attacker) as
+      // riposte damage. `event.attacker === null` is the first-person form
+      // ("You try to slash X, but X ripostes!") — normalise to the uploader.
+      if (k === 'riposte') {
+        const atkNorm = (event.attacker === null || /^you$/i.test(event.attacker || ''))
+          ? (this.character || 'You')
+          : event.attacker;
+        if (atkNorm) {
+          const key = `${def}→${atkNorm}`;
+          this.pendingRipostes.set(key, Date.parse(event.ts) || Date.now());
+        }
+      }
+    }
+
+    // Riposte damage credit — if this damage event matches a pending riposte
+    // (defender just riposted attacker), and it landed within ~1.5s, credit it
+    // to defenderStats[originalAttacker].ripostedFor. Lets a tank see how much
+    // damage they ate from boss ripostes — a key Knight-vs-Warrior tank metric.
+    if (event.type === 'damage' && event.attacker && event.defender && this.pendingRipostes.size) {
+      const atkNorm = /^you$/i.test(event.attacker) ? (this.character || 'You') : event.attacker;
+      const defNorm = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
+      const key = `${atkNorm}→${defNorm}`;
+      const ts  = this.pendingRipostes.get(key);
+      if (ts) {
+        const now = Date.parse(event.ts) || Date.now();
+        if (now - ts <= 1500) {
+          this._bumpDefender(defNorm, 'ripostedFor', event.amount || 0);
+        }
+        this.pendingRipostes.delete(key);  // consume
+      }
     }
     // Healer totals — every "X has been healed by Y for N" line. First-person
     // ("You heal X for N") would need a separate parseEvent pattern; for now we
