@@ -170,6 +170,25 @@ const BARD_SONGS = [
   { name: "Angstlich's Assonance",      baseTick: 45 },
 ];
 
+// ── Threat-procs catalog ───────────────────────────────────────────────────
+// When a damage event's ability is one of these named procs, the threat meter
+// uses the catalog hate value directly INSTEAD of the generic damage proxy.
+// Values are per-trigger hate; add more procs as the guild discovers them on
+// their weapons. Names are case-insensitive lookup keys.
+//
+// Sources:
+//   - "Bloodfrenzy" / "Blade of Carnage" warrior weapons → Enraging Blow @ 700
+//   - Taunt-on-proc lines → Provoke / Taunt-style effects
+//   - User-confirmed values from the Quarmy weapon-stats screenshot
+const PROC_HATE = {
+  'enraging blow':       700,   // warrior threat procs (Bloodfrenzy, BoC, etc.)
+  'provoke':             500,
+  'taunt':               500,
+  // Generic flat-hate weapon procs — add as observed
+  'shock of fear':       250,
+  'shock of dyn`leth':   250,
+};
+
 // ── Config ───────────────────────────────────────────────────────────────────
 // These regexes match RAW log lines that should never be parsed, much less
 // uploaded. Match-and-discard happens before any other processing.
@@ -737,11 +756,12 @@ class EncounterBuilder {
     const perPlayer = {};
     for (const [name, t] of this.threatBy) {
       perPlayer[name] = {
-        swing: Math.round(t.swing),
-        proc:  Math.round(t.proc),
-        spell: Math.round(t.spell),
-        heal:  Math.round(t.heal),
-        total: Math.round(t.swing + t.proc + t.spell + t.heal),
+        swing:      Math.round(t.swing),
+        proc:       Math.round(t.proc),
+        spell:      Math.round(t.spell),
+        heal:       Math.round(t.heal),
+        total:      Math.round(t.swing + t.proc + t.spell + t.heal),
+        procDetail: t.procDetail || {},   // { 'Enraging Blow': 4, ... }
       };
     }
     stats.currentEncounterThreat = {
@@ -888,14 +908,20 @@ class EncounterBuilder {
       // Skip NPC-on-NPC (multi-word attacker that isn't the uploader)
       if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         if (!this.threatBy.has(attacker)) {
-          this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0 });
+          this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
         }
         const t = this.threatBy.get(attacker);
         const a = (event.ability || '').toLowerCase();
-        if (MELEE_ABILITIES.has(a) || a === 'hit') {
+        // PROC_HATE catalog takes precedence — known threat procs use their
+        // flat hate value (e.g. Enraging Blow = 700 hate per trigger) rather
+        // than a damage-proxy. Also count occurrences for the breakdown.
+        if (a && PROC_HATE[a] !== undefined) {
+          t.proc += PROC_HATE[a];
+          t.procDetail[event.ability] = (t.procDetail[event.ability] || 0) + 1;
+        } else if (MELEE_ABILITIES.has(a) || a === 'hit') {
           t.swing += event.amount;                 // 1 hate per damage (proxy)
         } else if (a === 'non-melee' || a === 'dot' || a === '') {
-          t.proc  += event.amount * 1.3;           // procs / DS-style hate
+          t.proc  += event.amount * 1.3;           // unnamed procs / DS-style
         } else {
           t.spell += event.amount * 1.5;           // named spells / songs / dirges
         }
@@ -1719,14 +1745,19 @@ function renderTanks(s) {
     h += '<div class="card wide"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + '</h2>';
     h += '<div class="subtle">Per-source breakdown. Phase-2 will add Quarmy build links + theoretical TPS from weapon procs/haste.</div>';
     h += '<table style="margin-top:6px">' +
-         '<tr><th>Player</th><th>Total</th><th>Swing</th><th>Proc</th><th>Spell</th><th>Heal</th></tr>';
+         '<tr><th>Player</th><th>Total</th><th>Swing</th><th>Proc</th><th>Spell</th><th>Heal</th><th>Threat procs detected</th></tr>';
     for (const [name, t] of ranked) {
+      const procs = Object.entries(t.procDetail || {})
+        .sort((a, b) => b[1] - a[1])
+        .map(([n, c]) => esc(n) + ' ×' + c)
+        .join(' · ') || '<span class="dim">—</span>';
       h += '<tr><td class="name">' + esc(name) + '</td>' +
            '<td class="num"><b>' + fmtK(t.total) + '</b></td>' +
            '<td class="num">' + (t.swing ? fmtK(t.swing) : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.proc  ? fmtK(t.proc)  : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.spell ? fmtK(t.spell) : '<span class="dim">—</span>') + '</td>' +
-           '<td class="num">' + (t.heal  ? fmtK(t.heal)  : '<span class="dim">—</span>') + '</td></tr>';
+           '<td class="num">' + (t.heal  ? fmtK(t.heal)  : '<span class="dim">—</span>') + '</td>' +
+           '<td class="dim" style="font-size:11px">' + procs + '</td></tr>';
     }
     h += '</table></div>';
   }
