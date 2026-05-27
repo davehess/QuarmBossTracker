@@ -2221,11 +2221,16 @@ async function _handleAgentUpload(req, res) {
   for (const ev of encounter.events) {
     if (ev.type !== 'damage') continue;
     const rawAttacker = ev.attacker;
+    // Skip received-damage events. When rawAttacker=null AND defender=null (or defender="you"),
+    // the event is "You were hit by non-melee for N" — i.e. INCOMING damage, not outgoing.
+    // Without this guard, every incoming hit would be attributed to the character as outgoing
+    // DPS because rawAttacker=null gets rewritten to character below.
+    if (rawAttacker === null && !ev.defender) continue;
     // Re-attribute first-person (null) events to the uploading character
     const attacker = rawAttacker ?? character ?? null;
     if (!attacker) continue;
     if (/^Eye of /i.test(attacker)) continue;                                                    // skip Eye of X wizard/mage scout pets
-    if (ev.spell && /cannibali[sz]e/i.test(ev.spell) && rawAttacker === ev.target) continue;    // skip self-cannibalizes
+    if (ev.ability && /cannibali[sz]e/i.test(ev.ability) && rawAttacker === null) continue;     // skip self-cannibalizes (canni: first-person + ability name)
     const amount = ev.amount || 0;
     const owners = petLeaders[attacker.toLowerCase()];
     if (owners) {
@@ -2315,9 +2320,16 @@ async function _handleAgentUpload(req, res) {
         const existing  = getAgentTestCard(bossKey);
         const exStart   = existing?.encounterStartedAt || 0;
         const exEnd     = existing?.encounterEndedAt   || 0;
-        const overlaps  = existing && exStart > 0 && exEnd > 0
-                          && (startedMs < exEnd) && (endedMs > exStart);
-        const withinWindow = overlaps;
+        // Two encounters are the "same kill" if their time ranges OVERLAP (concurrent parsers)
+        // OR they are sequential kills of the same mob within 60s (back-to-back pulls in the
+        // same zone — e.g. grinding Shik`nar Workers one after another). In both cases we
+        // merge into the same parse card rather than posting a new one.
+        const overlaps    = existing && exStart > 0 && exEnd > 0
+                            && (startedMs < exEnd) && (endedMs > exStart);
+        const sequential  = existing && exStart > 0 && exEnd > 0
+                            && startedMs >= exEnd
+                            && (startedMs - exEnd) < 60_000;   // gap < 60s = same session
+        const withinWindow = overlaps || sequential;
 
         let mergedPlayers, perspectives, newDuration, newTotalDamage, newTotalDps;
 
@@ -2329,7 +2341,12 @@ async function _handleAgentUpload(req, res) {
             const cur = merged.get(k);
             if (!cur || p.damage > cur.damage) merged.set(k, { ...p });
           }
-          newDuration    = Math.max(existing.duration, duration);
+          // For concurrent parsers (overlapping), use the longest duration — they watched the
+          // same fight and the longer window is more accurate. For sequential kills (back-to-back
+          // pulls), sum the durations — they're separate fights whose totals should add up.
+          newDuration    = sequential && !overlaps
+            ? (existing.duration || 0) + duration
+            : Math.max(existing.duration, duration);
           // Recalculate DPS for all merged players against the longest known fight duration
           mergedPlayers  = [...merged.values()]
             .sort((a, b) => b.damage - a.damage)

@@ -476,6 +476,11 @@ function characterFromFilename(filepath) {
 // so /who output captured between encounters still ships with the next upload.
 const whoData = new Map(); // lowercaseName → { name, class, level, race, guild, anonymous, gm, observedAt }
 
+// Module-level pet owner tracker. Persists for the whole agent session so pet
+// declarations (which only fire once at summon / charm time) are never lost.
+// petNameLower → Set<ownerName>  (one-to-many: charm pets can cycle through owners)
+const knownPetOwners = new Map();
+
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
   // Skip level 1-4 characters — these are almost always traders parked in EC/WC.
@@ -524,6 +529,10 @@ class EncounterBuilder {
     // Pet leader declarations update the map but don't count as combat events
     if (event.type === 'pet_leader') {
       this.petLeaders[event.pet.toLowerCase()] = event.owner;
+      // Also update the session-wide dashboard tracker so [P] view stays current
+      const _pk = event.pet.toLowerCase();
+      if (!knownPetOwners.has(_pk)) knownPetOwners.set(_pk, new Set());
+      knownPetOwners.get(_pk).add(event.owner);
       return;
     }
 
@@ -820,8 +829,12 @@ function renderDashboard() {
   if (contributors.length === 0) {
     right.push(`  ${C.dim}(no damage yet)${C.reset}`);
   } else {
+    const _myChars = new Set(stats.watchedLogs.map(w => (w.character || '').toLowerCase()));
     for (const [name, dmg] of contributors) {
-      right.push(`  ${pad(name, 14)} ${C.bold}${fmtK(dmg)}${C.reset}`);
+      const _petEntry = knownPetOwners.get(name.toLowerCase());
+      const _isMyPet  = _petEntry && [..._petEntry].some(o => _myChars.has(o.toLowerCase()));
+      const _petTag   = _isMyPet ? ` ${C.dim}(my pet)${C.reset}` : '';
+      right.push(`  ${pad(name, 14)} ${C.bold}${fmtK(dmg)}${C.reset}${_petTag}`);
     }
   }
   right.push('');
@@ -871,7 +884,7 @@ function renderDashboard() {
   out.push(`  ${C.dim}/who unique:${C.reset}  ${C.bold}${whoData.size}${C.reset} characters observed this session ${C.dim}(lv5+ only)${C.reset}\n`);
   out.push('\n');
 
-  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}|${C.reset}  ${C.cyan}[T]${C.reset} New Token  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
+  out.push(`  ${C.cyan}[U]${C.reset} Updates  ${C.gray}|${C.reset}  ${C.cyan}[T]${C.reset} New Token  ${C.gray}|${C.reset}  ${C.cyan}[I]${C.reset} Info  ${C.gray}|${C.reset}  ${C.cyan}[P]${C.reset} Pets  ${C.gray}|${C.reset}  ${C.cyan}[Ctrl+C]${C.reset} Exit\n`);
   process.stdout.write(out.join(''));
 }
 
@@ -888,14 +901,14 @@ function scheduleRender() {
 //            shortcut relaunches us with the new agent code
 //   I / i  → flip into info view (next keypress returns to dashboard)
 //   Ctrl+C → exit cleanly
-let _viewMode = 'dashboard'; // 'dashboard' | 'info'
+let _viewMode = 'dashboard'; // 'dashboard' | 'info' | 'pets'
 function setupKeypressHandler() {
   if (!process.stdin.isTTY) return;
   try { process.stdin.setRawMode(true); } catch { return; }
   process.stdin.resume();
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (key) => {
-    if (_viewMode === 'info') {
+    if (_viewMode === 'info' || _viewMode === 'pets') {
       _viewMode = 'dashboard';
       renderDashboard();
       return;
@@ -932,6 +945,11 @@ function setupKeypressHandler() {
       process.stdout.write(ANSI.clear);
       showInfo();
     }
+    if (key === 'p' || key === 'P') {
+      _viewMode = 'pets';
+      process.stdout.write(ANSI.clear);
+      showPets();
+    }
   });
 }
 
@@ -943,8 +961,81 @@ function showInfo() {
   out.push(`  Uploads this session: ${stats.uploadCount} (${stats.uploadErrors} errors)\n`);
   out.push(`  Watched logs:  ${stats.watchedLogs.length}\n`);
   out.push(`  /who unique (lv5+, this session): ${whoData.size} characters\n`);
+  out.push(`  Known pets this session: ${knownPetOwners.size}\n`);
   out.push(`  Lifetime first seen: ${stats.lifetime.firstSeenAt}\n`);
   out.push(`\n  Press any key to return to the dashboard.\n`);
+  process.stdout.write(out.join(''));
+}
+
+function showPets() {
+  const out = [];
+  out.push(C.clear);
+  out.push(`${C.cyan}${C.bold}  Wolf Pack EQ - Pet Dashboard${C.reset}\n`);
+  out.push(`${C.gray}  ------------------------------------------${C.reset}\n\n`);
+
+  // Identify which characters are "mine" (being parsed by this agent instance)
+  const myChars = new Set(stats.watchedLogs.map(w => (w.character || '').toLowerCase()));
+
+  // Two-column layout: left = all known pets, right = "My pet" (owned by watched chars)
+  const LCOL = 44;
+  const left  = [];
+  const right = [];
+
+  left.push(`${C.bold}${C.yellow}All Pets This Session${C.reset}`);
+  right.push(`${C.bold}${C.yellow}My Pet${C.reset}`);
+
+  const sorted = [...knownPetOwners.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+  if (sorted.length === 0) {
+    left.push(`  ${C.dim}(no pet declarations seen yet)${C.reset}`);
+    left.push(`  ${C.dim}Pets declare via: PetName says,${C.reset}`);
+    left.push(`  ${C.dim}'My leader is OwnerName.'${C.reset}`);
+    right.push(`  ${C.dim}(waiting for a summon/charm)${C.reset}`);
+  }
+
+  for (const [petName, owners] of sorted) {
+    const ownerArr = [...owners];
+    const isMyPet  = ownerArr.some(o => myChars.has(o.toLowerCase()));
+    const marker   = isMyPet ? `${C.green}>${C.reset} ` : `  `;
+    const ownerStr = ownerArr.join(', ');
+    left.push(`${marker}${C.bold}${petName}${C.reset}`);
+    left.push(`    ${C.dim}owner: ${ownerStr}${C.reset}`);
+
+    if (isMyPet) {
+      const myOwners = ownerArr.filter(o => myChars.has(o.toLowerCase()));
+      // Show session damage for this pet if available
+      const petDmg = stats.sessionDamageBy[petName]
+        || stats.sessionDamageBy[petName.charAt(0).toUpperCase() + petName.slice(1)]
+        || 0;
+      right.push(`  ${C.green}${C.bold}${petName}${C.reset}`);
+      right.push(`  ${C.dim}owned by: ${C.reset}${myOwners.join(', ')}`);
+      if (petDmg > 0) {
+        right.push(`  ${C.dim}session dmg: ${C.reset}${C.bold}${fmtK(petDmg)}${C.reset}`);
+      } else {
+        right.push(`  ${C.dim}(no damage tracked yet)${C.reset}`);
+      }
+      right.push('');
+    }
+  }
+
+  if (sorted.length > 0 && right.length <= 1) {
+    right.push(`  ${C.dim}(none of the active pets belong${C.reset}`);
+    right.push(`  ${C.dim} to the characters in this session)${C.reset}`);
+  }
+
+  // Zip columns
+  const rows = Math.max(left.length, right.length);
+  for (let i = 0; i < rows; i++) {
+    const l = left[i]  || '';
+    const r = right[i] || '';
+    const lLen = l.replace(/\x1b\[[0-9;]*m/g, '').length;
+    out.push(`  ${l}${' '.repeat(Math.max(0, LCOL - lLen))}  ${r}\n`);
+  }
+
+  out.push(`\n`);
+  out.push(`  ${C.dim}Note: summon pets declare automatically. Charm pets (bard/enc)${C.reset}\n`);
+  out.push(`  ${C.dim}do NOT declare — their damage won't appear here or in parses.${C.reset}\n`);
+  out.push(`\n  ${C.cyan}[P]${C.reset} or any key → back to dashboard\n`);
   process.stdout.write(out.join(''));
 }
 
