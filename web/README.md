@@ -62,6 +62,39 @@ Once the domain is live, also set the Discord OAuth redirect URI to
 - Discord developer portal (your app → OAuth2 → Redirects)
 - Supabase Auth → Providers → Discord → Redirect URLs
 
+## Discord OAuth setup
+
+The site uses **Supabase Auth** with the **Discord provider**. End-to-end wiring:
+
+### 1. Discord Developer Portal
+
+1. Go to <https://discord.com/developers/applications> → pick the app you use for the bot (or create one).
+2. **OAuth2 → General**:
+   - Copy the **Client ID** and **Client Secret** (the secret may need to be reset if it isn't in your vault).
+   - **Redirects:** add `https://<your-project>.supabase.co/auth/v1/callback` (Supabase's own callback — the user never sees this URL).
+
+### 2. Supabase Dashboard
+
+1. Open the same project the bot uses → **Authentication → Providers**.
+2. Find **Discord** → toggle **Enable**.
+3. Paste the Client ID + Client Secret from step 1.
+4. Under **Site URL** (Authentication → URL Configuration) set `https://wolfpack.quest`.
+5. Under **Redirect URLs** add:
+   - `https://wolfpack.quest/auth/callback`
+   - `http://localhost:3000/auth/callback` (for local dev)
+6. Save.
+
+### 3. Verify
+
+1. Visit <https://wolfpack.quest/loadouts> while signed out — should redirect to `/auth/signin`.
+2. Click **Continue with Discord** → Discord consent → bounces back signed in.
+3. The header now shows your Discord avatar + a **Sign out** button.
+
+### Notes
+- Scopes requested: `identify` only (Discord ID + username + avatar). No DMs, no guild reads.
+- Guild-membership gating (only Wolf Pack members can sign in) is a follow-up; right now any Discord user can sign in but only members will have data joined to them downstream.
+- Sessions are HTTP-only cookies refreshed by `middleware.ts` on every request.
+
 ## Pages
 
 | Route        | What it does                                            | Status        |
@@ -73,7 +106,8 @@ Once the domain is live, also set the Discord OAuth redirect URI to
 
 ## Next milestones
 
-- [ ] Discord OAuth via Supabase Auth (gate `/loadouts` and `/parses` to guild members)
+- [x] Discord OAuth via Supabase Auth (gate `/loadouts` and `/parses`)
+- [ ] Guild-membership check on sign-in (currently any Discord user can sign in)
 - [ ] Agent → bot inventory upload endpoint + `character_inventories` table
 - [ ] Planner UI: 4-slot picker → DMG / Delay / proc / theoretical hate-per-min
 - [ ] Parse filters: by boss, by night, by raider

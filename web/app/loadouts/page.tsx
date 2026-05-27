@@ -10,7 +10,9 @@
 //
 // For now we render a placeholder showing the SHAPE of the data so the
 // page structure is reviewable end-to-end.
+import { redirect } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 
 // Sample query to validate the table chain — once inventories are uploading
 // this becomes the real source. For now it returns the schema-confirming
@@ -28,6 +30,9 @@ async function loadItemSamples() {
 export const dynamic = 'force-dynamic';
 
 export default async function LoadoutsPage() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect('/auth/signin?next=/loadouts');
+
   const { samples, error } = await loadItemSamples();
   return (
     <div className="space-y-6">

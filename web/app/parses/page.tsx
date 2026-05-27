@@ -4,7 +4,9 @@
 // The bot's existing utils/supabase.recordParse() writes per-encounter rows;
 // this page is the read-only browser for them. Filters come later — start
 // with a "last 20 parses" board to validate the column shapes.
+import { redirect } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 
 async function loadRecentParses() {
   // Probe a couple of candidate table names — the bot has migrated through
@@ -24,6 +26,9 @@ async function loadRecentParses() {
 export const dynamic = 'force-dynamic';
 
 export default async function ParsesPage() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect('/auth/signin?next=/parses');
+
   const { table, rows, error } = await loadRecentParses();
   return (
     <div className="space-y-6">

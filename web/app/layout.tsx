@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import Nav from '@/components/Nav';
+import AuthBadge from '@/components/AuthBadge';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://wolfpack.quest';
 
@@ -32,12 +33,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span aria-hidden>🐺</span>
               <span>Wolf Pack EQ — Tracker</span>
             </h1>
-            <Nav />
+            <div className="flex items-center gap-3">
+              <Nav />
+              <AuthBadge />
+            </div>
           </header>
           <main>{children}</main>
           <footer className="mt-12 text-xs text-dim">
             Data shared with the Discord bot via Supabase · the local agent dashboard
-            stays on <code>http://localhost:7777</code> for live in-raid stats.
+            lives at{' '}
+            <a
+              href="http://localhost:7777"
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue hover:underline"
+            >
+              http://localhost:7777
+            </a>{' '}
+            for live in-raid stats (only opens if your wolfpack-logsync agent is running).
           </footer>
         </div>
       </body>
