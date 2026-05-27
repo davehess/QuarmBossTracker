@@ -2339,13 +2339,69 @@ function parsePvpBroadcast(line) {
   };
 }
 
+// EQ in-game item links land in the log as `\x12<hex blob>\x12Item Name\x12`.
+// Quarm's blob format observed in the wild: 7 hex chars = <1 version><5 ID><1 flag>.
+// We extract the item ID and turn the link into a clickable PQDI markdown URL so
+// guildies see "[A Lucid Shard](pqdi)" in Discord instead of "0022194A Lucid Shard"
+// (which is what they'd see if Discord strips the 0x12 delimiters with no transform).
+//
+// Two passes:
+//   1. \x12-delimited form (raw from the EQ log)  →  markdown link
+//   2. Already-stripped form ("<hex run><Item Name>") in case the delimiters
+//      were lost upstream  →  markdown link
+//
+// Item names containing `[`, `]`, `(`, `)` are left alone — those chars would
+// corrupt markdown link syntax. EQ item names don't normally have them.
+const EQ_ITEM_LINK_RX = /\x12([0-9A-Fa-f]{5,})\x12([^\x12]+)\x12/g;
+
+// Discord-stripped fallback: exactly 7 UPPERCASE hex chars (Quarm's blob length)
+// immediately followed by an item-name-cased phrase. Item names start with an
+// optional article ("A "/"An "/"The ") then a Capital word, optionally followed
+// by more Capital words connected by short lowercase joiners ("of"/"the"/etc.).
+// Anchored to word boundaries to avoid matching plain numeric chat.
+const EQ_STRIPPED_LINK_RX = /\b([0-9A-F]{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
+
+function _extractItemId(blob) {
+  // Quarm format: <1-char version><5-char hex ID><...flags>.
+  // Some emulators omit the version byte (older format: <5-char ID><...>).
+  // If the first char looks like a version digit (0 or 1) and there's room
+  // for a full 5-char ID after it, skip past the version byte.
+  const startIdx = (blob[0] === '0' || blob[0] === '1') && blob.length >= 6 ? 1 : 0;
+  const id = parseInt(blob.slice(startIdx, startIdx + 5), 16);
+  if (!Number.isFinite(id) || id <= 0 || id > 999999) return null;
+  return id;
+}
+
+function transformEqItemLinks(text) {
+  if (!text) return text;
+  let out = text;
+  // Pass 1: raw EQ format with 0x12 delimiters
+  if (out.indexOf('\x12') !== -1) {
+    out = out.replace(EQ_ITEM_LINK_RX, (_, blob, name) => {
+      if (/[\[\]()]/.test(name)) return name;
+      const id = _extractItemId(blob);
+      return id ? `[${name}](https://www.pqdi.cc/item/${id})` : name;
+    }).replace(/\x12/g, '');
+  }
+  // Pass 2: Discord-stripped form (delimiters already lost). Only match when
+  // the hex blob length is in the typical link range (6-10) and the following
+  // text is item-name-cased. Reduces false positives on plain numeric chat.
+  out = out.replace(EQ_STRIPPED_LINK_RX, (match, blob, name) => {
+    if (/[\[\]()]/.test(name)) return match;
+    const id = _extractItemId(blob);
+    return id ? `[${name}](https://www.pqdi.cc/item/${id})` : match;
+  });
+  return out;
+}
+
 function parseChatLine(line, selfName) {
   for (const { rx, channel, self: isSelf } of CHAT_LINE_PATTERNS) {
     const m = line.match(rx);
     if (!m) continue;
     const ts      = parseEqTimestamp(line);
     const speaker = isSelf ? (selfName || 'You') : m[1];
-    const text    = isSelf ? m[1] : m[2];
+    const rawText = isSelf ? m[1] : m[2];
+    const text    = transformEqItemLinks(rawText);
     const who     = whoData.get(speaker.toLowerCase()) || null;
     return {
       channel,

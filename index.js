@@ -2214,6 +2214,37 @@ async function _handleAgentChat(req, res) {
       .trim();
   }
 
+  // EQ item link → PQDI markdown link. Handles both the raw \x12-delimited form
+  // and the Discord-stripped form (where 0x12 control chars were eaten upstream,
+  // leaving "0022194A Lucid Shard" — 7 hex chars then an item-cased name).
+  //
+  // The 7-char Quarm blob is <1 version><5 hex item ID><1 flag>. We slice past
+  // the version byte if it looks like 0/1, otherwise we read from offset 0.
+  const EQ_ITEM_LINK_RX     = /\x12([0-9A-Fa-f]{5,})\x12([^\x12]+)\x12/g;
+  const EQ_STRIPPED_LINK_RX = /\b([0-9A-F]{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
+  function _itemIdFromBlob(blob) {
+    const startIdx = (blob[0] === '0' || blob[0] === '1') && blob.length >= 6 ? 1 : 0;
+    const id = parseInt(blob.slice(startIdx, startIdx + 5), 16);
+    return (Number.isFinite(id) && id > 0 && id <= 999999) ? id : null;
+  }
+  function linkifyEqItems(text) {
+    if (!text) return text;
+    let out = text;
+    if (out.indexOf('\x12') !== -1) {
+      out = out.replace(EQ_ITEM_LINK_RX, (_, blob, name) => {
+        if (/[\[\]()]/.test(name)) return name;
+        const id = _itemIdFromBlob(blob);
+        return id ? `[${name}](https://www.pqdi.cc/item/${id})` : name;
+      }).replace(/\x12/g, '');
+    }
+    out = out.replace(EQ_STRIPPED_LINK_RX, (match, blob, name) => {
+      if (/[\[\]()]/.test(name)) return match;
+      const id = _itemIdFromBlob(blob);
+      return id ? `[${name}](https://www.pqdi.cc/item/${id})` : match;
+    });
+    return out;
+  }
+
   for (const msg of messages) {
     const { channel, speaker, text, ts: msgTs, who: uploadedWho } = msg || {};
     if (!channel || !speaker || !text) continue;
@@ -2249,7 +2280,11 @@ async function _handleAgentChat(req, res) {
       // Format matches Quarm's #ingame-general style:  "**Name** [60 Race Class]: message"
       // Both speaker name and text are sanitized — no @pings, no code-block injection.
       const safeSpeaker = sanitizeChatText(speaker).replace(/\*/g, '');  // strip bold markers from name
-      const safeText    = sanitizeChatText(text);
+      // Sanitize FIRST (strips control chars, pings) then linkify items.
+      // Order matters: if we linkified first the sanitizer's backslash-doubling
+      // could break our markdown URLs (URLs have no backslashes so this is just
+      // belt-and-suspenders).
+      const safeText    = linkifyEqItems(sanitizeChatText(text));
       await ch.send(`**${safeSpeaker}**${whoTag}: ${safeText}`);
       posted++;
     } catch (err) {
