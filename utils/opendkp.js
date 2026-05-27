@@ -133,16 +133,18 @@ async function _bearerHeaders(contentType = false) {
 }
 
 // GET /clients/{name}/characters — all characters
+// Uses Bearer auth (same as auction endpoints) — OPENDKP_CLIENT_ID not needed.
 async function getCharacters() {
-  const headers = await _writeHeaders();
+  const headers = await _bearerHeaders();
   return _get({ ..._clientUrl('/characters'), headers });
 }
 
 // PUT /clients/{name}/characters — create a new character
 // payload: { Name, Class, Race, Level, Active, Rank, ParentId }
 // Returns object with CharacterId on success.
+// Uses Bearer auth (same as auction endpoints) — OPENDKP_CLIENT_ID not needed.
 async function createCharacter(payload) {
-  const headers = await _writeHeaders();
+  const headers = await _bearerHeaders(true);
   const body    = JSON.stringify(payload);
   return _post({
     ..._clientUrl('/characters'),
