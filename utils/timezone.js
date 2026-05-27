@@ -172,7 +172,48 @@ function shortTimestampInTz(date, tz) {
   });
 }
 
+// ── Raid window detection ──────────────────────────────────────────────────
+// Wolf Pack EQ official raid windows: Sun / Wed / Thu  8:30–11:30 pm EST.
+// Used to tag encounter uploads with `is_raid_window` so analytics can scope
+// the guild's "official" stats separately from group runs and solo sessions.
+//
+//   RAID_DAYS: 0=Sun, 3=Wed, 4=Thu  (JS Date.getDay() values)
+//   Window: 20:30–23:30 in America/New_York (DST-aware via Intl.DateTimeFormat)
+const RAID_DAYS         = new Set([0, 3, 4]);  // Sun, Wed, Thu
+const RAID_WINDOW_START = 20 * 60 + 30;        // 20:30 in minutes from midnight
+const RAID_WINDOW_END   = 23 * 60 + 30;        // 23:30 in minutes from midnight
+
+/**
+ * Returns true if the given Unix-ms timestamp falls within the Wolf Pack EQ
+ * official raid window (Sun/Wed/Thu 8:30–11:30 pm Eastern time).
+ *
+ * @param {number} tsMs   Unix milliseconds (e.g. Date.now())
+ * @param {string} [tz]   Override timezone (default: America/New_York)
+ */
+function isInRaidWindow(tsMs, tz) {
+  tz = tz || 'America/New_York';
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday: 'short',   // "Sun" / "Mon" …
+    hour:    'numeric',
+    minute:  'numeric',
+    hour12:  false,
+  }).formatToParts(new Date(tsMs))
+    .reduce((a, { type, value }) => { a[type] = value; return a; }, {});
+
+  const DOW_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dow  = DOW_NAMES.indexOf(p.weekday);
+  if (dow === -1 || !RAID_DAYS.has(dow)) return false;
+
+  // hour12:false gives "24" for midnight in some locales; normalise
+  const h    = parseInt(p.hour)   % 24;
+  const m    = parseInt(p.minute) || 0;
+  const mins = h * 60 + m;
+  return mins >= RAID_WINDOW_START && mins < RAID_WINDOW_END;
+}
+
 module.exports = {
   getDefaultTz, msUntilMidnightInTz, nowPartsInTz, parseUserTime,
   formatInDefaultTz, shortTimestampInTz, localToUTC,
+  isInRaidWindow, RAID_DAYS, RAID_WINDOW_START, RAID_WINDOW_END,
 };

@@ -312,7 +312,21 @@ async function handleParseBreakdown(interaction) {
   return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
 }
 
-function buildParseEmbed(bossName, parsed, bossEmoji) {
+/**
+ * Build the parse embed.
+ *
+ * @param {string}   bossName
+ * @param {object}   parsed        { duration, totalDamage, totalDps, players }
+ * @param {string}   [bossEmoji]
+ * @param {object}   [extras]      { healers?, defenders?, isRaidWindow? }
+ *   healers:   [{ name, healed, ticks, targets }]  — from encounter.healers aggregate
+ *   defenders: [{ name, hits, damageTaken, misses, dodges, parries, ripostes,
+ *                 blocks, invulns, ripostedFor }]   — from encounter.defenders aggregate
+ *   isRaidWindow: bool — tag the footer with a 🎯 badge when this is an official night
+ */
+function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
+  const { healers, defenders, isRaidWindow } = extras;
+
   const hdr     = `${'#'.padStart(2)}  ${'Player'.padEnd(20)} ${'Damage'.padStart(7)}  ${'DPS'.padStart(7)}  Time`;
   const divider = '─'.repeat(hdr.length);
 
@@ -338,15 +352,65 @@ function buildParseEmbed(bossName, parsed, bossEmoji) {
   const classValue = classLines.join('\n') || '*No roster data — run `/rosterimport` to enable*';
 
   const title = ['📊', bossEmoji, bossName].filter(Boolean).join(' ');
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(0xe74c3c)
     .setTitle(title)
-    .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)}/s raid DPS`)
+    .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)}/s raid DPS${isRaidWindow ? '  🎯 *raid night*' : ''}`)
     .addFields(
       { name: '🏆 Top Classes', value: classValue, inline: false },
       { name: 'DPS Rankings',   value: wrap(rows),  inline: false },
     )
     .setTimestamp();
+
+  // ── 🩺 Healers section ────────────────────────────────────────────────────
+  // Rendered when healer data is present (requires uploader to be in the fight
+  // and their log must contain "X has been healed by Y for N" lines).
+  if (Array.isArray(healers) && healers.length > 0) {
+    const sorted = [...healers].sort((a, b) => b.healed - a.healed).slice(0, 10);
+    const healHdr  = `${'#'.padStart(2)}  ${'Healer'.padEnd(16)} ${'Total'.padStart(8)}  ${'Ticks'.padStart(5)}`;
+    const healDiv  = '─'.repeat(healHdr.length);
+    const healRows = sorted.map((h, i) => {
+      const name   = (h.name || '?').slice(0, 16).padEnd(16);
+      const total  = fmt(h.healed).padStart(8);
+      const ticks  = String(h.ticks || 0).padStart(5);
+      const extra  = (h.targets?.length > 0) ? `  → ${h.targets.slice(0, 3).join(', ')}` : '';
+      return `${String(i + 1).padStart(2)}. ${name} ${total}  ${ticks}${extra}`;
+    });
+    // Trim if too long for Discord field limit
+    const wrapH = (r) => '```\n' + [healHdr, healDiv, ...r].join('\n') + '\n```';
+    while (healRows.length > 0 && wrapH(healRows).length > 1024) healRows.pop();
+    embed.addFields({ name: '🩺 Healers', value: wrapH(healRows), inline: false });
+  }
+
+  // ── ⚔️ Riposte damage section ─────────────────────────────────────────────
+  // Only shown when at least one tank has measurable riposte damage. High values
+  // (≥10% of incoming) indicate a fight where a Knight (paladin/SK) would reduce
+  // damage from boss ripostes compared to a Warrior.
+  if (Array.isArray(defenders) && defenders.length > 0) {
+    const withRiposte = [...defenders]
+      .filter(d => (d.ripostedFor || 0) > 0)
+      .sort((a, b) => b.ripostedFor - a.ripostedFor);
+    if (withRiposte.length > 0) {
+      const riposteRows = withRiposte.slice(0, 4).map(d => {
+        const pct  = d.damageTaken > 0 ? Math.round(d.ripostedFor / d.damageTaken * 100) : 0;
+        const name = (d.name || '?').slice(0, 14).padEnd(14);
+        const dmg  = fmt(d.ripostedFor).padStart(8);
+        return `${name} ${dmg}  (${String(pct).padStart(2)}% of ${fmt(d.damageTaken)} incoming)`;
+      });
+      const topPct = withRiposte[0].damageTaken > 0
+        ? Math.round(withRiposte[0].ripostedFor / withRiposte[0].damageTaken * 100) : 0;
+      const knightNote = topPct >= 10
+        ? '\n> ⚔️ *High riposte %: a Knight tank would take less damage on this mob.*'
+        : '';
+      // Wrap only when there's no knightNote (adds to char count)
+      const riposteValue = '```\n' + riposteRows.join('\n') + '\n```' + knightNote;
+      if (riposteValue.length <= 1024) {
+        embed.addFields({ name: '🛡️ Riposte Damage', value: riposteValue, inline: false });
+      }
+    }
+  }
+
+  return embed;
 }
 
 /**

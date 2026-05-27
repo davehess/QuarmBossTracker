@@ -834,13 +834,44 @@ class EncounterBuilder {
       this.reset();
       return;
     }
+    // ── Raid window detection ──────────────────────────────────────────────
+    // Official Wolf Pack EQ raid nights: Sun/Wed/Thu 8:30–11:30 pm Eastern.
+    // Computed from the encounter's start timestamp so backfill uploads are also
+    // tagged correctly. The server stores this alongside parse entries so
+    // /parsestats and future /guildreport can scope "official raid stats".
+    const _raidDays = new Set([0, 3, 4]);          // 0=Sun 3=Wed 4=Thu (JS getDay)
+    const _raidStartMin = 20 * 60 + 30;            // 20:30 Eastern
+    const _raidEndMin   = 23 * 60 + 30;            // 23:30 Eastern
+    let isRaidWindow = false;
+    if (this.startedAt) {
+      try {
+        const _p = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+        }).formatToParts(new Date(this.startedAt))
+          .reduce((a, { type, value }) => { a[type] = value; return a; }, {});
+        const _DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const _dow = _DOW.indexOf(_p.weekday);
+        const _h   = parseInt(_p.hour)   % 24;
+        const _m   = parseInt(_p.minute) || 0;
+        if (_raidDays.has(_dow)) {
+          const _mins = _h * 60 + _m;
+          isRaidWindow = _mins >= _raidStartMin && _mins < _raidEndMin;
+        }
+      } catch { /* non-fatal — Intl not available in all envs */ }
+    }
+
     const payload = {
       agent_version: AGENT_VERSION,
       character:     this.character,
       encounter: {
-        started_at:  this.startedAt,
-        ended_at:    this.lastEvent,
-        boss_name:   this.bossName,
+        started_at:    this.startedAt,
+        ended_at:      this.lastEvent,
+        boss_name:     this.bossName,
+        // is_raid_window: true when the encounter falls inside an official guild raid
+        // night (Sun/Wed/Thu 8:30–11:30 pm Eastern). Server stores this with parse
+        // entries for /parsestats raid_only filtering and future /guildreport.
+        is_raid_window: isRaidWindow || undefined,
         // pet_leaders: { lowercasePetName: "OwnerName" } — used server-side to attribute
         // pet damage to the player owner. Empty object when no pets were detected.
         pet_leaders: Object.keys(this.petLeaders).length > 0 ? { ...this.petLeaders } : undefined,

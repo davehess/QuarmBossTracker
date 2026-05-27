@@ -2269,6 +2269,21 @@ async function _handleAgentUpload(req, res) {
   const totalDamage = players.reduce((s, p) => s + p.damage, 0);
   const totalDps    = duration > 0 ? Math.round(totalDamage / duration) : 0;
 
+  // ── Raid window tag ────────────────────────────────────────────────────────
+  // True when the encounter's start time falls within the official Wolf Pack EQ
+  // raid windows (Sun/Wed/Thu 8:30–11:30 pm Eastern). Stored with parse entries
+  // so /parsestats and future /guildreport can scope "official raid stats" vs
+  // casual group runs.
+  const { isInRaidWindow } = require('./utils/timezone');
+  const isRaidWindow = isInRaidWindow(startedMs);
+
+  // ── Healer and defender aggregation ───────────────────────────────────────
+  // The agent uploads per-encounter healer totals ({ name, healed, ticks, targets })
+  // and defender tanking stats ({ name, hits, damageTaken, ripostedFor, … }).
+  // Extract them here so we can merge across parsers and feed to the parse card.
+  const uploadedHealers   = Array.isArray(encounter.healers)   ? encounter.healers   : [];
+  const uploadedDefenders = Array.isArray(encounter.defenders) ? encounter.defenders : [];
+
   // ── Accumulate into active /raidnight session (all encounters, not just bosses) ──
   // sessionDamage lives inside raidSession in state.json — clears at midnight with the session.
   if (players.length > 0) {
@@ -2331,7 +2346,7 @@ async function _handleAgentUpload(req, res) {
                             && (startedMs - exEnd) < 60_000;   // gap < 60s = same session
         const withinWindow = overlaps || sequential;
 
-        let mergedPlayers, perspectives, newDuration, newTotalDamage, newTotalDps;
+        let mergedPlayers, mergedHealers, mergedDefenders, perspectives, newDuration, newTotalDamage, newTotalDps;
 
         if (withinWindow) {
           // Two distinct merge semantics:
@@ -2374,12 +2389,62 @@ async function _handleAgentUpload(req, res) {
           perspectives   = [...new Set([...existing.perspectives, character].filter(Boolean))];
           newTotalDamage = mergedPlayers.reduce((s, p) => s + p.damage, 0);
           newTotalDps    = newDuration > 0 ? Math.round(newTotalDamage / newDuration) : 0;
+
+          // ── Merge healers ──────────────────────────────────────────────────
+          // Overlapping parsers: each observer sees heals to DIFFERENT targets,
+          // so SUM is more accurate than MAX (two clerics CH-ing different players
+          // both show up). Sequential kills: also SUM (separate fights).
+          // We SUM in both cases; the only risk is double-counting from two
+          // parsers watching the exact same heal to the same target — acceptable
+          // for a first-cut display.
+          {
+            const hMap = new Map((existing.healers || []).map(h => [h.name.toLowerCase(), { ...h, targets: [...(h.targets || [])] }]));
+            for (const h of uploadedHealers) {
+              const k = (h.name || '').toLowerCase();
+              const cur = hMap.get(k);
+              if (cur) {
+                hMap.set(k, {
+                  ...cur,
+                  healed:  cur.healed + (h.healed || 0),
+                  ticks:   cur.ticks  + (h.ticks  || 0),
+                  targets: [...new Set([...cur.targets, ...(h.targets || [])])],
+                });
+              } else {
+                hMap.set(k, { ...h, targets: [...(h.targets || [])] });
+              }
+            }
+            mergedHealers = [...hMap.values()].sort((a, b) => b.healed - a.healed);
+          }
+
+          // ── Merge defenders ────────────────────────────────────────────────
+          // For riposte tracking: SUM ripostedFor across parsers (different
+          // parsers may see different riposte events, especially multi-perspective
+          // on a long fight). Also SUM hits and damageTaken.
+          {
+            const dMap = new Map((existing.defenders || []).map(d => [d.name.toLowerCase(), { ...d }]));
+            for (const d of uploadedDefenders) {
+              const k = (d.name || '').toLowerCase();
+              const cur = dMap.get(k);
+              if (cur) {
+                // Sum numeric fields — each perspective catches different events
+                const sumFields = ['hits','damageTaken','misses','dodges','parries','ripostes','blocks','invulns','ripostedFor'];
+                const merged2 = { ...cur };
+                for (const f of sumFields) merged2[f] = (cur[f] || 0) + (d[f] || 0);
+                dMap.set(k, merged2);
+              } else {
+                dMap.set(k, { ...d });
+              }
+            }
+            mergedDefenders = [...dMap.values()].sort((a, b) => b.damageTaken - a.damageTaken);
+          }
         } else {
-          mergedPlayers  = players;
-          perspectives   = character ? [character] : [];
-          newDuration    = duration;
-          newTotalDamage = totalDamage;
-          newTotalDps    = totalDps;
+          mergedPlayers   = players;
+          mergedHealers   = [...uploadedHealers];
+          mergedDefenders = [...uploadedDefenders];
+          perspectives    = character ? [character] : [];
+          newDuration     = duration;
+          newTotalDamage  = totalDamage;
+          newTotalDps     = totalDps;
         }
 
         const perspCount = perspectives.length;
@@ -2387,7 +2452,11 @@ async function _handleAgentUpload(req, res) {
         const perspNames = perspectives.join(', ') || '?';
 
         const parsed = { duration: newDuration, totalDamage: newTotalDamage, totalDps: newTotalDps, players: mergedPlayers };
-        const card   = buildParseEmbed(mobName, parsed, '🤖');
+        const card   = buildParseEmbed(mobName, parsed, '🤖', {
+          healers:      mergedHealers.length   > 0 ? mergedHealers   : undefined,
+          defenders:    mergedDefenders.length > 0 ? mergedDefenders : undefined,
+          isRaidWindow,
+        });
 
         // Append the fight's start time to the title so back-to-back kills of
         // the same mob ("a Shissar Revenant", "a Shissar Revenant") are
@@ -2423,41 +2492,40 @@ async function _handleAgentUpload(req, res) {
           card.setDescription((card.data.description || '') + warning);
         }
 
+        // Shared card state object (avoids duplication in the 3 setAgentTestCard paths)
+        const _cardState = (msgId, ts, sAt, eAt) => ({
+          messageId:          msgId,
+          timestamp:          ts,
+          encounterStartedAt: sAt,
+          encounterEndedAt:   eAt,
+          perspectives,
+          players:    mergedPlayers,
+          duration:   newDuration,
+          totalDamage: newTotalDamage,
+          // Persist healer + defender aggregates so future parsers merging
+          // into this card start with the accumulated totals.
+          healers:    mergedHealers.length   > 0 ? mergedHealers   : [],
+          defenders:  mergedDefenders.length > 0 ? mergedDefenders : [],
+        });
+
         if (withinWindow && existing.messageId) {
           try {
             const existingMsg = await testThread.messages.fetch(existing.messageId);
             await existingMsg.edit({ embeds: [card] });
-            setAgentTestCard(bossKey, {
-              messageId:          existing.messageId,
-              timestamp:          existing.timestamp, // keep original window start
-              // Extend the kill's time range to encompass both perspectives.
-              // A later parser joining mid-fight or an earlier one leaving
-              // early both contribute to widening the recognised window so
-              // a third late perspective still overlaps.
-              encounterStartedAt: Math.min(exStart, startedMs),
-              encounterEndedAt:   Math.max(exEnd, endedMs),
-              perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
-            });
+            setAgentTestCard(bossKey, _cardState(
+              existing.messageId,
+              existing.timestamp,           // keep original window start
+              Math.min(exStart, startedMs), // extend range to cover both perspectives
+              Math.max(exEnd, endedMs),
+            ));
           } catch {
             // Message gone — post fresh card
             const sent = await testThread.send({ embeds: [card] });
-            setAgentTestCard(bossKey, {
-              messageId:          sent.id,
-              timestamp:          Date.now(),
-              encounterStartedAt: startedMs,
-              encounterEndedAt:   endedMs,
-              perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
-            });
+            setAgentTestCard(bossKey, _cardState(sent.id, Date.now(), startedMs, endedMs));
           }
         } else {
           const sent = await testThread.send({ embeds: [card] });
-          setAgentTestCard(bossKey, {
-            messageId:          sent.id,
-            timestamp:          Date.now(),
-            encounterStartedAt: startedMs,
-            encounterEndedAt:   endedMs,
-            perspectives, players: mergedPlayers, duration: newDuration, totalDamage: newTotalDamage,
-          });
+          setAgentTestCard(bossKey, _cardState(sent.id, Date.now(), startedMs, endedMs));
         }
 
         // ── If contaminated, also retroactively warn on the prior card ────
@@ -2552,6 +2620,9 @@ async function _handleAgentUpload(req, res) {
           players,
           parseType:       'instance',
           source:          'wolfpack_agent',
+          // Tag whether this encounter fell inside an official raid window.
+          // Enables /parsestats raid_only:true filtering and future /guildreport.
+          is_raid_window:  isRaidWindow,
           discordMsgId:    null,
         };
 
