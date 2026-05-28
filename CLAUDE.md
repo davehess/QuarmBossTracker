@@ -627,11 +627,57 @@ Always `git merge <branch> -m "vX.Y.Z — short reason"` — never `--no-edit`. 
 - **`find_or_create_encounter` doesn't set `zone_short` on insert.** Existing rows were backfilled 2026-05-28 from `data/bosses.json` → `eqemu_zone`. New encounters still land with NULL until the RPC (or the bot's call site) is updated to pass zone through.
 - **EQEmu sync is incomplete:** `eqemu_npc_types.zone_short` is NULL for all 14k NPCs, and `eqemu_spawnentry` / `eqemu_spawn2` are empty. Fixing the sync would unlock zone derivation for non-boss NPCs (trash, named, etc.) without bosses.json fallback. Tracked at `scripts/sync-from-eqmac.js`.
 
+## Raid Schedule & Coverage Window
+
+Guild raids: **Sun / Wed / Thu, 8pm–midnight Eastern.** Any "should have been there"
+check (gap detection, missing-parse warnings, attendance reconciliation) should
+default to this window across each raid date. Anchor: the first recorded raid in
+`raid_nights` is the historical baseline.
+
+## Gap Detection Signals (design notes — UI not yet built)
+
+When asking "who should be in this parse but isn't?" — combine two signals:
+
+1. **`/tick` raid attendance** (OpenDKP `raids` API + `raid_nights` join). If a
+   character was ticked in for the slot containing the kill timestamp but has no
+   row in `encounter_players`, they're a candidate gap.
+2. **`/who` observations in the zone within the raid window.** Agent's `/who`
+   captures land in `state.json::whoData` (and Supabase if we ever extend the
+   ingest). A character seen in the kill's zone within ±10 min of `started_at`
+   but absent from `encounter_players` is a stronger candidate gap.
+
+Take the union, dedupe, sort by signal strength. Flag the rest as confident.
+
+## Historical Parse Recovery — Limitations of Old Chat Parses
+
+Before the `wolfpack-logsync` agent existed, the guild called out parses in
+`/gu` and `/rs` as text. Those messages live in `chat_messages` now (or will,
+once the agent's `--since` backfill processes them). We can mine them to fill
+out historical encounters, but the parse format itself has structural gaps —
+when merging chat-extracted parses into `encounter_players`, be aware:
+
+- **Captured well:** melee damage (tanks + melee DPS), some archery (a
+  Luclin/Velious-era thing), some nukes that hit hard enough to register.
+- **NOT captured:** DoT damage. EQ's DoTs tick server-side without a name
+  attribution that other players can see — the casting class is the only one
+  with full attribution. So necros, druids, shamans (any DoT-heavy class) will
+  show up with damage well below their actual contribution.
+- **Damage shields** attribute to the tank, not the DS caster (e.g., enchanter,
+  cleric, magician). Tank parses will be inflated by ~10–20% on heavy-DS fights.
+- **AoE / proc-heavy classes** (rogues, monks past Velious) parse cleanly because
+  the parser sees the swing line directly.
+
+Implication for the merge: keep `contributions.raw_parse->source` distinct
+(e.g. `eqlogparser_send_to_eq`, `local_agent_v1`, `chat_extracted`) so the UI can
+show a confidence indicator and so a future "true total" pass can prefer
+agent-source data when both exist for the same encounter.
+
 ## Long-term Roadmap (collect now, display later)
 
 Forward-looking ambitions that influence ingestion design but aren't ready to ship UI for:
 
 - **Guild timeline.** OpenDKP raid + loot history merged with our encounters and roster history → a single browsable record of "how the pack progressed." Items acquired by character, DKP spent per night and to whom, main swaps, alt promotions over the expansions. OpenDKP raid pagination already works (`utils/opendkp.js`); we just don't have a Supabase mirror or a UI yet.
+- **Chat → parse extraction.** Mine `chat_messages` for historical parse paste-ups (regex on the EQLogParser format) and merge them as `contributions` with `source='chat_extracted'` against the right encounter via `find_or_create_encounter`. Caveats above apply.
 - **Character path tracking.** Agent log verbosity is high enough that we can chart a character's zone-to-zone movement over months. Build the data pipeline (zone-change events tagged with character + timestamp), then a connection-map visualization that animates through time.
 - **Optimized long-haul storage.** Three years of agent data is a lot. Before path tracking and combat_events go full ingest, design tables that compress well (partitioning by month, columnar layouts, or moving cold data to a cheaper tier). The current `combat_events` schema is unoptimized — granular event stream is fine for tonight but will balloon over years.
 - **Parser install UX.** Two steps but they aren't obvious: install Node (handled) + enable EQ logging (`/log on` in-game OR `Logging=on` in `eqclient.ini`). Worth a short setup video and an in-parser detector that surfaces a banner when no `eqlog_*_pq.proj.txt` files exist or are stale.
