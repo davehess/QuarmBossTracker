@@ -2012,9 +2012,15 @@ function renderDash(s) {
     h += '<div><h3>' + title + '</h3>';
     if (!list?.length) h += '<div class="dim">(none yet)</div>';
     else for (const e of list) {
+      // Stash the dismiss key in a data-attribute (HTML-escape it via esc()
+      // so single quotes / brackets don't break the attribute). The click
+      // handler at the bottom of renderDash binds this up and calls
+      // dismissTopDamage(). Inline onclick='...' would have to thread JSON
+      // through TWO escape layers (template literal + HTML attribute) — too
+      // many ways to break.
       const dKey = JSON.stringify({ list: listKey, attacker: e.attacker, amount: e.amount });
       h += '<div style="display:flex;align-items:baseline;gap:6px">' +
-           '<button onclick=\'dismissTopDamage(' + dKey.replace(/'/g, '\\\'') + ')\' style="background:none;border:none;color:var(--dim);cursor:pointer;padding:0;font-size:11px;line-height:1;flex-shrink:0" title="Remove">✕</button>' +
+           '<button class="dismiss-td" data-key="' + esc(dKey) + '" style="background:none;border:none;color:var(--dim);cursor:pointer;padding:0;font-size:11px;line-height:1;flex-shrink:0" title="Remove">✕</button>' +
            '<span class="name">' + esc(e.attacker) + '</span> ' +
            '<span class="num">' + fmtK(e.amount) + '</span> ' +
            '<span class="dim">' + esc(e.label||'') + (e.ability ? ' — ' + esc(e.ability) : '') + '</span></div>';
@@ -2024,6 +2030,10 @@ function renderDash(s) {
   h += '</div></div>';
   h += '</div>';
   document.getElementById('dash').innerHTML = h;
+  // Wire dismiss buttons after innerHTML replaces the DOM
+  document.querySelectorAll('#dash .dismiss-td').forEach(b => b.addEventListener('click', () => {
+    try { dismissTopDamage(JSON.parse(b.dataset.key)); } catch {}
+  }));
 }
 
 function renderTanks(s) {
