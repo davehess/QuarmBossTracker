@@ -44,17 +44,36 @@ What started as a Discord raid-timer bot for Project Quarm is now a multi-system
 
 ## Scope Boundaries (read before changing related code)
 
-**Historical chat backfill: REMOVED FROM SCOPE.** Old EQ log files are backfilled for **boss combat + `/who` data only**. Guild/raid chat from older logs is *not* archived. Affected (treat as deprecated, do not extend):
-- `POST /api/agent/historical_chat` endpoint (`index.js`)
-- `data/historical_chat.jsonl`
-- `supabase/migrations/20260527000000_historical_chat.sql` + `chat_messages` table
-- `commands/chatstats.js`
-- Era-routing logic in `_handleAgentChat` (chat now posts directly to Discord; no era-thread subdivision)
-- `commands/initerathreads.js` (era threads no longer used)
+**Historical chat backfill — revised 2026-05-28: collection IS in scope, display is NOT.**
+Old EQ log files are backfilled for boss combat + `/who` data **and** guild/raid chat.
+Chat goes to Supabase (`chat_messages` table) for long-term timeline analysis. We
+deliberately do NOT replay old chat into Discord threads — there's no "era thread"
+view of historical chat anywhere. Live chat (`/api/agent/chat`) posts directly to
+the configured channels without era subdivision.
 
-These can be torn out in a follow-up commit; the scope boundary is documented for now.
+What this means for code:
+- `POST /api/agent/historical_chat` (`index.js`) — **kept**. Continues to ingest
+  old chat into `chat_messages`. Was tagged DEPRECATED in earlier revisions; that
+  tag is no longer accurate.
+- `data/historical_chat.jsonl` — local mirror still produced as a backup. Supabase
+  is the canonical store going forward.
+- `supabase/migrations/20260527000000_historical_chat.sql` + `chat_messages` table —
+  **kept and required**. (The original migration never applied in prod;
+  `20260528220000_historical_chat_recreate.sql` restored it with RLS hardening.)
+- `commands/chatstats.js` — **kept**. Useful for analyzing the collected corpus.
+- Era-thread routing in `_handleAgentChat` — **still deprecated**. Live chat
+  should post directly without era subdivision.
+- `commands/initerathreads.js` — **still deprecated** (no era threads needed).
 
 **PoP expansion: locked until `2026-10-01T00:00:00`** via `isPopLocked()` in `utils/config.js`. PoP boss buttons return ephemeral lock messages until then.
+
+**Zone resolution for encounters** — `eqemu_npc_types.zone_short` is NULL across the
+catalog because the weekly sync only pulls npc_types, not spawn data. As of
+2026-05-28, `encounters.zone_short` is backfilled from `data/bosses.json` →
+`eqemu_zone.long_name` lookup (113 boss → zone pairs, see
+`supabase/migrations/20260528210000_zone_short_backfill.sql`). `bosses_local`
+also gained a `zone_short` column. Future encounters still need the bot to set
+zone on insert — `find_or_create_encounter` currently leaves it NULL.
 
 ---
 
@@ -155,7 +174,7 @@ These can be torn out in a follow-up commit; the scope boundary is documented fo
 | `POST` | `/api/agent/pvp` | PvP kill/death broadcast to `PVP_CHANNEL_ID` with 5s dedup |
 | `POST` | `/api/agent/bosskill` | Druzzil Ro instance kill broadcasts → auto-sets timers |
 | `POST` | `/api/agent/lockout` | `/sll`-style lockout relay; never clears on "Available" |
-| `POST` | `/api/agent/historical_chat` | **DEPRECATED** — historical chat backfill (out of scope; see Scope Boundaries) |
+| `POST` | `/api/agent/historical_chat` | Historical `/gu` + `/rs` backfill from older logs → `chat_messages` table. Not displayed on Discord. |
 | `GET/POST` | `/` | Health check (`200 OK`) |
 
 Payload limits: chat 256KB, encounter upload 10MB. Returns `503` if `WOLFPACK_AGENT_TOKEN` unset.
@@ -318,7 +337,7 @@ Time formats: `"8:30 PM"`, `"Thursday 9pm"`, `"tomorrow 8pm"`, `"in 2 hours"`. R
 | `/raidbosshelp` | Command reference embed (ephemeral) |
 | `/ari` / `/autoraidinvite` / `/ariclear` | Auto-Raid-Invite character + password. No args = view (all). Set/clear = officer. Falls back to `ARI_DEFAULT_PASSWORD` |
 | `/token` | Show `WOLFPACK_AGENT_TOKEN` (ephemeral, role-gated) — for agent setup |
-| `/chatstats` | **DEPRECATED** — historical chat stats (out of scope; see Scope Boundaries) |
+| `/chatstats` | Streams `historical_chat.jsonl` (local mirror) for per-era counts. Cheap on multi-GB stores. Long-term: should read from Supabase `chat_messages` instead. |
 | `/initerathreads` | **DEPRECATED** — bootstrap era-partitioned chat threads (era subdivision out of scope) |
 
 ### Roles
@@ -424,7 +443,7 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
 | `audit_log` | Mirror of Discord audit thread |
 | `wolfpack_members` | Web OAuth user sync (discord_id, user_id, nickname, roles[], is_member) |
 | `wolfpack_roles` | Discord role catalog (role_id, name, color, position) |
-| `chat_messages` | **DEPRECATED** — historical chat (out of scope; see Scope Boundaries) |
+| `chat_messages` | Historical `/gu` + `/rs` chat archive (backfilled from old logs; service_role only) |
 | `patch_notes`, `officer_notes`, `travel_paths` | Various |
 
 ### RPC / views
@@ -605,6 +624,17 @@ Always `git merge <branch> -m "vX.Y.Z — short reason"` — never `--no-edit`. 
 - **`parseQuarmyWishlist`:** placeholder in `utils/loot.js`. Implement once Quarmy BIS page format confirmed.
 - **`LUCLIN_KEYS_SHEET_ID`:** env var reserved for future Lucid Shards tracker; `utils/sheets.js` is wired but no command consumes it yet.
 - **Era-thread chat routing** (`_handleAgentChat`): currently partitions by era; per scope boundary, will become direct post.
+- **`find_or_create_encounter` doesn't set `zone_short` on insert.** Existing rows were backfilled 2026-05-28 from `data/bosses.json` → `eqemu_zone`. New encounters still land with NULL until the RPC (or the bot's call site) is updated to pass zone through.
+- **EQEmu sync is incomplete:** `eqemu_npc_types.zone_short` is NULL for all 14k NPCs, and `eqemu_spawnentry` / `eqemu_spawn2` are empty. Fixing the sync would unlock zone derivation for non-boss NPCs (trash, named, etc.) without bosses.json fallback. Tracked at `scripts/sync-from-eqmac.js`.
+
+## Long-term Roadmap (collect now, display later)
+
+Forward-looking ambitions that influence ingestion design but aren't ready to ship UI for:
+
+- **Guild timeline.** OpenDKP raid + loot history merged with our encounters and roster history → a single browsable record of "how the pack progressed." Items acquired by character, DKP spent per night and to whom, main swaps, alt promotions over the expansions. OpenDKP raid pagination already works (`utils/opendkp.js`); we just don't have a Supabase mirror or a UI yet.
+- **Character path tracking.** Agent log verbosity is high enough that we can chart a character's zone-to-zone movement over months. Build the data pipeline (zone-change events tagged with character + timestamp), then a connection-map visualization that animates through time.
+- **Optimized long-haul storage.** Three years of agent data is a lot. Before path tracking and combat_events go full ingest, design tables that compress well (partitioning by month, columnar layouts, or moving cold data to a cheaper tier). The current `combat_events` schema is unoptimized — granular event stream is fine for tonight but will balloon over years.
+- **Parser install UX.** Two steps but they aren't obvious: install Node (handled) + enable EQ logging (`/log on` in-game OR `Logging=on` in `eqclient.ini`). Worth a short setup video and an in-parser detector that surfaces a banner when no `eqlog_*_pq.proj.txt` files exist or are stale.
 
 ---
 
