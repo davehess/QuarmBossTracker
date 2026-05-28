@@ -128,7 +128,11 @@ function _auctionRow(a) {
 
   // Pick the winning bid from Bids[]. Highest Value wins; ties go to the
   // earliest Date. Empty Bids[] → no winner (auction unawarded).
+  // Bid.User is the OpenDKP account login (not the character); Bid.CharacterId
+  // is the actual character the bid is for. Store both so the view can JOIN
+  // characters.opendkp_id and surface the real character name.
   let winner = null;
+  let winnerCharacterId = null;
   let bidAmount = null;
   const bids = Array.isArray(a.Bids) ? a.Bids
             : Array.isArray(a.bids) ? a.bids
@@ -144,8 +148,9 @@ function _auctionRow(a) {
       const tb = Date.parse(best?.Date || best?.date || best?.CreatedAt || '') || Infinity;
       return ta < tb ? b : best;
     }, bids[0]);
-    winner    = top?.User || top?.Name || top?.CharacterName || null;
-    bidAmount = Number.isFinite(Number(top?.Value)) ? Number(top.Value) : null;
+    winner            = top?.User || top?.Name || top?.CharacterName || null;
+    winnerCharacterId = Number.isFinite(Number(top?.CharacterId)) ? Number(top.CharacterId) : null;
+    bidAmount         = Number.isFinite(Number(top?.Value)) ? Number(top.Value) : null;
   }
 
   return {
@@ -154,6 +159,7 @@ function _auctionRow(a) {
     item_id:     Number.isFinite(Number(itemId)) ? Number(itemId) : null,
     item_name:   String(itemName),
     winner,
+    winner_character_id: winnerCharacterId,
     bid_amount:  bidAmount,
     auctioneer:  _lootField(a, 'Auctioneer', 'auctioneer') || null,
     notes:       _lootField(a, 'Notes', 'notes') || null,
@@ -177,13 +183,18 @@ function _bidsFromAuction(auctionId, a) {
   // Sort by Value desc for stable position numbering
   const sorted = [...bids].sort((x, y) => Number(y?.Value || 0) - Number(x?.Value || 0));
   return sorted.map((b, i) => {
-    const name = b?.User || b?.Name || b?.CharacterName;
-    if (!name) return null;
+    const userLogin = b?.User || b?.Name || b?.CharacterName;
+    if (!userLogin) return null;
     const valueRaw = b?.Value ?? b?.value;
+    const charId   = Number(b?.CharacterId);
     return {
       auction_id:     Number(auctionId),
       position:       i + 1,
-      character_name: String(name),
+      // character_name retained for legacy display compatibility; the actual
+      // character lookup happens via character_id → characters.opendkp_id.
+      character_name: String(userLogin),
+      user_login:     String(userLogin),
+      character_id:   Number.isFinite(charId) ? charId : null,
       rank:           b?.Rank || b?.rank || null,
       value:          Number.isFinite(Number(valueRaw)) ? Number(valueRaw) : null,
       bid_at:         b?.Date || b?.date || b?.CreatedAt || null,
