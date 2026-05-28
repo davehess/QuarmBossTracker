@@ -1278,6 +1278,18 @@ class EncounterBuilder {
       this.reset();
       return;
     }
+    // Skip encounters where the detected "boss" is actually a player, a known
+    // pet, or the uploader themselves. Pet reclaims/dismisses can trigger a
+    // death event with the pet as defender, which would otherwise post a
+    // bogus parse card naming the pet as the boss.
+    const _bnLower = this.bossName.toLowerCase();
+    const _isPet     = !!this.petLeaders[_bnLower] || knownPetOwners.has(_bnLower);
+    const _isPlayer  = isConfirmedPlayer(this.bossName);
+    const _isUploader = this.character && _bnLower === this.character.toLowerCase();
+    if (_isPet || _isPlayer || _isUploader) {
+      this.reset();
+      return;
+    }
     // ── Heal chain gap analysis ────────────────────────────────────────────
     // Identify stretches where the primary tank went >8s without a heal while
     // actively taking damage. CH chains should tick every 3-4s in Luclin; a gap
