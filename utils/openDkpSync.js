@@ -16,7 +16,7 @@
 // throw — a stuck raid shouldn't kill the whole sync.
 
 const supabase = require('./supabase');
-const { getRaids, getRaid } = require('./opendkp');
+const { getRaids, getRaid, getCharacters } = require('./opendkp');
 
 const PER_RUN_DETAIL_LIMIT = 50;   // max getRaid() calls per sync invocation
 
@@ -155,8 +155,23 @@ async function syncRaidDetail(raidId) {
 // opts.full = true forces detail fetch for every raid (use sparingly — only for
 // manual /syncopendkp).
 async function runSync(opts = {}) {
+  // Characters first — uses bearer auth, works even when OPENDKP_CLIENT_ID
+  // (the read-side base64 token) is missing. Independent of the raids flow
+  // so a CLIENT_ID outage still keeps the roster fresh.
+  const charResult = await syncCharacters().catch(err => ({ error: err?.message || String(err) }));
+
+  // Raids list — uses _readHeaders → requires OPENDKP_CLIENT_ID. If this
+  // fails we still surface the character sync result so the caller knows
+  // SOMETHING worked.
   const listResult = await syncRaidsList();
-  if (listResult.error) return { phase: 'list', ...listResult };
+  if (listResult.error) {
+    return {
+      phase: 'list',
+      ...listResult,
+      characters_upserted: charResult?.upserted ?? 0,
+      characters_error:    charResult?.error || null,
+    };
+  }
 
   // Pull the freshly-upserted raid list (oldest first so backfills land in
   // chronological order — the web app pages from newest to oldest, so newer
@@ -165,7 +180,15 @@ async function runSync(opts = {}) {
     'opendkp_raids',
     'select=raid_id,version&order=ts.desc'
   );
-  if (!Array.isArray(raids)) return { phase: 'list', ...listResult, detail_error: 'select raids failed' };
+  if (!Array.isArray(raids)) {
+    return {
+      phase: 'list',
+      ...listResult,
+      detail_error: 'select raids failed',
+      characters_upserted: charResult?.upserted ?? 0,
+      characters_error:    charResult?.error || null,
+    };
+  }
 
   const candidates = [];
   for (const r of raids) {
@@ -187,13 +210,78 @@ async function runSync(opts = {}) {
 
   return {
     phase: 'done',
-    raids_fetched:    listResult.fetched,
-    raids_upserted:   listResult.upserted,
-    detail_synced:    candidates.length,
-    detail_errors:    detailErrors,
+    raids_fetched:     listResult.fetched,
+    raids_upserted:    listResult.upserted,
+    detail_synced:     candidates.length,
+    detail_errors:     detailErrors,
     tick_rows_written: tickRowsWritten,
     loot_rows_written: lootRowsWritten,
+    characters_upserted: charResult?.upserted ?? 0,
+    characters_error:    charResult?.error || null,
   };
 }
 
-module.exports = { runSync, syncRaidsList, syncRaidDetail };
+// Pull the full OpenDKP character list and mirror into the characters table.
+// The OpenDKP roster is the canonical class/race/rank source — the web app
+// uses it directly rather than relying on the noisier who_observations table
+// which depends on someone running the agent in-zone.
+//
+// Uses bearer auth (getCharacters), so this works even if OPENDKP_CLIENT_ID
+// is unset on Railway (which is the current case).
+//
+// ParentId resolution: a character with ParentId == 0 is the family root
+// (main); otherwise ParentId points to the root's CharacterId. We build a
+// Map<CharacterId, Name> first so we can store main_name as the actual name,
+// not just an integer.
+async function syncCharacters() {
+  if (!supabase.isEnabled()) return { error: 'supabase disabled', upserted: 0 };
+  let chars;
+  try { chars = await getCharacters(); }
+  catch (err) { return { error: err?.message || String(err), upserted: 0 }; }
+  if (!Array.isArray(chars)) return { error: 'getCharacters returned non-array', upserted: 0 };
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const nowIso  = new Date().toISOString();
+
+  // Build CharacterId → Name map for ParentId resolution. Names can repeat
+  // across accounts in theory; we trust OpenDKP IDs for the lookup and only
+  // use names downstream.
+  const idToName = new Map();
+  for (const c of chars) {
+    if (c?.CharacterId && c?.Name) idToName.set(c.CharacterId, c.Name);
+  }
+
+  const rows = chars
+    .filter(c => c && c.Name && !c.Deleted)
+    .map(c => {
+      const isRoot = c.ParentId === 0 || c.ParentId == null;
+      const mainName = isRoot ? c.Name : (idToName.get(c.ParentId) || null);
+      return {
+        guild_id:   guildId,
+        name:       c.Name,
+        race:       c.Race  || null,
+        class:      c.Class || null,
+        rank:       c.Rank  || null,
+        main_name:  mainName,
+        opendkp_id: Number.isFinite(c.CharacterId) ? c.CharacterId : null,
+        active:     c.Active === 1 || c.Active === true,
+        updated_at: nowIso,
+      };
+    });
+
+  if (rows.length === 0) return { upserted: 0 };
+
+  // Batch in chunks so a huge guild roster doesn't single-shot a big PostgREST
+  // payload. 200/batch is well under PostgREST's limit and matches our other
+  // upsert helpers' implicit batching.
+  const BATCH = 200;
+  let upserted = 0;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const slice = rows.slice(i, i + BATCH);
+    const written = await supabase.upsert('characters', slice, 'guild_id,name');
+    if (Array.isArray(written)) upserted += written.length;
+  }
+  return { upserted };
+}
+
+module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters };

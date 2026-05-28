@@ -99,20 +99,22 @@ client.once(Events.ClientReady, async (readyClient) => {
 // block on completion — the helper does its own per-call error logging.
 const OPENDKP_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function startOpenDkpSync() {
-  // Skip entirely when OpenDKP creds aren't configured (e.g. dev environments).
-  // OPENDKP_EMAIL is the legacy name for OPENDKP_USERNAME — utils/opendkp.js
-  // accepts either, so we mirror that here.
-  const hasClientId = !!process.env.OPENDKP_CLIENT_ID;
+  // Cognito (bearer) creds gate the entire flow: without them, neither
+  // syncCharacters() nor syncRaidsList() can talk to OpenDKP. OPENDKP_CLIENT_ID
+  // gates only the raid-list read endpoints — if it's missing the raids sync
+  // no-ops with an error, but characters keep syncing fine (Bearer auth path).
   const hasUsername = !!(process.env.OPENDKP_USERNAME || process.env.OPENDKP_EMAIL);
   const hasPassword = !!process.env.OPENDKP_PASSWORD;
   const hasCognito  = !!process.env.OPENDKP_COGNITO_CLIENT_ID;
-  if (!hasClientId || !hasUsername || !hasPassword || !hasCognito) {
-    console.log('[opendkp-sync] skipped —',
-      'CLIENT_ID=' + (hasClientId ? 'set' : 'MISSING'),
+  if (!hasUsername || !hasPassword || !hasCognito) {
+    console.log('[opendkp-sync] skipped — missing Cognito creds:',
       'USERNAME/EMAIL=' + (hasUsername ? 'set' : 'MISSING'),
       'PASSWORD=' + (hasPassword ? 'set' : 'MISSING'),
       'COGNITO_CLIENT_ID=' + (hasCognito ? 'set' : 'MISSING'));
     return;
+  }
+  if (!process.env.OPENDKP_CLIENT_ID) {
+    console.log('[opendkp-sync] OPENDKP_CLIENT_ID empty — characters will sync, raids will not');
   }
   const { runSync } = require('./utils/openDkpSync');
   setTimeout(() => {

@@ -30,27 +30,37 @@ async function load(name: string) {
     const sb = supabaseAdmin();
     const decoded = decodeURIComponent(name);
 
-    // 1. /who observations — class/race/level/guild. Take latest non-null fields.
+    // 1. Class/race/rank from the OpenDKP roster mirror (characters table).
+    // We fall back to who_observations only for level + guild_name, which
+    // the roster doesn't carry.
+    const { data: charRows } = await sb
+      .from('characters')
+      .select('name, class, race, rank, main_name, active')
+      .ilike('name', decoded)
+      .limit(1);
+    const char = (charRows && charRows[0]) || null;
+
+    // Level + guild come from who_observations (the agent's /who captures);
+    // ignore class/race here since the roster is authoritative.
     const { data: whoRows } = await sb
       .from('who_observations')
-      .select('character, class, race, level, guild_name, observed_at')
+      .select('character, level, guild_name, observed_at')
       .ilike('character', decoded)
       .order('observed_at', { ascending: false })
       .limit(20);
-    const who: WhoObs | null = (() => {
-      const merged: Partial<WhoObs> & { character?: string; observed_at?: string } = {};
-      for (const r of (whoRows ?? []) as WhoObs[]) {
-        if (!merged.character) merged.character = r.character;
-        if (!merged.observed_at) merged.observed_at = r.observed_at;
-        if (!merged.class && r.class) merged.class = r.class;
-        if (!merged.race  && r.race)  merged.race  = r.race;
-        if (merged.level == null && r.level != null) merged.level = r.level;
-        if (!merged.guild_name && r.guild_name) merged.guild_name = r.guild_name;
-      }
-      return merged.character ? (merged as WhoObs) : null;
-    })();
+    const observedLevel = ((whoRows ?? []) as { level: number | null }[]).find(r => r.level != null)?.level ?? null;
+    const observedGuild = ((whoRows ?? []) as { guild_name: string | null }[]).find(r => r.guild_name)?.guild_name ?? null;
 
-    const displayName = who?.character || decoded;
+    const who: WhoObs | null = (char || observedLevel || observedGuild) ? {
+      character:  char?.name || decoded,
+      class:      char?.class || null,
+      race:       char?.race  || null,
+      level:      observedLevel,
+      guild_name: observedGuild,
+      observed_at: new Date().toISOString(),
+    } : null;
+
+    const displayName = char?.name || decoded;
 
     // 2. Parses — every encounter_players row, joined to its encounter for boss/zone/time.
     const { data: parseRowsRaw } = await sb
@@ -83,7 +93,14 @@ async function load(name: string) {
 
     return { displayName, who, parses, loot, attendance, error: null as string | null };
   } catch (err: unknown) {
-    return { error: err instanceof Error ? err.message : String(err) };
+    return {
+      displayName: '',
+      who: null as WhoObs | null,
+      parses: [] as ParseRow[],
+      loot: [] as LootRow[],
+      attendance: null as AttendanceRow | null,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

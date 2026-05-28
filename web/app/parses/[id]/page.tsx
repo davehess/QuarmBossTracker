@@ -99,24 +99,19 @@ async function load(id: string) {
       .eq('raid_date', date)
       .order('dkp', { ascending: false });
 
-    // Pull class info for the players in this encounter so the tank-perspective
-    // block can spot warriors/paladins/SKs.
+    // Class lookup comes from the OpenDKP roster mirror (characters table) —
+    // the authoritative source. who_observations is too noisy and depends on
+    // someone actually /who'ing the character in-zone. We include all players
+    // in the encounter so the damage table and the by-class roll-up resolve
+    // class consistently.
     const charNames = (encTyped.encounter_players ?? []).map(p => p.character_name);
-    let whoRows: WhoObs[] = [];
+    let charRows: { name: string; class: string | null; race: string | null; rank: string | null }[] = [];
     if (charNames.length > 0) {
       const { data } = await sb
-        .from('who_observations')
-        .select('character, class, level')
-        .in('character', charNames)
-        .not('class', 'is', null)
-        .order('observed_at', { ascending: false })
-        .limit(charNames.length * 3); // a few observations per character
-      // Latest non-null class wins
-      const map = new Map<string, WhoObs>();
-      for (const r of (data ?? []) as WhoObs[]) {
-        if (!map.has(r.character)) map.set(r.character, r);
-      }
-      whoRows = [...map.values()];
+        .from('characters')
+        .select('name, class, race, rank')
+        .in('name', charNames);
+      charRows = (data ?? []) as typeof charRows;
     }
 
     return {
@@ -124,7 +119,7 @@ async function load(id: string) {
       contribs: (contribs ?? []) as Contribution[],
       zones,
       loot: (lootRows ?? []) as LootRow[],
-      whoMap: new Map(whoRows.map(w => [w.character.toLowerCase(), w])),
+      whoMap: new Map(charRows.map(c => [c.name.toLowerCase(), { character: c.name, class: c.class, race: c.race, level: null }])),
       date,
       error: null as string | null,
     };
