@@ -1022,9 +1022,11 @@ class EncounterBuilder {
     try { recordEventForDashboard(event, this.character); } catch {}
     try { this._publishLiveThreat(); } catch {}
 
-    // Track damage dealt TO targets — but exclude "YOU" / "you" so player-received
-    // damage never inflates a player-name into appearing to be the primary target.
-    if (event.type === 'damage' && event.defender && !/^you$/i.test(event.defender)) {
+    // Track damage dealt TO targets — exclude "YOU" / "you" and confirmed players
+    // so PvP hits never inflate a player-name into appearing to be the primary target.
+    if (event.type === 'damage' && event.defender
+        && !/^you$/i.test(event.defender)
+        && !isConfirmedPlayer(event.defender)) {
       this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
     }
 
@@ -1037,8 +1039,15 @@ class EncounterBuilder {
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
         ? (this.character || 'You')
         : rawAtk;
+      // Skip player-on-player damage (direct PvP or charm mechanics):
+      //   • Named confirmed player as defender: "PlayerA hits PlayerB for N"
+      //   • Uploader as defender AND attacker is a 3rd-party confirmed player:
+      //     charmed raid member hits the log uploader
+      const pvpHit =
+        (event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender)) ||
+        (/^you$/i.test(event.defender || '') && rawAtk !== null && isConfirmedPlayer(attacker));
       // Skip NPC-on-NPC (multi-word attacker that isn't the uploader)
-      if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+      if (!pvpHit && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         if (!this.threatBy.has(attacker)) {
           this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
         }
@@ -1071,7 +1080,9 @@ class EncounterBuilder {
     // looking at the player's prior 1 second of activity (heuristic).
     if (event.type === 'critical' && event.attacker && event.amount > 0) {
       const attacker = /^you$/i.test(event.attacker) ? (this.character || 'You') : event.attacker;
-      if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+      // Skip crits against other players (PvP / charm) same as damage events
+      const critOnPlayer = event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender);
+      if (!critOnPlayer && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         this._bumpDeeps(attacker, 'crit', event.amount, null);
       }
     }
