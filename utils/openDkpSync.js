@@ -19,6 +19,7 @@ const supabase = require('./supabase');
 const { getRaids, getRaid, getCharacters } = require('./opendkp');
 
 const PER_RUN_DETAIL_LIMIT = 50;   // max getRaid() calls per sync invocation
+let _loggedLootShape = false;      // one-shot diagnostic for unknown response shape
 
 // Normalize the OpenDKP raid summary into the opendkp_raids row shape.
 function _raidSummaryRow(r) {
@@ -71,16 +72,35 @@ function _tickRow(raidId, tick) {
   };
 }
 
+// Defensive against field-name variation across OpenDKP versions. Confirmed
+// from the web UI (raid 96400, 2026-05-28): rows have Item, ItemID, DKP,
+// Character, Notes columns. Underlying API field names not yet confirmed via
+// raw response — we try the common variants until one of them gives us a
+// non-null name + winner pair.
+function _lootField(item, ...names) {
+  for (const n of names) {
+    if (item && item[n] != null && item[n] !== '') return item[n];
+  }
+  return null;
+}
+
 function _lootRow(raidId, item) {
-  if (!item || !item.CharacterName || !item.ItemName) return null;
+  if (!item) return null;
+  const itemName = _lootField(item, 'ItemName', 'Name', 'item_name', 'item');
+  const charName = _lootField(item, 'CharacterName', 'Character', 'WinnerName', 'Winner',
+                               'character_name', 'character', 'winner');
+  const dkpRaw   = _lootField(item, 'Dkp', 'DKP', 'DkpSpent', 'Value', 'dkp', 'dkp_spent');
+  const itemId   = _lootField(item, 'ItemId', 'ItemID', 'item_id');
+  const gameItemId = _lootField(item, 'GameItemId', 'GameItem', 'game_item_id') ?? itemId;
+  if (!itemName || !charName) return null;
   return {
     raid_id:        raidId,
-    item_id:        item.ItemId      ?? null,
-    game_item_id:   item.GameItemId  ?? item.ItemId ?? null,
-    item_name:      item.ItemName,
-    character_name: item.CharacterName,
-    dkp:            Number.isFinite(item.Dkp) ? item.Dkp : 0,
-    notes:          item.Notes || null,
+    item_id:        Number.isFinite(itemId) ? itemId : null,
+    game_item_id:   Number.isFinite(gameItemId) ? gameItemId : null,
+    item_name:      String(itemName),
+    character_name: String(charName),
+    dkp:            Number.isFinite(dkpRaw) ? dkpRaw : 0,
+    notes:          _lootField(item, 'Notes', 'notes') || null,
     fetched_at:     new Date().toISOString(),
   };
 }
@@ -138,8 +158,36 @@ async function syncRaidDetail(raidId) {
     await supabase.upsert('opendkp_raids', [summaryRow], 'raid_id');
   }
 
-  const tickRows = (full.Ticks || []).map(t => _tickRow(full.RaidId, t)).filter(Boolean);
-  const lootRows = (full.Items || []).map(i => _lootRow(full.RaidId, i)).filter(Boolean);
+  // Look for items in multiple possible places — the API's field name for
+  // the loot array hasn't been confirmed against a raw response. Web UI
+  // shows columns Item/ItemID/DKP/Character/Notes but doesn't reveal the
+  // wire format.
+  const itemsArray = (() => {
+    for (const key of ['Items', 'items', 'Loot', 'loot', 'Awards', 'awards', 'RaidItems']) {
+      if (Array.isArray(full[key])) return full[key];
+    }
+    return [];
+  })();
+
+  // One-shot diagnostic: when the response has neither Items NOR Loot at
+  // any of the expected names, log the top-level keys so we can see what
+  // the actual shape is. The first raid_id to trip this logs once; we
+  // throttle further raids in the same run via a module-level flag below.
+  if (itemsArray.length === 0 && !_loggedLootShape) {
+    _loggedLootShape = true;
+    const keys = Object.keys(full || {}).filter(k => typeof full[k] !== 'function');
+    console.log(`[opendkp-sync] raid ${raidId}: no items at expected keys. Top-level response keys:`,
+      keys.join(', '));
+    // Sample first 200 chars of full payload (redact-safe — these are raid
+    // metadata, no creds).
+    try {
+      const sample = JSON.stringify(full).slice(0, 600);
+      console.log(`[opendkp-sync] raid ${raidId} sample:`, sample);
+    } catch {}
+  }
+
+  const tickRows = (full.Ticks || full.ticks || []).map(t => _tickRow(full.RaidId, t)).filter(Boolean);
+  const lootRows = itemsArray.map(i => _lootRow(full.RaidId, i)).filter(Boolean);
 
   let tickWritten = 0, lootWritten = 0;
   if (tickRows.length > 0) {
