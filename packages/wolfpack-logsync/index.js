@@ -1825,10 +1825,12 @@ tr:hover td { background:#1f242c }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
-.nav { display:flex; gap:6px; margin:12px 0; flex-wrap:wrap; }
+.nav { display:flex; gap:6px; margin:12px 0; flex-wrap:wrap; align-items:center; }
 .nav button { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12px; }
 .nav button:hover { background:#30363d }
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
+.nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
+.nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
 .banner { padding:8px 12px; border-radius:6px; margin:0 0 10px 0; font-size:13px; }
 .banner.update { background:#9e6a03; color:#fff }
@@ -1849,6 +1851,9 @@ tr:hover td { background:#1f242c }
   <button data-tab="pets">Pets</button>
   <button data-tab="info">Info / Stats</button>
   <button data-tab="optin">Opt-in Logs</button>
+  <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
+     class="nav-quest"
+     title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
 </div>
 <div id="dash" class="section active"></div>
 <div id="tanks" class="section"></div>
@@ -2538,6 +2543,17 @@ refresh(); setInterval(refresh, 2000);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
 
+// W (lowercase or uppercase) opens wolfpack.quest in a new tab. Ignored when
+// the user is typing into an input/textarea so it doesn't hijack normal typing.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'w' && e.key !== 'W') return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const tag = (e.target?.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+  e.preventDefault();
+  document.getElementById('wolfpackQuestLink')?.click();
+});
+
 async function dismissTopDamage(key) {
   try {
     await fetch('/api/topdamage/dismiss', { method: 'POST',
@@ -3165,6 +3181,16 @@ function setupKeypressHandler() {
     if (key === 'i' || key === 'I') _enterView('info',    showInfo);
     if (key === 'p' || key === 'P') _enterView('pets',    showPets);
     if (key === 'o' || key === 'O') _enterView('optin',   showOptIn);
+    // W = open wolfpack.quest in the default browser. Available from any view
+    // since it's a shortcut to leave the terminal and look at the web app.
+    if (key === 'w' || key === 'W') {
+      const url = process.env.WOLFPACK_WEB_URL || 'https://wolfpack.quest';
+      const cmd = process.platform === 'win32' ? `start "" "${url}"`
+                : process.platform === 'darwin' ? `open "${url}"`
+                : `xdg-open "${url}"`;
+      try { require('child_process').exec(cmd); } catch {}
+      process.stdout.write(`${ANSI.dim}\n  Opening ${url} in your browser...${ANSI.reset}\n`);
+    }
     // [B] — detach into a background service and exit this window. The new
     // process runs hidden (no cmd.exe window on Windows) and opens the web
     // dashboard. Re-opening parser.bat will detect the running service and
