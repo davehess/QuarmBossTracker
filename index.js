@@ -2756,6 +2756,96 @@ async function _handleAgentLockout(req, res) {
 // each post a fresh card.
 const _liveCards = new Map();
 
+// GET /api/agent/incomplete-encounters?characters=Hitya,Statlander[&limit=20]
+//
+// Returns the list of encounters flagged data_incomplete that include any of
+// the queried characters in encounter_players. Sorted newest-first. The agent
+// dashboard uses the first entry's boss name for the banner copy and the
+// total count for the "and N more" tail.
+//
+// Multiple characters per call so an agent with several builders (one EQ
+// account running multiple toons) gets all relevant encounters in one round
+// trip. Case-insensitive match.
+async function _handleAgentIncomplete(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const url   = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const raw   = url.searchParams.get('characters') || url.searchParams.get('character') || '';
+  const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10) || 20));
+
+  const characters = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (characters.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ incomplete: [], total: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ incomplete: [], total: 0, note: 'supabase disabled' }));
+  }
+
+  // Find encounter_player rows for the queried characters (case-insensitive)
+  // joined to encounters where data_incomplete=true. PostgREST doesn't have
+  // a built-in case-insensitive IN, so we pass an `in.(...)` with all the
+  // case variants we expect — practically the names from EQ are canonical
+  // and stable, so a plain `in.()` is enough.
+  const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
+  const rows = await supabase.select(
+    'encounter_players',
+    'select=character_name,encounter_id,encounters!inner(id,started_at,data_incomplete,data_incomplete_reason,data_incomplete_at,eqemu_npc_types(name))' +
+    `&character_name=in.${encodeURIComponent(inList)}` +
+    '&encounters.data_incomplete=eq.true' +
+    `&order=encounters(started_at).desc&limit=${limit * characters.length}`,
+  );
+
+  if (!Array.isArray(rows)) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ incomplete: [], total: 0 }));
+  }
+
+  // Dedup by encounter_id (one character might match multiple encounters and
+  // multiple characters might match the same encounter).
+  const seen = new Map();
+  for (const r of rows) {
+    const e = r.encounters;
+    if (!e || !e.data_incomplete) continue;
+    const id = e.id;
+    if (seen.has(id)) {
+      seen.get(id).characters.push(r.character_name);
+      continue;
+    }
+    seen.set(id, {
+      encounter_id: id,
+      started_at:   e.started_at,
+      boss_name:    e.eqemu_npc_types?.name || null,
+      reason:       e.data_incomplete_reason || null,
+      flagged_at:   e.data_incomplete_at || null,
+      characters:   [r.character_name],
+    });
+  }
+
+  const list = [...seen.values()]
+    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+    .slice(0, limit);
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    incomplete: list,
+    total: seen.size,
+    queried_characters: characters,
+  }));
+}
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
@@ -3475,6 +3565,19 @@ http.createServer(async (req, res) => {
     return res.end(JSON.stringify({
       latest_agent_version: _currentAgentVersion(),
     }));
+  }
+
+  // Incomplete-encounter list — agent polls this per logged-in character to
+  // decide whether to show the "we need your logs" banner. Returns the set
+  // of encounters flagged data_incomplete that the queried character was in.
+  // Bearer-auth gated like the other agent endpoints.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/incomplete-encounters')) {
+    try { return await _handleAgentIncomplete(req, res); }
+    catch (err) {
+      console.error('[incomplete] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
   }
 
   if (req.method === 'POST' && req.url === '/api/agent/encounter') {
