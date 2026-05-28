@@ -587,9 +587,9 @@ function parseEvent(line, ts) {
   // "You attempt to taunt Lord Nagafen."  — attempt (always logged, even if resisted)
   // "You have taunted Lord Nagafen."      — success confirmation (some server variants)
   m = line.match(/\]\s+You attempt to taunt (.+?)\./i);
-  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1] };
+  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1], success: false };
   m = line.match(/\]\s+You have taunted (.+?)\./i);
-  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1] };
+  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1], success: true };
 
   // ── Stun skill (Warrior/Paladin combat ability, non-damage) ──────────────
   // "You have stunned Lord Nagafen."  /  "You stun Lord Nagafen."
@@ -859,7 +859,12 @@ class EncounterBuilder {
 
   _publishLiveThreat() {
     if (this.threatBy.size === 0) {
-      stats.currentEncounterThreat = null;
+      // Keep the last fight's threat visible for 2 min as a stale read-back.
+      const et = stats.currentEncounterThreat;
+      if (et && et.flushedAt && Date.now() - et.flushedAt > 120_000) {
+        stats.currentEncounterThreat = null;
+      }
+      // else: leave stale data in place (flushedAt set by flush())
       return;
     }
     const perPlayer = {};
@@ -870,12 +875,13 @@ class EncounterBuilder {
         spell:      Math.round(t.spell),
         heal:       Math.round(t.heal),
         total:      Math.round(t.swing + t.proc + t.spell + t.heal),
-        procDetail: t.procDetail || {},   // { 'Enraging Blow': 4, ... }
+        procDetail: t.procDetail || {},
       };
     }
     stats.currentEncounterThreat = {
       bossName:  this.bossName,
       startedAt: this.startedAt,
+      flushedAt: null,
       perPlayer,
     };
   }
@@ -1093,19 +1099,29 @@ class EncounterBuilder {
       }
     }
 
-    // Taunt/stun — non-damage flat hate credited to the uploader's character.
-    // These skill uses never appear as damage events so the damage-proxy above
-    // would miss them entirely; handle them here and fold into the proc bucket
-    // so they show up in the "proc X.XXK" breakdown and the procDetail column.
+    // Taunt/stun — non-damage hate credited to the uploader's character.
+    // Successful taunt ("You have taunted X") places the taunter at top threat +1,
+    // matching real EQ aggro mechanics. Failed attempts use a flat 500 proxy.
     if ((event.type === 'taunt' || event.type === 'stun') && this.character) {
       const attacker = this.character;
       if (!this.threatBy.has(attacker)) {
         this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
       }
       const t = this.threatBy.get(attacker);
-      t.proc += PROC_HATE[event.type] || 0;
       const label = event.type === 'taunt' ? 'Taunt' : 'Stun';
       t.procDetail[label] = (t.procDetail[label] || 0) + 1;
+      if (event.type === 'taunt' && event.success) {
+        // Set taunter to current max threat across all players + 1
+        let maxThreat = 0;
+        for (const [, ot] of this.threatBy) {
+          const tot = ot.swing + ot.proc + ot.spell + ot.heal;
+          if (tot > maxThreat) maxThreat = tot;
+        }
+        const current = t.swing + t.proc + t.spell + t.heal;
+        t.proc += Math.max(1, maxThreat + 1 - current);
+      } else {
+        t.proc += PROC_HATE[event.type] || 0;
+      }
     }
 
     // Per-defender stats — feeds tanking analytics (avoidance %, damage taken,
@@ -1229,10 +1245,10 @@ class EncounterBuilder {
     }
   }
   tickIdle(now) {
-    // If we've been silent for >60s and have events, flush
+    // If we've been silent for >120s and have events, flush
     if (this.events.length && this.lastEvent) {
       const last = new Date(this.lastEvent).getTime();
-      if (now - last > 60_000) this.flush();
+      if (now - last > 120_000) this.flush();
     }
   }
   flush() {
@@ -1252,6 +1268,13 @@ class EncounterBuilder {
     }
     // No identifiable target = nothing useful to upload (all-heal or background noise)
     if (!this.bossName) {
+      this.reset();
+      return;
+    }
+    // Skip encounters where the detected boss is a player pet (beastlord eye
+    // warders, clockwork eyes, familiar eyes, etc.). These are owned familiars
+    // that should never generate parse cards.
+    if (/^eye\s+of\s+/i.test(this.bossName)) {
       this.reset();
       return;
     }
@@ -1452,6 +1475,11 @@ class EncounterBuilder {
     }
 
     this.onFlush(payload);
+    // Stamp the live-threat snapshot so the dashboard can show stale data
+    // for ~2 min after a fight ends rather than blanking the Threat panel immediately.
+    if (stats.currentEncounterThreat) {
+      stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
+    }
     this.reset();
   }
 }
@@ -1939,7 +1967,8 @@ function renderDash(s) {
       .sort((a, b) => b[1].total - a[1].total)
       .slice(0, 12);
     const topT = ranked[0]?.[1].total || 1;
-    h += '<div class="card wide"><h2>⚔️ Live Threat — ' + esc(et.bossName || 'current fight') + '</h2>';
+    const staleLabel = et.flushedAt ? ' <span style="color:var(--dim);font-size:12px;font-weight:normal">(ended ' + fmtAgo(et.flushedAt) + ')</span>' : '';
+    h += '<div class="card wide"><h2>⚔️ Live Threat — ' + esc(et.bossName || 'current fight') + staleLabel + '</h2>';
     h += '<div class="subtle">Estimated from observable damage + heals (Phase 1 proxy). Real spell/proc hate tables not yet wired up.</div>';
     h += '<table style="margin-top:6px"><tr><th></th><th>Player</th><th>Threat</th><th style="width:40%">Bar</th><th>Breakdown</th></tr>';
     for (let i = 0; i < ranked.length; i++) {
@@ -1992,7 +2021,8 @@ function renderTanks(s) {
   const et = s.currentEncounterThreat;
   if (et && et.perPlayer && Object.keys(et.perPlayer).length > 0) {
     const ranked = Object.entries(et.perPlayer).sort((a, b) => b[1].total - a[1].total);
-    h += '<div class="card wide"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + '</h2>';
+    const staleLabel2 = et.flushedAt ? ' <span style="color:var(--dim);font-size:12px;font-weight:normal">(ended ' + fmtAgo(et.flushedAt) + ')</span>' : '';
+    h += '<div class="card wide"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + staleLabel2 + '</h2>';
     h += '<div class="subtle">Per-source breakdown. Phase-2 will add Quarmy build links + theoretical TPS from weapon procs/haste.</div>';
     h += '<table style="margin-top:6px">' +
          '<tr><th>Player</th><th>Total</th><th>Swing</th><th>Proc</th><th>Spell</th><th>Heal</th><th>Threat procs detected</th></tr>';
