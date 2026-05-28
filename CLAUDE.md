@@ -641,34 +641,51 @@ Three different "who is this" questions, three different sources — don't mix t
 
 | Question | Source | Commands that use it |
 |---|---|---|
-| "Is this a Wolf Pack member?" (active or inactive) | OpenDKP roster (`utils/roster.js` — `getCharacter`, `getAllNames`, `getActiveRoster`, `getInactiveRoster`) | `/who`, `/whoall`, `/quarmy`, `/register`, `/dkp`, `/wishlist`, `/tick` |
+| "Is this a Wolf Pack member?" | **Union of two sources** (see "Guild membership" below) | `/dkp`, `/wishlist`, `/tick`, future gap detection |
+| "Is this character in our roster at all?" | OpenDKP roster (`utils/roster.js` — `getCharacter`, `getAllNames`). Broader — includes Recruits, Members, Inactive, and Pack Members who aren't on the raid team. | `/who`, `/whoall`, `/quarmy`, `/register` |
 | "Have we ever seen this character anywhere?" | OpenDKP roster + agent `/who` observations (`state.whoData` + `who_observations` table) | `/whois` only |
-| "Who was eligible to be in last night's raid?" | Same as the first row — Wolf Pack roster (active + inactive). NOT `who_observations`, NOT `encounter_players`. | Gap detection (when built), attendance reconciliation, "missing from parse" warnings |
 
-Why this matters: `who_observations` contains anyone the agent ever `/who`'d —
-including PUGs, random players in zones we cleared through, opposing raid forces,
-and people in `/anon`. If "who was in the raid" used `who_observations` as the
-eligibility list, gap detection would flag every passing stranger as a "missing
-Wolf Pack member." The roster is the canonical guild member list.
+### Guild membership — the canonical predicate
+
+A character counts as a Wolf Pack member iff **either** is true:
+
+1. **Discord side:** the character's linked Discord user (via `characters.discord_id` →
+   `wolfpack_members.discord_id`) has the **`Pack Member`** Discord role *or any
+   role above it* — currently `Pack Member` (pos 39), `Raid Recruit` (40),
+   `Raid Pack` (41), `Officer` (42), `Pack Leader` (43). Role IDs and positions
+   live in `wolfpack_roles` (synced every 6h).
+2. **OpenDKP side:** the character's rank is **`Raid Pack`** or higher — i.e.
+   `Raid Pack`, `Pack Leader`, or `Officer` in `utils/roster.js::RANK_PRIORITY`.
+   Lower OpenDKP ranks (`Recruit`, `Member`, `Inactive`) **do not** confer
+   membership on their own.
+
+The asymmetry is intentional: the Discord bar is broader (anyone who got the
+Pack Member role for being in the guild socially), while OpenDKP `Raid Pack+` is
+narrower (people on the actual raid team). The union covers gaps where a
+character lives in only one system — a long-time raider who's not in Discord, or
+a new member with the role but no OpenDKP entry yet.
+
+Gap detection / attendance UI should evaluate this predicate per character, not
+fall back to "every name in the OpenDKP roster" — that would flag retired alts,
+trial recruits, etc. as missing raiders.
 
 ## Gap Detection Signals (design notes — UI not yet built)
 
-**Candidate pool:** the Wolf Pack roster (active + inactive) — same source `/who`
-uses. Per the table above.
+**Candidate pool:** characters where the guild-membership predicate above is true.
 
-When asking "which roster members should be in this parse but aren't?" — combine
+When asking "which guild members should be in this parse but aren't?" — combine
 two signals:
 
 1. **`/tick` raid attendance** (OpenDKP `raids` API + `raid_nights` join). If a
-   roster character was ticked in for the slot containing the kill timestamp but
-   has no row in `encounter_players`, they're a candidate gap.
+   member was ticked in for the slot containing the kill timestamp but has no
+   row in `encounter_players`, they're a candidate gap.
 2. **`/who` observations in the zone within the raid window** (`who_observations`
-   table). A roster character seen in the kill's zone within ±10 min of
-   `started_at` but absent from `encounter_players` is a stronger candidate gap.
+   table). A member seen in the kill's zone within ±10 min of `started_at` but
+   absent from `encounter_players` is a stronger candidate gap.
 
 Take the union, dedupe, sort by signal strength. Flag the rest as confident.
 
-Non-roster characters who appear in `encounter_players` or `who_observations`
+Non-member characters who appear in `encounter_players` or `who_observations`
 are informational only — log them, don't flag them as missing.
 
 ## Historical Parse Recovery — Limitations of Old Chat Parses
