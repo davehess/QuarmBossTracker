@@ -15,29 +15,17 @@ let _instructionsMsgId  = null;
 // ── Changelog — new commands/features per version ─────────────────────────────
 const CHANGELOGS = {
   '1.0.0': [
-    '`/parse <data>` — submit an EQLogParser DPS parse after a kill (auto-detects boss)',
-    '`/parseboss <boss> <data>` — submit a parse with explicit boss selection',
-    '`/parsestats <boss>` — DPS scoreboard and raid metrics for a boss across all kills',
-    '`/parseaoe <data>` — submit an AoE parse (combines within a 5-minute window)',
-    '`/parsenight [public]` — full-night DPS summary across every kill tonight',
-    '`/raidnight` — open tonight\'s raid parse thread with a live rolling scoreboard',
+    '`/kill <boss>` — log a kill and start the respawn timer',
+    '`/timers [zone] [filter]` — view all spawn timers by zone or status',
+    '`/announce` — schedule a raid with a thread and Discord event',
   ],
   '1.0.1': [
     '`/onboarding` — show the welcome message again, or toggle your opt-out preference',
   ],
-  '1.0.2': [
-    '`/parsenight <data>` — submit a Combined EQLogParser string for a full-night DPS summary',
-    '`/parseaoe <data>` — now accepts the Combined (N): multi-mob format in addition to single-mob parses',
-  ],
-  '1.0.3': [
-    '`/parse` and `/parseaoe` now automatically post results to active raid/event threads',
-  ],
   '1.1.0': [
-    'Parse embeds now show a **Top Classes** breakdown (damage, DPS, avg combat seconds) using roster class data',
-    '`/rosterimport <file>` — import the OpenDKP roster JSON export to update the character database (Officers only)',
+    '`/rosterimport <file>` — import the OpenDKP roster JSON export (Officers only)',
     '`/who <name>` — look up a character\'s class and main/alt status (ephemeral)',
     '`/whoall <name>` — view a character\'s full family tree (main + alts) (ephemeral)',
-    'Every parse message now has a **📊 Full Breakdown** button for a private class + player breakdown',
   ],
 };
 
@@ -155,18 +143,6 @@ function buildInstructionsEmbed() {
         inline: false,
       },
       {
-        name: '📊 Parse Tracking',
-        value: [
-          '`/parse <data>` — Submit an EQLogParser DPS parse (boss auto-detected)',
-          '`/parseboss <boss> <data>` — Submit a parse with explicit boss',
-          '`/parsestats <boss>` — DPS scoreboard for a boss across all kills',
-          '`/parseaoe <data>` — AoE parse combining within a 5-minute window',
-          '`/parsenight [public]` — Full-night DPS summary across all tonight\'s kills',
-          '`/raidnight` — Open tonight\'s raid parse thread with live scoreboard',
-        ].join('\n'),
-        inline: false,
-      },
-      {
         name: '📣 Raid Announcements',
         value: [
           '`/announce time:<when> [boss/zone]` — Create a raid thread + Discord event',
@@ -241,17 +217,6 @@ function buildWelcomeEmbed() {
         inline: false,
       },
       {
-        name: '📊 Parses (auto or manual)',
-        value:
-          'Easiest path: install **WolfPackParser** — it tails your eqlog and auto-uploads every kill ' +
-          'with no copy/paste, plus live guild/raid chat relay, tank dashboards, and a web UI.\n' +
-          '**Download:** https://parser.wolfpack.quest · unzip · double-click **`RUN-FIRST-for-Node.js.bat`** ' +
-          'once · then **`Parser.bat`**. Full walkthrough: `/parsehelp`.\n' +
-          'Prefer manual? Paste your EQLogParser output into `/parse` — boss is auto-detected. ' +
-          'Hit "I want to be top deeps" for the full rundown.',
-        inline: false,
-      },
-      {
         name: '📣 Coordination',
         value:
           'Use `/announce` to schedule a group takedown — it creates a thread, a Discord event, and ' +
@@ -283,16 +248,6 @@ function buildOrganizerEmbed() {
           'Run `/raidbosshelp` for a full command reference.',
         inline: false,
       },
-      {
-        name: '📊 Parse Tracking',
-        value: [
-          'Push raiders toward **WolfPackParser** — it auto-uploads every kill so you don\'t chase missing parses.',
-          'Download: https://parser.wolfpack.quest · `/parsehelp` for setup. Manual fallback: paste into `/parse`.',
-          'Use `/parsestats <boss>` for the DPS scoreboard, `/parsenight` for a full-night summary.',
-          '`/parseagents` shows who\'s currently uploading via the agent.',
-        ].join('\n'),
-        inline: false,
-      },
     )
     .setFooter({ text: 'You can get this message again at any time with /onboarding' });
 }
@@ -312,58 +267,19 @@ function buildAttendeeEmbed() {
 function buildParseOverviewEmbed() {
   return new EmbedBuilder()
     .setColor(0x2ecc71)
-    .setTitle('📊 So you want to be top deeps?')
-    .setDescription(
-      'Two ways to track DPS — automatic (recommended) or manual.'
-    )
+    .setTitle('🐺 Wolf Pack Parser — Setup')
+    .setDescription('The Wolf Pack Parser runs in the background and keeps your timers in sync.')
     .addFields(
       {
-        name: '🐺 Recommended: WolfPackParser (logsync agent)',
+        name: '📥 Download',
         value:
-          'Drop the manual /parse pasting — the parser tails your `eqlog_*.txt` ' +
-          'automatically and uploads every kill in real time. Bonus features:\n' +
-          '• Live guild/raid chat → `#in-game-guild-chat` and `#in-game-raid-chat` (per-era threaded)\n' +
-          '• Tank dashboard with rampage, invuln-avoided, riposte deaths\n' +
-          '• Healer dashboard with CH chain gap warnings\n' +
-          '• Per-dirge / per-song breakdown for bards\n' +
-          '• Monk mend tracker (attempts / crits / fail rate)\n' +
-          '• Web dashboard at `http://localhost:7777` — runs as a background service\n' +
-          '• Charm-aware fight timing for pet/dotter classes\n' +
-          `**Download:** https://parser.wolfpack.quest\n` +
-          `**Install:** unzip → double-click \`RUN-FIRST-for-Node.js.bat\` (once) → then \`Parser.bat\`\n` +
-          `**Walkthrough:** \`/parsehelp\``,
-        inline: false,
-      },
-      {
-        name: '✋ Manual fallback: paste from EQLogParser',
-        value:
-          'No agent installed? Open **EQLogParser**, filter to the fight, then paste:\n' +
-          '`/parse <data>` — boss is auto-detected from the mob name\n' +
-          '`/parseboss <boss> <data>` — use this if auto-detect picks the wrong boss\n' +
-          '`/parsenight <data>` — paste a Combined EQLogParser string to submit a full night at once',
-        inline: false,
-      },
-      {
-        name: '📈 Check the scoreboard',
-        value:
-          '`/parsestats <boss>` — DPS rankings for that boss across all recorded kills, plus your personal best and average\n' +
-          '`/parsenight` — full-night DPS summary across every kill from tonight',
-        inline: false,
-      },
-      {
-        name: '🧵 Live raid threads',
-        value:
-          '`/raidnight` — opens a raid thread with a rolling live scoreboard that updates as parses come in',
-        inline: false,
-      },
-      {
-        name: '💥 AoE fights',
-        value:
-          '`/parseaoe <data>` — combines AoE parses within a 5-minute window so tank/DPS contributions aren\'t split',
+          '**https://parser.wolfpack.quest** — unzip anywhere on your drive.\n' +
+          'Double-click **`RUN-FIRST-for-Node.js.bat`** once, then **`Parser.bat`** each session.\n' +
+          'Full setup walkthrough: `/parsehelp`',
         inline: false,
       },
     )
-    .setFooter({ text: 'Run /raidbosshelp for the full command reference · /parsehelp for parser setup' });
+    .setFooter({ text: 'Run /raidbosshelp for the full command reference' });
 }
 
 function buildWelcomeComponents(version) {
@@ -371,7 +287,7 @@ function buildWelcomeComponents(version) {
   const roleRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('onb_pvp').setLabel('Count me in for PVP').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('onb_organizer').setLabel('I want to help organize').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('onb_deeps').setLabel('I want to be top deeps').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('onb_deeps').setLabel('Set up the parser').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('onb_attend').setLabel('Just here to attend').setStyle(ButtonStyle.Secondary),
   );
   const optRow = new ActionRowBuilder().addComponents(
