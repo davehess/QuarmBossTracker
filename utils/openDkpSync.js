@@ -35,15 +35,28 @@ function _raidSummaryRow(r) {
   };
 }
 
-// Extract the array of attendee character names from a Tick. OpenDKP's payload
-// varies — sometimes it's Attendees: ["Hitya", "Statlander", ...], sometimes
-// Characters: [123, 456] (IDs). We coerce to strings either way and let the
-// downstream resolver figure it out.
+// Extract attendee character names from a Tick. Observed payload (2026-05-28):
+// Attendees[] is an array of OBJECTS, not strings — shape roughly
+//   { CharacterId, Name, ... } or similar. The recon docs assumed strings;
+// that's wrong. We pull a name field with fallbacks and only stringify a raw
+// ID when no name is available.
 function _tickAttendees(tick) {
   const raw = Array.isArray(tick?.Attendees) ? tick.Attendees
             : Array.isArray(tick?.Characters) ? tick.Characters
             : [];
-  return raw.map(x => (typeof x === 'string' ? x : String(x))).filter(Boolean);
+  return raw
+    .map(x => {
+      if (typeof x === 'string') return x;
+      if (typeof x === 'number') return String(x);
+      if (x && typeof x === 'object') {
+        return x.Name
+            || x.CharacterName
+            || x.character
+            || (x.CharacterId != null ? String(x.CharacterId) : null);
+      }
+      return null;
+    })
+    .filter(Boolean);
 }
 
 function _tickRow(raidId, tick) {
@@ -190,12 +203,16 @@ async function runSync(opts = {}) {
     };
   }
 
+  // PER_RUN_DETAIL_LIMIT is a guard against an enthusiastic background sync,
+  // not the manual /syncopendkp full:true case. When the caller explicitly
+  // asked for a full re-sync, run through everything.
+  const cap = opts.full ? Infinity : PER_RUN_DETAIL_LIMIT;
   const candidates = [];
   for (const r of raids) {
     if (opts.full || await _raidNeedsDetail(r.raid_id, r.version)) {
       candidates.push(r.raid_id);
     }
-    if (candidates.length >= PER_RUN_DETAIL_LIMIT) break;
+    if (candidates.length >= cap) break;
   }
 
   let tickRowsWritten = 0;
