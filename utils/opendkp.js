@@ -205,12 +205,20 @@ async function createAuctions(auctions) {
   }, body);
 }
 
-// GET /clients/{name}/auctions — list active auctions
-// Returns array of auction objects with Bids.
-// ⚠️  PENDING API CAPTURE: exact endpoint path not confirmed.
-async function getAuctions() {
+// GET /clients/{name}/auctions[?page=N] — list active + closed auctions
+// Captured cURL (2026-05-28): https://api.opendkp.com/clients/wolfpack/auctions?page=1
+// Same endpoint the OpenDKP web UI uses; Bearer auth works (the web UI uses
+// IAM Sig V4 because it's a Cognito Identity Pool, but API Gateway accepts
+// the User Pool ID token on this route too — same pattern as /characters).
+//
+// Pagination: ?page=1 returns the first page. Walk pages until the returned
+// list is empty or shorter than the previous page. Pre-settled active
+// auctions carry Bids[] which is the only source for runner-up bid data —
+// settling an auction discards everything but the winner.
+async function getAuctions(page = 1) {
   const headers = await _bearerHeaders();
-  return _get({ ..._clientUrl('/auctions'), headers });
+  const p = page > 1 ? `?page=${page}` : '';
+  return _get({ ..._clientUrl('/auctions' + p), headers });
 }
 
 // PUT /clients/{name}/auctions/{auctionId}/bids — submit a bid on an active auction.
