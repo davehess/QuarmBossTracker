@@ -3,5 +3,19 @@
   "framework": "nextjs",
   "buildCommand": "next build",
   "installCommand": "npm install",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "parser.wolfpack.quest" }],
+      "destination": "https://tinyurl.com/WolfPackP",
+      "permanent": false
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "discord.wolfpack.quest" }],
+      "destination": "https://discord.gg/VBCs6hCcau",
+      "permanent": false
+    }
+  ]
 }

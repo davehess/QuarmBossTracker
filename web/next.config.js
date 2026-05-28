@@ -1,16 +1,22 @@
 /** @type {import('next').NextConfig} */
 //
 // Host-based redirects for sibling subdomains on wolfpack.quest:
-//   parser.wolfpack.quest   → GitHub raw download of the parser zip
+//   parser.wolfpack.quest   → TinyURL pointing at the parser installer
 //   discord.wolfpack.quest  → guild Discord invite (DISCORD_INVITE_URL env var)
 //
+// These rules are duplicated in vercel.json so the redirect fires at the
+// Vercel edge regardless of whether Next.js framework detection ran (we
+// saw cases where next.config redirects didn't apply on prod). Keep both
+// in sync.
+//
 // Each subdomain needs to be added in Vercel Dashboard → Domains, with a
-// CNAME record at Porkbun pointing to `cname.vercel-dns.com`. Once the
-// domain is attached to this project, the `has` host match below kicks in
-// and Vercel issues the 308 redirect.
+// CNAME record at Porkbun pointing to `cname.vercel-dns.com`.
+//
+// Using TinyURL as the default destination so the target can be re-pointed
+// without redeploying — set PARSER_DOWNLOAD_URL in Vercel to override.
 const PARSER_DOWNLOAD_URL =
   process.env.PARSER_DOWNLOAD_URL ||
-  'https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/releases/WolfPackParser.zip';
+  'https://tinyurl.com/WolfPackP';
 
 const DISCORD_INVITE_URL =
   process.env.DISCORD_INVITE_URL ||
@@ -30,7 +36,7 @@ module.exports = {
         source: '/:path*',
         has: [{ type: 'host', value: 'parser.wolfpack.quest' }],
         destination: PARSER_DOWNLOAD_URL,
-        permanent: false, // 307 so we can re-point at GitHub Releases later
+        permanent: false,
       },
       {
         source: '/:path*',
