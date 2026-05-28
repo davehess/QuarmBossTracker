@@ -16,14 +16,17 @@
 // throw — a stuck raid shouldn't kill the whole sync.
 
 const supabase = require('./supabase');
-const { getRaids, getRaid, getCharacters, getAuctions, getAuction } = require('./opendkp');
+const { getRaids, getRaid, getCharacters, getAuctions, getAuction, getAudits, getAdjustments } = require('./opendkp');
 
 const PER_RUN_DETAIL_LIMIT  = 50;   // max getRaid() calls per sync invocation
 const AUCTION_PAGE_LIMIT    = 25;   // safety cap; OpenDKP "Include all" runs ~13 pages
+const AUDIT_PAGE_LIMIT      = 25;   // safety cap; user reports ~15 audit pages currently
 const BID_DETAIL_PER_RUN    = 50;   // per-auction bid fetches per incremental run
 let _loggedLootShape       = false;  // one-shot diagnostic — unknown raid-detail items shape
 let _loggedAuctionShape    = false;  // one-shot diagnostic — unknown auctions response shape
 let _loggedBidShape        = false;  // one-shot diagnostic — unknown bid response shape
+let _loggedAuditShape      = false;  // one-shot diagnostic — unknown audit response shape
+let _loggedAdjustShape     = false;  // one-shot diagnostic — unknown adjustment response shape
 
 // Normalize the OpenDKP raid summary into the opendkp_raids row shape.
 function _raidSummaryRow(r) {
@@ -512,6 +515,15 @@ async function runSync(opts = {}) {
   const auctionsResult = await syncAuctions(opts).catch(err =>
     ({ error: err?.message || String(err), upserted: 0, pages: 0 }));
 
+  // Audits + adjustments: full walks every time for now (~15 pages each).
+  // These are the canonical sources for officer-driven changes (rank moves,
+  // main switches, manual DKP corrections) and feed the era timeline on the
+  // character page.
+  const auditsResult      = await syncAudits().catch(err =>
+    ({ error: err?.message || String(err), upserted: 0, pages: 0 }));
+  const adjustmentsResult = await syncAdjustments().catch(err =>
+    ({ error: err?.message || String(err), upserted: 0, pages: 0 }));
+
   return {
     phase: 'done',
     raids_fetched:     listResult.fetched,
@@ -526,9 +538,134 @@ async function runSync(opts = {}) {
     auctions_detailed:     auctionsResult?.auctions_detailed ?? 0,
     auction_bid_errors:    auctionsResult?.bid_errors ?? 0,
     auctions_error:    auctionsResult?.error || null,
+    audits_upserted:        auditsResult?.upserted ?? 0,
+    audits_pages:           auditsResult?.pages ?? 0,
+    audits_error:           auditsResult?.error || null,
+    adjustments_upserted:   adjustmentsResult?.upserted ?? 0,
+    adjustments_pages:      adjustmentsResult?.pages ?? 0,
+    adjustments_error:      adjustmentsResult?.error || null,
     characters_upserted: charResult?.upserted ?? 0,
     characters_error:    charResult?.error || null,
   };
+}
+
+// Pluck a likely ID/timestamp from any OpenDKP-style record. Shapes vary
+// across endpoints (AuditId / AdjustmentId / etc.) so we accept any of the
+// common variants.
+function _firstNumber(row, ...keys) {
+  for (const k of keys) {
+    const v = row?.[k];
+    if (v == null) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+function _firstString(row, ...keys) {
+  for (const k of keys) {
+    const v = row?.[k];
+    if (v == null) continue;
+    if (typeof v === 'string' && v) return v;
+  }
+  return null;
+}
+
+// Walk a paginated list endpoint and upsert raw rows into the given table.
+// Used for both /audits and /adjustments since we don't yet know the exact
+// field shape — we store the full payload as JSONB and surface an ID +
+// timestamp for indexing.
+async function _syncListEndpoint({
+  label, fetchPage, table, idKeys, tsKeys, shapeFlag,
+}) {
+  if (!supabase.isEnabled()) return { error: 'supabase disabled', upserted: 0, pages: 0 };
+
+  let pagesWalked   = 0;
+  let totalUpserted = 0;
+
+  for (let page = 1; page <= AUDIT_PAGE_LIMIT; page++) {
+    let arr;
+    try { arr = await fetchPage(page); }
+    catch (err) { return { error: err?.message || String(err), upserted: totalUpserted, pages: pagesWalked }; }
+
+    // Same shape conventions as auctions: { TotalPages, CurrentPage, BidResults } —
+    // OpenDKP appears to consistently wrap list payloads. We accept BidResults,
+    // Results, and raw arrays.
+    const list = Array.isArray(arr?.BidResults) ? arr.BidResults
+              : Array.isArray(arr?.Results)    ? arr.Results
+              : Array.isArray(arr?.Items)      ? arr.Items
+              : Array.isArray(arr)             ? arr
+              : Array.isArray(arr?.data)       ? arr.data
+              : null;
+
+    if (!list) {
+      if (!shapeFlag.value) {
+        shapeFlag.value = true;
+        const keys = Object.keys(arr || {}).filter(k => typeof arr[k] !== 'function');
+        console.log(`[opendkp-sync] ${label} page ${page} unexpected shape — top-level keys:`, keys.join(', '));
+        try { console.log(`[opendkp-sync] ${label} sample:`, JSON.stringify(arr).slice(0, 600)); } catch {}
+      }
+      return { error: `unexpected ${label} shape`, upserted: totalUpserted, pages: pagesWalked };
+    }
+
+    if (list.length === 0) break;
+    pagesWalked++;
+
+    if (!shapeFlag.value && list[0]) {
+      shapeFlag.value = true;
+      const keys = Object.keys(list[0]).filter(k => typeof list[0][k] !== 'function');
+      console.log(`[opendkp-sync] ${label} first row keys:`, keys.join(', '));
+    }
+
+    const rows = list.map(row => {
+      const id = _firstNumber(row, ...idKeys);
+      if (id == null) return null;
+      const tsRaw = _firstString(row, ...tsKeys);
+      return {
+        [idKeys[0].toLowerCase().replace(/id$/, '_id')]: id,
+        ts:         tsRaw ? new Date(tsRaw).toISOString() : null,
+        raw:        row,
+        fetched_at: new Date().toISOString(),
+      };
+    }).filter(Boolean);
+
+    if (rows.length > 0) {
+      const pkCol = Object.keys(rows[0])[0];
+      const written = await supabase.upsert(table, rows, pkCol);
+      if (Array.isArray(written)) totalUpserted += written.length;
+    }
+
+    if (arr?.TotalPages && arr?.CurrentPage && arr.CurrentPage >= arr.TotalPages) break;
+  }
+
+  return { upserted: totalUpserted, pages: pagesWalked };
+}
+
+async function syncAudits() {
+  const flag = { value: _loggedAuditShape };
+  const res  = await _syncListEndpoint({
+    label:     'audits',
+    fetchPage: getAudits,
+    table:     'opendkp_audits',
+    idKeys:    ['AuditId', 'Id', 'audit_id'],
+    tsKeys:    ['Timestamp', 'CreatedAt', 'Date', 'timestamp'],
+    shapeFlag: flag,
+  });
+  _loggedAuditShape = flag.value;
+  return res;
+}
+
+async function syncAdjustments() {
+  const flag = { value: _loggedAdjustShape };
+  const res  = await _syncListEndpoint({
+    label:     'adjustments',
+    fetchPage: getAdjustments,
+    table:     'opendkp_adjustments',
+    idKeys:    ['AdjustmentId', 'Id', 'adjustment_id'],
+    tsKeys:    ['Timestamp', 'CreatedAt', 'Date', 'timestamp'],
+    shapeFlag: flag,
+  });
+  _loggedAdjustShape = flag.value;
+  return res;
 }
 
 // Pull the full OpenDKP character list and mirror into the characters table.
@@ -594,4 +731,4 @@ async function syncCharacters() {
   return { upserted };
 }
 
-module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions };
+module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments };

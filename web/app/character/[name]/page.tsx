@@ -10,6 +10,14 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel } from '@/lib/format';
+import {
+  loadFamily,
+  loadEraTimeline,
+  loadFamilyAggregates,
+  isMain,
+  type FamilyMember,
+  type EraSummary,
+} from '@/lib/character-family';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,7 +101,25 @@ async function load(name: string) {
       .single();
     const attendance = attRaw as AttendanceRow | null;
 
-    return { displayName, who, parses, loot, attendance, error: null as string | null };
+    // 5. Family + per-era timeline + family aggregates.
+    const { root, members } = await loadFamily(sb, displayName);
+    const [timeline, familyAgg] = await Promise.all([
+      loadEraTimeline(sb, members),
+      loadFamilyAggregates(sb, members),
+    ]);
+
+    return {
+      displayName,
+      who,
+      parses,
+      loot,
+      attendance,
+      family: members,
+      familyRoot: root,
+      timeline,
+      familyAgg,
+      error: null as string | null,
+    };
   } catch (err: unknown) {
     return {
       displayName: '',
@@ -101,6 +127,10 @@ async function load(name: string) {
       parses: [] as ParseRow[],
       loot: [] as LootRow[],
       attendance: null as AttendanceRow | null,
+      family: [] as FamilyMember[],
+      familyRoot: null as FamilyMember | null,
+      timeline: [] as EraSummary[],
+      familyAgg: { totalDkpSpent: 0, totalItems: 0, firstAttended: null as string | null, lastAttended: null as string | null, totalRaids: 0 },
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -120,7 +150,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
     );
   }
 
-  const { displayName, who, parses, loot, attendance } = data;
+  const { displayName, who, parses, loot, attendance, family, familyRoot, timeline, familyAgg } = data;
 
   // Aggregates
   const totalParses = parses.length;
@@ -135,6 +165,12 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
     (a, b) => new Date(b.encounters?.started_at || 0).getTime() - new Date(a.encounters?.started_at || 0).getTime(),
   ).slice(0, 30);
 
+  const showsMainBadge = isMain(family, displayName);
+  const altFamily = family.filter(m => m.name.toLowerCase() !== displayName.toLowerCase());
+  // Filter timeline to only eras the family was actually active. "No activity"
+  // pre-Classic etc. just clutters the timeline.
+  const visibleTimeline = timeline.filter(e => e.raidsAttended > 0 || e.dkpSpent > 0 || e.itemsWon > 0);
+
   return (
     <div className="space-y-6">
       <div className="text-sm">
@@ -143,7 +179,22 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
-          <h2 className="text-2xl text-gold">{displayName}</h2>
+          <h2 className="text-2xl text-gold flex items-center gap-3">
+            <span>{displayName}</span>
+            {showsMainBadge && (
+              <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-gold/20 border border-gold/60 text-gold uppercase">
+                Main
+              </span>
+            )}
+            {!showsMainBadge && familyRoot && (
+              <span className="text-xs text-dim font-normal">
+                alt of{' '}
+                <Link href={`/character/${encodeURIComponent(familyRoot.name)}`} className="text-blue hover:underline">
+                  {familyRoot.name}
+                </Link>
+              </span>
+            )}
+          </h2>
           {who && (
             <div className="text-sm text-dim">
               {who.level && <span>{who.level} </span>}
@@ -179,6 +230,39 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           <Stat label="Last raid"  value={attendance?.last_attended  ? new Date(attendance.last_attended).toLocaleDateString()  : '—'} />
         </div>
       </section>
+
+      {/* Family aggregate strip — only shown when the family has multiple members */}
+      {family.length > 1 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-sm text-blue mb-3 flex items-center gap-2">
+            <span aria-hidden>👥</span>
+            <span>Family aggregate</span>
+            <span className="text-dim text-xs">· {family.length} characters under {familyRoot?.name || '?'}</span>
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Family DKP spent" value={fmtDkp(familyAgg.totalDkpSpent)} accent="text-gold" />
+            <Stat label="Family items won" value={String(familyAgg.totalItems)} />
+            <Stat label="Family raids"     value={String(familyAgg.totalRaids)} accent="text-orange" />
+            <Stat label="First appearance" value={familyAgg.firstAttended ? new Date(familyAgg.firstAttended).toLocaleDateString() : '—'} />
+          </div>
+        </section>
+      )}
+
+      {/* Per-era timeline — main switches, DKP earned vs spent per era */}
+      {visibleTimeline.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-sm text-purple mb-3 flex items-center gap-2">
+            <span aria-hidden>📜</span>
+            <span>Era timeline</span>
+            <span className="text-dim text-xs">· main detected from bids &gt; 100 or tick attendance</span>
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {visibleTimeline.map(era => (
+              <EraCard key={era.era} era={era} family={family} self={displayName} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Recent parses */}
       <section className="bg-panel border border-border rounded-lg p-4">
@@ -254,6 +338,30 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           </ul>
         </section>
       )}
+
+      {/* Alt family — list every other character that shares this family root */}
+      {altFamily.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-sm text-blue mb-3 flex items-center gap-2">
+            <span aria-hidden>🌳</span>
+            <span>Alt family</span>
+            <span className="text-dim text-xs">· {altFamily.length} other character{altFamily.length === 1 ? '' : 's'}</span>
+          </h3>
+          <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+            {altFamily.map(m => (
+              <li key={m.name} className="flex items-center justify-between border-b border-border/40 py-1">
+                <Link href={`/character/${encodeURIComponent(m.name)}`} className="text-blue hover:underline truncate">
+                  {m.name}
+                </Link>
+                <span className="text-dim whitespace-nowrap ml-2">
+                  {m.class || '—'}
+                  {m.rank && <span className="text-text ml-2">· {m.rank}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
@@ -264,6 +372,66 @@ function Stat({ label, value, sub, accent }: { label: string; value: string; sub
       <div className="text-[10px] text-dim uppercase tracking-wide">{label}</div>
       <div className={`text-sm font-medium truncate ${accent || 'text-text'}`} title={value}>{value}</div>
       {sub && <div className="text-xs text-dim truncate">{sub}</div>}
+    </div>
+  );
+}
+
+function EraCard({ era, family, self }: { era: EraSummary; family: FamilyMember[]; self: string }) {
+  const startLabel = new Date(era.start).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  const main = era.main;
+  const mainIsSelf = !!main && main.toLowerCase() === self.toLowerCase();
+  const mainMember = main ? family.find(m => m.name === main) : null;
+  const sourceLabel =
+    era.mainSource === 'big_bid' ? 'big bid' :
+    era.mainSource === 'ticks'    ? 'most ticks' :
+    era.mainSource === 'rank_fallback' ? 'rank fallback' :
+    'no activity';
+  const sourceColor =
+    era.mainSource === 'big_bid' ? 'text-gold' :
+    era.mainSource === 'ticks'    ? 'text-blue' :
+    'text-dim';
+
+  return (
+    <div className="bg-bg border border-border/60 rounded p-3 space-y-2">
+      <div className="flex items-baseline justify-between">
+        <div className="text-sm text-purple font-medium">{era.era}</div>
+        <div className="text-[10px] text-dim">since {startLabel}</div>
+      </div>
+
+      <div className="text-xs">
+        <span className="text-dim">Main:&nbsp;</span>
+        {main ? (
+          <Link
+            href={`/character/${encodeURIComponent(main)}`}
+            className={`hover:underline ${mainIsSelf ? 'text-gold font-semibold' : 'text-text'}`}
+          >
+            {main}
+          </Link>
+        ) : (
+          <span className="text-dim italic">—</span>
+        )}
+        {mainMember?.class && <span className="text-dim ml-2">· {mainMember.class}</span>}
+        <span className={`ml-2 text-[10px] ${sourceColor}`}>({sourceLabel})</span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+        <div className="bg-panel border border-border/40 rounded px-1.5 py-1">
+          <div className="text-[9px] text-dim uppercase">Earned</div>
+          <div className="text-text">{fmtDkp(era.dkpEarned)}</div>
+        </div>
+        <div className="bg-panel border border-border/40 rounded px-1.5 py-1">
+          <div className="text-[9px] text-dim uppercase">Spent</div>
+          <div className="text-gold">{fmtDkp(era.dkpSpent)}</div>
+        </div>
+        <div className="bg-panel border border-border/40 rounded px-1.5 py-1">
+          <div className="text-[9px] text-dim uppercase">Raids</div>
+          <div className="text-orange">{era.raidsAttended}</div>
+        </div>
+      </div>
+
+      {era.itemsWon > 0 && (
+        <div className="text-[10px] text-dim">{era.itemsWon} item{era.itemsWon === 1 ? '' : 's'} won by the family</div>
+      )}
     </div>
   );
 }

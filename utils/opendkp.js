@@ -373,6 +373,31 @@ async function getMostRecentRaid() {
   )[0];
 }
 
+// ── Audits + Adjustments ──────────────────────────────────────────────────────
+// GET /clients/{name}/audits?page=N — OpenDKP audit trail.
+// Captured 2026-05-28; user reports ~15 pages of history. Likely shape:
+// each entry records who did what to whom (rank changes, main switches,
+// character creates/renames, DKP awards). This is the canonical source for
+// main-switch history — the bid/tick heuristics on the character page
+// approximate what audits could pin down exactly.
+//
+// Pagination: same convention as /auctions — walk until an empty page (or
+// CurrentPage === TotalPages) is returned.
+async function getAudits(page = 1) {
+  const headers = await _bearerHeaders();
+  const p = page > 1 ? `?page=${page}` : '';
+  return _get({ ..._clientUrl('/audits' + p), headers });
+}
+
+// GET /clients/{name}/adjustments?page=N — DKP adjustment history.
+// Manual DKP awards/penalties applied outside the raid/auction flow
+// (e.g., officer-issued corrections). Captured 2026-05-28.
+async function getAdjustments(page = 1) {
+  const headers = await _bearerHeaders();
+  const p = page > 1 ? `?page=${page}` : '';
+  return _get({ ..._clientUrl('/adjustments' + p), headers });
+}
+
 // PUT /beta/raids — create new raid
 async function createRaid(payload) {
   const headers = await _writeHeaders();
@@ -446,4 +471,5 @@ module.exports = {
   getCharacters, createCharacter,
   createAuctions, getAuctions, getAuction, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
+  getAudits, getAdjustments,
 };
