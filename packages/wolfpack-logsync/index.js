@@ -1022,12 +1022,16 @@ class EncounterBuilder {
     try { recordEventForDashboard(event, this.character); } catch {}
     try { this._publishLiveThreat(); } catch {}
 
-    // Track damage dealt TO targets — exclude "YOU" / "you" and confirmed players
-    // so PvP hits never inflate a player-name into appearing to be the primary target.
+    // Track damage dealt TO targets — exclude "YOU" / "you", confirmed players
+    // (PvP), and self-hits (pet reclaim/dismiss generates attacker === defender).
     if (event.type === 'damage' && event.defender
         && !/^you$/i.test(event.defender)
         && !isConfirmedPlayer(event.defender)) {
-      this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+      const rawAtk0 = event.attacker;
+      const isSelfHit = rawAtk0 && rawAtk0.toLowerCase() === event.defender.toLowerCase();
+      if (!isSelfHit) {
+        this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+      }
     }
 
     // Live threat tracking + DEEPS tracking — both bump per-player counters
@@ -1043,9 +1047,11 @@ class EncounterBuilder {
       //   • Named confirmed player as defender: "PlayerA hits PlayerB for N"
       //   • Uploader as defender AND attacker is a 3rd-party confirmed player:
       //     charmed raid member hits the log uploader
+      // Also skip self-hits: pet reclaim / cleric pet dismiss hits itself for 20K.
       const pvpHit =
         (event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender)) ||
-        (/^you$/i.test(event.defender || '') && rawAtk !== null && isConfirmedPlayer(attacker));
+        (/^you$/i.test(event.defender || '') && rawAtk !== null && isConfirmedPlayer(attacker)) ||
+        (event.defender && rawAtk && rawAtk.toLowerCase() === event.defender.toLowerCase());
       // Skip NPC-on-NPC (multi-word attacker that isn't the uploader)
       if (!pvpHit && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         if (!this.threatBy.has(attacker)) {
@@ -2672,6 +2678,9 @@ function recordEventForDashboard(event, character) {
   const attacker = event.attacker || character || 'You';
   // Skip events that look like NPC-on-NPC (multi-word attacker with no pet leader)
   if (/\s/.test(attacker) && attacker !== character) return;
+  // Skip self-hits: pet reclaim / cleric pet self-dismiss generates a log line
+  // where the pet hits itself for exactly 20K. attacker === defender catches it.
+  if (event.defender && attacker.toLowerCase() === event.defender.toLowerCase()) return;
 
   // Track session-wide damage totals across ALL hit sizes (not just big crits).
   // Powers the "Damage done this session" right column.
