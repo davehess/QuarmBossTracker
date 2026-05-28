@@ -1840,19 +1840,27 @@ function renderHeader(s) {
   document.getElementById('header').innerHTML = h;
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
+  function _startRestartPoll(bannerId) {
+    let tries = 0;
+    const t = setInterval(async () => {
+      tries++;
+      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); return; } } catch {}
+      // After 30s show a manual-reload link in the banner
+      if (tries === 30) {
+        const b = document.getElementById(bannerId);
+        if (b) b.innerHTML += ' &nbsp;<a href="" style="color:#fff;font-weight:bold" onclick="location.reload();return false">Reload now</a>';
+      }
+      if (tries > 300) clearInterval(t);  // give up after ~5 min
+    }, 1000);
+  }
   if (manual) manual.addEventListener('click', async () => {
     if (!confirm('Restart agent and pull the latest version? Session will be saved and resumed.')) return;
     manual.disabled = true; manual.textContent = 'Restarting...';
     try { await fetch('/api/update', { method: 'POST' }); } catch {}
     document.body.insertAdjacentHTML('afterbegin',
-      '<div class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
+      '<div id="restartBanner" class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
-    let tries = 0;
-    const t = setInterval(async () => {
-      tries++;
-      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); } } catch {}
-      if (tries > 60) clearInterval(t);
-    }, 1000);
+    _startRestartPoll('restartBanner');
   });
   // Inline [install] link mirrors the banner Install button
   const inline = document.getElementById('inlineUpdateBtn');
@@ -1866,15 +1874,9 @@ function renderHeader(s) {
     u.disabled = true; u.textContent = 'Restarting...';
     try { await fetch('/api/update', { method: 'POST' }); } catch {}
     document.body.insertAdjacentHTML('afterbegin',
-      '<div class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
+      '<div id="restartBanner" class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
-    // Poll until the server comes back
-    let tries = 0;
-    const t = setInterval(async () => {
-      tries++;
-      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); } } catch {}
-      if (tries > 60) clearInterval(t);  // give up after ~60s
-    }, 1000);
+    _startRestartPoll('restartBanner');
   });
 }
 
@@ -2495,9 +2497,12 @@ function startWebDashboard(port) {
         return;
       }
       if (req.url === '/api/update' && req.method === 'POST') {
-        // Same behavior as [U] press: save session, write update marker,
-        // exit. The wrapper script (start-logsync.ps1) sees the marker and
-        // downloads + relaunches the new version.
+        // Same behavior as [U] press: save session, write update marker, exit.
+        // In foreground/CLI mode the wrapper script (start-logsync.ps1) sees
+        // the marker and downloads + relaunches the new version.
+        // In background service mode (--no-service-check) the wrapper exited
+        // long ago, so we spawn a new copy of ourselves before exiting so the
+        // web dashboard comes back up automatically.
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, message: 'restarting' }));
         setTimeout(() => {
@@ -2506,6 +2511,17 @@ function startWebDashboard(port) {
             const marker = path.join(__dirname, '.force-update-on-restart');
             fs.writeFileSync(marker, new Date().toISOString());
           } catch {}
+          if (_isServiceMode) {
+            try {
+              const { spawn } = require('child_process');
+              const child = spawn(process.execPath, process.argv.slice(1), {
+                detached: true,
+                stdio:    'ignore',
+                cwd:      process.cwd(),
+              });
+              child.unref();
+            } catch {}
+          }
           process.exit(0);
         }, 250);  // let the response flush
         return;
@@ -2591,8 +2607,14 @@ function startWebDashboard(port) {
       res.end(JSON.stringify({ error: err.message }));
     }
   });
+  let _bindRetries = 0;
   server.on('error', (err) => {
-    console.warn(`[web-dashboard] could not bind to port ${port}: ${err.message}`);
+    if (err.code === 'EADDRINUSE' && _bindRetries < 5) {
+      _bindRetries++;
+      setTimeout(() => server.listen(port, '127.0.0.1'), 1000 * _bindRetries);
+    } else {
+      console.warn(`[web-dashboard] could not bind to port ${port}: ${err.message}`);
+    }
   });
   // Bind to 127.0.0.1 only — never expose to network.
   server.listen(port, '127.0.0.1', () => {
@@ -2763,6 +2785,7 @@ function pad(s, n) {
 }
 
 let _dashboardEnabled = false;
+let _isServiceMode    = false;  // true when started with --no-service-check (background service)
 function renderDashboard() {
   if (!_dashboardEnabled) return;
   // Don't overwrite info/pets views when the periodic redraw fires.
@@ -4631,7 +4654,8 @@ async function main() {
   }
 
   // Make opts available to the chat relay flush (module-level so the interval can see them)
-  _uploadOpts = { botUrl, token, dryRun };
+  _uploadOpts    = { botUrl, token, dryRun };
+  _isServiceMode = !!args.flags.noServiceCheck;
 
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();
