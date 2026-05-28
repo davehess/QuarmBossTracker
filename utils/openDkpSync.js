@@ -110,35 +110,86 @@ function _lootRow(raidId, item) {
 }
 
 // Map a raw auction object from /clients/wolfpack/auctions?page=N into an
-// opendkp_auctions row. Field names are defensive — the wire format hasn't
-// been pasted yet, but the OpenDKP UI shows columns AuctionId / Item / Winner
-// / Bid Amount / Date / Auctioneer / Notes / Raid. _lootField walks variants.
+// opendkp_auctions row. Confirmed shape (2026-05-28):
+//   { AuctionId, State, ItemId, CreatedTimestamp, EndTimestamp, Notes,
+//     Auctioneer, Item: { ItemId, Name, GameItemId }, Bids: [...] }
+// No top-level Winner / BidAmount fields — winner is the highest bid in
+// Bids[] (highest Value wins, ties broken by earliest Date).
 function _auctionRow(a) {
   if (!a) return null;
-  const auctionId = _lootField(a, 'AuctionId', 'AuctionID', 'Id', 'id', 'auction_id');
-  const itemName  = _lootField(a, 'ItemName', 'Item', 'Name', 'item_name', 'item');
-  if (auctionId == null || !itemName) return null;
+  const auctionId = _lootField(a, 'AuctionId', 'AuctionID', 'Id', 'id');
+  if (auctionId == null) return null;
 
-  const winnerRaw    = _lootField(a, 'WinnerName', 'Winner', 'CharacterName', 'Character', 'winner', 'character');
-  const bidAmountRaw = _lootField(a, 'BidAmount', 'Bid', 'Dkp', 'DKP', 'Value', 'bid_amount', 'dkp');
-  const itemIdRaw    = _lootField(a, 'ItemId', 'ItemID', 'GameItemId', 'item_id');
-  const raidIdRaw    = _lootField(a, 'RaidId', 'RaidID', 'raid_id');
+  const itemName = (a.Item && (a.Item.Name || a.Item.ItemName))
+                || _lootField(a, 'ItemName', 'Name');
+  const itemId   = (a.Item && (a.Item.ItemId || a.Item.GameItemId))
+                || _lootField(a, 'ItemId', 'GameItemId');
+  if (!itemName) return null;
+
+  // Pick the winning bid from Bids[]. Highest Value wins; ties go to the
+  // earliest Date. Empty Bids[] → no winner (auction unawarded).
+  let winner = null;
+  let bidAmount = null;
+  const bids = Array.isArray(a.Bids) ? a.Bids
+            : Array.isArray(a.bids) ? a.bids
+            : [];
+  if (bids.length > 0) {
+    const top = bids.reduce((best, b) => {
+      const v = Number(b?.Value ?? b?.value ?? 0);
+      const bv = Number(best?.Value ?? best?.value ?? 0);
+      if (v > bv) return b;
+      if (v < bv) return best;
+      // Tie: earlier date wins
+      const ta = Date.parse(b?.Date || b?.date || b?.CreatedAt || '') || Infinity;
+      const tb = Date.parse(best?.Date || best?.date || best?.CreatedAt || '') || Infinity;
+      return ta < tb ? b : best;
+    }, bids[0]);
+    winner    = top?.User || top?.Name || top?.CharacterName || null;
+    bidAmount = Number.isFinite(Number(top?.Value)) ? Number(top.Value) : null;
+  }
 
   return {
     auction_id:  Number(auctionId),
-    raid_id:     Number.isFinite(raidIdRaw) ? Number(raidIdRaw) : null,
-    item_id:     Number.isFinite(itemIdRaw) ? Number(itemIdRaw) : null,
+    raid_id:     _lootField(a, 'RaidId', 'RaidID', 'raid_id') || null,
+    item_id:     Number.isFinite(Number(itemId)) ? Number(itemId) : null,
     item_name:   String(itemName),
-    winner:      winnerRaw ? String(winnerRaw) : null,
-    bid_amount:  Number.isFinite(bidAmountRaw) ? Number(bidAmountRaw) : null,
-    auctioneer:  _lootField(a, 'Auctioneer', 'auctioneer', 'CreatedBy') || null,
+    winner,
+    bid_amount:  bidAmount,
+    auctioneer:  _lootField(a, 'Auctioneer', 'auctioneer') || null,
     notes:       _lootField(a, 'Notes', 'notes') || null,
-    state:       _lootField(a, 'State', 'state') ?? null,
-    awarded_at:  _lootField(a, 'AwardedAt', 'awarded_at', 'EndTimestamp', 'EndAt', 'UpdatedTimestamp') || null,
-    created_at:  _lootField(a, 'CreatedAt', 'CreatedTimestamp', 'created_at') || null,
+    state:       Number.isFinite(Number(a.State)) ? Number(a.State) : null,
+    awarded_at:  _lootField(a, 'EndTimestamp', 'AwardedAt', 'UpdatedTimestamp') || null,
+    created_at:  _lootField(a, 'CreatedTimestamp', 'CreatedAt', 'created_at') || null,
     end_at:      _lootField(a, 'EndTimestamp', 'EndAt', 'end_at') || null,
     fetched_at:  new Date().toISOString(),
   };
+}
+
+// Extract inline bid rows from a list-endpoint auction. The bidding history
+// lives directly in the auctions list response — no separate detail call
+// needed. Bid shape (confirmed 2026-05-28):
+//   { BidId, SessionId, CharacterId, User, Value, Rank, Date, ... }
+function _bidsFromAuction(auctionId, a) {
+  const bids = Array.isArray(a?.Bids) ? a.Bids
+            : Array.isArray(a?.bids) ? a.bids
+            : [];
+  if (bids.length === 0) return [];
+  // Sort by Value desc for stable position numbering
+  const sorted = [...bids].sort((x, y) => Number(y?.Value || 0) - Number(x?.Value || 0));
+  return sorted.map((b, i) => {
+    const name = b?.User || b?.Name || b?.CharacterName;
+    if (!name) return null;
+    const valueRaw = b?.Value ?? b?.value;
+    return {
+      auction_id:     Number(auctionId),
+      position:       i + 1,
+      character_name: String(name),
+      rank:           b?.Rank || b?.rank || null,
+      value:          Number.isFinite(Number(valueRaw)) ? Number(valueRaw) : null,
+      bid_at:         b?.Date || b?.date || b?.CreatedAt || null,
+      fetched_at:     new Date().toISOString(),
+    };
+  }).filter(Boolean);
 }
 
 // Walk /clients/wolfpack/auctions?page=N until an empty page (or the safety
@@ -208,21 +259,20 @@ async function syncAuctions(opts = {}) {
   let pagesWalked    = 0;
   let totalUpserted  = 0;
 
+  let bidsWritten = 0;
+
   for (let page = 1; page <= maxPages; page++) {
     let arr;
     try { arr = await getAuctions(page); }
     catch (err) {
-      return { error: err?.message || String(err), upserted: totalUpserted, pages: pagesWalked };
+      return { error: err?.message || String(err), upserted: totalUpserted, pages: pagesWalked, bids_written: bidsWritten };
     }
 
-    // Response shape unknown — could be a flat array, or wrapped under
-    // .auctions / .data / .results. First sync logs the shape if we can't
-    // find a list anywhere.
-    const list = Array.isArray(arr)              ? arr
-              : Array.isArray(arr?.auctions)     ? arr.auctions
-              : Array.isArray(arr?.data)         ? arr.data
-              : Array.isArray(arr?.results)      ? arr.results
-              : Array.isArray(arr?.Auctions)     ? arr.Auctions
+    // Confirmed shape (2026-05-28): { TotalPages, CurrentPage, BidResults: [...] }
+    const list = Array.isArray(arr?.BidResults)    ? arr.BidResults
+              : Array.isArray(arr)                 ? arr
+              : Array.isArray(arr?.auctions)       ? arr.auctions
+              : Array.isArray(arr?.data)           ? arr.data
               : null;
 
     if (!list) {
@@ -232,65 +282,46 @@ async function syncAuctions(opts = {}) {
         console.log('[opendkp-sync] auctions page ' + page + ' unexpected shape — top-level keys:', keys.join(', '));
         try { console.log('[opendkp-sync] auctions sample:', JSON.stringify(arr).slice(0, 600)); } catch {}
       }
-      return { error: 'unexpected auctions shape', upserted: totalUpserted, pages: pagesWalked };
+      return { error: 'unexpected auctions shape', upserted: totalUpserted, pages: pagesWalked, bids_written: bidsWritten };
     }
 
     if (list.length === 0) break;
     pagesWalked++;
 
-    const rows = list.map(_auctionRow).filter(Boolean);
-    if (rows.length === 0 && !_loggedAuctionShape) {
-      _loggedAuctionShape = true;
-      console.log('[opendkp-sync] auctions page ' + page + ' had ' + list.length + ' entries but 0 mapped — entry keys:',
-        Object.keys(list[0] || {}).join(', '));
-      try { console.log('[opendkp-sync] entry sample:', JSON.stringify(list[0]).slice(0, 600)); } catch {}
-    }
-
-    if (rows.length > 0) {
-      const written = await supabase.upsert('opendkp_auctions', rows, 'auction_id');
+    // Auction rows
+    const auctionRows = list.map(_auctionRow).filter(Boolean);
+    if (auctionRows.length > 0) {
+      const written = await supabase.upsert('opendkp_auctions', auctionRows, 'auction_id');
       if (Array.isArray(written)) totalUpserted += written.length;
     }
-  }
 
-  // Per-auction bid detail pass. Skip auctions we already have bids for
-  // (settled auctions don't change). Cap on incremental; uncapped on full.
-  let bidsWritten   = 0;
-  let auctionsDetailed = 0;
-  let bidErrors     = 0;
-  const bidCap      = opts.full ? Infinity : BID_DETAIL_PER_RUN;
+    // Bid rows live inline in each auction's Bids[] — no detail call needed.
+    // Flatten across all auctions on this page, upsert as one batch.
+    const allBids = list.flatMap(a => {
+      const auctionId = a?.AuctionId ?? a?.AuctionID ?? a?.Id;
+      if (auctionId == null) return [];
+      return _bidsFromAuction(auctionId, a);
+    });
+    if (allBids.length > 0) {
+      const written = await supabase.upsert(
+        'opendkp_auction_bids',
+        allBids,
+        'auction_id,character_name,value',
+      );
+      if (Array.isArray(written)) bidsWritten += written.length;
+    }
 
-  // Pull the IDs we don't yet have bids for. Use a left-anti-join via JS:
-  // fetch recent auction IDs, fetch distinct bid auction_ids, diff. Cheaper
-  // than a per-auction existence probe.
-  const recentAuctions = await supabase.select(
-    'opendkp_auctions',
-    'select=auction_id&order=auction_id.desc&limit=' + (opts.full ? 2000 : 200),
-  );
-  const haveBidsFor = await supabase.select(
-    'opendkp_auction_bids',
-    'select=auction_id&limit=10000',
-  );
-  const haveBidsSet = new Set(
-    Array.isArray(haveBidsFor) ? haveBidsFor.map(r => r.auction_id) : [],
-  );
-  const needBids = (Array.isArray(recentAuctions) ? recentAuctions : [])
-    .map(r => r.auction_id)
-    .filter(id => !haveBidsSet.has(id));
-
-  for (const auctionId of needBids) {
-    if (auctionsDetailed >= bidCap) break;
-    const res = await syncAuctionBids(auctionId);
-    auctionsDetailed++;
-    if (res.error) { bidErrors++; continue; }
-    bidsWritten += res.bids_written || 0;
+    // Stop if the API said this is the last page.
+    if (arr?.TotalPages && arr?.CurrentPage && arr.CurrentPage >= arr.TotalPages) break;
   }
 
   return {
-    upserted:           totalUpserted,
-    pages:              pagesWalked,
-    bids_written:       bidsWritten,
-    auctions_detailed:  auctionsDetailed,
-    bid_errors:         bidErrors,
+    upserted:       totalUpserted,
+    pages:          pagesWalked,
+    bids_written:   bidsWritten,
+    // Kept for backwards-compat with the /syncopendkp reply formatter
+    auctions_detailed: pagesWalked, // bids are now extracted inline, not via per-auction calls
+    bid_errors:        0,
   };
 }
 
