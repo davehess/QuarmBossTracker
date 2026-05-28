@@ -184,6 +184,7 @@ const PROC_HATE = {
   'enraging blow':       700,   // warrior threat procs (Bloodfrenzy, BoC, etc.)
   'provoke':             500,
   'taunt':               500,
+  'stun':                200,   // warrior/paladin stun combat ability (non-damage)
   // Generic flat-hate weapon procs — add as observed
   'shock of fear':       250,
   'shock of dyn`leth':   250,
@@ -322,6 +323,11 @@ const KEEP_PATTERNS = [
   /\byou\s+(?:magically\s+)?mend\s+your\s+wounds/i,
   /\byou\s+(?:try\s+to\s+|fail\s+to\s+)?mend\s+your\s+wounds/i,
   /\b(?:tries|try)\s+to\s+\w+\s+.+?,\s+but\s+/i,
+  // Taunt and stun skill uses — credited as flat hate on the live threat meter
+  /\byou attempt to taunt\b/i,
+  /\byou have taunted\b/i,
+  /\byou have stunned\b/i,
+  /\byou stun\s+\w/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -576,6 +582,21 @@ function parseEvent(line, ts) {
   if (m) {
     return { ts: tsIso, type: 'cast', attacker: m[1], ability: m[2] };
   }
+
+  // ── Taunt skill ──────────────────────────────────────────────────────────
+  // "You attempt to taunt Lord Nagafen."  — attempt (always logged, even if resisted)
+  // "You have taunted Lord Nagafen."      — success confirmation (some server variants)
+  m = line.match(/\]\s+You attempt to taunt (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1] };
+  m = line.match(/\]\s+You have taunted (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1] };
+
+  // ── Stun skill (Warrior/Paladin combat ability, non-damage) ──────────────
+  // "You have stunned Lord Nagafen."  /  "You stun Lord Nagafen."
+  m = line.match(/\]\s+You have stunned (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
+  m = line.match(/\]\s+You stun (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
 
   // ── Sourceless spell cast detection (bard dirges & similar) ──────────────
   // Walks the SOURCELESS_SPELLS catalog and emits a `dirge_cast` event with
@@ -1053,6 +1074,21 @@ class EncounterBuilder {
       if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         this._bumpDeeps(attacker, 'crit', event.amount, null);
       }
+    }
+
+    // Taunt/stun — non-damage flat hate credited to the uploader's character.
+    // These skill uses never appear as damage events so the damage-proxy above
+    // would miss them entirely; handle them here and fold into the proc bucket
+    // so they show up in the "proc X.XXK" breakdown and the procDetail column.
+    if ((event.type === 'taunt' || event.type === 'stun') && this.character) {
+      const attacker = this.character;
+      if (!this.threatBy.has(attacker)) {
+        this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
+      }
+      const t = this.threatBy.get(attacker);
+      t.proc += PROC_HATE[event.type] || 0;
+      const label = event.type === 'taunt' ? 'Taunt' : 'Stun';
+      t.procDetail[label] = (t.procDetail[label] || 0) + 1;
     }
 
     // Per-defender stats — feeds tanking analytics (avoidance %, damage taken,

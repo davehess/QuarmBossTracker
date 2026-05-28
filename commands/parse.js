@@ -9,6 +9,11 @@ const path = require('path');
 
 const PARSES_FILE = path.join(__dirname, '../data/parses.json');
 
+// In-memory dedup map for no-session parse posts: bossId → { messageId, channelId, ts }
+// Allows subsequent /parse submissions for the same boss within 10 minutes to edit the
+// existing card in the interaction channel instead of flooding with new posts.
+const recentParseCards = new Map();
+
 function loadParses() {
   if (!fs.existsSync(PARSES_FILE)) return {};
   try { return JSON.parse(fs.readFileSync(PARSES_FILE, 'utf8')); }
@@ -656,12 +661,35 @@ async function finishParse(interaction, bossId, boss, parsed, parseType = 'insta
   // there is no active raid session. When a session is open, appendParseToSession
   // already posts the card to the raid thread; posting here too would duplicate
   // it in the parent channel (e.g. Raid Chat).
+  // Edit-in-place dedup: if a card for the same boss was posted within the last
+  // 10 minutes in the same channel, edit it instead of posting a new one.
   const { getRaidSession } = require('../utils/state');
   if (!getRaidSession()) {
     const content = mergeNote || undefined;
-    interaction.channel.send({ content, embeds: [embed], components }).catch(err =>
-      console.warn('[parse] public channel send failed:', err?.message)
-    );
+    const now = Date.now();
+    const recent = recentParseCards.get(bossId);
+    const canEdit = recent
+      && (now - recent.ts) < 10 * 60 * 1000
+      && recent.channelId === interaction.channelId;
+    if (canEdit) {
+      try {
+        const existingMsg = await interaction.channel.messages.fetch(recent.messageId);
+        await existingMsg.edit({ content: content || null, embeds: [embed], components });
+        recentParseCards.set(bossId, { ...recent, ts: now });
+      } catch {
+        const sent = await interaction.channel.send({ content, embeds: [embed], components }).catch(err => {
+          console.warn('[parse] public channel send failed:', err?.message);
+          return null;
+        });
+        if (sent) recentParseCards.set(bossId, { messageId: sent.id, channelId: interaction.channelId, ts: now });
+      }
+    } else {
+      const sent = await interaction.channel.send({ content, embeds: [embed], components }).catch(err => {
+        console.warn('[parse] public channel send failed:', err?.message);
+        return null;
+      });
+      if (sent) recentParseCards.set(bossId, { messageId: sent.id, channelId: interaction.channelId, ts: now });
+    }
   }
 
   // ── Build ephemeral reply content ──────────────────────────────────────────
