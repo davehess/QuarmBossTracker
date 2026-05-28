@@ -2459,20 +2459,22 @@ function renderOptin(o) {
         ? '<td style="color:' + nameColor + ';font-weight:bold">' + esc(char) + (files.length > 1 ? ' <span class="dim" style="font-weight:normal">(' + files.length + ' files)</span>' : '') + '</td>'
         : '<td></td>';
       const fnameStyle = idx === 0 ? 'class="dim"' : 'class="dim" style="padding-left:18px"';
-      // Live-tailed files can't be backfilled (would duplicate events) —
-      // disable the checkbox and show a "live" badge so the user knows
-      // we're already covering this character in real time.
-      const cbAttrs = f.isWatched
-        ? 'disabled title="This file is being tailed live — backfill would duplicate events"'
-        : (f.selected ? 'checked' : '');
+      // Live-tailed files can still be backfilled — server-side dedup
+      // (find_or_create_encounter + chat_messages unique constraint) keeps
+      // overlap from double-counting. We just surface the live badge so
+      // the user knows the live tail is also covering this character.
+      const cbAttrs = f.selected ? 'checked' : '';
+      const cbTitle = f.isWatched
+        ? ' title="Live tail is running — backfill will fill in earlier history; overlap dedupes server-side"'
+        : '';
       const liveBadge = f.isWatched
         ? ' <span style="color:var(--green);font-size:11px">● live</span>'
         : '';
       const altBadge = f.isAlt
         ? ' <span class="dim" style="font-size:11px">(alt)</span>'
         : '';
-      h += '<tr' + (f.isWatched ? ' style="opacity:0.7"' : '') + '>' +
-           '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + cbAttrs + '></td>' +
+      h += '<tr>' +
+           '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + cbAttrs + cbTitle + '></td>' +
            charCell +
            '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + '</td>' +
            '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
@@ -2579,11 +2581,12 @@ function _serializeOptinForWeb() {
     path:      f.path,
     character: f.character,
     isAlt:     f.isAlt,
-    sizeBytes: f.sizeBytes,
-    sizeMb:    f.sizeMb,
-    mtime:     f.mtime ? f.mtime.getTime() : null,
-    selected:  !!f.selected,
-    requested: !!f.requested,
+    isWatched: !!f.isWatched,  // ← was omitted; without it the UI couldn't tell
+    sizeBytes: f.sizeBytes,    //   the checkbox should render as `disabled`,
+    sizeMb:    f.sizeMb,       //   so clicks reached the server but were
+    mtime:     f.mtime ? f.mtime.getTime() : null,  // silently dropped by the
+    selected:  !!f.selected,                        // `!f.isWatched` guard
+    requested: !!f.requested,                       // in the select handler.
     resume:    f.resume || null,
     active:    _activeBackfills.has(f.path),
     activeStatus: _activeBackfills.get(f.path) || null,
@@ -2695,13 +2698,15 @@ function startWebDashboard(port) {
         const byPath = new Map(all.map(f => [f.path, f]));
 
         if (action === 'select') {
-          // Don't allow selecting live-tailed files — backfilling them
-          // would duplicate events into the parse pipeline.
-          for (const p of paths) { const f = byPath.get(p); if (f && !f.isWatched) f.selected = true; }
+          // Live-tailed files are allowed — combat events dedup via
+          // find_or_create_encounter (30-min window) and chat dedup via
+          // chat_messages unique constraint, so overlap with the live tail
+          // doesn't double-count server-side.
+          for (const p of paths) { const f = byPath.get(p); if (f) f.selected = true; }
         } else if (action === 'deselect') {
           for (const p of paths) { const f = byPath.get(p); if (f) f.selected = false; }
         } else if (action === 'select-all') {
-          for (const f of _optinState.files) if (!f.isWatched) f.selected = true;
+          for (const f of _optinState.files) f.selected = true;
         } else if (action === 'select-none') {
           for (const f of _optinState.files) f.selected = false;
         } else if (action === 'ignore') {
@@ -3686,10 +3691,8 @@ function _renderOptinList(list, label, cursor, showResume) {
   }
   out.push(`  ${C.dim}${pad('', 3)} ${pad('Character', 14)} ${pad('File', 32)} ${pad('Size', 8)} ${pad('Modified', 11)} ${showResume ? 'Resume' : ''}${C.reset}\n`);
   list.forEach((f, i) => {
-    // Live-tailed files can't be backfilled — show a locked checkbox.
-    const sel  = f.isWatched
-      ? `${C.dim}[~]${C.reset}`
-      : (f.selected ? `${C.green}[✓]${C.reset}` : `${C.dim}[ ]${C.reset}`);
+    // Live-tailed files can be selected too — server-side dedup catches overlap.
+    const sel  = f.selected ? `${C.green}[✓]${C.reset}` : `${C.dim}[ ]${C.reset}`;
     const cur  = i === cursor ? `${C.yellow}▶${C.reset}` : ' ';
     const alt  = f.isAlt ? ` ${C.dim}(alt)${C.reset}` : '';
     const live = f.isWatched ? ` ${C.green}● live${C.reset}` : '';
