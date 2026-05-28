@@ -58,11 +58,47 @@ function eraByName(name: string | undefined) {
   return ERAS.find(e => e.name.toLowerCase() === name.toLowerCase()) || null;
 }
 
+// Parse the speaker param. Comma-separated → list of speakers; everything else
+// is treated as a single substring match (preserves the v1 behavior). Trim
+// whitespace and drop empties so trailing commas don't accidentally widen the
+// scope.
+function parseSpeakers(s: string | undefined): string[] {
+  if (!s) return [];
+  return s.split(',').map(x => x.trim()).filter(Boolean);
+}
+
+// Add or remove a speaker from the active list (clicking from the sidebar).
+// Case-insensitive match for dedup so capitalization quirks in the URL don't
+// matter.
+function toggleSpeakerList(current: string | undefined, name: string): string | undefined {
+  const list = parseSpeakers(current);
+  const idx = list.findIndex(s => s.toLowerCase() === name.toLowerCase());
+  if (idx >= 0) list.splice(idx, 1);
+  else list.push(name);
+  return list.length > 0 ? list.join(',') : undefined;
+}
+
+function removeSpeaker(current: string | undefined, name: string): string | undefined {
+  const list = parseSpeakers(current).filter(s => s.toLowerCase() !== name.toLowerCase());
+  return list.length > 0 ? list.join(',') : undefined;
+}
+
 // Apply the orthogonal filters (speaker / channel / search / era) to a query.
-function applyFilters<T extends { gte: Function; lt: Function; eq: Function; ilike: Function }>(q: T, p: Params): T {
+function applyFilters<T extends { gte: Function; lt: Function; eq: Function; ilike: Function; or: Function }>(q: T, p: Params): T {
   let r = q;
   if (p.channel && p.channel !== 'all') r = (r as any).eq('channel', p.channel);
-  if (p.speaker) r = (r as any).ilike('speaker', `%${p.speaker.replace(/[%_]/g, '\\$&')}%`);
+  const speakers = parseSpeakers(p.speaker);
+  if (speakers.length === 1) {
+    r = (r as any).ilike('speaker', `%${speakers[0].replace(/[%_]/g, '\\$&')}%`);
+  } else if (speakers.length > 1) {
+    // PostgREST .or() syntax: speaker.ilike.%X%,speaker.ilike.%Y% — names
+    // contain no commas/parens so escaping the percent/underscore chars is
+    // enough. Wrap each pattern explicitly to keep ilike's wildcard meaning.
+    const clauses = speakers
+      .map(s => `speaker.ilike.%${s.replace(/[%_]/g, '\\$&')}%`)
+      .join(',');
+    r = (r as any).or(clauses);
+  }
   if (p.search)  r = (r as any).ilike('text',    `%${p.search.replace(/[%_]/g, '\\$&')}%`);
   const era = eraByName(p.era);
   if (era) r = (r as any).gte('ts', era.start).lt('ts', era.end);
@@ -138,10 +174,8 @@ async function loadDay(p: Params, year: number, month: number, day: number): Pro
 // count). Single query pulls ts for the filtered set, JS buckets by era.
 async function eraCounts(p: Omit<Params, 'era' | 'year' | 'month' | 'day'>) {
   const sb = supabaseAdmin();
-  let q = sb.from('chat_messages').select('ts').limit(50000);
-  if (p.channel && p.channel !== 'all') q = q.eq('channel', p.channel);
-  if (p.speaker) q = q.ilike('speaker', `%${p.speaker.replace(/[%_]/g, '\\$&')}%`);
-  if (p.search)  q = q.ilike('text',    `%${p.search.replace(/[%_]/g, '\\$&')}%`);
+  let q: any = sb.from('chat_messages').select('ts').limit(50000);
+  q = applyFilters(q, { ...p, era: undefined });
   const { data } = await q;
   const counts = new Map<string, number>(ERAS.map(e => [e.name, 0]));
   for (const r of (data ?? []) as { ts: string }[]) {
@@ -156,20 +190,42 @@ async function eraCounts(p: Omit<Params, 'era' | 'year' | 'month' | 'day'>) {
   return ERAS.map(e => ({ name: e.name, count: counts.get(e.name) ?? 0 }));
 }
 
-// Top speakers under the current filter scope (excluding speaker filter, so
-// you can SWAP speakers in one click without losing year/month/day context).
+// Top speakers under the current filter scope. EXCLUDES the speaker filter so
+// the sidebar always shows every voice in the time range — clicking
+// adds/removes that name from the multi-speaker list without losing scope.
 async function topSpeakers(p: Omit<Params, 'speaker'>, scope: { start: string; end: string } | null) {
   const sb = supabaseAdmin();
-  let q = sb.from('chat_messages').select('speaker').limit(50000);
+  let q: any = sb.from('chat_messages').select('speaker').limit(50000);
   if (scope) q = q.gte('ts', scope.start).lt('ts', scope.end);
-  if (p.channel && p.channel !== 'all') q = q.eq('channel', p.channel);
-  if (p.search) q = q.ilike('text', `%${p.search.replace(/[%_]/g, '\\$&')}%`);
+  // Use applyFilters but force speaker undefined so the speaker scope itself
+  // doesn't constrain the sidebar.
+  q = applyFilters(q, { ...p, speaker: undefined });
   const { data } = await q;
   const counts = new Map<string, number>();
   for (const r of (data ?? []) as { speaker: string }[]) {
     counts.set(r.speaker, (counts.get(r.speaker) ?? 0) + 1);
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
+}
+
+// "Years that exist in the chat_messages table at all" — used to render the
+// year axis even when the active filter has no matches that year. Without
+// this, drilling into a narrow filter would hide the rest of the timeline.
+// Cheap: two single-row queries for min/max ts.
+async function allYearsAxis(): Promise<number[]> {
+  const sb = supabaseAdmin();
+  const [minRes, maxRes] = await Promise.all([
+    sb.from('chat_messages').select('ts').order('ts', { ascending: true }).limit(1).maybeSingle(),
+    sb.from('chat_messages').select('ts').order('ts', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const minTs = (minRes.data as { ts?: string } | null)?.ts;
+  const maxTs = (maxRes.data as { ts?: string } | null)?.ts;
+  if (!minTs || !maxTs) return [];
+  const minYear = new Date(minTs).getUTCFullYear();
+  const maxYear = new Date(maxTs).getUTCFullYear();
+  const years: number[] = [];
+  for (let y = maxYear; y >= minYear; y--) years.push(y);
+  return years;
 }
 
 function paramsToQuery(p: Params): string {
@@ -268,6 +324,7 @@ export default async function AdminChatPage({
 
   // Browser / log content
   let years: [number, number][] = [];
+  let yearAxis: number[] = [];
   let months: [number, number][] = [];
   let days: [number, number][] = [];
   let log: ChatRow[] = [];
@@ -279,7 +336,10 @@ export default async function AdminChatPage({
   } else if (year) {
     months = await monthBuckets(p, year);
   } else {
-    years = await yearBuckets(p);
+    // At the year level, show ALL years that exist in chat_messages — even
+    // ones with 0 matches for the active filter. Otherwise narrowing the
+    // filter would hide the rest of the timeline.
+    [years, yearAxis] = await Promise.all([yearBuckets(p), allYearsAxis()]);
   }
 
   // Speaker swap menu — independent of the speaker filter so you can swap
@@ -320,9 +380,12 @@ export default async function AdminChatPage({
             </select>
           </label>
           <label className="text-xs">
-            <span className="text-dim block mb-1">Speaker</span>
+            <span className="text-dim block mb-1">
+              Speaker <span className="text-dim/70">(comma-separated for multi-select)</span>
+            </span>
             <input type="text" name="speaker" defaultValue={p.speaker ?? ''}
-              placeholder="(any)" className="w-full bg-bg border border-border rounded px-2 py-1 text-sm" />
+              placeholder="(any) — e.g. Hitya, Aimey, Halocke"
+              className="w-full bg-bg border border-border rounded px-2 py-1 text-sm" />
           </label>
           <label className="text-xs">
             <span className="text-dim block mb-1">Text contains</span>
@@ -349,12 +412,18 @@ export default async function AdminChatPage({
           </span>
         ))}
         <span className="ml-auto flex items-center gap-3 flex-wrap">
-          {p.speaker && (
-            <span className="text-dim">
-              speaker: <span className="text-orange">{p.speaker}</span>
-              <Link href={`/admin/chat${paramsToQuery({ ...p, speaker: undefined })}`} className="ml-1 text-dim hover:text-blue">×</Link>
+          {parseSpeakers(p.speaker).map(name => (
+            <span key={name} className="text-dim">
+              speaker: <span className="text-orange">{name}</span>
+              <Link
+                href={`/admin/chat${paramsToQuery({ ...p, speaker: removeSpeaker(p.speaker, name) })}`}
+                className="ml-1 text-dim hover:text-blue"
+                aria-label={`Remove speaker ${name}`}
+              >
+                ×
+              </Link>
             </span>
-          )}
+          ))}
           {activeEra && (
             <span className="text-dim">
               era: <span className="text-blue">{activeEra.name}</span>
@@ -409,21 +478,31 @@ export default async function AdminChatPage({
             </section>
           )}
 
-          {/* Year grid */}
-          {years.length > 0 && (
+          {/* Year grid — always shows every year that exists in chat_messages,
+              even when the active filter has 0 matches there. Grayed cells
+              are still clickable so you can hop into an empty year and broaden
+              the filter from inside it. */}
+          {yearAxis.length > 0 && (
             <section className="bg-panel border border-border rounded-lg p-4">
-              <h3 className="text-sm text-orange mb-3">📅 Years with traffic</h3>
+              <h3 className="text-sm text-orange mb-3">📅 Years</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {years.map(([y, n]) => (
-                  <Link
-                    key={y}
-                    href={`/admin/chat${paramsToQuery({ ...p, year: String(y) })}`}
-                    className="bg-bg border border-border rounded p-3 hover:border-blue transition-colors no-underline"
-                  >
-                    <div className="text-lg text-text">{y}</div>
-                    <div className="text-xs text-dim">{n.toLocaleString()} msgs</div>
-                  </Link>
-                ))}
+                {yearAxis.map((y) => {
+                  const found = years.find(([yy]) => yy === y);
+                  const n = found ? found[1] : 0;
+                  const cellClass = n === 0
+                    ? 'bg-bg/50 border border-border/40 rounded p-3 hover:border-blue transition-colors no-underline opacity-50'
+                    : 'bg-bg border border-border rounded p-3 hover:border-blue transition-colors no-underline';
+                  return (
+                    <Link
+                      key={y}
+                      href={`/admin/chat${paramsToQuery({ ...p, year: String(y) })}`}
+                      className={cellClass}
+                    >
+                      <div className="text-lg text-text">{y}</div>
+                      <div className="text-xs text-dim">{n > 0 ? `${n.toLocaleString()} msgs` : 'no matches'}</div>
+                    </Link>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -532,11 +611,15 @@ export default async function AdminChatPage({
             ) : (
               <ul className="text-xs space-y-0.5 max-h-[60vh] overflow-y-auto">
                 {speakerList.map(([name, n]) => {
-                  const isActive = p.speaker?.toLowerCase() === name.toLowerCase();
+                  // Sidebar clicks ADD to or REMOVE FROM the multi-speaker
+                  // list; never wipe other selections. Active = the speaker
+                  // is currently in the list.
+                  const activeSpeakers = parseSpeakers(p.speaker);
+                  const isActive = activeSpeakers.some(s => s.toLowerCase() === name.toLowerCase());
                   return (
                     <li key={name}>
                       <Link
-                        href={`/admin/chat${paramsToQuery({ ...p, speaker: isActive ? undefined : name })}`}
+                        href={`/admin/chat${paramsToQuery({ ...p, speaker: toggleSpeakerList(p.speaker, name) })}`}
                         className={`flex justify-between gap-2 px-1 py-0.5 rounded ${
                           isActive ? 'bg-[#1f6feb33] text-blue' : 'hover:bg-[#1a212c] text-text'
                         }`}
