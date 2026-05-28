@@ -95,15 +95,19 @@ async function getNpcIdForInternalId(internalId) {
 
 // Find or create an encounter matching npc_id within ±N min of timestamp.
 // Returns the encounter id (uuid) or null on failure.
-async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMin = 30 }) {
+// zoneShort is optional — when present it's stored on insert. When absent the
+// RPC falls back to bosses_local.zone_short for the npc.
+async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMin = 30, zoneShort = null }) {
   if (!isEnabled() || !npcId) return null;
-  const result = await rpc('find_or_create_encounter', {
+  const params = {
     p_guild_id:   _guildId(),
     p_npc_id:     npcId,
     p_started_at: new Date(startedAtMs).toISOString(),
     p_duration:   durationSec,
     p_window_min: windowMin,
-  });
+  };
+  if (zoneShort) params.p_zone_short = zoneShort;
+  const result = await rpc('find_or_create_encounter', params);
   // RPC returns the scalar uuid
   return typeof result === 'string' ? result : null;
 }
@@ -154,10 +158,17 @@ async function recordParse({
   bossInternalId, parsed, timestampMs,
   contributorDiscordId, contributorCharacter,
   source = 'eqlogparser_send_to_eq',
+  zoneShort = null,
 }) {
   if (!isEnabled()) return null;
 
-  const npcId = await getNpcIdForInternalId(bossInternalId);
+  // One query for npc_id + zone_short so encounter insert lands with a zone.
+  const rows = await select(
+    'bosses_local',
+    `internal_id=eq.${encodeURIComponent(bossInternalId)}&select=npc_id,zone_short&limit=1`
+  );
+  const row   = Array.isArray(rows) ? rows[0] : null;
+  const npcId = row?.npc_id || null;
   if (!npcId) {
     // Expected during rollout — bosses_local hasn't been populated yet, or this
     // boss isn't opt-in. Falling back to no-op is correct; the legacy parses.json
@@ -169,6 +180,7 @@ async function recordParse({
     npcId,
     startedAtMs: timestampMs,
     durationSec: parsed.duration,
+    zoneShort:   zoneShort || row.zone_short || null,
   });
   if (!encounterId) return null;
 

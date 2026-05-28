@@ -2,7 +2,7 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 2.5.0 | `package.json` |
+| **Bot** | 2.5.1 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 2.4.6 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 0.2.0 | `web/package.json` |
 
