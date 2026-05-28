@@ -1841,6 +1841,7 @@ function scheduleMidnightSummary(readyClient) {
       clearRaidNight();
       // Clear agent test thread tracking — fresh state for the new night
       clearAgentTestCards();
+      _liveCards.clear();
       clearAgentSessionCardId();
       clearAgentActivity();
       clearPetOwners();
@@ -2663,6 +2664,12 @@ async function _handleAgentLockout(req, res) {
   res.end(JSON.stringify({ ok: true, set }));
 }
 
+// In-memory card cache: mirrors agentTestCards in state.json but updated
+// immediately (before the async Discord send completes), so concurrent uploads
+// for the same boss find the in-progress card and merge rather than racing to
+// each post a fresh card.
+const _liveCards = new Map();
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
@@ -2898,18 +2905,25 @@ async function _handleAgentUpload(req, res) {
         // the out-of-range case — Utoh's encounter ended via idle flush
         // ~minutes before Syrl's in-range parser saw the death event, so
         // their ended_at gap exceeded any reasonable tolerance window.
-        const existing  = getAgentTestCard(bossKey);
+        // Cache-first lookup: _liveCards is updated immediately (before the async
+        // Discord send resolves), so concurrent uploads for the same boss find
+        // the in-progress card rather than each racing to post a fresh one.
+        const existing  = _liveCards.get(bossKey) || getAgentTestCard(bossKey);
         const exStart   = existing?.encounterStartedAt || 0;
         const exEnd     = existing?.encounterEndedAt   || 0;
+        // Named mobs (no "a "/"an " prefix) are unique — only one can exist in a zone
+        // at a time, so any upload within 10 min of the prior card is the same kill.
+        // Trash mobs ("a Shissar Guard") keep the tight 60s window so back-to-back
+        // pulls still accumulate on the same card.
+        const isNamedMob   = !/^an?\s/i.test(mobName);
+        const seqWindowMs  = isNamedMob ? 10 * 60_000 : 60_000;
         // Two encounters are the "same kill" if their time ranges OVERLAP (concurrent parsers)
-        // OR they are sequential kills of the same mob within 60s (back-to-back pulls in the
-        // same zone — e.g. grinding Shik`nar Workers one after another). In both cases we
-        // merge into the same parse card rather than posting a new one.
+        // OR they are sequential kills of the same mob within the window.
         const overlaps    = existing && exStart > 0 && exEnd > 0
                             && (startedMs < exEnd) && (endedMs > exStart);
         const sequential  = existing && exStart > 0 && exEnd > 0
                             && startedMs >= exEnd
-                            && (startedMs - exEnd) < 60_000;   // gap < 60s = same session
+                            && (startedMs - exEnd) < seqWindowMs;
         const withinWindow = overlaps || sequential;
 
         let mergedPlayers, mergedHealers, mergedDefenders, mergedDeaths, mergedHealGaps, perspectives, newDuration, newTotalDamage, newTotalDps;
@@ -3108,24 +3122,36 @@ async function _handleAgentUpload(req, res) {
           healGaps:   mergedHealGaps || null,
         });
 
-        if (withinWindow && existing.messageId) {
+        // Stamp _liveCards immediately (before the awaited Discord send) so any
+        // concurrent upload for the same boss finds the in-progress card.
+        const _saveCard = (state) => {
+          _liveCards.set(bossKey, state);
+          setAgentTestCard(bossKey, state);
+        };
+
+        if (withinWindow && existing.messageId && existing.messageId !== 'pending') {
+          // Reserve the slot before the async send to prevent races
+          const mergedState = _cardState(
+            existing.messageId,
+            existing.timestamp,
+            Math.min(exStart, startedMs),
+            Math.max(exEnd, endedMs),
+          );
+          _liveCards.set(bossKey, mergedState);
           try {
             const existingMsg = await testThread.messages.fetch(existing.messageId);
             await existingMsg.edit({ embeds: [card] });
-            setAgentTestCard(bossKey, _cardState(
-              existing.messageId,
-              existing.timestamp,           // keep original window start
-              Math.min(exStart, startedMs), // extend range to cover both perspectives
-              Math.max(exEnd, endedMs),
-            ));
+            _saveCard(mergedState);
           } catch {
             // Message gone — post fresh card
             const sent = await testThread.send({ embeds: [card] });
-            setAgentTestCard(bossKey, _cardState(sent.id, Date.now(), startedMs, endedMs));
+            _saveCard(_cardState(sent.id, Date.now(), startedMs, endedMs));
           }
         } else {
+          // Reserve the slot before the async send
+          _liveCards.set(bossKey, _cardState('pending', Date.now(), startedMs, endedMs));
           const sent = await testThread.send({ embeds: [card] });
-          setAgentTestCard(bossKey, _cardState(sent.id, Date.now(), startedMs, endedMs));
+          _saveCard(_cardState(sent.id, Date.now(), startedMs, endedMs));
         }
 
         // ── If contaminated, also retroactively warn on the prior card ────
