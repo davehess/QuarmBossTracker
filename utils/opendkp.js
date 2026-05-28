@@ -330,14 +330,22 @@ async function deleteAuction(auctionId) {
 }
 
 // ── Raids API ─────────────────────────────────────────────────────────────────
-// GET /beta/raids — all raids (no ticks detail)
+// Captured cURL (2026-05-28) confirms /clients/{name}/raids/:id works with
+// the same Bearer auth as /characters and /auctions. Switching reads off the
+// legacy /beta/raids path means we no longer need OPENDKP_CLIENT_ID for
+// the sync — bearer covers everything. updateRaidById was already on the
+// bearer path; getRaids/getRaid now match.
+//
+// GET /clients/{name}/raids — all raids (summary, no ticks detail)
 async function getRaids() {
-  return _get({ ..._raidsUrl(), headers: _readHeaders() });
+  const headers = await _bearerHeaders();
+  return _get({ ..._clientUrl('/raids'), headers });
 }
 
-// GET /beta/raids/:id — single raid with full ticks, attendees, and loot Items
+// GET /clients/{name}/raids/:id — single raid with full Ticks + Items
 async function getRaid(raidId) {
-  return _get({ ..._raidsUrl(`/${raidId}`), headers: _readHeaders() });
+  const headers = await _bearerHeaders();
+  return _get({ ..._clientUrl(`/raids/${raidId}`), headers });
 }
 
 // Convenience: fetch all raids, return the most recent by Timestamp.
