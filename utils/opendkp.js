@@ -132,11 +132,16 @@ async function _bearerHeaders(contentType = false) {
   return h;
 }
 
-// GET /clients/{name}/characters — all characters
+// GET /clients/{name}/characters[?IncludeInactives=true] — full roster.
+// Defaults to including inactives so callers see the complete picture (alts
+// retired off the raid team, ex-members who left, etc). Pass { activeOnly:
+// true } to restrict to current actives.
+//
 // Uses Bearer auth (same as auction endpoints) — OPENDKP_CLIENT_ID not needed.
-async function getCharacters() {
+async function getCharacters(opts = {}) {
   const headers = await _bearerHeaders();
-  return _get({ ..._clientUrl('/characters'), headers });
+  const path    = opts.activeOnly ? '/characters' : '/characters?IncludeInactives=true';
+  return _get({ ..._clientUrl(path), headers });
 }
 
 // PUT /clients/{name}/characters — create a new character
