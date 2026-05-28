@@ -2412,7 +2412,7 @@ function renderOptin(o) {
     h += '<div class="banner resumed">⏳ Running: ' +
          o.activeBackfills.map(b => esc(b.character) + ' (' +
            (b.totalBytes ? Math.floor(b.bytePos/b.totalBytes*100)+'%' : '?') +
-           ', ' + b.chatCount + ' chat lines)').join(' · ') + '</div>';
+           ', ' + b.chatCount + ' chat, ' + (b.encounterCount||0) + ' enc)').join(' · ') + '</div>';
   }
   // Group files by character so 'Hitya' with eqlog_Hitya_pq.proj.txt and
   // eqlog_Hitya_pq.proj.txt2 (the rolled-over backup) show under one header.
@@ -3530,14 +3530,14 @@ function runOptinBackfill(files, opts = {}) {
   const log = opts.log || (() => {});
   const { botUrl, token, dryRun } = _uploadOpts || {};
 
-  log(`Starting chat-only backfill on ${files.length} file(s)...`);
+  log(`Starting backfill on ${files.length} file(s) — chat + combat + /who...`);
 
   for (const f of files) {
     if (_activeBackfills.has(f.path)) {
       log(`  Skipping ${f.character} — backfill already in progress`);
       continue;
     }
-    const status = { character: f.character, path: f.path, chatCount: 0,
+    const status = { character: f.character, path: f.path, chatCount: 0, encounterCount: 0,
                      startedAt: Date.now(), state: 'running', bytePos: 0, totalBytes: f.sizeBytes || 0 };
     _activeBackfills.set(f.path, status);
     onStatus(status);
@@ -3549,6 +3549,20 @@ function runOptinBackfill(files, opts = {}) {
       const batch = chatBatch.splice(0);
       await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
     };
+
+    // Per-file builder: encounters auto-flush on boss death (see EncounterBuilder.add),
+    // plus a final builder.flush() at end of file for any trailing events. /who
+    // observations land in the module-level whoData map as a parseEvent side-effect
+    // and ride along with the next uploadEncounter payload.
+    const builder = new EncounterBuilder({
+      character: f.character,
+      onFlush: payload => {
+        status.encounterCount++;
+        return uploadEncounter(payload, { botUrl, token, dryRun }).catch(err =>
+          log(`  [upload error] ${f.character}: ${err.message}`)
+        );
+      },
+    });
 
     (async () => {
       const stored    = _optinState.progress[f.path];
@@ -3563,13 +3577,20 @@ function runOptinBackfill(files, opts = {}) {
       try {
         await readFromBytePos(f.path, startByte,
           (line) => {
-            // CHAT-ONLY. Legacy logs should not create parses.
+            // Chat comes first — chat lines don't survive shouldKeep().
             const chatMsg = parseChatLine(line, f.character);
             if (chatMsg) {
               chatBatch.push({ ...chatMsg, uploadedBy: f.character });
               status.chatCount++;
               if (chatBatch.length >= 500) flushChat(true).catch(() => {});
+              return;
             }
+            // Combat + /who: shouldKeep with defaults; parseEvent populates the
+            // module-level whoData map as a side-effect for /who output rows.
+            if (!shouldKeep(line)) return;
+            const ts = parseEqTimestamp(line);
+            const ev = parseEvent(line, ts);
+            if (ev) builder.add(ev);
           },
           ({ bytePos, lineNum }) => {
             status.bytePos = bytePos;
@@ -3582,6 +3603,7 @@ function runOptinBackfill(files, opts = {}) {
             _saveOptInState();
             onStatus(status);
           });
+        builder.flush();
         await flushChat(true).catch(() => {});
         _optinState.progress[f.path] = {
           bytePos: totalBytes, lineNum: -1, totalBytes,
@@ -3590,7 +3612,7 @@ function runOptinBackfill(files, opts = {}) {
         };
         _saveOptInState();
         status.state = 'done';
-        log(`  ✓ Done: ${f.character} (${status.chatCount} chat lines stored)`);
+        log(`  ✓ Done: ${f.character} (${status.chatCount} chat, ${status.encounterCount} encounters)`);
       } catch (err) {
         status.state = 'error';
         status.error = err.message;
@@ -4910,9 +4932,27 @@ async function main() {
     const since = new Date(args.flags.since);
     const until = args.flags.until ? new Date(args.flags.until) : new Date();
     console.log(`Backfilling window: ${since.toISOString()} → ${until.toISOString()}`);
+
+    // Chat is filtered out by shouldKeep at the byte-level, so handle it
+    // before the combat filter. Batches up to 500 then flushes.
+    const chatBatch = [];
+    const flushChat = async (force) => {
+      if (chatBatch.length === 0) return;
+      if (!force && chatBatch.length < 500) return;
+      const batch = chatBatch.splice(0);
+      await uploadHistoricalChat(batch, { botUrl, token, dryRun })
+        .catch(err => console.warn(`[chat backfill] ${err.message}`));
+    };
+
     for (const b of builders) {
       console.log(`[${b.character}] scanning ${b.logPath}`);
       await readWindow(b.logPath, since, until, line => {
+        const chatMsg = parseChatLine(line, b.character);
+        if (chatMsg) {
+          chatBatch.push({ ...chatMsg, uploadedBy: b.character });
+          if (chatBatch.length >= 500) flushChat(true).catch(() => {});
+          return;
+        }
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ts = parseEqTimestamp(line);
         const ev = parseEvent(line, ts);
@@ -4920,6 +4960,7 @@ async function main() {
       });
       b.builder.flush();
     }
+    await flushChat(true).catch(() => {});
     console.log('Backfill complete.');
     return;
   }
