@@ -32,8 +32,11 @@ module.exports = {
       `• Raids fetched: **${res.raids_fetched}** (upserted ${res.raids_upserted})`,
       `• Detail synced: **${res.detail_synced}** raid(s)${res.detail_errors ? ` — ${res.detail_errors} errored (see logs)` : ''}`,
       `• Ticks written: ${res.tick_rows_written}`,
-      `• Loot rows written: ${res.loot_rows_written}`,
-      full ? '• Mode: full re-sync (every raid)' : '• Mode: incremental (new + version-bumped only)',
+      `• Loot rows written (from raid detail): ${res.loot_rows_written}`,
+      `• Characters: ${res.characters_upserted}${res.characters_error ? ` (error: ${res.characters_error})` : ''}`,
+      `• Auctions: **${res.auctions_upserted}** upserted across ${res.auctions_pages} page(s)${res.auctions_error ? ` — error: ${res.auctions_error}` : ''}`,
+      `• Bid detail: **${res.auction_bids_written}** bids written across ${res.auctions_detailed} auction(s)${res.auction_bid_errors ? ` — ${res.auction_bid_errors} errored` : ''}`,
+      full ? '• Mode: full re-sync (every raid + every page + every auction\'s bids)' : '• Mode: incremental (newest 50 auctions + new bids only)',
     ].join('\n'));
   },
 };

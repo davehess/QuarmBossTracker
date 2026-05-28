@@ -16,10 +16,14 @@
 // throw — a stuck raid shouldn't kill the whole sync.
 
 const supabase = require('./supabase');
-const { getRaids, getRaid, getCharacters } = require('./opendkp');
+const { getRaids, getRaid, getCharacters, getAuctions, getAuction } = require('./opendkp');
 
-const PER_RUN_DETAIL_LIMIT = 50;   // max getRaid() calls per sync invocation
-let _loggedLootShape = false;      // one-shot diagnostic for unknown response shape
+const PER_RUN_DETAIL_LIMIT  = 50;   // max getRaid() calls per sync invocation
+const AUCTION_PAGE_LIMIT    = 25;   // safety cap; OpenDKP "Include all" runs ~13 pages
+const BID_DETAIL_PER_RUN    = 50;   // per-auction bid fetches per incremental run
+let _loggedLootShape       = false;  // one-shot diagnostic — unknown raid-detail items shape
+let _loggedAuctionShape    = false;  // one-shot diagnostic — unknown auctions response shape
+let _loggedBidShape        = false;  // one-shot diagnostic — unknown bid response shape
 
 // Normalize the OpenDKP raid summary into the opendkp_raids row shape.
 function _raidSummaryRow(r) {
@@ -102,6 +106,191 @@ function _lootRow(raidId, item) {
     dkp:            Number.isFinite(dkpRaw) ? dkpRaw : 0,
     notes:          _lootField(item, 'Notes', 'notes') || null,
     fetched_at:     new Date().toISOString(),
+  };
+}
+
+// Map a raw auction object from /clients/wolfpack/auctions?page=N into an
+// opendkp_auctions row. Field names are defensive — the wire format hasn't
+// been pasted yet, but the OpenDKP UI shows columns AuctionId / Item / Winner
+// / Bid Amount / Date / Auctioneer / Notes / Raid. _lootField walks variants.
+function _auctionRow(a) {
+  if (!a) return null;
+  const auctionId = _lootField(a, 'AuctionId', 'AuctionID', 'Id', 'id', 'auction_id');
+  const itemName  = _lootField(a, 'ItemName', 'Item', 'Name', 'item_name', 'item');
+  if (auctionId == null || !itemName) return null;
+
+  const winnerRaw    = _lootField(a, 'WinnerName', 'Winner', 'CharacterName', 'Character', 'winner', 'character');
+  const bidAmountRaw = _lootField(a, 'BidAmount', 'Bid', 'Dkp', 'DKP', 'Value', 'bid_amount', 'dkp');
+  const itemIdRaw    = _lootField(a, 'ItemId', 'ItemID', 'GameItemId', 'item_id');
+  const raidIdRaw    = _lootField(a, 'RaidId', 'RaidID', 'raid_id');
+
+  return {
+    auction_id:  Number(auctionId),
+    raid_id:     Number.isFinite(raidIdRaw) ? Number(raidIdRaw) : null,
+    item_id:     Number.isFinite(itemIdRaw) ? Number(itemIdRaw) : null,
+    item_name:   String(itemName),
+    winner:      winnerRaw ? String(winnerRaw) : null,
+    bid_amount:  Number.isFinite(bidAmountRaw) ? Number(bidAmountRaw) : null,
+    auctioneer:  _lootField(a, 'Auctioneer', 'auctioneer', 'CreatedBy') || null,
+    notes:       _lootField(a, 'Notes', 'notes') || null,
+    state:       _lootField(a, 'State', 'state') ?? null,
+    awarded_at:  _lootField(a, 'AwardedAt', 'awarded_at', 'EndTimestamp', 'EndAt', 'UpdatedTimestamp') || null,
+    created_at:  _lootField(a, 'CreatedAt', 'CreatedTimestamp', 'created_at') || null,
+    end_at:      _lootField(a, 'EndTimestamp', 'EndAt', 'end_at') || null,
+    fetched_at:  new Date().toISOString(),
+  };
+}
+
+// Walk /clients/wolfpack/auctions?page=N until an empty page (or the safety
+// cap) is hit. OpenDKP's "Include all" toggle issues exactly the same fetches
+// pages 1..13 currently, so AUCTION_PAGE_LIMIT=25 is generous headroom.
+// Map a raw bid entry from /clients/wolfpack/auctions/{id} into an
+// opendkp_auction_bids row. Confirmed columns (from web UI for auction
+// 994909): position #, Name, Rank, Value, Date. Defensive field-name
+// matching like the other OpenDKP rows.
+function _bidRow(auctionId, b, position) {
+  if (!b) return null;
+  const charName = _lootField(b, 'Name', 'CharacterName', 'Character', 'character_name', 'character');
+  if (!charName) return null;
+  const valueRaw = _lootField(b, 'Value', 'Bid', 'Dkp', 'DKP', 'value');
+  const bidAt    = _lootField(b, 'Date', 'BidAt', 'Timestamp', 'CreatedAt', 'created_at', 'bid_at');
+  return {
+    auction_id:     Number(auctionId),
+    position:       Number.isFinite(position) ? position : null,
+    character_name: String(charName),
+    rank:           _lootField(b, 'Rank', 'rank') || null,
+    value:          Number.isFinite(valueRaw) ? Number(valueRaw) : null,
+    bid_at:         bidAt || null,
+    fetched_at:     new Date().toISOString(),
+  };
+}
+
+// Fetch one auction's full detail and upsert its bids. Returns count
+// written (or { error }).
+async function syncAuctionBids(auctionId) {
+  let detail;
+  try { detail = await getAuction(auctionId); }
+  catch (err) { return { error: err?.message || String(err), bids_written: 0 }; }
+  if (!detail) return { bids_written: 0 };
+
+  // Bids array could live at .Bids, .bids, or be the response itself if
+  // the API returns just the array. Try the common spots.
+  const bids = Array.isArray(detail)             ? detail
+            : Array.isArray(detail?.Bids)        ? detail.Bids
+            : Array.isArray(detail?.bids)        ? detail.bids
+            : Array.isArray(detail?.Bidders)     ? detail.Bidders
+            : null;
+
+  if (!bids) {
+    if (!_loggedBidShape) {
+      _loggedBidShape = true;
+      const keys = Object.keys(detail || {}).filter(k => typeof detail[k] !== 'function');
+      console.log('[opendkp-sync] auction', auctionId, 'detail: no bids array. Keys:', keys.join(', '));
+      try { console.log('[opendkp-sync] auction', auctionId, 'sample:', JSON.stringify(detail).slice(0, 600)); } catch {}
+    }
+    return { bids_written: 0 };
+  }
+
+  const rows = bids.map((b, i) => _bidRow(auctionId, b, i + 1)).filter(Boolean);
+  if (rows.length === 0) return { bids_written: 0 };
+  const written = await supabase.upsert('opendkp_auction_bids', rows, 'auction_id,character_name,value');
+  return { bids_written: Array.isArray(written) ? written.length : 0 };
+}
+
+//
+// Incremental sync (default): walk page 1 only (50 most recent auctions —
+// covers any newly-settled bids since the last run).
+// Full sync (opts.full): walk all pages until empty.
+async function syncAuctions(opts = {}) {
+  if (!supabase.isEnabled()) return { error: 'supabase disabled', upserted: 0, pages: 0 };
+  const maxPages = opts.full ? AUCTION_PAGE_LIMIT : 1;
+
+  let pagesWalked    = 0;
+  let totalUpserted  = 0;
+
+  for (let page = 1; page <= maxPages; page++) {
+    let arr;
+    try { arr = await getAuctions(page); }
+    catch (err) {
+      return { error: err?.message || String(err), upserted: totalUpserted, pages: pagesWalked };
+    }
+
+    // Response shape unknown — could be a flat array, or wrapped under
+    // .auctions / .data / .results. First sync logs the shape if we can't
+    // find a list anywhere.
+    const list = Array.isArray(arr)              ? arr
+              : Array.isArray(arr?.auctions)     ? arr.auctions
+              : Array.isArray(arr?.data)         ? arr.data
+              : Array.isArray(arr?.results)      ? arr.results
+              : Array.isArray(arr?.Auctions)     ? arr.Auctions
+              : null;
+
+    if (!list) {
+      if (!_loggedAuctionShape) {
+        _loggedAuctionShape = true;
+        const keys = Object.keys(arr || {}).filter(k => typeof arr[k] !== 'function');
+        console.log('[opendkp-sync] auctions page ' + page + ' unexpected shape — top-level keys:', keys.join(', '));
+        try { console.log('[opendkp-sync] auctions sample:', JSON.stringify(arr).slice(0, 600)); } catch {}
+      }
+      return { error: 'unexpected auctions shape', upserted: totalUpserted, pages: pagesWalked };
+    }
+
+    if (list.length === 0) break;
+    pagesWalked++;
+
+    const rows = list.map(_auctionRow).filter(Boolean);
+    if (rows.length === 0 && !_loggedAuctionShape) {
+      _loggedAuctionShape = true;
+      console.log('[opendkp-sync] auctions page ' + page + ' had ' + list.length + ' entries but 0 mapped — entry keys:',
+        Object.keys(list[0] || {}).join(', '));
+      try { console.log('[opendkp-sync] entry sample:', JSON.stringify(list[0]).slice(0, 600)); } catch {}
+    }
+
+    if (rows.length > 0) {
+      const written = await supabase.upsert('opendkp_auctions', rows, 'auction_id');
+      if (Array.isArray(written)) totalUpserted += written.length;
+    }
+  }
+
+  // Per-auction bid detail pass. Skip auctions we already have bids for
+  // (settled auctions don't change). Cap on incremental; uncapped on full.
+  let bidsWritten   = 0;
+  let auctionsDetailed = 0;
+  let bidErrors     = 0;
+  const bidCap      = opts.full ? Infinity : BID_DETAIL_PER_RUN;
+
+  // Pull the IDs we don't yet have bids for. Use a left-anti-join via JS:
+  // fetch recent auction IDs, fetch distinct bid auction_ids, diff. Cheaper
+  // than a per-auction existence probe.
+  const recentAuctions = await supabase.select(
+    'opendkp_auctions',
+    'select=auction_id&order=auction_id.desc&limit=' + (opts.full ? 2000 : 200),
+  );
+  const haveBidsFor = await supabase.select(
+    'opendkp_auction_bids',
+    'select=auction_id&limit=10000',
+  );
+  const haveBidsSet = new Set(
+    Array.isArray(haveBidsFor) ? haveBidsFor.map(r => r.auction_id) : [],
+  );
+  const needBids = (Array.isArray(recentAuctions) ? recentAuctions : [])
+    .map(r => r.auction_id)
+    .filter(id => !haveBidsSet.has(id));
+
+  for (const auctionId of needBids) {
+    if (auctionsDetailed >= bidCap) break;
+    const res = await syncAuctionBids(auctionId);
+    auctionsDetailed++;
+    if (res.error) { bidErrors++; continue; }
+    bidsWritten += res.bids_written || 0;
+  }
+
+  return {
+    upserted:           totalUpserted,
+    pages:              pagesWalked,
+    bids_written:       bidsWritten,
+    auctions_detailed:  auctionsDetailed,
+    bid_errors:         bidErrors,
   };
 }
 
@@ -273,6 +462,14 @@ async function runSync(opts = {}) {
     lootRowsWritten += res.loot_rows_written || 0;
   }
 
+  // Auctions: incremental walks page 1 only (~50 most-recent entries cover
+  // anything settled since the last sync); full walks pages 1..13ish until
+  // exhausted. Bid-Amount + Winner + RaidId per row → this is the canonical
+  // loot source going forward (opendkp_loot_recent view reads from
+  // opendkp_auctions, not from the per-raid Items[] data).
+  const auctionsResult = await syncAuctions(opts).catch(err =>
+    ({ error: err?.message || String(err), upserted: 0, pages: 0 }));
+
   return {
     phase: 'done',
     raids_fetched:     listResult.fetched,
@@ -281,6 +478,12 @@ async function runSync(opts = {}) {
     detail_errors:     detailErrors,
     tick_rows_written: tickRowsWritten,
     loot_rows_written: lootRowsWritten,
+    auctions_upserted:  auctionsResult?.upserted ?? 0,
+    auctions_pages:     auctionsResult?.pages ?? 0,
+    auction_bids_written:  auctionsResult?.bids_written ?? 0,
+    auctions_detailed:     auctionsResult?.auctions_detailed ?? 0,
+    auction_bid_errors:    auctionsResult?.bid_errors ?? 0,
+    auctions_error:    auctionsResult?.error || null,
     characters_upserted: charResult?.upserted ?? 0,
     characters_error:    charResult?.error || null,
   };
@@ -349,4 +552,4 @@ async function syncCharacters() {
   return { upserted };
 }
 
-module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters };
+module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions };

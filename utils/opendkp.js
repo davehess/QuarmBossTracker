@@ -210,6 +210,16 @@ async function createAuctions(auctions) {
   }, body);
 }
 
+// GET /clients/{name}/auctions/{auctionId} — single auction with full Bids[]
+// Captured cURL (2026-05-28): clicking into auction 994909 returns 14 bids
+// with character/rank/value/timestamp per entry. Source of truth for runner-
+// up bids before an auction settles.
+async function getAuction(auctionId) {
+  if (!auctionId) throw new Error('getAuction: auctionId is required');
+  const headers = await _bearerHeaders();
+  return _get({ ..._clientUrl(`/auctions/${auctionId}`), headers });
+}
+
 // GET /clients/{name}/auctions[?page=N] — list active + closed auctions
 // Captured cURL (2026-05-28): https://api.opendkp.com/clients/wolfpack/auctions?page=1
 // Same endpoint the OpenDKP web UI uses; Bearer auth works (the web UI uses
@@ -434,6 +444,6 @@ async function updateRaidById(raidId, raidObject) {
 module.exports = {
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter,
-  createAuctions, getAuctions, restoreAuction, deleteAuction,
+  createAuctions, getAuctions, getAuction, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
 };
