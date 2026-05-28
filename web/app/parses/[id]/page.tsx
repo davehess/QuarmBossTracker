@@ -200,6 +200,48 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         </div>
       </section>
 
+      {/* Damage by class */}
+      {(() => {
+        const totalEncDamage = players.reduce((s, p) => s + (p.total_damage || 0), 0);
+        const byClass = new Map<string, { total: number; players: number }>();
+        for (const p of players) {
+          const who = whoMap.get(p.character_name.toLowerCase());
+          const klass = who?.class || (p.has_pets ? 'Pets / unknown' : 'Unknown');
+          const e = byClass.get(klass) || { total: 0, players: 0 };
+          e.total += p.total_damage || 0;
+          e.players += 1;
+          byClass.set(klass, e);
+        }
+        const rows = [...byClass.entries()]
+          .map(([klass, v]) => ({ klass, ...v, share: totalEncDamage > 0 ? (v.total / totalEncDamage) * 100 : 0 }))
+          .sort((a, b) => b.total - a.total);
+        if (rows.length === 0 || totalEncDamage === 0) return null;
+        return (
+          <section className="bg-panel border border-border rounded-lg p-4">
+            <h3 className="text-sm text-blue mb-3 flex items-center gap-2">
+              <span aria-hidden>🎯</span>
+              <span>Damage by class</span>
+              <span className="text-dim text-xs">· class data from /who observations; unmatched players bucket together</span>
+            </h3>
+            <ul className="space-y-1">
+              {rows.map((r) => (
+                <li key={r.klass} className="text-xs">
+                  <div className="flex justify-between gap-2 mb-0.5">
+                    <span className="text-text">{r.klass} <span className="text-dim">· {r.players} player{r.players === 1 ? '' : 's'}</span></span>
+                    <span className="text-dim">
+                      {fmtDmg(r.total)} <span className="text-orange">· {r.share.toFixed(1)}%</span>
+                    </span>
+                  </div>
+                  <div className="w-full bg-bg rounded h-1.5 overflow-hidden">
+                    <div className="bg-blue h-full" style={{ width: `${r.share}%` }} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })()}
+
       {/* Damage breakdown */}
       <section className="bg-panel border border-border rounded-lg p-4">
         <h3 className="text-sm text-orange mb-3 flex items-center gap-2">
