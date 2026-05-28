@@ -184,6 +184,7 @@ const PROC_HATE = {
   'enraging blow':       700,   // warrior threat procs (Bloodfrenzy, BoC, etc.)
   'provoke':             500,
   'taunt':               500,
+  'stun':                200,   // warrior/paladin stun combat ability (non-damage)
   // Generic flat-hate weapon procs — add as observed
   'shock of fear':       250,
   'shock of dyn`leth':   250,
@@ -322,6 +323,11 @@ const KEEP_PATTERNS = [
   /\byou\s+(?:magically\s+)?mend\s+your\s+wounds/i,
   /\byou\s+(?:try\s+to\s+|fail\s+to\s+)?mend\s+your\s+wounds/i,
   /\b(?:tries|try)\s+to\s+\w+\s+.+?,\s+but\s+/i,
+  // Taunt and stun skill uses — credited as flat hate on the live threat meter
+  /\byou attempt to taunt\b/i,
+  /\byou have taunted\b/i,
+  /\byou have stunned\b/i,
+  /\byou stun\s+\w/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -576,6 +582,21 @@ function parseEvent(line, ts) {
   if (m) {
     return { ts: tsIso, type: 'cast', attacker: m[1], ability: m[2] };
   }
+
+  // ── Taunt skill ──────────────────────────────────────────────────────────
+  // "You attempt to taunt Lord Nagafen."  — attempt (always logged, even if resisted)
+  // "You have taunted Lord Nagafen."      — success confirmation (some server variants)
+  m = line.match(/\]\s+You attempt to taunt (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1] };
+  m = line.match(/\]\s+You have taunted (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'taunt', attacker: null, target: m[1] };
+
+  // ── Stun skill (Warrior/Paladin combat ability, non-damage) ──────────────
+  // "You have stunned Lord Nagafen."  /  "You stun Lord Nagafen."
+  m = line.match(/\]\s+You have stunned (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
+  m = line.match(/\]\s+You stun (.+?)\./i);
+  if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
 
   // ── Sourceless spell cast detection (bard dirges & similar) ──────────────
   // Walks the SOURCELESS_SPELLS catalog and emits a `dirge_cast` event with
@@ -1001,10 +1022,16 @@ class EncounterBuilder {
     try { recordEventForDashboard(event, this.character); } catch {}
     try { this._publishLiveThreat(); } catch {}
 
-    // Track damage dealt TO targets — but exclude "YOU" / "you" so player-received
-    // damage never inflates a player-name into appearing to be the primary target.
-    if (event.type === 'damage' && event.defender && !/^you$/i.test(event.defender)) {
-      this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+    // Track damage dealt TO targets — exclude "YOU" / "you", confirmed players
+    // (PvP), and self-hits (pet reclaim/dismiss generates attacker === defender).
+    if (event.type === 'damage' && event.defender
+        && !/^you$/i.test(event.defender)
+        && !isConfirmedPlayer(event.defender)) {
+      const rawAtk0 = event.attacker;
+      const isSelfHit = rawAtk0 && rawAtk0.toLowerCase() === event.defender.toLowerCase();
+      if (!isSelfHit) {
+        this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+      }
     }
 
     // Live threat tracking + DEEPS tracking — both bump per-player counters
@@ -1016,8 +1043,17 @@ class EncounterBuilder {
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
         ? (this.character || 'You')
         : rawAtk;
+      // Skip player-on-player damage (direct PvP or charm mechanics):
+      //   • Named confirmed player as defender: "PlayerA hits PlayerB for N"
+      //   • Uploader as defender AND attacker is a 3rd-party confirmed player:
+      //     charmed raid member hits the log uploader
+      // Also skip self-hits: pet reclaim / cleric pet dismiss hits itself for 20K.
+      const pvpHit =
+        (event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender)) ||
+        (/^you$/i.test(event.defender || '') && rawAtk !== null && isConfirmedPlayer(attacker)) ||
+        (event.defender && rawAtk && rawAtk.toLowerCase() === event.defender.toLowerCase());
       // Skip NPC-on-NPC (multi-word attacker that isn't the uploader)
-      if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+      if (!pvpHit && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         if (!this.threatBy.has(attacker)) {
           this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
         }
@@ -1050,9 +1086,26 @@ class EncounterBuilder {
     // looking at the player's prior 1 second of activity (heuristic).
     if (event.type === 'critical' && event.attacker && event.amount > 0) {
       const attacker = /^you$/i.test(event.attacker) ? (this.character || 'You') : event.attacker;
-      if (attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+      // Skip crits against other players (PvP / charm) same as damage events
+      const critOnPlayer = event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender);
+      if (!critOnPlayer && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         this._bumpDeeps(attacker, 'crit', event.amount, null);
       }
+    }
+
+    // Taunt/stun — non-damage flat hate credited to the uploader's character.
+    // These skill uses never appear as damage events so the damage-proxy above
+    // would miss them entirely; handle them here and fold into the proc bucket
+    // so they show up in the "proc X.XXK" breakdown and the procDetail column.
+    if ((event.type === 'taunt' || event.type === 'stun') && this.character) {
+      const attacker = this.character;
+      if (!this.threatBy.has(attacker)) {
+        this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
+      }
+      const t = this.threatBy.get(attacker);
+      t.proc += PROC_HATE[event.type] || 0;
+      const label = event.type === 'taunt' ? 'Taunt' : 'Stun';
+      t.procDetail[label] = (t.procDetail[label] || 0) + 1;
     }
 
     // Per-defender stats — feeds tanking analytics (avoidance %, damage taken,
@@ -1804,19 +1857,27 @@ function renderHeader(s) {
   document.getElementById('header').innerHTML = h;
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
+  function _startRestartPoll(bannerId) {
+    let tries = 0;
+    const t = setInterval(async () => {
+      tries++;
+      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); return; } } catch {}
+      // After 30s show a manual-reload link in the banner
+      if (tries === 30) {
+        const b = document.getElementById(bannerId);
+        if (b) b.innerHTML += ' &nbsp;<a href="" style="color:#fff;font-weight:bold" onclick="location.reload();return false">Reload now</a>';
+      }
+      if (tries > 300) clearInterval(t);  // give up after ~5 min
+    }, 1000);
+  }
   if (manual) manual.addEventListener('click', async () => {
     if (!confirm('Restart agent and pull the latest version? Session will be saved and resumed.')) return;
     manual.disabled = true; manual.textContent = 'Restarting...';
     try { await fetch('/api/update', { method: 'POST' }); } catch {}
     document.body.insertAdjacentHTML('afterbegin',
-      '<div class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
+      '<div id="restartBanner" class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
-    let tries = 0;
-    const t = setInterval(async () => {
-      tries++;
-      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); } } catch {}
-      if (tries > 60) clearInterval(t);
-    }, 1000);
+    _startRestartPoll('restartBanner');
   });
   // Inline [install] link mirrors the banner Install button
   const inline = document.getElementById('inlineUpdateBtn');
@@ -1830,15 +1891,9 @@ function renderHeader(s) {
     u.disabled = true; u.textContent = 'Restarting...';
     try { await fetch('/api/update', { method: 'POST' }); } catch {}
     document.body.insertAdjacentHTML('afterbegin',
-      '<div class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
+      '<div id="restartBanner" class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
-    // Poll until the server comes back
-    let tries = 0;
-    const t = setInterval(async () => {
-      tries++;
-      try { const r = await fetch('/api/state'); if (r.ok) { clearInterval(t); location.reload(); } } catch {}
-      if (tries > 60) clearInterval(t);  // give up after ~60s
-    }, 1000);
+    _startRestartPoll('restartBanner');
   });
 }
 
@@ -2488,9 +2543,12 @@ function startWebDashboard(port) {
         return;
       }
       if (req.url === '/api/update' && req.method === 'POST') {
-        // Same behavior as [U] press: save session, write update marker,
-        // exit. The wrapper script (start-logsync.ps1) sees the marker and
-        // downloads + relaunches the new version.
+        // Same behavior as [U] press: save session, write update marker, exit.
+        // In foreground/CLI mode the wrapper script (start-logsync.ps1) sees
+        // the marker and downloads + relaunches the new version.
+        // In background service mode (--no-service-check) the wrapper exited
+        // long ago, so we spawn a new copy of ourselves before exiting so the
+        // web dashboard comes back up automatically.
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, message: 'restarting' }));
         setTimeout(() => {
@@ -2499,6 +2557,17 @@ function startWebDashboard(port) {
             const marker = path.join(__dirname, '.force-update-on-restart');
             fs.writeFileSync(marker, new Date().toISOString());
           } catch {}
+          if (_isServiceMode) {
+            try {
+              const { spawn } = require('child_process');
+              const child = spawn(process.execPath, process.argv.slice(1), {
+                detached: true,
+                stdio:    'ignore',
+                cwd:      process.cwd(),
+              });
+              child.unref();
+            } catch {}
+          }
           process.exit(0);
         }, 250);  // let the response flush
         return;
@@ -2586,8 +2655,14 @@ function startWebDashboard(port) {
       res.end(JSON.stringify({ error: err.message }));
     }
   });
+  let _bindRetries = 0;
   server.on('error', (err) => {
-    console.warn(`[web-dashboard] could not bind to port ${port}: ${err.message}`);
+    if (err.code === 'EADDRINUSE' && _bindRetries < 5) {
+      _bindRetries++;
+      setTimeout(() => server.listen(port, '127.0.0.1'), 1000 * _bindRetries);
+    } else {
+      console.warn(`[web-dashboard] could not bind to port ${port}: ${err.message}`);
+    }
   });
   // Bind to 127.0.0.1 only — never expose to network.
   server.listen(port, '127.0.0.1', () => {
@@ -2634,6 +2709,9 @@ function recordEventForDashboard(event, character) {
   const attacker = event.attacker || character || 'You';
   // Skip events that look like NPC-on-NPC (multi-word attacker with no pet leader)
   if (/\s/.test(attacker) && attacker !== character) return;
+  // Skip self-hits: pet reclaim / cleric pet self-dismiss generates a log line
+  // where the pet hits itself for exactly 20K. attacker === defender catches it.
+  if (event.defender && attacker.toLowerCase() === event.defender.toLowerCase()) return;
 
   // Track session-wide damage totals across ALL hit sizes (not just big crits).
   // Powers the "Damage done this session" right column.
@@ -2758,6 +2836,7 @@ function pad(s, n) {
 }
 
 let _dashboardEnabled = false;
+let _isServiceMode    = false;  // true when started with --no-service-check (background service)
 function renderDashboard() {
   if (!_dashboardEnabled) return;
   // Don't overwrite info/pets views when the periodic redraw fires.
@@ -4644,7 +4723,8 @@ async function main() {
   }
 
   // Make opts available to the chat relay flush (module-level so the interval can see them)
-  _uploadOpts = { botUrl, token, dryRun };
+  _uploadOpts    = { botUrl, token, dryRun };
+  _isServiceMode = !!args.flags.noServiceCheck;
 
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();

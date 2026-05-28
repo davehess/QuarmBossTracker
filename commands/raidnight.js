@@ -190,10 +190,25 @@ async function appendParseToSession(client, bossId, parsed, bossName, bossEmoji)
       } catch {}
     }
 
-    // Append this mob's parse card to the thread
+    // Post or edit this mob's parse card in the thread.
+    // Track per-boss message IDs in session.bossCards so subsequent submissions
+    // from other parsers edit the existing card rather than creating a new one.
     const { buildParseEmbed } = require('./parse');
     const mobEmbed = buildParseEmbed(bossName, parsed, bossEmoji);
-    await thread.send({ embeds: [mobEmbed] });
+    const existingCardId = session.bossCards?.[bossId];
+    let posted = false;
+    if (existingCardId) {
+      try {
+        const existingMsg = await thread.messages.fetch(existingCardId);
+        await existingMsg.edit({ embeds: [mobEmbed] });
+        posted = true;
+      } catch { /* message deleted — fall through to post new */ }
+    }
+    if (!posted) {
+      const sent = await thread.send({ embeds: [mobEmbed] });
+      const updated = { ...session, bossCards: { ...(session.bossCards || {}), [bossId]: sent.id } };
+      saveRaidSession(updated);
+    }
   } catch (err) {
     console.warn('[raidnight] appendParseToSession error:', err?.message);
   }
