@@ -2800,12 +2800,15 @@ async function _handleAgentIncomplete(req, res) {
   // case variants we expect — practically the names from EQ are canonical
   // and stable, so a plain `in.()` is enough.
   const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
+  // Sort by data_incomplete_at desc so the agent's "MOST RECENT REQUESTED"
+  // banner shows the most-recently-flagged kill, not the most-recently-killed
+  // one.
   const rows = await supabase.select(
     'encounter_players',
     'select=character_name,encounter_id,encounters!inner(id,started_at,data_incomplete,data_incomplete_reason,data_incomplete_at,eqemu_npc_types(name))' +
     `&character_name=in.${encodeURIComponent(inList)}` +
     '&encounters.data_incomplete=eq.true' +
-    `&order=encounters(started_at).desc&limit=${limit * characters.length}`,
+    `&order=encounters(data_incomplete_at).desc&limit=${limit * characters.length}`,
   );
 
   if (!Array.isArray(rows)) {
@@ -2835,7 +2838,10 @@ async function _handleAgentIncomplete(req, res) {
   }
 
   const list = [...seen.values()]
-    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+    .sort((a, b) =>
+      new Date(b.flagged_at || b.started_at).getTime() -
+      new Date(a.flagged_at || a.started_at).getTime()
+    )
     .slice(0, limit);
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
