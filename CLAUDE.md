@@ -1,95 +1,318 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 2.2.39  
-**Runtime:** Node.js 20, discord.js v14  
-**Deployment:** Railway (primary) or Docker  
+**Version:** 2.2.39
+**Runtime:** Node.js 20, discord.js v14
+**Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
+
+> This file is the authoritative architectural map. README.md is the user-facing setup guide. When they conflict, this file is correct.
+
+---
 
 ## Versioning Rule
 
-On every revision, increment the **patch** version (`Z` in `x.y.z`) in both `package.json` and `README.md` unless a specific minor (`y`) or major (`x`) bump is requested. Update `CLAUDE.md` version header to match.
+On every revision, bump the **patch** in `package.json`, `README.md`, and this file's header unless a minor/major bump is requested. Commit message convention: `vX.Y.Z — <short reason>`. Railway shows the merge commit message as the deploy name, so always merge with a descriptive `-m` flag — never `--no-edit`.
 
 ---
 
 ## What This Bot Does
 
-Tracks instanced raid boss spawn timers for Project Quarm (EverQuest TLP server, currently Luclin era). Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
+What started as a Discord raid-timer bot for Project Quarm is now a multi-system platform:
 
-Users click buttons in expansion threads to record kills. The bot maintains live cooldown cards, a main-channel summary, and a "Spawning Tomorrow" preview. Kill state persists across restarts via `data/state.json` on a mounted volume.
+1. **Raid boss kill tracking** — instanced spawn timers, sourced from [PQDI.cc](https://www.pqdi.cc). Buttons in expansion threads record kills; live cooldown cards, summary, 24h preview.
+2. **Parse aggregation** — multi-perspective DPS parses (manual `/parse` paste + `wolfpack-logsync` agent uploads). Encounters merged with max-damage-per-player. Stored in Supabase + Discord thread of truth.
+3. **Live-server + Plane-of-Hate tracking** — `/livekill`, `/livehatekill`, `/hateboard` boards persist to hidden JSON embeds in `HATE_THREAD_ID`.
+4. **PvP tracking** — separate timer/alert system for PvP-server mobs; ±20% variance windows, `/quake` resets, `@PVP` role rally.
+5. **DKP + sealed-bid loot** — `/dkp` balance, `/wishlist` sealed-bid registry (AES-256-GCM), `/loot` Zeal-paste parser, `/tick` attendance, `/register` character creation — all via OpenDKP API.
+6. **Roster + char↔Discord mapping** — `/rosterimport`, `/who*`, `/quarmy` link, `/syncmembers` Discord guild → Supabase.
+7. **Onboarding** — welcome flow with versioned opt-out (salted SHA-256), public Quick Start in `ONBOARDING_THREAD_ID`.
+8. **Announcements** — `/announce` creates raid thread, PQDI boss scrape, Discord scheduled event, mutable target list.
+9. **Web app** — Next.js on `wolfpack.quest`, Discord OAuth, read-only views of Supabase data.
+10. **Audit trail** — every kill/unkill/updatetimer posts to `AUDIT_TRAIL_THREAD_ID` with officer-only Undo button.
 
 ---
 
-## Architecture — Channel Layout
+## Scope Boundaries (read before changing related code)
+
+**Historical chat backfill: REMOVED FROM SCOPE.** Old EQ log files are backfilled for **boss combat + `/who` data only**. Guild/raid chat from older logs is *not* archived. Affected (treat as deprecated, do not extend):
+- `POST /api/agent/historical_chat` endpoint (`index.js`)
+- `data/historical_chat.jsonl`
+- `supabase/migrations/20260527000000_historical_chat.sql` + `chat_messages` table
+- `commands/chatstats.js`
+- Era-routing logic in `_handleAgentChat` (chat now posts directly to Discord; no era-thread subdivision)
+- `commands/initerathreads.js` (era threads no longer used)
+
+These can be torn out in a follow-up commit; the scope boundary is documented for now.
+
+**PoP expansion: locked until `2026-10-01T00:00:00`** via `isPopLocked()` in `utils/config.js`. PoP boss buttons return ephemeral lock messages until then.
+
+---
+
+## Top-Level File Structure
+
+```
+/
+├── index.js                  3,453 lines — entry point, interaction router, HTTP server, background tasks
+├── package.json              version source of truth
+├── deploy-commands.js        legacy manual command registration (auto-runs on start)
+├── Dockerfile                node:20-alpine; `rm -f data/state.json` after COPY
+├── docker-compose.yml        Mounts ./data:/app/data for persistence
+├── railway.toml              Railway config
+├── README.md                 User-facing setup + command reference
+├── .env.example              ALL env vars documented (read this when adding new ones)
+├── Parser.bat                Windows launcher for wolfpack-logsync agent
+├── RUN-FIRST-for-Node.js.bat Node 20 installer for end users
+├── start-logsync.ps1         PowerShell wrapper that copies the agent into the user's EQ dir
+│
+├── commands/                 64 slash commands (see Commands section)
+├── utils/                    20 utility modules
+├── data/
+│   ├── bosses.json           133 bosses — hot-reloaded
+│   ├── hate-spots.js         Plane of Hate spot definitions
+│   ├── pqdi-items.json       Cached PQDI item names (for /loot rarity labels)
+│   ├── zones.json            Zone catalog (for /timers autocomplete)
+│   ├── parses.json           Local mirror of parse data (rebuilt from Discord thread on startup)
+│   └── state.json            Live kill state — NEVER commit, NEVER bake into image
+│
+├── packages/wolfpack-logsync/  Local EQ log tail agent (Node.js, zero deps)
+├── releases/WolfPackParser.zip Bundled agent + Node launcher for distribution
+├── scripts/                  One-off helpers (sync-from-eqmac, migrate-bosses, screenshot gen)
+├── supabase/                 README + migrations/ (timestamped SQL files)
+├── web/                      Next.js 14 app deployed to wolfpack.quest
+├── .github/workflows/        sync-quarm.yml (weekly eqmac sync), release-parser.yml
+└── docs/                     Screenshots, opendkp-capture-playbook.md, flyer
+```
+
+---
+
+## index.js Architecture (3,453 lines, no longer thin)
+
+| Section | Lines | What |
+|---|---|---|
+| Imports + boot | 1–94 | Dotenv, discord.js, agent version cache, command loader |
+| `Events.ClientReady` | 86–116 | Logs ready → `registerCommands()` → starts spawn checker → schedules midnight → inits member sync → runs startup sequence (60s-delayed chain: load onboarding/parses/roster/hate, then board + cleanup) |
+| `Events.InteractionCreate` dispatcher | 130–200 | Routes autocomplete / select / button / chat-input |
+| Button handlers (inline) | 200–1356 | 28+ custom_id prefixes — see table below |
+| `Events.GuildMemberAdd` | 1358–1405 | Onboarding DM with fallback to onboarding thread |
+| `Events.ThreadCreate` | 1410–1471 | Forum-post watcher in `FORUM_CHANNEL_ID` → suggests `/suggest` |
+| `startSpawnChecker()` | 1473–1539 | 5-min interval; main raid + calls PvP/live/quake checkers |
+| `checkPvpSpawns()` | 1563–1692 | PvP window-open / window-spawned alerts with stale suppression |
+| `checkLiveSpawns()` | 1694–1763 | Live-server spawn alerts during raid window |
+| `scheduleMidnightSummary()` | 1765–1890 | TZ-aware recursive setTimeout; runs midnight tasks chain |
+| `archivePassedAnnounceThreads()` | 1893–1941 | |
+| `archiveRaidSession()` | 1944–1970 | |
+| `postPvpMidnightSummary()` | 1972–1998 | |
+| `checkQuakeAlert()` | 2000–2038 | |
+| `consolidateNightlyParses()` | 2039–2114 | 10-min session-window merge of multi-submitter parses |
+| Chat dedup GC | 2126–2129 | 10s interval, prunes 5s-old entries |
+| **HTTP server (port `PORT`/3000)** | 2117–3453 | See endpoints table below |
+
+### Button custom_id prefixes
+
+| Prefix | Handler | Purpose |
+|---|---|---|
+| `kill:<bossId>` | `handleBoardButton` | Toggle kill (kill if available, unkill if on cooldown) |
+| `audit_undo:<id>` | `handleAuditUndo` | Officer-only undo of a logged action |
+| `cancel_announce` | `handleCancelAnnounce` | Archive announce to Historic Kills |
+| `cancel_event_thread:` | `handleCancelEventThread` | Close event scheduling thread |
+| `confirm_kill_announce:` / `cancel_kill_confirm` | inline | Kill confirmation modal |
+| `remove_target:` | `handleRemoveTargetButton` | Remove from announce target list |
+| `add_zone_bosses:` | `handleAddZoneBosses` | Bulk-add zone bosses to target list |
+| `loot_rm:` / `loot_post` / `loot_cancel` | `handleLoot*` | Loot remove / post auctions / cancel |
+| `pvprole_toggle` / `pvprole_toggle_silent` | `handlePvpRoleToggle` | Toggle @PVP role |
+| `pvpalert_howl:` | `handlePvpAlertHowl` | 🐺 Howl! rally count |
+| `pvp_spawn_alert:` | `handlePvpSpawnAlert` | Officer rally from `/pvpspawn` ephemeral |
+| `mark_avail:` | `handleMarkAvail` | Mark member available for PvP |
+| `pvp_window_spawned:` | `handlePvpWindowSpawned` | Confirm PvP window mob spawned |
+| `hate_kill:<live\|pvp>:<n>` | `handleHateKillButton` | Hate board toggle |
+| `hate_confirm_unkill:` | `handleHateConfirmUnkill` | Confirm hate kill undo |
+| `hate_unknown:<live\|pvp>:<n>` | `handleHateUnknownButton` | Mark hate spot as timer-unknown |
+| `suggest_host:` / `suggest_confirm:` / `suggest_cancel_host:` / `suggest_nohost` | `handleSuggest*` | Event request hosting flow |
+| `onb_pvp` / `onb_organizer` / `onb_attend` / `onb_deeps` / `onb_ignore:` / `onb_show_again` | `handleOnb*` | Onboarding choices |
+| `fb_recv` / `fb_impl` / `fb_nope` | `handleFeedback*` | Officer feedback ack |
+| `parse_breakdown:` | `handleParseBreakdown` (parse.js) | Per-player damage breakdown modal |
+| `who_family:` | `handleWhoFamily` | Inline alt expansion |
+| `parseConfirm` (string select) | `handleParseConfirm` (parse.js) | Confirm boss for ambiguous parse |
+| `sll_confirm:` / `sll_cancel` | `handleSll*` (sll.js) | Lockout import confirm |
+
+### HTTP endpoints (bearer-auth via `WOLFPACK_AGENT_TOKEN`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/agent/latest-version` | Advertises current agent version + requested-characters list (for "rerun" prompts) |
+| `POST` | `/api/agent/encounter` | Encounter ingest — combat events → parse cards + Supabase encounters/contributions/encounter_players |
+| `POST` | `/api/agent/chat` | Live `/gu` + `/rs` relay. **Currently routes via era threads; era subdivision is deprecated — will become direct post.** |
+| `POST` | `/api/agent/pvp` | PvP kill/death broadcast to `PVP_CHANNEL_ID` with 5s dedup |
+| `POST` | `/api/agent/bosskill` | Druzzil Ro instance kill broadcasts → auto-sets timers |
+| `POST` | `/api/agent/lockout` | `/sll`-style lockout relay; never clears on "Available" |
+| `POST` | `/api/agent/historical_chat` | **DEPRECATED** — historical chat backfill (out of scope; see Scope Boundaries) |
+| `GET/POST` | `/` | Health check (`200 OK`) |
+
+Payload limits: chat 256KB, encounter upload 10MB. Returns `503` if `WOLFPACK_AGENT_TOKEN` unset.
+
+---
+
+## Channel Layout
 
 ### `#raid-mobs` (main channel) — `TIMER_CHANNEL_ID`
-Fixed message slots, always edited in place, never re-posted:
 
-| Slot | Content | Anchored by env var |
-|------|---------|---------------------|
+Four fixed message slots, edited in place, never re-posted:
+
+| Slot | Content | Anchor env var |
+|---|---|---|
 | 1 | 📊 Active Cooldowns (all expansions, grouped) | `SUMMARY_MESSAGE_ID` |
 | 2 | 🌅 Spawning in the Next 24 Hours | `SPAWNING_TOMORROW_MESSAGE_ID` |
-| 3 | 📅 Daily Raid Summary (resets midnight EST) | `DAILY_SUMMARY_MESSAGE_ID` |
-| 4 | Thread links (single message, all 5 expansions) | `THREAD_LINKS_MESSAGE_ID` |
+| 3 | 📅 Daily Raid Summary (resets midnight in `DEFAULT_TIMEZONE`) | `DAILY_SUMMARY_MESSAGE_ID` |
+| 4 | Thread links (one message, all 5 expansions) | `THREAD_LINKS_MESSAGE_ID` |
 
-### Expansion Threads (inside `#raid-mobs`)
-One thread per expansion. Each thread contains (top to bottom):
-1. `<Emoji> <Expansion> — Active Cooldowns` card — **edited in place** at top, anchored by `<EXP>_COOLDOWN_ID` env var
-2. Zone kill cards — posted by `/kill`, edited in place per zone, deleted when boss respawns
-3. Board panels (kill buttons) — edited in place, anchored by `<EXP>_BOARD_IDS` env var
+### Expansion threads (inside `#raid-mobs`)
 
-| Thread | Env Var |
-|--------|--------|
-| Classic Thread | `CLASSIC_THREAD_ID` |
-| Kunark Thread | `KUNARK_THREAD_ID` |
-| Velious Thread | `VELIOUS_THREAD_ID` |
-| Luclin Thread | `LUCLIN_THREAD_ID` |
-| PoP Thread | `POP_THREAD_ID` |
+| Thread | Env var | Cooldown card | Board panel IDs |
+|---|---|---|---|
+| Classic | `CLASSIC_THREAD_ID` | `CLASSIC_COOLDOWN_ID` | `CLASSIC_BOARD_IDS` |
+| Kunark | `KUNARK_THREAD_ID` | `KUNARK_COOLDOWN_ID` | `KUNARK_BOARD_IDS` |
+| Velious | `VELIOUS_THREAD_ID` | `VELIOUS_COOLDOWN_ID` | `VELIOUS_BOARD_IDS` |
+| Luclin | `LUCLIN_THREAD_ID` | `LUCLIN_COOLDOWN_ID` | `LUCLIN_BOARD_IDS` |
+| PoP | `POP_THREAD_ID` | `POP_COOLDOWN_ID` | `POP_BOARD_IDS` |
 
-### Historic Kills Thread — `HISTORIC_KILLS_THREAD_ID`
-Receives:
-- Midnight daily summaries (archived copy)
-- Zone kill cards when boss respawns (archived with timestamp)
-- Cancelled `/announce` messages
+Each thread contains: cooldown card at top → zone kill cards (mid) → board panels (bottom), all edited in place.
+
+### Other named threads/channels
+
+| Env var | Purpose |
+|---|---|
+| `HISTORIC_KILLS_THREAD_ID` | Midnight summaries, expired zone cards, archived announces |
+| `PARSES_LOG_THREAD_ID` | **Parse source of truth.** Every `/parse` archived as JSON embed; reloaded on startup |
+| `AUTOPARSE_TEST_THREAD_ID` | Agent uploads post readable parse cards here for QA (covers ALL encounters incl. trash) |
+| `ONBOARDING_THREAD_ID` | Public Quick Start + opt-out registry (hashed user IDs) |
+| `ROSTER_ACTIVE_THREAD_ID` / `ROSTER_INACTIVE_THREAD_ID` | Persisted roster data (chunked JSON in messages) |
+| `HATE_THREAD_ID` | `/hateboard` boards + hidden state embeds |
+| `LIVE_CHANNEL_ID` | `/livekill` / `/livehatekill` cards |
+| `PVP_KILLS_THREAD_ID` | `/pvpkill` cards |
+| `PVP_CHANNEL_ID` / `PVP_THREAD_ID` | PvP alerts, quake notices, spawn pings (`PVP_THREAD_ID` takes priority) |
+| `AUDIT_TRAIL_THREAD_ID` | Audit log with officer-only Undo buttons |
+| `FEEDBACK_THREAD_ID` | `/feedback` submissions |
+| `SUGGEST_CHANNEL_ID` | `/suggest` event requests for officers to claim |
+| `FORUM_CHANNEL_ID` | Forum where members create event-request threads (default `1242116105326166057`) |
+| `OFFICER_CHAT_CHANNEL_ID` | `/register` notifications |
+| `BOSS_OUTPUT_CHANNEL_ID` | Where `bosses.json` is posted after `/addboss` / `/removeboss` |
+| `ARCHIVE_CHANNEL_ID` | Passed announce thread summaries at midnight |
+| `STAGING_MODE` | `true` = agent uploads write to parses.json + Supabase + test thread, but NOT live boards |
 
 ---
 
-## File Structure
+## Commands (64 total)
 
-```
-quarm-bot-v0.9.3/
-├── index.js                   Entry point: client setup, interaction router, spawn checker, midnight tasks
-├── deploy-commands.js         Legacy manual command registration (auto-runs on start now)
-├── package.json               { "version": "0.9.3", "main": "index.js" }
-├── Dockerfile                 node:20-alpine; RUN rm -f data/state.json (never bake state into image)
-├── docker-compose.yml         Mounts ./data:/app/data for persistence
-├── .dockerignore              Excludes data/state.json, .env from image
-├── .gitignore                 Excludes data/state.json
-├── .env.example               All env vars documented
-│
-├── commands/
-│   ├── board.js               /board — post/edit all slots and thread boards
-│   ├── cleanup.js             /cleanup — delete transients/dupes, anchor earliest boards
-│   ├── kill.js                /kill — record kill, post/edit zone card in thread
-│   ├── unkill.js              /unkill — clear kill, update zone card
-│   ├── updatetimer.js         /updatetimer — override nextSpawn, refresh all
-│   ├── announce.js            /announce — raid announcement + thread + Discord event
-│   ├── timers.js              /timers — show spawn timers (autocomplete zone filter)
-│   ├── addboss.js             /addboss <pqdi_url> — scrape PQDI, add to bosses.json, refresh board
-│   ├── removeboss.js          /removeboss — remove boss, clear state, refresh board
-│   └── restore.js             /restore <links> — rebuild state from any cooldowns/summary messages
-│
-├── utils/
-│   ├── config.js              EXPANSION_ORDER, EXPANSION_META, getThreadId(), getBossExpansion()
-│   ├── state.js               All state.json read/write; atomic writes via .tmp rename
-│   ├── board.js               buildExpansionPanels(), buildAllExpansionPanels()
-│   ├── embeds.js              All embed builders
-│   ├── killops.js             postKillUpdate(), postOrUpdateExpansionBoard(), refresh*Card()
-│   ├── roles.js               hasAllowedRole(), getAllowedRoles() from ALLOWED_ROLE_NAMES
-│   └── timer.js               calcNextSpawn(), discordRelativeTime(), discordAbsoluteTime()
-│
-└── data/
-    ├── bosses.json            133 bosses (Classic/Kunark/Velious/Luclin/PoP) — hot-reloaded
-    └── state.json             Live state — NEVER commit, NEVER bake into Docker image
-```
+### Kill tracking
+| Command | Notes |
+|---|---|
+| `/kill <boss>` | Record kill, post/edit zone card |
+| `/unkill <boss> [message]` | Clear kill. With `message` link → edits a specific daily summary in place |
+| `/updatetimer <boss> <time>` | Override `nextSpawn`. Time format: `"3d4h30m"` or `"Expires in 3 Days, 4 Hours..."` |
+| `/timers [zone] [filter]` | View timers. Filter: `all`/`spawned`/`soon`/`unknown` |
+| `/board` | Re-render all 4 slots + all thread boards. Operates on `TIMER_CHANNEL_ID` regardless of where called |
+| `/cleanup` | Delete transients/duplicates, anchor earliest boards. Historic Kills scan limited to 300 msgs |
+| `/restore <links...>` | Rebuild state from any combination of Active Cooldowns / Daily Summary message links. Latest `nextSpawn` per boss wins |
+
+### Boss management
+| Command | Notes |
+|---|---|
+| `/addboss <pqdi_url>` | Scrape PQDI NPC page → write to `bosses.json` → hot-reload → refresh board. Expansion detection: timer-text → `instance_spawn_timer_override` (seconds, 3600–700000) → zone lookup table |
+| `/removeboss <boss>` | Autocomplete by name/nickname or PQDI URL |
+
+### Parse aggregation
+| Command | Notes |
+|---|---|
+| `/parse <data> [type]` | EQLogParser "Send to EQ" paste. `type`: `instance` (starts timer) / `open_world` / `pvp` (stats only). Multiple submitters auto-merge |
+| `/parseboss <boss> <data>` | Explicit boss selection for ambiguous parses |
+| `/parseaoe <data>` | AoE phase merge, 5-min window, max-damage-per-player |
+| `/parsenight [public]` | Full-night DPS combined parse |
+| `/parsestats <boss>` | Aggregate scoreboard across all stored kills. Filters "Eye of *" dummies |
+| `/parseleaderboard` | Officer: pin/update leaderboard in `PARSES_LOG_THREAD_ID` |
+| `/parseagents` | Show active (last 20 min) and stale agent uploaders |
+| `/parsereset` | Officer: clear session damage, test-thread cards, agent tracking |
+| `/parsehelp` | Setup steps for the wolfpack-logsync agent |
+| `/backfillparses` | Officer: push `parses.json` history → Supabase (idempotent via `find_or_create_encounter`) |
+| `/backfillfromtestthread` | Officer: reverse-parse `AUTOPARSE_TEST_THREAD_ID` cards → Supabase |
+| `/raidnight` | Officer: opens tonight's session thread with rolling parseboard |
+| `/encounter [tonight\|view\|mine]` | Post-raid recap from Supabase |
+| `/mystats <character>` | Per-character DPS (kills, avg, peak, per-boss breakdown). Ephemeral |
+| `/mystatsall <character>` | Same, aggregated across main + alts |
+| `/raidstats` | Full-night raid scoreboard (since midnight in `DEFAULT_TIMEZONE`) |
+
+### Live-server + Hate
+| Command | Notes |
+|---|---|
+| `/livekill <boss> [timer_unknown]` | Live-server raid boss kill — exact timer, no variance. Posts to `LIVE_CHANNEL_ID` |
+| `/livehatekill <position> [timer_unknown] [killed_ago]` | Live-server Hate mini-boss (72h exact). `killed_ago`: `"2h30m"` for back-dating |
+| `/livehate` | Live-server hate spot status list |
+| `/hateboard` | Officer: post/refresh persistent live + PvP hate boards in `HATE_THREAD_ID`. Static floor maps + board embeds with toggle buttons |
+
+Hate state is **dual-persisted** to survive volume loss: `state.json` + hidden JSON embeds in `HATE_THREAD_ID` (loaded on startup via `loadHateStateFromDiscord`).
+
+### PvP
+| Command | Notes |
+|---|---|
+| `/pvpkill <mob> [timer_unknown]` | Records kill with ±20% variance window |
+| `/pvpunkill <mob>` | Undo |
+| `/pvpspawn <mob>` | Mark spawned, delete card, offer ephemeral "🐺 Alert PVP" |
+| `/pvphate` | List 10 hate spots with ±20% variance |
+| `/pvphatekill <position> [timer_unknown] [killed_ago]` | 72h ±20% |
+| `/pvpalert <zone>` | Ping `@PVP_ROLE`. 1-hour suppression: re-alerting within 1h edits existing message, appends zones |
+| `/pvprole [silent]` | Toggle `@PVP` role membership |
+| `/quake [time]` | Officer: reset all PvP mob timers. `"now"` or natural language (`"Friday 9pm"`). Creates Discord event for future times |
+| `/markzek <character> <true\|false>` | Officer: sticky `is_zek` flag overrides auto-detection from `/who` |
+
+Stale-alert suppression (post-redeploy): "opens soon" suppressed if earliest spawn > 10 min ago; "definitely spawned" if latest > 15 min ago.
+
+### Announcements
+| Command | Notes |
+|---|---|
+| `/announce [time] [boss] [zone] [note]` | Creates thread in `#raid-mobs` named `<Boss/Zone> — <time>`, scrapes PQDI (HP/AC/hit/resists/specials/spells/drops), creates Discord Scheduled Event, posts compact announcement with Kill + Cancel buttons |
+| `/addtarget <boss>` | Add to active announce thread's target list |
+| `/removetarget <boss>` | Remove. Easter-egg chain (Fippy → Nillipuss → Emperor Crush) when last target cleared |
+| `/adjusttime <time>` | Move raid time, preserve date |
+| `/adjustdate <date>` | Move raid date, preserve time |
+
+Time formats: `"8:30 PM"`, `"Thursday 9pm"`, `"tomorrow 8pm"`, `"in 2 hours"`. Requires "Manage Events" bot permission.
+
+### DKP / Loot / Wishlist
+| Command | Notes |
+|---|---|
+| `/dkp [character] [family]` | Balance lookup. 60s cache. Family mode shows main+alts+total |
+| `/tick` | Officer: parse `RaidTick*.txt`, post attendance to OpenDKP. Enforces slot ordering 1→4, 1h overwrite window. Bonus/OT create separate raids |
+| `/register <name> <class> <race> [main] [rank]` | Officer: create character in OpenDKP. Resolves ParentId via `rootCharId` (family root). Posts to `OFFICER_CHAT_CHANNEL_ID` |
+| `/loot <items> [boss] [bid_minutes]` | Officer: parse Zeal paste, fetch PQDI drop table, label 🆕 NEW / 💎 ULTRA RARE, match wishlists. **Auction creation cURL captured** (PUT `/auctions`); button wiring still pending |
+| `/wishlist add\|remove\|show` | Sealed-bid registry. Bids encrypted AES-256-GCM via `WISHLIST_BID_KEY`. `show` redacts bids to non-owner/non-officer |
+| `/mywishlist [character]` | Private ephemeral: decrypted bids, drop history per item, DKP headroom vs balance, overcommit warning |
+| `/sll <paste>` | Import lockouts from `/sll` or `#showlootlockouts`. Tiered match (boss name → nickname → zone). On Quarm: lockout remaining = respawn remaining exactly |
+
+### Roster & character lookup
+| Command | Notes |
+|---|---|
+| `/rosterimport <file>` | Officer: import OpenDKP JSON export. Family-tree grouping, persisted to `ROSTER_ACTIVE_THREAD_ID` + `ROSTER_INACTIVE_THREAD_ID` (chunked JSON, 3500 chars each) |
+| `/rosterclean` | Dedupe in-memory roster + normalize thread messages in place (edits only — no notifications) |
+| `/syncmembers` | Officer: Discord guild → `wolfpack_members` Supabase upsert. Auto-runs on startup + every 6h. Also syncs `wolfpack_roles` |
+| `/who <character>` | Ephemeral lookup w/ "Show Family" button + class emoji + Quarmy/OpenDKP links |
+| `/whoall <character>` | Full family tree embed |
+| `/whois <character>` | Combines OpenDKP roster + `/who` observation history (level, guild, Zek flag, first/last-seen). Red embed if Zek-flagged |
+| `/quarmy set\|clear\|view <character> [url]` | Store Quarmy profile URL per character. Persists in roster chunks. Officer-only writes |
+
+### Onboarding / feedback / help
+| Command | Notes |
+|---|---|
+| `/onboarding` | Show welcome again or toggle opt-out |
+| `/suggest <boss> <time> [note]` | Member request → `SUGGEST_CHANNEL_ID` for officer claim |
+| `/feedback <category> <message>` | Submit to `FEEDBACK_THREAD_ID` |
+| `/feedbacklist` | Officer: format last 50 feedback entries |
+| `/raidbosshelp` | Command reference embed (ephemeral) |
+| `/ari` / `/autoraidinvite` / `/ariclear` | Auto-Raid-Invite character + password. No args = view (all). Set/clear = officer. Falls back to `ARI_DEFAULT_PASSWORD` |
+| `/token` | Show `WOLFPACK_AGENT_TOKEN` (ephemeral, role-gated) — for agent setup |
+| `/chatstats` | **DEPRECATED** — historical chat stats (out of scope; see Scope Boundaries) |
+| `/initerathreads` | **DEPRECATED** — bootstrap era-partitioned chat threads (era subdivision out of scope) |
+
+### Roles
+- `ALLOWED_ROLE_NAMES` — general (kill, parse, timers, etc.). Default: `Pack Member,Officer,Guild Leader`
+- `OFFICER_ROLE_NAMES` — officer-only (board, cleanup, restore, addboss, announce, tick, register, etc.). Defaults to `ALLOWED_ROLE_NAMES` if unset
 
 ---
 
@@ -98,363 +321,293 @@ quarm-bot-v0.9.3/
 ```json
 {
   "bosses": {
-    "<bossId>": {
-      "killedAt": 1745900000000,
-      "nextSpawn": 1746483200000,
-      "killedBy": "<discordUserId>"
-    }
+    "<bossId>": { "killedAt": 1745900000000, "nextSpawn": 1746483200000, "killedBy": "<userId>" }
   },
   "expansionBoards": {
     "<expansion>": { "messageIds": ["id1", "id2", "id3"] }
   },
   "channelSlots": {
-    "summary": "<messageId>",
-    "spawningTomorrow": "<messageId>",
-    "dailySummary": "<messageId>",
-    "threadLinks": "<messageId>",
-    "Classic": "<placeholderMsgId>",
-    "tc_Classic": "<threadCooldownCardMsgId>",
+    "summary": "<msgId>",
+    "spawningTomorrow": "<msgId>",
+    "dailySummary": "<msgId>",
+    "threadLinks": "<msgId>",
+    "tc_<expansion>": "<threadCooldownCardMsgId>",
     "alert_<bossId>": "<spawnAlertMsgId>"
   },
   "zoneCards": {
     "<zoneName>": { "messageId": "<id>", "threadId": "<id>" }
   },
-  "dailyKills": [
-    { "bossId": "lord_nagafen", "killedAt": 1745900000000, "killedBy": "<userId>" }
-  ],
-  "announceMessageIds": ["<messageId>"]
+  "dailyKills": [{ "bossId": "lord_nagafen", "killedAt": 1745900000000, "killedBy": "<userId>" }],
+  "announceMessageIds": ["<msgId>", ...],
+  "liveKills":   { "<bossId>":  { ... } },
+  "pvpKills":    { "<mobId>":   { ... } },
+  "hateBoards":  { "live": "<msgId>", "pvp": "<msgId>", "liveStateMsg": "<msgId>", "pvpStateMsg": "<msgId>" },
+  "whoData":     { "<character>": { "level": 60, "guild": "...", "is_zek": false, "first_seen": ..., "last_seen": ... } },
+  "ari":         { "character": "...", "password": "...", "setBy": "<userId>", "setByName": "...", "setAt": ... },
+  "raidNight":   { "date": "2026-05-27", "slotsPosted": { "1": true, "2": true } },
+  "quake":       { "scheduledFor": <ts>, "scheduledBy": "<userId>" },
+  "pvpAlerts":   { "<msgId>": { "zones": [...], "howlers": [...], "lastAt": ... } }
 }
 ```
 
-**Critical:** `channelSlots` keys:
-- `summary` / `spawningTomorrow` / `dailySummary` / `threadLinks` → main channel fixed slots
-- `<expansion>` (e.g. `"Classic"`) → placeholder message ID in main channel (not currently used much)
-- `tc_<expansion>` (e.g. `"tc_Luclin"`) → cooldown card at top of expansion thread
-- `alert_<bossId>` → spawn warning message ID (updated in-place to "spawned", deleted at midnight)
+**Anchor-ID priority** (all anchored slots): `process.env.<KEY>` → `state.channelSlots.<slug>` → `null`. Env vars override state so anchors survive volume loss across redeploys.
 
-**State getters prefer env vars over state.json** for the anchor IDs, so they survive redeploys even if the volume isn't working. Pattern:
-```js
-function getSummaryMessageId() {
-  return process.env.SUMMARY_MESSAGE_ID || loadState().channelSlots?.summary || null;
-}
-```
+Writes are atomic: write to `.tmp` → `renameSync` → done.
 
 ---
 
-## Environment Variables
+## Key utility modules
 
-### Required
-```
-DISCORD_TOKEN
-DISCORD_CLIENT_ID
-DISCORD_GUILD_ID=1168893924329402420
-TIMER_CHANNEL_ID=1496263398495621302
-CLASSIC_THREAD_ID
-KUNARK_THREAD_ID
-VELIOUS_THREAD_ID
-LUCLIN_THREAD_ID
-POP_THREAD_ID
-HISTORIC_KILLS_THREAD_ID
-ALLOWED_ROLE_NAMES=Pack Member,Officer,Guild Leader
-```
-
-### Hardcoded slot anchors (highly recommended — paste once, survive any redeploy)
-```
-SUMMARY_MESSAGE_ID=1496610319534133248
-SPAWNING_TOMORROW_MESSAGE_ID=1496610321438343228
-DAILY_SUMMARY_MESSAGE_ID=1496610323732369579
-THREAD_LINKS_MESSAGE_ID=<id>
-CLASSIC_BOARD_IDS=<id1,id2,...>
-KUNARK_BOARD_IDS=<id1,id2,...>
-VELIOUS_BOARD_IDS=<id1,id2,...>
-LUCLIN_BOARD_IDS=<id1,id2,...>
-POP_BOARD_IDS=<id>
-CLASSIC_COOLDOWN_ID=<id>
-KUNARK_COOLDOWN_ID=<id>
-VELIOUS_COOLDOWN_ID=<id>
-LUCLIN_COOLDOWN_ID=<id>
-POP_COOLDOWN_ID=<id>
-```
+| File | Purpose |
+|---|---|
+| `utils/config.js` | `EXPANSION_ORDER`, `EXPANSION_META`, `getThreadId()`, `getBossExpansion()`, `isPopLocked()` |
+| `utils/state.js` (728 lines) | All `state.json` I/O. Atomic writes. Env-var-first anchor getters. Hate/PvP/quake/ARI/whoData/raidNight helpers |
+| `utils/board.js` | `buildExpansionPanels()`, `buildAllExpansionPanels()` — packs zones into 25-button panels, splits when over capacity |
+| `utils/embeds.js` | All embed builders: summary, spawning-tomorrow, zone kill cards, daily summary, spawn alerts, `/timers` |
+| `utils/killops.js` | `postKillUpdate()` parallel refresh of 5 cards; `postOrUpdateExpansionBoard()` 3-tier board finding (state → env → channel scan → post fresh) |
+| `utils/timer.js` | `calcNextSpawn()`, `parseTimeString()`, `parseUserTime()`, discord timestamp formatters |
+| `utils/timezone.js` | TZ math for `DEFAULT_TIMEZONE` (default `America/New_York`); midnight calc, formatters |
+| `utils/roles.js` | `hasAllowedRole()`, `hasOfficerRole()` from env vars |
+| `utils/audit.js` | `postAuditEntry()` to `AUDIT_TRAIL_THREAD_ID`; opposing actions (kill↔unkill) remove the prior Undo button |
+| `utils/supabase.js` | Service-role client; `recordParse()` → `find_or_create_encounter()` RPC → `merge_encounter_players()` RPC. Used by parse, encounter, wishlist, loot, member sync |
+| `utils/opendkp.js` (418 lines) | Cognito auth (1h token cache), character/raid/auction API. Auction creation captured; bid submission + Award still stubs |
+| `utils/loot.js` (370 lines) | Zeal paste parser, PQDI drop scrape, NEW/ULTRA_RARE labels, `parseQuarmyWishlist()` placeholder |
+| `utils/bidCrypto.js` | AES-256-GCM for sealed wishlist bids. Format: `iv:tag:ct`. Auth-tag verifies on decrypt |
+| `utils/roster.js` (480 lines) | OpenDKP export parser, family-tree grouping, Discord-thread chunked persistence, `_rootId` tracking for ParentId |
+| `utils/wolfpackMembers.js` | Discord guild → Supabase `wolfpack_members` upsert in batches of 100; role catalog sync |
+| `utils/sheets.js` | Google Sheets I/O via service account. `LUCLIN_KEYS_SHEET_ID` reserved (not yet consumed) |
+| `utils/onboarding.js` | Welcome embed builder, opt-out registry (salted SHA-256), version-diff "what's new" |
+| `utils/hateBoard.js` (213 lines) | Hate board builders + Discord state persistence (hidden JSON embeds) |
+| `utils/itemNameDb.js` | Cached EQ item name lookup |
+| `utils/suggestParser.js` | Parses forum post starter messages for boss/time/zone hints |
 
 ---
 
-## Key Utilities
+## Supabase Schema (`supabase/migrations/`)
 
-### `utils/config.js`
-```js
-EXPANSION_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP']
-EXPANSION_META = { Classic: { label, color, emoji, envKey }, ... }
-getThreadId(expansion)    // → process.env[meta.envKey] or null
-getBossExpansion(boss)    // → boss.expansion || 'Luclin'
-```
+Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on merge to `main`.
 
-### `utils/state.js`
-All reads call `loadState()` (reads from disk each time).  
-All writes call `saveState(state)` — atomic write via `.tmp` rename.  
-Key functions: `recordKill`, `clearKill`, `getAllState`, `getBossState`, `overrideTimer`, `restoreBossState`,  
-`getExpansionBoard`, `saveExpansionBoard`, `getZoneCard`, `setZoneCard`, `clearZoneCard`,  
-`getSummaryMessageId`, `setSummaryMessageId` (and spawning/daily/threadLinks variants),  
-`getThreadCooldownId`, `setThreadCooldownId` (checks `<EXP>_COOLDOWN_ID` env var first),  
-`getSpawnAlertMessageId`, `setSpawnAlertMessageId`, `clearSpawnAlertMessageId`, `getAllSpawnAlertMessageIds`,  
-`getAri`, `setAri`, `clearAri`
+### Tier 1 — `eqemu_*` (mirrors, weekly sync via `.github/workflows/sync-quarm.yml`)
+| Table | Purpose |
+|---|---|
+| `eqemu_zone` | Zone catalog |
+| `eqemu_items` | Item catalog (damage, delay, proc_effect, slots) |
+| `eqemu_npc_types` | NPC catalog (hp, resists, raid_target, respawn_seconds) |
+| `eqemu_spells` | Spell catalog (for proc resolution) |
+| `eqemu_loottable` / `eqemu_loottable_entries` / `eqemu_lootdrop` / `eqemu_lootdrop_entries` | Loot tree |
+| `eqemu_spawngroup` / `eqemu_spawnentry` / `eqemu_spawn2` | Spawn data |
+| `sync_meta` | Tracks which upstream dump we're aligned with |
 
-### `utils/killops.js`
-```js
-postKillUpdate(discordClient, channelId, bossId)
-// Runs all 5 refreshes in parallel after any kill/unkill:
-//   refreshExpansionBoard(client, exp, threadId, bosses)
-//   refreshZoneCard(client, boss, threadId, bosses)
-//   refreshThreadCooldownCard(client, exp, threadId, bosses)
-//   refreshSummaryCard(client, channelId, bosses)        // always uses TIMER_CHANNEL_ID
-//   refreshSpawningTomorrowCard(client, channelId, bosses) // always uses TIMER_CHANNEL_ID
+### Tier 2 — guild data (we write)
+| Table | Purpose |
+|---|---|
+| `characters` | Roster (main/alt, opendkp_id, discord_id opt-in, rank, class) |
+| `bosses_local` | Opt-in boss tracker (internal_id, nicknames, emoji, timer_override, expansion, notes) |
+| `raid_nights` | Session metadata (date, zone, leader, raid_size_expected) |
+| `encounters` | Boss kills (npc_id, started_at, total_damage, total_dps, raid_night_id) |
+| `encounter_players` | Per-char aggregate per encounter (damage, dps, duration, rank, pets flag) |
+| `contributions` | Parse submissions (encounter_id, contributor, source, raw_parse JSONB) |
+| `combat_events` | Granular events (ts_ms, event_type, attacker, defender, ability, amount) |
+| `loot_drops` | Awards (encounter_id, item_id, winner_character, dkp_spent, runner_up_bids JSONB) |
+| `wishlists` | Per-char BIS (character_name, item_id, priority, **bid_amount_enc** AES-256-GCM) |
+| `audit_log` | Mirror of Discord audit thread |
+| `wolfpack_members` | Web OAuth user sync (discord_id, user_id, nickname, roles[], is_member) |
+| `wolfpack_roles` | Discord role catalog (role_id, name, color, position) |
+| `chat_messages` | **DEPRECATED** — historical chat (out of scope; see Scope Boundaries) |
+| `patch_notes`, `officer_notes`, `travel_paths` | Various |
 
-postOrUpdateExpansionBoard(discordClient, expansion, threadId, bosses)
-// 3-tier board finding (never posts new if existing board found):
-//   1. state.json stored IDs
-//   2. env var <EXP>_BOARD_IDS
-//   3. Channel scan (fetchBotMessages → find earliest anchor title → collect N panels)
-//   4. Post fresh only if all 3 fail
-```
+### RPC / views
+- `find_or_create_encounter(p_guild_id, p_npc_id, p_started_at, p_duration, p_window_min=30)` — dedup by ±window
+- `merge_encounter_players(p_encounter_id)` — recompute from contributions JSONB
+- `eqemu_npc_drops` (view) — flattened NPC → item drops with effective chance
+- `item_with_proc` (view) — items + resolved proc spells
 
-### `utils/board.js`
-```js
-buildExpansionPanels(expansion, bosses, killState)
-// Returns array of { type, expansion, label, payload }
-// Each panel = one Discord message with embed + ActionRows of buttons
-// Zones start on new ActionRow for visual separation
-// Max 5 ActionRows × 5 buttons = 25 buttons per panel
-// Splits into multiple panels if needed (e.g. Luclin = 3 panels)
-
-buildAllExpansionPanels(bosses, killState)
-// Returns { Classic: [...], Kunark: [...], ... }
-```
-
-### `utils/embeds.js`
-```js
-buildZoneKillCard(zone, killedBosses)        // ☠️ Zone — one card, N boss fields
-buildSummaryCard(bosses, killState)           // 📊 Active Cooldowns (all expansions)
-buildSpawningTomorrowCard(bosses, killState)  // 🌅 Spawning in Next 24 Hours
-buildExpansionCooldownCard(expansion, bosses, killState)  // 🌙 Luclin — Active Cooldowns
-buildStatusEmbed(bosses, state, filterZone)  // /timers output
-buildSpawnAlertEmbed(boss)                   // ⚠️ spawning soon
-buildSpawnedEmbed(boss)                      // 🟢 has spawned
-buildDailySummaryEmbed(killedToday, availableNow, bosses, dateLabel)
-// dateLabel: "April 24, 2026" → changes "Killed Today" to "Killed April 24, 2026" in archives
-// availableNow intentionally ignored (no "Available Now" section in output)
-```
-
-### `utils/audit.js`
-```js
-postAuditEntry(client, { action, userId, userName, bossId, bossName, prevState, newNextSpawn, msgLink })
-// Posts to AUDIT_TRAIL_THREAD_ID with an Undo button (officer-only, customId: audit_undo:<id>)
-// Actions: kill, unkill, kill_board, unkill_board, updatetimer
-// Opposing actions (kill↔unkill) for same boss automatically removes the prior Undo button
-
-removeUndoButton(client, auditMsgId)
-// Strips components from an audit message (called after undo completes)
-```
+### RLS
+- Tier 1 + `patch_notes` + `sync_meta`: `anon` + `authenticated` SELECT
+- Encounters, characters, raid_nights, etc.: `authenticated` SELECT (guild members only)
+- `wishlists.bid_amount_enc`, `loot_drops.runner_up_bids`: service_role only
+- `wolfpack_members`: self-read via `auth.uid() = user_id`
+- Bot uses `service_role` → bypasses all RLS
 
 ---
 
-## Commands Reference
+## wolfpack-logsync Agent (`packages/wolfpack-logsync/`)
 
-### `/board`
-Always operates on `TIMER_CHANNEL_ID` regardless of where it's called from.  
-Posts/edits 4 main-channel slots in order, then for each thread: cooldown card + board panels.  
-Uses `editOrPost(channel, storedId, payload, onNewId)` — tries edit first, posts only if message gone.
+**What:** Single-file Node.js daemon. Zero npm deps. Tails `eqlog_*_pq.proj.txt` files, filters channels at the byte level, uploads combat events + `/who` data per encounter.
 
-### `/cleanup`
-**What it deletes:**
-- Main channel: transient embeds (`☠️`, `⚠️`, `🟢`), old-format boards, duplicate slot messages, duplicate thread-link messages
-- Each thread: transient embeds, duplicate board sets (keeps earliest), **orphan board panels** (lone panels not part of a recognized set), duplicate cooldown cards (keeps earliest), stray thread-link messages
-- Historic Kills thread: duplicate daily summaries for same date, strips "Available Now" from remaining ones
+**Where it runs:** End-user's Windows machine, inside their EQ install dir. First-run wizard (`start-logsync.ps1`) copies itself into the EQ dir and offers Task Scheduler / desktop shortcut / Start menu options.
 
-**What it edits in place:** all 4 main-channel slots, thread cooldown cards, board panels.  
-**Anchor logic:** walks messages oldest-first; first occurrence of each slot title = canonical.
+**Distribution:**
+- `releases/WolfPackParser.zip` (bundled with Node launcher)
+- `.github/workflows/release-parser.yml` rebuilds the zip on push
+- `Parser.bat` + `RUN-FIRST-for-Node.js.bat` — Windows entry points
 
-### `/restore <links>`
-Accepts 1–10 space-separated Discord message links. Supported embed types:
-- `📊 Active Cooldowns` (main channel summary)
-- `<Expansion> — Active Cooldowns` (thread cooldown card)
-- `📅 Daily Raid Summary` (parses "Killed Today" field)
+**Privacy filter (byte-level, pre-parse drop):**
+- Officer chat, tells, `/raidsay`, `[#officer]`, `[guild]` — never leave the machine
+- Only combat events + `/who` lines + boss kill broadcasts upload
 
-**Merge strategy:** collects all entries, groups by `bossId`, **latest `nextSpawn` wins**.  
-So paste a full week of daily summaries — the most recent kill of each boss wins.  
-Entries whose `nextSpawn` has already passed are skipped.  
-Writes directly to `state.json` atomically, then refreshes all boards and cards.
+**Upload modes:**
+- `--watch` — tail forever, upload per-encounter (default)
+- `--since <ISO>` — backfill from timestamp (binary-search seek). **Backfill scope = boss-matched combat + `/who` only** (see Scope Boundaries — chat backfill removed)
+- `--once` — scan once, exit
+- `--dry-run` — parse, skip upload
 
-### `/kill <boss>`
-Records kill → posts/edits zone kill card in expansion thread → calls `postKillUpdate`.  
-If zone card already exists (same zone, other boss killed earlier), edits it to add new row.
-
-### `/unkill <boss>`
-Clears kill → updates zone card (removes row or deletes if last boss) → calls `postKillUpdate`.
-
-### `/updatetimer <boss> <timeleft>`
-Parses time strings: `"3d4h30m"` or `"Expires in 3 Days, 4 Hours, 30 Minutes, and 20 Seconds"`.  
-Calls `overrideTimer(bossId, newNextSpawn)` then `postKillUpdate`.
-
-### `/announce <boss> <time> [note]`
-1. Creates a thread in `#raid-mobs` named `<Boss> — <time>`
-2. Scrapes PQDI for HP, AC, hit range, resists, special abilities, spells, drops → posts in thread
-3. Creates a Discord Scheduled Event (requires "Manage Events" bot permission)
-4. Posts compact announcement wherever `/announce` was called (can be any channel) with:
-   - Kill button (`kill:<bossId>`)
-   - Cancel/Archive button (`cancel_announce`)
-   - Links to thread and event
-
-### `/addboss <pqdi_url>`
-Scrapes PQDI NPC page. Expansion detection priority:
-1. Human-readable "Instance Spawn Timer: X days and Y hours" text
-2. `instance_spawn_timer_override` field (treated as **seconds**, not ms; sanity checked 3600–700000)  
-3. Zone-name lookup table (from `pqdi.cc/zones`)
-
-Body type → emoji mapping in `BODY_TYPE_EMOJI` map (dragon→🐉, giant→🗿, humanoid→🧍, etc.; fallback 🐉).  
-Writes to `bosses.json`, hot-reloads, refreshes expansion thread board.
-
-### `/removeboss <boss>`
-Autocomplete by name/nickname or accepts PQDI URL.  
-Removes from `bosses.json`, clears any kill state, refreshes board.
-
-### `/timers [zone] [filter]`
-Zone filter uses autocomplete (supports 33+ zones — avoids Discord's 25-choice limit).  
-Filter options: `all`, `spawned`, `soon` (within 2h), `unknown`.
-
-### `/autoraidinvite` (alias `/ari`)
-- **No args** → shows current ARI character + password (ephemeral, all roles)
-- **`character` + `password`** → sets ARI (officer/pack leader only); posts public confirmation
-- **`clear` in either field** → clears current ARI (officer/pack leader only)
-- State stored in `state.json` as `ari: { character, password, setBy, setByName, setAt }`
-
----
-
-## Boss Data (`data/bosses.json`)
-
-133 bosses. Schema:
+**Upload target:** Bot's `POST /api/agent/encounter` with bearer `WOLFPACK_AGENT_TOKEN`. Payload shape:
 ```json
-{
-  "id": "lord_nagafen",
-  "name": "Lord Nagafen",
-  "zone": "Nagafen's Lair",
-  "expansion": "Classic",
-  "timerHours": 162,
-  "nicknames": ["naggy", "nag", "nagafen"],
-  "emoji": "🐉",
-  "pqdiUrl": "https://www.pqdi.cc/npc/32040"
-}
+{ "agent_version": "2.4.6", "character": "Hitya",
+  "encounter": { "started_at": "ISO", "ended_at": "ISO", "boss_name": "Lord Nagafen",
+                 "events": [ {"ts": "ISO", "type": "damage", "attacker": "...", "defender": "...", "ability": "...", "amount": 1830} ],
+                 "pet_leaders": { "petname": "Owner" } } }
 ```
 
-Valid `expansion` values: `Classic`, `Kunark`, `Velious`, `Luclin`, `PoP`  
-`timerHours` is fractional — e.g. `66.05` for bosses with 66-hour + 3-minute timers.
-
-**Hot reload:** all commands call `getBosses()` which does `delete require.cache[...]` before `require()`.  
-This means `/addboss` and `/removeboss` take effect immediately without restart.
-
-Breakdown: Classic (15) | Kunark (16) | Velious (35) | Luclin (47) | PoP (20, locked until 2026-10-01)
+**Agent UI (localhost:7777, optional `--web-port`):** Dashboard, Tanks, Healers, DEEPS, Pets, Info/Stats, Opt-in Logs tabs. Versions tracked separately (`agent v2.4.6` etc.); auto-update prompt from `/api/agent/latest-version`.
 
 ---
 
-## Spawn Checker (index.js)
+## Web App (`web/` → `wolfpack.quest`)
+
+**Stack:** Next.js 14 App Router, React 18, Tailwind, Supabase Auth.
+**Auth:** Discord OAuth via Supabase. **Two gates at sign-in:** (a) Discord guild membership (`DISCORD_GUILD_ID`), (b) role membership via `ALLOWED_ROLE_NAMES`. Role IDs resolved via `wolfpack_roles` catalog (bot syncs every 6h). Display name = server nickname.
+**Sessions:** HTTP-only cookies refreshed by `middleware.ts` on every request.
+**Vercel env vars:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DISCORD_GUILD_ID`, `ALLOWED_ROLE_NAMES`.
+
+**Routes:**
+| Path | Status |
+|---|---|
+| `/` | Landing |
+| `/auth/signin`, `/auth/callback`, `/auth/signout` | OAuth flow |
+| `/loadouts` | Tank bandolier sets joined with `item_with_proc` view |
+| `/parses` | Recent parse browser (encounter + encounter_players) |
+| `/planner` | Placeholder — TPS calc |
+
+**Subdomains:** `parser.wolfpack.quest` → GitHub release download; `discord.wolfpack.quest` → guild invite.
+
+---
+
+## Spawn Checker
 
 Runs every 5 minutes. For each boss with a recorded kill:
-- **≤0 remaining:** Archives zone card to Historic Kills thread (edits card to remove spawned boss, or deletes if last). Updates the spawn alert message in-place to "spawned" (`buildSpawnedEmbed`). Posts to expansion thread (falls back to main channel). Clears kill. Calls `postKillUpdate`.
-- **≤30 min remaining:** Posts spawn alert to expansion thread, stores message ID via `setSpawnAlertMessageId`.
-- **>30 min:** Clears alert/spawned tracking sets so re-arming works if timer is extended.
+- **≤ 0 remaining:** archive zone card to Historic Kills, edit spawn alert in-place to "spawned" (`buildSpawnedEmbed`), post to expansion thread (fallback main channel), clear kill, refresh all cards
+- **≤ 30 min remaining:** post spawn alert to expansion thread, store msg ID via `setSpawnAlertMessageId`
+- **> 30 min remaining:** clear alert/spawned tracking sets so re-arming works if timer extended
 
-## Midnight Tasks (index.js)
+Same loop also calls `checkPvpSpawns()`, `checkLiveSpawns()`, `checkQuakeAlert()`.
 
-Runs at midnight EST. Scheduled via recursive `setTimeout(msUntilMidnightEST())`.
-1. Build `buildDailySummaryEmbed(dailyKills, [], bosses, dateLabel)` — no "Available Now"
-2. Edit the fixed `DAILY_SUMMARY_MESSAGE_ID` slot in main channel
+---
+
+## Midnight Tasks
+
+Runs at midnight in `DEFAULT_TIMEZONE`. Scheduled via recursive `setTimeout`. In order:
+1. Build daily summary embed (`buildDailySummaryEmbed`, no "Available Now")
+2. Edit `DAILY_SUMMARY_MESSAGE_ID` slot in main channel
 3. Archive summary to Historic Kills thread
-4. Archive all pending `/announce` messages to Historic Kills thread, delete originals
-5. Delete all lingering spawn alert messages (`getAllSpawnAlertMessageIds()`)
-6. `resetDailyKills()`, `clearAnnounceMessageIds()`
+4. Archive all pending `/announce` messages → Historic Kills, delete originals
+5. Archive passed announce threads (`archivePassedAnnounceThreads`)
+6. Delete lingering spawn alert messages
+7. Post PvP midnight summary (if any spawn within 24h)
+8. Archive raid night parse thread (`archiveRaidSession`)
+9. Consolidate multi-user parses within 10-min windows (`consolidateNightlyParses`)
+10. `resetDailyKills()`, `clearAnnounceMessageIds()`
 
 ---
 
-## Board Button Handler (index.js)
+## Bosses Data (`data/bosses.json`)
 
-Button custom IDs:
-- `kill:<bossId>` — toggle: if boss is on cooldown → unkill, else → kill
-- `cancel_announce` — archive announce to Historic Kills thread, delete from channel
-- `audit_undo:<entryId>` — officer-only undo of a logged kill/unkill/updatetimer action
+133 bosses. Hot-reloaded via `getBosses()` (clears `require.cache` per call).
 
-The kill/unkill toggle logic is in `handleBoardButton()` in `index.js`. It duplicates some logic from `kill.js`/`unkill.js` intentionally (interaction context differs — button vs slash command).
+```json
+{ "id": "lord_nagafen", "name": "Lord Nagafen", "zone": "Nagafen's Lair",
+  "expansion": "Classic", "timerHours": 162,
+  "nicknames": ["naggy", "nag", "nagafen"], "emoji": "🐉",
+  "pqdiUrl": "https://www.pqdi.cc/npc/32040" }
+```
+
+Valid expansions: `Classic` (15) / `Kunark` (16) / `Velious` (35) / `Luclin` (47) / `PoP` (20, locked until 2026-10-01). `timerHours` is fractional (e.g. `66.05`).
+
+`/addboss` and `/removeboss` write to the running container's `bosses.json`. With Docker: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json` to sync back.
 
 ---
 
-## Deployment Notes
+## Background Jobs Summary
 
-### Git / Merge Convention
-Railway shows the merge commit message as the deployment name. Always merge to `main` with a descriptive `-m` flag:
-```bash
-git merge <branch> -m "v0.9.7 — brief description of main feature"
-git push -u origin main
-```
-Never use `--no-edit` for merges — it produces "Merge branch '...'" which is meaningless in Railway's deploy history.
-Also bump `CLAUDE.md` version header and `package.json` version before merging.
+| Job | Cadence | What |
+|---|---|---|
+| Spawn checker | 5 min | Spawn alerts + cleared kills + PvP/live/quake check-ins |
+| Midnight summary | TZ midnight | See above |
+| Chat dedup GC | 10s | Prune 5s-old entries |
+| Wolfpack member sync | startup + 6h | Discord guild → Supabase `wolfpack_members` + `wolfpack_roles` |
+| Agent version poll | startup | Caches `_currentAgentVersion()` from `packages/wolfpack-logsync/package.json` |
+| Weekly Quarm sync | GitHub Actions cron | `.github/workflows/sync-quarm.yml` mirrors eqmac dump to Supabase Tier 1 |
 
-### Railway
-- Deploy from GitHub, add env vars under Variables tab
-- Add a Volume at `/app/data` — this is where `state.json` and bosses changes persist
-- The `.dockerignore` excludes `data/state.json` from the image
-- The `Dockerfile` runs `rm -f data/state.json` after `COPY . .` as a second safeguard
+---
 
-### Docker
-```bash
-cp .env.example .env && nano .env
-docker-compose up -d
-# Update:
-git pull && docker-compose down && docker-compose up -d --build
-# Sync bosses.json after /addboss:
-docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json
-```
+## Deployment
 
-### First-time Setup Order
-1. Create 5 threads inside `#raid-mobs`: Classic Thread, Kunark Thread, Velious Thread, Luclin Thread, PoP Thread
-2. Create Historic Kills thread inside `#raid-mobs`
-3. Add all thread IDs to `.env`
-4. Deploy bot
-5. Run `/board` — creates all slots and posts boards in threads
-6. Right-click each anchored message → copy ID → add to `.env` (prevents re-posting on redeploy)
-7. Run `/board` again to confirm all edits (no new messages posted)
+### Railway (bot)
+1. Deploy from GitHub
+2. Variables tab — paste all from `.env.example`
+3. Volume at `/app/data` for `state.json` + boss changes
+4. `.dockerignore` excludes `data/state.json`; `Dockerfile` does `rm -f data/state.json` after `COPY .` as belt-and-suspenders
+
+### Vercel (web)
+1. Root directory: `web` (monorepo)
+2. Env vars listed in `web/README.md`
+3. Discord OAuth redirect: `https://<project>.supabase.co/auth/v1/callback` in Discord Dev Portal; Supabase auth Site URL = `https://wolfpack.quest`
+
+### Supabase
+1. Project `zhtoekwakucbckvatfky`. GitHub integration auto-applies new migrations on merge to `main`
+2. Migration naming: `YYYYMMDDHHMMSS_short_description.sql`. Idempotent (`CREATE TABLE IF NOT EXISTS`)
+
+### Git/merge convention
+Always `git merge <branch> -m "vX.Y.Z — short reason"` — never `--no-edit`. Railway uses merge commit message as deploy name.
+
+---
+
+## First-time Setup Order
+
+1. Create threads in `#raid-mobs`: Classic, Kunark, Velious, Luclin, PoP
+2. Create: Historic Kills, Parse Logs, Onboarding, Hate, Roster Active, Roster Inactive, Audit Trail, Feedback
+3. (Optional) PVP channel/thread, Live channel
+4. Paste all thread IDs into `.env`
+5. Deploy bot
+6. `/board` — creates all slots + posts boards
+7. Right-click each anchored message → copy ID → add to env vars (`SUMMARY_MESSAGE_ID`, `*_BOARD_IDS`, `*_COOLDOWN_ID`, etc.)
+8. `/board` again to confirm edits in place (no new messages posted)
+9. `/rosterimport` with OpenDKP export
+10. `/hateboard` to seed hate boards
+11. `/parseleaderboard` to pin leaderboard
+12. `/onboarding` to seed the public Quick Start message
 
 ### Recovery After State Loss
-```
-/restore <link-to-active-cooldowns>  [<link2> <link3> ...]
-```
-Paste links to any combination of Active Cooldowns cards (main channel or any thread) and Daily Raid Summary messages. Latest `nextSpawn` per boss wins. Can paste a whole week of daily summaries at once.
+`/restore <link1> [<link2> ...]` — paste links to any combination of Active Cooldowns cards (main or thread) and Daily Summary messages. Latest `nextSpawn` per boss wins. Parse data restored automatically from `PARSES_LOG_THREAD_ID` on startup. Hate state restored from hidden embeds in `HATE_THREAD_ID`.
 
 ---
 
 ## Known Issues / Future Work
 
-- **PoP expansion:** 20 bosses pre-loaded but hard-locked until `2026-10-01T00:00:00` via `isPopLocked()` in `utils/config.js`. PoP thread shows locked 🔒 buttons until then — clicking any returns an ephemeral message. After unlock, run `/board` to activate the PoP thread. Update `pqdiUrl` fields via `/addboss` once PQDI has the NPC data.
-- **`/announce` Discord events:** Requires "Manage Events" bot permission. If not granted, announcement still works but no event is created.
-- **`/announce` cross-channel kills:** If `/announce` is posted in `#event-chat` and someone clicks the Kill button there, the kill is recorded and boards update correctly, but the zone card posts in the expansion thread (correct behavior).
-- **bosses.json sync:** `/addboss` and `/removeboss` write to the running container's `bosses.json`. Must manually sync back to repo. With Docker: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json`
-- **`/cleanup` scope:** Historic Kills thread scan is limited to 300 messages. Increase `limit` param in `fetchBotMessages(histThread, botId, 300)` if older duplicates aren't caught.
-- **OpenDKP roster auto-sync:** Currently the roster is updated only on `/rosterimport` (manual) or `/register` (single character). A future enhancement could periodically poll `GET /clients/wolfpack/characters` and diff against the in-memory roster, posting a summary of new/changed characters to officer chat. Useful for catching rank changes, new imports done directly on the OpenDKP site, etc.
-- **Discord → character mapping:** Store a `discordId → [characterNames]` table (in `state.json`) so members can self-assign their characters. This would enable bid/loot commands that infer the character automatically. Implementation sketch: `/mycharacter <name>` stores `state.discordChars[userId] = name`; `/bid` reads that to know whose DKP to spend. The registration flow could also accept an optional `discorduser` mention to pre-populate the mapping at `/register` time.
-- **`/loot` auction creation (pending API capture):** `utils/opendkp.js createAuctions()` is stubbed. To complete: from the OpenDKP Bidding Tool, create a real auction with a valid item ID selected via autocomplete and capture the Network request cURL (`PUT /clients/wolfpack/auctions`). The 500 error in v1.3.12 was caused by a fake ItemId (31337). Also need: bid submission cURL (what payload submits a character's bid), and the Auction "End All" endpoint. Once captured, uncomment the auction block in `commands/loot.js execute()`.
-- **`/loot` bid characters:** When auction creation is live, players bidding via Discord button should see a character picker (their raid-eligible alts only — no Non-raid Alt, no Trader). Character eligibility: Officer/Pack Leader/Raid Pack/Recruit/Member/Inactive = full; Raid Alt = eligible, max 100 DKP. Requires Discord↔character mapping (see above) or manual character selection at bid time.
-- **`/loot` wishlist notifications:** After the loot embed posts, delay 10–15 seconds, then send ephemeral DMs/mentions to members who have the item on their wishlist. Character picker pre-populated from wishlist. Requires wishlist storage per character (in `state.json` or separate DB).
-- **Quarmy wishlist pre-loading:** `utils/loot.js parseQuarmyWishlist(url)` is a placeholder. Once Quarmy BIS page format is confirmed (e.g., `https://quarmy.com/b/<id>?gs=<gsId>`), implement to parse item names and sources → register as wishlist items for a character. Loot embed delay can show "🎯 X guildies have this wishlisted" hint.
-- **Item rarity from PQDI:** Drop table scraping in `fetchPqdiDropTable` uses a row-by-row HTML regex approach. If PQDI changes their table format, update the regex in `utils/loot.js`. Current pattern assumes `<tr>` rows with `<a href="/item/ID">Name</a>` and `X.X%` in the same row.
-- **Quest turn-in loot:** Items bid on for quest hand-ins (e.g., item 8365 "Remains of Vah Kerrath" → reward item 8364 via PQDI script) work identically to regular loot — the Zeal paste includes the real EQ item ID, PQDI link in the embed provides context. No special handling needed; officers manage the quest/turn-in coordination offline.
-- **OpenDKP bidding / loot posting (original):** The bot now proactively posts loot via `/loot` (officer-initiated) rather than polling OpenDKP. Discord bid buttons will come once auction creation API is captured.
+- **PoP expansion locked** until 2026-10-01 via `isPopLocked()`. After unlock, run `/board` to activate the thread. Update `pqdiUrl` fields via `/addboss` once PQDI has NPC data.
+- **OpenDKP auction creation:** API cURL captured (`PUT /clients/wolfpack/auctions`); button wiring in `handleLootPost` still pending. Bid submission and Award endpoints not yet captured.
+- **`bosses.json` sync:** `/addboss` and `/removeboss` write to the running container. Must manually sync back to repo via `docker cp` (or rely on Railway volume).
+- **`/cleanup` Historic Kills scope:** limited to 300 messages. Bump `fetchBotMessages(histThread, botId, 300)` if older dupes aren't caught.
+- **Discord OAuth UI:** built; guild-membership check at sign-in still TODO (currently any Discord user can sign in).
+- **`/loot` wishlist auto-bid settlement:** wishlist-match summary posts, but actual auction submission depends on auction-creation wiring.
+- **`parseQuarmyWishlist`:** placeholder in `utils/loot.js`. Implement once Quarmy BIS page format confirmed.
+- **`LUCLIN_KEYS_SHEET_ID`:** env var reserved for future Lucid Shards tracker; `utils/sheets.js` is wired but no command consumes it yet.
+- **Era-thread chat routing** (`_handleAgentChat`): currently partitions by era; per scope boundary, will become direct post.
 
 ---
 
-## Conversation History
+## Conversation History Note
 
-This bot was built across a single long Claude.ai session. The full development history is available in the session transcript. Key architectural decisions made during the session:
+This bot was developed across multiple long Claude.ai sessions. Architectural decisions of note:
 
-1. **Thread-based layout** (vs flat channel board) — decided mid-session when the channel became cluttered. Each expansion got its own thread for boards + zone cards.
-2. **Env-var anchoring** — added after repeated state loss on Railway redeploy. The `SUMMARY_MESSAGE_ID` etc. env vars mean the bot always edits the same messages regardless of state.json contents.
-3. **3-tier board finding** in `postOrUpdateExpansionBoard` — state → env vars → channel scan → post fresh. Prevents duplicate boards after redeploy.
-4. **Zone kill cards** consolidated — one card per zone (edited in place) instead of one per kill, to reduce channel noise.
-5. **Atomic state writes** — `.tmp` file + `renameSync` to prevent corruption if process dies mid-write.
-6. **`/restore` multi-link** — added after a state-loss incident where kills had to be reconstructed from a week of daily summaries.
-7. **`/cleanup` never uses "."** — originally replaced messages with "." as placeholders. Changed to always delete transient messages and edit canonical ones in place.
+1. **Thread-based layout** (vs flat channel board) — each expansion got its own thread to reduce clutter.
+2. **Env-var anchoring** — `SUMMARY_MESSAGE_ID`/`*_BOARD_IDS`/`*_COOLDOWN_ID` survive volume loss.
+3. **3-tier board finding** in `postOrUpdateExpansionBoard` (state → env → channel scan → post fresh) prevents duplicate boards after redeploy.
+4. **Zone kill cards** consolidated — one per zone, edited in place.
+5. **Atomic state writes** — `.tmp` file + `renameSync`.
+6. **`/restore` multi-link** — paste a week of daily summaries; latest `nextSpawn` per boss wins.
+7. **Discord as source of truth** — parses from `PARSES_LOG_THREAD_ID`, hate state from hidden embeds in `HATE_THREAD_ID`, roster from chunked messages in roster threads. State.json and parses.json are local mirrors only.
+8. **Sealed-bid wishlist** — AES-256-GCM per-entry with auth tag; service_role-only RLS; service degrades gracefully if `WISHLIST_BID_KEY` unset (dev only).
+9. **Max-damage-per-player merge** — multi-perspective parse submissions for the same encounter merge by taking each player's highest reported damage.
+10. **Stale-alert suppression** post-redeploy (PvP soon/spawned, 10/15 min thresholds) prevents notification flood.
