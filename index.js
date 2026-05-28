@@ -102,9 +102,16 @@ function startOpenDkpSync() {
   // Skip entirely when OpenDKP creds aren't configured (e.g. dev environments).
   // OPENDKP_EMAIL is the legacy name for OPENDKP_USERNAME — utils/opendkp.js
   // accepts either, so we mirror that here.
-  const username = process.env.OPENDKP_USERNAME || process.env.OPENDKP_EMAIL;
-  if (!process.env.OPENDKP_CLIENT_ID || !username) {
-    console.log('[opendkp-sync] skipped — OPENDKP_CLIENT_ID / OPENDKP_USERNAME (or _EMAIL) unset');
+  const hasClientId = !!process.env.OPENDKP_CLIENT_ID;
+  const hasUsername = !!(process.env.OPENDKP_USERNAME || process.env.OPENDKP_EMAIL);
+  const hasPassword = !!process.env.OPENDKP_PASSWORD;
+  const hasCognito  = !!process.env.OPENDKP_COGNITO_CLIENT_ID;
+  if (!hasClientId || !hasUsername || !hasPassword || !hasCognito) {
+    console.log('[opendkp-sync] skipped —',
+      'CLIENT_ID=' + (hasClientId ? 'set' : 'MISSING'),
+      'USERNAME/EMAIL=' + (hasUsername ? 'set' : 'MISSING'),
+      'PASSWORD=' + (hasPassword ? 'set' : 'MISSING'),
+      'COGNITO_CLIENT_ID=' + (hasCognito ? 'set' : 'MISSING'));
     return;
   }
   const { runSync } = require('./utils/openDkpSync');
