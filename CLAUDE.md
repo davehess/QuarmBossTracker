@@ -635,19 +635,41 @@ check (gap detection, missing-parse warnings, attendance reconciliation) should
 default to this window across each raid date. Anchor: the first recorded raid in
 `raid_nights` is the historical baseline.
 
+## Character Identity Scopes (read before building any roster-aware feature)
+
+Three different "who is this" questions, three different sources — don't mix them:
+
+| Question | Source | Commands that use it |
+|---|---|---|
+| "Is this a Wolf Pack member?" (active or inactive) | OpenDKP roster (`utils/roster.js` — `getCharacter`, `getAllNames`, `getActiveRoster`, `getInactiveRoster`) | `/who`, `/whoall`, `/quarmy`, `/register`, `/dkp`, `/wishlist`, `/tick` |
+| "Have we ever seen this character anywhere?" | OpenDKP roster + agent `/who` observations (`state.whoData` + `who_observations` table) | `/whois` only |
+| "Who was eligible to be in last night's raid?" | Same as the first row — Wolf Pack roster (active + inactive). NOT `who_observations`, NOT `encounter_players`. | Gap detection (when built), attendance reconciliation, "missing from parse" warnings |
+
+Why this matters: `who_observations` contains anyone the agent ever `/who`'d —
+including PUGs, random players in zones we cleared through, opposing raid forces,
+and people in `/anon`. If "who was in the raid" used `who_observations` as the
+eligibility list, gap detection would flag every passing stranger as a "missing
+Wolf Pack member." The roster is the canonical guild member list.
+
 ## Gap Detection Signals (design notes — UI not yet built)
 
-When asking "who should be in this parse but isn't?" — combine two signals:
+**Candidate pool:** the Wolf Pack roster (active + inactive) — same source `/who`
+uses. Per the table above.
+
+When asking "which roster members should be in this parse but aren't?" — combine
+two signals:
 
 1. **`/tick` raid attendance** (OpenDKP `raids` API + `raid_nights` join). If a
-   character was ticked in for the slot containing the kill timestamp but has no
-   row in `encounter_players`, they're a candidate gap.
-2. **`/who` observations in the zone within the raid window.** Agent's `/who`
-   captures land in `state.json::whoData` (and Supabase if we ever extend the
-   ingest). A character seen in the kill's zone within ±10 min of `started_at`
-   but absent from `encounter_players` is a stronger candidate gap.
+   roster character was ticked in for the slot containing the kill timestamp but
+   has no row in `encounter_players`, they're a candidate gap.
+2. **`/who` observations in the zone within the raid window** (`who_observations`
+   table). A roster character seen in the kill's zone within ±10 min of
+   `started_at` but absent from `encounter_players` is a stronger candidate gap.
 
 Take the union, dedupe, sort by signal strength. Flag the rest as confident.
+
+Non-roster characters who appear in `encounter_players` or `who_observations`
+are informational only — log them, don't flag them as missing.
 
 ## Historical Parse Recovery — Limitations of Old Chat Parses
 
