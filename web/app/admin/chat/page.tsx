@@ -18,6 +18,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { dayLabel } from '@/lib/format';
+import { loadItemCatalog, linkifyItems, type ItemCatalog } from '@/lib/item-link';
 
 export const dynamic = 'force-dynamic';
 
@@ -253,20 +254,56 @@ function channelChip(ch: string) {
   return { label: ch.slice(0, 3), color: 'text-dim' };
 }
 
-function renderText(text: string) {
-  const parts: (string | { url: string; label: string })[] = [];
+function renderText(text: string, catalog: ItemCatalog) {
+  // First pass: split on agent-injected URL placeholders <https://…>
+  // (already extracted as clickable PQDI links by the agent when the line
+  // contained \x12 item-link metadata). Second pass: scan the remaining
+  // plain segments for item-name matches from the eqemu_items catalog so
+  // bare-text item mentions ("Trochilic's Skean") get the same treatment.
+  const segments: ({ kind: 'url'; url: string; label: string } | { kind: 'text'; value: string })[] = [];
   const rx = /<(https?:\/\/[^>]+)>/g;
   let last = 0;
   let m;
   while ((m = rx.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    parts.push({ url: m[1], label: m[1].includes('pqdi.cc/item/') ? '🔗' : m[1] });
+    if (m.index > last) segments.push({ kind: 'text', value: text.slice(last, m.index) });
+    segments.push({ kind: 'url', url: m[1], label: m[1].includes('pqdi.cc/item/') ? '🔗' : m[1] });
     last = m.index + m[0].length;
   }
-  if (last < text.length) parts.push(text.slice(last));
-  return parts.map((p, i) => typeof p === 'string'
-    ? <span key={i}>{p}</span>
-    : <a key={i} href={p.url} target="_blank" rel="noreferrer" className="text-blue hover:underline">{p.label}</a>);
+  if (last < text.length) segments.push({ kind: 'text', value: text.slice(last) });
+
+  const out: React.ReactNode[] = [];
+  let k = 0;
+  for (const seg of segments) {
+    if (seg.kind === 'url') {
+      out.push(
+        <a key={k++} href={seg.url} target="_blank" rel="noreferrer" className="text-blue hover:underline">
+          {seg.label}
+        </a>,
+      );
+      continue;
+    }
+    const nodes = linkifyItems(seg.value, catalog);
+    for (const n of nodes) {
+      if (n.type === 'text') {
+        out.push(<span key={k++}>{n.value}</span>);
+      } else {
+        const href = `https://www.pqdi.cc/item/${n.id}`;
+        out.push(
+          <a
+            key={k++}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="text-purple hover:underline"
+            title={`PQDI · item ${n.id}`}
+          >
+            {n.name}
+          </a>,
+        );
+      }
+    }
+  }
+  return out;
 }
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -349,6 +386,12 @@ export default async function AdminChatPage({
   // Per-era counts for the chips row.
   const eras = await eraCounts({ speaker: p.speaker, channel: p.channel, search: p.search });
   const activeEra = eraByName(p.era);
+
+  // Item catalog — only fetched (and cached for an hour) when we're about to
+  // render an actual chat log. Browse/bucket views don't need it.
+  const itemCatalog: ItemCatalog = inLogMode
+    ? await loadItemCatalog(supabaseAdmin())
+    : new Map();
 
   // Group log by speaker for the "by speaker" toggle? Future. For v1, just
   // render chronologically with channel chip + speaker.
@@ -584,7 +627,7 @@ export default async function AdminChatPage({
                           </Link>
                           {r.who?.class && <span className="text-dim ml-1 text-[10px]">({r.who.class})</span>}
                         </span>
-                        <span className="text-text break-words whitespace-pre-wrap">{renderText(r.text)}</span>
+                        <span className="text-text break-words whitespace-pre-wrap">{renderText(r.text, itemCatalog)}</span>
                       </li>
                     );
                   })}

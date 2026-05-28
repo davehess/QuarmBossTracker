@@ -20,6 +20,7 @@ const config: Config = {
         green:  '#56d364',
         red:    '#f85149',
         orange: '#ffa657',
+        purple: '#a371f7',
         accent: '#1f6feb',
       },
       fontFamily: {
