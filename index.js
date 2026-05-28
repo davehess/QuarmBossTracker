@@ -100,8 +100,11 @@ client.once(Events.ClientReady, async (readyClient) => {
 const OPENDKP_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function startOpenDkpSync() {
   // Skip entirely when OpenDKP creds aren't configured (e.g. dev environments).
-  if (!process.env.OPENDKP_CLIENT_ID || !process.env.OPENDKP_USERNAME) {
-    console.log('[opendkp-sync] skipped — OPENDKP_CLIENT_ID / OPENDKP_USERNAME unset');
+  // OPENDKP_EMAIL is the legacy name for OPENDKP_USERNAME — utils/opendkp.js
+  // accepts either, so we mirror that here.
+  const username = process.env.OPENDKP_USERNAME || process.env.OPENDKP_EMAIL;
+  if (!process.env.OPENDKP_CLIENT_ID || !username) {
+    console.log('[opendkp-sync] skipped — OPENDKP_CLIENT_ID / OPENDKP_USERNAME (or _EMAIL) unset');
     return;
   }
   const { runSync } = require('./utils/openDkpSync');
