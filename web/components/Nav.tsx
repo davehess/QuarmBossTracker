@@ -10,11 +10,16 @@ const links = [
   { href: '/planner',       label: 'Planner' },
 ];
 
-export default function Nav() {
+// showAdmin is computed server-side in the root layout (based on officer
+// role) and passed in so non-officers never see the link.
+export default function Nav({ showAdmin = false }: { showAdmin?: boolean }) {
   const path = usePathname();
+  const allLinks = showAdmin
+    ? [...links, { href: '/admin', label: '🛡️ Admin' }]
+    : links;
   return (
     <nav className="flex gap-2">
-      {links.map(({ href, label }) => {
+      {allLinks.map(({ href, label }) => {
         const active = path === href || (href !== '/' && path?.startsWith(href));
         return (
           <Link

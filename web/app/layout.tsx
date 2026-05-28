@@ -2,6 +2,8 @@ import './globals.css';
 import type { Metadata } from 'next';
 import Nav from '@/components/Nav';
 import AuthBadge from '@/components/AuthBadge';
+import { supabaseServer } from '@/lib/supabase-server';
+import { isOfficer } from '@/lib/officer';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://wolfpack.quest';
 
@@ -23,7 +25,12 @@ export const metadata: Metadata = {
   icons: { icon: '/favicon.ico' },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Officer check runs server-side per request so the Admin nav link only
+  // appears for officers. Non-officers never see the link in the source.
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  const showAdmin = user ? await isOfficer(user.id) : false;
+
   return (
     <html lang="en">
       <body className="font-mono">
@@ -34,7 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span>Wolf Pack EQ — Tracker</span>
             </h1>
             <div className="flex items-center gap-3">
-              <Nav />
+              <Nav showAdmin={showAdmin} />
               <AuthBadge />
             </div>
           </header>
