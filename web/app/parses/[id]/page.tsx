@@ -147,6 +147,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const { enc, contribs, zones, loot, whoMap, date } = data;
 
   const bossName = enc.eqemu_npc_types?.name || 'Unknown boss';
+  const bossId   = enc.npc_id;
   const zoneShort = enc.zone_short || enc.eqemu_npc_types?.zone_short;
   const zoneLong = zoneShort ? zones.get(zoneShort)?.long_name || zoneShort : 'Unknown zone';
 
@@ -180,7 +181,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
-          <h2 className="text-2xl text-gold">{bossName}</h2>
+          <h2 className="text-2xl text-gold">
+            {bossId ? (
+              <Link href={`/boss/${bossId}`} className="hover:underline">{bossName}</Link>
+            ) : bossName}
+          </h2>
           <div className="text-dim text-sm">
             {dayLabel(date)} · {fmtTime(enc.started_at)}
           </div>
