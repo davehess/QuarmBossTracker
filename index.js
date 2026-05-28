@@ -2329,6 +2329,27 @@ async function _handleAgentChat(req, res) {
 //   npc (or other)                 → plain death notice
 const WP_GUILD_NAME = process.env.PVP_GUILD_NAME || 'Wolf Pack';
 
+// Dedup cache: when multiple parsers see the same Druzzil Ro broadcast,
+// each uploads it independently. Key on second-granular timestamp + text
+// so we only post each unique broadcast once. 5-min TTL is plenty since
+// real duplicate kills of the same player by the same mob in the same
+// zone never happen within 5 min.
+const _recentPvpBroadcasts = new Map();
+function _pvpDedupKey(b) {
+  const sec = b?.ts ? new Date(b.ts).toISOString().slice(0, 19) : '';
+  return `${sec}|${b?.text || ''}`;
+}
+function _isPvpDupe(b) {
+  const now = Date.now();
+  for (const [k, exp] of _recentPvpBroadcasts) {
+    if (exp < now) _recentPvpBroadcasts.delete(k);
+  }
+  const key = _pvpDedupKey(b);
+  if (_recentPvpBroadcasts.has(key)) return true;
+  _recentPvpBroadcasts.set(key, now + 5 * 60_000);
+  return false;
+}
+
 async function _handleAgentPvp(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -2364,8 +2385,9 @@ async function _handleAgentPvp(req, res) {
   const { buildHowlRow } = require('./commands/pvpalert');
   const pvpRoleName = process.env.PVP_ROLE || 'PVP';
 
-  let posted = 0;
+  let posted = 0, deduped = 0;
   for (const b of broadcasts) {
+    if (_isPvpDupe(b)) { deduped++; continue; }
     const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
     try {
       const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
@@ -2401,7 +2423,7 @@ async function _handleAgentPvp(req, res) {
   }
 
   res.writeHead(200);
-  res.end(JSON.stringify({ ok: true, posted }));
+  res.end(JSON.stringify({ ok: true, posted, deduped }));
 }
 
 // ── Druzzil Ro boss-kill auto-timer ───────────────────────────────────────
