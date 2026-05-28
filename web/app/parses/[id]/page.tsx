@@ -7,7 +7,8 @@
 // whole night here.
 
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
+import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel } from '@/lib/format';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
@@ -130,6 +131,9 @@ async function load(id: string) {
 
 export default async function EncounterDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect(`/auth/signin?next=/parses/${encodeURIComponent(id)}`);
+
   const data = await load(id);
   if (data.error || !data.enc) {
     if (data.error === 'not found') notFound();

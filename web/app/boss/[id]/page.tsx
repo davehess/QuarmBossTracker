@@ -2,8 +2,9 @@
 // Shows: every recorded kill, top damage all-time, fastest kill,
 // historical top performers per role inferred from class data.
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -60,6 +61,9 @@ async function load(npcIdRaw: string) {
 
 export default async function BossPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect(`/auth/signin?next=/boss/${encodeURIComponent(id)}`);
+
   const data = await load(id);
   if (data.error === 'not found' || data.error === 'invalid id') notFound();
   if (data.error || !data.boss) {

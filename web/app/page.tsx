@@ -1,7 +1,10 @@
-// Landing page — public, anonymous. Shows the most recent activity to give
-// new visitors something to click before the OAuth gate.
+// Landing page — public marketing copy + cards. The Recent Kills widget is
+// data and only renders for signed-in users (guild members), matching the
+// rest of the site's gate. Cards link to gated pages, which redirect
+// unauthenticated visitors to /auth/signin?next=...
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtTime, dayKey, dayLabel } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +30,8 @@ async function loadRecent() {
 }
 
 export default async function HomePage() {
-  const recent = await loadRecent();
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  const recent = user ? await loadRecent() : [];
 
   return (
     <div className="space-y-6">
@@ -85,13 +89,18 @@ export default async function HomePage() {
         />
       </section>
 
-      <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
-        <p>
-          Public read-only data lives here. Auth via Discord OAuth lands in the
-          next iteration to unlock per-user features (your own loadout uploads,
-          private bid history).
-        </p>
-      </section>
+      {!user && (
+        <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
+          <p>
+            Parses, leaderboards, and per-character history require a Wolf Pack
+            EQ Discord sign-in.{' '}
+            <Link href="/auth/signin" className="text-blue hover:underline">
+              Sign in
+            </Link>{' '}
+            to see them.
+          </p>
+        </section>
+      )}
     </div>
   );
 }

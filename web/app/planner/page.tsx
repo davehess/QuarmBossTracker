@@ -3,7 +3,14 @@
 // pick MH/OH/Range/Ammo from the eqemu_items list, get a hate/min estimate
 // from the formulas you posted in the screenshot (PPM × proc_hate + swing rate ×
 // (DMG + bonus)).
-export default function PlannerPage() {
+import { redirect } from 'next/navigation';
+import { supabaseServer } from '@/lib/supabase-server';
+
+export const dynamic = 'force-dynamic';
+
+export default async function PlannerPage() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect('/auth/signin?next=/planner');
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">

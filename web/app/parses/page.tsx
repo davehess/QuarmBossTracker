@@ -1,9 +1,13 @@
 // Raid parse history — server component. Reads encounters via service_role
 // so the page is consistent regardless of the viewer's RLS scope. Encounter
-// data is not sensitive within the guild; sealed bids etc. live elsewhere.
+// data is non-sensitive within the guild but isn't public — we gate on a
+// signed-in Supabase session, which by definition means the user passed the
+// guild + role checks in /auth/callback at sign-in time.
 //
 // Structure: raid night → zone group → kills in the order we did them →
 // per-night loot block from OpenDKP + attendance summary.
+import { redirect } from 'next/navigation';
+import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import KillCard, { type KillCardData } from '@/components/KillCard';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
@@ -225,6 +229,9 @@ function computeNightStats(day: DayBucket, dayDate: string): NightStats {
 }
 
 export default async function ParsesPage() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect('/auth/signin?next=/parses');
+
   const { rows, zones, loot, attendance, error } = await loadAll();
   const days = bucket(rows, zones);
   const dayEntries = [...days.entries()];

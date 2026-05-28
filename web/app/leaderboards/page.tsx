@@ -9,7 +9,9 @@
 // rather than season totals so the page reads as "who's been crushing it lately."
 
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtDkp } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -84,6 +86,9 @@ async function load() {
 }
 
 export default async function LeaderboardsPage() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect('/auth/signin?next=/leaderboards');
+
   const { topDamage, attendance, lootSpend } = await load();
 
   return (

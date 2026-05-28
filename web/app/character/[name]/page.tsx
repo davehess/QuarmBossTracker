@@ -6,7 +6,9 @@
 // the canonical character name.
 
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -106,6 +108,9 @@ async function load(name: string) {
 
 export default async function CharacterPage({ params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}`);
+
   const data = await load(name);
   if (data.error || !data.displayName) {
     return (
