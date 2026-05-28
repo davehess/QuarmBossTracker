@@ -1,7 +1,14 @@
 // Raid parse history — server component. Reads encounters via service_role
 // so the page is consistent regardless of the viewer's RLS scope. Encounter
 // data is not sensitive within the guild; sealed bids etc. live elsewhere.
+//
+// Structure: raid night → zone group → kills in the order we did them →
+// per-night loot block from OpenDKP + attendance summary.
 import { supabaseAdmin } from '@/lib/supabase';
+import KillCard, { type KillCardData } from '@/components/KillCard';
+import LootBlock, { type LootRow } from '@/components/LootBlock';
+import NightSummary, { type NightStats } from '@/components/NightSummary';
+import { dayKey, dayLabel, fmtDmg } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,20 +25,35 @@ type EncounterRow = {
   encounter_players: PlayerRow[];
 };
 type ZoneRow = { short_name: string; long_name: string; expansion: number | null };
+type LootDbRow = {
+  raid_date: string;
+  raid_id: number;
+  raid_name: string;
+  item_name: string;
+  character_name: string;
+  dkp: number;
+  game_item_id: number | null;
+  notes: string | null;
+};
+type AttendanceRollup = {
+  date: string;
+  raid_count: number;
+  unique_attendees: number;
+  top_attendees: { name: string; ticks: number }[];
+};
 
 const ROW_LIMIT = 250;
 
-async function loadRecentParses(): Promise<{
+async function loadAll(): Promise<{
   rows: EncounterRow[];
   zones: Map<string, ZoneRow>;
+  loot: Map<string, LootDbRow[]>;
+  attendance: Map<string, AttendanceRollup>;
   error: string | null;
 }> {
   try {
     const sb = supabaseAdmin();
 
-    // Encounters with any merged damage at all. 0-damage rows show up when the
-    // boss kill broadcast lands before any contribution is ingested (or when
-    // the contribution merge errors silently). The user asked us to hide them.
     const { data: encs, error: encErr } = await sb
       .from('encounters')
       .select(`
@@ -42,9 +64,8 @@ async function loadRecentParses(): Promise<{
       .gt('total_damage', 0)
       .order('started_at', { ascending: false })
       .limit(ROW_LIMIT);
-    if (encErr) return { rows: [], zones: new Map(), error: encErr.message };
+    if (encErr) return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), error: encErr.message };
 
-    // Zone catalog for pretty long_name display ("Ssra Temple" vs "ssratemple").
     const { data: zoneRows } = await sb
       .from('eqemu_zone')
       .select('short_name, long_name, expansion');
@@ -52,55 +73,70 @@ async function loadRecentParses(): Promise<{
       (zoneRows ?? []).map((z: ZoneRow) => [z.short_name, z]),
     );
 
-    return { rows: (encs as unknown as EncounterRow[]) ?? [], zones, error: null };
+    // Loot: pull 60 days back so a long backfill scroll still shows context.
+    const since = new Date(Date.now() - 60 * 86400 * 1000).toISOString().slice(0, 10);
+    const { data: lootRows } = await sb
+      .from('opendkp_loot_recent')
+      .select('raid_date, raid_id, raid_name, item_name, character_name, dkp, game_item_id, notes')
+      .gte('raid_date', since)
+      .order('dkp', { ascending: false });
+    const loot = new Map<string, LootDbRow[]>();
+    for (const r of (lootRows ?? []) as LootDbRow[]) {
+      // raid_date is YYYY-MM-DD from the view
+      const k = r.raid_date;
+      if (!loot.has(k)) loot.set(k, []);
+      loot.get(k)!.push(r);
+    }
+
+    // Attendance rollup: per-night raid + attendee count + top 5 attendees.
+    // We compute this in app code from opendkp_raids + opendkp_ticks rather
+    // than trying to build a view that handles all the edge cases (multi-pool
+    // nights, bonus ticks, etc).
+    const { data: raidRows } = await sb
+      .from('opendkp_raids')
+      .select('raid_id, ts')
+      .gte('ts', since);
+    const { data: tickRows } = await sb
+      .from('opendkp_ticks')
+      .select('raid_id, attendees');
+
+    const attendance = new Map<string, AttendanceRollup>();
+    if (raidRows && tickRows) {
+      const raidToDate = new Map<number, string>();
+      for (const r of raidRows as { raid_id: number; ts: string }[]) {
+        raidToDate.set(r.raid_id, dayKey(r.ts));
+      }
+      type DayAgg = { raids: Set<number>; attendeeTicks: Map<string, number> };
+      const byDay = new Map<string, DayAgg>();
+      for (const t of tickRows as { raid_id: number; attendees: string[] }[]) {
+        const dateKey = raidToDate.get(t.raid_id);
+        if (!dateKey) continue;
+        let agg = byDay.get(dateKey);
+        if (!agg) { agg = { raids: new Set(), attendeeTicks: new Map() }; byDay.set(dateKey, agg); }
+        agg.raids.add(t.raid_id);
+        for (const name of (t.attendees || [])) {
+          agg.attendeeTicks.set(name, (agg.attendeeTicks.get(name) || 0) + 1);
+        }
+      }
+      for (const [date, agg] of byDay.entries()) {
+        const top = [...agg.attendeeTicks.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([name, ticks]) => ({ name, ticks }));
+        attendance.set(date, {
+          date,
+          raid_count: agg.raids.size,
+          unique_attendees: agg.attendeeTicks.size,
+          top_attendees: top,
+        });
+      }
+    }
+
+    return { rows: (encs as unknown as EncounterRow[]) ?? [], zones, loot, attendance, error: null };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { rows: [], zones: new Map(), error: msg };
+    return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), error: msg };
   }
-}
-
-// ── Formatting helpers ────────────────────────────────────────────────────────
-
-function fmtDmg(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function fmtDuration(sec: number | null) {
-  if (sec == null) return '—';
-  if (sec < 60)    return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return s === 0 ? `${m}m` : `${m}m${s}s`;
-}
-
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour: 'numeric', minute: '2-digit', hour12: true,
-  });
-}
-
-// Day bucket used for grouping cards into raid-night sections. Uses the
-// viewer's locale rather than America/New_York — close enough until we
-// surface a tz toggle.
-function dayKey(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-CA'); // YYYY-MM-DD, locale-stable
-}
-
-function dayLabel(key: string) {
-  const today    = new Date();
-  const todayKey = today.toLocaleDateString('en-CA');
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayKey = yesterday.toLocaleDateString('en-CA');
-
-  if (key === todayKey)     return 'Tonight';
-  if (key === yesterdayKey) return 'Yesterday';
-  return new Date(key + 'T00:00:00').toLocaleDateString('en-US', {
-    weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
-  });
 }
 
 function resolveZone(enc: EncounterRow, zones: Map<string, ZoneRow>) {
@@ -109,10 +145,24 @@ function resolveZone(enc: EncounterRow, zones: Map<string, ZoneRow>) {
   return { short, long: long || short || 'Unknown zone' };
 }
 
-// ── Grouping ──────────────────────────────────────────────────────────────────
-//
-// Two-level: dayKey → zoneKey → encounters[]. Insertion order is preserved
-// because `loadRecentParses` already ordered by started_at desc.
+function toCardData(enc: EncounterRow): KillCardData {
+  const players = [...(enc.encounter_players ?? [])]
+    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
+  return {
+    id: enc.id,
+    started_at: enc.started_at,
+    duration_sec: enc.duration_sec,
+    total_damage: enc.total_damage,
+    total_dps: enc.total_dps,
+    boss_name: enc.eqemu_npc_types?.name ?? 'Unknown boss',
+    player_count: players.length,
+    top_players: players.slice(0, 5).map(p => ({
+      character_name: p.character_name,
+      total_damage: p.total_damage,
+      dps: p.dps,
+    })),
+  };
+}
 
 type ZoneBucket = { label: string; encounters: EncounterRow[] };
 type DayBucket  = { label: string; zones: Map<string, ZoneBucket> };
@@ -128,25 +178,73 @@ function bucket(rows: EncounterRow[], zones: Map<string, ZoneRow>) {
     if (!day.zones.has(zKey)) day.zones.set(zKey, { label: long, encounters: [] });
     day.zones.get(zKey)!.encounters.push(enc);
   }
+  // Within each zone, sort by started_at ASCENDING so we render in kill order
+  // (top of the zone = the first kill of the night there).
+  for (const day of days.values()) {
+    for (const z of day.zones.values()) {
+      z.encounters.sort((a, b) =>
+        new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+      );
+    }
+  }
   return days;
 }
 
-// ── UI ────────────────────────────────────────────────────────────────────────
+function computeNightStats(day: DayBucket, dayDate: string): NightStats {
+  const encs: EncounterRow[] = [];
+  for (const z of day.zones.values()) encs.push(...z.encounters);
+  const total_damage = encs.reduce((s, e) => s + (e.total_damage || 0), 0);
+  const total_duration_sec = encs.reduce((s, e) => s + (e.duration_sec || 0), 0);
+  // Top player by max damage in any single encounter (matches the displayed
+  // ranking on the cards — gives the same "scoreboard #1" feel rather than
+  // summing damage across the night which would dilute spike performances).
+  let topPlayer: { name: string; damage: number } | null = null;
+  for (const e of encs) {
+    for (const p of e.encounter_players || []) {
+      if (!topPlayer || p.total_damage > topPlayer.damage) {
+        topPlayer = { name: p.character_name, damage: p.total_damage };
+      }
+    }
+  }
+  let longest: { boss: string; duration_sec: number } | null = null;
+  for (const e of encs) {
+    const d = e.duration_sec || 0;
+    if (!longest || d > longest.duration_sec) {
+      longest = { boss: e.eqemu_npc_types?.name || 'Unknown boss', duration_sec: d };
+    }
+  }
+  return {
+    date: dayDate,
+    encounters: encs.length,
+    total_damage,
+    total_duration_sec,
+    top_player: topPlayer,
+    longest_fight: longest,
+    deaths: 0, // populated client-side requires raw_parse pull; skipping for the index page
+  };
+}
 
 export default async function ParsesPage() {
-  const { rows, zones, error } = await loadRecentParses();
+  const { rows, zones, loot, attendance, error } = await loadAll();
   const days = bucket(rows, zones);
+  const dayEntries = [...days.entries()];
+  const headlineNight = dayEntries.length > 0 ? dayEntries[0] : null;
 
   return (
     <div className="space-y-6">
+      {headlineNight && (
+        <NightSummary stats={computeNightStats(headlineNight[1], headlineNight[0])} />
+      )}
+
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">📊 Boss Kills</h2>
         <p className="text-sm text-dim">
           Last {ROW_LIMIT} merged encounters, grouped by raid night and zone.
-          Damage shown is the max-per-player merge across all parser uploads
-          for the same kill. Send <code>/parse</code> in Discord or run the
-          local agent to add more data — old kills will refresh automatically
-          when new contributions come in.
+          Within each zone, kills are shown in the order they happened. Damage
+          is the max-per-player merge across all parser uploads for the same
+          kill. Click a card for the full breakdown. Loot blocks and attendance
+          rollups come from OpenDKP, mirrored every 6h (or via{' '}
+          <code>/syncopendkp</code>).
         </p>
       </section>
 
@@ -163,82 +261,61 @@ export default async function ParsesPage() {
         </section>
       )}
 
-      {[...days.entries()].map(([dKey, day]) => (
-        <section key={dKey} className="space-y-4">
-          <h3 className="text-lg text-blue border-b border-border pb-1">
-            {day.label} <span className="text-dim text-xs">— {dKey}</span>
-          </h3>
+      {[...days.entries()].map(([dKey, day]) => {
+        const nightLoot = loot.get(dKey) ?? [];
+        const nightAttendance = attendance.get(dKey) ?? null;
+        return (
+          <section key={dKey} className="space-y-4">
+            <div className="border-b border-border pb-1 flex items-baseline justify-between flex-wrap gap-2">
+              <h3 className="text-lg text-blue">
+                {day.label} <span className="text-dim text-xs">— {dKey}</span>
+              </h3>
+              {nightAttendance && (
+                <div className="text-xs text-dim flex gap-3">
+                  <span>{nightAttendance.raid_count} OpenDKP raid{nightAttendance.raid_count === 1 ? '' : 's'}</span>
+                  <span>{nightAttendance.unique_attendees} attendee{nightAttendance.unique_attendees === 1 ? '' : 's'}</span>
+                </div>
+              )}
+            </div>
 
-          {[...day.zones.entries()].map(([zKey, zone]) => (
-            <div key={zKey} className="space-y-2">
-              <h4 className="text-sm text-orange flex items-center gap-2">
-                <span aria-hidden>📍</span>
-                <span>{zone.label}</span>
-                <span className="text-dim text-xs">
-                  · {zone.encounters.length} kill{zone.encounters.length === 1 ? '' : 's'}
-                </span>
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {zone.encounters.map((enc) => (
-                  <KillCard key={enc.id} enc={enc} />
+            {[...day.zones.entries()].map(([zKey, zone]) => (
+              <div key={zKey} className="space-y-2">
+                <h4 className="text-sm text-orange flex items-center gap-2">
+                  <span aria-hidden>📍</span>
+                  <span>{zone.label}</span>
+                  <span className="text-dim text-xs">
+                    · {zone.encounters.length} kill{zone.encounters.length === 1 ? '' : 's'}
+                    {zone.encounters.length > 1 && (
+                      <span> · {fmtDmg(zone.encounters.reduce((s, e) => s + e.total_damage, 0))} total</span>
+                    )}
+                  </span>
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {zone.encounters.map((enc) => (
+                    <KillCard key={enc.id} kill={toCardData(enc)} />
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {nightLoot.length > 0 && (
+              <LootBlock loot={nightLoot as LootRow[]} />
+            )}
+
+            {nightAttendance && nightAttendance.top_attendees.length > 0 && (
+              <div className="text-xs text-dim flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span className="text-orange">Top ticks:</span>
+                {nightAttendance.top_attendees.map((a) => (
+                  <span key={a.name}>
+                    <span className="text-text">{a.name}</span>
+                    <span className="opacity-60"> · {a.ticks}</span>
+                  </span>
                 ))}
               </div>
-            </div>
-          ))}
-        </section>
-      ))}
-    </div>
-  );
-}
-
-function KillCard({ enc }: { enc: EncounterRow }) {
-  const bossName = enc.eqemu_npc_types?.name ?? 'Unknown boss';
-  const players  = [...(enc.encounter_players ?? [])]
-    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
-  const top5     = players.slice(0, 5);
-  const extra    = players.length - top5.length;
-
-  return (
-    <div className="bg-panel border border-border rounded-lg p-3 hover:border-blue transition-colors">
-      <div className="flex items-baseline justify-between gap-2 mb-2">
-        <div className="text-gold text-sm font-medium truncate" title={bossName}>
-          {bossName}
-        </div>
-        <div className="text-dim text-xs whitespace-nowrap">
-          {fmtTime(enc.started_at)}
-        </div>
-      </div>
-
-      <div className="text-xs text-dim mb-2 flex gap-3">
-        <span>{fmtDuration(enc.duration_sec)}</span>
-        <span className="text-text">{fmtDmg(enc.total_damage)}</span>
-        <span>{enc.total_dps ? `${fmtDmg(enc.total_dps)}/s` : '—'}</span>
-        <span className="ml-auto">
-          {players.length} player{players.length === 1 ? '' : 's'}
-        </span>
-      </div>
-
-      {top5.length > 0 ? (
-        <ol className="text-xs space-y-0.5">
-          {top5.map((p, i) => (
-            <li key={p.character_name} className="flex justify-between gap-2">
-              <span className="truncate">
-                <span className="text-dim mr-1">{i + 1}.</span>
-                <span className="text-text">{p.character_name}</span>
-              </span>
-              <span className="text-dim whitespace-nowrap">
-                {fmtDmg(p.total_damage)}
-                {p.dps ? <span className="opacity-50"> · {fmtDmg(p.dps)}/s</span> : null}
-              </span>
-            </li>
-          ))}
-          {extra > 0 && (
-            <li className="text-dim italic">+{extra} more</li>
-          )}
-        </ol>
-      ) : (
-        <div className="text-xs text-dim italic">no contributions yet</div>
-      )}
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }

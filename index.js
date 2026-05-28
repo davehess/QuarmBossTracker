@@ -90,8 +90,30 @@ client.once(Events.ClientReady, async (readyClient) => {
   scheduleMidnightSummary(readyClient);
   const { startWolfpackMembersSync } = require('./utils/wolfpackMembers');
   startWolfpackMembersSync(readyClient);
+  startOpenDkpSync();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 });
+
+// OpenDKP mirror: first run 45s after boot (after the wolfpack-members sync
+// kicks off so we don't double up on Cognito auth), then every 6h. We don't
+// block on completion — the helper does its own per-call error logging.
+const OPENDKP_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+function startOpenDkpSync() {
+  // Skip entirely when OpenDKP creds aren't configured (e.g. dev environments).
+  if (!process.env.OPENDKP_CLIENT_ID || !process.env.OPENDKP_USERNAME) {
+    console.log('[opendkp-sync] skipped — OPENDKP_CLIENT_ID / OPENDKP_USERNAME unset');
+    return;
+  }
+  const { runSync } = require('./utils/openDkpSync');
+  setTimeout(() => {
+    runSync().then(r => console.log('[opendkp-sync] initial:', JSON.stringify(r)))
+             .catch(err => console.warn('[opendkp-sync] initial failed:', err?.message));
+  }, 45_000);
+  setInterval(() => {
+    runSync().then(r => console.log('[opendkp-sync] interval:', JSON.stringify(r)))
+             .catch(err => console.warn('[opendkp-sync] interval failed:', err?.message));
+  }, OPENDKP_SYNC_INTERVAL_MS);
+}
 
 async function runStartupSequence(readyClient) {
   const delay = ms => new Promise(r => setTimeout(r, ms));
