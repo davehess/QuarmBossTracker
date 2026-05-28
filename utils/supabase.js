@@ -114,6 +114,10 @@ async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMi
 
 // Record a contribution (one player's perspective) for an encounter.
 // rawParse is the { bossName, duration, totalDamage, totalDps, players: [...] } structure.
+// Idempotent for named contributors via the contributions_dedup partial unique
+// index (encounter_id, source, contributor_character) — re-runs upsert the row
+// in place. Anonymous (NULL-character) contributions still insert fresh every
+// time since the index excludes NULLs.
 async function recordContribution({
   encounterId,
   contributorDiscordId,
@@ -134,8 +138,10 @@ async function recordContribution({
     raw_parse:                rawParse,
   };
 
-  const inserted = await insert('contributions', [row]);
-  const contributionId = Array.isArray(inserted) ? inserted[0]?.id : null;
+  const written = contributorCharacter
+    ? await upsert('contributions', [row], 'encounter_id,source,contributor_character')
+    : await insert('contributions', [row]);
+  const contributionId = Array.isArray(written) ? written[0]?.id : null;
 
   // Recompute the merged encounter_players view
   if (contributionId) {

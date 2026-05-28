@@ -2,7 +2,7 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 2.5.1 | `package.json` |
+| **Bot** | 2.5.2 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 2.4.7 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 0.2.0 | `web/package.json` |
 
@@ -443,7 +443,8 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
 | `audit_log` | Mirror of Discord audit thread |
 | `wolfpack_members` | Web OAuth user sync (discord_id, user_id, nickname, roles[], is_member) |
 | `wolfpack_roles` | Discord role catalog (role_id, name, color, position) |
-| `chat_messages` | Historical `/gu` + `/rs` chat archive (backfilled from old logs; service_role only) |
+| `chat_messages` | All `/gu` + `/rs` chat — live (`/api/agent/chat`) and historical (`/api/agent/historical_chat`) routes both write here, dedup'd by `(guild_id, ts, channel, speaker, text)` |
+| `who_observations` | Every `/who` line the agent reports. Mirrors `state.whoData` but durable + queryable. Dedup'd per minute per uploader |
 | `patch_notes`, `officer_notes`, `travel_paths` | Various |
 
 ### RPC / views
@@ -677,7 +678,8 @@ agent-source data when both exist for the same encounter.
 Forward-looking ambitions that influence ingestion design but aren't ready to ship UI for:
 
 - **Guild timeline.** OpenDKP raid + loot history merged with our encounters and roster history → a single browsable record of "how the pack progressed." Items acquired by character, DKP spent per night and to whom, main swaps, alt promotions over the expansions. OpenDKP raid pagination already works (`utils/opendkp.js`); we just don't have a Supabase mirror or a UI yet.
-- **Chat → parse extraction.** Mine `chat_messages` for historical parse paste-ups (regex on the EQLogParser format) and merge them as `contributions` with `source='chat_extracted'` against the right encounter via `find_or_create_encounter`. Caveats above apply.
+- **Chat → parse extraction.** `/backfillchatparses` mines `chat_messages` for EQLogParser pastes (window-merges consecutive lines from same speaker/channel within 15s, runs `parseEQLog`) and records contributions with `source='chat_extracted'` via `find_or_create_encounter`. Idempotent via `contributions_dedup` partial unique index. Caveats above (DoT/DS attribution) apply.
+- **CH chain chatter analysis.** Cleric Complete Heal chains call out numbers ("1", "2", "ch3 up") in `/rs` and `/gu`. Once `chat_messages` has volume, mine for short numeric callouts from speakers tagged as `class='Cleric'` in `who_observations` and produce frequency stats per cleric. Pet project — would be a `/chchain [character]` ephemeral or a `/parses`-page widget.
 - **Character path tracking.** Agent log verbosity is high enough that we can chart a character's zone-to-zone movement over months. Build the data pipeline (zone-change events tagged with character + timestamp), then a connection-map visualization that animates through time.
 - **Optimized long-haul storage.** Three years of agent data is a lot. Before path tracking and combat_events go full ingest, design tables that compress well (partitioning by month, columnar layouts, or moving cold data to a cheaper tier). The current `combat_events` schema is unoptimized — granular event stream is fine for tonight but will balloon over years.
 - **Parser install UX.** Two steps but they aren't obvious: install Node (handled) + enable EQ logging (`/log on` in-game OR `Logging=on` in `eqclient.ini`). Worth a short setup video and an in-parser detector that surfaces a banner when no `eqlog_*_pq.proj.txt` files exist or are stale.

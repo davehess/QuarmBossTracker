@@ -2213,6 +2213,11 @@ async function _handleAgentChat(req, res) {
   const guildChId = process.env.GUILD_CHAT_CHANNEL_ID;
   const raidChId  = process.env.RAID_CHAT_CHANNEL_ID;
   let posted = 0;
+  // Mirror every relayed chat line into chat_messages so the historical
+  // record builds up live, not just via the agent's --since backfill.
+  // Same dedup as the Discord-side path (speaker + text + 5s window) but
+  // also backed by the chat_messages_dedup unique index for safety.
+  const supabaseChatRows = [];
 
   // Sanitize chat text before posting to Discord:
   //   - Strip @everyone / @here — would ping the entire server/channel
@@ -2292,6 +2297,18 @@ async function _handleAgentChat(req, res) {
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
 
+    // Stage for chat_messages upsert. Same shape as historical_chat path so
+    // the table has one canonical row format regardless of ingestion route.
+    supabaseChatRows.push({
+      guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      ts:          msgTs || new Date().toISOString(),
+      channel,
+      speaker,
+      text:        String(text).slice(0, 2000),
+      who:         uploadedWho || null,
+      uploaded_by: payload?.uploaded_by || null,
+    });
+
     // Class/level tag: try server-side whoData first, fall back to what the agent sent
     const { getWhoEntry } = require('./utils/state');
     const whoEntry = getWhoEntry(speaker) || uploadedWho || null;
@@ -2314,6 +2331,19 @@ async function _handleAgentChat(req, res) {
       posted++;
     } catch (err) {
       console.warn(`[chat-relay] failed to post to ${channel}:`, err?.message);
+    }
+  }
+
+  // Best-effort Supabase mirror — fail-open if disabled or upsert errors.
+  if (supabaseChatRows.length > 0) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        await supabase.upsert('chat_messages', supabaseChatRows, 'guild_id,ts,channel,speaker,text')
+          .catch(err => console.warn('[chat-relay] supabase upsert failed:', err?.message));
+      }
+    } catch (err) {
+      console.warn('[chat-relay] supabase mirror failed:', err?.message);
     }
   }
 
@@ -2737,6 +2767,36 @@ async function _handleAgentUpload(req, res) {
   const uploadedWhoData = encounter.who_data;
   if (Array.isArray(uploadedWhoData) && uploadedWhoData.length > 0) {
     try { mergeWhoData(uploadedWhoData); } catch {}
+
+    // Mirror to Supabase who_observations for long-term SQL access. The
+    // agent re-uploads its full whoData on every encounter — the per-minute
+    // dedup index (lower(character), date_trunc('minute', observed_at),
+    // uploaded_by) collapses repeats so this is cheap. Fail-open.
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        const rows = uploadedWhoData
+          .filter(w => w && w.name)
+          .map(w => ({
+            guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
+            character:   w.name,
+            level:       Number.isFinite(w.level) ? w.level : null,
+            race:        w.race  || null,
+            class:       w.class || null,
+            guild_name:  w.guild || null,
+            anonymous:   !!w.anonymous,
+            gm:          !!w.gm,
+            observed_at: w.observedAt ? new Date(w.observedAt).toISOString() : new Date().toISOString(),
+            uploaded_by: character || '',
+          }));
+        if (rows.length > 0) {
+          supabase.upsert('who_observations', rows, 'guild_id,character,observed_minute,uploaded_by')
+            .catch(err => console.warn('[who-obs] supabase upsert failed:', err?.message));
+        }
+      }
+    } catch (err) {
+      console.warn('[who-obs] supabase mirror failed:', err?.message);
+    }
   }
 
   // Server-side noise guard (agent already filters these, but defend in depth).

@@ -6,6 +6,7 @@ const {
 } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
+const { parseEQLog, findBossFromName, kmToInt } = require('../utils/parseEqLog');
 
 const PARSES_FILE = path.join(__dirname, '../data/parses.json');
 
@@ -24,66 +25,6 @@ function saveParses(data) {
   const tmp = PARSES_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
   fs.renameSync(tmp, PARSES_FILE);
-}
-
-// Parses EQLogParser "Send to EQ" single-mob format:
-// "High Priest of Ssraeshza in 42s, 53.12K Damage @1.26K, 1. Statlander +Pets = 4.59K@148 in 31s | ..."
-// Also handles "Combined (N): <boss> in ..." multi-mob format from EQLogParser.
-// Total damage may use K or M suffix; individual DPS may be raw integer or K-suffixed float.
-function kmToInt(num, suffix) {
-  const n = parseFloat(num);
-  if (suffix === 'M') return Math.round(n * 1_000_000);
-  if (suffix === 'K') return Math.round(n * 1_000);
-  return Math.round(n);
-}
-
-function parseEQLog(str) {
-  // Strip "Combined (N): " prefix from EQLogParser combined multi-mob format
-  const cleaned = str.replace(/^Combined\s*\(\d+\):\s*/, '');
-
-  const headerMatch = cleaned.match(/^(.+?)\s+in\s+(\d+)s,\s*([\d.]+)([KM])\s+Damage\s+@([\d.]+)([KM])?/);
-  if (!headerMatch) return null;
-
-  const bossName    = headerMatch[1].trim();
-  const duration    = parseInt(headerMatch[2]);
-  const totalDamage = kmToInt(headerMatch[3], headerMatch[4]);
-  const totalDps    = kmToInt(headerMatch[5], headerMatch[6]);
-
-  // Handles K/M-suffixed damage (78.22K@216, 1.07M@222, 231.20K@5.78K) and raw numbers (204@68)
-  const playerRx = /(\d+)\.\s+(.+?)\s+=\s+([\d.]+)([KM])?@([\d.]+)([KM])?\s+in\s+(\d+)s/g;
-  const players  = [];
-  let m;
-  while ((m = playerRx.exec(cleaned)) !== null) {
-    const raw     = m[2].trim();
-    const hasPets = raw.includes('+Pets');
-    const name    = raw.replace(/\s*\+Pets/g, '').trim();
-    players.push({
-      rank: parseInt(m[1]), name, hasPets,
-      damage:   kmToInt(m[3], m[4]),
-      dps:      kmToInt(m[5], m[6]),
-      duration: parseInt(m[7]),
-    });
-  }
-
-  if (players.length === 0) return null;
-  return { bossName, duration, totalDamage, totalDps, players };
-}
-
-// Boss matching: exact > nickname > partial (by closest name length, tie: longer name wins)
-function findBossFromName(parsedName, bosses) {
-  const nl = parsedName.toLowerCase().trim();
-  const exact = bosses.find(b => b.name.toLowerCase() === nl);
-  if (exact) return exact;
-  const nick = bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl));
-  if (nick) return nick;
-  const partials = bosses
-    .filter(b => { const bn = b.name.toLowerCase(); return bn.includes(nl) || nl.includes(bn); })
-    .sort((a, b) => {
-      const da = Math.abs(a.name.length - nl.length);
-      const db = Math.abs(b.name.length - nl.length);
-      return da !== db ? da - db : b.name.length - a.name.length;
-    });
-  return partials[0] || null;
 }
 
 // Returns { exact: boss } | { partial: boss } | { candidates: [boss,...] } | { none: true }
