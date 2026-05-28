@@ -222,7 +222,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
               return (
                 <tr key={p.character_name} className="border-b border-border/30 hover:bg-[#1a212c]">
                   <td className="py-1 pr-2 text-dim">{i + 1}</td>
-                  <td className="py-1 pr-2 text-text truncate">{p.character_name}</td>
+                  <td className="py-1 pr-2 text-text truncate">
+                    <Link href={`/character/${encodeURIComponent(p.character_name)}`} className="hover:text-blue hover:underline">
+                      {p.character_name}
+                    </Link>
+                  </td>
                   <td className="py-1 pr-2 text-dim">{klass}</td>
                   <td className="py-1 pr-2 text-right text-text">{fmtDmg(p.total_damage)}</td>
                   <td className="py-1 pr-2 text-right text-dim">{p.dps ? `${fmtDmg(p.dps)}/s` : '—'}</td>
@@ -277,7 +281,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           <ul className="text-xs space-y-1">
             {tanks.map((t) => (
               <li key={t.id} className="text-dim">
-                <span className="text-text">{t.contributor_character}</span>
+                {t.contributor_character ? (
+                  <Link href={`/character/${encodeURIComponent(t.contributor_character)}`} className="text-text hover:text-blue hover:underline">
+                    {t.contributor_character}
+                  </Link>
+                ) : <span className="text-text">(anonymous)</span>}
                 <span> — </span>
                 <span>{(t.raw_parse?.players ?? []).length} players parsed, </span>
                 <span>{fmtDmg(t.raw_parse?.totalDamage ?? 0)} total</span>
@@ -298,7 +306,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           {contribs.map((c) => (
             <li key={c.id} className="flex justify-between gap-2">
               <span className="truncate">
-                <span className="text-text">{c.contributor_character || '(anonymous)'}</span>
+                {c.contributor_character ? (
+                  <Link href={`/character/${encodeURIComponent(c.contributor_character)}`} className="text-text hover:text-blue hover:underline">
+                    {c.contributor_character}
+                  </Link>
+                ) : <span className="text-text">(anonymous)</span>}
                 <span className="text-dim ml-1 text-[10px]">{c.source}</span>
               </span>
               <span className="text-dim whitespace-nowrap">{fmtDmg(c.total_damage)}</span>
