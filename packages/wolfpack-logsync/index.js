@@ -1996,11 +1996,14 @@ function renderDash(s) {
   // Top damage
   h += '<div class="card wide"><h2>Top Damage This Session</h2>' +
        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">';
-  for (const [list, title] of [[s.topDamageSaw, 'I saw'], [s.topDamageDid, 'I did']]) {
+  for (const [list, listKey, title] of [[s.topDamageSaw, 'saw', 'I saw'], [s.topDamageDid, 'did', 'I did']]) {
     h += '<div><h3>' + title + '</h3>';
     if (!list?.length) h += '<div class="dim">(none yet)</div>';
     else for (const e of list) {
-      h += '<div><span class="name">' + esc(e.attacker) + '</span> ' +
+      const dKey = JSON.stringify({ list: listKey, attacker: e.attacker, amount: e.amount });
+      h += '<div style="display:flex;align-items:baseline;gap:6px">' +
+           '<button onclick=\'dismissTopDamage(' + dKey.replace(/'/g, '\\\'') + ')\' style="background:none;border:none;color:var(--dim);cursor:pointer;padding:0;font-size:11px;line-height:1;flex-shrink:0" title="Remove">✕</button>' +
+           '<span class="name">' + esc(e.attacker) + '</span> ' +
            '<span class="num">' + fmtK(e.amount) + '</span> ' +
            '<span class="dim">' + esc(e.label||'') + (e.ability ? ' — ' + esc(e.ability) : '') + '</span></div>';
     }
@@ -2512,6 +2515,14 @@ document.querySelectorAll('.nav button').forEach(b => b.addEventListener('click'
 refresh(); setInterval(refresh, 2000);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
+
+async function dismissTopDamage(key) {
+  try {
+    await fetch('/api/topdamage/dismiss', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(key) });
+    refresh();
+  } catch {}
+}
 </script></body></html>`;
 
 async function _readBody(req, max = 64 * 1024) {
@@ -2617,6 +2628,18 @@ function startWebDashboard(port) {
         _saveOptInState();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, hidden: [..._optinState.hiddenLoadoutChars] }));
+      }
+      if (req.url === '/api/topdamage/dismiss' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const { list, attacker, amount } = payload || {};
+        const arr = list === 'did' ? stats.topDamageDid : stats.topDamageSaw;
+        const idx = arr.findIndex(e => e.attacker === attacker && e.amount === amount);
+        if (idx >= 0) arr.splice(idx, 1);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
       }
       if (req.url === '/api/optin' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
