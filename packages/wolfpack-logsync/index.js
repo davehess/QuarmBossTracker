@@ -2422,12 +2422,18 @@ function renderOptin(o) {
          ? '<button data-act="ignore" ' + (selCount===0?'disabled':'') + '>Ignore selected</button>'
          : '') +
        '</div>';
-  // Active backfills banner
+  // Active backfills banner — with a Stop-all button so the user can pause
+  // the whole import at once. Per-file resume position is preserved, so
+  // clicking Backfill again on the same selection picks up where it left off.
   if ((o.activeBackfills||[]).length > 0) {
-    h += '<div class="banner resumed">⏳ Running: ' +
+    h += '<div class="banner resumed" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+         '<span>⏳ Running: ' +
          o.activeBackfills.map(b => esc(b.character) + ' (' +
            (b.totalBytes ? Math.floor(b.bytePos/b.totalBytes*100)+'%' : '?') +
-           ', ' + b.chatCount + ' chat, ' + (b.encounterCount||0) + ' enc)').join(' · ') + '</div>';
+           ', ' + b.chatCount + ' chat, ' + (b.encounterCount||0) + ' enc)').join(' · ') +
+         '</span>' +
+         '<button data-act="stop-all" style="background:#a40e26;border-color:#a40e26;color:#fff;margin-left:auto">⏸ Pause all</button>' +
+         '</div>';
   }
   // Group files by character so 'Hitya' with eqlog_Hitya_pq.proj.txt and
   // eqlog_Hitya_pq.proj.txt2 (the rolled-over backup) show under one header.
@@ -2512,6 +2518,12 @@ function renderOptin(o) {
       if (act === 'ignore' || act === 'restore') {
         const paths = [...root.querySelectorAll('input[type=checkbox][data-path]:checked')].map(x => x.dataset.path);
         if (paths.length > 0) await postOptin(act, { paths });
+        refreshOptin(); return;
+      }
+      if (act === 'stop-all') {
+        // Server pauses every running backfill; current byte position is
+        // already persisted so clicking Backfill again resumes from there.
+        await postOptin('stop');
         refreshOptin(); return;
       }
     });
@@ -2737,6 +2749,16 @@ function startWebDashboard(port) {
               log: (m) => console.log(`[optin] ${m}`),
             });
           }
+        } else if (action === 'stop') {
+          // Flag running backfills to abort at the next chunk boundary. The
+          // current byte position is preserved in _optinState.progress, so
+          // a subsequent Backfill click resumes from where this stopped.
+          // Empty paths = stop everything currently running.
+          const toStop = paths.length > 0 ? paths : [..._activeBackfills.keys()];
+          for (const p of toStop) {
+            if (_activeBackfills.has(p)) _abortedBackfills.add(p);
+          }
+          console.log(`[optin] Stop requested for ${toStop.length} backfill(s)`);
         } else {
           res.writeHead(400); return res.end(JSON.stringify({ error: 'unknown action' }));
         }
@@ -3525,7 +3547,7 @@ let _optinKeyHandler = null;
 
 // Read entire file with byte-position tracking; supports resume from a stored offset.
 // onLine(line) is called for each line; onProgress({ bytePos, totalBytes, lineNum }) is called every ~256KB.
-async function readFromBytePos(logPath, startBytePos, onLine, onProgress) {
+async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortCheck) {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(logPath, {
       encoding:      'utf8',
@@ -3540,6 +3562,15 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress) {
 
     stream.on('data', chunk => {
       if (cancelled) return;
+      // Abort check runs once per chunk (~64KB) — cheap, and the latency
+      // between Stop click and actual halt stays under a chunk's processing
+      // time. Destroying the stream fires 'close' which resolves us.
+      if (abortCheck && abortCheck()) {
+        cancelled = true;
+        try { onProgress && onProgress({ bytePos, lineNum }); } catch {}
+        stream.destroy();
+        return;
+      }
       bytePos          += Buffer.byteLength(chunk, 'utf8');
       sinceLastProgress += Buffer.byteLength(chunk, 'utf8');
       buf += chunk;
@@ -3554,8 +3585,8 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress) {
         try { onProgress({ bytePos, lineNum }); } catch {}
       }
     });
-    stream.on('end',   () => { if (onProgress) try { onProgress({ bytePos, lineNum }); } catch {} ; resolve({ bytePos, lineNum }); });
-    stream.on('close', () => resolve({ bytePos, lineNum }));
+    stream.on('end',   () => { if (onProgress) try { onProgress({ bytePos, lineNum }); } catch {} ; resolve({ bytePos, lineNum, aborted: cancelled }); });
+    stream.on('close', () => resolve({ bytePos, lineNum, aborted: cancelled }));
     stream.on('error', reject);
   });
 }
@@ -3564,7 +3595,8 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress) {
 // web dashboard. Files arg is an array of opt-in file records (path, character,
 // sizeBytes). Returns a per-file status array via the optional `onStatus(...)`
 // callback as work progresses, and a promise that resolves when all done.
-const _activeBackfills = new Map();   // path → { startedAt, chatCount, status }
+const _activeBackfills    = new Map();   // path → { startedAt, chatCount, status }
+const _abortedBackfills   = new Set();   // paths flagged for graceful abort
 
 function runOptinBackfill(files, opts = {}) {
   const onStatus = opts.onStatus || (() => {});
@@ -3578,6 +3610,8 @@ function runOptinBackfill(files, opts = {}) {
       log(`  Skipping ${f.character} — backfill already in progress`);
       continue;
     }
+    // Fresh start clears any stale abort flag from a previous run.
+    _abortedBackfills.delete(f.path);
     const status = { character: f.character, path: f.path, chatCount: 0, encounterCount: 0,
                      startedAt: Date.now(), state: 'running', bytePos: 0, totalBytes: f.sizeBytes || 0 };
     _activeBackfills.set(f.path, status);
@@ -3595,11 +3629,15 @@ function runOptinBackfill(files, opts = {}) {
     // plus a final builder.flush() at end of file for any trailing events. /who
     // observations land in the module-level whoData map as a parseEvent side-effect
     // and ride along with the next uploadEncounter payload.
+    //
+    // backfill=true tags every upload so the bot's /api/agent/encounter handler
+    // skips Discord card posting + boss-timer auto-kill + session damage
+    // accumulation. Supabase still gets the row.
     const builder = new EncounterBuilder({
       character: f.character,
       onFlush: payload => {
         status.encounterCount++;
-        return uploadEncounter(payload, { botUrl, token, dryRun }).catch(err =>
+        return uploadEncounter({ ...payload, backfill: true }, { botUrl, token, dryRun }).catch(err =>
           log(`  [upload error] ${f.character}: ${err.message}`)
         );
       },
@@ -3616,7 +3654,7 @@ function runOptinBackfill(files, opts = {}) {
         log(`  Backfilling ${f.character} from ${f.path}...`);
       }
       try {
-        await readFromBytePos(f.path, startByte,
+        const result = await readFromBytePos(f.path, startByte,
           (line) => {
             // Chat comes first — chat lines don't survive shouldKeep().
             const chatMsg = parseChatLine(line, f.character);
@@ -3643,22 +3681,31 @@ function runOptinBackfill(files, opts = {}) {
             };
             _saveOptInState();
             onStatus(status);
-          });
+          },
+          () => _abortedBackfills.has(f.path));
         builder.flush();
         await flushChat(true).catch(() => {});
-        _optinState.progress[f.path] = {
-          bytePos: totalBytes, lineNum: -1, totalBytes,
-          character: f.character,
-          updatedAt: new Date().toISOString(), complete: true,
-        };
-        _saveOptInState();
-        status.state = 'done';
-        log(`  ✓ Done: ${f.character} (${status.chatCount} chat, ${status.encounterCount} encounters)`);
+        if (result?.aborted) {
+          // Resume position preserved — clicking Backfill again picks up
+          // where we left off via _optinState.progress[f.path].bytePos.
+          status.state = 'paused';
+          log(`  ⏸ Paused: ${f.character} (${status.chatCount} chat, ${status.encounterCount} encounters processed; click Backfill again to resume)`);
+        } else {
+          _optinState.progress[f.path] = {
+            bytePos: totalBytes, lineNum: -1, totalBytes,
+            character: f.character,
+            updatedAt: new Date().toISOString(), complete: true,
+          };
+          _saveOptInState();
+          status.state = 'done';
+          log(`  ✓ Done: ${f.character} (${status.chatCount} chat, ${status.encounterCount} encounters)`);
+        }
       } catch (err) {
         status.state = 'error';
         status.error = err.message;
         log(`  ✗ ${f.character}: ${err.message}`);
       }
+      _abortedBackfills.delete(f.path);
       _activeBackfills.delete(f.path);
       onStatus(status);
       scheduleRender();
@@ -4130,10 +4177,15 @@ function showHealers() {
 
 // ── Upload ──────────────────────────────────────────────────────────────────
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
+  // Backfill uploads don't touch the live dashboard counters — old fights
+  // shouldn't show up in "this session" / "recent parses" / top-damage
+  // panes. They still upload to the bot (Supabase persistence) but with
+  // payload.backfill=true so the bot also skips Discord side-effects.
+  const isBackfill = payload?.backfill === true;
   if (dryRun) {
     const e = payload.encounter;
     console.log(`[dry-run] ${e.boss_name || '?'} · ${e.events.length} events · ${e.started_at} → ${e.ended_at}`);
-    recordUploadForDashboard(payload, payload.character);
+    if (!isBackfill) recordUploadForDashboard(payload, payload.character);
     scheduleRender();
     return Promise.resolve();
   }
@@ -4176,7 +4228,7 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
               stats.requestedCharacters = resp.requested_characters;
             }
           } catch { /* non-fatal */ }
-          recordUploadForDashboard(payload, payload.character);
+          if (!isBackfill) recordUploadForDashboard(payload, payload.character);
           if (!_dashboardEnabled) console.log(`✓ uploaded ${e.boss_name || '?'} (${e.events.length} events)`);
           scheduleRender();
           resolve();

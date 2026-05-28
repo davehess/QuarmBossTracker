@@ -2881,7 +2881,14 @@ async function _handleAgentUpload(req, res) {
   }
 
   // Shape: { agent_version, character, encounter: { started_at, ended_at, boss_name, events: [...] } }
+  // Optional payload.backfill === true → the agent is replaying old logs via
+  // the opt-in import flow. We still persist to Supabase (that's the whole
+  // point of backfill), but skip every live-side-effect: no parse card in
+  // AUTOPARSE_TEST_THREAD, no session damage accumulation, no auto-kill /
+  // timer reset. Otherwise importing weeks of old combat would spam Discord
+  // and stomp every active boss timer.
   const { character, encounter } = payload || {};
+  const isBackfill = payload?.backfill === true;
   if (!encounter || !Array.isArray(encounter.events)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'missing encounter.events' }));
@@ -3068,7 +3075,8 @@ async function _handleAgentUpload(req, res) {
 
   // ── Accumulate into active /raidnight session (all encounters, not just bosses) ──
   // sessionDamage lives inside raidSession in state.json — clears at midnight with the session.
-  if (players.length > 0) {
+  // Skip during backfill so importing old fights doesn't pollute tonight's session totals.
+  if (players.length > 0 && !isBackfill) {
     try { accumulateSessionDamage(players, duration); } catch (e) { /* non-fatal */ }
   }
 
@@ -3083,7 +3091,7 @@ async function _handleAgentUpload(req, res) {
   //
   // Also posts/edits a session leaderboard card showing all-night running totals.
   const testThreadId = process.env.AUTOPARSE_TEST_THREAD_ID;
-  if (testThreadId && players.length > 0) {
+  if (testThreadId && players.length > 0 && !isBackfill) {
     try {
       const testThread = await client.channels.fetch(testThreadId).catch(() => null);
       if (testThread) {
@@ -3438,9 +3446,13 @@ async function _handleAgentUpload(req, res) {
 
   // ── Match boss against bosses.json, then mirror /parse instance behavior:
   //    write to parses.json, record the kill, update the board ─────────────────
+  // Backfill skips this entire block — replaying old kills would reset every
+  // active boss timer to whenever the old fight happened, and the parses.json
+  // mirror would balloon with weeks of history (Supabase is the durable store
+  // for backfilled data; parses.json is just the live mirror).
   let matchedBoss = null;
   try {
-    if (encounter.boss_name) {
+    if (encounter.boss_name && !isBackfill) {
       const { findBossFromName, loadParses, saveParses, logParseToDiscord } = require('./commands/parse');
       matchedBoss = findBossFromName(encounter.boss_name, getBosses());
 
