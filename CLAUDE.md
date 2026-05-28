@@ -1,5 +1,11 @@
 # Quarm Raid Timer Bot — Claude Code Handoff
-**Version:** 2.2.39
+
+| Component | Version | Source |
+|---|---|---|
+| **Bot** | 2.2.39 | `package.json` |
+| **Agent** (`wolfpack-logsync`) | 2.4.6 | `packages/wolfpack-logsync/package.json` |
+| **Web** (`wolfpack.quest`) | 0.1.0 | `web/package.json` |
+
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)
 **Guild:** Wolf Pack EQ (Quarm) — `DISCORD_GUILD_ID=1168893924329402420`
@@ -10,7 +16,12 @@
 
 ## Versioning Rule
 
-On every revision, bump the **patch** in `package.json`, `README.md`, and this file's header unless a minor/major bump is requested. Commit message convention: `vX.Y.Z — <short reason>`. Railway shows the merge commit message as the deploy name, so always merge with a descriptive `-m` flag — never `--no-edit`.
+The **bot**, **agent**, and **web** ship and version independently. When changing one, only bump that component's version:
+- Bot changes → bump `package.json` + `README.md` header + this file's version table
+- Agent changes → bump `packages/wolfpack-logsync/package.json` (auto-derived by `_currentAgentVersion()` in `index.js`)
+- Web changes → bump `web/package.json`
+
+Default to a **patch** bump unless a minor/major is requested. Commit message convention: `<component> vX.Y.Z — <short reason>` (e.g. `agent v2.4.6 — ...`, `v2.2.39 — ...` for the bot). Railway shows the merge commit message as the deploy name, so always merge with a descriptive `-m` flag — never `--no-edit`.
 
 ---
 
