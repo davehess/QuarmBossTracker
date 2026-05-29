@@ -2322,7 +2322,11 @@ function renderTanks(s) {
 }
 
 function renderHealers(s) {
-  let h = '<div class="grid"><div class="card wide"><h2>Healers This Session</h2>';
+  let h = '<div class="grid"><div class="card wide">' +
+          '<h2>Healers This Session ' +
+          '<span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span>' +
+          '</h2>' +
+          '<div class="subtle" style="font-size:11px;margin-bottom:6px">Exact amounts depend on the healer running the parser — Quarm does not reveal incoming-heal attribution to the target. Coverage grows as more healers join.</div>';
   const healers = Object.entries(s.sessionHealers||{}).sort((a,b)=>b[1].healed-a[1].healed);
   if (!healers.length) h += '<div class="dim">No healing parsed yet.</div>';
   else {

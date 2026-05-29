@@ -3349,12 +3349,16 @@ async function _handleAgentUpload(req, res) {
           newTotalDps    = newDuration > 0 ? Math.round(newTotalDamage / newDuration) : 0;
 
           // ── Merge healers ──────────────────────────────────────────────────
-          // Overlapping parsers: each observer sees heals to DIFFERENT targets,
-          // so SUM is more accurate than MAX (two clerics CH-ing different players
-          // both show up). Sequential kills: also SUM (separate fights).
-          // We SUM in both cases; the only risk is double-counting from two
-          // parsers watching the exact same heal to the same target — acceptable
-          // for a first-cut display.
+          // MAX-per-healer across contributors. On Quarm the bystander
+          // third-person heal line (with healer name + amount) doesn't show,
+          // so in practice only the healer themselves uploads heal events for
+          // their own outgoing heals — SUM and MAX both produce the same
+          // result. MAX is the defensive choice for future cases (raid-spam
+          // toggle changes, HoT ticks visible to multiple parsers): two
+          // contributors both seeing the same healer's outgoing 1234 collapse
+          // to 1234 instead of inflating to 2468. Targets union across
+          // contributors so a healer who hits both Tank A and Tank B from
+          // different perspectives still gets credit for both.
           {
             const hMap = new Map((existing.healers || []).map(h => [h.name.toLowerCase(), { ...h, targets: [...(h.targets || [])] }]));
             for (const h of uploadedHealers) {
@@ -3363,8 +3367,8 @@ async function _handleAgentUpload(req, res) {
               if (cur) {
                 hMap.set(k, {
                   ...cur,
-                  healed:  cur.healed + (h.healed || 0),
-                  ticks:   cur.ticks  + (h.ticks  || 0),
+                  healed:  Math.max(cur.healed || 0, h.healed || 0),
+                  ticks:   Math.max(cur.ticks  || 0, h.ticks  || 0),
                   targets: [...new Set([...cur.targets, ...(h.targets || [])])],
                 });
               } else {
