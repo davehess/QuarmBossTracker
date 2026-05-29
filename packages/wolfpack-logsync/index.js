@@ -1287,6 +1287,18 @@ class EncounterBuilder {
       }
       this.bossName = top;
     }
+    // Confirmed player as the bossName means we ended up attributing this
+    // encounter to a guild member — usually a damage shield or charm/fear
+    // quirk where a player ate hits without it actually being a "kill them"
+    // fight. Skip the flush so it doesn't surface as a Recent Parse or
+    // upload to the bot. The underlying events still flowed through
+    // parseEvent so any per-player stats accumulated. Only PvP kill
+    // broadcasts (handled via /api/agent/pvp) should turn into surfaced
+    // parses for player targets.
+    if (this.bossName && isConfirmedPlayer(this.bossName)) {
+      this.reset();
+      return;
+    }
     // No identifiable target = nothing useful to upload (all-heal or background noise)
     if (!this.bossName) {
       this.reset();
