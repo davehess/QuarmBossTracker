@@ -63,6 +63,14 @@ type WhoObs = { character: string; class: string | null; level: number | null };
 
 const TANK_CLASSES = new Set(['Warrior', 'Paladin', 'Shadow Knight']);
 
+// EQEmu names scripted/event mobs with a leading '#' and underscores
+// ("#Grieg_Veneficus", "Lord_Inquisitor_Seru"). Clean those for display so
+// the page shows "Grieg Veneficus" instead of the raw spawn name.
+function cleanBossName(raw: string | null | undefined): string {
+  if (!raw) return 'Unknown boss';
+  return raw.replace(/^#/, '').replace(/_/g, ' ').trim() || 'Unknown boss';
+}
+
 async function load(id: string) {
   try {
     const sb = supabaseAdmin();
@@ -114,13 +122,50 @@ async function load(id: string) {
         .in('name', charNames);
       charRows = (data ?? []) as typeof charRows;
     }
+    // Build the class map, OpenDKP roster first. For any player the roster
+    // doesn't cover (alts not synced, or a roster gap), fall back to the most
+    // recent /who observation that carried a class. who_observations is
+    // noisier but it's better than "Unknown" for a known raider.
+    const whoMap = new Map<string, { character: string; class: string | null; race: string | null; level: number | null }>();
+    for (const c of charRows) {
+      whoMap.set(c.name.toLowerCase(), { character: c.name, class: c.class, race: c.race, level: null });
+    }
+    const missing = charNames.filter(n => !whoMap.get(n.toLowerCase())?.class);
+    if (missing.length > 0) {
+      const { data: obs } = await sb
+        .from('who_observations')
+        .select('character, class, race, level, observed_at')
+        .in('character', missing)
+        .not('class', 'is', null)
+        .order('observed_at', { ascending: false });
+      for (const o of (obs ?? []) as { character: string; class: string | null; race: string | null; level: number | null }[]) {
+        const k = o.character.toLowerCase();
+        if (!whoMap.get(k)?.class) {
+          whoMap.set(k, { character: o.character, class: o.class, race: o.race, level: o.level });
+        }
+      }
+    }
+    // Zone fallback chain for future-proofing: encounters.zone_short (now
+    // backfilled) → eqemu_npc_types.zone_short → bosses_local.zone_short.
+    // The last one covers fresh kills recorded before a zone backfill runs,
+    // since find_or_create_encounter still inserts NULL zone today.
+    let bossLocalZone: string | null = null;
+    if (encTyped.npc_id) {
+      const { data: bl } = await sb
+        .from('bosses_local')
+        .select('zone_short')
+        .eq('npc_id', encTyped.npc_id)
+        .maybeSingle();
+      bossLocalZone = (bl as { zone_short: string | null } | null)?.zone_short ?? null;
+    }
 
     return {
       enc: encTyped,
       contribs: (contribs ?? []) as Contribution[],
       zones,
       loot: (lootRows ?? []) as LootRow[],
-      whoMap: new Map(charRows.map(c => [c.name.toLowerCase(), { character: c.name, class: c.class, race: c.race, level: null }])),
+      whoMap,
+      bossLocalZone,
       date,
       error: null as string | null,
     };
@@ -143,11 +188,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       </div>
     );
   }
-  const { enc, contribs, zones, loot, whoMap, date } = data;
+  const { enc, contribs, zones, loot, whoMap, bossLocalZone, date } = data;
 
-  const bossName = enc.eqemu_npc_types?.name || 'Unknown boss';
+  const bossName = cleanBossName(enc.eqemu_npc_types?.name);
   const bossId   = enc.npc_id;
-  const zoneShort = enc.zone_short || enc.eqemu_npc_types?.zone_short;
+  const zoneShort = enc.zone_short || enc.eqemu_npc_types?.zone_short || bossLocalZone;
   const zoneLong = zoneShort ? zones.get(zoneShort)?.long_name || zoneShort : 'Unknown zone';
 
   const players = [...(enc.encounter_players ?? [])]
@@ -195,7 +240,16 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           <span className="text-text">{fmtDmg(enc.total_damage)} damage</span>
           {enc.total_dps > 0 && <span>{fmtDmg(enc.total_dps)}/s overall</span>}
           <span>{players.length} player{players.length === 1 ? '' : 's'}</span>
-          <span>{contribs.length} contribution{contribs.length === 1 ? '' : 's'}</span>
+          <span
+            className="underline decoration-dotted decoration-dim/60 cursor-help"
+            title={
+              contribs.length
+                ? 'Contributors: ' + contribs.map(c => (c.contributor_character || '(anonymous)') + ' [' + c.source + ']').join(', ')
+                : 'No contributors recorded'
+            }
+          >
+            {contribs.length} contribution{contribs.length === 1 ? '' : 's'}
+          </span>
         </div>
       </section>
 

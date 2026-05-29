@@ -680,12 +680,54 @@ async function syncAdjustments() {
 // (main); otherwise ParentId points to the root's CharacterId. We build a
 // Map<CharacterId, Name> first so we can store main_name as the actual name,
 // not just an integer.
+// Pull every page of characters. OpenDKP's /characters endpoint paginates
+// (the web UI exposes page-size + page controls), and a single un-paged call
+// only returns the first slice — that's how active level-60 mains like Dant
+// went missing from our mirror. We walk ?page=N until a page yields no NEW
+// CharacterIds (handles both real pagination AND an endpoint that ignores
+// ?page and returns the same full list every time — the new-id check stops
+// us after the second page in that case). Accepts a flat-array response or a
+// { Results | Characters | data } wrapper. Caps at 40 pages for safety.
+const CHAR_PAGE_LIMIT = 40;
+async function _fetchAllCharacters() {
+  const byId   = new Map();   // CharacterId -> char
+  const noId   = [];          // chars without a CharacterId (kept, can't dedup)
+  let pagesWalked = 0;
+  for (let page = 1; page <= CHAR_PAGE_LIMIT; page++) {
+    let resp;
+    try { resp = await getCharacters({ page }); }
+    catch (err) { if (page === 1) throw err; break; }  // page-1 failure is fatal; later pages just stop
+    const list = Array.isArray(resp)            ? resp
+              : Array.isArray(resp?.Results)    ? resp.Results
+              : Array.isArray(resp?.Characters) ? resp.Characters
+              : Array.isArray(resp?.data)       ? resp.data
+              : null;
+    if (!list || list.length === 0) break;
+    pagesWalked++;
+    let newOnThisPage = 0;
+    for (const c of list) {
+      if (!c) continue;
+      if (Number.isFinite(c.CharacterId)) {
+        if (!byId.has(c.CharacterId)) { byId.set(c.CharacterId, c); newOnThisPage++; }
+      } else {
+        noId.push(c); newOnThisPage++;
+      }
+    }
+    // No new characters on this page → endpoint either has no more, or is
+    // ignoring ?page and replaying the same set. Either way, stop.
+    if (newOnThisPage === 0) break;
+    if (resp?.TotalPages && resp?.CurrentPage && resp.CurrentPage >= resp.TotalPages) break;
+  }
+  return { chars: [...byId.values(), ...noId], pagesWalked };
+}
+
 async function syncCharacters() {
   if (!supabase.isEnabled()) return { error: 'supabase disabled', upserted: 0 };
-  let chars;
-  try { chars = await getCharacters(); }
+  let chars, pagesWalked;
+  try { ({ chars, pagesWalked } = await _fetchAllCharacters()); }
   catch (err) { return { error: err?.message || String(err), upserted: 0 }; }
   if (!Array.isArray(chars)) return { error: 'getCharacters returned non-array', upserted: 0 };
+  console.log(`[opendkp-sync] characters: fetched ${chars.length} across ${pagesWalked} page(s)`);
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const nowIso  = new Date().toISOString();
@@ -728,7 +770,7 @@ async function syncCharacters() {
     const written = await supabase.upsert('characters', slice, 'guild_id,name');
     if (Array.isArray(written)) upserted += written.length;
   }
-  return { upserted };
+  return { upserted, pages: pagesWalked };
 }
 
 module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments };

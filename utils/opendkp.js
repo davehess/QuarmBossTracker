@@ -140,7 +140,10 @@ async function _bearerHeaders(contentType = false) {
 // Uses Bearer auth (same as auction endpoints) — OPENDKP_CLIENT_ID not needed.
 async function getCharacters(opts = {}) {
   const headers = await _bearerHeaders();
-  const path    = opts.activeOnly ? '/characters' : '/characters?IncludeInactives=true';
+  const params  = [];
+  if (!opts.activeOnly) params.push('IncludeInactives=true');
+  if (opts.page && opts.page > 1) params.push('page=' + opts.page);
+  const path = '/characters' + (params.length ? '?' + params.join('&') : '');
   return _get({ ..._clientUrl(path), headers });
 }
 

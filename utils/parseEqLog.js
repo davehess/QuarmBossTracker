@@ -50,7 +50,11 @@ function parseEQLog(str) {
 // variants are equally-good partial matches. Prefer (South) so the bot's auto-
 // kill / parse routing is deterministic — south goes first this raid era.
 function findBossFromName(parsedName, bosses) {
-  const nl = parsedName.toLowerCase().trim();
+  // Normalize EQEmu scripted-mob names: a leading '#' and underscores
+  // ("#Vulak`Aerr", "#Grieg_Veneficus", "Lord_Inquisitor_Seru") otherwise
+  // block the match against the clean bosses.json name. Strip them so the
+  // scripted raid target resolves to its boss entry.
+  const nl = parsedName.toLowerCase().replace(/^#/, '').replace(/_/g, ' ').trim();
   const exact = bosses.find(b => b.name.toLowerCase() === nl);
   if (exact) return exact;
   const nick = bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl));
