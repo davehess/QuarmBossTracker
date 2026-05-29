@@ -59,6 +59,11 @@ export default function AdminPage() {
           body="Raid-Helper events vs reality (parses + /who). Find no-shows, exceeded-tentatives, and people who showed up without signing up."
           href="/admin/signups"
         />
+        <Card
+          title="📊 Attendance roster"
+          body="Class-by-class active roster ≥50% RA in last 30 days vs 60-man target. Color-coded for new attendees and downturn. Replaces the leader's spreadsheet."
+          href="/admin/attendance"
+        />
       </section>
     </div>
   );
