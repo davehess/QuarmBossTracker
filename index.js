@@ -38,6 +38,7 @@ const {
   getAgentTestCard, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
   getAgentSessionCardChannelId, setAgentSessionCardChannelId,
+  getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, clearAgentActivity,
   getPetOwners, addPetOwners, clearPetOwners,
   mergeWhoData,
@@ -105,7 +106,48 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (err) {
     console.warn('[startup] bot_boards mirror skipped:', err?.message);
   }
+
+  // Agent release announcement — when the current agent version differs
+  // from the last one we announced, post a brief note to TIMER_CHANNEL_ID
+  // (#raid-mobs) so users know to update. Fires at most once per (bot,
+  // agent) version pair. Skipped silently when no channel is configured
+  // or the version hasn't moved since the last successful announce.
+  setTimeout(() => {
+    try { announceAgentReleaseIfNew(readyClient).catch(err => console.warn('[release-announce] failed:', err?.message)); }
+    catch (err) { console.warn('[release-announce] init failed:', err?.message); }
+  }, 30_000);
 });
+
+// Post a brief release note for the current agent version. Idempotent via
+// state.lastAnnouncedAgentVersion so a Railway restart doesn't double-post.
+async function announceAgentReleaseIfNew(discordClient) {
+  const channelId = process.env.RELEASE_ANNOUNCE_CHANNEL_ID || process.env.TIMER_CHANNEL_ID;
+  if (!channelId) return;
+  const version = _currentAgentVersion();
+  if (!version) return;
+  const last = getLastAnnouncedAgentVersion();
+  if (last === version) return;
+
+  const channel = await discordClient.channels.fetch(channelId).catch(() => null);
+  if (!channel) return;
+
+  const lines = [
+    `📦 **wolfpack-logsync agent v${version}** is out.`,
+    '',
+    'To update:',
+    '1. Re-launch your **Parser.bat** — it auto-pulls the latest agent on start.',
+    '2. Or click **↻ Check for update** on http://localhost:7777 if the parser is already running.',
+    '',
+    `Bot v${require('./package.json').version || '?'} · agent ships independently.`,
+  ];
+  try {
+    await channel.send({ content: lines.join('\n'), allowedMentions: { parse: [] } });
+    setLastAnnouncedAgentVersion(version);
+    console.log(`[release-announce] posted agent v${version} to channel ${channelId}`);
+  } catch (err) {
+    console.warn('[release-announce] post failed:', err?.message);
+  }
+}
 
 // OpenDKP mirror: first run 45s after boot (after the wolfpack-members sync
 // kicks off so we don't double up on Cognito auth), then every 6h. We don't

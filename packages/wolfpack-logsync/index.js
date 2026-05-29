@@ -739,9 +739,14 @@ function recordWhoEvent(ev) {
 }
 
 class EncounterBuilder {
-  constructor({ character, onFlush }) {
+  constructor({ character, onFlush, silent = false }) {
     this.character  = character;
     this.onFlush    = onFlush;
+    // `silent` mode = no live-dashboard side-effects. Backfill drivers
+    // set this so replaying old logs doesn't move top-damage counters,
+    // session DPS, recentParses, or threat tables. Combat events still
+    // flow to onFlush and upload to the bot for Supabase persistence.
+    this.silent     = silent;
     // petLeaders is PERSISTENT across encounters — pets only declare their
     // leader once when summoned, and they keep that owner until repop. If we
     // wiped this on every encounter flush, a pet that was summoned during
@@ -1024,9 +1029,13 @@ class EncounterBuilder {
     this.lastEvent = event.ts;
     this.events.push(event);
 
-    // Dashboard tracking — sees every parsed damage event, not just uploaded ones
-    try { recordEventForDashboard(event, this.character); } catch {}
-    try { this._publishLiveThreat(); } catch {}
+    // Dashboard tracking — sees every parsed damage event, not just uploaded ones.
+    // Skip when this builder is in silent mode (e.g. backfill drivers) so old
+    // log replays don't move live counters or threat tables.
+    if (!this.silent) {
+      try { recordEventForDashboard(event, this.character); } catch {}
+      try { this._publishLiveThreat(); } catch {}
+    }
 
     // Track damage dealt TO targets — exclude "YOU" / "you", confirmed players
     // (PvP), and self-hits (pet reclaim/dismiss generates attacker === defender).
@@ -1573,6 +1582,33 @@ function loadStats() {
   if (!stats.lifetime.firstSeenAt) stats.lifetime.firstSeenAt = new Date().toISOString();
 }
 
+// Zero out every session-scoped field on `stats` while preserving lifetime
+// totals, the active encounter pointer, watched-log list, and persisted
+// loadout/inventory state. Called by the dashboard "Reset session" button.
+function resetSessionStats() {
+  stats.startedAt          = Date.now();
+  stats.recentParses       = [];
+  stats.topDamageSaw       = [];
+  stats.topDamageDid       = [];
+  stats.sessionEvents      = 0;
+  stats.sessionTotalDamage = 0;
+  stats.sessionDamageBy    = {};
+  stats.abilityStats       = new Map();
+  stats.sessionDeaths      = {};
+  stats.sessionHealers     = {};
+  stats.sessionDefenders   = {};
+  stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
+  stats.sessionProcs       = {};
+  stats.sessionDeeps       = {};
+  stats.uploadCount        = 0;
+  stats.uploadErrors       = 0;
+  stats.lastUploadAt       = null;
+  stats.currentEncounterThreat = null;
+  // Don't wipe activeBandolier or characterInventories — those are
+  // long-lived references the user expects to persist.
+  scheduleRender();
+}
+
 // ── Session-state persistence ──────────────────────────────────────────────
 // On graceful exit (especially [U] update-and-restart), snapshot the live
 // session — recent parses, top hits, ability stats, healers/defenders/procs —
@@ -1898,7 +1934,11 @@ function renderHeader(s) {
   }
   const alwaysBtn = '<button id="manualUpdateBtn" style="margin-left:12px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="Save session, restart agent, pull the latest version">'
                   + (hasNewer ? '↻ Restart now' : '↻ Check for update') + '</button>';
-  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + alwaysBtn + '</div>';
+  // Click-to-reset for officers who want a clean board between raid nights
+  // or after testing. Wipes session counters and Recent Parses; lifetime
+  // totals and persisted resume state for opt-in backfills are preserved.
+  const resetBtn = '<button id="resetSessionBtn" style="margin-left:8px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="Zero out the session counters and Recent Parses on this dashboard">⟲ Reset dashboard</button>';
+  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + alwaysBtn + resetBtn + '</div>';
   document.getElementById('header').innerHTML = h;
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
@@ -1939,6 +1979,16 @@ function renderHeader(s) {
       '<div id="restartBanner" class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
     _startRestartPoll('restartBanner');
+  });
+  // Reset-dashboard click — zeros session counters server-side, then we
+  // re-pull /api/state so the UI refreshes immediately without a hard reload.
+  const r = document.getElementById('resetSessionBtn');
+  if (r) r.addEventListener('click', async () => {
+    if (!confirm('Reset session counters? Recent Parses, top damage and per-class panes go back to empty. Lifetime totals and opt-in backfill progress are preserved.')) return;
+    r.disabled = true; r.textContent = 'Resetting...';
+    try { await fetch('/api/reset-session', { method: 'POST' }); } catch {}
+    try { const fresh = await (await fetch('/api/state')).json(); refresh(); void fresh; } catch {}
+    r.disabled = false; r.textContent = '⟲ Reset dashboard';
   });
 }
 
@@ -2665,6 +2715,15 @@ function startWebDashboard(port) {
           process.exit(0);
         }, 250);  // let the response flush
         return;
+      }
+      if (req.url === '/api/reset-session' && req.method === 'POST') {
+        // Zero out everything session-scoped so the dashboard looks fresh.
+        // Lifetime totals + persisted resume state for opt-in backfills are
+        // intentionally left untouched. This is a click-to-reset for officers
+        // who want a clean board between raid nights or after testing.
+        resetSessionStats();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
       }
       if (req.url === '/api/loadouts/hide' && req.method === 'POST') {
         const body = await _readBody(req);
@@ -3632,9 +3691,12 @@ function runOptinBackfill(files, opts = {}) {
     //
     // backfill=true tags every upload so the bot's /api/agent/encounter handler
     // skips Discord card posting + boss-timer auto-kill + session damage
-    // accumulation. Supabase still gets the row.
+    // accumulation. silent=true tells the builder to NOT touch the local
+    // dashboard counters (top damage, recentParses, sessionDeeps, threat
+    // tables) — old log replays shouldn't move live numbers.
     const builder = new EncounterBuilder({
       character: f.character,
+      silent: true,
       onFlush: payload => {
         status.encounterCount++;
         return uploadEncounter({ ...payload, backfill: true }, { botUrl, token, dryRun }).catch(err =>

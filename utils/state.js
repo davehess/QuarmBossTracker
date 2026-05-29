@@ -709,6 +709,13 @@ function getAgentSessionCardId()   { return loadState().agentSessionCardId || nu
 function setAgentSessionCardId(id) { const s = loadState(); s.agentSessionCardId = id; saveState(s); }
 function clearAgentSessionCardId() { const s = loadState(); s.agentSessionCardId = null; s.agentSessionCardChannelId = null; saveState(s); }
 
+// Last agent version we posted a release announcement for. Used by the
+// startup-time release-announcement check to fire at most once per
+// (bot, agent) version pair. Cleared by no one in normal operation; an
+// officer would only edit it manually to re-announce a version.
+function getLastAnnouncedAgentVersion()        { return loadState().lastAnnouncedAgentVersion || null; }
+function setLastAnnouncedAgentVersion(version) { const s = loadState(); s.lastAnnouncedAgentVersion = version; saveState(s); }
+
 // Channel the session card lives in. Tracked separately from the message ID
 // because the target channel can change between posts (e.g., raidnight thread
 // vs RAID_CHAT_CHANNEL_ID vs AUTOPARSE_TEST_THREAD_ID). When the target
@@ -759,6 +766,7 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getAgentTestCard, getAllAgentTestCards, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
   getAgentSessionCardChannelId, setAgentSessionCardChannelId,
+  getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
   getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
