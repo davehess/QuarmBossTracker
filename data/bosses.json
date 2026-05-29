@@ -327,7 +327,7 @@
     "timerHours": 72,
     "nicknames": ["bob", "lord bob", "dolj", "doli"],
     "emoji": "🪓",
-    "pqdiUrl": "https://www.pqdi.cc/npc/112026"
+    "pqdiUrl": "https://www.pqdi.cc/npc/112049"
   },
   {
     "id": "tunare",
@@ -1047,7 +1047,7 @@
     "timerHours": 162,
     "nicknames": ["diabo xin", "dxx"],
     "emoji": "🌀",
-    "pqdiUrl": "https://www.pqdi.cc/npc/158445"
+    "pqdiUrl": "https://www.pqdi.cc/npc/158446"
   },
   {
     "id": "diabo_xi_va",
@@ -1057,7 +1057,7 @@
     "timerHours": 162,
     "nicknames": ["diabo va", "dxv"],
     "emoji": "🌀",
-    "pqdiUrl": "https://www.pqdi.cc/npc/158446"
+    "pqdiUrl": "https://www.pqdi.cc/npc/158445"
   },
   {
     "id": "thall_va_xakra_south",

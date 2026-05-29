@@ -2,7 +2,7 @@
 // are fun to track. First tenants: Peopleslayer LD counter (from the agent's
 // fun_events stream) and Tunare mentions from Naggato's family (from the
 // chat_messages table). Future tenants will join as the agent ships their
-// detectors: CoH Pearl, DI Emerald, Aegolism/Rune Peridot, etc.
+// detectors: CotH Pearl (Magician), DI Emerald, Aegolism/Rune Peridot, etc.
 
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -96,7 +96,7 @@ export default async function FunPage() {
         <p className="text-sm text-dim mt-2">
           Counters that don&apos;t matter for raid optimization but are fun to
           track. More tenants land as the agent&apos;s detectors ship —
-          CoH Pearls, DI Emeralds, Aegolism/Rune Peridots are queued.
+          CotH Pearls, DI Emeralds, Aegolism/Rune Peridots are queued.
         </p>
       </section>
 
@@ -116,7 +116,7 @@ export default async function FunPage() {
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim">
         <div className="font-semibold text-text mb-2">Coming soon</div>
         <ul className="space-y-1 list-disc list-inside">
-          <li>🦪 Call of the Hero Pearl tally (Wizard CoH casts)</li>
+          <li>🦪 CotH Pearl tally (Magician Call of the Hero casts)</li>
           <li>💚 Emerald counter (Cleric Divine Intervention casts + saves)</li>
           <li>💛 Peridot counter (Rune + Aegolism + group buffs; MGB doubles)</li>
           <li>📚 Spell-cast leaderboard (per-character per-spell from agent castCounts)</li>
