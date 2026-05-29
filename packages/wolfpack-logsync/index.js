@@ -874,6 +874,10 @@ class EncounterBuilder {
     }
     const perPlayer = {};
     for (const [name, t] of this.threatBy) {
+      // Defense-in-depth: even if a name slipped past the writer-side
+      // NPC check, drop it here if it shows up as a damage target — the
+      // mob we're fighting can't simultaneously be on our threat table.
+      if (this.targets.has(name)) continue;
       perPlayer[name] = {
         swing:      Math.round(t.swing),
         proc:       Math.round(t.proc),
@@ -1067,8 +1071,16 @@ class EncounterBuilder {
         (event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender)) ||
         (/^you$/i.test(event.defender || '') && rawAtk !== null && isConfirmedPlayer(attacker)) ||
         (event.defender && rawAtk && rawAtk.toLowerCase() === event.defender.toLowerCase());
-      // Skip NPC-on-NPC (multi-word attacker that isn't the uploader)
-      if (!pvpHit && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+      // Skip NPC-on-NPC (multi-word attacker that isn't the uploader). The
+      // multi-word filter catches things like "a clockwork dragoon", but
+      // misses single-token boss names with no spaces — Vulak`Aerr,
+      // Doomshade, Rumblecrush, Aaryonar, Klandicar, etc. Those still
+      // showed up on the threat list as if they were players. Second
+      // filter: anyone we've been DAMAGING this encounter (this.targets)
+      // is by definition an NPC, so reject them too.
+      const attackerIsKnownNpc = attacker && this.targets.has(attacker);
+      if (!pvpHit && attacker && !attackerIsKnownNpc
+          && (!/\s/.test(attacker) || attacker === this.character)) {
         if (!this.threatBy.has(attacker)) {
           this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
         }
@@ -2910,11 +2922,29 @@ function recordEventForDashboard(event, character) {
     stats.abilityStats.set(ability, cur);
   }
 
+  // Flat-amount execute abilities never reflect sustained DPS — they're
+  // cooldowns that fire when a mob crosses an HP threshold. Decapitate
+  // (Warrior 65), Finishing Blow (Warrior 65 Killing-Spree), Assassinate
+  // (Rogue 65), Headshot (Ranger 65 ranged) all land at exactly 32,000.
+  // A second cluster of execute / capstone procs lands at exactly 20,000.
+  // Excluding both keeps the top-damage panel meaningful — these end up
+  // misleadingly dominating the list every raid night otherwise.
+  if (event.amount === 32000 || event.amount === 20000) return;
+
   // Top-damage lists thresholds — use a much lower bar for the uploader's own
   // hits so solo / low-level / non-raid content still populates "Top damage I
   // did". A monk at 60 might never exceed 500 per hit but still wants to see
   // their crits and big swings on the dashboard.
-  if (event.amount < (isMine ? 50 : 250)) return;
+  //
+  // For other players, generic melee swings (ability='hit') get a much
+  // higher floor than named abilities. Casters and hybrids often have
+  // weapon swings landing around 1-3k, which drowned out their actual
+  // spell crits in the panel. Named procs / spells still surface at the
+  // normal 250 threshold so an enchanter's Color Slant or a wizard's
+  // Pillar still shows up.
+  const isBareHit = (event.ability || '').toLowerCase() === 'hit';
+  const threshold = isMine ? 50 : (isBareHit ? 5000 : 250);
+  if (event.amount < threshold) return;
 
   const item = {
     label:    classifyDamage(event),
