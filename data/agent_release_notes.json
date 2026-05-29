@@ -1,0 +1,44 @@
+{
+  "_comment": "Brief release notes per agent version. The bot's release-announcement hook reads this when an agent version differs from the last one announced. Plain text, 2-4 short lines per version — the announcement is supposed to be a heads-up, not a full changelog. Unknown versions fall through to the generic 'is out' message.",
+  "_updated_at": "2026-05-29",
+  "versions": {
+    "2.4.18": [
+      "Durable upload queue with retry — DNS / network blips don't drop encounters or chat anymore.",
+      "[U] update refuses to bounce mid-fight, mid-backfill, or with queued uploads (Shift+U overrides).",
+      "Peopleslayer LD counter wired up. New 🎉 Fun page on wolfpack.quest.",
+      "Per-character spell cast counter on the Info tab."
+    ],
+    "2.4.17": [
+      "Healers tab marked BETA — exact heal amounts depend on the healer running the parser.",
+      "MAX-per-healer merge across multi-perspective uploads instead of SUM, defensive against future double-counting."
+    ],
+    "2.4.16": [
+      "Opt-in backfill is fully silent on the dashboard now — old log replays don't move the live DEEPS / Tanks / Deaths counters.",
+      "Mob Procs panel removed pending a real design."
+    ],
+    "2.4.15": [
+      "Skip flushing encounters where the highest-damaged target turned out to be a guild player (damage shield / charm quirks). PvP kills still surface via the broadcast flow."
+    ],
+    "2.4.14": [
+      "Top-damage panel drops the 20K / 32K flat-execute attacks (Assassinate, Decapitate, Finishing Blow, Headshot) — they were dominating the panel without reflecting sustained DPS.",
+      "Threat list filters NPCs even when the boss has a single-word name (Vulak`Aerr, Doomshade, etc.)."
+    ],
+    "2.4.13": [
+      "Reset dashboard button in the header — wipes session counters and Recent Parses, preserves lifetime totals + opt-in backfill progress.",
+      "Backfill encounters no longer pollute the live agent dashboard."
+    ],
+    "2.4.12": [
+      "Parse bare PvP-channel kill lines (no Druzzil Ro wrapper) — PvP-server kills land in the Discord PVP channel correctly now."
+    ],
+    "2.4.11": [
+      "Opt-in backfill is silent on the dashboard.",
+      "Bot upload includes a backfill=true tag so old fights don't post Discord cards or stomp board timers."
+    ],
+    "2.4.10": [
+      "Opt-in checkboxes work for every file (including those being live-tailed) — server-side dedup catches any overlap."
+    ],
+    "2.4.9": [
+      "[W] hotkey opens wolfpack.quest from the dashboard or CLI."
+    ]
+  }
+}

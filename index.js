@@ -178,29 +178,84 @@ client.once(Events.ClientReady, async (readyClient) => {
 });
 
 // Post a brief release note for the current agent version. Idempotent via
-// state.lastAnnouncedAgentVersion so a Railway restart doesn't double-post.
+// Supabase (bot_announcements table) so a Railway restart or volume wipe
+// doesn't re-post the same version. Falls back to the state.json marker
+// when Supabase is unavailable.
 async function announceAgentReleaseIfNew(discordClient) {
   const channelId = process.env.RELEASE_ANNOUNCE_CHANNEL_ID || process.env.TIMER_CHANNEL_ID;
   if (!channelId) return;
   const version = _currentAgentVersion();
   if (!version) return;
+
+  // Durable idempotency check via Supabase first. If we already announced
+  // this version (even from a previous Railway deploy), do nothing.
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      const prior = await supabase.select(
+        'bot_announcements',
+        `guild_id=eq.${guildId}&kind=eq.agent_release&key=eq.${encodeURIComponent(version)}&select=announced_at&limit=1`,
+      );
+      if (Array.isArray(prior) && prior.length > 0) return;
+    }
+  } catch (err) {
+    console.warn('[release-announce] supabase prior-check failed:', err?.message);
+  }
+  // Fallback: the state.json marker. Belt-and-braces; mostly relevant
+  // when Supabase is down.
   const last = getLastAnnouncedAgentVersion();
   if (last === version) return;
 
   const channel = await discordClient.channels.fetch(channelId).catch(() => null);
   if (!channel) return;
 
+  // Look up the per-version what's-new blurb. Falls through to a generic
+  // line when the version isn't in the file.
+  let releaseNotes = [];
+  try {
+    delete require.cache[require.resolve('./data/agent_release_notes.json')];
+    const notes = require('./data/agent_release_notes.json');
+    releaseNotes = Array.isArray(notes?.versions?.[version]) ? notes.versions[version] : [];
+  } catch { /* missing or unreadable — fine */ }
+
   const lines = [
     `📦 **wolfpack-logsync agent v${version}** is out.`,
-    '',
-    'To update:',
-    '1. Re-launch your **Parser.bat** — it auto-pulls the latest agent on start.',
-    '2. Or click **↻ Check for update** on http://localhost:7777 if the parser is already running.',
-    '',
-    `Bot v${require('./package.json').version || '?'} · agent ships independently.`,
   ];
+  if (releaseNotes.length > 0) {
+    lines.push('');
+    lines.push('**What\'s new:**');
+    for (const note of releaseNotes) lines.push(`• ${note}`);
+  }
+  lines.push('');
+  lines.push('**To update:**');
+  lines.push('1. Re-launch your **Parser.bat** — it auto-pulls the latest agent on start.');
+  lines.push('2. Or click **↻ Check for update** on http://localhost:7777 if the parser is already running.');
+  lines.push('');
+  lines.push(`*Bot v${require('./package.json').version || '?'} · agent ships independently.*`);
+
   try {
-    await channel.send({ content: lines.join('\n'), allowedMentions: { parse: [] } });
+    const sent = await channel.send({ content: lines.join('\n'), allowedMentions: { parse: [] } });
+
+    // Record the announcement durably in Supabase (primary) AND state.json
+    // (secondary). Either alone is sufficient to prevent duplicates; both
+    // gives us cross-redeploy protection plus a fallback if Supabase is
+    // unreachable.
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        await supabase.upsert('bot_announcements', [{
+          guild_id:     guildId,
+          kind:         'agent_release',
+          key:          version,
+          channel_id:   channelId,
+          message_id:   sent?.id || null,
+          announced_at: new Date().toISOString(),
+        }], 'guild_id,kind,key').catch(err => console.warn('[release-announce] supabase write failed:', err?.message));
+      }
+    } catch (err) {
+      console.warn('[release-announce] supabase persist wrap failed:', err?.message);
+    }
     setLastAnnouncedAgentVersion(version);
     console.log(`[release-announce] posted agent v${version} to channel ${channelId}`);
   } catch (err) {
