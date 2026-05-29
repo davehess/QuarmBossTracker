@@ -37,6 +37,7 @@ const {
   clearRaidNight,
   getAgentTestCard, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
+  getAgentSessionCardChannelId, setAgentSessionCardChannelId,
   recordAgentUpload, clearAgentActivity,
   getPetOwners, addPetOwners, clearPetOwners,
   mergeWhoData,
@@ -3408,15 +3409,42 @@ async function _handleAgentUpload(req, res) {
           }
         }
 
-        // ── Session leaderboard card — edited in place after every encounter ─
-        // Shows running all-night DPS totals when a /raidnight or /announce session
-        // is active. The card is posted once (on first encounter with an active session)
-        // and edited in place from then on.
-        const session    = getRaidSession();
-        const sessionDmg = session?.sessionDamage || {};
-        const allNight   = Object.values(sessionDmg).sort((a, b) => b.damage - a.damage).slice(0, 15);
+      }
+    } catch (err) {
+      console.warn('[agent] test thread post failed:', err?.message);
+    }
+  }
 
-        if (allNight.length > 0) {
+  // ── Session leaderboard card — edited in place after every encounter ─
+  // Lives outside the AUTOPARSE_TEST_THREAD guard so it still posts when
+  // no test thread is configured. Routing priority:
+  //   1. Active /raidnight thread  — officers see it inline with kills
+  //   2. RAID_CHAT_CHANNEL_ID      — visible to the whole raid
+  //   3. AUTOPARSE_TEST_THREAD_ID  — original fallback (officers' QA queue)
+  //
+  // The cached message ID is only safe to edit when its channel still
+  // matches the current target. When the target changes between two
+  // upload events (e.g. /raidnight thread opens mid-raid), the stale ID
+  // would 404 against the wrong channel — post fresh and overwrite.
+  if (!isBackfill && players.length > 0) {
+    try {
+      const session    = getRaidSession();
+      const sessionDmg = session?.sessionDamage || {};
+      const allNight   = Object.values(sessionDmg).sort((a, b) => b.damage - a.damage).slice(0, 15);
+
+      if (allNight.length > 0) {
+        let sessionTargetChannel = null;
+        if (session?.threadId) {
+          sessionTargetChannel = await client.channels.fetch(session.threadId).catch(() => null);
+        }
+        if (!sessionTargetChannel && process.env.RAID_CHAT_CHANNEL_ID) {
+          sessionTargetChannel = await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null);
+        }
+        if (!sessionTargetChannel && process.env.AUTOPARSE_TEST_THREAD_ID) {
+          sessionTargetChannel = await client.channels.fetch(process.env.AUTOPARSE_TEST_THREAD_ID).catch(() => null);
+        }
+
+        if (sessionTargetChannel) {
           const maxDmg = allNight[0]?.damage || 1;
           const rows = allNight.map((p, i) => {
             const avgDps = p.duration > 0 ? Math.round(p.damage / p.duration) : 0;
@@ -3429,30 +3457,36 @@ async function _handleAgentUpload(req, res) {
           });
 
           const sessionLabel = session?.label || 'Active Session';
-          const sessionCard  = new _TEB()
+          const { EmbedBuilder: _SEB } = require('discord.js');
+          const sessionCard = new _SEB()
             .setColor(0x5865F2)
             .setTitle(`📊 All-Night Leaderboard — ${sessionLabel}`)
             .setDescription(rows.join('\n'))
             .setFooter({ text: 'Session totals · all encounters including trash · edits in place' })
             .setTimestamp();
 
-          const sessionCardId = getAgentSessionCardId();
-          if (sessionCardId) {
+          const sessionCardId     = getAgentSessionCardId();
+          const sessionCardChanId = getAgentSessionCardChannelId();
+          const channelMatches    = sessionCardId && sessionCardChanId === sessionTargetChannel.id;
+
+          if (channelMatches) {
             try {
-              const sessionMsg = await testThread.messages.fetch(sessionCardId);
+              const sessionMsg = await sessionTargetChannel.messages.fetch(sessionCardId);
               await sessionMsg.edit({ embeds: [sessionCard] });
             } catch {
-              const sent = await testThread.send({ embeds: [sessionCard] });
+              const sent = await sessionTargetChannel.send({ embeds: [sessionCard] });
               setAgentSessionCardId(sent.id);
+              setAgentSessionCardChannelId(sessionTargetChannel.id);
             }
           } else {
-            const sent = await testThread.send({ embeds: [sessionCard] });
+            const sent = await sessionTargetChannel.send({ embeds: [sessionCard] });
             setAgentSessionCardId(sent.id);
+            setAgentSessionCardChannelId(sessionTargetChannel.id);
           }
         }
       }
     } catch (err) {
-      console.warn('[agent] test thread post failed:', err?.message);
+      console.warn('[agent] session leaderboard post failed:', err?.message);
     }
   }
 

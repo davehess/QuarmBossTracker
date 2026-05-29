@@ -2,7 +2,7 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 2.5.21 | `package.json` |  *(no live-bot code changes this commit; data migration only)*
+| **Bot** | 2.5.22 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 2.4.11 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 0.4.7 | `web/package.json` |
 

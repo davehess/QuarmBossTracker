@@ -707,7 +707,15 @@ function clearAgentTestCards() {
 }
 function getAgentSessionCardId()   { return loadState().agentSessionCardId || null; }
 function setAgentSessionCardId(id) { const s = loadState(); s.agentSessionCardId = id; saveState(s); }
-function clearAgentSessionCardId() { const s = loadState(); s.agentSessionCardId = null; saveState(s); }
+function clearAgentSessionCardId() { const s = loadState(); s.agentSessionCardId = null; s.agentSessionCardChannelId = null; saveState(s); }
+
+// Channel the session card lives in. Tracked separately from the message ID
+// because the target channel can change between posts (e.g., raidnight thread
+// vs RAID_CHAT_CHANNEL_ID vs AUTOPARSE_TEST_THREAD_ID). When the target
+// changes between two upload events, the prior message ID is stale — try to
+// edit it would 404 against the wrong channel.
+function getAgentSessionCardChannelId()        { return loadState().agentSessionCardChannelId || null; }
+function setAgentSessionCardChannelId(channelId) { const s = loadState(); s.agentSessionCardChannelId = channelId; saveState(s); }
 
 // Legacy compat
 function getBoardMessages()  { return []; }
@@ -750,6 +758,7 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getAuditEntries, getAuditEntry, addAuditEntry, updateAuditEntryMsgId, markAuditEntryUndone, findLatestActiveAuditEntry,
   getAgentTestCard, getAllAgentTestCards, setAgentTestCard, clearAgentTestCards,
   getAgentSessionCardId, setAgentSessionCardId, clearAgentSessionCardId,
+  getAgentSessionCardChannelId, setAgentSessionCardChannelId,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
   getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
