@@ -5,7 +5,9 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 const {
   getAnnounceByThreadId, updateAnnounceTargets, updateAnnounceEasterEgg, getAnnounce, saveAnnounce,
+  getRaidSession, removeRaidSessionTarget,
 } = require('../utils/state');
+const { refreshSessionSummary } = require('./raidnight');
 const {
   buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow, EASTER_EGG_CHAIN,
 } = require('./announce');
@@ -102,14 +104,25 @@ module.exports = {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+    const removeId  = interaction.options.getString('boss');
+
+    // /removetarget also works inside the /raidnight thread.
+    const raidSession = getRaidSession();
+    if (raidSession && raidSession.threadId === interaction.channel.id) {
+      const removed = removeRaidSessionTarget(removeId);
+      if (!removed) return interaction.editReply('❌ That boss is not in tonight\'s target list.');
+      await refreshSessionSummary(interaction.client).catch(() => {});
+      const removedBoss = bosses.find(b => b.id === removeId);
+      return interaction.editReply(`✅ **${removedBoss?.name || removeId}** removed from tonight's target list.`);
+    }
+
     let announce = getAnnounceByThreadId(interaction.channel.id);
     if (!announce) {
       announce = await restoreAnnounceFromThread(interaction.channel, bosses);
       if (!announce)
-        return interaction.editReply('❌ This command must be run inside a raid announce thread. Could not find announce state for this thread.');
+        return interaction.editReply('❌ Run this inside an /announce thread or the active /raidnight thread.');
     }
 
-    const removeId  = interaction.options.getString('boss');
     let targets     = [...(announce.targets || [])];
 
     if (!targets.includes(removeId))

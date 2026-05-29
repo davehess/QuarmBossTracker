@@ -40,7 +40,42 @@ async function postKillUpdate(discordClient, channelId, bossId) {
     refreshThreadCooldownCard(discordClient, expansion, threadId, bosses),
     refreshSummaryCard(discordClient, channelId, bosses),
     refreshSpawningTomorrowCard(discordClient, channelId, bosses),
+    // Mirror the latest board snapshot to Supabase so wolfpack.quest/boards
+    // can render the same per-boss state without hitting the bot directly.
+    // Fire-and-forget — Discord refresh shouldn't block on a Supabase write.
+    mirrorBoardsToSupabase(bosses).catch(err =>
+      console.warn('[killops] supabase mirror failed:', err?.message)),
   ]);
+}
+
+// Per-boss snapshot writer. Pulls the current killState via getAllState()
+// and upserts one row per boss in bosses.json. Cheap (~130 rows) so a full
+// re-mirror on every kill is fine. Includes display fields (name, zone,
+// expansion, emoji, pqdi_url, timer_hours) so the wolfpack.quest /boards
+// page is a single-table read with no joins.
+async function mirrorBoardsToSupabase(bosses) {
+  const supabase = require('./supabase');
+  if (!supabase.isEnabled()) return;
+  const killState = getAllState();
+  const now = new Date().toISOString();
+  const rows = bosses.map((b) => {
+    const s = killState[b.id];
+    return {
+      boss_id:     b.id,
+      name:        b.name        || null,
+      zone:        b.zone        || null,
+      expansion:   b.expansion   || null,
+      timer_hours: typeof b.timerHours === 'number' ? b.timerHours : null,
+      emoji:       b.emoji       || null,
+      pqdi_url:    b.pqdiUrl     || null,
+      killed_at:   s?.killedAt  ? new Date(s.killedAt).toISOString()  : null,
+      next_spawn:  s?.nextSpawn ? new Date(s.nextSpawn).toISOString() : null,
+      killed_by:   s?.killedBy  || null,
+      updated_at:  now,
+    };
+  });
+  if (rows.length === 0) return;
+  await supabase.upsert('bot_boards', rows, 'boss_id');
 }
 
 // ── Expansion board (buttons) ─────────────────────────────────────────────────
@@ -237,4 +272,5 @@ module.exports = {
   refreshExpansionBoard, refreshZoneCard, refreshThreadCooldownCard,
   refreshSummaryCard, refreshSpawningTomorrowCard,
   postOrUpdateExpansionBoard,
+  mirrorBoardsToSupabase,
 };

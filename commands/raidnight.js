@@ -4,7 +4,7 @@
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { nowPartsInTz, getDefaultTz, msUntilMidnightInTz } = require('../utils/timezone');
-const { getRaidSession, saveRaidSession } = require('../utils/state');
+const { getRaidSession, saveRaidSession, getRaidSessionTargets } = require('../utils/state');
 const { loadParses }  = require('./parse');
 
 const RAID_DAYS = new Set(['sunday', 'wednesday', 'thursday']);
@@ -43,7 +43,7 @@ function getTonightParses() {
   return result;
 }
 
-function buildSummaryEmbed(label, raidNight, tonightParses) {
+function buildSummaryEmbed(label, raidNight, tonightParses, targets = []) {
   delete require.cache[require.resolve('../data/bosses.json')];
   const bosses = require('../data/bosses.json');
 
@@ -63,15 +63,37 @@ function buildSummaryEmbed(label, raidNight, tonightParses) {
     return `${boss?.emoji || '⚔️'} **${boss?.name || bossId}** — ${dmg} dmg in ${latest.duration}s${countTag}${link}`;
   });
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(raidNight ? 0xe74c3c : 0x95a5a6)
     .setTitle((raidNight ? '🗡️ Raid Night — ' : '⚔️ Kill Log — ') + label)
     .addFields({
       name: `Parses Tonight (${mobLines.length})`,
       value: mobLines.length > 0 ? mobLines.join('\n') : '*No parses yet — use `/parse` after each kill*',
       inline: false,
-    })
-    .setTimestamp();
+    });
+
+  // Targets list — strikethrough killed targets so officers can see at a
+  // glance what's still on the board for tonight. Only rendered when at
+  // least one target has been added via /addtarget.
+  if (Array.isArray(targets) && targets.length > 0) {
+    const killedIds = new Set(Object.keys(tonightParses));
+    const lines = targets.map(tid => {
+      const boss = bosses.find(b => b.id === tid);
+      const name = boss?.name || tid;
+      const emoji = boss?.emoji || '⚔️';
+      const zone = boss?.zone ? ` *(${boss.zone})*` : '';
+      return killedIds.has(tid)
+        ? `~~${emoji} **${name}**${zone}~~ ✅`
+        : `${emoji} **${name}**${zone}`;
+    });
+    embed.addFields({
+      name: `🎯 Targets (${targets.length})`,
+      value: lines.join('\n'),
+      inline: false,
+    });
+  }
+
+  return embed.setTimestamp();
 }
 
 function fmt(n) { return n.toLocaleString('en-US'); }
@@ -174,7 +196,7 @@ async function appendParseToSession(client, bossId, parsed, bossName, bossEmoji)
     // Re-build and edit the pinned summary at top
     const raidNight     = isRaidNight();
     const tonightParses = getTonightParses();
-    const summaryEmbed  = buildSummaryEmbed(session.label, raidNight, tonightParses);
+    const summaryEmbed  = buildSummaryEmbed(session.label, raidNight, tonightParses, getRaidSessionTargets());
 
     try {
       const summaryMsg = await thread.messages.fetch(session.summaryMessageId);
@@ -243,6 +265,25 @@ function buildParseboardEmbedFromParsed(label, raidNight, parsed) {
     .setTimestamp();
 }
 
+// Edit the raid-night summary embed in place. Called by /addtarget +
+// /removetarget after they mutate the targets list so the pinned summary
+// reflects the new state immediately. No-op when no session is open.
+async function refreshSessionSummary(client) {
+  const session = getRaidSession();
+  if (!session) return;
+  try {
+    const thread = await client.channels.fetch(session.threadId).catch(() => null);
+    if (!thread) return;
+    const raidNight     = isRaidNight();
+    const tonightParses = getTonightParses();
+    const summaryEmbed  = buildSummaryEmbed(session.label, raidNight, tonightParses, getRaidSessionTargets());
+    const msg = await thread.messages.fetch(session.summaryMessageId).catch(() => null);
+    if (msg) await msg.edit({ embeds: [summaryEmbed] });
+  } catch (err) {
+    console.warn('[raidnight] refreshSessionSummary:', err?.message);
+  }
+}
+
 // Called by /parsenight when a session is active — posts the full-night summary to the thread
 // and updates the parseboard with combined parse data.
 async function postNightSummaryToSession(client, fullNightEmbed, parsed) {
@@ -265,7 +306,7 @@ async function postNightSummaryToSession(client, fullNightEmbed, parsed) {
 
 async function openSession(thread, channelId, label, tonightParses) {
   const raidNight      = isRaidNight();
-  const summaryEmbed   = buildSummaryEmbed(label, raidNight, tonightParses);
+  const summaryEmbed   = buildSummaryEmbed(label, raidNight, tonightParses, getRaidSessionTargets());
   const parseboardEmbed = buildParseboardEmbed(label, raidNight, tonightParses);
 
   const summaryMsg    = await thread.send({ embeds: [summaryEmbed] });
@@ -378,6 +419,7 @@ module.exports = {
 
   appendParseToSession,
   postNightSummaryToSession,
+  refreshSessionSummary,
   openSession,
   getTonightParses,
   buildSummaryEmbed,

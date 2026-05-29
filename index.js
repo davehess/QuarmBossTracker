@@ -92,6 +92,18 @@ client.once(Events.ClientReady, async (readyClient) => {
   startWolfpackMembersSync(readyClient);
   startOpenDkpSync();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
+
+  // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
+  // /boards has data immediately (otherwise it'd be empty until the next
+  // kill triggers postKillUpdate).
+  try {
+    const { mirrorBoardsToSupabase } = require('./utils/killops');
+    mirrorBoardsToSupabase(getBosses())
+      .then(() => console.log('[startup] bot_boards mirrored to supabase'))
+      .catch(err => console.warn('[startup] bot_boards mirror failed:', err?.message));
+  } catch (err) {
+    console.warn('[startup] bot_boards mirror skipped:', err?.message);
+  }
 });
 
 // OpenDKP mirror: first run 45s after boot (after the wolfpack-members sync
@@ -3490,6 +3502,23 @@ async function _handleAgentUpload(req, res) {
             }
           }
         }).catch(err => console.warn('[agent] Discord log failed:', err?.message));
+
+        // If a /raidnight session is open, also drop the parse card into that
+        // thread so officers see boss kills surface alongside manual /parse
+        // submissions instead of having to flip to PARSES_LOG_THREAD_ID.
+        // The same dedup (per-boss bossCards map) edits the card in place when
+        // multiple parsers cover the same kill.
+        try {
+          const { getRaidSession } = require('./utils/state');
+          if (getRaidSession()) {
+            const { appendParseToSession } = require('./commands/raidnight');
+            const parsed = { players, totalDamage, totalDps, duration };
+            appendParseToSession(client, matchedBoss.id, parsed, matchedBoss.name, matchedBoss.emoji)
+              .catch(err => console.warn('[agent] raid-thread append failed:', err?.message));
+          }
+        } catch (err) {
+          console.warn('[agent] raid-thread append wrapper failed:', err?.message);
+        }
 
         // Auto-record kill if boss isn't already on cooldown
         const { getBossState, recordKill } = require('./utils/state');

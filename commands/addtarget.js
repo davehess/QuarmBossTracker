@@ -5,10 +5,12 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 const {
   getAnnounceByThreadId, updateAnnounceTargets, getAnnounce, saveAnnounce,
+  getRaidSession, addRaidSessionTarget,
 } = require('../utils/state');
 const {
   buildControlPanelEmbed, buildTargetButtons, buildKillRows, buildCancelRow, EASTER_EGG_CHAIN,
 } = require('./announce');
+const { refreshSessionSummary } = require('./raidnight');
 const { isPopLocked } = require('../utils/config');
 
 function getBosses() {
@@ -96,11 +98,23 @@ module.exports = {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+    // /addtarget also works inside the /raidnight thread — add to the raid
+    // session's target list and refresh the pinned summary. Officers don't
+    // need to know which thread type they're in; both flows share the same
+    // UI surface from their perspective.
+    const raidSession = getRaidSession();
+    if (raidSession && raidSession.threadId === interaction.channel.id) {
+      const added = addRaidSessionTarget(bossId);
+      if (!added) return interaction.editReply(`**${boss.name}** is already a target.`);
+      await refreshSessionSummary(interaction.client).catch(() => {});
+      return interaction.editReply(`✅ **${boss.name}** added to tonight's target list.`);
+    }
+
     let announce = getAnnounceByThreadId(interaction.channel.id);
     if (!announce) {
       announce = await restoreAnnounceFromThread(interaction.channel, bosses);
       if (!announce)
-        return interaction.editReply('❌ This command must be run inside a raid announce thread. Could not find announce state for this thread.');
+        return interaction.editReply('❌ Run this inside an /announce thread or the active /raidnight thread.');
     }
 
     const targets = [...(announce.targets || [])];

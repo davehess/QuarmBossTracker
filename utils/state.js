@@ -336,6 +336,35 @@ function clearSessionDamage() {
   if (s.raidSession) { s.raidSession.sessionDamage = {}; saveState(s); }
 }
 
+// Targets list for the raid session — mirrors the /announce target list so
+// /addtarget + /removetarget work inside the raid-night thread too. Each
+// entry is a boss id (matches data/bosses.json).
+function getRaidSessionTargets() {
+  const s = loadState();
+  return s.raidSession?.targets || [];
+}
+function addRaidSessionTarget(bossId) {
+  const s = loadState();
+  if (!s.raidSession) return false;
+  const list = s.raidSession.targets || [];
+  if (list.includes(bossId)) return false;
+  list.push(bossId);
+  s.raidSession.targets = list;
+  saveState(s);
+  return true;
+}
+function removeRaidSessionTarget(bossId) {
+  const s = loadState();
+  if (!s.raidSession) return false;
+  const list = s.raidSession.targets || [];
+  const idx = list.indexOf(bossId);
+  if (idx === -1) return false;
+  list.splice(idx, 1);
+  s.raidSession.targets = list;
+  saveState(s);
+  return true;
+}
+
 // Accumulate per-player damage into the active raid session (called after every agent encounter upload).
 // players = [{ name, damage, duration }] — same shape as parses.json players array.
 // No-ops if no session is active.
@@ -713,6 +742,7 @@ module.exports = {
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getRaidSession, saveRaidSession, clearRaidSession, accumulateSessionDamage, clearSessionDamage,
+  getRaidSessionTargets, addRaidSessionTarget, removeRaidSessionTarget,
   getRaidNight, saveRaidNight, clearRaidNight,
   getAri, setAri, clearAri,
   getQuarmyLink, setQuarmyLink, clearQuarmyLink,
