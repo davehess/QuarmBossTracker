@@ -2671,38 +2671,47 @@ async function _handleAgentPvp(req, res) {
   }
 
   for (const b of broadcasts) {
-    if (_isPvpDupe(b)) { deduped++; continue; }
     const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
+
+    const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME;  // WP member got a kill
+    const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME;  // WP member died
+
+    // Record the kill to the PvP ledger (player-vs-player, WP involved).
+    // Done BEFORE the dupe check and channel fetch so a Discord hiccup — or a
+    // backfill replay with no intent to post — still persists the row. The DB
+    // dedup_key collapses true duplicates; _isPvpDupe only guards the live
+    // Discord post against multi-parser double-posts (checked below).
+    if (killType === 'pvp' && (isWpKill || isWpDeath) && killer && victim) {
+      const owners = _petOwners[String(killer).toLowerCase()];
+      const viaPet = Array.isArray(owners) && owners.length > 0;
+      const creditedKiller = viaPet ? owners[0] : killer;
+      const killedAt = b?.ts ? new Date(b.ts) : new Date();
+      const secondIso = killedAt.toISOString().slice(0, 19);
+      const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+      pvpKillRows.push({
+        guild_id:     guildId,
+        killer:       creditedKiller,
+        killer_guild: killerGuild || null,
+        victim,
+        victim_guild: victimGuild || null,
+        zone:         zone || null,
+        via_pet:      viaPet,
+        pet_name:     viaPet ? killer : null,
+        killed_at:    killedAt.toISOString(),
+        source:       b?.backfill ? 'log_backfill' : 'pvp_channel',
+        raw_text:     (text || '').slice(0, 300),
+        dedup_key:    `${guildId}|${String(creditedKiller).toLowerCase()}|${String(victim).toLowerCase()}|${secondIso}`,
+      });
+    }
+
+    // Backfilled kills are ledger-only — never re-posted to the live channel
+    // (would spam months of history). Live posts dedup multi-parser sends.
+    if (b?.backfill) continue;
+    if (_isPvpDupe(b)) { deduped++; continue; }
+
     try {
       const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
       if (!ch) continue;
-
-      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME;  // WP member got a kill
-      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME;  // WP member died
-
-      // Record the kill to the PvP ledger (player-vs-player, WP involved).
-      if (killType === 'pvp' && (isWpKill || isWpDeath) && killer && victim) {
-        const owners = _petOwners[String(killer).toLowerCase()];
-        const viaPet = Array.isArray(owners) && owners.length > 0;
-        const creditedKiller = viaPet ? owners[0] : killer;
-        const killedAt = b?.ts ? new Date(b.ts) : new Date();
-        const secondIso = killedAt.toISOString().slice(0, 19);
-        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-        pvpKillRows.push({
-          guild_id:     guildId,
-          killer:       creditedKiller,
-          killer_guild: killerGuild || null,
-          victim,
-          victim_guild: victimGuild || null,
-          zone:         zone || null,
-          via_pet:      viaPet,
-          pet_name:     viaPet ? killer : null,
-          killed_at:    killedAt.toISOString(),
-          source:       b?.backfill ? 'log_backfill' : 'pvp_channel',
-          raw_text:     (text || '').slice(0, 300),
-          dedup_key:    `${guildId}|${String(creditedKiller).toLowerCase()}|${String(victim).toLowerCase()}|${secondIso}`,
-        });
-      }
 
       let content;
       if (isWpKill) {
