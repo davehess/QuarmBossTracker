@@ -1587,7 +1587,8 @@ let _queueDrainTimer   = null;
 let _queueSaveTimer    = null;
 let _queueDraining     = false;     // re-entrancy guard for the drain loop
 let _queueUploadOpts   = null;      // { botUrl, token } — set by startUploadQueueDrain
-let _queuePermanentDropCount = 0;   // surface in /api/state for diagnostics
+let _queuePermanentDropCount = 0;   // 4xx responses since startup
+let _queueCapEvictCount      = 0;   // FIFO evictions because queue hit MAX_SIZE
 
 function _loadQueueFromDisk() {
   try {
@@ -1645,6 +1646,7 @@ function _endpointForKind(kind, botUrl) {
 function enqueueUpload(kind, payload) {
   if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
     const dropped = _uploadQueue.shift();
+    _queueCapEvictCount++;
     console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped oldest ${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
   }
   const entry = {
@@ -1841,6 +1843,7 @@ function uploadQueueSnapshot() {
     maxAttempts,
     lastError,
     permanentDropped:  _queuePermanentDropCount,
+    capEvicted:        _queueCapEvictCount,
   };
 }
 
@@ -2316,8 +2319,12 @@ function renderHeader(s) {
     const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
     const tip = (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
     queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued</span>';
-  } else if (q.permanentDropped > 0) {
-    queueChip = ' · <span style="background:#3b0a0a;color:#ff9c9c;border:1px solid #f85149;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + q.permanentDropped + ' upload(s) permanently failed since startup (4xx response). Check the agent log.">✕ ' + q.permanentDropped + ' dropped</span>';
+  } else if (q.permanentDropped > 0 || q.capEvicted > 0) {
+    const dropTip =
+      (q.permanentDropped > 0 ? q.permanentDropped + ' permanent 4xx · ' : '') +
+      (q.capEvicted      > 0 ? q.capEvicted      + ' cap evictions'    : '');
+    const total = (q.permanentDropped || 0) + (q.capEvicted || 0);
+    queueChip = ' · <span style="background:#3b0a0a;color:#ff9c9c;border:1px solid #f85149;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(dropTip) + '. Check the agent log for details.">✕ ' + total + ' dropped</span>';
   }
   h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + alwaysBtn + resetBtn + '</div>';
   document.getElementById('header').innerHTML = h;
