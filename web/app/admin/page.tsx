@@ -19,6 +19,11 @@ export default function AdminPage() {
           body="Searchable /gu + /rs history from chat_messages. Filter by date, channel, speaker. Mirrors what the bot pulls from agent uploads."
           href="/admin/chat"
         />
+        <Card
+          title="🔗 Character → Discord links"
+          body="Set or correct characters.discord_id. Auto-suggests matches from member nicknames + main-name fallback; manual dropdown for the rest. Required for owner-only views (PvP deaths, future loot history)."
+          href="/admin/links"
+        />
       </section>
     </div>
   );
