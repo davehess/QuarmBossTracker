@@ -4276,6 +4276,17 @@ const PVP_BROADCAST_RX    = /^\[(.+?)\]\s+PVP Druzzil Ro BROADCASTS,\s*['"](.+?)
 const PVP_PLAYER_KILL_RX  = /^(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
 const PVP_NPC_KILL_RX     = /^(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
 
+// "Bare" PvP kill — same kill body as the two above but landing in the log
+// without a "PVP Druzzil Ro BROADCASTS," wrapper. Observed when the kill
+// message comes through the player's in-game [PVP] channel directly
+// (Versaci of <Zek> killed by Lutharion of <Wolf Pack> in Akheva Ruins).
+// The body shape (guild brackets + "has been killed in combat by" /
+// "has died to ... in combat in" + zone + "!") is distinctive enough that
+// matching it without a broadcaster prefix doesn't false-positive on
+// regular chat. The optional [PVP] channel marker is also accepted.
+const PVP_BARE_PLAYER_RX  = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_BARE_NPC_RX     = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+
 function parseDruzzilKill(line) {
   const m = DRUZZIL_KILL_RX.exec(line);
   if (!m) return null;
@@ -4290,36 +4301,60 @@ function parseDruzzilKill(line) {
 }
 
 function parsePvpBroadcast(line) {
+  // Path A: god-broadcast wrapper — "PVP Druzzil Ro BROADCASTS, '...'"
   const m = PVP_BROADCAST_RX.exec(line);
-  if (!m) return null;
-  const ts   = parseEqTimestamp(line);
-  const text = m[2];
-
-  let killType = 'npc';
-  let victim = null, victimGuild = null, killer = null, killerGuild = null, zone = null;
-
-  const ppk = PVP_PLAYER_KILL_RX.exec(text);
-  if (ppk) {
-    killType    = 'pvp';
-    victim      = ppk[1]; victimGuild  = ppk[2];
-    killer      = ppk[3]; killerGuild  = ppk[4];
-    zone        = ppk[5];
-  } else {
-    const npck = PVP_NPC_KILL_RX.exec(text);
-    if (npck) {
-      victim      = npck[1]; victimGuild = npck[2];
-      zone        = npck[4];
+  if (m) {
+    const ts   = parseEqTimestamp(line);
+    const text = m[2];
+    let killType = 'npc';
+    let victim = null, victimGuild = null, killer = null, killerGuild = null, zone = null;
+    const ppk = PVP_PLAYER_KILL_RX.exec(text);
+    if (ppk) {
+      killType    = 'pvp';
+      victim      = ppk[1]; victimGuild  = ppk[2];
+      killer      = ppk[3]; killerGuild  = ppk[4];
+      zone        = ppk[5];
+    } else {
+      const npck = PVP_NPC_KILL_RX.exec(text);
+      if (npck) {
+        victim      = npck[1]; victimGuild = npck[2];
+        zone        = npck[4];
+      }
     }
+    return {
+      ts: ts ? ts.toISOString() : new Date().toISOString(),
+      text, killType,
+      victim, victimGuild, killer, killerGuild, zone,
+    };
   }
 
-  return {
-    ts: ts ? ts.toISOString() : new Date().toISOString(),
-    text,
-    killType,
-    victim, victimGuild,
-    killer, killerGuild,
-    zone,
-  };
+  // Path B: bare kill body in the in-game [PVP] channel — no Druzzil prefix.
+  const ppkBare = PVP_BARE_PLAYER_RX.exec(line);
+  if (ppkBare) {
+    const ts = parseEqTimestamp(line);
+    return {
+      ts: ts ? ts.toISOString() : new Date().toISOString(),
+      text: `${ppkBare[2]} of <${ppkBare[3]}> has been killed in combat by ${ppkBare[4]} of <${ppkBare[5]}> in ${ppkBare[6]}!`,
+      killType:    'pvp',
+      victim:      ppkBare[2], victimGuild: ppkBare[3],
+      killer:      ppkBare[4], killerGuild: ppkBare[5],
+      zone:        ppkBare[6],
+    };
+  }
+  const npcBare = PVP_BARE_NPC_RX.exec(line);
+  if (npcBare) {
+    const ts = parseEqTimestamp(line);
+    return {
+      ts: ts ? ts.toISOString() : new Date().toISOString(),
+      text: `${npcBare[2]} of <${npcBare[3]}> has died to ${npcBare[4]} in combat in ${npcBare[5]}!`,
+      killType:    'npc',
+      victim:      npcBare[2], victimGuild: npcBare[3],
+      killer:      null,       killerGuild: null,
+      zone:        npcBare[5],
+    };
+  }
+
+  return null;
 }
 
 // EQ in-game item links land in the log as `\x12<hex blob>\x12Item Name\x12`.
