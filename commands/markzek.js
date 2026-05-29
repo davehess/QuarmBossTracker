@@ -1,19 +1,22 @@
-// commands/markzek.js — Officer-only command to flag/unflag a character as
-// being affiliated with Zek (PVP guild). Useful when someone shows up as
-// unguilded in /who but is actually Zek-aligned.
+// commands/markzek.js — Flag/unflag a character as being affiliated with
+// Zek (PVP guild). Useful when someone shows up as unguilded in /who but
+// is actually Zek-aligned.
 //
 // The is_zek flag is sticky: once set, it persists until explicitly cleared
 // here. Auto-flagging on guild="Zek" still happens via mergeWhoData on every
-// upload — this command is for the manual cases.
+// upload — this command is for the manual cases. Open to any guildie with
+// the standard allowed role; Zek intel benefits the whole pack and there's
+// no destructive blast radius (worst case is an erroneous flag on a friendly,
+// which any officer can flip back with `is_zek:false`).
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { hasOfficerRole, officerRolesList } = require('../utils/roles');
+const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 const { setZekFlag, getWhoEntry } = require('../utils/state');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('markzek')
-    .setDescription('Flag (or clear) a character as Zek-affiliated (officers only)')
+    .setDescription('Flag (or clear) a character as Zek-affiliated')
     .addStringOption(opt =>
       opt.setName('character').setDescription('Character name').setRequired(true)
     )
@@ -22,10 +25,10 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    if (!hasOfficerRole(interaction.member)) {
+    if (!hasAllowedRole(interaction.member)) {
       return interaction.reply({
         flags:   MessageFlags.Ephemeral,
-        content: `❌ Only officers can mark Zek affiliation. Required roles: ${officerRolesList()}`,
+        content: `❌ You need one of these roles to mark Zek affiliation: ${allowedRolesList()}`,
       });
     }
 
