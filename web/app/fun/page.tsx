@@ -1,0 +1,127 @@
+// /fun — guild-flavor counters that don't matter for raid optimization but
+// are fun to track. First tenants: Peopleslayer LD counter (from the agent's
+// fun_events stream) and Tunare mentions from Naggato's family (from the
+// chat_messages table). Future tenants will join as the agent ships their
+// detectors: CoH Pearl, DI Emerald, Aegolism/Rune Peridot, etc.
+
+import { redirect } from 'next/navigation';
+import { supabaseServer } from '@/lib/supabase-server';
+import { supabaseAdmin } from '@/lib/supabase';
+
+export const dynamic = 'force-dynamic';
+
+async function loadCounters() {
+  const sb = supabaseAdmin();
+  const counters: { label: string; emoji: string; value: number; sub?: string }[] = [];
+
+  // Peopleslayer LD count — straight from fun_events.
+  try {
+    const { count } = await sb
+      .from('fun_events')
+      .select('*', { count: 'exact', head: true })
+      .eq('event_type', 'peopleslayer_ld');
+    counters.push({
+      label: 'Peopleslayer linkdead events',
+      emoji: '🔌',
+      value: count ?? 0,
+      sub: 'has gone linkdead — across every opt-in log we know about',
+    });
+  } catch (err) {
+    counters.push({
+      label: 'Peopleslayer linkdead events',
+      emoji: '🔌',
+      value: 0,
+      sub: 'no fun_events data yet — opt-in backfills will populate as logs replay',
+    });
+    void err;
+  }
+
+  // Tunare mentions from Naggato + alts. Two queries: first the family name
+  // list, then the chat scan.
+  try {
+    const { data: family } = await sb
+      .from('characters')
+      .select('name')
+      .eq('guild_id', 'wolfpack')
+      .or('main_name.eq.Naggato,name.eq.Naggato');
+    const familyNames = (family ?? []).map((r: { name: string }) => r.name);
+    if (familyNames.length > 0) {
+      // PostgREST doesn't have a direct case-insensitive IN, so we build an
+      // .or() chain of speaker.ilike for each family member.
+      const orFilter = familyNames.map(n => `speaker.ilike.${n}`).join(',');
+      const { count } = await sb
+        .from('chat_messages')
+        .select('*', { count: 'exact', head: true })
+        .ilike('text', '%tunare%')
+        .or(orFilter);
+      counters.push({
+        label: 'Tunare invocations',
+        emoji: '🌿',
+        value: count ?? 0,
+        sub: `from Naggato's family (${familyNames.length} character${familyNames.length === 1 ? '' : 's'})`,
+      });
+    } else {
+      counters.push({
+        label: 'Tunare invocations',
+        emoji: '🌿',
+        value: 0,
+        sub: 'Naggato family not resolved yet — characters sync needs to run',
+      });
+    }
+  } catch (err) {
+    counters.push({
+      label: 'Tunare invocations',
+      emoji: '🌿',
+      value: 0,
+      sub: 'query failed: ' + (err instanceof Error ? err.message : String(err)),
+    });
+  }
+
+  return counters;
+}
+
+export default async function FunPage() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect('/auth/signin?next=/fun');
+
+  const counters = await loadCounters();
+
+  return (
+    <div className="space-y-6">
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-2xl text-gold flex items-center gap-3">
+          <span aria-hidden>🎉</span>
+          <span>Just for fun</span>
+        </h2>
+        <p className="text-sm text-dim mt-2">
+          Counters that don&apos;t matter for raid optimization but are fun to
+          track. More tenants land as the agent&apos;s detectors ship —
+          CoH Pearls, DI Emeralds, Aegolism/Rune Peridots are queued.
+        </p>
+      </section>
+
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {counters.map(c => (
+          <div key={c.label} className="bg-panel border border-border rounded-lg p-4">
+            <div className="flex items-baseline justify-between">
+              <div className="text-xs text-dim uppercase tracking-wide">{c.label}</div>
+              <span aria-hidden className="text-2xl">{c.emoji}</span>
+            </div>
+            <div className="text-3xl text-gold font-bold mt-2">{c.value.toLocaleString()}</div>
+            {c.sub && <div className="text-xs text-dim mt-1">{c.sub}</div>}
+          </div>
+        ))}
+      </section>
+
+      <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim">
+        <div className="font-semibold text-text mb-2">Coming soon</div>
+        <ul className="space-y-1 list-disc list-inside">
+          <li>🦪 Call of the Hero Pearl tally (Wizard CoH casts)</li>
+          <li>💚 Emerald counter (Cleric Divine Intervention casts + saves)</li>
+          <li>💛 Peridot counter (Rune + Aegolism + group buffs; MGB doubles)</li>
+          <li>📚 Spell-cast leaderboard (per-character per-spell from agent castCounts)</li>
+        </ul>
+      </section>
+    </div>
+  );
+}

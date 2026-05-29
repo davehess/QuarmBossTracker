@@ -2754,6 +2754,65 @@ async function _handleAgentBossKill(req, res) {
 // The JSONL store is the canonical record; Supabase is for SQL queries.
 const HISTORICAL_CHAT_PATH = require('path').join(__dirname, 'data', 'historical_chat.jsonl');
 
+// ── Fun-events ingestion ────────────────────────────────────────────────────
+// Receives tagged "just for fun" occurrences (Peopleslayer LD counter,
+// future CoH/DI/Aegolism/Rune) and upserts into the fun_events Supabase
+// table. The table's unique constraint on (guild_id, event_type, caster,
+// event_ts) makes backfill replays idempotent — re-running the same opt-in
+// log just hits on-conflict-do-nothing and ends up with no double-count.
+async function _handleAgentFunEvent(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'fun-events disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  if (events.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = events
+    .filter(e => e && e.type && e.ts)
+    .map(e => ({
+      guild_id:    guildId,
+      event_ts:    new Date(e.ts).toISOString(),
+      event_type:  String(e.type),
+      caster:      e.caster || null,
+      target:      e.target || null,
+      reagent_qty: Number.isFinite(e.reagent_qty) ? e.reagent_qty : 1,
+      raw_text:    e.raw_text || null,
+    }));
+  if (rows.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const written = await supabase.upsert('fun_events', rows, 'guild_id,event_type,caster,event_ts')
+    .catch(err => { console.warn('[fun-event] upsert failed:', err?.message); return null; });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
+}
+
 async function _handleAgentHistoricalChat(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -3864,6 +3923,18 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentHistoricalChat(req, res); }
     catch (err) {
       console.error('[historical-chat] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Fun-events ingestion — Peopleslayer LD counter, future CoH/DI/Aegolism/Rune.
+  // Each event upserts into the fun_events table; the unique constraint on
+  // (guild_id, event_type, caster, event_ts) silently dedups replays.
+  if (req.method === 'POST' && req.url === '/api/agent/fun_event') {
+    try { return await _handleAgentFunEvent(req, res); }
+    catch (err) {
+      console.error('[fun-event] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

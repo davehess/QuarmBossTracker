@@ -9,6 +9,7 @@ const links = [
   { href: '/leaderboards',  label: 'Ranks' },
   { href: '/loadouts',      label: 'Loadouts' },
   { href: '/planner',       label: 'Planner' },
+  { href: '/fun',           label: '🎉 Fun' },
 ];
 
 // showAdmin is computed server-side in the root layout (based on officer

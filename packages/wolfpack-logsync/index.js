@@ -1214,6 +1214,22 @@ class EncounterBuilder {
     // ("You heal X for N") would need a separate parseEvent pattern; for now we
     // capture third-person heals which cover most CH-chain visibility from
     // non-cleric perspectives.
+    // ── Cast attempt counter ───────────────────────────────────────────────
+    // Per-character per-spell cast attempts (session-scoped on stats; surfaces
+    // on the Info tab). Reliable for the uploader (always knows the spell);
+    // for other casters EQ logs "<X> begins to cast a spell" with no name,
+    // so those entries land under ability="(unknown)" — still useful as raw
+    // cast-volume. Silent builders (opt-in backfill) skip this so old log
+    // replays don't move the counter.
+    if (event.type === 'cast' && !this.silent) {
+      const caster = event.attacker || this.character;
+      const spell  = event.ability || '(unknown)';
+      if (caster) {
+        const byChar = stats.castCounts[caster] || (stats.castCounts[caster] = {});
+        byChar[spell] = (byChar[spell] || 0) + 1;
+      }
+    }
+
     if (event.type === 'heal' && (event.attacker || this.character)) {
       const healer = event.attacker || this.character;
       this._bumpHealer(healer, event.defender, event.amount || 0);
@@ -1546,6 +1562,257 @@ class EncounterBuilder {
 // restarts via logsync.stats.json placed next to the agent index.js.
 const STATS_FILE = path.join(__dirname, 'logsync.stats.json');
 
+// ── Durable upload queue ─────────────────────────────────────────────────────
+// Every outbound POST (encounter, chat, pvp, bosskill, lockout, historical_chat,
+// fun_event) goes through this queue. Network errors, DNS hiccups, 5xx
+// responses, and timeouts don't drop data — entries stay in the queue and
+// retry on an exponential backoff. The drain loop walks the queue every 15s.
+// On agent restart, the queue is read from disk and replayed before any new
+// work — so a crash mid-outage doesn't lose anything either.
+//
+// Permanent 4xx responses (400/401/403/404/422) drop the entry from the
+// queue with a loud warning — those won't fix themselves by retrying.
+const QUEUE_FILE             = path.join(__dirname, 'logsync.queue.json');
+const QUEUE_MAX_SIZE         = 5000;     // FIFO cap; oldest dropped with a warning
+const QUEUE_DRAIN_INTERVAL_MS = 15_000;  // walk the queue every 15s
+const QUEUE_REQUEST_TIMEOUT_MS = 30_000; // per-attempt HTTP timeout
+const QUEUE_BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
+const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 422]);
+
+let _uploadQueue       = [];        // in-memory mirror, persisted to QUEUE_FILE
+let _queueDrainTimer   = null;
+let _queueSaveTimer    = null;
+let _queueDraining     = false;     // re-entrancy guard for the drain loop
+let _queueUploadOpts   = null;      // { botUrl, token } — set by startUploadQueueDrain
+let _queuePermanentDropCount = 0;   // surface in /api/state for diagnostics
+
+function _loadQueueFromDisk() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
+    if (Array.isArray(raw?.pending)) {
+      _uploadQueue = raw.pending;
+      console.log(`[upload-queue] loaded ${_uploadQueue.length} pending entr${_uploadQueue.length === 1 ? 'y' : 'ies'} from disk`);
+    }
+  } catch { /* missing on first boot — fine */ }
+}
+
+function _saveQueueToDisk() {
+  // Debounce to 500ms so a burst of enqueue+drain cycles writes once.
+  if (_queueSaveTimer) return;
+  _queueSaveTimer = setTimeout(() => {
+    _queueSaveTimer = null;
+    try {
+      const tmp = QUEUE_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify({ pending: _uploadQueue }));
+      fs.renameSync(tmp, QUEUE_FILE);
+    } catch (err) {
+      console.warn(`[upload-queue] save failed: ${err.message}`);
+    }
+  }, 500);
+}
+
+function _queueId() {
+  return Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+}
+
+// Build the actual POST URL for a given queue entry. We store only the
+// `kind` per entry; the endpoint path is derived here from the configured
+// botUrl so a botUrl change between sessions still routes correctly.
+function _endpointForKind(kind, botUrl) {
+  const base = botUrl.replace(/\/encounter(\?.*)?$/, '');
+  switch (kind) {
+    case 'encounter':       return botUrl;             // already /api/agent/encounter
+    case 'chat':            return base + '/chat';
+    case 'pvp':             return base + '/pvp';
+    case 'bosskill':        return base + '/bosskill';
+    case 'lockout':         return base + '/lockout';
+    case 'historical_chat': return base + '/historical_chat';
+    case 'fun_event':       return base + '/fun_event';
+    default:                return botUrl;
+  }
+}
+
+function enqueueUpload(kind, payload) {
+  if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
+    const dropped = _uploadQueue.shift();
+    console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped oldest ${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
+  }
+  const entry = {
+    id:          _queueId(),
+    kind,
+    payload,
+    attempts:    0,
+    queued_at:   Date.now(),
+    next_try_at: Date.now(),
+    last_error:  null,
+  };
+  _uploadQueue.push(entry);
+  _saveQueueToDisk();
+  // Kick the drain loop immediately so live uploads still feel real-time
+  // when the network is healthy.
+  if (_queueUploadOpts) _drainUploadQueue().catch(() => {});
+  return entry.id;
+}
+
+// One HTTP attempt. Returns { ok, permanent, statusCode, body }.
+function _doOneUpload(entry) {
+  return new Promise((resolve) => {
+    const opts = _queueUploadOpts;
+    if (!opts) {
+      resolve({ ok: false, permanent: false, statusCode: 0, body: 'no upload opts configured' });
+      return;
+    }
+    let target;
+    try { target = _endpointForKind(entry.kind, opts.botUrl); }
+    catch (err) { resolve({ ok: false, permanent: false, statusCode: 0, body: err.message }); return; }
+
+    let url;
+    try { url = new URL(target); }
+    catch (err) { resolve({ ok: false, permanent: true, statusCode: 0, body: 'bad URL: ' + err.message }); return; }
+
+    const mod = url.protocol === 'https:' ? https : http;
+    const body = JSON.stringify(entry.payload);
+    const req = mod.request({
+      method:   'POST',
+      hostname: url.hostname,
+      port:     url.port,
+      path:     url.pathname + url.search,
+      headers:  {
+        'Content-Type':   'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...(opts.token ? { 'Authorization': `Bearer ${opts.token}` } : {}),
+        'User-Agent':     `wolfpack-logsync/${AGENT_VERSION}`,
+      },
+      timeout:  QUEUE_REQUEST_TIMEOUT_MS,
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        const sc = res.statusCode || 0;
+        if (sc >= 200 && sc < 300) {
+          resolve({ ok: true,  permanent: false, statusCode: sc, body: data });
+        } else if (QUEUE_PERMANENT_CODES.has(sc)) {
+          resolve({ ok: false, permanent: true,  statusCode: sc, body: data });
+        } else {
+          resolve({ ok: false, permanent: false, statusCode: sc, body: data });
+        }
+      });
+    });
+    req.on('error',   (err) => resolve({ ok: false, permanent: false, statusCode: 0, body: err.message || String(err) }));
+    req.on('timeout', ()    => { req.destroy(); resolve({ ok: false, permanent: false, statusCode: 0, body: 'timeout' }); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// Side-effects on a successful encounter upload — refresh server-advertised
+// agent version + requested-character list + (for live, non-backfill) the
+// recent-parses dashboard counter. Mirrors what the old uploadEncounter
+// did inline before the queue refactor.
+function _onUploadSuccess(entry, responseText) {
+  if (entry.kind !== 'encounter') return;
+  try {
+    const resp = JSON.parse(responseText);
+    if (resp.latest_agent_version) {
+      stats.latestAgentVersion     = resp.latest_agent_version;
+      stats.latestVersionCheckedAt = Date.now();
+      stats.updateAvailable        = isNewerVersion(resp.latest_agent_version, AGENT_VERSION);
+    }
+    if (Array.isArray(resp.requested_characters)) {
+      stats.requestedCharacters = resp.requested_characters;
+    }
+  } catch { /* non-fatal */ }
+  const isBackfill = entry.payload?.backfill === true;
+  if (!isBackfill) recordUploadForDashboard(entry.payload, entry.payload?.character);
+}
+
+async function _drainUploadQueue() {
+  if (_queueDraining) return;
+  if (!_queueUploadOpts) return;
+  if (_uploadQueue.length === 0) return;
+  _queueDraining = true;
+  try {
+    const now = Date.now();
+    // Snapshot the due entries — new enqueues during this loop iteration get
+    // picked up on the next pass.
+    const due = _uploadQueue.filter(e => e.next_try_at <= now);
+    if (due.length === 0) return;
+
+    let stateChanged = false;
+    for (const entry of due) {
+      const result = await _doOneUpload(entry);
+      const idx = _uploadQueue.indexOf(entry);
+      if (idx === -1) continue; // dropped under us (queue cap)
+
+      if (result.ok) {
+        _uploadQueue.splice(idx, 1);
+        try { _onUploadSuccess(entry, result.body); } catch {}
+        stateChanged = true;
+      } else if (result.permanent) {
+        _uploadQueue.splice(idx, 1);
+        _queuePermanentDropCount++;
+        stats.uploadErrors++;
+        const snip = (result.body || '').toString().slice(0, 200);
+        console.warn(`[upload-queue] permanent failure ${result.statusCode} for ${entry.kind}; dropping. body=${snip}`);
+        stateChanged = true;
+      } else {
+        entry.attempts++;
+        entry.last_error = `${result.statusCode || 'net'}: ${(result.body || '').toString().slice(0, 200)}`;
+        const backoffIdx = Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1);
+        entry.next_try_at = Date.now() + QUEUE_BACKOFF_MS[backoffIdx];
+        stats.uploadErrors++;
+        if (entry.attempts === 1 || entry.attempts === 5 || entry.attempts === 20) {
+          console.warn(`[upload-queue] retrying ${entry.kind} (attempt ${entry.attempts}, next in ${Math.round(QUEUE_BACKOFF_MS[backoffIdx]/1000)}s): ${entry.last_error}`);
+        }
+        stateChanged = true;
+      }
+    }
+    if (stateChanged) {
+      _saveQueueToDisk();
+      scheduleRender();
+    }
+  } finally {
+    _queueDraining = false;
+  }
+}
+
+function startUploadQueueDrain(uploadOpts) {
+  _queueUploadOpts = uploadOpts;
+  _loadQueueFromDisk();
+  if (_queueDrainTimer) clearInterval(_queueDrainTimer);
+  // Immediate kick on startup so anything left from a crashed previous
+  // session replays right away.
+  _drainUploadQueue().catch(() => {});
+  _queueDrainTimer = setInterval(() => {
+    _drainUploadQueue().catch(() => {});
+  }, QUEUE_DRAIN_INTERVAL_MS);
+}
+
+// Dashboard + update-gate helpers. uploadQueueSnapshot is read-only; callers
+// shouldn't mutate the returned objects.
+function uploadQueueSnapshot() {
+  const byKind = {};
+  let oldest = null;
+  let maxAttempts = 0;
+  let lastError = null;
+  for (const e of _uploadQueue) {
+    byKind[e.kind] = (byKind[e.kind] || 0) + 1;
+    if (!oldest || e.queued_at < oldest) oldest = e.queued_at;
+    if (e.attempts > maxAttempts) {
+      maxAttempts = e.attempts;
+      lastError = e.last_error;
+    }
+  }
+  return {
+    pending:           _uploadQueue.length,
+    byKind,
+    oldestQueuedAt:    oldest,
+    maxAttempts,
+    lastError,
+    permanentDropped:  _queuePermanentDropCount,
+  };
+}
+
 const stats = {
   agentVersion:    AGENT_VERSION,
   startedAt:       Date.now(),
@@ -1583,6 +1850,13 @@ const stats = {
   updateAvailable:      false,      // true when server reports a newer agent version
   latestAgentVersion:   null,       // the server-advertised version (e.g. '2.3.24')
   latestVersionCheckedAt: null,     // last poll timestamp (ms)
+  // castCounts: per-character per-spell cast attempt counter. Surfaced on
+  // the Info tab. Reliable for the uploader (their "You begin casting <X>"
+  // lines always include the spell name); for other casters EQ logs
+  // "<X> begins to cast a spell" without the name, so we track those under
+  // ability="(unknown)" — still useful as a raw cast volume metric.
+  // Schema: { [casterName]: { [spellName]: count } }
+  castCounts:      {},
   // currentEncounterThreat: live threat snapshot for the active encounter
   // (null when no fight is active). { bossName, startedAt, perPlayer: { name: { swing, proc, spell, heal, total } } }
   currentEncounterThreat: null,
@@ -1633,6 +1907,7 @@ function resetSessionStats() {
   stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
   stats.sessionProcs       = {};
   stats.sessionDeeps       = {};
+  stats.castCounts         = {};
   stats.uploadCount        = 0;
   stats.uploadErrors       = 0;
   stats.lastUploadAt       = null;
@@ -1766,6 +2041,7 @@ function saveSessionState() {
       sessionMends:       stats.sessionMends,
       sessionDeeps:       stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
+      castCounts:         stats.castCounts,
       uploadCount:        stats.uploadCount,
       uploadErrors:       stats.uploadErrors,
       lastUploadAt:       stats.lastUploadAt,
@@ -1813,6 +2089,7 @@ function loadSessionState() {
     if (raw.abilityStats) {
       stats.abilityStats = new Map(Object.entries(raw.abilityStats));
     }
+    if (raw.castCounts) stats.castCounts = raw.castCounts;
     // Consume the file so the next clean exit must explicitly re-write it
     try { fs.unlinkSync(SESSION_FILE); } catch {}
     return true;
@@ -1851,6 +2128,7 @@ function _serializeForDashboard() {
     sessionDeaths:      stats.sessionDeaths,
     sessionMends:       stats.sessionMends,
     abilityStats:       Object.fromEntries(stats.abilityStats),
+    castCounts:         stats.castCounts,
     watchedLogs:        stats.watchedLogs,
     uploadCount:        stats.uploadCount,
     uploadErrors:       stats.uploadErrors,
@@ -1869,7 +2147,32 @@ function _serializeForDashboard() {
                         && stats._sessionRestoredAt
                         && (Date.now() - stats._sessionRestoredAt) < 120_000,
     knownPets:          [...knownPetOwners.entries()].map(([pet, owners]) => ({ pet, owners: [...owners] })),
+    uploadQueue:        uploadQueueSnapshot(),
+    updateBlocked:      _updateBlockedReason(),
   };
+}
+
+// Update-gate evaluator. Returns null when an update is safe, or a short
+// human-readable reason string when it isn't. Three blockers (any one is
+// enough): pending uploads in the queue, an opt-in backfill running, or
+// an active live fight currently accumulating events.
+function _updateBlockedReason() {
+  if (_uploadQueue.length > 0) {
+    return `${_uploadQueue.length} pending upload${_uploadQueue.length === 1 ? '' : 's'}`;
+  }
+  if (typeof _activeBackfills !== 'undefined' && _activeBackfills.size > 0) {
+    return `${_activeBackfills.size} opt-in backfill${_activeBackfills.size === 1 ? '' : 's'} running`;
+  }
+  // Active fight check: any tail-mode EncounterBuilder with events that
+  // haven't been flushed yet. We don't have a direct registry; instead
+  // check stats.currentEncounterThreat — the agent updates this on every
+  // damage event, and it's cleared when the fight ends. If it's set and
+  // recent (last threat publish < 60s ago) we're mid-fight.
+  const et = stats.currentEncounterThreat;
+  if (et && !et.flushedAt) {
+    return 'active fight in progress';
+  }
+  return null;
 }
 
 const WEB_HTML = `<!DOCTYPE html>
@@ -1965,13 +2268,27 @@ function renderHeader(s) {
   } else {
     versionStr = 'v' + esc(s.version);
   }
-  const alwaysBtn = '<button id="manualUpdateBtn" style="margin-left:12px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="Save session, restart agent, pull the latest version">'
-                  + (hasNewer ? '↻ Restart now' : '↻ Check for update') + '</button>';
+  const alwaysBtn = '<button id="manualUpdateBtn" style="margin-left:12px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="' +
+                  (s.updateBlocked ? 'Update blocked: ' + esc(s.updateBlocked) : 'Save session, restart agent, pull the latest version') +
+                  '"' + (s.updateBlocked ? ' data-blocked="' + esc(s.updateBlocked) + '"' : '') + '>' +
+                  (hasNewer ? '↻ Restart now' : '↻ Check for update') + '</button>';
   // Click-to-reset for officers who want a clean board between raid nights
   // or after testing. Wipes session counters and Recent Parses; lifetime
   // totals and persisted resume state for opt-in backfills are preserved.
   const resetBtn = '<button id="resetSessionBtn" style="margin-left:8px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="Zero out the session counters and Recent Parses on this dashboard">⟲ Reset dashboard</button>';
-  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + alwaysBtn + resetBtn + '</div>';
+  // Upload-queue chip — visible only when there's pending work or a recent
+  // permanent drop. Shows pending count + the last-retry summary so a
+  // network blip is obvious without scrolling.
+  let queueChip = '';
+  const q = s.uploadQueue || {};
+  if (q.pending > 0) {
+    const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
+    const tip = (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
+    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued</span>';
+  } else if (q.permanentDropped > 0) {
+    queueChip = ' · <span style="background:#3b0a0a;color:#ff9c9c;border:1px solid #f85149;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + q.permanentDropped + ' upload(s) permanently failed since startup (4xx response). Check the agent log.">✕ ' + q.permanentDropped + ' dropped</span>';
+  }
+  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + alwaysBtn + resetBtn + '</div>';
   document.getElementById('header').innerHTML = h;
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
@@ -1988,10 +2305,31 @@ function renderHeader(s) {
       if (tries > 300) clearInterval(t);  // give up after ~5 min
     }, 1000);
   }
+  // Shared helper — POST /api/update, handle the 409 update-blocked response
+  // by surfacing the reason + a force-override confirm. Used by both the
+  // header "Check for update" button and the banner "Install now" button.
+  async function _attemptUpdate(button, force) {
+    try {
+      const r = await fetch('/api/update' + (force ? '?force=1' : ''), { method: 'POST' });
+      if (r.status === 409) {
+        const j = await r.json().catch(() => ({}));
+        const reason = j?.reason || 'update is blocked';
+        if (button) { button.disabled = false; button.textContent = '↻ Check for update'; }
+        if (confirm('Update blocked: ' + reason + '.\n\nForce restart anyway? Unflushed data in the upload queue may be retried after restart, but in-flight encounters or backfill progress could be lost.')) {
+          return _attemptUpdate(button, true);
+        }
+        return false;
+      }
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
   if (manual) manual.addEventListener('click', async () => {
     if (!confirm('Restart agent and pull the latest version? Session will be saved and resumed.')) return;
     manual.disabled = true; manual.textContent = 'Restarting...';
-    try { await fetch('/api/update', { method: 'POST' }); } catch {}
+    const ok = await _attemptUpdate(manual, false);
+    if (!ok) return;
     document.body.insertAdjacentHTML('afterbegin',
       '<div id="restartBanner" class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
@@ -2007,7 +2345,8 @@ function renderHeader(s) {
   if (u) u.addEventListener('click', async () => {
     if (!confirm('Update agent now? Session will be saved and resumed automatically.')) return;
     u.disabled = true; u.textContent = 'Restarting...';
-    try { await fetch('/api/update', { method: 'POST' }); } catch {}
+    const ok = await _attemptUpdate(u, false);
+    if (!ok) return;
     document.body.insertAdjacentHTML('afterbegin',
       '<div id="restartBanner" class="banner update" style="position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center">' +
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
@@ -2458,6 +2797,32 @@ function renderInfo(s) {
     h += '</table>';
   }
   h += '</div>';
+  // Per-character cast counter — reliable for the uploader (knows spell name);
+  // "begins to cast a spell" for others lands under (unknown).
+  const cc = s.castCounts || {};
+  const casters = Object.keys(cc);
+  if (casters.length > 0) {
+    h += '<div class="card wide"><h2>Spell Casts This Session</h2>';
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Reliable for the uploader. Other casters land under <code>(unknown)</code> because EQ does not log the spell name for bystanders.</div>';
+    // Sort characters by total cast count desc
+    const ordered = casters
+      .map(name => {
+        const spells = cc[name] || {};
+        const total = Object.values(spells).reduce((a, b) => a + b, 0);
+        return { name, spells, total };
+      })
+      .sort((a, b) => b.total - a.total);
+    for (const c of ordered.slice(0, 10)) {
+      const spellEntries = Object.entries(c.spells).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      h += '<details><summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + c.total + ' cast' + (c.total === 1 ? '' : 's') + '</span></summary>';
+      h += '<table>';
+      for (const [spell, count] of spellEntries) {
+        h += '<tr><td>' + esc(spell) + '</td><td class="num">' + count + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
+    h += '</div>';
+  }
   h += '</div>';
   document.getElementById('info').innerHTML = h;
 }
@@ -2720,6 +3085,21 @@ function startWebDashboard(port) {
         // In background service mode (--no-service-check) the wrapper exited
         // long ago, so we spawn a new copy of ourselves before exiting so the
         // web dashboard comes back up automatically.
+        //
+        // Update gate: refuse if the upload queue has entries, a backfill
+        // is running, or a fight is in progress. Pass ?force=1 to override
+        // (e.g. user explicitly accepts the data-loss risk).
+        const forceParam = (req.url.split('?')[1] || '').split('&').includes('force=1');
+        const blockedReason = forceParam ? null : _updateBlockedReason();
+        if (blockedReason) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            ok: false,
+            blocked: true,
+            reason: blockedReason,
+            hint:   'Append ?force=1 to override at your own risk.',
+          }));
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, message: 'restarting' }));
         setTimeout(() => {
@@ -3283,6 +3663,14 @@ function setupKeypressHandler() {
 
     // Dashboard mode
     if (key === 'u' || key === 'U') {
+      // Update gate: don't bounce the agent mid-fight, mid-backfill, or
+      // with queued uploads on disk. Press Shift+U to force.
+      const blockedReason = (key === 'U') ? null : _updateBlockedReason();
+      if (blockedReason) {
+        process.stdout.write(`${ANSI.yellow}\n  Update blocked: ${blockedReason}.${ANSI.reset}\n`);
+        process.stdout.write(`${ANSI.dim}  Press ${ANSI.cyan}Shift+U${ANSI.dim} to force the restart anyway (may drop unflushed data).${ANSI.reset}\n`);
+        return;
+      }
       try {
         // Snapshot the live session so the new version's startup restores
         // recent parses, top hits, ability stats, etc. instead of resetting.
@@ -3763,6 +4151,12 @@ function runOptinBackfill(files, opts = {}) {
       try {
         const result = await readFromBytePos(f.path, startByte,
           (line) => {
+            // Fun-event detection runs before everything else so a single
+            // line can drive a fun_event AND a normal chat/combat path. No
+            // early return; the line still flows through downstream parsers.
+            const ldEvt = parsePeopleslayerLd(line);
+            if (ldEvt) funEventBuffer.push(ldEvt);
+
             // Chat comes first — chat lines don't survive shouldKeep().
             const chatMsg = parseChatLine(line, f.character);
             if (chatMsg) {
@@ -4283,11 +4677,10 @@ function showHealers() {
 }
 
 // ── Upload ──────────────────────────────────────────────────────────────────
+// All uploads route through enqueueUpload() so a DNS / network / 5xx failure
+// doesn't drop data. The queue persists to logsync.queue.json and retries on
+// exponential backoff via the drain loop started in main().
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
-  // Backfill uploads don't touch the live dashboard counters — old fights
-  // shouldn't show up in "this session" / "recent parses" / top-damage
-  // panes. They still upload to the bot (Supabase persistence) but with
-  // payload.backfill=true so the bot also skips Discord side-effects.
   const isBackfill = payload?.backfill === true;
   if (dryRun) {
     const e = payload.encounter;
@@ -4296,56 +4689,8 @@ function uploadEncounter(payload, { botUrl, token, dryRun }) {
     scheduleRender();
     return Promise.resolve();
   }
-  return new Promise((resolve, reject) => {
-    const url = new URL(botUrl);
-    const mod = url.protocol === 'https:' ? https : http;
-    const body = JSON.stringify(payload);
-    const req = mod.request({
-      method:   'POST',
-      hostname: url.hostname,
-      port:     url.port,
-      path:     url.pathname + url.search,
-      headers:  {
-        'Content-Type':   'application/json',
-        'Content-Length': Buffer.byteLength(body),
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        'User-Agent':     `wolfpack-logsync/${AGENT_VERSION}`,
-      },
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        if (res.statusCode >= 400) {
-          stats.uploadErrors++;
-          if (!_dashboardEnabled) console.warn(`[upload] ${res.statusCode}: ${data}`);
-          scheduleRender();
-          reject(new Error(`HTTP ${res.statusCode}`));
-        } else {
-          const e = payload.encounter;
-          // Check if server is advertising a newer agent version
-          try {
-            const resp = JSON.parse(data);
-            if (resp.latest_agent_version) {
-              stats.latestAgentVersion    = resp.latest_agent_version;
-              stats.latestVersionCheckedAt = Date.now();
-              // Only flag when the server's version is strictly newer than ours.
-              stats.updateAvailable = isNewerVersion(resp.latest_agent_version, AGENT_VERSION);
-            }
-            if (Array.isArray(resp.requested_characters)) {
-              stats.requestedCharacters = resp.requested_characters;
-            }
-          } catch { /* non-fatal */ }
-          if (!isBackfill) recordUploadForDashboard(payload, payload.character);
-          if (!_dashboardEnabled) console.log(`✓ uploaded ${e.boss_name || '?'} (${e.events.length} events)`);
-          scheduleRender();
-          resolve();
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+  enqueueUpload('encounter', payload);
+  return Promise.resolve();
 }
 
 // ── Guild / Raid chat relay ───────────────────────────────────────────────────
@@ -4608,6 +4953,7 @@ function parseSllLine(line) {
 const chatBuffer        = [];   // pending guild/raid chat lines
 const pvpBuffer         = [];   // pending PVP broadcast lines
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
+const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
 // _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
 let _uploadOpts    = null;      // set in main() once botUrl/token are known
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
@@ -4625,86 +4971,66 @@ function startChatRelay() {
       uploadDruzzilKills(druzzilKillBuffer.splice(0), _uploadOpts).catch(() => {});
     if (_lockoutBuffer.length > 0)
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (funEventBuffer.length > 0)
+      uploadFunEvents(funEventBuffer.splice(0), _uploadOpts).catch(() => {});
   }, 5000);
 }
 
+// ── Fun-event detection ─────────────────────────────────────────────────────
+// Lightweight, pattern-driven side stream that piggybacks on the live tail.
+// First tenant: Peopleslayer LD counter. Future tenants: CoH pearl, DI
+// emerald, Aegolism/Rune peridot, MGB doubling. Each detector returns
+// { type, caster, ts, raw_text } or null; matches push into funEventBuffer
+// and ride out via the 5s chat-relay flush.
+//
+// Linkdead line on Quarm: "[ts] <Name> has gone linkdead." Accept both
+// LD and linkdead phrasing for safety.
+const PEOPLESLAYER_LD_RX = /^\[(.+?)\]\s+Peopleslayer\s+has\s+gone\s+(?:LD|linkdead)\.?\s*$/i;
+
+function parsePeopleslayerLd(line) {
+  const m = PEOPLESLAYER_LD_RX.exec(line);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'peopleslayer_ld',
+    caster:   'Peopleslayer',
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
 function uploadChat(messages, { botUrl, token, dryRun }) {
+  void botUrl; void token; // route info lives in the queue's endpoint resolver
   if (dryRun) {
     for (const m of messages) {
       console.log(`[chat:${m.channel}] <${m.speaker}> ${m.text}`);
     }
     return Promise.resolve();
   }
-  // Derive chat URL: swap '/encounter' for '/chat' at the end of botUrl
-  const chatUrl = botUrl.replace(/\/encounter(\?.*)?$/, '/chat');
-  return new Promise((resolve) => {
-    try {
-      const url = new URL(chatUrl);
-      const mod = url.protocol === 'https:' ? https : http;
-      const body = JSON.stringify({ agent_version: AGENT_VERSION, messages });
-      const req  = mod.request({
-        method:   'POST',
-        hostname: url.hostname,
-        port:     url.port,
-        path:     url.pathname + url.search,
-        headers: {
-          'Content-Type':   'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-          'User-Agent':     `wolfpack-logsync/${AGENT_VERSION}`,
-        },
-      }, res => { res.resume(); resolve(); });
-      req.on('error', () => resolve());
-      req.write(body);
-      req.end();
-    } catch { resolve(); }
-  });
-}
-
-// Shared low-level HTTP POST helper for agent relay endpoints.
-function _agentPost(fullUrl, token, body) {
-  return new Promise((resolve) => {
-    try {
-      const u   = new URL(fullUrl);
-      const mod = u.protocol === 'https:' ? https : http;
-      const str = JSON.stringify(body);
-      const req = mod.request({
-        method:   'POST',
-        hostname: u.hostname,
-        port:     u.port,
-        path:     u.pathname + u.search,
-        headers: {
-          'Content-Type':   'application/json',
-          'Content-Length': Buffer.byteLength(str),
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-          'User-Agent':     `wolfpack-logsync/${AGENT_VERSION}`,
-        },
-      }, res => { res.resume(); resolve(); });
-      req.on('error', () => resolve());
-      req.write(str);
-      req.end();
-    } catch { resolve(); }
-  });
+  enqueueUpload('chat', { agent_version: AGENT_VERSION, messages });
+  return Promise.resolve();
 }
 
 function uploadPvp(broadcasts, { botUrl, token, dryRun }) {
+  void botUrl; void token;
   if (dryRun) {
     for (const b of broadcasts)
       console.log(`[pvp] ${b.killType === 'pvp' ? '⚔️' : '☠️'} ${b.text}`);
     return Promise.resolve();
   }
-  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/pvp'), token,
-    { agent_version: AGENT_VERSION, broadcasts });
+  enqueueUpload('pvp', { agent_version: AGENT_VERSION, broadcasts });
+  return Promise.resolve();
 }
 
 function uploadDruzzilKills(kills, { botUrl, token, dryRun }) {
+  void botUrl; void token;
   if (dryRun) {
     for (const k of kills)
       console.log(`[raid-kill] ${k.character} of <${k.guild}> killed ${k.boss} in ${k.zone}`);
     return Promise.resolve();
   }
-  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/bosskill'), token,
-    { agent_version: AGENT_VERSION, kills });
+  enqueueUpload('bosskill', { agent_version: AGENT_VERSION, kills });
+  return Promise.resolve();
 }
 
 // Polls the bot for the latest agent version without needing an encounter
@@ -4749,15 +5075,17 @@ function pollLatestVersion({ botUrl }) {
 }
 
 function uploadHistoricalChat(messages, { botUrl, token, dryRun }) {
+  void botUrl; void token;
   if (dryRun) {
     console.log(`[historical-chat] ${messages.length} chat lines (dry-run)`);
     return Promise.resolve({ stored: messages.length });
   }
-  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/historical_chat'), token,
-    { agent_version: AGENT_VERSION, messages });
+  enqueueUpload('historical_chat', { agent_version: AGENT_VERSION, messages });
+  return Promise.resolve({ stored: messages.length });
 }
 
 function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
+  void botUrl; void token;
   // Attach the character name so the bot can store it as killedBy
   const enriched = entries.map(e => ({ ...e, character: character || 'unknown' }));
   if (dryRun) {
@@ -4765,8 +5093,23 @@ function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
       console.log(`[lockout] ${e.bossName}: ${Math.round(e.remainingMs / 3600000)}h remaining`);
     return Promise.resolve();
   }
-  return _agentPost(botUrl.replace(/\/encounter(\?.*)?$/, '/lockout'), token,
-    { agent_version: AGENT_VERSION, entries: enriched });
+  enqueueUpload('lockout', { agent_version: AGENT_VERSION, entries: enriched });
+  return Promise.resolve();
+}
+
+// Fun-events upload (Peopleslayer LD counter, future CoH/DI/Aegolism). Each
+// event is a tagged occurrence the bot stores in the fun_events table with
+// a unique constraint on (guild_id, event_type, caster, event_ts) so re-
+// running the same backfill doesn't double-count. See utils/state and the
+// fun_events Supabase migration on the bot side.
+function uploadFunEvents(events, { dryRun } = {}) {
+  if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const e of events) console.log(`[fun-event] ${e.type} · ${e.caster || ''} · ${e.ts}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('fun_event', { agent_version: AGENT_VERSION, events });
+  return Promise.resolve();
 }
 
 // ── File watcher (tail mode) ────────────────────────────────────────────────
@@ -5046,6 +5389,12 @@ async function main() {
   _uploadOpts    = { botUrl, token, dryRun };
   _isServiceMode = !!args.flags.noServiceCheck;
 
+  // Start the durable upload queue drain. Loads any pending entries from
+  // disk first and kicks an immediate replay attempt — so anything left
+  // over from a previous crashed session goes out as soon as the
+  // network's back.
+  if (!dryRun) startUploadQueueDrain({ botUrl, token });
+
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();
   // Restore in-flight session state if the previous run snapshotted within the
@@ -5225,6 +5574,12 @@ async function main() {
         // PVP Druzzil Ro broadcast → PVP channel (with howl/backup logic in bot)
         const pvpBcast = parsePvpBroadcast(line);
         if (pvpBcast) { pvpBuffer.push(pvpBcast); return; }
+
+        // Fun-event detection (Peopleslayer LD, future CoH/DI/etc). Don't
+        // `return` after a match — fun events are pure side-channel logging
+        // and the line might also be useful to other parsers downstream.
+        const ldEvt = parsePeopleslayerLd(line);
+        if (ldEvt) funEventBuffer.push(ldEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
