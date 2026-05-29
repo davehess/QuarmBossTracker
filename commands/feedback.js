@@ -96,7 +96,31 @@ module.exports = {
 
     try {
       const thread = await interaction.client.channels.fetch(threadId);
-      await thread.send({ embeds: [embed], components: [row] });
+      const sent   = await thread.send({ embeds: [embed], components: [row] });
+
+      // Mirror to Supabase feedback table for the /admin/feedback search UI.
+      // Discord thread remains the primary surface; this is just for search /
+      // status tracking. Fire-and-forget.
+      try {
+        const supabase = require('../utils/supabase');
+        if (supabase.isEnabled()) {
+          const guildId = sent?.guildId || interaction.guildId;
+          const msgLink = guildId
+            ? `https://discord.com/channels/${guildId}/${threadId}/${sent.id}`
+            : null;
+          supabase.insert('feedback', [{
+            submitter_discord_id: interaction.user.id,
+            submitter_name:       submitter,
+            category:             command || 'general',
+            message,
+            discord_msg_id:       sent.id,
+            discord_msg_link:     msgLink,
+          }]).catch(err => console.warn('[feedback] supabase mirror failed:', err?.message));
+        }
+      } catch (err) {
+        console.warn('[feedback] supabase wrap failed:', err?.message);
+      }
+
       return interaction.editReply(`✅ Feedback submitted to <#${threadId}>. Thank you!`);
     } catch (err) {
       console.error('[feedback] Failed to post:', err);

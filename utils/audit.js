@@ -84,6 +84,30 @@ async function postAuditEntry(client, { action, userId, userName, bossId, bossNa
     console.warn('[audit] postAuditEntry error:', err?.message);
   }
 
+  // Mirror to Supabase audit_log so /admin/audit can search by actor / boss /
+  // action without scraping the Discord thread. Fire-and-forget; the Discord
+  // thread is still the primary, durable record.
+  try {
+    const supabase = require('./supabase');
+    if (supabase.isEnabled()) {
+      supabase.insert('audit_log', [{
+        action,
+        actor_discord_id: userId || null,
+        actor_name:       userName || null,
+        payload: {
+          bossId, bossName,
+          prevState:    prevState || null,
+          newNextSpawn: newNextSpawn || null,
+          source:       source || null,
+          entryId:      id,
+        },
+        msg_link: msgLink || null,
+      }]).catch(err => console.warn('[audit] supabase mirror failed:', err?.message));
+    }
+  } catch (err) {
+    console.warn('[audit] supabase wrap failed:', err?.message);
+  }
+
   return id;
 }
 

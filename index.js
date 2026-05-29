@@ -2375,6 +2375,30 @@ function getCurrentEra() {
   return getEraForTimestamp(Date.now());
 }
 
+// Fire-and-forget — log every agent upload to Supabase agent_uploads so the
+// /admin/agents board (and /me upload panel) can show who is uploading what,
+// when, on what version. Best-effort: failures are warned and swallowed so
+// the upload response is never blocked on the metadata insert.
+function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null }) {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return;
+    supabase.insert('agent_uploads', [{
+      guild_id:      process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      character:     character || null,
+      agent_version: agentVersion || null,
+      endpoint,
+      payload_bytes: payloadBytes,
+      ok,
+      status_code:   statusCode,
+      error_message: errorMessage,
+      agent_state:   agentState,
+    }]).catch(err => console.warn('[agent-uploads] insert failed:', err?.message));
+  } catch (err) {
+    console.warn('[agent-uploads] track failed:', err?.message);
+  }
+}
+
 async function _handleAgentChat(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -2547,6 +2571,7 @@ async function _handleAgentChat(req, res) {
     }
   }
 
+  _trackUpload({ endpoint: 'chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, posted }));
 }
@@ -2746,6 +2771,7 @@ async function _handleAgentPvp(req, res) {
     }
   }
 
+  _trackUpload({ endpoint: 'pvp', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, posted, deduped, kills_recorded: pvpKillRows.length }));
 }
@@ -2840,6 +2866,7 @@ async function _handleAgentBossKill(req, res) {
     }
   }
 
+  _trackUpload({ endpoint: 'bosskill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
 }
@@ -2911,6 +2938,7 @@ async function _handleAgentFunEvent(req, res) {
   }
   const written = await supabase.upsert('fun_events', rows, 'guild_id,event_type,caster,event_ts')
     .catch(err => { console.warn('[fun-event] upsert failed:', err?.message); return null; });
+  _trackUpload({ endpoint: 'fun_event', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
 }
@@ -2990,6 +3018,7 @@ async function _handleAgentHistoricalChat(req, res) {
     console.warn('[historical-chat] supabase mirror failed:', err?.message);
   }
 
+  _trackUpload({ endpoint: 'historical_chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, stored: lines.length }));
 }
@@ -3065,6 +3094,7 @@ async function _handleAgentLockout(req, res) {
     }
   }
 
+  _trackUpload({ endpoint: 'lockout', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
 }
@@ -3169,6 +3199,97 @@ async function _handleAgentIncomplete(req, res) {
     total: seen.size,
     queried_characters: characters,
   }));
+}
+
+// ── Backfill requests ──────────────────────────────────────────────────────
+// Officer-filed via /admin/encounters → agent polls here per character to
+// pick up its pending rows. Lifecycle: pending → acked (agent claimed it,
+// processing) → completed (with summary) or errored (with message). Agent
+// user can also dismiss the request from the dashboard.
+//
+// GET  /api/agent/backfill-requests?character=X[,Y]  — list pending for char(s)
+// POST /api/agent/backfill-requests/:id/:action      — ack | dismiss | complete | error
+//   POST body: { reason?, summary?, error_message? } (optional, by action)
+async function _handleAgentBackfillRequests(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'backfill-requests disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ requests: [], note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  // GET → list
+  if (req.method === 'GET') {
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const raw = url.searchParams.get('character') || url.searchParams.get('characters') || '';
+    const chars = raw.split(',').map(s => s.trim()).filter(Boolean);
+    if (chars.length === 0) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ requests: [] }));
+    }
+    const inList = '(' + chars.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
+    const rows = await supabase.select(
+      'agent_backfill_requests',
+      `guild_id=eq.${encodeURIComponent(guildId)}&character=in.${encodeURIComponent(inList)}&status=in.(pending,acked,running)&order=requested_at.desc&limit=50`,
+    );
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ requests: rows || [] }));
+  }
+
+  // POST /:id/:action
+  if (req.method === 'POST') {
+    // Path: /api/agent/backfill-requests/{id}/{action}
+    const parts = req.url.split('?')[0].split('/').filter(Boolean);
+    // ['api','agent','backfill-requests','<id>','<action>']
+    const id     = parts[3];
+    const action = parts[4];
+    if (!id || !action) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'expected /api/agent/backfill-requests/{id}/{action}' }));
+    }
+
+    const chunks = []; let total = 0;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > 32 * 1024) { res.writeHead(413); return res.end(); }
+      chunks.push(chunk);
+    }
+    let body = {};
+    if (total > 0) {
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+      catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+    }
+
+    const nowIso = new Date().toISOString();
+    let patch;
+    if (action === 'ack')       patch = { status: 'acked',     acked_at:     nowIso };
+    else if (action === 'running')   patch = { status: 'running' };
+    else if (action === 'dismiss')   patch = { status: 'dismissed', dismissed_at: nowIso, dismissed_reason: body.reason || null };
+    else if (action === 'complete')  patch = { status: 'completed', completed_at: nowIso, completed_summary: body.summary || null };
+    else if (action === 'error')     patch = { status: 'errored',   error_message: body.error_message || 'unknown error' };
+    else {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: `unknown action "${action}"` }));
+    }
+
+    await supabase.update('agent_backfill_requests', `id=eq.${encodeURIComponent(id)}`, patch);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, id, action }));
+  }
+
+  res.writeHead(405, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ error: 'method not allowed' }));
 }
 
 async function _handleAgentUpload(req, res) {
@@ -3929,6 +4050,13 @@ async function _handleAgentUpload(req, res) {
   const requestedChars = (process.env.REQUESTED_AGENT_CHARACTERS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
+  _trackUpload({
+    endpoint:      'encounter',
+    character:     payload?.character,
+    agentVersion:  payload?.agent_version,
+    payloadBytes:  total,
+    agentState:    payload?.agent_state || null,
+  });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     ok: true,
@@ -3956,6 +4084,17 @@ http.createServer(async (req, res) => {
     return res.end(JSON.stringify({
       latest_agent_version: _currentAgentVersion(),
     }));
+  }
+
+  // Officer-filed backfill requests — agent polls per character, picks up
+  // pending rows, acks/completes/errors/dismisses. Filed via /admin/encounters.
+  if (req.url.startsWith('/api/agent/backfill-requests')) {
+    try { return await _handleAgentBackfillRequests(req, res); }
+    catch (err) {
+      console.error('[backfill-requests] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
   }
 
   // Incomplete-encounter list — agent polls this per logged-in character to

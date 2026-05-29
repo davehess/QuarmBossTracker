@@ -259,6 +259,13 @@ const DEFAULT_DROP_PATTERNS = [
 //   EQ log format: "[Fri May 26 02:34:04 2026] Gobn says, 'My leader is Utoh.'"
 const PRIORITY_KEEP_PATTERNS = [
   /\bsays,?\s*['"]My leader is \w+/i,
+  // Charm-pet attribution. EQ only tells the CHARMER about its pet's target:
+  //   "A Soriz Skeleton tells you, 'Attacking A Shissar Taskmaster Master.'"
+  // Without this priority-keep, the line is dropped by the generic
+  // /tells you,/ filter below (which catches player tells) and we lose the
+  // pet → owner mapping for charm pets. parseEvent below resolves owner
+  // to the uploading character (this.character) when it sees this form.
+  /\btells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i,
   // /who output lines — '[60 Storm Warden] Alice (Wood Elf) <Wolf Pack>' etc.
   // Listed here so they can never be dropped by some future broad filter.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -652,6 +659,16 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
   }
 
+  // Charm-pet attribution. Form:
+  //   "A Soriz Skeleton tells you, 'Attacking A Shissar Taskmaster Master.'"
+  // This line is ONLY visible to the player who charmed the pet, so the
+  // owner is implicitly the agent's character. Emit a sentinel owner of
+  // "__SELF__" — EncounterBuilder.add() resolves it to this.character.
+  m = line.match(/\]\s+(.+?)\s+tells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i);
+  if (m) {
+    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__' };
+  }
+
   // ── /who output line ──────────────────────────────────────────────────────
   // Matches a row of the EQ /who report. Examples (post-timestamp):
   //   "[60 Storm Warden] Alice (Wood Elf) <Wolf Pack>"
@@ -938,13 +955,17 @@ class EncounterBuilder {
   add(event) {
     if (!event) return;
 
-    // Pet leader declarations update the map but don't count as combat events
+    // Pet leader declarations update the map but don't count as combat events.
+    // The parser emits owner='__SELF__' for charm-pet "Attacking X Master."
+    // lines (which EQ only shows to the charmer) — resolve to this.character.
     if (event.type === 'pet_leader') {
-      this.petLeaders[event.pet.toLowerCase()] = event.owner;
+      const owner = event.owner === '__SELF__' ? (this.character || null) : event.owner;
+      if (!owner) return;  // can't attribute without a known character
+      this.petLeaders[event.pet.toLowerCase()] = owner;
       // Also update the session-wide dashboard tracker so [P] view stays current
       const _pk = event.pet.toLowerCase();
       if (!knownPetOwners.has(_pk)) knownPetOwners.set(_pk, new Set());
-      knownPetOwners.get(_pk).add(event.owner);
+      knownPetOwners.get(_pk).add(owner);
       return;
     }
 
