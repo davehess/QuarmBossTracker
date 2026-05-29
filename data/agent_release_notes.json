@@ -2,6 +2,11 @@
   "_comment": "Brief release notes per agent version. The bot's release-announcement hook reads this when an agent version differs from the last one announced. Plain text, 2-4 short lines per version — the announcement is supposed to be a heads-up, not a full changelog. Unknown versions fall through to the generic 'is out' message.",
   "_updated_at": "2026-05-29",
   "versions": {
+    "2.4.19": [
+      "Exceptional Heals leaderboard on the Healers tab — public crit-heal data, populates from a single parser anywhere in the raid.",
+      "Quarm-confirmed heal-line regexes: 'You have been healed for N points of damage' (self target) and '<X> performs an exceptional heal! (N)' (bystander).",
+      "Opt-in backfill now records completed-at timestamp + agent version per file. ↻ Re-run button on completed entries kicks a fresh pass when the log has grown."
+    ],
     "2.4.18": [
       "Durable upload queue with retry — DNS / network blips don't drop encounters or chat anymore.",
       "[U] update refuses to bounce mid-fight, mid-backfill, or with queued uploads (Shift+U overrides).",

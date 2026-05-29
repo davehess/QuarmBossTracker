@@ -568,9 +568,35 @@ function parseEvent(line, ts) {
   }
 
   // ── Heals ─────────────────────────────────────────────────────────────────
+  // Quarm-confirmed heal-line variants (verified against Manamana's log,
+  // ~70MB, ~10mo of raid + group play):
+  //   1. "<Target> has been healed by <Healer> for <X> points." — third-person
+  //      with both names + amount. EQ canonically logs this only to
+  //      group/raid members with the appropriate spam toggle; on Quarm we
+  //      effectively never see it for bystanders.
+  //   2. "You have been healed for <X> points of damage." — self-target,
+  //      amount only, no healer attribution.
+  //   3. "You feel much better." — generic self-heal landing, no amount.
+  //   4. "<Healer> performs an exceptional heal! (<amount>)" — exceptional
+  //      ("critical") heal that IS bystander-visible with both name and
+  //      amount. This is the one that lets us build a public crit-heal
+  //      leaderboard from a single parser anywhere in the raid.
   m = line.match(/\]\s+(.+?)\s+has been healed\s+(?:by\s+(.+?)\s+)?for\s+(\d+)\s+points?/i);
   if (m) {
     return { ts: tsIso, type: 'heal', defender: m[1], attacker: m[2] || null, amount: parseInt(m[3], 10) };
+  }
+  m = line.match(/\]\s+You have been healed for\s+(\d+)\s+points? of damage\./i);
+  if (m) {
+    // Self-target, amount only, no healer attribution. Goes through the
+    // healers pipeline as an incoming heal we received but can't attribute.
+    return { ts: tsIso, type: 'heal', defender: 'You', attacker: null, amount: parseInt(m[1], 10) };
+  }
+  m = line.match(/\]\s+(.+?)\s+performs an exceptional heal!\s*\((\d+)\)/i);
+  if (m) {
+    // Bystander-visible exceptional heal with healer name + amount. Tagged
+    // as 'crit_heal' so the dashboard can surface a separate leaderboard
+    // without conflating with regular heal totals.
+    return { ts: tsIso, type: 'crit_heal', attacker: m[1], amount: parseInt(m[2], 10) };
   }
 
   // ── Casts ─────────────────────────────────────────────────────────────────
@@ -1230,6 +1256,21 @@ class EncounterBuilder {
       }
     }
 
+    // Exceptional/critical heals — bystander-visible "<X> performs an
+    // exceptional heal! (N)" lines. Tracked as a separate session counter
+    // since these reliably populate from a single parser anywhere in the
+    // raid, unlike regular heal totals which depend on the healer or
+    // target running the agent.
+    if (event.type === 'crit_heal' && event.attacker && !this.silent) {
+      const name = event.attacker;
+      const amount = event.amount || 0;
+      const cur = stats.sessionCritHeals[name] || (stats.sessionCritHeals[name] = { count: 0, total: 0, max: 0, lastSeen: 0 });
+      cur.count++;
+      cur.total += amount;
+      if (amount > cur.max) cur.max = amount;
+      cur.lastSeen = Date.now();
+    }
+
     if (event.type === 'heal' && (event.attacker || this.character)) {
       const healer = event.attacker || this.character;
       this._bumpHealer(healer, event.defender, event.amount || 0);
@@ -1885,6 +1926,11 @@ const stats = {
   // sessionMends: Monk Mending skill counts — { attempts, success, crit, fail }
   // Only the uploader's own mends are counted (mend lines start "You mend...").
   sessionMends:    { attempts: 0, success: 0, crit: 0, fail: 0 },
+  // sessionCritHeals: per-healer exceptional/critical heal totals. Bystander-
+  // visible on Quarm via "<X> performs an exceptional heal! (N)" — so this
+  // populates from a single parser anywhere in the raid, no healer-side
+  // adoption required. { [healerName]: { count, total, max, lastSeen } }
+  sessionCritHeals: {},
   // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
   // { mobName: { [abilityName]: { count, totalDmg } } }
   sessionProcs:    {},
@@ -1948,6 +1994,7 @@ function resetSessionStats() {
   stats.sessionHealers     = {};
   stats.sessionDefenders   = {};
   stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
+  stats.sessionCritHeals   = {};
   stats.sessionProcs       = {};
   stats.sessionDeeps       = {};
   stats.castCounts         = {};
@@ -2082,6 +2129,7 @@ function saveSessionState() {
       sessionProcs:       stats.sessionProcs,
       sessionDeaths:      stats.sessionDeaths,
       sessionMends:       stats.sessionMends,
+      sessionCritHeals:   stats.sessionCritHeals,
       sessionDeeps:       stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       castCounts:         stats.castCounts,
@@ -2115,6 +2163,7 @@ function loadSessionState() {
     if (raw.sessionProcs)       stats.sessionProcs       = raw.sessionProcs;
     if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
     if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
+    if (raw.sessionCritHeals)   stats.sessionCritHeals   = raw.sessionCritHeals;
     if (raw.sessionDeeps)       stats.sessionDeeps       = raw.sessionDeeps;
     if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
     if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
@@ -2167,6 +2216,7 @@ function _serializeForDashboard() {
     topDamageDid:       stats.topDamageDid,
     sessionDefenders:   stats.sessionDefenders,
     sessionHealers:     healersOut,
+    sessionCritHeals:   stats.sessionCritHeals || {},
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
     sessionMends:       stats.sessionMends,
@@ -2726,6 +2776,25 @@ function renderHealers(s) {
     h += '</table>';
   }
   h += '</div></div>';
+  // Exceptional Heals leaderboard — populated by the bystander-visible
+  // "<X> performs an exceptional heal! (N)" line, so a single parser
+  // anywhere in the raid sees every cleric's crit heals.
+  const crits = Object.entries(s.sessionCritHeals||{})
+    .sort((a, b) => (b[1].total||0) - (a[1].total||0));
+  if (crits.length > 0) {
+    let ch = '<div class="grid"><div class="card wide">' +
+             '<h2>💚 Exceptional Heals This Session</h2>' +
+             '<div class="subtle" style="font-size:11px;margin-bottom:6px">Crit heals are public — any parser in the raid sees them, no healer adoption required.</div>' +
+             '<table><tr><th>Healer</th><th>Crits</th><th>Total</th><th>Biggest</th></tr>';
+    for (const [n, st] of crits.slice(0, 15)) {
+      ch += '<tr><td class="name">' + esc(n) + '</td>' +
+            '<td class="num">' + (st.count||0) + '</td>' +
+            '<td class="num">' + fmtK(st.total||0) + '</td>' +
+            '<td class="num">' + fmtK(st.max||0) + '</td></tr>';
+    }
+    ch += '</table></div></div>';
+    h += ch;
+  }
   document.getElementById('healers').innerHTML = h;
 }
 
@@ -2942,7 +3011,24 @@ function renderOptin(o) {
       const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
       const ageStr = ageDays === null ? '?' : ageDays<1 ? 'today' : ageDays<30 ? ageDays+'d ago' : ageDays<365 ? Math.floor(ageDays/30)+'mo ago' : Math.floor(ageDays/365)+'y ago';
       let resumeStr = '';
-      if (f.resume?.complete) resumeStr = '<span style="color:var(--green)">✓ done</span>';
+      if (f.resume?.complete) {
+        // Surface when + which agent version finished this file, plus a
+        // re-run button so the user can re-trigger when the log has grown.
+        // Re-run posts {action:'rerun',paths:[path]} which clears bytePos
+        // and re-enqueues the file for backfill.
+        const when = f.resume?.completedAt
+          ? new Date(f.resume.completedAt).toLocaleString()
+          : '';
+        const ver = f.resume?.agentVersion ? 'v' + f.resume.agentVersion : '';
+        const counts = f.resume?.chatCount != null
+          ? f.resume.chatCount + ' chat · ' + (f.resume.encounterCount || 0) + ' enc'
+          : '';
+        const tip = [when, ver, counts].filter(Boolean).join(' · ');
+        resumeStr =
+          '<span style="color:var(--green)" title="' + esc(tip) + '">✓ done</span>' +
+          (when ? ' <span class="dim" style="font-size:10px">' + esc(when.replace(/, /, ' ')) + (ver ? ' · ' + esc(ver) : '') + '</span>' : '') +
+          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill on this file in case the log has new data the prior run didn\'t see" style="margin-left:6px;background:transparent;border:1px solid var(--border);color:var(--dim);font-size:10px;padding:1px 6px;border-radius:3px;cursor:pointer">↻ Re-run</button>';
+      }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
         const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
         resumeStr = '<span style="color:var(--gold)">' + pct + '% (line ' + (f.resume.lineNum || '?') + ')</span>';
@@ -3015,6 +3101,20 @@ function renderOptin(o) {
         await postOptin('stop');
         refreshOptin(); return;
       }
+    });
+  });
+  // Per-file ↻ Re-run button on completed entries. Clears the saved
+  // bytePos for that single path and kicks a fresh backfill from byte 0
+  // so any data appended since the last completion gets processed. The
+  // server-side dedup (encounters window + chat unique key + fun_events
+  // unique key) keeps re-uploaded events from inflating any totals.
+  root.querySelectorAll('button[data-rerun]').forEach(b => {
+    b.addEventListener('click', async () => {
+      const p = b.dataset.rerun;
+      if (!p) return;
+      if (!confirm('Re-run backfill on this file from the beginning? Useful when the log has grown since the last completion.')) return;
+      await postOptin('rerun', { paths: [p] });
+      refreshOptin();
     });
   });
   const sel = root.querySelector('#sortMode');
@@ -3272,6 +3372,25 @@ function startWebDashboard(port) {
             if (_activeBackfills.has(p)) _abortedBackfills.add(p);
           }
           console.log(`[optin] Stop requested for ${toStop.length} backfill(s)`);
+        } else if (action === 'rerun') {
+          // Reset the saved progress for these paths and re-trigger a
+          // fresh backfill from byte 0. Server-side dedup keeps re-
+          // uploaded data from inflating any totals; the prior
+          // completedAt / agentVersion in the entry get overwritten when
+          // this fresh run finishes.
+          const toRerun = [];
+          for (const p of paths) {
+            const f = byPath.get(p);
+            if (!f) continue;
+            delete _optinState.progress[p];
+            f.selected = true;
+            toRerun.push(f);
+          }
+          _saveOptInState();
+          if (toRerun.length > 0) {
+            runOptinBackfill(toRerun, { log: (m) => console.log(`[optin] ${m}`) });
+            console.log(`[optin] Re-run kicked for ${toRerun.length} file(s)`);
+          }
         } else {
           res.writeHead(400); return res.end(JSON.stringify({ error: 'unknown action' }));
         }
@@ -4222,7 +4341,12 @@ function runOptinBackfill(files, opts = {}) {
           ({ bytePos, lineNum }) => {
             status.bytePos = bytePos;
             status.lineNum = lineNum;
+            // Preserve completedAt / agentVersion / counts from a prior
+            // completion when overwriting (e.g. mid-resume) — they're the
+            // historical record of when this file was last fully processed.
+            const prior = _optinState.progress[f.path] || {};
             _optinState.progress[f.path] = {
+              ...prior,
               bytePos, lineNum, totalBytes,
               character: f.character,
               updatedAt: new Date().toISOString(),
@@ -4242,11 +4366,16 @@ function runOptinBackfill(files, opts = {}) {
           _optinState.progress[f.path] = {
             bytePos: totalBytes, lineNum: -1, totalBytes,
             character: f.character,
-            updatedAt: new Date().toISOString(), complete: true,
+            updatedAt:    new Date().toISOString(),
+            completedAt:  new Date().toISOString(),
+            agentVersion: AGENT_VERSION,
+            chatCount:    status.chatCount    || 0,
+            encounterCount: status.encounterCount || 0,
+            complete: true,
           };
           _saveOptInState();
           status.state = 'done';
-          log(`  ✓ Done: ${f.character} (${status.chatCount} chat, ${status.encounterCount} encounters)`);
+          log(`  ✓ Done: ${f.character} v${AGENT_VERSION} (${status.chatCount} chat, ${status.encounterCount} encounters)`);
         }
       } catch (err) {
         status.state = 'error';
