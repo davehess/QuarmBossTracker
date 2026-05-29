@@ -28,8 +28,10 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Officer check runs server-side per request so the Admin nav link only
   // appears for officers. Non-officers never see the link in the source.
+  // Signed-in users see "Me" — anonymous visitors don't.
   const { data: { user } } = await supabaseServer().auth.getUser();
   const showAdmin = user ? await isOfficer(user.id) : false;
+  const showMe    = !!user;
 
   return (
     <html lang="en">
@@ -41,7 +43,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <span>Wolf Pack EQ — Tracker</span>
             </h1>
             <div className="flex items-center gap-3">
-              <Nav showAdmin={showAdmin} />
+              <Nav showAdmin={showAdmin} showMe={showMe} />
               <AuthBadge />
             </div>
           </header>

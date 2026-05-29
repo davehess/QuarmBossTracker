@@ -13,13 +13,13 @@ const links = [
   { href: '/fun',           label: '🎉 Fun' },
 ];
 
-// showAdmin is computed server-side in the root layout (based on officer
-// role) and passed in so non-officers never see the link.
-export default function Nav({ showAdmin = false }: { showAdmin?: boolean }) {
+// showAdmin / showMe are computed server-side in the root layout (signed-in
+// users see "Me"; officers see "Admin") so non-targets never see the link.
+export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?: boolean; showMe?: boolean }) {
   const path = usePathname();
-  const allLinks = showAdmin
-    ? [...links, { href: '/admin', label: '🛡️ Admin' }]
-    : links;
+  const allLinks = [...links];
+  if (showMe)    allLinks.push({ href: '/me',    label: '👤 Me'    });
+  if (showAdmin) allLinks.push({ href: '/admin', label: '🛡️ Admin' });
   return (
     <nav className="flex gap-2">
       {allLinks.map(({ href, label }) => {

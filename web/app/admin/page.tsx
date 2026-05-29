@@ -34,6 +34,11 @@ export default function AdminPage() {
           body="Set or correct characters.discord_id. Auto-suggests matches from member nicknames + main-name fallback; manual dropdown for the rest. Required for owner-only views (PvP deaths, future loot history)."
           href="/admin/links"
         />
+        <Card
+          title="🎒 Quarmy URLs"
+          body="Bulk-set characters.quarmy_url. Per-row edit and a bulk-paste mode for quickly seeding URLs across the roster."
+          href="/admin/quarmy"
+        />
       </section>
     </div>
   );
