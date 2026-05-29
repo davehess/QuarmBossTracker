@@ -4,7 +4,7 @@
 |---|---|---|
 | **Bot** | 2.5.35 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 2.4.21 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 0.4.16 | `web/package.json` |
+| **Web** (`wolfpack.quest`) | 0.4.17 | `web/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)

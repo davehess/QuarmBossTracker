@@ -39,6 +39,21 @@ export default function AdminPage() {
           body="Bulk-set characters.quarmy_url. Per-row edit and a bulk-paste mode for quickly seeding URLs across the roster."
           href="/admin/quarmy"
         />
+        <Card
+          title="🛰️ Agent fleet"
+          body="Who's uploading right now, who's gone stale, which agent versions are deployed, recent errors. Plus the backfill request board (pending / acked / completed / dismissed)."
+          href="/admin/agents"
+        />
+        <Card
+          title="📜 Audit log"
+          body="Searchable mirror of the audit trail thread — filter by actor, action, boss name, date range. Bot v2.5.35+ mirrors every kill/unkill/updatetimer."
+          href="/admin/audit"
+        />
+        <Card
+          title="📬 Feedback inbox"
+          body="Mirror of /feedback submissions with status tracking. Acknowledge / mark addressed / add officer notes without scrolling the Discord thread."
+          href="/admin/feedback"
+        />
       </section>
     </div>
   );
