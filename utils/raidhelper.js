@@ -142,4 +142,114 @@ async function loadTonightsTargets(client, bosses, findBossFromName) {
   };
 }
 
-module.exports = { loadTonightsTargets, loadTonightsEvent, extractTargets, extractDescription };
+// ── Sign-up extraction ─────────────────────────────────────────────────────
+// RaidHelper embeds put sign-ups in embed.fields. Each field is a class /
+// role / status bucket (Tank, Healer, Melee, Ranged, Caster, Tentative,
+// Absence, Bench, Late). The value is a newline-separated list, each line
+// looks like "1. <@discord_id> <Class>" or sometimes just "<@id>".
+//
+// We don't try to identify which RaidHelper template was used — we just
+// capture every <@id> mention under each field and call the field name
+// the status. The web UI buckets by status (going / tentative / etc).
+const MENTION_RX = /<@!?(\d+)>/g;
+
+// Bucket common RaidHelper field names. Anything that doesn't look like
+// a known opt-out category becomes "going" — RH lets officers create
+// custom class fields (Druid / Necro / Shaman / etc) and any role-based
+// signup is a "yes" commitment.
+function _statusFromFieldName(name) {
+  const n = (name || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!n) return null;
+  if (n.includes('tent'))    return 'tentative';
+  if (n.includes('absen') || n.includes('decline') || n.includes('out')) return 'absence';
+  if (n.includes('bench'))   return 'bench';
+  if (n.includes('late') || n.includes('back')) return 'late';
+  return 'going';
+}
+
+function extractSignups(embed) {
+  if (!embed || !Array.isArray(embed.fields)) return [];
+  const out = [];
+  let index = 0;
+  for (const f of embed.fields) {
+    const status = _statusFromFieldName(f?.name);
+    if (!status) continue;
+    const value = String(f?.value || '');
+    // Pull every Discord mention out of the field. We don't try to parse
+    // the class/spec label per row — too template-specific. Future
+    // enhancement: capture the role name from the field title (the
+    // RH-canonical class) as the role_or_class.
+    const className = f.name?.replace(/[^A-Za-z0-9 ]/g, '').trim() || null;
+    let m;
+    while ((m = MENTION_RX.exec(value)) !== null) {
+      out.push({
+        discord_id:   m[1],
+        status,
+        class_name:   className,
+        signup_index: index++,
+      });
+    }
+  }
+  return out;
+}
+
+// One-shot: scan a Discord channel for the last N RaidHelper-authored
+// messages and produce { event, signups } tuples ready for upsert to
+// rh_events + rh_signups. Used by /scanraidhelper to seed historical
+// data without needing the RH REST API.
+//
+// We use msg.id as the synthetic event id (RH posts one event per
+// message, no embedded event-id field in v1 embeds). This keeps the
+// later API-backed sync from colliding because the API uses RH's own
+// numeric ids which are wildly different from Discord snowflakes.
+async function scanChannel(channel, { limit = 100 } = {}) {
+  const out = [];
+  if (!channel || typeof channel.messages?.fetch !== 'function') return out;
+  let lastId = null;
+  let fetched = 0;
+  while (fetched < limit) {
+    const batch = await channel.messages.fetch({
+      limit: Math.min(100, limit - fetched),
+      ...(lastId ? { before: lastId } : {}),
+    }).catch(() => null);
+    if (!batch || batch.size === 0) break;
+    for (const msg of batch.values()) {
+      lastId = msg.id;
+      fetched++;
+      if (!isRaidHelper(msg)) continue;
+      const embed = msg.embeds?.[0];
+      if (!embed) continue;
+
+      // Best-effort time extraction (same approach as loadTonightsEvent)
+      let eventMs = null;
+      const tsMatch = (embed.description || '').match(/<t:(\d+):[a-z]>/i);
+      if (tsMatch) eventMs = parseInt(tsMatch[1], 10) * 1000;
+      if (!eventMs && embed.timestamp) eventMs = new Date(embed.timestamp).getTime();
+      if (!eventMs) eventMs = msg.createdTimestamp;
+
+      out.push({
+        event: {
+          id:                msg.id,
+          server_id:         msg.guildId  || null,
+          channel_id:        channel.id   || null,
+          title:             embed.title  || null,
+          description:       (embed.description || '').slice(0, 4000),
+          start_time:        new Date(eventMs).toISOString(),
+          end_time:          null,
+          leader_discord_id: null,
+          template:          'discord_embed_scrape',
+          raw:               {
+            embed,
+            url:       msg.url,
+            createdAt: new Date(msg.createdTimestamp).toISOString(),
+          },
+        },
+        signups: extractSignups(embed),
+      });
+    }
+    if (batch.size < 100) break;  // exhausted
+  }
+  return out;
+}
+
+module.exports = { loadTonightsTargets, loadTonightsEvent, extractTargets, extractDescription, extractSignups, scanChannel };

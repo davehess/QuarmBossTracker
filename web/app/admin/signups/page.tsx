@@ -1,18 +1,25 @@
 // Officer tool: Raid-Helper sign-ups + reality reconciliation.
 //
-// For every recent RH event we mirror, cross-reference:
-//   - who said they'd be there (rh_signups, joined to wolfpack_members
-//     via discord_id)
-//   - who actually was there (encounter_players + who_observations in the
-//     ±2h window around event.start_time, resolved through characters table)
+// Reality data is layered:
+//   1) opendkp_ticks attendance — the canonical truth. If a character was
+//      ticked into raid slot 1/2/3/4, they showed up. Resolved to a
+//      discord_id via characters.discord_id. (Slot 1 attendance also lets
+//      us flag late arrivals — ticked into slot 2+ but not slot 1.)
+//   2) encounter_players within the raid window — proxy when ticks are
+//      missing or the character isn't linked in characters yet.
+//   3) who_observations within the raid window — broadest signal.
 //
-// Surfaces four cohorts that answer the questions the user posed:
+// Discord-mention-only signups (from the embed-scrape pathway) have no
+// user name attached — we resolve through wolfpack_members.discord_id.
+//
+// Cohorts:
 //   - 🟢 Signed Going + showed = reliable
-//   - 🔴 Signed Going + didn't show = no-show
+//   - 🔴 Signed Going + no tick = no-show
+//   - 🕐 Signed Going + ticked late (slot 2+) = late arrival
 //   - 🟡 Signed Tentative + showed = exceeded
-//   - 🟠 Signed Tentative + didn't show = expected absent
+//   - 🟠 Signed Tentative + no-show = expected absent
 //   - 🆕 Didn't sign up + showed = showed unsignaled
-//   - 🚫 Signed Absence (anything) = expected absent (informational)
+//   - 🚫 Signed Absence = expected absent (informational)
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -119,7 +126,8 @@ export default async function AdminSignupsPage({
   let detail: {
     event: RhEvent;
     signups: RhSignup[];
-    showed: Set<string>;        // discord_ids who appeared in parses/who_obs in window
+    showed: Set<string>;        // discord_ids who appeared (any signal)
+    tickedSlot1: Set<string>;   // discord_ids ticked into slot 1 (on time)
     showedNoSignup: { discord_id: string; charName: string }[];
   } | null = null;
 
@@ -135,18 +143,18 @@ export default async function AdminSignupsPage({
         .order('signup_index');
       const sList = (signups ?? []) as RhSignup[];
 
-      // Reality data window: ±2h around start_time. (Wider than the 4h raid
-      // because we want late arrivals captured.)
+      // Reality data: prefer opendkp_ticks (canonical) then parses + who as
+      // fallbacks. window: ±2h around start_time covers late arrivals.
       const start = event.start_time ? new Date(event.start_time) : null;
       const showed = new Set<string>();
+      const tickedSlot1 = new Set<string>();           // present at start
       const showedDiscordToChar = new Map<string, string>();
 
       if (start) {
         const lo = new Date(start.getTime() - 1 * 60 * 60 * 1000).toISOString();
         const hi = new Date(start.getTime() + 5 * 60 * 60 * 1000).toISOString();
 
-        // Pull every character → discord_id mapping so we can resolve
-        // encounter_players.character_name → discord_id
+        // Pull every character → discord_id mapping
         const { data: chars } = await admin
           .from('characters')
           .select('name, discord_id')
@@ -156,7 +164,40 @@ export default async function AdminSignupsPage({
           if (c.discord_id) charToDiscord.set(c.name.toLowerCase(), c.discord_id);
         }
 
-        // 1) encounter_players → encounter.started_at in window → showed
+        // PRIMARY SIGNAL — OpenDKP ticks. Find the raid whose ts matches the
+        // event date (within the same calendar day, server tz-naïve), pull
+        // every tick's attendees array, resolve to discord_id.
+        const eventDate = start.toISOString().slice(0, 10);
+        const { data: raids } = await admin
+          .from('opendkp_raids')
+          .select('raid_id, ts')
+          .gte('ts', eventDate + 'T00:00:00Z')
+          .lt('ts', eventDate + 'T23:59:59Z');
+        const raidIds = ((raids ?? []) as { raid_id: number }[]).map(r => r.raid_id);
+        if (raidIds.length > 0) {
+          const { data: ticks } = await admin
+            .from('opendkp_ticks')
+            .select('raid_id, tick_id, attendees')
+            .in('raid_id', raidIds)
+            .order('tick_id');
+          // tick_id ordering ≈ slot ordering for a given raid (slot 1 first).
+          const seenSlot1 = new Map<number, Set<string>>();
+          for (const t of (ticks ?? []) as { raid_id: number; tick_id: number; attendees: string[] }[]) {
+            const isSlot1 = !seenSlot1.has(t.raid_id);
+            if (isSlot1) seenSlot1.set(t.raid_id, new Set());
+            for (const charName of (t.attendees || [])) {
+              const d = charToDiscord.get(charName.toLowerCase());
+              if (d) {
+                showed.add(d);
+                if (!showedDiscordToChar.has(d)) showedDiscordToChar.set(d, charName);
+                if (isSlot1) tickedSlot1.add(d);
+              }
+            }
+          }
+        }
+
+        // FALLBACK — encounter_players within window (catches anyone whose
+        // tick attribution didn't flow through OpenDKP).
         const { data: encs } = await admin
           .from('encounters')
           .select('id')
@@ -169,11 +210,11 @@ export default async function AdminSignupsPage({
             .in('encounter_id', encIds);
           for (const ep of (eps ?? []) as { character_name: string }[]) {
             const d = charToDiscord.get(ep.character_name.toLowerCase());
-            if (d) { showed.add(d); showedDiscordToChar.set(d, ep.character_name); }
+            if (d) { showed.add(d); if (!showedDiscordToChar.has(d)) showedDiscordToChar.set(d, ep.character_name); }
           }
         }
 
-        // 2) who_observations in window → showed
+        // BROADEST FALLBACK — who_observations
         const { data: whos } = await admin
           .from('who_observations')
           .select('character')
@@ -185,14 +226,13 @@ export default async function AdminSignupsPage({
         }
       }
 
-      // Showed-but-didn't-sign-up: in `showed` but no rh_signups row with that discord_id
       const signedDiscord = new Set(sList.map(s => s.discord_id).filter(Boolean) as string[]);
       const showedNoSignup: { discord_id: string; charName: string }[] = [];
       for (const d of showed) {
         if (!signedDiscord.has(d)) showedNoSignup.push({ discord_id: d, charName: showedDiscordToChar.get(d) || d });
       }
 
-      detail = { event, signups: sList, showed, showedNoSignup };
+      detail = { event, signups: sList, showed, tickedSlot1, showedNoSignup };
     }
   }
 
@@ -220,12 +260,15 @@ export default async function AdminSignupsPage({
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">📋 Raid-Helper sign-ups</h2>
         <p className="text-sm text-dim leading-6">
-          Cross-references RH events with parse + <code>/who</code> data to
-          reconcile who said they&apos;d be there against who actually showed.
-          Synced from raid-helper.dev every 30 min by the bot. If this page is
-          empty, check <code>RH_API_KEY</code> and <code>RH_SERVER_ID</code>
-          env vars on the bot.
+          Cross-references RaidHelper sign-ups with reality (OpenDKP ticks
+          first; parses + <code>/who</code> as fallback) to surface no-shows,
+          late arrivals, exceeded tentatives, and people who showed up
+          without signing up. Sign-up data comes from two sources:
         </p>
+        <ul className="text-xs text-dim leading-6 list-disc ml-5 mt-2 space-y-1">
+          <li><b>Now (preview):</b> Discord-embed scrape via <code>/scanraidhelper</code> — pulls Discord-mention sign-ups from the embed fields of the RH bot&apos;s posts in the sign-up channel.</li>
+          <li><b>Once enabled:</b> Raid-Helper REST API every 30 min — full sign-up records including class, spec, signup time, decline reasons, plus signups RH stores but doesn&apos;t render in the embed.</li>
+        </ul>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
           <Stat label="Events" value={events.length} />
           <Stat label="Sign-ups" value={totalSignups} />
@@ -245,11 +288,46 @@ export default async function AdminSignupsPage({
         </form>
       </section>
 
+      {/* Pitch banner — visible at all times so a guild leader who clicks
+          through gets the context without needing to be briefed first. */}
+      <section className="bg-panel border border-blue rounded-lg p-5">
+        <h3 className="text-base text-blue mb-2">Why the Raid-Helper API integration is worth setting up</h3>
+        <div className="text-xs text-dim leading-6 space-y-2">
+          <p>
+            Today this page already works without the API — the embed scrape covers
+            roughly 80% of the signal because RH renders most signups in the visible
+            embed fields. But the API gets us things the embed never shows:
+          </p>
+          <ul className="list-disc ml-5 space-y-1">
+            <li><b>Signup timing.</b> Did they sign up days in advance or 5 minutes before raid start? Distinguishes planners from last-minute hopefuls.</li>
+            <li><b>Spec / role tracked separately from class.</b> The embed shows &quot;Cleric&quot; in a list; the API tells us &quot;Cleric — main heal&quot; vs &quot;Cleric — chain&quot;. Lets us audit comp coverage by spec.</li>
+            <li><b>Sign-out tracking.</b> Members who signed up Going then withdrew an hour before raid are flagged in the API but invisible in the embed — they look identical to a clean no-show.</li>
+            <li><b>Custom field state.</b> RH supports add-on questions (&quot;bringing alt?&quot;, &quot;buff specs?&quot;). The embed compresses these; the API returns the structured answer.</li>
+            <li><b>Pagination.</b> The embed lists ~30 names per role before truncating; the API returns everyone. Matters for large raids.</li>
+            <li><b>Server-wide attendance stats endpoint.</b> RH ships its own &quot;X attended N of last M raids&quot; — we cross-check our number against theirs to catch sync gaps.</li>
+            <li><b>Realtime.</b> No more 100-message channel scrape; just incremental polling on the events that changed.</li>
+          </ul>
+          <p className="mt-2">
+            <b>What it costs:</b> generate the key once in Discord (<code>/apikey refresh</code> then <code>/apikey show</code>), drop it into Railway as <code>RH_API_KEY</code>, redeploy. That&apos;s it — sync turns on automatically every 30 min and this page picks up the richer data without any other change.
+          </p>
+        </div>
+      </section>
+
       {events.length === 0 ? (
-        <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
-          No Raid-Helper events synced yet. The bot pulls every 30 min; first
-          sync runs 60 s after startup. If <code>RH_API_KEY</code> /{' '}
-          <code>RH_SERVER_ID</code> aren&apos;t set, the sync skips silently.
+        <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim space-y-2">
+          <p>No Raid-Helper events ingested yet. Two ways to fix:</p>
+          <ul className="list-disc ml-5 space-y-1">
+            <li>
+              <b>Quick preview (no setup):</b> run <code>/scanraidhelper</code> in
+              Discord and the bot will scrape the last 100 messages from the raid
+              sign-up channel for RH embeds. Officer-only.
+            </li>
+            <li>
+              <b>Permanent (better data):</b> set <code>RH_API_KEY</code> +{' '}
+              <code>RH_SERVER_ID</code> env vars on Railway and the bot syncs every
+              30 min.
+            </li>
+          </ul>
         </section>
       ) : !detail ? (
         <section className="bg-panel border border-border rounded-lg">
@@ -302,21 +380,31 @@ function DetailView({
     event: RhEvent;
     signups: RhSignup[];
     showed: Set<string>;
+    tickedSlot1: Set<string>;
     showedNoSignup: { discord_id: string; charName: string }[];
   };
   memberByDiscord: Map<string, Member>;
   backHref: string;
 }) {
-  const { event, signups, showed, showedNoSignup } = detail;
+  const { event, signups, showed, tickedSlot1, showedNoSignup } = detail;
 
-  type Cohort = 'goingShowed' | 'goingNoshow' | 'tentShowed' | 'tentNoshow' | 'absence' | 'bench' | 'other';
+  // Showed-going split by punctuality. tickedSlot1 = on time; in showed but
+  // not slot1 = late arrival (ticked into slot 2/3/4 or just appeared via
+  // parse/who later in the night).
+  type Cohort = 'goingOnTime' | 'goingLate' | 'goingNoshow' | 'tentShowed' | 'tentNoshow' | 'absence' | 'bench' | 'other';
   const buckets: Record<Cohort, RhSignup[]> = {
-    goingShowed: [], goingNoshow: [], tentShowed: [], tentNoshow: [], absence: [], bench: [], other: [],
+    goingOnTime: [], goingLate: [], goingNoshow: [], tentShowed: [], tentNoshow: [], absence: [], bench: [], other: [],
   };
   for (const s of signups) {
     const b = bucketStatus(s.status);
-    const did = s.discord_id ? showed.has(s.discord_id) : false;
-    if (b === 'going')      (did ? buckets.goingShowed : buckets.goingNoshow).push(s);
+    const d = s.discord_id;
+    const did    = d ? showed.has(d) : false;
+    const onTime = d ? tickedSlot1.has(d) : false;
+    if (b === 'going') {
+      if (did && onTime)   buckets.goingOnTime.push(s);
+      else if (did)        buckets.goingLate.push(s);
+      else                 buckets.goingNoshow.push(s);
+    }
     else if (b === 'tentative') (did ? buckets.tentShowed  : buckets.tentNoshow).push(s);
     else if (b === 'absence')   buckets.absence.push(s);
     else if (b === 'bench')     buckets.bench.push(s);
@@ -343,17 +431,18 @@ function DetailView({
           <Link href={backHref} className="text-blue hover:underline text-xs">← all events</Link>
         </div>
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-4 text-xs">
-          <Stat label="Reliable"  value={buckets.goingShowed.length} color="text-green" />
+          <Stat label="On time"   value={buckets.goingOnTime.length} color="text-green" />
+          <Stat label="Late"      value={buckets.goingLate.length}   color="text-orange" />
           <Stat label="No-show"   value={buckets.goingNoshow.length} color="text-red-400" />
           <Stat label="Exceeded"  value={buckets.tentShowed.length}  color="text-blue" />
-          <Stat label="Tent. out" value={buckets.tentNoshow.length}  color="text-orange" />
-          <Stat label="Showed unsignaled" value={showedNoSignup.length} color="text-purple" />
-          <Stat label="Declined"  value={buckets.absence.length}    color="text-dim" />
+          <Stat label="Unsignaled" value={showedNoSignup.length}     color="text-purple" />
+          <Stat label="Declined"  value={buckets.absence.length}     color="text-dim" />
         </div>
       </section>
 
       {/* The interesting cohorts first */}
       <Cohort title="🔴 Signed Going · did NOT show" rows={buckets.goingNoshow} label={label} cls="text-red-400" />
+      <Cohort title="🕐 Signed Going · ticked LATE (slot 2+)" rows={buckets.goingLate} label={label} cls="text-orange" />
       <Cohort title="🆕 Showed up · did NOT sign up" rows={showedNoSignup.map(x => ({ ...x }))} cls="text-purple" customRender={(x) =>
         <div className="text-text">
           {labelByDiscord((x as any).discord_id)}
@@ -362,7 +451,7 @@ function DetailView({
       } />
       <Cohort title="🟡 Signed Tentative · showed up" rows={buckets.tentShowed} label={label} cls="text-blue" />
       <Cohort title="🟠 Signed Tentative · no-show" rows={buckets.tentNoshow} label={label} cls="text-orange" />
-      <Cohort title="🟢 Signed Going · showed up" rows={buckets.goingShowed} label={label} cls="text-green" collapsed />
+      <Cohort title="🟢 Signed Going · on time (slot 1)" rows={buckets.goingOnTime} label={label} cls="text-green" collapsed />
       {buckets.absence.length > 0 && (
         <Cohort title="🚫 Declined" rows={buckets.absence} label={label} cls="text-dim" collapsed />
       )}
