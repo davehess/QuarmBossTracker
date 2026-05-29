@@ -815,7 +815,9 @@ class EncounterBuilder {
     // players — Quarm NPCs like 'Nillipuss' have single-word capitalised names
     // and would otherwise show up as tanks. isConfirmedPlayer whitelists from
     // /who, watchedLogs, healers, and chat speakers.
-    if (isConfirmedPlayer(name)) {
+    // Silent builders (opt-in backfill) skip this so old log replays don't
+    // pollute the live dashboard's tank/healer panels.
+    if (!this.silent && isConfirmedPlayer(name)) {
       if (!stats.sessionDefenders[name]) {
         stats.sessionDefenders[name] = {
           damageTaken: 0, hits: 0, ripostes: 0, ripostedFor: 0,
@@ -830,9 +832,11 @@ class EncounterBuilder {
   // so dashboard renderers can display a live threat meter without poking
   // EncounterBuilder internals.
   // Per-attacker DPS breakdown bucket — initialised lazily, updated live by
-  // damage and critical events. Used by the DEEPS tab.
+  // damage and critical events. Used by the DEEPS tab. Silent builders
+  // (opt-in backfill) skip this entirely so old log replays don't move
+  // the live DEEPS panel.
   _bumpDeeps(attacker, category, amount, abilityName) {
-    if (!attacker) return;
+    if (!attacker || this.silent) return;
     if (!stats.sessionDeeps[attacker]) {
       stats.sessionDeeps[attacker] = {
         melee: { count: 0, total: 0, max: 0 },
@@ -981,11 +985,14 @@ class EncounterBuilder {
     // ── Monk Mend ────────────────────────────────────────────────────────────
     // Counter-only event — not added to this.events, doesn't gate startedAt.
     // Crit rate is a per-character session stat surfaced on the Info screen.
+    // Silent builders skip this so old log replays don't move the mend counter.
     if (event.type === 'mend') {
-      stats.sessionMends.attempts++;
-      if (event.outcome === 'crit')        { stats.sessionMends.crit++;    stats.sessionMends.success++; }
-      else if (event.outcome === 'regular'){ stats.sessionMends.success++; }
-      else if (event.outcome === 'fail')   { stats.sessionMends.fail++; }
+      if (!this.silent) {
+        stats.sessionMends.attempts++;
+        if (event.outcome === 'crit')        { stats.sessionMends.crit++;    stats.sessionMends.success++; }
+        else if (event.outcome === 'regular'){ stats.sessionMends.success++; }
+        else if (event.outcome === 'fail')   { stats.sessionMends.fail++; }
+      }
       return;
     }
 
@@ -1249,7 +1256,11 @@ class EncounterBuilder {
         const whoEntry     = whoData.get(defName.toLowerCase());
         const charClass    = whoEntry?.class?.trim() || null;
         this.deaths.push({ name: defName, ts: event.ts, riposteDeath, class: charClass });
-        stats.sessionDeaths[defName] = (stats.sessionDeaths[defName] || 0) + 1;
+        // Silent builders (opt-in backfill) skip the session-wide deaths
+        // counter — old log replays shouldn't move the Deaths panel.
+        if (!this.silent) {
+          stats.sessionDeaths[defName] = (stats.sessionDeaths[defName] || 0) + 1;
+        }
       }
     }
 
@@ -1481,42 +1492,40 @@ class EncounterBuilder {
       },
     };
     // ── Accumulate into session stats ─────────────────────────────────────
-    // Defender stats (tanks) — single-word names only (skip NPCs)
-    // Defender stats now stream live into stats.sessionDefenders via
-    // _bumpDefender, so dashboard reflects damage taken even when a fight
-    // ends without a kill (wipes, gating out, etc.). We only need flush()
-    // to add invulnAvoidedDmg here because it requires the per-encounter
-    // bossMaxMelee × invulns product.
-    for (const [name, s] of this.defenderStats) {
-      if (/\s/.test(name)) continue;
-      if (!stats.sessionDefenders[name]) continue;  // already initialised live
-      const sd = stats.sessionDefenders[name];
-      sd.invulnAvoidedDmg = (sd.invulnAvoidedDmg || 0)
-                          + (s.invulns || 0) * (this.bossMaxMelee || 0);
-    }
-    // Healer stats
-    for (const [name, s] of this.healerStats) {
-      if (!stats.sessionHealers[name]) {
-        stats.sessionHealers[name] = { healed: 0, ticks: 0, targets: new Set() };
+    // Silent builders (opt-in backfill) skip every session-stat roll-up
+    // here so old log replays don't pollute the live dashboard panes —
+    // the encounter still uploads to the bot for Supabase persistence
+    // (via onFlush), it just doesn't move the local "this session"
+    // counters.
+    if (!this.silent) {
+      // Defender stats (tanks) — single-word names only (skip NPCs).
+      // Defender stats now stream live into stats.sessionDefenders via
+      // _bumpDefender, so dashboard reflects damage taken even when a
+      // fight ends without a kill (wipes, gating out, etc.). We only
+      // need flush() to add invulnAvoidedDmg here because it requires
+      // the per-encounter bossMaxMelee × invulns product.
+      for (const [name, s] of this.defenderStats) {
+        if (/\s/.test(name)) continue;
+        if (!stats.sessionDefenders[name]) continue;  // already initialised live
+        const sd = stats.sessionDefenders[name];
+        sd.invulnAvoidedDmg = (sd.invulnAvoidedDmg || 0)
+                            + (s.invulns || 0) * (this.bossMaxMelee || 0);
       }
-      const sh = stats.sessionHealers[name];
-      sh.healed = (sh.healed || 0) + (s.healed || 0);
-      sh.ticks  = (sh.ticks  || 0) + (s.ticks  || 0);
-      for (const t of s.targets) sh.targets.add(t);
-    }
-    // Mob proc counter — non-melee abilities that mobs used against players
-    if (this.bossName) {
-      for (const e of this.events) {
-        if (e.type !== 'damage' || !e.attacker || !e.ability) continue;
-        if (e.attacker !== this.bossName) continue;
-        const aLower = e.ability.toLowerCase();
-        if (MELEE_ABILITIES.has(aLower) || aLower === 'hit') continue;
-        if (!stats.sessionProcs[this.bossName]) stats.sessionProcs[this.bossName] = {};
-        const mob = stats.sessionProcs[this.bossName];
-        if (!mob[e.ability]) mob[e.ability] = { count: 0, totalDmg: 0 };
-        mob[e.ability].count++;
-        mob[e.ability].totalDmg += e.amount || 0;
+      // Healer stats
+      for (const [name, s] of this.healerStats) {
+        if (!stats.sessionHealers[name]) {
+          stats.sessionHealers[name] = { healed: 0, ticks: 0, targets: new Set() };
+        }
+        const sh = stats.sessionHealers[name];
+        sh.healed = (sh.healed || 0) + (s.healed || 0);
+        sh.ticks  = (sh.ticks  || 0) + (s.ticks  || 0);
+        for (const t of s.targets) sh.targets.add(t);
       }
+      // Mob proc counter is intentionally NOT accumulated anymore — the
+      // panel that consumed it surfaced misclassified data (player names
+      // landing under "pet" entries) and was removed from the dashboard
+      // pending a real design. Keep the events flowing for the upload
+      // payload; just don't roll them into stats.sessionProcs.
     }
 
     this.onFlush(payload);
@@ -2261,19 +2270,9 @@ function renderTanks(s) {
     h += '</table>';
   }
   h += '</div>';
-  // Mob procs
-  h += '<div class="card wide"><h2>Mob Procs / Special Abilities</h2>';
-  const mobs = Object.entries(s.sessionProcs||{});
-  if (!mobs.length) h += '<div class="dim">No proc events observed yet.</div>';
-  else for (const [mob, abs] of mobs) {
-    h += '<h3 style="color:var(--orange);margin-top:10px">' + esc(mob) + '</h3><table>';
-    const sorted = Object.entries(abs).sort((a,b)=>b[1].count-a[1].count);
-    for (const [ab, st] of sorted) {
-      h += '<tr><td>' + esc(ab) + '</td><td class="num">' + st.count + 'x</td><td class="num">' + fmtK(st.totalDmg) + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
+  // Mob Procs / Special Abilities — removed pending a real design.
+  // The previous panel showed misclassified data (player names landing
+  // under "pet" entries) and wasn't useful as-is. Hide until reworked.
   // Deaths
   const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
   h += '<div class="card"><h2>Deaths This Session</h2>';
