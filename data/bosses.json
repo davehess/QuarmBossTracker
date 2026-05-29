@@ -670,16 +670,6 @@
     "pqdiUrl": "https://www.pqdi.cc/npc/162065"
   },
   {
-    "id": "ssraeshzian_blood_golem",
-    "name": "Ssraeshzian Blood Golem",
-    "zone": "Ssraeshza Temple",
-    "expansion": "Luclin",
-    "timerHours": 162,
-    "nicknames": ["blood golem", "golem", "sbg"],
-    "emoji": "🩸",
-    "pqdiUrl": "https://www.pqdi.cc/npc/162493"
-  },
-  {
     "id": "high_priest_ssraeshza",
     "name": "High Priest of Ssraeshza",
     "zone": "Ssraeshza Temple",

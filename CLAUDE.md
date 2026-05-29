@@ -2,9 +2,9 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 2.5.21 | `package.json` |
+| **Bot** | 2.5.21 | `package.json` |  *(no live-bot code changes this commit; data migration only)*
 | **Agent** (`wolfpack-logsync`) | 2.4.11 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 0.4.6 | `web/package.json` |
+| **Web** (`wolfpack.quest`) | 0.4.7 | `web/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)

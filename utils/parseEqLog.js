@@ -45,6 +45,10 @@ function parseEQLog(str) {
 }
 
 // Boss matching: exact > nickname > partial (closest name length, tie: longer wins).
+// Final tiebreaker for direction-specific Vex Thal mobs (Kaas Thox Xi Aten Ha Ra,
+// Thall Va Xakra): when EQ logs the unqualified name, both (North) and (South)
+// variants are equally-good partial matches. Prefer (South) so the bot's auto-
+// kill / parse routing is deterministic — south goes first this raid era.
 function findBossFromName(parsedName, bosses) {
   const nl = parsedName.toLowerCase().trim();
   const exact = bosses.find(b => b.name.toLowerCase() === nl);
@@ -56,7 +60,16 @@ function findBossFromName(parsedName, bosses) {
     .sort((a, b) => {
       const da = Math.abs(a.name.length - nl.length);
       const db = Math.abs(b.name.length - nl.length);
-      return da !== db ? da - db : b.name.length - a.name.length;
+      if (da !== db) return da - db;
+      // Length-distance tie: prefer South over North for the Vex Thal pair.
+      const aSouth = /\(south\)/i.test(a.name);
+      const bSouth = /\(south\)/i.test(b.name);
+      if (aSouth !== bSouth) return aSouth ? -1 : 1;
+      const aNorth = /\(north\)/i.test(a.name);
+      const bNorth = /\(north\)/i.test(b.name);
+      if (aNorth !== bNorth) return aNorth ? 1 : -1;
+      // Otherwise longer name wins (same as before).
+      return b.name.length - a.name.length;
     });
   return partials[0] || null;
 }

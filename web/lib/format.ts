@@ -22,22 +22,31 @@ export function fmtTime(iso: string) {
   });
 }
 
-// YYYY-MM-DD for grouping. Locale-stable across timezones — uses en-CA which
-// renders ISO-style.
+// Raid nights run in Eastern time (matches the bot's DEFAULT_TIMEZONE), so
+// bucket every timestamp by US Eastern day instead of UTC. Otherwise a 9 PM
+// ET kill lands at 01:00 UTC the next day and gets pushed into "tomorrow"
+// when rendered on Vercel's UTC server.
+const RAID_TZ = 'America/New_York';
+
+// YYYY-MM-DD for grouping. Forces RAID_TZ so the day boundary is midnight
+// Eastern, not midnight UTC.
 export function dayKey(iso: string) {
-  return new Date(iso).toLocaleDateString('en-CA');
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: RAID_TZ });
 }
 
 export function dayLabel(key: string) {
-  const today    = new Date();
-  const todayKey = today.toLocaleDateString('en-CA');
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayKey = yesterday.toLocaleDateString('en-CA');
+  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: RAID_TZ });
+  // Yesterday's key — subtract 24h in Eastern via a string-based parse so we
+  // don't have to wrestle with DST math on the server.
+  const yesterday = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = yesterday.toLocaleDateString('en-CA', { timeZone: RAID_TZ });
   if (key === todayKey)     return 'Tonight';
   if (key === yesterdayKey) return 'Yesterday';
-  return new Date(key + 'T00:00:00').toLocaleDateString('en-US', {
+  // Parse the key as a noon-Eastern timestamp to avoid the DST seam on
+  // midnight boundaries flipping the displayed weekday.
+  return new Date(key + 'T12:00:00-05:00').toLocaleDateString('en-US', {
     weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
+    timeZone: RAID_TZ,
   });
 }
 

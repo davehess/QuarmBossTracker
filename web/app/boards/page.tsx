@@ -10,7 +10,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
-import BoardTicker from './ticker';
+import ExpansionSection from './ExpansionSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -115,38 +115,21 @@ export default async function BoardsPage() {
         const bosses = byExpansion.get(expansion);
         if (!bosses || bosses.length === 0) return null;
         const meta = EXPANSION_META[expansion];
-        // Group bosses by zone within each expansion
         const byZone = new Map<string, BoardRow[]>();
         for (const b of bosses) {
           const z = b.zone || 'Unknown zone';
           if (!byZone.has(z)) byZone.set(z, []);
           byZone.get(z)!.push(b);
         }
+        const zones = [...byZone.entries()].map(([zone, list]) => ({ zone, bosses: list }));
         return (
-          <section key={expansion} className={`bg-panel border ${meta.accent} rounded-lg p-4`}>
-            <h3 className="text-base text-text mb-3 font-semibold">{meta.label}</h3>
-            <div className="space-y-3">
-              {[...byZone.entries()].map(([zone, list]) => (
-                <div key={zone}>
-                  <div className="text-xs text-dim uppercase tracking-wide mb-1">{zone}</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {list.map(b => (
-                      <BoardTicker
-                        key={b.boss_id}
-                        bossId={b.boss_id}
-                        name={b.name || b.boss_id}
-                        emoji={b.emoji || '⚔️'}
-                        pqdiUrl={b.pqdi_url}
-                        nextSpawnIso={b.next_spawn}
-                        killedAtIso={b.killed_at}
-                        timerHours={b.timer_hours}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+          <ExpansionSection
+            key={expansion}
+            expansion={expansion}
+            label={meta.label}
+            accentClass={meta.accent}
+            zones={zones}
+          />
         );
       })}
     </div>
