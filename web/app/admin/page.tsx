@@ -54,6 +54,11 @@ export default function AdminPage() {
           body="Mirror of /feedback submissions with status tracking. Acknowledge / mark addressed / add officer notes without scrolling the Discord thread."
           href="/admin/feedback"
         />
+        <Card
+          title="📋 Sign-up accuracy"
+          body="Raid-Helper events vs reality (parses + /who). Find no-shows, exceeded-tentatives, and people who showed up without signing up."
+          href="/admin/signups"
+        />
       </section>
     </div>
   );

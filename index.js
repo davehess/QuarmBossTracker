@@ -93,6 +93,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   const { startWolfpackMembersSync } = require('./utils/wolfpackMembers');
   startWolfpackMembersSync(readyClient);
   startOpenDkpSync();
+  startRaidHelperSync();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
@@ -291,6 +292,25 @@ function startOpenDkpSync() {
     runSync().then(r => console.log('[opendkp-sync] interval:', JSON.stringify(r)))
              .catch(err => console.warn('[opendkp-sync] interval failed:', err?.message));
   }, OPENDKP_SYNC_INTERVAL_MS);
+}
+
+// Raid-Helper sync — pulls upcoming + recent events and per-event signups
+// every 30 min so /admin/signups has fresh data. Disabled when RH_API_KEY
+// or RH_SERVER_ID isn't set.
+function startRaidHelperSync() {
+  const rh = require('./utils/raidhelperApi');
+  if (!rh.isEnabled()) {
+    console.log('[raidhelper-api] skipped — RH_API_KEY and/or RH_SERVER_ID unset');
+    return;
+  }
+  setTimeout(() => {
+    rh.syncRecent().then(r => console.log('[raidhelper-api] initial:', JSON.stringify(r)))
+                   .catch(err => console.warn('[raidhelper-api] initial failed:', err?.message));
+  }, 60_000);
+  setInterval(() => {
+    rh.syncRecent().then(r => console.log('[raidhelper-api] interval:', JSON.stringify(r)))
+                   .catch(err => console.warn('[raidhelper-api] interval failed:', err?.message));
+  }, 30 * 60_000);
 }
 
 async function runStartupSequence(readyClient) {
