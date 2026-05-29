@@ -1,0 +1,29 @@
+{
+  "_comment": "Community-sourced list of characters believed to be Zek-affiliated. Loaded once on bot startup via applyKnownZekTips(). The conditional-merge logic preserves any existing whoData guild that is NOT Zek — so tipping a friendly character here is a no-op rather than a corruption.",
+  "_source": "Sir Malthur + Hitya + paul. tips from #known-roz on 2025-10-10",
+  "_updated_at": "2026-05-29",
+  "tips": [
+    { "name": "Jevvcy",       "class": "Monk",          "race": "Iksar" },
+    { "name": "Sweenie",      "class": "Cleric",        "race": "Gnome" },
+    { "name": "Maerg",        "class": "Bard" },
+    { "name": "Staymad",      "class": "Cleric" },
+    { "name": "Parsel",       "class": "Monk" },
+    { "name": "Malagen",      "class": "Cleric" },
+    { "name": "Tukx",         "class": "Shadow Knight" },
+    { "name": "Naikon",       "class": "Warrior" },
+    { "name": "Tlierwen",     "class": "Ranger" },
+    { "name": "Supports",     "class": "Shaman" },
+    { "name": "Bros",         "class": "Bard" },
+    { "name": "Pell",         "class": "Enchanter" },
+    { "name": "Darkhornx",    "class": "Shaman" },
+    { "name": "Eneurysm",     "class": "Enchanter" },
+    { "name": "Tannerite",    "class": "Wizard" },
+    { "name": "Tarskuk",      "class": "Rogue" },
+    { "name": "Kovert",       "class": "Rogue" },
+    { "name": "Leopard",      "class": "Beastlord" },
+    { "name": "Choopy",       "class": "Bard" },
+    { "name": "Kilkur"  },
+    { "name": "Yakman"  },
+    { "name": "Afflict" }
+  ]
+}

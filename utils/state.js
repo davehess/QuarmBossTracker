@@ -598,8 +598,9 @@ function mergeWhoData(rows) {
     const old = s.whoData[k] || {};
     // Sticky is_zek: once a character is flagged, they stay flagged unless
     // an officer explicitly clears it via /markzek. Also auto-flag anyone
-    // whose observed guild is literally "Zek".
-    const autoZek = (r.guild && /^zek$/i.test(r.guild)) ? true : false;
+    // whose observed guild contains "Zek" anywhere — catches "Zek",
+    // "Rise of Zek", "Pulse of Zek", etc., not just the bare guild name.
+    const autoZek = (r.guild && /zek/i.test(r.guild)) ? true : false;
     s.whoData[k] = {
       name:       r.name,
       class:      (r.class && r.class !== 'ANONYMOUS') ? r.class : (old.class || null),
@@ -624,6 +625,56 @@ function setZekFlag(name, isZek) {
   s.whoData[k].lastSeen = s.whoData[k].lastSeen || new Date().toISOString();
   saveState(s);
   return s.whoData[k];
+}
+
+// Apply a batch of community-tipped Zek affiliations. Conservative merge:
+//   - If the existing whoData entry has a non-Zek guild, we trust the
+//     observed data and skip this tip entirely (avoids mis-flagging
+//     friendlies someone confused with a Zek character of similar name).
+//   - Otherwise stamp guild='Zek', is_zek=true, and backfill class/race
+//     when the tip carries them and we don't already know.
+//
+// Idempotent — re-running produces the same end state, since we never
+// overwrite a non-Zek guild and the Zek flag is a set-true operation.
+// Returns { applied, skipped, examples } so the caller can log a summary.
+function applyKnownZekTips(tips) {
+  if (!Array.isArray(tips) || tips.length === 0) {
+    return { applied: 0, skipped: 0, examples: [] };
+  }
+  const s = loadState();
+  if (!s.whoData) s.whoData = {};
+  const now = new Date().toISOString();
+  let applied = 0, skipped = 0;
+  const examples = { applied: [], skipped: [] };
+  for (const t of tips) {
+    if (!t?.name) continue;
+    const k = String(t.name).toLowerCase();
+    const old = s.whoData[k] || {};
+    // Preserve a prior observation only when the existing guild is clearly
+    // NOT Zek-aligned. Treat any guild containing "Zek" (Rise of Zek,
+    // Pulse of Zek, etc.) as Zek and let the tip overwrite.
+    if (old.guild && !/zek/i.test(old.guild)) {
+      skipped++;
+      if (examples.skipped.length < 5) examples.skipped.push(`${t.name} (already <${old.guild}>)`);
+      continue;
+    }
+    s.whoData[k] = {
+      name:       old.name      || t.name,
+      class:      old.class     || t.class || null,
+      level:      old.level     || null,
+      race:       old.race      || t.race  || null,
+      guild:      'Zek',
+      anonymous:  !!old.anonymous,
+      gm:         !!old.gm,
+      is_zek:     true,
+      firstSeen:  old.firstSeen || now,
+      lastSeen:   old.lastSeen  || now,
+    };
+    applied++;
+    if (examples.applied.length < 5) examples.applied.push(t.name);
+  }
+  saveState(s);
+  return { applied, skipped, examples };
 }
 function setGuildOverride(name, guild) {
   const s = loadState();
@@ -770,6 +821,7 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
   getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
+  applyKnownZekTips,
   getPendingLoot, getAllPendingLoot, setPendingLoot, removePendingLootItem,
   clearPendingLoot, clearAllPendingLoot,
 };

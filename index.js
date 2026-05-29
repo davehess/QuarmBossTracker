@@ -41,7 +41,7 @@ const {
   getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, clearAgentActivity,
   getPetOwners, addPetOwners, clearPetOwners,
-  mergeWhoData,
+  mergeWhoData, applyKnownZekTips,
   clearAllPendingLoot,
   getAllLiveKills, clearLiveKill,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
@@ -116,6 +116,65 @@ client.once(Events.ClientReady, async (readyClient) => {
     try { announceAgentReleaseIfNew(readyClient).catch(err => console.warn('[release-announce] failed:', err?.message)); }
     catch (err) { console.warn('[release-announce] init failed:', err?.message); }
   }, 30_000);
+
+  // Apply community-tipped Zek affiliations from data/known_zek.json.
+  // Conditional merge — anyone already tagged with a non-Zek guild stays
+  // as-is. Idempotent, so re-running on every boot is safe. Mirrored to
+  // Supabase who_observations so /whois and the web UI see them too,
+  // not just the local state.whoData on Railway disk.
+  try {
+    delete require.cache[require.resolve('./data/known_zek.json')];
+    const knownZek = require('./data/known_zek.json');
+    const tips     = Array.isArray(knownZek?.tips) ? knownZek.tips : [];
+    const result   = applyKnownZekTips(tips);
+    if (result.applied || result.skipped) {
+      console.log(`[zek-tips] applied=${result.applied} skipped=${result.skipped}` +
+        (result.examples.applied.length ? ` first-applied=[${result.examples.applied.join(', ')}]` : '') +
+        (result.examples.skipped.length ? ` first-skipped=[${result.examples.skipped.join(', ')}]` : ''));
+    }
+    // Mirror the same tips into Supabase who_observations. We only mirror
+    // tips that survived the conditional merge — i.e., names where the
+    // bot will now treat them as Zek. Otherwise we'd be writing
+    // mis-attributing rows.
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled() && tips.length > 0) {
+        const { getWhoEntry } = require('./utils/state');
+        const nowIso = new Date().toISOString();
+        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+        const rows = tips
+          .map(t => {
+            if (!t?.name) return null;
+            const live = getWhoEntry(t.name);
+            // Only emit a row when the merged entry is in fact a Zek
+            // tag — the conditional merge above might have skipped this
+            // name due to an existing non-Zek guild.
+            if (!live || !live.is_zek) return null;
+            return {
+              guild_id:    guildId,
+              character:   t.name,
+              level:       live.level || null,
+              race:        live.race  || null,
+              class:       live.class || null,
+              guild_name:  'Zek',
+              anonymous:   false,
+              gm:          false,
+              observed_at: nowIso,
+              uploaded_by: 'zek-tips',
+            };
+          })
+          .filter(Boolean);
+        if (rows.length > 0) {
+          supabase.upsert('who_observations', rows, 'guild_id,character,observed_minute,uploaded_by')
+            .catch(err => console.warn('[zek-tips] supabase mirror failed:', err?.message));
+        }
+      }
+    } catch (err) {
+      console.warn('[zek-tips] supabase wrap failed:', err?.message);
+    }
+  } catch (err) {
+    console.warn('[zek-tips] failed:', err?.message);
+  }
 });
 
 // Post a brief release note for the current agent version. Idempotent via
