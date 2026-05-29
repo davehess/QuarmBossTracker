@@ -1576,6 +1576,9 @@ const QUEUE_FILE             = path.join(__dirname, 'logsync.queue.json');
 const QUEUE_MAX_SIZE         = 5000;     // FIFO cap; oldest dropped with a warning
 const QUEUE_DRAIN_INTERVAL_MS = 15_000;  // walk the queue every 15s
 const QUEUE_REQUEST_TIMEOUT_MS = 30_000; // per-attempt HTTP timeout
+const QUEUE_MAX_PER_DRAIN_PASS = 50;     // cap parallel work per drain so a
+                                         // 5000-entry backlog doesn't wedge
+                                         // a single pass for hours
 const QUEUE_BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
 const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 422]);
 
@@ -1601,14 +1604,21 @@ function _saveQueueToDisk() {
   if (_queueSaveTimer) return;
   _queueSaveTimer = setTimeout(() => {
     _queueSaveTimer = null;
-    try {
-      const tmp = QUEUE_FILE + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify({ pending: _uploadQueue }));
-      fs.renameSync(tmp, QUEUE_FILE);
-    } catch (err) {
-      console.warn(`[upload-queue] save failed: ${err.message}`);
-    }
+    _flushQueueToDiskSync();
   }, 500);
+}
+
+// Synchronous flush used by debounced timer AND by every process-exit
+// pathway. Cancels any pending debounce so we don't race with ourselves.
+function _flushQueueToDiskSync() {
+  if (_queueSaveTimer) { clearTimeout(_queueSaveTimer); _queueSaveTimer = null; }
+  try {
+    const tmp = QUEUE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ pending: _uploadQueue }));
+    fs.renameSync(tmp, QUEUE_FILE);
+  } catch (err) {
+    console.warn(`[upload-queue] save failed: ${err.message}`);
+  }
 }
 
 function _queueId() {
@@ -1734,8 +1744,10 @@ async function _drainUploadQueue() {
   try {
     const now = Date.now();
     // Snapshot the due entries — new enqueues during this loop iteration get
-    // picked up on the next pass.
-    const due = _uploadQueue.filter(e => e.next_try_at <= now);
+    // picked up on the next pass. Cap parallel work so a huge backlog
+    // doesn't wedge a single pass for hours; the next interval (15s)
+    // picks up the rest.
+    const due = _uploadQueue.filter(e => e.next_try_at <= now).slice(0, QUEUE_MAX_PER_DRAIN_PASS);
     if (due.length === 0) return;
 
     let stateChanged = false;
@@ -1774,6 +1786,13 @@ async function _drainUploadQueue() {
   } finally {
     _queueDraining = false;
   }
+  // If we capped this pass and there's still due work waiting, kick another
+  // pass after a short pause so a 5000-entry backlog drains in ~5min total
+  // (5000 / 50 = 100 passes * 3s = 5min) rather than 15s * 100 passes = 25min.
+  const now = Date.now();
+  if (_uploadQueue.some(e => e.next_try_at <= now)) {
+    setTimeout(() => _drainUploadQueue().catch(() => {}), 3_000);
+  }
 }
 
 function startUploadQueueDrain(uploadOpts) {
@@ -1786,7 +1805,19 @@ function startUploadQueueDrain(uploadOpts) {
   _queueDrainTimer = setInterval(() => {
     _drainUploadQueue().catch(() => {});
   }, QUEUE_DRAIN_INTERVAL_MS);
+  // Sync-flush the queue on any process-exit pathway so the debounced timer
+  // can't drop in-memory entries on Ctrl+C / SIGTERM / [U] update / etc.
+  // Registered idempotently — the listener list won't grow on repeated
+  // start calls (e.g. test harnesses).
+  if (!_queueExitHooked) {
+    _queueExitHooked = true;
+    const flush = () => { try { _flushQueueToDiskSync(); } catch {} };
+    process.on('exit',  flush);
+    process.on('SIGINT',  () => { flush(); process.exit(0); });
+    process.on('SIGTERM', () => { flush(); process.exit(0); });
+  }
 }
+let _queueExitHooked = false;
 
 // Dashboard + update-gate helpers. uploadQueueSnapshot is read-only; callers
 // shouldn't mutate the returned objects.
@@ -5423,7 +5454,9 @@ async function main() {
   if (args.flags.webPort) {
     startWebDashboard(args.flags.webPort);
     writePidFile(args.flags.webPort);
-    // Best-effort cleanup so a stale PID doesn't block the next launch
+    // Best-effort cleanup so a stale PID doesn't block the next launch.
+    // Queue-flush exit handlers are registered separately by
+    // startUploadQueueDrain() so they fire even in non-dashboard CLI mode.
     process.on('exit',    () => removePidFile());
     process.on('SIGINT',  () => { removePidFile(); process.exit(0); });
     process.on('SIGTERM', () => { removePidFile(); process.exit(0); });

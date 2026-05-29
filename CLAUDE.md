@@ -491,7 +491,18 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
                  "pet_leaders": { "petname": "Owner" } } }
 ```
 
-**Agent UI (localhost:7777, optional `--web-port`):** Dashboard, Tanks, Healers, DEEPS, Pets, Info/Stats, Opt-in Logs tabs. Versions tracked separately (`agent v2.4.6` etc.); auto-update prompt from `/api/agent/latest-version`.
+**Durable upload queue (v2.4.18+):** Every outbound POST (encounter, chat, pvp, bosskill, lockout, historical_chat, fun_event) routes through `enqueueUpload()` and persists to `logsync.queue.json` next to the other state files. Drain loop walks the queue every 15s with exponential backoff (30s → 60s → 2m → 4m → 8m → 10m cap). 4xx responses (400/401/403/404/422) drop entries as permanent failures with a loud warning; everything else retries. Cap of 50 entries per drain pass prevents huge backlogs from wedging the loop; if there's still due work, an immediate-3s-later kick keeps the queue flowing. Sync flush on every exit pathway (`SIGINT`/`SIGTERM`/normal `exit`) so the in-memory state isn't lost between debounced disk saves. Queue replays on agent startup so a crash mid-outage doesn't lose anything either. Dashboard header chip shows pending count + last error.
+
+**Update gate (v2.4.18+):** `[U]` keypress and `POST /api/update` refuse to bounce the agent when:
+1. Upload queue has pending entries
+2. Opt-in backfill is running (`_activeBackfills.size > 0`)
+3. An active fight is in progress (`stats.currentEncounterThreat` set, `flushedAt` null)
+
+`Shift+U` (CLI) or `?force=1` (HTTP) bypasses. The `/api/state` payload includes `updateBlocked: <reason>` so the dashboard renders the right tooltip.
+
+**Agent UI (localhost:7777, optional `--web-port`):** Dashboard, Tanks, Healers (BETA), DEEPS, Pets, Info/Stats, Opt-in Logs tabs. Versions tracked separately (`agent v2.4.6` etc.); auto-update prompt from `/api/agent/latest-version`. Per-character spell cast counter on the Info tab (reliable for the uploader, "(unknown)" for bystanders since EQ doesn't log spell names for them).
+
+**Fun events (v2.4.18+):** Lightweight side stream for guild-flavor counters. Each detector returns `{ type, caster, ts, raw_text }` or null; matches push into `funEventBuffer` and ride out via the 5s chat-relay flush to `POST /api/agent/fun_event`. Bot upserts into the `fun_events` Supabase table with `unique (guild_id, event_type, caster, event_ts)` so backfill replays are idempotent. First tenant: Peopleslayer LD counter. Planned: CoH Pearl, DI Emerald, Aegolism/Rune Peridot (MGB doubles).
 
 ---
 
