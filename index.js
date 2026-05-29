@@ -2502,6 +2502,53 @@ async function _handleAgentPvp(req, res) {
   const pvpRoleName = process.env.PVP_ROLE || 'PVP';
 
   let posted = 0, deduped = 0;
+  // Roster harvest from the broadcast bodies. Every PvP kill names two
+  // characters and their guilds; that's free who-data we wouldn't otherwise
+  // see (Zek members never run /who for us). Build whoData rows for any
+  // non-WP names + guilds, merge into state.whoData (mergeWhoData auto-flags
+  // anyone whose guild is literally "Zek"), and mirror to Supabase
+  // who_observations so /whois and the web app pick them up.
+  const harvestedRows = [];
+  for (const b of broadcasts) {
+    const nowIso = b?.ts || new Date().toISOString();
+    for (const side of ['victim', 'killer']) {
+      const name  = b?.[side];
+      const guild = b?.[`${side}Guild`];
+      if (!name || !guild) continue;
+      if (guild === WP_GUILD_NAME) continue;     // skip our own members
+      harvestedRows.push({
+        name,
+        guild,
+        observedAt: nowIso,
+        // class/level/race left null — PvP broadcasts don't carry them.
+      });
+    }
+  }
+  if (harvestedRows.length > 0) {
+    try { mergeWhoData(harvestedRows); } catch {}
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        const rows = harvestedRows.map(w => ({
+          guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          character:   w.name,
+          level:       null,
+          race:        null,
+          class:       null,
+          guild_name:  w.guild,
+          anonymous:   false,
+          gm:          false,
+          observed_at: new Date(w.observedAt).toISOString(),
+          uploaded_by: 'pvp-relay',
+        }));
+        supabase.upsert('who_observations', rows, 'guild_id,character,observed_minute,uploaded_by')
+          .catch(err => console.warn('[pvp-relay] who-obs upsert failed:', err?.message));
+      }
+    } catch (err) {
+      console.warn('[pvp-relay] supabase mirror failed:', err?.message);
+    }
+  }
+
   for (const b of broadcasts) {
     if (_isPvpDupe(b)) { deduped++; continue; }
     const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
