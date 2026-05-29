@@ -4323,6 +4323,14 @@ function runOptinBackfill(files, opts = {}) {
             const ldEvt = parsePeopleslayerLd(line);
             if (ldEvt) funEventBuffer.push(ldEvt);
 
+            // PvP kill broadcasts — record to the ledger from history, but
+            // flagged backfill so the bot won't re-post them to Discord.
+            const pvpBcast = parsePvpBroadcast(line);
+            if (pvpBcast) {
+              pvpBatch.push({ ...pvpBcast, backfill: true });
+              if (pvpBatch.length >= 200) flushPvp(true).catch(() => {});
+            }
+
             // Chat comes first — chat lines don't survive shouldKeep().
             const chatMsg = parseChatLine(line, f.character);
             if (chatMsg) {

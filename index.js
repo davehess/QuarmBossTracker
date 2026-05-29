@@ -2616,6 +2616,13 @@ async function _handleAgentPvp(req, res) {
   const pvpRoleName = process.env.PVP_ROLE || 'PVP';
 
   let posted = 0, deduped = 0;
+  // PvP kill ledger rows accumulated this request, upserted to pvp_kills
+  // after the post loop. Only player-vs-player kills where Wolf Pack is
+  // involved on either side are recorded (our kills + our deaths); Zek-vs-
+  // other-guild noise is not. Pet attribution: if the killer is a known pet
+  // (state petOwners map), credit the owner and flag via_pet.
+  const pvpKillRows = [];
+  const _petOwners = (() => { try { return getPetOwners() || {}; } catch { return {}; } })();
   // Roster harvest from the broadcast bodies. Every PvP kill names two
   // characters and their guilds; that's free who-data we wouldn't otherwise
   // see (Zek members never run /who for us). Build whoData rows for any
@@ -2673,6 +2680,30 @@ async function _handleAgentPvp(req, res) {
       const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME;  // WP member got a kill
       const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME;  // WP member died
 
+      // Record the kill to the PvP ledger (player-vs-player, WP involved).
+      if (killType === 'pvp' && (isWpKill || isWpDeath) && killer && victim) {
+        const owners = _petOwners[String(killer).toLowerCase()];
+        const viaPet = Array.isArray(owners) && owners.length > 0;
+        const creditedKiller = viaPet ? owners[0] : killer;
+        const killedAt = b?.ts ? new Date(b.ts) : new Date();
+        const secondIso = killedAt.toISOString().slice(0, 19);
+        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+        pvpKillRows.push({
+          guild_id:     guildId,
+          killer:       creditedKiller,
+          killer_guild: killerGuild || null,
+          victim,
+          victim_guild: victimGuild || null,
+          zone:         zone || null,
+          via_pet:      viaPet,
+          pet_name:     viaPet ? killer : null,
+          killed_at:    killedAt.toISOString(),
+          source:       b?.backfill ? 'log_backfill' : 'pvp_channel',
+          raw_text:     (text || '').slice(0, 300),
+          dedup_key:    `${guildId}|${String(creditedKiller).toLowerCase()}|${String(victim).toLowerCase()}|${secondIso}`,
+        });
+      }
+
       let content;
       if (isWpKill) {
         // Celebrate — Wolf Pack got a PvP kill
@@ -2701,8 +2732,22 @@ async function _handleAgentPvp(req, res) {
     }
   }
 
+  // Persist the PvP kill ledger. Idempotent via dedup_key so multi-parser
+  // uploads of the same broadcast collapse to one row.
+  if (pvpKillRows.length > 0) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        await supabase.upsert('pvp_kills', pvpKillRows, 'dedup_key')
+          .catch(err => console.warn('[pvp-relay] pvp_kills upsert failed:', err?.message));
+      }
+    } catch (err) {
+      console.warn('[pvp-relay] pvp_kills persist wrap failed:', err?.message);
+    }
+  }
+
   res.writeHead(200);
-  res.end(JSON.stringify({ ok: true, posted, deduped }));
+  res.end(JSON.stringify({ ok: true, posted, deduped, kills_recorded: pvpKillRows.length }));
 }
 
 // ── Druzzil Ro boss-kill auto-timer ───────────────────────────────────────
