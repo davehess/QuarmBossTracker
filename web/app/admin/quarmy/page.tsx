@@ -182,7 +182,8 @@ export default async function AdminQuarmyPage({
 
       {/* Per-row edit */}
       <section className="bg-panel border border-border rounded-lg">
-        <table className="w-full text-xs">
+        <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-[720px]">
           <thead className="text-dim">
             <tr className="border-b border-border">
               <th className="text-left px-3 py-2 font-normal">Character</th>
@@ -224,6 +225,7 @@ export default async function AdminQuarmyPage({
             ))}
           </tbody>
         </table>
+        </div>
       </section>
     </div>
   );

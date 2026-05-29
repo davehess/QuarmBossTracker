@@ -316,7 +316,8 @@ function LinkTable({
   return (
     <section className="bg-panel border border-border rounded-lg">
       <h3 className="text-sm text-orange px-4 py-3 border-b border-border">{title}</h3>
-      <table className="w-full text-xs">
+      <div className="overflow-x-auto">
+      <table className="w-full text-xs min-w-[720px]">
         <thead className="text-dim">
           <tr className="border-b border-border">
             <th className="text-left px-3 py-2 font-normal">Character</th>
@@ -376,6 +377,7 @@ function LinkTable({
           })}
         </tbody>
       </table>
+      </div>
     </section>
   );
 }

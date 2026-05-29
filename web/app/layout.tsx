@@ -36,15 +36,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
       <body className="font-mono">
-        <div className="max-w-7xl mx-auto p-4">
-          <header className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl text-blue font-bold flex items-center gap-3">
-              <span aria-hidden>🐺</span>
-              <span>Wolf Pack EQ — Tracker</span>
-            </h1>
-            <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto p-3 sm:p-4">
+          <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+            <div className="flex items-center justify-between gap-3">
+              <h1 className="text-xl sm:text-2xl text-blue font-bold flex items-center gap-2">
+                <span aria-hidden>🐺</span>
+                <span className="hidden sm:inline">Wolf Pack EQ — Tracker</span>
+                <span className="sm:hidden">Wolf Pack EQ</span>
+              </h1>
+              {/* AuthBadge sits next to title on mobile so the nav row gets the full width */}
+              <div className="sm:hidden"><AuthBadge /></div>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
               <Nav showAdmin={showAdmin} showMe={showMe} />
-              <AuthBadge />
+              <div className="hidden sm:block"><AuthBadge /></div>
             </div>
           </header>
           <main>{children}</main>

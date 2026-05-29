@@ -21,7 +21,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
   if (showMe)    allLinks.push({ href: '/me',    label: '👤 Me'    });
   if (showAdmin) allLinks.push({ href: '/admin', label: '🛡️ Admin' });
   return (
-    <nav className="flex gap-2">
+    <nav className="flex flex-wrap gap-1.5 sm:gap-2 -mx-1 px-1 overflow-x-auto">
       {allLinks.map(({ href, label }) => {
         const active = path === href || (href !== '/' && path?.startsWith(href));
         return (
@@ -29,7 +29,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
             key={href}
             href={href}
             className={[
-              'px-3 py-1.5 rounded border text-sm transition-colors',
+              'px-2.5 sm:px-3 py-1 sm:py-1.5 rounded border text-xs sm:text-sm transition-colors whitespace-nowrap',
               active
                 ? 'bg-accent border-accent text-white'
                 : 'bg-panel border-border text-text hover:bg-[#21262d]',

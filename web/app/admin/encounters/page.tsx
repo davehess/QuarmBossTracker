@@ -393,7 +393,8 @@ export default async function AdminEncountersPage({
         <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
           Encounters — last {days} day{days === 1 ? '' : 's'}
         </h3>
-        <table className="w-full text-xs">
+        <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-[680px]">
           <thead className="text-dim">
             <tr className="border-b border-border">
               <th className="text-left px-3 py-2 font-normal">When</th>
@@ -460,6 +461,7 @@ export default async function AdminEncountersPage({
             })}
           </tbody>
         </table>
+        </div>
       </section>
     </div>
   );
