@@ -219,17 +219,16 @@ export default async function AdminMembersPage({
       </nav>
 
       <section className="bg-panel border border-border rounded-lg">
-        <div className="overflow-x-auto">
-        <table className="w-full text-xs min-w-[720px]">
-          <thead className="text-dim">
+        <table className="w-full text-xs">
+          <thead className="text-dim hidden sm:table-header-group">
             <tr className="border-b border-border">
-              <th className="text-left px-3 py-2 font-normal">Member</th>
-              <th className="text-left px-3 py-2 font-normal">Joined</th>
-              <th className="text-left px-3 py-2 font-normal">Characters</th>
-              <th className="text-right px-3 py-2 font-normal">Chat 30d</th>
-              <th className="text-right px-3 py-2 font-normal">Parses 30d</th>
-              <th className="text-right px-3 py-2 font-normal">/who 30d</th>
-              <th className="text-left px-3 py-2 font-normal">Roles</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">Member</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">Joined</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">Characters</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Chat 30d</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Parses 30d</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">/who 30d</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">Roles</th>
             </tr>
           </thead>
           <tbody>
@@ -240,12 +239,21 @@ export default async function AdminMembersPage({
               const silent = isSilent(m);
               return (
                 <tr key={m.discord_id} className="border-b border-border/40 hover:bg-[#1a212c]">
-                  <td className="px-3 py-2 text-text">
-                    <div>{memberLabel(m)}</div>
-                    <div className="text-dim text-[10px]">{m.discord_id}</div>
+                  <td className="px-2 sm:px-3 py-2 text-text">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span>{memberLabel(m)}</span>
+                      {silent && <span className="text-orange text-[10px]">· silent</span>}
+                    </div>
+                    <div className="text-dim text-[10px] sm:hidden">
+                      {fmtJoined(m.joined_at)}
+                      {(m.chatLast30 || m.parseLast30 || m.whoLast30) > 0 && (
+                        <> · {m.chatLast30}💬 {m.parseLast30}📊 {m.whoLast30}👁</>
+                      )}
+                    </div>
+                    <div className="text-dim text-[10px] hidden sm:block">{m.discord_id}</div>
                   </td>
-                  <td className="px-3 py-2 text-dim whitespace-nowrap">{fmtJoined(m.joined_at)}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap hidden sm:table-cell">{fmtJoined(m.joined_at)}</td>
+                  <td className="px-2 sm:px-3 py-2">
                     {m.charNames.length === 0 ? (
                       <span className="text-orange">— none —</span>
                     ) : (
@@ -260,19 +268,17 @@ export default async function AdminMembersPage({
                       </span>
                     )}
                   </td>
-                  <td className={`px-3 py-2 text-right ${m.chatLast30  === 0 ? 'text-dim' : 'text-text'}`}>{m.chatLast30.toLocaleString()}</td>
-                  <td className={`px-3 py-2 text-right ${m.parseLast30 === 0 ? 'text-dim' : 'text-text'}`}>{m.parseLast30.toLocaleString()}</td>
-                  <td className={`px-3 py-2 text-right ${m.whoLast30   === 0 ? 'text-dim' : 'text-text'}`}>{m.whoLast30.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-dim text-[10px]">
+                  <td className={`px-2 sm:px-3 py-2 text-right hidden md:table-cell ${m.chatLast30  === 0 ? 'text-dim' : 'text-text'}`}>{m.chatLast30.toLocaleString()}</td>
+                  <td className={`px-2 sm:px-3 py-2 text-right hidden md:table-cell ${m.parseLast30 === 0 ? 'text-dim' : 'text-text'}`}>{m.parseLast30.toLocaleString()}</td>
+                  <td className={`px-2 sm:px-3 py-2 text-right hidden md:table-cell ${m.whoLast30   === 0 ? 'text-dim' : 'text-text'}`}>{m.whoLast30.toLocaleString()}</td>
+                  <td className="px-2 sm:px-3 py-2 text-dim text-[10px] hidden lg:table-cell">
                     {(m.role_names ?? []).slice(0, 3).join(', ') || '—'}
-                    {silent && <span className="ml-2 text-orange">· silent</span>}
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        </div>
       </section>
     </div>
   );

@@ -316,15 +316,14 @@ function LinkTable({
   return (
     <section className="bg-panel border border-border rounded-lg">
       <h3 className="text-sm text-orange px-4 py-3 border-b border-border">{title}</h3>
-      <div className="overflow-x-auto">
-      <table className="w-full text-xs min-w-[720px]">
-        <thead className="text-dim">
+      <table className="w-full text-xs">
+        <thead className="text-dim hidden sm:table-header-group">
           <tr className="border-b border-border">
-            <th className="text-left px-3 py-2 font-normal">Character</th>
-            <th className="text-left px-3 py-2 font-normal">Main</th>
-            <th className="text-left px-3 py-2 font-normal">Class</th>
-            <th className="text-left px-3 py-2 font-normal">{alreadyLinked ? 'Linked to' : 'Suggested'}</th>
-            <th className="text-left px-3 py-2 font-normal">Action</th>
+            <th className="text-left px-2 sm:px-3 py-2 font-normal">Character</th>
+            <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Main</th>
+            <th className="text-left px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">Class</th>
+            <th className="text-left px-2 sm:px-3 py-2 font-normal">{alreadyLinked ? 'Linked to' : 'Suggested'}</th>
+            <th className="text-left px-2 sm:px-3 py-2 font-normal">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -333,12 +332,18 @@ function LinkTable({
             const suggestedMember = suggestion.discord_id ? memberById.get(suggestion.discord_id) : null;
             return (
               <tr key={char.name} className="border-b border-border/40 hover:bg-[#1a212c]">
-                <td className="px-3 py-2 text-text">{char.name}</td>
-                <td className="px-3 py-2 text-dim">
+                <td className="px-2 sm:px-3 py-2 text-text">
+                  <div>{char.name}</div>
+                  <div className="text-dim text-[10px] md:hidden">
+                    {char.main_name && char.main_name !== char.name && <>alt of {char.main_name} · </>}
+                    {char.class || '—'}
+                  </div>
+                </td>
+                <td className="px-2 sm:px-3 py-2 text-dim hidden md:table-cell">
                   {char.main_name && char.main_name !== char.name ? char.main_name : '—'}
                 </td>
-                <td className="px-3 py-2 text-dim">{char.class || '—'}</td>
-                <td className="px-3 py-2">
+                <td className="px-2 sm:px-3 py-2 text-dim hidden lg:table-cell">{char.class || '—'}</td>
+                <td className="px-2 sm:px-3 py-2">
                   {linkedMember ? (
                     <span className="text-green">{memberLabel(linkedMember)}</span>
                   ) : suggestedMember ? (
@@ -354,13 +359,13 @@ function LinkTable({
                     <span className="text-dim italic">no suggestion</span>
                   )}
                 </td>
-                <td className="px-3 py-2">
-                  <form action={setLink} className="flex items-center gap-2">
+                <td className="px-2 sm:px-3 py-2">
+                  <form action={setLink} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
                     <input type="hidden" name="name" value={char.name} />
                     <select
                       name="discord_id"
                       defaultValue={char.discord_id ?? suggestion.discord_id ?? ''}
-                      className="bg-bg border border-border rounded px-2 py-1 text-xs min-w-[200px]"
+                      className="bg-bg border border-border rounded px-2 py-1 text-xs sm:min-w-[200px]"
                     >
                       <option value="">— unlinked —</option>
                       {memberList.map(m => (
@@ -377,7 +382,6 @@ function LinkTable({
           })}
         </tbody>
       </table>
-      </div>
     </section>
   );
 }

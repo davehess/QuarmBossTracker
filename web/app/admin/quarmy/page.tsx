@@ -182,41 +182,46 @@ export default async function AdminQuarmyPage({
 
       {/* Per-row edit */}
       <section className="bg-panel border border-border rounded-lg">
-        <div className="overflow-x-auto">
-        <table className="w-full text-xs min-w-[720px]">
-          <thead className="text-dim">
+        <table className="w-full text-xs">
+          <thead className="text-dim hidden sm:table-header-group">
             <tr className="border-b border-border">
-              <th className="text-left px-3 py-2 font-normal">Character</th>
-              <th className="text-left px-3 py-2 font-normal">Main</th>
-              <th className="text-left px-3 py-2 font-normal">Class</th>
-              <th className="text-left px-3 py-2 font-normal">Quarmy URL</th>
-              <th className="text-left px-3 py-2 font-normal w-24">Save</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">Character</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Main</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">Class</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">Quarmy URL</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal w-24">Save</th>
             </tr>
           </thead>
           <tbody>
             {visible.map(c => (
               <tr key={c.name} className="border-b border-border/40 hover:bg-[#1a212c]">
-                <td className="px-3 py-2 text-text">
-                  {c.name}
-                  {!c.active && <span className="text-dim text-[10px] ml-1">(inactive)</span>}
+                <td className="px-2 sm:px-3 py-2 text-text">
+                  <div>
+                    {c.name}
+                    {!c.active && <span className="text-dim text-[10px] ml-1">(inactive)</span>}
+                  </div>
+                  <div className="text-dim text-[10px] md:hidden">
+                    {c.main_name && c.main_name !== c.name && <>alt of {c.main_name} · </>}
+                    {c.class || '—'}
+                  </div>
                 </td>
-                <td className="px-3 py-2 text-dim">{c.main_name && c.main_name !== c.name ? c.main_name : '—'}</td>
-                <td className="px-3 py-2 text-dim">{c.class || '—'}</td>
-                <td className="px-3 py-2">
+                <td className="px-2 sm:px-3 py-2 text-dim hidden md:table-cell">{c.main_name && c.main_name !== c.name ? c.main_name : '—'}</td>
+                <td className="px-2 sm:px-3 py-2 text-dim hidden lg:table-cell">{c.class || '—'}</td>
+                <td className="px-2 sm:px-3 py-2">
                   <form action={setQuarmy} className="flex items-center gap-2" id={`f_${c.name}`}>
                     <input type="hidden" name="name" value={c.name} />
                     <input
                       name="url"
                       defaultValue={c.quarmy_url ?? ''}
                       placeholder="https://quarmy.com/..."
-                      className="bg-bg border border-border rounded px-2 py-1 text-xs flex-1 min-w-[320px]"
+                      className="bg-bg border border-border rounded px-2 py-1 text-xs flex-1"
                     />
                     {c.quarmy_url && (
                       <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue text-[10px] hover:underline">↗</a>
                     )}
                   </form>
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-2 sm:px-3 py-2">
                   <button form={`f_${c.name}`} type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">
                     Save
                   </button>
@@ -225,7 +230,6 @@ export default async function AdminQuarmyPage({
             ))}
           </tbody>
         </table>
-        </div>
       </section>
     </div>
   );

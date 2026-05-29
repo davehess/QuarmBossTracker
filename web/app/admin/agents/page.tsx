@@ -226,34 +226,34 @@ export default async function AdminAgentsPage() {
             with the uploader's character, version, and endpoint mix.
           </EmptyHint>
         ) : (
-          <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[760px]">
-            <thead className="text-dim">
+          <table className="w-full text-xs">
+            <thead className="text-dim hidden sm:table-header-group">
               <tr className="border-b border-border">
-                <th className="text-left px-3 py-2 font-normal">Character</th>
-                <th className="text-left px-3 py-2 font-normal">Last upload</th>
-                <th className="text-left px-3 py-2 font-normal">Agent</th>
-                <th className="text-right px-3 py-2 font-normal">24h</th>
-                <th className="text-right px-3 py-2 font-normal">7d</th>
-                <th className="text-left px-3 py-2 font-normal">Endpoint mix</th>
-                <th className="text-left px-3 py-2 font-normal">Status</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal">Character</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal">Last upload</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Agent</th>
+                <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">24h</th>
+                <th className="text-right px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">7d</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">Endpoint mix</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal">Status</th>
               </tr>
             </thead>
             <tbody>
               {active.map(s => (
                 <tr key={s.character} className="border-b border-border/40 hover:bg-[#1a212c]">
-                  <td className="px-3 py-2 text-text">
+                  <td className="px-2 sm:px-3 py-2 text-text">
                     <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
+                    <div className="text-dim text-[10px] md:hidden">{s.agentVersion || '—'} · {s.uploads24h}/24h</div>
                   </td>
-                  <td className="px-3 py-2 text-dim whitespace-nowrap">{rel(s.lastUpload)} <span className="text-[10px]">· {fmtTs(s.lastUpload)}</span></td>
-                  <td className="px-3 py-2 text-text">{s.agentVersion || '—'}</td>
-                  <td className="px-3 py-2 text-right text-text">{s.uploads24h}</td>
-                  <td className="px-3 py-2 text-right text-dim">{s.uploads7d}</td>
-                  <td className="px-3 py-2 text-dim text-[10px]">
+                  <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap">{rel(s.lastUpload)}</td>
+                  <td className="px-2 sm:px-3 py-2 text-text hidden md:table-cell">{s.agentVersion || '—'}</td>
+                  <td className="px-2 sm:px-3 py-2 text-right text-text hidden md:table-cell">{s.uploads24h}</td>
+                  <td className="px-2 sm:px-3 py-2 text-right text-dim hidden lg:table-cell">{s.uploads7d}</td>
+                  <td className="px-2 sm:px-3 py-2 text-dim text-[10px] hidden lg:table-cell">
                     {[...s.byEndpoint.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}×${n}`).join(' · ')}
                   </td>
-                  <td className="px-3 py-2 text-[10px]">
-                    {s.errors30d > 0 && <span className="text-red-400">{s.errors30d} errors</span>}
+                  <td className="px-2 sm:px-3 py-2 text-[10px]">
+                    {s.errors30d > 0 && <span className="text-red-400">{s.errors30d} err</span>}
                     {s.queuePending != null && s.queuePending > 0 && <span className="text-orange ml-1">Q={s.queuePending}</span>}
                     {s.fightActive && <span className="text-blue ml-1">in-fight</span>}
                     {s.errors30d === 0 && (s.queuePending ?? 0) === 0 && !s.fightActive && <span className="text-green">healthy</span>}
@@ -262,7 +262,6 @@ export default async function AdminAgentsPage() {
               ))}
             </tbody>
           </table>
-          </div>
         )}
       </section>
 
@@ -272,8 +271,7 @@ export default async function AdminAgentsPage() {
           <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
             Stale (active in last 30d, nothing in last 24h) — {stale.length}
           </h3>
-          <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[600px]">
+          <table className="w-full text-xs">
             <thead className="text-dim">
               <tr className="border-b border-border">
                 <th className="text-left px-3 py-2 font-normal">Character</th>
@@ -293,7 +291,6 @@ export default async function AdminAgentsPage() {
               ))}
             </tbody>
           </table>
-          </div>
         </section>
       )}
 
@@ -303,8 +300,7 @@ export default async function AdminAgentsPage() {
           <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
             Recent errors — {uploads.filter(u => !u.ok).length} total in last 30d
           </h3>
-          <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[640px]">
+          <table className="w-full text-xs">
             <thead className="text-dim">
               <tr className="border-b border-border">
                 <th className="text-left px-3 py-2 font-normal">When</th>
@@ -326,7 +322,6 @@ export default async function AdminAgentsPage() {
               ))}
             </tbody>
           </table>
-          </div>
         </section>
       )}
 
@@ -352,8 +347,7 @@ export default async function AdminAgentsPage() {
             and report back as they process each one.
           </EmptyHint>
         ) : (
-          <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[760px]">
+          <table className="w-full text-xs">
             <thead className="text-dim">
               <tr className="border-b border-border">
                 <th className="text-left px-3 py-2 font-normal">Filed</th>
@@ -391,7 +385,6 @@ export default async function AdminAgentsPage() {
               })}
             </tbody>
           </table>
-          </div>
         )}
       </section>
     </div>

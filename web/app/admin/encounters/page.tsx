@@ -393,18 +393,17 @@ export default async function AdminEncountersPage({
         <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
           Encounters — last {days} day{days === 1 ? '' : 's'}
         </h3>
-        <div className="overflow-x-auto">
-        <table className="w-full text-xs min-w-[680px]">
-          <thead className="text-dim">
+        <table className="w-full text-xs">
+          <thead className="text-dim hidden sm:table-header-group">
             <tr className="border-b border-border">
-              <th className="text-left px-3 py-2 font-normal">When</th>
-              <th className="text-left px-3 py-2 font-normal">Boss / Zone</th>
-              <th className="text-right px-3 py-2 font-normal">Dur</th>
-              <th className="text-right px-3 py-2 font-normal">Damage</th>
-              <th className="text-right px-3 py-2 font-normal">HP%</th>
-              <th className="text-right px-3 py-2 font-normal">P</th>
-              <th className="text-right px-3 py-2 font-normal">C</th>
-              <th className="text-left px-3 py-2 font-normal">Action</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">When</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">Boss / Zone</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal">Dur</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal">Damage</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal">HP%</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">P</th>
+              <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">C</th>
+              <th className="text-left px-2 sm:px-3 py-2 font-normal">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -414,16 +413,19 @@ export default async function AdminEncountersPage({
               const flagged = r.data_incomplete || (r.total_damage ?? 0) === 0 || (ratio != null && ratio < 0.75) || (ratio != null && ratio > 1.10);
               return (
                 <tr key={r.id} className={`border-b border-border/40 hover:bg-[#1a212c] ${dupeIds.has(r.id) ? 'bg-[#3a1e1e22]' : ''}`}>
-                  <td className="px-3 py-2 text-dim whitespace-nowrap">{fmtTs(r.started_at)}</td>
-                  <td className="px-3 py-2 text-text">
+                  <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap hidden sm:table-cell">{fmtTs(r.started_at)}</td>
+                  <td className="px-2 sm:px-3 py-2 text-text">
                     <div>{r.npc_name || `npc ${r.npc_id}`}</div>
-                    <div className="text-dim text-[10px]">{r.zone_short || '—'}</div>
+                    <div className="text-dim text-[10px]">
+                      {r.zone_short || '—'}
+                      <span className="sm:hidden"> · {fmtTs(r.started_at)} · {fmtDur(r.duration_sec)}</span>
+                    </div>
                   </td>
-                  <td className="px-3 py-2 text-right text-dim">{fmtDur(r.duration_sec)}</td>
-                  <td className="px-3 py-2 text-right text-text">{(r.total_damage ?? 0).toLocaleString()}</td>
-                  <td className={`px-3 py-2 text-right ${badge.cls}`}>{badge.label}</td>
-                  <td className="px-3 py-2 text-right text-dim">{r.players}</td>
-                  <td className="px-3 py-2 text-right text-dim">{r.contribs}</td>
+                  <td className="px-2 sm:px-3 py-2 text-right text-dim hidden sm:table-cell">{fmtDur(r.duration_sec)}</td>
+                  <td className="px-2 sm:px-3 py-2 text-right text-text whitespace-nowrap">{(r.total_damage ?? 0).toLocaleString()}</td>
+                  <td className={`px-2 sm:px-3 py-2 text-right whitespace-nowrap ${badge.cls}`}>{badge.label}</td>
+                  <td className="px-2 sm:px-3 py-2 text-right text-dim hidden md:table-cell">{r.players}</td>
+                  <td className="px-2 sm:px-3 py-2 text-right text-dim hidden md:table-cell">{r.contribs}</td>
                   <td className="px-3 py-2">
                     <details className="text-xs">
                       <summary className={`cursor-pointer ${flagged ? 'text-orange' : 'text-dim'}`}>
@@ -461,7 +463,6 @@ export default async function AdminEncountersPage({
             })}
           </tbody>
         </table>
-        </div>
       </section>
     </div>
   );

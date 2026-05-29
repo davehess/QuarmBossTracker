@@ -1981,6 +1981,11 @@ const stats = {
   // { [characterName]: { weapons: { primary, secondary, range, ammo }, worn: {...}, _updatedAt, _path } }
   characterInventories: {},
   requestedCharacters:  [],         // characters the server needs for parse completeness
+  // Officer-filed backfill requests for any character this agent is watching.
+  // Populated by pollBackfillRequests every 5 min; rendered on the Opt-in tab
+  // with Accept/Dismiss buttons that POST back to the bot.
+  backfillRequests:      [],
+  backfillRequestsCheckedAt: null,
   lastUploadAt:    null,
   lifetime: {                     // persisted across restarts
     totalEvents:       0,
@@ -2254,6 +2259,8 @@ function _serializeForDashboard() {
     activeBandolier:        stats.activeBandolier,
     sessionDeeps:           stats.sessionDeeps,
     requestedCharacters: stats.requestedCharacters,
+    backfillRequests:    stats.backfillRequests,
+    backfillRequestsCheckedAt: stats.backfillRequestsCheckedAt,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
     // after that the user knows, and a stale banner is just noise.
@@ -5279,6 +5286,94 @@ function pollLatestVersion({ botUrl }) {
   });
 }
 
+// Poll the bot for officer-filed backfill requests targeting any character
+// this agent is watching. Server returns pending|acked|running rows. We
+// store them on stats.backfillRequests so the dashboard can render an
+// "Officer requested backfill" banner with Accept / Dismiss buttons.
+function pollBackfillRequests({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const chars = (stats.watchedLogs || [])
+    .map(w => w && w.character)
+    .filter(Boolean);
+  if (chars.length === 0) return Promise.resolve();
+
+  // /encounter → /backfill-requests, plus the character filter
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/backfill-requests')
+            + '?character=' + encodeURIComponent(chars.join(','));
+
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method:  'GET',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname + u.search,
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+        },
+        timeout: 5000,
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const resp = JSON.parse(data);
+            if (Array.isArray(resp.requests)) {
+              stats.backfillRequests          = resp.requests;
+              stats.backfillRequestsCheckedAt = Date.now();
+              scheduleRender();
+            }
+          } catch { /* non-fatal */ }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
+// Transition a single backfill request via the bot's
+// POST /api/agent/backfill-requests/{id}/{action} endpoint. `body` is the
+// optional payload (reason / summary / error_message depending on action).
+// Returns a Promise that resolves to true on success.
+function postBackfillRequestAction({ botUrl, token, id, action, body }) {
+  if (!botUrl || !token || !id || !action) return Promise.resolve(false);
+  const base = botUrl.replace(/\/encounter(\?.*)?$/, '/backfill-requests');
+  const url  = `${base}/${encodeURIComponent(id)}/${encodeURIComponent(action)}`;
+  const json = body ? JSON.stringify(body) : '';
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method:   'POST',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname,
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type':  'application/json',
+          'Content-Length': Buffer.byteLength(json),
+          'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+        },
+        timeout: 5000,
+      }, (res) => {
+        res.on('data', () => {});
+        res.on('end', () => resolve(res.statusCode >= 200 && res.statusCode < 300));
+      });
+      req.on('error',   () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+      if (json) req.write(json);
+      req.end();
+    } catch { resolve(false); }
+  });
+}
+
 function uploadHistoricalChat(messages, { botUrl, token, dryRun }) {
   void botUrl; void token;
   if (dryRun) {
@@ -5622,6 +5717,12 @@ async function main() {
   if (botUrl) {
     pollLatestVersion({ botUrl });
     setInterval(() => pollLatestVersion({ botUrl }), 10 * 60_000);
+    // Officer-filed backfill request poll. Runs slightly more often than the
+    // version probe since requests are actionable (officers expect agents to
+    // notice within ~5 min). Initial run is delayed a few seconds so the
+    // log-tail enumeration has populated stats.watchedLogs first.
+    setTimeout(() => pollBackfillRequests({ botUrl, token }), 8_000);
+    setInterval(() => pollBackfillRequests({ botUrl, token }), 5 * 60_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.

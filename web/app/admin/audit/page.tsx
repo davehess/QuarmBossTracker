@@ -151,16 +151,15 @@ export default async function AdminAuditPage({
             thread is still the authoritative source.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[680px]">
-            <thead className="text-dim">
+          <table className="w-full text-xs">
+            <thead className="text-dim hidden sm:table-header-group">
               <tr className="border-b border-border">
-                <th className="text-left px-3 py-2 font-normal">When</th>
-                <th className="text-left px-3 py-2 font-normal">Action</th>
-                <th className="text-left px-3 py-2 font-normal">Boss</th>
-                <th className="text-left px-3 py-2 font-normal">Actor</th>
-                <th className="text-left px-3 py-2 font-normal">Source</th>
-                <th className="text-left px-3 py-2 font-normal">Link</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal">When</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal">Action</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal">Boss</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal">Actor</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Source</th>
+                <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Link</th>
               </tr>
             </thead>
             <tbody>
@@ -168,14 +167,20 @@ export default async function AdminAuditPage({
                 const chip = actionChip(r.action);
                 return (
                   <tr key={r.id} className="border-b border-border/40 hover:bg-[#1a212c]">
-                    <td className="px-3 py-2 text-dim whitespace-nowrap">{fmtTs(r.ts)}</td>
-                    <td className={`px-3 py-2 ${chip.cls}`}>{chip.label}<span className="text-dim text-[10px] ml-1">{r.action}</span></td>
-                    <td className="px-3 py-2 text-text">{r.payload?.bossName || '—'}</td>
-                    <td className="px-3 py-2 text-text">
+                    <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap">{fmtTs(r.ts)}</td>
+                    <td className={`px-2 sm:px-3 py-2 ${chip.cls}`}>{chip.label}</td>
+                    <td className="px-2 sm:px-3 py-2 text-text">
+                      <div>{r.payload?.bossName || '—'}</div>
+                      <div className="text-dim text-[10px] md:hidden">
+                        {r.payload?.source && <>{r.payload.source} </>}
+                        {r.msg_link && <a href={r.msg_link} target="_blank" rel="noreferrer" className="text-blue hover:underline">↗</a>}
+                      </div>
+                    </td>
+                    <td className="px-2 sm:px-3 py-2 text-text">
                       {r.actor_name || (r.actor_discord_id ? `<@${r.actor_discord_id}>` : '—')}
                     </td>
-                    <td className="px-3 py-2 text-dim text-[10px]">{r.payload?.source || '—'}</td>
-                    <td className="px-3 py-2">
+                    <td className="px-2 sm:px-3 py-2 text-dim text-[10px] hidden md:table-cell">{r.payload?.source || '—'}</td>
+                    <td className="px-2 sm:px-3 py-2 hidden md:table-cell">
                       {r.msg_link ? (
                         <a href={r.msg_link} target="_blank" rel="noreferrer" className="text-blue hover:underline text-[10px]">↗ jump</a>
                       ) : '—'}
@@ -185,7 +190,6 @@ export default async function AdminAuditPage({
               })}
             </tbody>
           </table>
-          </div>
         )}
       </section>
     </div>
