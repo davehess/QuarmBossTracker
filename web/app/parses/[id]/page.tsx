@@ -145,6 +145,15 @@ async function load(id: string) {
         }
       }
     }
+    // Known summoned-pet names — exact (case-insensitive) match only, so a
+    // real player is never mis-flagged. Pet rows get bucketed under "Pets"
+    // in the by-class roll-up instead of inflating "Unknown".
+    const petSet = new Set<string>();
+    {
+      const { data: pets } = await sb.from('pet_names').select('name').eq('guild_id', 'wolfpack');
+      for (const p of (pets ?? []) as { name: string }[]) petSet.add(p.name.toLowerCase());
+    }
+
     // Zone fallback chain for future-proofing: encounters.zone_short (now
     // backfilled) → eqemu_npc_types.zone_short → bosses_local.zone_short.
     // The last one covers fresh kills recorded before a zone backfill runs,
@@ -166,6 +175,7 @@ async function load(id: string) {
       loot: (lootRows ?? []) as LootRow[],
       whoMap,
       bossLocalZone,
+      petSet,
       date,
       error: null as string | null,
     };
@@ -188,7 +198,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       </div>
     );
   }
-  const { enc, contribs, zones, loot, whoMap, bossLocalZone, date } = data;
+  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date } = data;
+  const isPet = (name: string) => petSet.has(name.toLowerCase());
 
   const bossName = cleanBossName(enc.eqemu_npc_types?.name);
   const bossId   = enc.npc_id;
@@ -259,7 +270,9 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         const byClass = new Map<string, { total: number; players: number }>();
         for (const p of players) {
           const who = whoMap.get(p.character_name.toLowerCase());
-          const klass = who?.class || (p.has_pets ? 'Pets / unknown' : 'Unknown');
+          const klass = isPet(p.character_name)
+            ? 'Pets'
+            : (who?.class || (p.has_pets ? 'Pets / unknown' : 'Unknown'));
           const e = byClass.get(klass) || { total: 0, players: 0 };
           e.total += p.total_damage || 0;
           e.players += 1;
@@ -274,7 +287,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             <h3 className="text-sm text-blue mb-3 flex items-center gap-2">
               <span aria-hidden>🎯</span>
               <span>Damage by class</span>
-              <span className="text-dim text-xs">· class data from /who observations; unmatched players bucket together</span>
+              <span className="text-dim text-xs">· class from OpenDKP roster, then /who; known pets bucket under Pets</span>
             </h3>
             <ul className="space-y-1">
               {rows.map((r) => (
@@ -318,7 +331,9 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             {players.map((p, i) => {
               const share = maxDamage > 0 ? (p.total_damage / maxDamage) * 100 : 0;
               const who = whoMap.get(p.character_name.toLowerCase());
-              const klass = who?.class || (p.has_pets ? '(has pets)' : '—');
+              const klass = isPet(p.character_name)
+                ? 'Pet'
+                : (who?.class || (p.has_pets ? '(has pets)' : '—'));
               return (
                 <tr key={p.character_name} className="border-b border-border/30 hover:bg-[#1a212c]">
                   <td className="py-1 pr-2 text-dim">{i + 1}</td>
