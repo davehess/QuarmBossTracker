@@ -600,7 +600,7 @@ function mergeWhoData(rows) {
     // an officer explicitly clears it via /markzek. Also auto-flag anyone
     // whose observed guild contains "Zek" anywhere — catches "Zek",
     // "Rise of Zek", "Pulse of Zek", etc., not just the bare guild name.
-    const autoZek = (r.guild && /zek/i.test(r.guild)) ? true : false;
+    const autoZek = (r.guild && /^(zek|rise of zek)$/i.test(r.guild)) ? true : false;
     s.whoData[k] = {
       name:       r.name,
       class:      (r.class && r.class !== 'ANONYMOUS') ? r.class : (old.class || null),
@@ -653,7 +653,7 @@ function applyKnownZekTips(tips) {
     // Preserve a prior observation only when the existing guild is clearly
     // NOT Zek-aligned. Treat any guild containing "Zek" (Rise of Zek,
     // Pulse of Zek, etc.) as Zek and let the tip overwrite.
-    if (old.guild && !/zek/i.test(old.guild)) {
+    if (old.guild && !/^(zek|rise of zek)$/i.test(old.guild)) {
       skipped++;
       if (examples.skipped.length < 5) examples.skipped.push(`${t.name} (already <${old.guild}>)`);
       continue;
