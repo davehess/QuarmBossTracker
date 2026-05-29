@@ -2689,8 +2689,10 @@ async function _handleAgentPvp(req, res) {
 
       const sent = await ch.send({ content });
 
-      // Attach Howl button for player-vs-player kills only
-      if (killType === 'pvp') {
+      // Attach Howl button only when Wolf Pack is involved (either side).
+      // PvP kills between two non-WP guilds are visible to us via /pvp
+      // channel chatter but there's nothing to celebrate or rally to.
+      if (isWpKill || isWpDeath) {
         await sent.edit({ content, components: [buildHowlRow(sent.id)] });
       }
       posted++;
