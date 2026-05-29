@@ -1591,13 +1591,22 @@ let _queuePermanentDropCount = 0;   // 4xx responses since startup
 let _queueCapEvictCount      = 0;   // FIFO evictions because queue hit MAX_SIZE
 
 function _loadQueueFromDisk() {
+  if (!fs.existsSync(QUEUE_FILE)) return;
   try {
     const raw = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
     if (Array.isArray(raw?.pending)) {
       _uploadQueue = raw.pending;
       console.log(`[upload-queue] loaded ${_uploadQueue.length} pending entr${_uploadQueue.length === 1 ? 'y' : 'ies'} from disk`);
     }
-  } catch { /* missing on first boot — fine */ }
+  } catch (err) {
+    // The file exists but couldn't be parsed — likely truncated during a
+    // crash mid-write. Move it aside (instead of silently dropping its
+    // contents) so the user can recover or report it if it matters.
+    const aside = QUEUE_FILE + '.corrupt-' + Date.now();
+    try { fs.renameSync(QUEUE_FILE, aside); }
+    catch (renameErr) { console.warn(`[upload-queue] could not move corrupt queue aside: ${renameErr.message}`); }
+    console.warn(`[upload-queue] queue file unreadable (${err.message}); moved to ${path.basename(aside)} and starting empty`);
+  }
 }
 
 function _saveQueueToDisk() {
