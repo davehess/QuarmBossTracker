@@ -15,6 +15,16 @@ export default function AdminPage() {
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card
+          title="⚔️ Encounter audit"
+          body="HP-vs-damage health for every encounter, duplicate detection, merge action, mark-incomplete, and file backfill requests when parses underreported."
+          href="/admin/encounters"
+        />
+        <Card
+          title="👥 Member dashboard"
+          body="Silent-member outreach list. Cross-references guild members against character roster, chat, parses, and /who observations to find inactive raiders and roster gaps."
+          href="/admin/members"
+        />
+        <Card
           title="💬 Guild chat log"
           body="Searchable /gu + /rs history from chat_messages. Filter by date, channel, speaker. Mirrors what the bot pulls from agent uploads."
           href="/admin/chat"
