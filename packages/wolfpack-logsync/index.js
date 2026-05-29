@@ -2985,7 +2985,42 @@ function renderOptin(o) {
   const list = _optinPane === 'active' ? o.files : o.ignored;
   const selCount = (o.files||[]).filter(f => f.selected).length;
 
-  let h = '<div class="card wide"><h2>Historical Log Opt-in — ' + _optinPane[0].toUpperCase()+_optinPane.slice(1) +
+  let h = '';
+
+  // Officer-filed backfill requests banner. Surfaces pending/acked requests
+  // targeting characters this agent watches. Each row: character, scope,
+  // reason, requested-by, Accept / Dismiss buttons. After action the panel
+  // refreshes (postOptin already calls refreshOptin afterward).
+  const reqs = (o.backfillRequests || []).filter(r => r.status === 'pending' || r.status === 'acked');
+  if (reqs.length > 0) {
+    h += '<div class="card wide" style="border-color:#a06628">' +
+         '<h2 style="color:#f0883e">📋 Officer-requested backfill (' + reqs.length + ')</h2>' +
+         '<div class="subtle">An officer asked you to upload a specific log window. Accept to confirm you\'ll handle it — then run the matching file from the list below. Dismiss if it doesn\'t apply.</div>';
+    for (const r of reqs) {
+      const scopeStart = r.scope && r.scope.start_iso ? new Date(r.scope.start_iso).toLocaleString() : '?';
+      const scopeEnd   = r.scope && r.scope.end_iso   ? new Date(r.scope.end_iso).toLocaleString()   : '?';
+      const status = r.status === 'acked'
+        ? '<span style="color:#1f6feb">✓ acknowledged</span>'
+        : '<span style="color:#f0883e">pending</span>';
+      h += '<div style="margin-top:10px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px">' +
+           '<div><b>' + esc(r.character) + '</b> ' + status + '</div>' +
+           '<div class="dim" style="font-size:11px;margin-top:2px">' +
+             scopeStart + ' &rarr; ' + scopeEnd +
+             (r.requested_by_name ? ' &middot; by ' + esc(r.requested_by_name) : '') +
+           '</div>' +
+           (r.reason ? '<div style="margin-top:4px;font-size:12px">' + esc(r.reason) + '</div>' : '') +
+           '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+             (r.status === 'pending'
+               ? '<button data-bf-act="ack" data-bf-id="' + esc(r.id) + '" style="background:#1a7f37;border-color:#1a7f37;color:#fff">Accept</button>'
+               : '<span class="dim" style="font-size:11px">Now run the file matching ' + esc(r.character) + ' below ↓</span>') +
+             '<button data-bf-act="dismiss" data-bf-id="' + esc(r.id) + '" data-bf-char="' + esc(r.character) + '" style="background:transparent;border-color:var(--border);color:var(--dim)">Dismiss</button>' +
+           '</div>' +
+           '</div>';
+    }
+    h += '</div>';
+  }
+
+  h += '<div class="card wide"><h2>Historical Log Opt-in — ' + _optinPane[0].toUpperCase()+_optinPane.slice(1) +
           ' (' + list.length + ')</h2>';
   h += '<div class="subtle">Backfill captures guild/raid chat + boss-matched combat kills (tagged with raid-window status). ' +
        '<span style="color:var(--blue)">Blue</span> = requested by the bot.</div>';
@@ -3145,6 +3180,23 @@ function renderOptin(o) {
       refreshOptin();
     });
   });
+  // Backfill request Accept / Dismiss buttons
+  root.querySelectorAll('button[data-bf-act]').forEach(b => {
+    b.addEventListener('click', async () => {
+      const id  = b.dataset.bfId;
+      const act = b.dataset.bfAct;
+      if (!id || !act) return;
+      let reason = null;
+      if (act === 'dismiss') {
+        const char = b.dataset.bfChar || 'this character';
+        reason = prompt('Dismiss backfill request for ' + char + '?\\n\\nOptional reason (shown to the officer):', '');
+        if (reason === null) return;  // cancelled
+      }
+      const action = act === 'ack' ? 'ack-backfill' : 'dismiss-backfill';
+      await postOptin(action, { id, reason });
+      refreshOptin();
+    });
+  });
   const sel = root.querySelector('#sortMode');
   if (sel) sel.addEventListener('change', async () => { await postOptin('sort', { mode: sel.value }); refreshOptin(); });
 }
@@ -3160,6 +3212,15 @@ async function refresh() {
   try {
     const s = await (await fetch('/api/state')).json();
     renderHeader(s); renderDash(s); renderTanks(s); renderHealers(s); renderDeeps(s); renderPets(s); renderInfo(s);
+    // Surface pending backfill request count on the Opt-in tab so officers
+    // notice without clicking through.
+    const pending = (s.backfillRequests || []).filter(r => r.status === 'pending').length;
+    const optinBtn = document.querySelector('.nav button[data-tab="optin"]');
+    if (optinBtn) {
+      const baseLabel = 'Opt-in Logs';
+      optinBtn.textContent = pending > 0 ? (baseLabel + ' (' + pending + ')') : baseLabel;
+      optinBtn.style.color = pending > 0 ? '#f0883e' : '';
+    }
   } catch (e) { /* network blip — just retry next tick */ }
 }
 
@@ -3226,6 +3287,19 @@ function _serializeOptinForWeb() {
     files:    _optinState.files.map(mapFile),
     ignored:  _optinState.ignored.map(mapFile),
     activeBackfills: [..._activeBackfills.values()],
+    // Officer-filed backfill requests targeting any character we watch.
+    // Populated by pollBackfillRequests; we expose just the actionable
+    // fields needed for the dashboard banner.
+    backfillRequests: (stats.backfillRequests || []).map(r => ({
+      id:                r.id,
+      character:         r.character,
+      requested_at:      r.requested_at,
+      requested_by_name: r.requested_by_name,
+      reason:            r.reason,
+      scope:             r.scope,
+      status:            r.status,
+    })),
+    backfillRequestsCheckedAt: stats.backfillRequestsCheckedAt,
   };
 }
 
@@ -3418,6 +3492,27 @@ function startWebDashboard(port) {
           if (toRerun.length > 0) {
             runOptinBackfill(toRerun, { log: (m) => console.log(`[optin] ${m}`) });
             console.log(`[optin] Re-run kicked for ${toRerun.length} file(s)`);
+          }
+        } else if (action === 'ack-backfill' || action === 'dismiss-backfill') {
+          // Backfill request status transitions — POST to the bot, then
+          // re-poll so the local view reflects what the bot sees.
+          const id     = payload?.id;
+          const reason = payload?.reason || null;
+          if (!id) {
+            res.writeHead(400); return res.end(JSON.stringify({ error: 'missing id' }));
+          }
+          const bot = (_uploadOpts || {});
+          const botAct = action === 'ack-backfill' ? 'ack' : 'dismiss';
+          const body   = botAct === 'dismiss' && reason ? { reason } : null;
+          const ok = await postBackfillRequestAction({
+            botUrl: bot.botUrl, token: bot.token, id, action: botAct, body,
+          });
+          // Refresh from bot so the UI shows the new status without waiting
+          // for the 5-min interval.
+          await pollBackfillRequests({ botUrl: bot.botUrl, token: bot.token });
+          if (!ok) {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'bot returned non-2xx' }));
           }
         } else {
           res.writeHead(400); return res.end(JSON.stringify({ error: 'unknown action' }));
