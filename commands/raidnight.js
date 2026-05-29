@@ -4,8 +4,9 @@
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { nowPartsInTz, getDefaultTz, msUntilMidnightInTz } = require('../utils/timezone');
-const { getRaidSession, saveRaidSession, getRaidSessionTargets } = require('../utils/state');
-const { loadParses }  = require('./parse');
+const { getRaidSession, saveRaidSession, getRaidSessionTargets, addRaidSessionTarget } = require('../utils/state');
+const { loadParses, findBossFromName }  = require('./parse');
+const { loadTonightsTargets }  = require('../utils/raidhelper');
 
 const RAID_DAYS = new Set(['sunday', 'wednesday', 'thursday']);
 
@@ -414,7 +415,33 @@ module.exports = {
     }
 
     await openSession(thread, targetChannel.id, label, tonightParses);
-    await interaction.editReply(`✅ Raid thread open: <#${thread.id}>\nUse \`/parse\` after each kill to post results.`);
+
+    // Auto-import tonight's RaidHelper event targets if one is scheduled.
+    // No-op when RAIDHELPER_CHANNEL_ID is unset or no matching event is
+    // found in the ±18h window. Failures are surfaced in the reply but
+    // never block the session from opening.
+    let raidHelperLine = '';
+    try {
+      delete require.cache[require.resolve('../data/bosses.json')];
+      const bosses = require('../data/bosses.json');
+      const parsed = await loadTonightsTargets(interaction.client, bosses, findBossFromName);
+      if (parsed && parsed.bossIds.length > 0) {
+        let added = 0;
+        for (const id of parsed.bossIds) { if (addRaidSessionTarget(id)) added++; }
+        if (added > 0) await refreshSessionSummary(interaction.client).catch(() => {});
+        const names = parsed.bossIds.map(id => bosses.find(b => b.id === id)?.name || id);
+        raidHelperLine = `\n🎯 Imported ${added} target${added === 1 ? '' : 's'} from RaidHelper: ${names.join(', ')}`;
+        if (parsed.unmatched.length) {
+          raidHelperLine += `\n   *Skipped (no bosses.json match):* ${parsed.unmatched.join(', ')}`;
+        }
+      } else if (parsed && parsed.bossIds.length === 0 && parsed.unmatched.length > 0) {
+        raidHelperLine = `\n🎯 RaidHelper found but no boss names matched: ${parsed.unmatched.join(', ')}`;
+      }
+    } catch (err) {
+      console.warn('[raidnight] raidhelper import failed:', err?.message);
+    }
+
+    await interaction.editReply(`✅ Raid thread open: <#${thread.id}>\nUse \`/parse\` after each kill to post results.${raidHelperLine}`);
   },
 
   appendParseToSession,
