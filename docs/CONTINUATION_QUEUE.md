@@ -15,6 +15,12 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **agent v2.4.26 / bot v2.5.39** — per-ability rollup emission + watermark cutover.
+  Agent computes `{ by_skill, total_hits, total_damage, self_attack_count }` per
+  character at encounter flush (pets→owners, null attacker→uploader); bot upserts
+  into `encounter_combat_rollup` and stamps `contributions.agent_version` +
+  `has_ability_detail=true`. Rollup verified against synthetic events (pets attribute
+  correctly, self-attack counted, avoid events skipped).
 - `character_data_floor` view + `characters.exclude_from_stats` / `exclude_inventory`
   opt-out flags — `supabase/migrations/20260530120000_character_data_floor.sql`.
   `member_since = LEAST(first /gu, first /rs, first OpenDKP tick)` across the family.
@@ -28,22 +34,12 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
-### 1. Agent + bot: per-ability rollup emission  ← starts the clock, do first
-Every raid not collected is data we can never recover.
-- **Cutover version:** bump agent to next version (currently 2.4.29 → **2.4.30**) and
-  set a `ROLLUP_MIN_AGENT_VERSION = "2.4.30"` constant in the bot.
-- **Agent** (`packages/wolfpack-logsync/index.js`, encounter builder): from the
-  per-encounter `events[]`, compute per character:
-  `{ by_skill: {<skill|"Spell: X"|"Song: Y">: {hits, dmg}}, total_hits, total_damage,
-  self_attack_count }` (self = attacker == defender). Send under `encounter.rollup`.
-  Note: bystander spell names are "(unknown)" in EQ logs — reliable only for the
-  uploader; melee/skill verbs are reliable for everyone.
-- **Bot** (`index.js` `/api/agent/encounter`, ~line 4009 area): upsert rollup into
-  `encounter_combat_rollup` (unique encounter_id+character), stamp
-  `contributions.agent_version` + `has_ability_detail=true`.
-- Bump `packages/wolfpack-logsync/package.json` + bot `package.json` + README + this
-  file's version table. **Batch into ONE agent release** — restarts have been painful.
-- Run `npm run check:dashboard` before release (escape-bug guard).
+### 1. ✅ DONE — Agent + bot per-ability rollup emission (cutover v2.4.26 / v2.5.39)
+See "Shipped this session". The rollup table starts populating on the next agent
+upload at/after 2.4.26. **Note:** `npm run check:dashboard` referenced in the
+previous queue revision **does not exist in the repo** — the script + npm wiring
+the earlier summary described was never actually shipped. Rebuilding it is its own
+small task; for now, manual diff inspection of `WEB_HTML` changes is the only guard.
 
 ### 2. `/me` page: verb totals + self-attack + resubmit nudge
 - Grand total by verb: sum `by_skill` across the character's `encounter_combat_rollup`.
