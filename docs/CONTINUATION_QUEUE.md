@@ -86,7 +86,16 @@ Supabase encounters → `mirrorBoardsToSupabase`.
 ### 8. Misc queued
 - Recipient-side Malthur detectors + `provisions_cursor_full` event (cursor caps ~10).
 - Backfill queue backpressure (pause feeding near the 5000 cap).
-- Architecture pivot decision (extract agent UI to wolfpack.quest) — recommended.
+
+## 🏛️ Project Mimic — overarching direction (see `docs/MIMIC.md`)
+Electron desktop client, **new 4th component, major release, BETA channel**, codename
+**mimic**. Consumes (does not rebuild) the agent + wolfpack.quest data and adds
+DnDOverlay-style always-on-top overlays (triggers/audio/TTS, timer bars, DPS meter,
+raid announcements). Most client-side queued items above (agent dashboard, triggers,
+EQ UI editor #4, tell-bot #5, PvP panel #6) **become Mimic panels** rather than
+standalone builds. **Phase 0 = stabilize the agent's local HTTP API as the Mimic
+contract** before any overlay/UI work. Reconcile the DnDOverlay feature inventory
+against the actual GitLab repo when egress allows (gitlab.com blocked from sandbox).
 
 ## Standing constraints (carry forward)
 - Byte-level privacy filter strips officer chat/tells/private channels before upload.
