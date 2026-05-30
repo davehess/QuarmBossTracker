@@ -2453,7 +2453,7 @@ function renderHeader(s) {
         const j = await r.json().catch(() => ({}));
         const reason = j?.reason || 'update is blocked';
         if (button) { button.disabled = false; button.textContent = '↻ Check for update'; }
-        if (confirm('Update blocked: ' + reason + '.\n\nForce restart anyway? Unflushed data in the upload queue may be retried after restart, but in-flight encounters or backfill progress could be lost.')) {
+        if (confirm('Update blocked: ' + reason + '.\\n\\nForce restart anyway? Unflushed data in the upload queue may be retried after restart, but in-flight encounters or backfill progress could be lost.')) {
           return _attemptUpdate(button, true);
         }
         return false;
