@@ -178,6 +178,13 @@ function Install-ToEqDir([string]$eqDir) {
         Write-Host "           The repo's packages\wolfpack-logsync\index.js must be present." -ForegroundColor Yellow
     }
 
+    # Copy supervisor.js if present (enables in-place auto-updates). Older
+    # zips won't have it; the launch path below falls back to direct index.js.
+    $supervisorSrc = Join-Path (Split-Path -Parent $AgentEntry) "supervisor.js"
+    if (Test-Path $supervisorSrc) {
+        Copy-Item $supervisorSrc (Join-Path $agentDest "supervisor.js") -Force
+    }
+
     # Copy this script
     $thisScript = $MyInvocation.ScriptName
     if ($thisScript -and (Test-Path $thisScript)) {
@@ -738,7 +745,18 @@ Remove-BomFromFile $_pkgPath
 # exits node with code 0 after dropping the marker) re-enters this script,
 # applies the update, and relaunches automatically.
 while ($true) {
-    $nodeArgs = @($AgentEntry)
+    # Supervisor preferred when present — it owns the lifecycle (in-place
+    # auto-updates, child restart-with-backoff, free-port probe, post-update
+    # transmit verification). Falls back to launching the agent directly so
+    # older installs without supervisor.js still work after a re-pull.
+    $supervisor = Join-Path (Split-Path -Parent $AgentEntry) "supervisor.js"
+    $useSupervisor = (Test-Path $supervisor)
+
+    if ($useSupervisor) {
+        $nodeArgs = @($supervisor, "--agent", $AgentEntry, "--bot", $cfg.BotUrl, "--port", "7777", "--")
+    } else {
+        $nodeArgs = @($AgentEntry)
+    }
     foreach ($f in $activeLogs) {
         $nodeArgs += "--log"
         $nodeArgs += $f.FullName
@@ -751,7 +769,8 @@ while ($true) {
     # Always launch the local web dashboard on port 7777 so users have both
     # the CLI window and the web UI available side-by-side without needing
     # to press [B] to detach. Port collides → falls back inside the agent;
-    # CLI keeps running either way.
+    # CLI keeps running either way. (Under the supervisor, the supervisor
+    # picks the actual port — the agent forwards this as the BASE.)
     $nodeArgs += "--web-port"
     $nodeArgs += "7777"
     if ($DryRun) { $nodeArgs += "--dry-run" }
