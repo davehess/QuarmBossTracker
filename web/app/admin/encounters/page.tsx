@@ -293,25 +293,34 @@ async function fileBackfillRequest(formData: FormData) {
 export default async function AdminEncountersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ days?: string }>;
+  searchParams: Promise<{ days?: string; show?: string }>;
 }) {
-  const { days: daysParam } = await searchParams;
+  const { days: daysParam, show } = await searchParams;
   const days = Math.max(1, Math.min(90, parseInt(daysParam || '7', 10) || 7));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  // "Reviewable" = encounters whose npc_id never resolved to a name in
+  // our catalog. These render as "npc 158443" and are the rows officers
+  // need to dig into (raid scripted bosses, novel mobs, broken sync).
+  const showReviewable = show === 'reviewable';
 
-  const rows = await loadEncounters(since.toISOString());
-  const dupes = findDuplicates(rows);
+  const allRows = await loadEncounters(since.toISOString());
+  const dupes = findDuplicates(allRows);
   const dupeIds = new Set<string>();
   for (const p of dupes) { dupeIds.add(p.a.id); dupeIds.add(p.b.id); }
 
+  // Always count from the full set so the chips reflect totals; the table
+  // below filters when ?show=reviewable.
   const stats = {
-    total: rows.length,
-    zero: rows.filter(r => (r.total_damage ?? 0) === 0).length,
-    low:  rows.filter(r => { const x = hpRatio(r); return x != null && x < 0.75; }).length,
-    over: rows.filter(r => { const x = hpRatio(r); return x != null && x > 1.10; }).length,
-    incomplete: rows.filter(r => r.data_incomplete).length,
+    total: allRows.length,
+    zero: allRows.filter(r => (r.total_damage ?? 0) === 0).length,
+    low:  allRows.filter(r => { const x = hpRatio(r); return x != null && x < 0.75; }).length,
+    over: allRows.filter(r => { const x = hpRatio(r); return x != null && x > 1.10; }).length,
+    incomplete: allRows.filter(r => r.data_incomplete).length,
     duplicates: dupes.length,
+    reviewable: allRows.filter(r => !r.npc_name).length,
   };
+
+  const rows = showReviewable ? allRows.filter(r => !r.npc_name) : allRows;
 
   return (
     <div className="space-y-6">
@@ -325,15 +334,16 @@ export default async function AdminEncountersPage({
           Every encounter the bot has stored, with HP-vs-damage health, duplicate
           detection, and merge / mark-incomplete / request-backfill actions.
         </p>
-        <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 mt-4 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-7 gap-3 mt-4 text-xs">
           <Stat label="Encounters"     value={stats.total} />
+          <Stat label="Reviewable"     value={stats.reviewable} color="text-purple" />
           <Stat label="Zero damage"    value={stats.zero}  color="text-red-400" />
           <Stat label="Low HP (<75%)"  value={stats.low}   color="text-orange" />
           <Stat label="Over cap (>110%)" value={stats.over} color="text-purple" />
           <Stat label="Duplicates"     value={stats.duplicates} color="text-orange" />
           <Stat label="Marked incomplete" value={stats.incomplete} color="text-dim" />
         </div>
-        <form method="GET" className="mt-4 text-xs flex items-center gap-2">
+        <form method="GET" className="mt-4 text-xs flex items-center gap-2 flex-wrap">
           <span className="text-dim">Last</span>
           <select name="days" defaultValue={String(days)}
             className="bg-bg border border-border rounded px-2 py-1 text-sm">
@@ -344,7 +354,19 @@ export default async function AdminEncountersPage({
             <option value="30">30 days</option>
             <option value="90">90 days</option>
           </select>
+          {showReviewable && <input type="hidden" name="show" value="reviewable" />}
           <button className="px-3 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">Apply</button>
+          {showReviewable ? (
+            <Link href={`/admin/encounters?days=${days}`}
+              className="px-3 py-1 rounded border border-purple bg-[#8957e533] text-purple text-xs no-underline">
+              🔍 Reviewable only ({stats.reviewable}) · click to clear
+            </Link>
+          ) : (
+            <Link href={`/admin/encounters?days=${days}&show=reviewable`}
+              className="px-3 py-1 rounded border border-border bg-bg text-dim hover:text-purple text-xs no-underline">
+              🔍 Show only reviewable ({stats.reviewable})
+            </Link>
+          )}
         </form>
       </section>
 
@@ -355,17 +377,31 @@ export default async function AdminEncountersPage({
             🚨 Possible duplicates ({dupes.length}) — same NPC, started within 60s
           </h3>
           <div className="p-3 space-y-3">
-            {dupes.map((p, i) => (
+            {dupes.map((p, i) => {
+              const bothEmpty = (p.a.total_damage ?? 0) === 0 && (p.b.total_damage ?? 0) === 0
+                              && p.a.contribs === 0 && p.b.contribs === 0;
+              return (
               <div key={i} className="bg-bg border border-border rounded p-3">
                 <div className="grid grid-cols-2 gap-3 text-xs">
-                  {[p.a, p.b].map(e => (
+                  {[{ label: 'A', enc: p.a }, { label: 'B', enc: p.b }].map(({ label, enc: e }) => (
                     <div key={e.id} className="space-y-1">
-                      <div className="text-text">{e.npc_name || `npc ${e.npc_id}`}</div>
+                      <div className="text-text">
+                        <span className="text-orange font-bold mr-1">[{label}]</span>
+                        {e.npc_name || `npc ${e.npc_id}`}
+                        {e.npc_id && <span className="text-dim text-[10px]"> · npc_id {e.npc_id}</span>}
+                      </div>
                       <div className="text-dim">{fmtTs(e.started_at)} · {fmtDur(e.duration_sec)} · {e.contribs} contribs · {e.players} players</div>
                       <div className="text-dim">{(e.total_damage ?? 0).toLocaleString()} dmg <span className={hpBadge(hpRatio(e)).cls}>{hpBadge(hpRatio(e)).label}</span></div>
+                      <div className="text-dim text-[10px]">id <code>{e.id.slice(0, 8)}</code></div>
                     </div>
                   ))}
                 </div>
+                {bothEmpty && (
+                  <div className="text-dim text-[11px] italic mt-2">
+                    Both rows are empty (0 contributions, 0 players, 0 damage) — merging won&apos;t change anything.
+                    Use <b>Mark incomplete</b> on each below, or delete one as a ghost row.
+                  </div>
+                )}
                 <div className="flex gap-2 mt-2">
                   <form action={mergeEncounters}>
                     <input type="hidden" name="target" value={p.a.id} />
@@ -383,7 +419,8 @@ export default async function AdminEncountersPage({
                   </form>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         </section>
       )}
@@ -415,9 +452,13 @@ export default async function AdminEncountersPage({
                 <tr key={r.id} className={`border-b border-border/40 hover:bg-[#1a212c] ${dupeIds.has(r.id) ? 'bg-[#3a1e1e22]' : ''}`}>
                   <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap hidden sm:table-cell">{fmtTs(r.started_at)}</td>
                   <td className="px-2 sm:px-3 py-2 text-text">
-                    <div>{r.npc_name || `npc ${r.npc_id}`}</div>
+                    <div>
+                      {r.npc_name || <span className="text-purple">npc {r.npc_id}</span>}
+                    </div>
                     <div className="text-dim text-[10px]">
                       {r.zone_short || '—'}
+                      {r.npc_id && r.npc_name && <> · npc_id {r.npc_id}</>}
+                      {' · id '}<code>{r.id.slice(0, 8)}</code>
                       <span className="sm:hidden"> · {fmtTs(r.started_at)} · {fmtDur(r.duration_sec)}</span>
                     </div>
                   </td>
