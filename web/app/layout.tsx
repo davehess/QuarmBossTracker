@@ -55,18 +55,26 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </header>
           <main>{children}</main>
-          <footer className="mt-12 text-xs text-dim">
-            Data shared with the Discord bot via Supabase · the local agent dashboard
-            lives at{' '}
-            <a
-              href="http://localhost:7777"
-              target="_blank"
-              rel="noreferrer"
-              className="text-blue hover:underline"
-            >
-              http://localhost:7777
-            </a>{' '}
-            for live in-raid stats (only opens if your wolfpack-logsync agent is running).
+          <footer className="mt-12 text-xs text-dim space-y-1">
+            <div>
+              Data shared with the Discord bot via Supabase · the local agent dashboard
+              lives at{' '}
+              <a
+                href="http://localhost:7777"
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue hover:underline"
+              >
+                http://localhost:7777
+              </a>{' '}
+              for live in-raid stats (only opens if your wolfpack-logsync agent is running).
+            </div>
+            <div>
+              <a href="/privacy" className="text-blue hover:underline">Privacy</a>{' '}
+              <span aria-hidden>·</span>{' '}
+              Your logs stay on your device. Toggle exclusions any time on{' '}
+              <a href="/me" className="text-blue hover:underline">/me</a>.
+            </div>
           </footer>
         </div>
       </body>

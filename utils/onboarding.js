@@ -58,6 +58,9 @@ const CHANGELOGS = {
   '2.5.43': [
     'New officer command: `/recoverkills [since] [dry_run]` rebuilds boss timers from Supabase encounters when the boards have drifted (volume wipe, missed updates, the recent re-run-as-backfill bug). Dry-run first to preview.',
   ],
+  '2.5.44': [
+    'Privacy statement is live at **wolfpack.quest/privacy** — what we keep, what stays local, who sees what, and how to opt out per character. Linked from the footer and the welcome message.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
@@ -338,6 +341,14 @@ function buildWelcomeEmbed() {
         value:
           'Use `/announce` to schedule a group takedown — it creates a thread, a Discord event, and ' +
           'rallies the pack.\nRun `/raidbosshelp` for a full command reference.',
+        inline: false,
+      },
+      {
+        name: '🔒 Your data, your call',
+        value:
+          'Your raw logs stay on your machine — only what you opt into syncs. Read the privacy ' +
+          'statement and toggle per-character exclusions any time at ' +
+          '**https://wolfpack.quest/privacy** and **https://wolfpack.quest/me**.',
         inline: false,
       },
     );

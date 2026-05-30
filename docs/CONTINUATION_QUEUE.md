@@ -15,6 +15,10 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **bot v2.5.44 / web v0.4.29** — privacy statement live. `/privacy` page mirrors
+  `docs/PRIVACY.md` (the canonical source of truth), linked from the global
+  footer + the welcome onboarding embed. Plain-words: what we keep, what stays
+  local, the PRIVATE/ANON/GUILD scope contract, and how to opt out per-character.
 - **bot v2.5.43** — `/recoverkills [since] [dry_run]` officer command. Rebuilds
   `state.bosses` + `bot_boards` from Supabase `encounters` when the live state
   is empty/drifted. Maps `encounter.npc_id → bosses_local.internal_id → bosses.json
@@ -129,8 +133,10 @@ drifts again.
 > the quality-of-life business." The real value is carrying the SUBSTANTIAL prep load
 > the organizing officers do day and night. Judge every feature by: does it reduce
 > officer prep burden? Never by: does it grade a player?
-- **Privacy statement** — draft at `docs/PRIVACY.md` (preview only, NOT wired). Pending:
-  wire into installer first-run, wolfpack.quest footer/`/privacy`, and onboarding DM.
+- **Privacy statement** — ✅ live at `wolfpack.quest/privacy`, mirrored from
+  `docs/PRIVACY.md`, footer-linked, and called out in the welcome embed.
+  Remaining: surface it inside the installer first-run flow once the
+  stupid-simple installer lands (see acceptance criteria below).
 - **Simplify installation — STUPID-SIMPLE (user spec 2026-05-30).** Collapse the
   Node-install + log-enable + agent-copy steps (`RUN-FIRST-for-Node.js.bat`,
   `start-logsync.ps1`, `Parser.bat`) into one button. Acceptance criteria:

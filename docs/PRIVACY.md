@@ -1,4 +1,9 @@
-# Wolf Pack — Privacy, in plain words  *(DRAFT — preview, not yet wired anywhere)*
+# Wolf Pack — Privacy, in plain words
+
+> Source of truth for the public privacy statement. Mirrored on
+> `wolfpack.quest/privacy` (`web/app/privacy/page.tsx`) and linked from the
+> global footer + the welcome onboarding embed. Keep this file and the page
+> in sync.
 
 **The spirit.** This stuff exists to make raids easier to run when things get
 hectic — and to carry some of the load for the officers who prep at all hours.
