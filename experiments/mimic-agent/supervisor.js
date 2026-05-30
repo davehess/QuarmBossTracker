@@ -126,10 +126,9 @@ function downloadVerified(url, destPath, expectedSha256) {
 }
 
 async function checkForUpdate() {
-  // STUB: /api/agent/latest-version only returns { latest_agent_version }.
-  // A real rollout publishes { version, url, sha256 }; until then we can detect
-  // a newer version but can't safely download (no url/hash) — so we log the
-  // delta and let the user update via the existing path.
+  // /api/agent/latest-version returns { latest_agent_version, url, sha256 }
+  // (bot v2.5.47+). Older bots return only the version string — then url/sha256
+  // are absent and we detect-but-defer rather than download blind.
   const verUrl = BOT_URL.replace(/\/encounter(\?.*)?$/, '/latest-version');
   const manifest = await getJson(verUrl);
   if (!manifest) return;

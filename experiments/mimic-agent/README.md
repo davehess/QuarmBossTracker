@@ -33,12 +33,15 @@ node experiments/mimic-agent/supervisor.js -- --watch --once
   one blocking the other.
 
 ## What's still stubbed (needs an infra decision before it's real)
-1. **Update manifest.** `/api/agent/latest-version` currently returns only
-   `{ latest_agent_version }`. For safe auto-download the bot (or the GitHub
-   release) must publish `{ version, url, sha256 }`. Until then the supervisor
-   *detects* a newer version but won't download (logs the delta and defers to the
-   existing update path). Wiring this is ~half a day on the bot side.
-2. **Signing the supervisor** so Windows SmartScreen doesn't flag it.
+1. ~~Update manifest.~~ ✅ **Done (bot v2.5.47):** `/api/agent/latest-version` now
+   returns `{ latest_agent_version, url, sha256 }` — a raw single-file URL plus
+   the SHA-256 of exactly what `main` holds, computed from the bot's own image.
+   The supervisor verifies the hash before swapping. Override the URL with
+   `AGENT_RAW_URL` if the repo/branch moves.
+2. **Distribution swap.** The supervisor must become the *launched* process (it
+   spawns the agent), i.e. `Parser.bat` / the installer should run `supervisor.js`
+   instead of `index.js`. Small change, deferred until we commit to the rollout.
+3. **Signing the supervisor** so Windows SmartScreen doesn't flag it.
 
 ## How this becomes Mimic
 The Electron app (`docs/MIMIC.md`) wraps this exact supervised-engine model:

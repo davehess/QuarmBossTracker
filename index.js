@@ -21,6 +21,36 @@ function _currentAgentVersion() {
   return _cachedAgentVersion;
 }
 
+// Update manifest for the self-updating supervisor (see experiments/mimic-agent
+// + docs/MIMIC_AGENT.md). The agent is a single file shipped in the bot's own
+// image, so we can publish a stable SHA-256 of exactly what `main` holds and a
+// raw URL to fetch it. The supervisor verifies the hash before swapping, so a
+// CDN hiccup or truncated download never replaces a working agent.
+//
+// AGENT_RAW_URL defaults to the raw file on the default branch; override via env
+// if the repo/branch differs. Hash is computed once and cached (file is
+// immutable within a deploy).
+let _cachedAgentSha = undefined;
+function _currentAgentSha256() {
+  if (_cachedAgentSha !== undefined) return _cachedAgentSha;
+  try {
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const buf = fs.readFileSync(require('path').join(__dirname, 'packages/wolfpack-logsync/index.js'));
+    _cachedAgentSha = crypto.createHash('sha256').update(buf).digest('hex');
+  } catch { _cachedAgentSha = null; }
+  return _cachedAgentSha;
+}
+function _agentManifest() {
+  return {
+    latest_agent_version: _currentAgentVersion(),
+    // Raw single-file URL. Override AGENT_RAW_URL if the default branch/repo moves.
+    url: process.env.AGENT_RAW_URL ||
+      'https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/index.js',
+    sha256: _currentAgentSha256(),
+  };
+}
+
 const {
   getAllState, recordKill, clearKill,
   getZoneCard, setZoneCard, clearZoneCard,
@@ -4415,10 +4445,11 @@ http.createServer(async (req, res) => {
   // Lightweight version probe — agents poll this every ~10 minutes to learn
   // about new releases without needing to upload an encounter first.
   if (req.method === 'GET' && req.url === '/api/agent/latest-version') {
+    // Now returns the full update manifest { latest_agent_version, url, sha256 }
+    // for the self-updating supervisor. Older agents read only
+    // latest_agent_version and ignore the extra fields, so this is additive.
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({
-      latest_agent_version: _currentAgentVersion(),
-    }));
+    return res.end(JSON.stringify(_agentManifest()));
   }
 
   // Officer-filed backfill requests — agent polls per character, picks up

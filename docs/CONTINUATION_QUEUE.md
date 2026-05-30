@@ -20,8 +20,11 @@
   full ~6-10 weeks; coexistence design) + `experiments/mimic-agent/` runnable
   prototype (version check, hash-verified atomic download/swap, child restart
   backoff, free-port probe). Verified: semver compare + port probe (7777→7778).
-  **Stub:** `/api/agent/latest-version` returns only a version string — needs
-  `{ version, url, sha256 }` manifest before auto-download is safe (~½ day bot work).
+- **bot v2.5.47** — agent update manifest. `/api/agent/latest-version` now returns
+  `{ latest_agent_version, url, sha256 }` (raw single-file URL + SHA-256 of what
+  `main` holds, from the bot's own image). Closes the supervisor's download stub —
+  auto-update is now real + hash-verified. Remaining for rollout: make the
+  supervisor the launched process (`Parser.bat` → `supervisor.js`) + sign it.
 - **bot v2.5.46 / web v0.4.32** — tell notifications: per-character `tell_dm`
   Discord toggle + device-local browser notifications (Supabase Realtime on
   `tells`, visibility-gated, optional WebAudio ping). Migration 20260530170000.
