@@ -12,22 +12,25 @@
 import { useTransition, useState } from 'react';
 import { setCharacterExclusion } from './actions';
 
-type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay';
+type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm';
 
 export default function ExclusionToggles({
   character,
   excludeFromStats,
   excludeInventory,
   tellRelay,
+  tellDm,
 }: {
   character: string;
   excludeFromStats: boolean;
   excludeInventory: boolean;
   tellRelay: boolean;
+  tellDm: boolean;
 }) {
   const [stats, setStats]         = useState(excludeFromStats);
   const [inventory, setInventory] = useState(excludeInventory);
   const [tells, setTells]         = useState(tellRelay);
+  const [dm, setDm]               = useState(tellDm);
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
 
@@ -72,12 +75,25 @@ export default function ExclusionToggles({
         <Toggle
           on={tells}
           disabled={pending}
-          tooltip="Tells relay: opt in to forward this character's incoming /tell messages to your /me/tells page + Discord DMs. Default off — your tells stay private until you turn this on. Outgoing tells you send are also stored so /me/tells shows both sides of the conversation. Only you ever see them."
+          tooltip="Tells relay: opt in to forward this character's incoming /tell messages to your /me/tells page + notifications. Default off — your tells stay private until you turn this on. Outgoing tells you send are also stored so /me/tells shows both sides of the conversation. Only you ever see them."
           onLabel="Tells: ON"
           offLabel="Tells: off"
           variant="positive-when-on"
           onChange={(next) => flip('tell_relay', next, setTells, tells)}
         />
+        {/* DM channel only matters once the relay is on. Browser notifications
+            are toggled separately on the /me/tells page (device-local). */}
+        {tells && (
+          <Toggle
+            on={dm}
+            disabled={pending}
+            tooltip="Discord DM: when an incoming tell lands on this character while you're away, the bot DMs you on Discord. Turn off to keep the tell on /me/tells (and browser notifications) but silence the Discord ping — handy for a noisy alt. Browser notifications are a separate toggle on the /me/tells page."
+            onLabel="DM: ON"
+            offLabel="DM: off"
+            variant="positive-when-on"
+            onChange={(next) => flip('tell_dm', next, setDm, dm)}
+          />
+        )}
       </div>
       {err && <div className="text-red-400">{err}</div>}
     </div>

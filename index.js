@@ -3380,7 +3380,7 @@ async function _handleAgentTells(req, res) {
   // ownership. Missing either → silently drop (do not write).
   const charRows = await supabase.select(
     'characters',
-    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay&guild_id=eq.wolfpack&limit=1`,
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay,tell_dm&guild_id=eq.wolfpack&limit=1`,
   ).catch(() => []);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (!charRow?.tell_relay) {
@@ -3437,10 +3437,13 @@ async function _handleAgentTells(req, res) {
     if (Array.isArray(i)) stored += i.length;
   }
 
-  // Fire-and-forget DM relay for incoming tells. Coalesce per-recipient into
-  // a single message when there are multiple, to keep notifications quiet.
+  // Fire-and-forget DM relay for incoming tells — only when the per-character
+  // Discord-DM toggle is on. tell_dm defaults true, so opting into tell_relay
+  // gives DMs out of the box; flipping tell_dm off keeps the row + browser
+  // notification but silences the Discord ping. Browser notifications ride
+  // Supabase Realtime on the row insert, independent of this DM path.
   const incoming = rows.filter(r => r.direction === 'incoming');
-  if (incoming.length > 0) {
+  if (incoming.length > 0 && charRow.tell_dm !== false) {
     _relayTellsToDM(charRow.discord_id, charRow.name, incoming).catch(err =>
       console.warn('[tells] DM relay failed:', err?.message));
   }

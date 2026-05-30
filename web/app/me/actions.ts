@@ -10,7 +10,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 
-type FlagKey = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay';
+type FlagKey = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm';
 
 export async function setCharacterExclusion(
   characterName: string,
@@ -45,7 +45,7 @@ export async function setCharacterExclusion(
   }
 
   // Whitelist the column so a hostile caller can't drift the flag name.
-  const allowed: FlagKey[] = ['exclude_from_stats', 'exclude_inventory', 'tell_relay'];
+  const allowed: FlagKey[] = ['exclude_from_stats', 'exclude_inventory', 'tell_relay', 'tell_dm'];
   if (!allowed.includes(flag)) return { ok: false, error: 'invalid flag' };
 
   const { error } = await admin

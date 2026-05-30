@@ -42,6 +42,7 @@ type CharRow = {
   exclude_from_stats: boolean | null;
   exclude_inventory:  boolean | null;
   tell_relay:         boolean | null;
+  tell_dm:            boolean | null;
 };
 
 type SkillBucket = { hits: number; dmg: number };
@@ -95,7 +96,7 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   if (!pack?.discord_id) return { discordId: null, nickname: pack?.nickname ?? null, chars: [] };
   const { data: chars } = await admin
     .from('characters')
-    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, exclude_from_stats, exclude_inventory, tell_relay')
+    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm')
     .eq('guild_id', 'wolfpack')
     .eq('discord_id', pack.discord_id)
     .order('active', { ascending: false })
@@ -400,6 +401,7 @@ export default async function MePage() {
                   excludeFromStats={!!c.exclude_from_stats}
                   excludeInventory={!!c.exclude_inventory}
                   tellRelay={!!c.tell_relay}
+                  tellDm={c.tell_dm !== false}
                 />
               </li>
             ))}
@@ -434,6 +436,7 @@ export default async function MePage() {
                   excludeFromStats={!!c.exclude_from_stats}
                   excludeInventory={!!c.exclude_inventory}
                   tellRelay={!!c.tell_relay}
+                  tellDm={c.tell_dm !== false}
                 />
                 <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
                 {c.quarmy_url && (

@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import TellNotifications from './TellNotifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -133,6 +134,12 @@ export default async function TellsPage() {
             </p>
           </div>
         </div>
+        {discordId && (
+          <div className="mt-4 pt-3 border-t border-border/40">
+            <div className="text-[10px] text-dim mb-2">Notify me when a tell lands while I&apos;m away</div>
+            <TellNotifications discordId={discordId} />
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
           <Stat label="Conversations" value={conversations.length} />
           <Stat label="Total tells"   value={tells.length} />
