@@ -59,7 +59,13 @@ type CharRow = {
   class: string | null;
   main_name: string | null;
   active: boolean;
+  rank: string | null;
 };
+
+// Ranks that count as "on the raid roster" — what the class summary should
+// count. Excludes Raid Alt (placeholder DKP-tracker characters like
+// Ferdinand / Canopy / Bardtholemu that aren't real people in the slot).
+const ROSTER_RANKS = new Set(['Raid Pack', 'Officer', 'Pack Leader', 'Recruit']);
 
 type Raid = { raid_id: number; ts: string };
 type Tick = { raid_id: number; tick_id: number; attendees: string[] };
@@ -96,7 +102,7 @@ async function loadData() {
   const [{ data: chars }, { data: raids90 }] = await Promise.all([
     admin
       .from('characters')
-      .select('name, class, main_name, active')
+      .select('name, class, main_name, active, rank')
       .eq('guild_id', 'wolfpack'),
     admin
       .from('opendkp_raids')
@@ -201,9 +207,16 @@ function computeAttendance(args: {
   }
 
   // Roll up per character on roster
+  // Include EVERY on-roster character (Raid Pack / Officer / Pack Leader /
+  // Recruit) — even those with zero attendance — so the grid shows the
+  // full roster, not just the regulars. Raid Alts are skipped because
+  // they're DKP-tracker placeholders, not real players in a slot.
   const byClass = new Map<string, AttRow[]>();
   for (const c of chars) {
     if (!c.active) continue;
+    if (!c.rank || !ROSTER_RANKS.has(c.rank)) continue;
+    const cls = (c.class || 'UNKNOWN');
+    if (cls === 'UNKNOWN') continue;
     const k = c.name.toLowerCase();
     const set90 = attended90.get(k) || new Set<number>();
     const attended30 = [...set90].filter(rid => {
@@ -212,11 +225,8 @@ function computeAttendance(args: {
     }).length;
     const setPrior = attendedPrior.get(k) || new Set<number>();
     const attendedPriorN = setPrior.size;
-
-    const rate30   = raids30      > 0 ? attended30      / raids30      : 0;
-    const ratePrior = raidsPrior  > 0 ? attendedPriorN  / raidsPrior   : 0;
-    const cls = (c.class || 'UNKNOWN');
-    if (cls === 'UNKNOWN') continue;
+    const rate30   = raids30     > 0 ? attended30     / raids30     : 0;
+    const ratePrior = raidsPrior > 0 ? attendedPriorN / raidsPrior  : 0;
 
     const row: AttRow = {
       name: c.name,
@@ -282,20 +292,33 @@ export default async function AdminAttendancePage({
     since30: data.since30, since60: data.since60,
   });
 
-  // Build summary: count regulars per class (above threshold)
+  // Roster-by-class headcount — pulled from characters.rank (Raid Pack /
+  // Officer / Pack Leader / Recruit), NOT from attendance. Attendance
+  // belongs to the cohort sections below; the class summary answers
+  // "do we have enough of each class on the team to fill a 60-man raid".
+  // Raid Alt rank chars are placeholders — excluded.
+  const rosterByClass = new Map<string, number>();
+  for (const c of data.chars) {
+    if (!c.active || !c.class || c.class === 'UNKNOWN') continue;
+    if (!c.rank || !ROSTER_RANKS.has(c.rank)) continue;
+    rosterByClass.set(c.class, (rosterByClass.get(c.class) || 0) + 1);
+  }
+
+  // Build summary: target vs roster count. Delta = current - target so
+  // negative means "down N from ideal" — matches the leader's spreadsheet
+  // convention.
   const summaryRows: { cls: string; target: number; current: number; delta: number }[] = [];
   let totalTarget = 0, totalCurrent = 0;
   for (const cls of CLASS_ORDER) {
-    const list = byClass.get(cls) || [];
-    const current = list.filter(r => r.rate30 >= threshold).length;
+    const current = rosterByClass.get(cls) || 0;
     const target = targets[cls] ?? 0;
     totalTarget += target;
     totalCurrent += current;
-    summaryRows.push({ cls, target, current, delta: target - current });
+    summaryRows.push({ cls, target, current, delta: current - target });
   }
   const flexTarget = targets[FLEX_CLASS] ?? 0;
   totalTarget += flexTarget;
-  summaryRows.push({ cls: FLEX_CLASS, target: flexTarget, current: 0, delta: flexTarget });
+  summaryRows.push({ cls: FLEX_CLASS, target: flexTarget, current: 0, delta: 0 - flexTarget });
 
   // Stats
   const newAttendees: AttRow[] = [];
@@ -317,18 +340,23 @@ export default async function AdminAttendancePage({
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">📊 Raid attendance roster</h2>
         <p className="text-sm text-dim leading-6">
-          Reproduces the class-coverage view from the leader&apos;s
-          spreadsheet, computed from <code>opendkp_ticks</code> over the
-          last 90 days. Threshold for &quot;active roster&quot; is{' '}
-          {pct(threshold)} attendance rate in the last 30 days (
-          {data.raids.filter(r => r.ts >= data.since30).length} raids in
-          window; {raidsPrior} in the prior 30-day window for baseline).
-          Targets per class come from the spreadsheet&apos;s 60-man column.
+          <b>Class summary</b> compares the 60-man target against the
+          current roster headcount per class. Headcount is pulled from
+          <code className="ml-1">characters.rank</code> (Raid Pack / Officer
+          / Pack Leader / Recruit — Raid Alts are excluded as DKP-tracker
+          placeholders). <b>Delta = current − target</b>: negative means
+          down N from ideal, positive means surplus.{' '}
+          <b>Attendance grid</b> below shows every roster character with
+          their last-30d attendance rate over{' '}
+          {data.raids.filter(r => r.ts >= data.since30).length} raids; the
+          {pct(threshold)} threshold drives the new / downturn highlights.
+          Targets are tunable via{' '}
+          <code>?targets=Bard=8,Cleric=8,...</code>.
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
-          <Stat label="Target" value={totalTarget} />
-          <Stat label="Current regulars" value={totalCurrent} color="text-text" />
-          <Stat label="Delta" value={totalTarget - totalCurrent} color={(totalTarget - totalCurrent) > 0 ? 'text-orange' : 'text-green'} />
+          <Stat label="Target (60-man)" value={totalTarget} />
+          <Stat label="Current roster"  value={totalCurrent} color="text-text" />
+          <Stat label="Delta" value={totalCurrent - totalTarget} color={(totalCurrent - totalTarget) < 0 ? 'text-orange' : 'text-green'} />
           <Stat label="🆕 New attendees" value={newAttendees.length} color="text-yellow-400" />
         </div>
       </section>
@@ -336,7 +364,7 @@ export default async function AdminAttendancePage({
       {/* Class summary */}
       <section className="bg-panel border border-border rounded-lg">
         <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-          Class summary — current roster if above {pct(threshold)} RA / 30 days
+          Class summary — 60-man target vs current roster headcount (Raid Pack / Officer / Pack Leader / Recruit)
         </h3>
         <table className="w-full text-xs">
           <thead className="text-dim">
@@ -353,7 +381,7 @@ export default async function AdminAttendancePage({
                 <td className="px-3 py-2 text-right text-text">{row.target}</td>
                 <td className={`px-3 py-2 text-right ${row.current >= row.target ? 'text-green' : 'text-text'}`}>{row.current}</td>
                 <td className="px-3 py-2 text-text">{row.cls}</td>
-                <td className={`px-3 py-2 text-right ${row.delta > 0 ? 'text-orange' : row.delta < 0 ? 'text-green' : 'text-dim'}`}>
+                <td className={`px-3 py-2 text-right ${row.delta < 0 ? 'text-orange' : row.delta > 0 ? 'text-green' : 'text-dim'}`}>
                   {row.delta > 0 ? `+${row.delta}` : row.delta}
                 </td>
               </tr>
@@ -362,8 +390,8 @@ export default async function AdminAttendancePage({
               <td className="px-3 py-2 text-right text-text font-bold">{totalTarget}</td>
               <td className="px-3 py-2 text-right text-text font-bold">{totalCurrent}</td>
               <td className="px-3 py-2 text-dim">Total</td>
-              <td className={`px-3 py-2 text-right font-bold ${(totalTarget - totalCurrent) > 0 ? 'text-orange' : 'text-green'}`}>
-                {(totalTarget - totalCurrent) > 0 ? `+${totalTarget - totalCurrent}` : (totalTarget - totalCurrent)}
+              <td className={`px-3 py-2 text-right font-bold ${(totalCurrent - totalTarget) < 0 ? 'text-orange' : 'text-green'}`}>
+                {(totalCurrent - totalTarget) > 0 ? `+${totalCurrent - totalTarget}` : (totalCurrent - totalTarget)}
               </td>
             </tr>
           </tbody>
@@ -378,7 +406,8 @@ export default async function AdminAttendancePage({
         <div className="px-4 py-3 text-[10px] text-dim flex flex-wrap gap-3">
           <span><span className="inline-block w-3 h-3 align-middle mr-1" style={{background:'#3f3f24'}}/> 🆕 new (first tick ≤ 60d ago)</span>
           <span><span className="inline-block w-3 h-3 align-middle mr-1" style={{background:'#4a1f3f'}}/> 📉 downturn (baseline ≥ {pct(threshold)}, recent &lt; {pct(threshold * 0.7)})</span>
-          <span><span className="inline-block w-3 h-3 align-middle mr-1 bg-bg border border-border"/> steady</span>
+          <span><span className="inline-block w-3 h-3 align-middle mr-1 bg-bg border border-border"/> ≥ {pct(threshold)} regular</span>
+          <span><span className="inline-block w-3 h-3 align-middle mr-1" style={{background:'#2a2a2a'}}/> &lt; {pct(threshold)} (faded — on roster but inactive)</span>
         </div>
         <div className="overflow-x-auto">
           <table className="text-xs">
@@ -388,16 +417,18 @@ export default async function AdminAttendancePage({
                   <th key={cls} className="text-left px-2 py-2 font-normal align-bottom min-w-[110px]">
                     {cls}
                     <div className="text-[10px] text-dim">
-                      {(byClass.get(cls) || []).filter(r => r.rate30 >= threshold).length}
+                      {(byClass.get(cls) || []).length} on roster
                     </div>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {/* Render rows up to the max class roster size so columns align */}
+              {/* Render every on-roster character (no attendance gate).
+                  Sorted by rate30 desc inside computeAttendance so the
+                  regulars surface first per column. */}
               {(() => {
-                const cols = CLASS_ORDER.map(cls => (byClass.get(cls) || []).filter(r => r.rate30 >= threshold));
+                const cols = CLASS_ORDER.map(cls => (byClass.get(cls) || []));
                 const maxLen = Math.max(0, ...cols.map(c => c.length));
                 const rowsOut: React.ReactNode[] = [];
                 for (let i = 0; i < maxLen; i++) {
@@ -407,14 +438,18 @@ export default async function AdminAttendancePage({
                         const r = list[i];
                         if (!r) return <td key={j} className="px-2 py-1" />;
                         const c = classify(r, threshold, data.since60);
-                        const bg = c.isDownturn ? '#4a1f3f' : c.isNew ? '#3f3f24' : '';
+                        const inactive = r.rate30 < threshold;
+                        let bg = '';
+                        if (c.isDownturn) bg = '#4a1f3f';
+                        else if (c.isNew && c.isRegular) bg = '#3f3f24';
+                        else if (inactive) bg = '#2a2a2a';
                         const title = `${pct(r.rate30)} last 30d · ${pct(r.ratePrior)} prior 30d · first seen ${r.firstSeen ? r.firstSeen.slice(0, 10) : 'unknown'}`;
                         return (
                           <td key={j} className="px-2 py-1" style={bg ? { background: bg } : undefined} title={title}>
-                            <Link href={`/character/${encodeURIComponent(r.name)}`} className="hover:underline text-text">
+                            <Link href={`/character/${encodeURIComponent(r.name)}`} className={`hover:underline ${inactive && !c.isDownturn ? 'text-dim' : 'text-text'}`}>
                               {maybeFake(demoMode, r.name, r.className)}
                             </Link>
-                            <div className="text-[10px] text-dim">{pct(r.rate30)}</div>
+                            <div className={`text-[10px] ${inactive ? 'text-dim' : 'text-text'}`}>{pct(r.rate30)}</div>
                           </td>
                         );
                       })}
