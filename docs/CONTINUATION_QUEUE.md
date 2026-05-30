@@ -15,6 +15,11 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **web v0.4.30** — `/pvp/server` server-wide PvP top-10 with the Wolf Pack
+  mini-rivalry per row (their kills vs WP, our kills vs them). Linked from
+  the existing `/pvp` page. Reads from `pvp_kills` (PvP-channel relay), uses
+  newest-row guild affiliation per killer. PvP is exempt from the data floor,
+  so kills count from the first observation.
 - **bot v2.5.44 / web v0.4.29** — privacy statement live. `/privacy` page mirrors
   `docs/PRIVACY.md` (the canonical source of truth), linked from the global
   footer + the welcome onboarding embed. Plain-words: what we keep, what stays
@@ -112,9 +117,10 @@ tells table + bot endpoint + agent toggle (opt-in, default-off, own-tells-only,
 own-DM-only) + detector + `/me/tells` page (conversation grid + stream) + local log
 browser tab with highlights (auctions, spawns). No leaderboard of who talks to whom.
 
-### 6. Server-wide PvP top-killers leaderboard (designed)
-Top 10 killers + Wolf Pack kills for/against, pulled from the PvP channel. PvP is
-exempt from the data floor (counts from the beginning).
+### 6. ✅ DONE — Server-wide PvP top-10 (web v0.4.30)
+`/pvp/server` lists everyone seen on the PvP-channel relay with the Wolf Pack
+mini-rivalry (`vs WP` and `WP vs them`) on each row. Wolf Pack-only board still
+lives at `/pvp`. PvP remains exempt from the data floor.
 
 ### 7. ✅ DONE — `/recoverkills` officer command (bot v2.5.43)
 See "Shipped this session". Rebuilds from Supabase encounters with a `since`
