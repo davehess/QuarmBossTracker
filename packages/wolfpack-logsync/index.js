@@ -4571,6 +4571,10 @@ function runOptinBackfill(files, opts = {}) {
             if (provEvt) funEventBuffer.push(provEvt);
             const cursorEvt = parseCursorFull(line, f.character);
             if (cursorEvt) funEventBuffer.push(cursorEvt);
+            const htEvt = parseHarmTouch(line, f.character);
+            if (htEvt) funEventBuffer.push(htEvt);
+            const lohEvt = parseLayOnHands(line, f.character);
+            if (lohEvt) funEventBuffer.push(lohEvt);
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -5555,6 +5559,56 @@ function parseCursorFull(line, character) {
   };
 }
 
+// ── Class signature abilities (caster-side) ──────────────────────────────────
+// Shadow Knight Harm Touch damage total + Paladin Lay on Hands count/heal.
+// Both are self-cast "You ..." lines, so only the caster's own agent logs them
+// — same single-perspective limitation as spell names, which is fine (each SK/
+// paladin reports their own). caster = the agent's character.
+//
+// reagent_qty carries the amount: HT damage, or the LoH heal when the line
+// shows it. The bot's fun_event handler already passes reagent_qty through.
+//
+// ⚠️ WORDING FLAGGED FOR REVIEW: these regexes are best-effort against standard
+// EQ phrasing; confirm against real Quarm logs and tighten if a variant is
+// missed. HT also typically lands in encounter_combat_rollup.by_skill (it's a
+// damage event), so the rollup is a cross-check on these fun-event totals.
+//
+// ⚠️ LoH "heal total based on max it can do": Lay on Hands heals for the
+// paladin's MAX HP. The log line may not include the number, so when it doesn't
+// we record the COUNT (reagent_qty=0) and the display layer multiplies count ×
+// that paladin's max HP (from /who or char data) to get the heal total. When the
+// line DOES carry a heal number we record it directly.
+const HARM_TOUCH_RX = /\b(?:you|your)\s+harm[\s-]?touch(?:es|ed)?\b[^\d]*?(\d+)\s+points?\s+of\s+damage/i;
+const LAY_ON_HANDS_RX = /\byou\s+lay\s+(?:your\s+)?hands?\s+on\b/i;
+// Optional heal amount on the LoH line / its companion heal message.
+const LOH_HEAL_RX = /\b(?:lay|laid)\s+hands?\b[^\d]*?(\d+)\s+points?/i;
+
+function parseHarmTouch(line, character) {
+  const m = HARM_TOUCH_RX.exec(line);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:        'harm_touch',
+    caster:      character || null,
+    reagent_qty: parseInt(m[1], 10) || 0,   // HT damage dealt
+    ts:          ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text:    line.slice(0, 200),
+  };
+}
+
+function parseLayOnHands(line, character) {
+  if (!LAY_ON_HANDS_RX.test(line)) return null;
+  const heal = LOH_HEAL_RX.exec(line);
+  const ts = parseEqTimestamp(line);
+  return {
+    type:        'lay_on_hands',
+    caster:      character || null,
+    reagent_qty: heal ? (parseInt(heal[1], 10) || 0) : 0,   // 0 → count only; display × max HP
+    ts:          ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text:    line.slice(0, 200),
+  };
+}
+
 function uploadChat(messages, { botUrl, token, dryRun }) {
   void botUrl; void token; // route info lives in the queue's endpoint resolver
   if (dryRun) {
@@ -6506,6 +6560,10 @@ async function main() {
         if (provEvt && !_sourceExcluded) funEventBuffer.push(provEvt);
         const cursorEvt = parseCursorFull(line, b.character);
         if (cursorEvt && !_sourceExcluded) funEventBuffer.push(cursorEvt);
+        const htEvt = parseHarmTouch(line, b.character);
+        if (htEvt && !_sourceExcluded) funEventBuffer.push(htEvt);
+        const lohEvt = parseLayOnHands(line, b.character);
+        if (lohEvt && !_sourceExcluded) funEventBuffer.push(lohEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);

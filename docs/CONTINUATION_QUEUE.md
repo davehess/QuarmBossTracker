@@ -103,6 +103,17 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
+### Class signature counters (agent v2.4.31) — collecting; display TODO
+- SK **Harm Touch** damage total (`harm_touch`, reagent_qty=damage) and Paladin
+  **Lay on Hands** (`lay_on_hands`, reagent_qty=heal-or-0-for-count) +
+  caster-side detectors, wired into live tail + backfill, gated by
+  `exclude_from_stats`. ⚠️ Regex wording is best-effort — confirm against real
+  Quarm logs. ⚠️ LoH "heal total based on max": when the line carries no number
+  we store count (qty=0); the **/fun or /me display must multiply count × that
+  paladin's max HP** (from /who or char data) to show the heal total. HT damage
+  also lands in `encounter_combat_rollup.by_skill` as a cross-check.
+  **Display for these event types is not built yet** — they're collecting now.
+
 ### 1. ✅ DONE — Agent + bot per-ability rollup emission (cutover v2.4.26 / v2.5.39)
 See "Shipped this session". The rollup table starts populating on the next agent
 upload at/after 2.4.26. **Note:** `npm run check:dashboard` referenced in the
