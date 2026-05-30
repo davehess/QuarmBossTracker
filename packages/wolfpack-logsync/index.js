@@ -4575,6 +4575,8 @@ function runOptinBackfill(files, opts = {}) {
             if (htEvt) funEventBuffer.push(htEvt);
             const lohEvt = parseLayOnHands(line, f.character);
             if (lohEvt) funEventBuffer.push(lohEvt);
+            const pkEvt = parsePvpFlag(line, f.character);
+            if (pkEvt) funEventBuffer.push(pkEvt);
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -5670,6 +5672,45 @@ function parseLayOnHands(line, character) {
   };
 }
 
+// ── PvP flag toggle (Quarm / Discord-Order alignment) ────────────────────────
+// EQ Quarm uses the "ways of Discord/Order" alignment + a separate "player
+// kill" flag. Exact lines (from user 2026-05-30):
+//
+//   "You are now player kill and follow the ways of Discord."   ← PK flag ON
+//   "You are now player kill."                                  ← PK flag ON (alt)
+//   "You now follow the ways of Order."                         ← peaceful state
+//   "You now follow the ways of Discord."                       ← still PK?
+//   "You no longer follow the ways of discord."                 ← leaving Discord
+//
+// Treat 'You are now player kill' (in any phrasing) as PK ON. Treat 'You now
+// follow the ways of Order' as PK OFF (Order is peaceful by definition).
+// Bare 'You now follow the ways of Discord' without 'player kill' is treated
+// as alignment-only (no PK flag change) and produces no event.
+const PVP_FLAG_ON_RX  = /^\[(.+?)\]\s+You are now player kill\b/i;
+const PVP_FLAG_OFF_RX = /^\[(.+?)\]\s+You now follow the ways of Order\b/i;
+
+function parsePvpFlag(line, character) {
+  if (PVP_FLAG_ON_RX.test(line)) {
+    const ts = parseEqTimestamp(line);
+    return {
+      type:     'pvp_flag_on',
+      caster:   character || null,
+      ts:       ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text: line.slice(0, 200),
+    };
+  }
+  if (PVP_FLAG_OFF_RX.test(line)) {
+    const ts = parseEqTimestamp(line);
+    return {
+      type:     'pvp_flag_off',
+      caster:   character || null,
+      ts:       ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text: line.slice(0, 200),
+    };
+  }
+  return null;
+}
+
 function uploadChat(messages, { botUrl, token, dryRun }) {
   void botUrl; void token; // route info lives in the queue's endpoint resolver
   if (dryRun) {
@@ -6625,6 +6666,8 @@ async function main() {
         if (htEvt && !_sourceExcluded) funEventBuffer.push(htEvt);
         const lohEvt = parseLayOnHands(line, b.character);
         if (lohEvt && !_sourceExcluded) funEventBuffer.push(lohEvt);
+        const pkEvt = parsePvpFlag(line, b.character);
+        if (pkEvt && !_sourceExcluded) funEventBuffer.push(pkEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
