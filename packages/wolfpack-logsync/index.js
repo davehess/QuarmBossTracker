@@ -1520,6 +1520,52 @@ class EncounterBuilder {
     }
     const activeDurationS = Math.max(1, Math.round(_activeDurationMs / 1000));
 
+    // ── Per-character ability rollup (going-forward telemetry) ─────────────
+    // Bucketed by verb/skill so the server can answer "what did each player
+    // hit with, and how often" without keeping the raw event stream. Pets are
+    // attributed to their owner where known. Self-attacks (attacker resolves
+    // to the same character as defender — charm break, fat-finger /assist,
+    // riposted swings on self) are counted separately.
+    //
+    // Bystander spell names are "(unknown)" in EQ logs — these rollups are
+    // reliable for the uploader and for melee/skill verbs across the board;
+    // remote players' spell names are not.
+    const _uploader = this.character || null;
+    const _resolve = (name) => {
+      if (!name) return _uploader;
+      const owner = this.petLeaders[String(name).toLowerCase()];
+      return owner || name;
+    };
+    const _rollupByChar = {};
+    for (const ev of this.events) {
+      if (ev.type !== 'damage') continue;
+      const attacker = _resolve(ev.attacker);
+      const defender = _resolve(ev.defender);
+      if (!attacker) continue;
+      const amt = Number(ev.amount) || 0;
+      const skillKey = (ev.ability ? String(ev.ability) : 'unknown').slice(0, 64);
+
+      let bucket = _rollupByChar[attacker];
+      if (!bucket) {
+        bucket = _rollupByChar[attacker] = {
+          by_skill: {}, total_hits: 0, total_damage: 0, self_attack_count: 0,
+        };
+      }
+      let s = bucket.by_skill[skillKey];
+      if (!s) s = bucket.by_skill[skillKey] = { hits: 0, dmg: 0 };
+      s.hits += 1;
+      s.dmg  += amt;
+      bucket.total_hits   += 1;
+      bucket.total_damage += amt;
+
+      if (defender && attacker.toLowerCase() === defender.toLowerCase()) {
+        bucket.self_attack_count += 1;
+      }
+    }
+    const _rollup = Object.keys(_rollupByChar).length
+      ? { by_char: _rollupByChar }
+      : undefined;
+
     const payload = {
       agent_version: AGENT_VERSION,
       character:     this.character,
@@ -1566,6 +1612,10 @@ class EncounterBuilder {
         // { tank: name, count: N, maxGapMs: N }
         // null/undefined when no healer data was observed or gaps < 8s.
         heal_gaps:   _healGaps || undefined,
+        // Per-character verb/skill rollup. Server upserts into
+        // encounter_combat_rollup and stamps contributions.has_ability_detail.
+        // Absent on older agents → rollup tables stay empty for those uploads.
+        rollup:      _rollup,
         events:      this.events,
       },
     };

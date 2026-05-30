@@ -124,6 +124,8 @@ async function recordContribution({
   contributorCharacter,
   source,
   rawParse,
+  agentVersion = null,
+  hasAbilityDetail = false,
 }) {
   if (!isEnabled() || !encounterId) return null;
 
@@ -136,6 +138,8 @@ async function recordContribution({
     player_count:             rawParse?.players?.length || 0,
     duration_sec:             rawParse?.duration || null,
     raw_parse:                rawParse,
+    agent_version:            agentVersion,
+    has_ability_detail:       !!hasAbilityDetail,
   };
 
   const written = contributorCharacter
@@ -165,6 +169,8 @@ async function recordParse({
   contributorDiscordId, contributorCharacter,
   source = 'eqlogparser_send_to_eq',
   zoneShort = null,
+  agentVersion = null,
+  rollupByChar = null,
 }) {
   if (!isEnabled()) return null;
 
@@ -190,15 +196,44 @@ async function recordParse({
   });
   if (!encounterId) return null;
 
+  const hasAbilityDetail = !!(rollupByChar && Object.keys(rollupByChar).length);
   const contributionId = await recordContribution({
     encounterId,
     contributorDiscordId,
     contributorCharacter,
     source,
     rawParse: parsed,
+    agentVersion,
+    hasAbilityDetail,
   });
 
+  // Persist the per-character verb rollup for this encounter. Idempotent via
+  // (encounter_id, character_name) — a resubmit overwrites in place. Failures
+  // are non-fatal: the contribution + merged player view still landed.
+  if (hasAbilityDetail) {
+    try { await upsertCombatRollup(encounterId, agentVersion, rollupByChar); }
+    catch (err) { console.warn('[supabase] combat rollup upsert failed:', err?.message); }
+  }
+
   return { encounterId, contributionId, npcId };
+}
+
+// Upsert per-character ability rollups for one encounter.
+// rollupByChar: { [characterName]: { by_skill, total_hits, total_damage, self_attack_count } }
+async function upsertCombatRollup(encounterId, agentVersion, rollupByChar) {
+  if (!isEnabled() || !encounterId || !rollupByChar) return;
+  const rows = Object.entries(rollupByChar).map(([characterName, b]) => ({
+    guild_id:          _guildId(),
+    encounter_id:      encounterId,
+    character_name:    characterName,
+    agent_version:     agentVersion || null,
+    by_skill:          b?.by_skill || {},
+    total_hits:        Number(b?.total_hits)        || 0,
+    total_damage:      Number(b?.total_damage)      || 0,
+    self_attack_count: Number(b?.self_attack_count) || 0,
+  }));
+  if (rows.length === 0) return;
+  await upsert('encounter_combat_rollup', rows, 'encounter_id,character_name');
 }
 
 // Fetch the completeness summary for an encounter.
@@ -248,6 +283,7 @@ module.exports = {
   findOrCreateEncounter,
   recordContribution,
   recordParse,
+  upsertCombatRollup,
   getEncounterCompleteness,
   getEncounterContributions,
   getEncounterPlayers,

@@ -4110,6 +4110,8 @@ async function _handleAgentUpload(req, res) {
           contributorDiscordId: null,
           contributorCharacter: character || null,
           source: 'local_agent_v1',
+          agentVersion: payload?.agent_version || null,
+          rollupByChar: encounter.rollup?.by_char || null,
         }).catch(err => console.warn('[agent] recordParse failed:', err?.message));
       } else {
         console.log(`[agent] no bosses_local match for "${bossInternalId}" — encounter not persisted to Supabase`);
