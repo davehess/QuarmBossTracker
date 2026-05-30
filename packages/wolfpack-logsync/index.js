@@ -5172,21 +5172,29 @@ const DRUZZIL_KILL_RX = /^\[(.+?)\]\s+Druzzil Ro tells the guild,\s*['"](\w+) of
 
 // ── PVP Druzzil Ro broadcast announcements ─────────────────────────────────
 // Server god broadcasts player deaths: "PVP Druzzil Ro BROADCASTS, 'text'"
-// Two kill-type sub-patterns determine Wolf Pack involvement:
-const PVP_BROADCAST_RX    = /^\[(.+?)\]\s+PVP Druzzil Ro BROADCASTS,\s*['"](.+?)['"]\s*$/;
-const PVP_PLAYER_KILL_RX  = /^(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
-const PVP_NPC_KILL_RX     = /^(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+// Two phrasing styles must be covered or we silently lose kills:
+//   * Victim-first ("X of <G1> has been killed in combat by Y of <G2> ...")
+//   * Killer-first ("X of <G1> has killed Y of <G2> ...") — also how PvP-server
+//     BOSS deaths are announced ("X of <G> has killed Boss in Zone!"). The
+//     parser missed killer-first phrasing entirely before 2.4.32, so /pvp only
+//     showed members whose victims were members of guilds that died in
+//     victim-first form. Diagnosis from real-user report 2026-05-30.
+const PVP_BROADCAST_RX           = /^\[(.+?)\]\s+PVP Druzzil Ro BROADCASTS,\s*['"](.+?)['"]\s*$/;
+const PVP_PLAYER_KILL_RX         = /^(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_NPC_KILL_RX            = /^(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+const PVP_PLAYER_KILL_ACTIVE_RX  = /^(\w+) of <(.+?)> has killed (\w+) of <(.+?)> in (.+?)!$/;
+// Boss kill on PvP server — no victim guild. Zone clause is optional ("...has
+// killed Lord Nagafen!" vs "...has killed Lord Nagafen in Nagafen's Lair!").
+// Try the player-active matcher FIRST: this one's the broader superset.
+const PVP_BOSS_KILL_ACTIVE_RX    = /^(\w+) of <(.+?)> has killed (.+?)(?: in (.+?))?!$/;
 
-// "Bare" PvP kill — same kill body as the two above but landing in the log
+// "Bare" PvP kill — same kill body as the four above but landing in the log
 // without a "PVP Druzzil Ro BROADCASTS," wrapper. Observed when the kill
-// message comes through the player's in-game [PVP] channel directly
-// (Versaci of <Zek> killed by Lutharion of <Wolf Pack> in Akheva Ruins).
-// The body shape (guild brackets + "has been killed in combat by" /
-// "has died to ... in combat in" + zone + "!") is distinctive enough that
-// matching it without a broadcaster prefix doesn't false-positive on
-// regular chat. The optional [PVP] channel marker is also accepted.
-const PVP_BARE_PLAYER_RX  = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
-const PVP_BARE_NPC_RX     = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+// message comes through the player's in-game [PVP] channel directly.
+const PVP_BARE_PLAYER_RX         = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_BARE_NPC_RX            = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+const PVP_BARE_PLAYER_ACTIVE_RX  = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_BARE_BOSS_ACTIVE_RX    = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (.+?)(?: in (.+?))?!$/;
 
 function parseDruzzilKill(line) {
   const m = DRUZZIL_KILL_RX.exec(line);
@@ -5202,58 +5210,103 @@ function parseDruzzilKill(line) {
 }
 
 function parsePvpBroadcast(line) {
+  const tsOf = () => {
+    const ts = parseEqTimestamp(line);
+    return ts ? ts.toISOString() : new Date().toISOString();
+  };
+
   // Path A: god-broadcast wrapper — "PVP Druzzil Ro BROADCASTS, '...'"
   const m = PVP_BROADCAST_RX.exec(line);
   if (m) {
-    const ts   = parseEqTimestamp(line);
     const text = m[2];
-    let killType = 'npc';
-    let victim = null, victimGuild = null, killer = null, killerGuild = null, zone = null;
+
+    // Victim-first player kill: "X has been killed in combat by Y"
     const ppk = PVP_PLAYER_KILL_RX.exec(text);
-    if (ppk) {
-      killType    = 'pvp';
-      victim      = ppk[1]; victimGuild  = ppk[2];
-      killer      = ppk[3]; killerGuild  = ppk[4];
-      zone        = ppk[5];
-    } else {
-      const npck = PVP_NPC_KILL_RX.exec(text);
-      if (npck) {
-        victim      = npck[1]; victimGuild = npck[2];
-        zone        = npck[4];
-      }
-    }
-    return {
-      ts: ts ? ts.toISOString() : new Date().toISOString(),
-      text, killType,
-      victim, victimGuild, killer, killerGuild, zone,
+    if (ppk) return {
+      ts: tsOf(), text, killType: 'pvp',
+      victim: ppk[1], victimGuild: ppk[2],
+      killer: ppk[3], killerGuild: ppk[4],
+      zone:   ppk[5],
     };
+
+    // Killer-first player kill: "X has killed Y" (added 2.4.32)
+    const ppkA = PVP_PLAYER_KILL_ACTIVE_RX.exec(text);
+    if (ppkA) return {
+      ts: tsOf(), text, killType: 'pvp',
+      killer: ppkA[1], killerGuild: ppkA[2],
+      victim: ppkA[3], victimGuild: ppkA[4],
+      zone:   ppkA[5],
+    };
+
+    // Victim-first NPC death: "X has died to Mob"
+    const npck = PVP_NPC_KILL_RX.exec(text);
+    if (npck) return {
+      ts: tsOf(), text, killType: 'npc',
+      victim: npck[1], victimGuild: npck[2],
+      killer: null,    killerGuild: null,
+      zone:   npck[4],
+    };
+
+    // Killer-first boss kill: "X has killed Boss [in Zone]!" — no victim guild.
+    // Try LAST because this is the broadest "has killed" superset; the player-
+    // active matcher above must win when both could match. Recorded as PvP so
+    // the kill credits to the Wolf Pack killer on /pvp/server.
+    const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
+    if (bossA) return {
+      ts: tsOf(), text, killType: 'pvp',
+      killer: bossA[1], killerGuild: bossA[2],
+      victim: bossA[3], victimGuild: null,
+      zone:   bossA[4] || null,
+    };
+
+    // Wrapper matched but no inner pattern fit. Return null instead of a
+    // partially-filled row (the pre-2.4.32 fallthrough emitted killType='npc'
+    // with everything null, which the bot silently dropped but logs still
+    // ballooned around).
+    return null;
   }
 
   // Path B: bare kill body in the in-game [PVP] channel — no Druzzil prefix.
+  // Order mirrors Path A: most-specific first, broadest active-voice last.
   const ppkBare = PVP_BARE_PLAYER_RX.exec(line);
-  if (ppkBare) {
-    const ts = parseEqTimestamp(line);
-    return {
-      ts: ts ? ts.toISOString() : new Date().toISOString(),
-      text: `${ppkBare[2]} of <${ppkBare[3]}> has been killed in combat by ${ppkBare[4]} of <${ppkBare[5]}> in ${ppkBare[6]}!`,
-      killType:    'pvp',
-      victim:      ppkBare[2], victimGuild: ppkBare[3],
-      killer:      ppkBare[4], killerGuild: ppkBare[5],
-      zone:        ppkBare[6],
-    };
-  }
+  if (ppkBare) return {
+    ts: tsOf(),
+    text: `${ppkBare[2]} of <${ppkBare[3]}> has been killed in combat by ${ppkBare[4]} of <${ppkBare[5]}> in ${ppkBare[6]}!`,
+    killType:    'pvp',
+    victim:      ppkBare[2], victimGuild: ppkBare[3],
+    killer:      ppkBare[4], killerGuild: ppkBare[5],
+    zone:        ppkBare[6],
+  };
+
+  const ppkBareA = PVP_BARE_PLAYER_ACTIVE_RX.exec(line);
+  if (ppkBareA) return {
+    ts: tsOf(),
+    text: `${ppkBareA[2]} of <${ppkBareA[3]}> has killed ${ppkBareA[4]} of <${ppkBareA[5]}> in ${ppkBareA[6]}!`,
+    killType:    'pvp',
+    killer:      ppkBareA[2], killerGuild: ppkBareA[3],
+    victim:      ppkBareA[4], victimGuild: ppkBareA[5],
+    zone:        ppkBareA[6],
+  };
+
   const npcBare = PVP_BARE_NPC_RX.exec(line);
-  if (npcBare) {
-    const ts = parseEqTimestamp(line);
-    return {
-      ts: ts ? ts.toISOString() : new Date().toISOString(),
-      text: `${npcBare[2]} of <${npcBare[3]}> has died to ${npcBare[4]} in combat in ${npcBare[5]}!`,
-      killType:    'npc',
-      victim:      npcBare[2], victimGuild: npcBare[3],
-      killer:      null,       killerGuild: null,
-      zone:        npcBare[5],
-    };
-  }
+  if (npcBare) return {
+    ts: tsOf(),
+    text: `${npcBare[2]} of <${npcBare[3]}> has died to ${npcBare[4]} in combat in ${npcBare[5]}!`,
+    killType:    'npc',
+    victim:      npcBare[2], victimGuild: npcBare[3],
+    killer:      null,       killerGuild: null,
+    zone:        npcBare[5],
+  };
+
+  const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
+  if (bossBareA) return {
+    ts: tsOf(),
+    text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
+    killType:    'pvp',
+    killer:      bossBareA[2], killerGuild: bossBareA[3],
+    victim:      bossBareA[4], victimGuild: null,
+    zone:        bossBareA[5] || null,
+  };
 
   return null;
 }
