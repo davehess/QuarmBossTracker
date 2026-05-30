@@ -41,6 +41,7 @@ type CharRow = {
   opendkp_id: number | null;
   exclude_from_stats: boolean | null;
   exclude_inventory:  boolean | null;
+  tell_relay:         boolean | null;
 };
 
 type SkillBucket = { hits: number; dmg: number };
@@ -94,7 +95,7 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   if (!pack?.discord_id) return { discordId: null, nickname: pack?.nickname ?? null, chars: [] };
   const { data: chars } = await admin
     .from('characters')
-    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, exclude_from_stats, exclude_inventory')
+    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, exclude_from_stats, exclude_inventory, tell_relay')
     .eq('guild_id', 'wolfpack')
     .eq('discord_id', pack.discord_id)
     .order('active', { ascending: false })
@@ -345,13 +346,20 @@ export default async function MePage() {
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
-        <h2 className="text-xl text-gold mb-1">👤 My Characters</h2>
-        <p className="text-sm text-dim">
-          Everything we track about characters linked to your Discord account.
-          {discordId && (
-            <> Signed in as <span className="text-text">{nickname || discordId}</span>.</>
-          )}
-        </p>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-xl text-gold mb-1">👤 My Characters</h2>
+            <p className="text-sm text-dim">
+              Everything we track about characters linked to your Discord account.
+              {discordId && (
+                <> Signed in as <span className="text-text">{nickname || discordId}</span>.</>
+              )}
+            </p>
+          </div>
+          <Link href="/me/tells" className="text-blue hover:underline text-sm whitespace-nowrap">
+            📬 Inbound /tell →
+          </Link>
+        </div>
 
         {allChars.length === 0 ? (
           <div className="bg-bg border border-orange/40 rounded p-4 mt-4 text-sm">
@@ -391,6 +399,7 @@ export default async function MePage() {
                   character={c.name}
                   excludeFromStats={!!c.exclude_from_stats}
                   excludeInventory={!!c.exclude_inventory}
+                  tellRelay={!!c.tell_relay}
                 />
               </li>
             ))}
@@ -424,6 +433,7 @@ export default async function MePage() {
                   character={c.name}
                   excludeFromStats={!!c.exclude_from_stats}
                   excludeInventory={!!c.exclude_inventory}
+                  tellRelay={!!c.tell_relay}
                 />
                 <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
                 {c.quarmy_url && (

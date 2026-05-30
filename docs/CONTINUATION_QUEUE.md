@@ -15,6 +15,15 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **bot v2.5.45 / agent v2.4.29 / web v0.4.31** — tell-bot / Inbound `/tell`.
+  Opt-in per character via `characters.tell_relay` (default off). Agent parses
+  incoming/outgoing tell lines BEFORE the byte-level filter drops them, batches
+  to a 5s relay, uploads to new `POST /api/agent/tells`. Bot defense-in-depth
+  re-checks `tell_relay` then DMs the owner with batched tells (header + up to
+  10 lines, link to /me/tells). `/me/tells` page shows conversation grid + recent
+  stream (PRIVATE scope, RLS-gated). Migration `20260530160000_tells.sql`.
+  **Out of scope:** local log browser tab with auction/spawn highlights —
+  deferred as separate work (significant agent dashboard HTML).
 - **web v0.4.30** — `/pvp/server` server-wide PvP top-10 with the Wolf Pack
   mini-rivalry per row (their kills vs WP, our kills vs them). Linked from
   the existing `/pvp` page. Reads from `pvp_kills` (PvP-channel relay), uses
@@ -112,10 +121,13 @@ Hitya + Melting full sets received, incl. per-server variants (`144.217`/`192.99
   **refuse to write while EQ is running**, validate before write, never touch a
   resolution block we didn't generate unless asked.
 
-### 5. Tell-bot / Inbound `/tell`
-tells table + bot endpoint + agent toggle (opt-in, default-off, own-tells-only,
-own-DM-only) + detector + `/me/tells` page (conversation grid + stream) + local log
-browser tab with highlights (auctions, spawns). No leaderboard of who talks to whom.
+### 5. ✅ DONE (mostly) — Tell-bot / Inbound `/tell` (v2.5.45 / v2.4.29 / v0.4.31)
+Shipped: `characters.tell_relay` opt-in (default off) → agent forwards tells to
+`/me/tells` and Discord DMs the owner. Conversation grid + recent stream are live.
+**Follow-up:** local log browser tab (full per-character log view with highlights
+for auctions / spawn callouts). Holds the same dashboard scope as #4's UI editor —
+significant `WEB_HTML` work, queued for a Mimic panel rather than the current
+served-HTML dashboard.
 
 ### 6. ✅ DONE — Server-wide PvP top-10 (web v0.4.30)
 `/pvp/server` lists everyone seen on the PvP-channel relay with the Wolf Pack

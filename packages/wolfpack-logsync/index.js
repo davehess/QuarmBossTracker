@@ -51,6 +51,7 @@ const fs   = require('fs');
 const path = require('path');
 const https = require('https');
 const http  = require('http');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 // Read version from package.json so we only have to bump it in one place per release.
@@ -1760,6 +1761,7 @@ function _endpointForKind(kind, botUrl) {
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
+    case 'tells':           return base + '/tells';
     default:                return botUrl;
   }
 }
@@ -5301,6 +5303,55 @@ function parseChatLine(line, selfName) {
   return null;
 }
 
+// /tell capture — opt-in via characters.tell_relay (default off). The byte-
+// level filter (in shouldKeep) normally DROPS tells before they reach the
+// combat parser, so this function runs at the per-line callback site BEFORE
+// the filter. Output shape matches the POST /api/agent/tells body.
+//
+//   Incoming:  "[ts] Player tells you, 'message text'"
+//   Outgoing:  "[ts] You told Player, 'message text'"
+//
+// dedup_key is a stable hash so an agent restart / log re-read can't double-
+// store. Falls back to a synthetic key when ts/text are weird.
+const TELL_INCOMING_RX = /^\[(?<ts>[^\]]+)\]\s+(?<other>[A-Za-z][A-Za-z' ]+?)\s+tells you,\s*['"](?<text>.+?)['"]\s*$/;
+const TELL_OUTGOING_RX = /^\[(?<ts>[^\]]+)\]\s+You told\s+(?<other>[A-Za-z][A-Za-z' ]+?),\s*['"](?<text>.+?)['"]\s*$/;
+
+function parseTellLine(line, selfName) {
+  let m = line.match(TELL_OUTGOING_RX);
+  let direction = null;
+  if (m) direction = 'outgoing';
+  else { m = line.match(TELL_INCOMING_RX); if (m) direction = 'incoming'; }
+  if (!m || !direction) return null;
+  const tsParsed = parseEqTimestamp(line);
+  const tsIso    = tsParsed ? tsParsed.toISOString() : new Date().toISOString();
+  const other    = m.groups.other.trim();
+  // Filter NPC chatter that uses the same "X tells you," pattern — pets and
+  // mobs spam it constantly. Heuristic: NPC names usually contain spaces or
+  // start with lowercase (e.g. "a kobold runner"). Player names are typically
+  // single Capitalized words. False positives on this filter are acceptable
+  // (an NPC tell that slips through is harmless); false NEGATIVES are not
+  // (a real tell that we miss).
+  if (direction === 'incoming') {
+    if (/\s/.test(other)) return null;
+    if (!/^[A-Z]/.test(other)) return null;
+  }
+  const text = transformEqItemLinks(m.groups.text);
+  // Stable dedup: sha1 over the tuple. ts in here so two identical messages
+  // sent later get fresh rows (which is correct — they ARE separate tells).
+  const key = crypto.createHash('sha1')
+    .update([selfName, direction, other, tsIso, text].join(''))
+    .digest('hex')
+    .slice(0, 32);
+  return {
+    direction,
+    other,
+    text,
+    ts:        tsIso,
+    raw_text:  line.slice(0, 500),
+    dedup_key: key,
+  };
+}
+
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
 //   [timestamp] === Current Loot Lockouts ===
@@ -5370,6 +5421,7 @@ const chatBuffer        = [];   // pending guild/raid chat lines
 const pvpBuffer         = [];   // pending PVP broadcast lines
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
+const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
 // _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
 let _uploadOpts    = null;      // set in main() once botUrl/token are known
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
@@ -5389,6 +5441,21 @@ function startChatRelay() {
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
     if (funEventBuffer.length > 0)
       uploadFunEvents(funEventBuffer.splice(0), _uploadOpts).catch(() => {});
+    // Tell relay drains per-character — the endpoint requires one character
+    // per request (it gates on characters.tell_relay before storing).
+    if (tellBuffer.length > 0) {
+      // Group pending tells by character so a single agent watching multiple
+      // logs uploads them separately. Most agents only watch one at a time.
+      const byChar = new Map();
+      for (const t of tellBuffer.splice(0)) {
+        const arr = byChar.get(t.character) || [];
+        arr.push(t);
+        byChar.set(t.character, arr);
+      }
+      for (const [character, tells] of byChar) {
+        uploadTells({ character, tells }, _uploadOpts).catch(() => {});
+      }
+    }
   }, 5000);
 }
 
@@ -5832,6 +5899,20 @@ function uploadFunEvents(events, { dryRun } = {}) {
     return Promise.resolve();
   }
   enqueueUpload('fun_event', { agent_version: AGENT_VERSION, events });
+  return Promise.resolve();
+}
+
+// Inbound /tell relay. The bot endpoint re-validates characters.tell_relay
+// before accepting, so this is a safe defense-in-depth — but the agent also
+// gates on stats.characterPrefs[character].tell_relay so we don't burn the
+// queue with rejected uploads.
+function uploadTells({ character, tells }, { dryRun } = {}) {
+  if (!character || !Array.isArray(tells) || tells.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const t of tells) console.log(`[tell:${t.direction}] ${character} ${t.direction === 'outgoing' ? '→' : '←'} ${t.other}: ${t.text}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('tells', { agent_version: AGENT_VERSION, character, tells });
   return Promise.resolve();
 }
 
@@ -6304,6 +6385,20 @@ async function main() {
         // below short-circuits on the prefs gate so an excluded character
         // generates zero outbound traffic from this machine.
         const _sourceExcluded = !shouldUploadForCharacter(b.character);
+
+        // /tell relay (opt-in via characters.tell_relay; default off). MUST be
+        // checked BEFORE shouldKeep — the byte-level filter explicitly drops
+        // "tells you" / "you told" lines so we never see them in combat paths.
+        // exclude_from_stats short-circuits this too; both gates must pass.
+        const _tellPrefs = stats.characterPrefs && stats.characterPrefs[String(b.character || '').toLowerCase()];
+        if (!_sourceExcluded && _tellPrefs?.tell_relay) {
+          const tellEvt = parseTellLine(line, b.character);
+          if (tellEvt) {
+            tellBuffer.push({ ...tellEvt, character: b.character });
+            // Don't `return` — tells are side-channel. Continue so any further
+            // processing (e.g. log highlighter, future panels) still sees the line.
+          }
+        }
 
         // /sll lockout output → bot timer (Available entries silently skipped)
         const lockoutEntry = parseSllLine(line);

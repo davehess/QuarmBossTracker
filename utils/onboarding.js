@@ -61,6 +61,9 @@ const CHANGELOGS = {
   '2.5.44': [
     'Privacy statement is live at **wolfpack.quest/privacy** — what we keep, what stays local, who sees what, and how to opt out per character. Linked from the footer and the welcome message.',
   ],
+  '2.5.45': [
+    'Inbound /tell relay (opt-in, default off): flip `Tells: ON` on **wolfpack.quest/me** for a character and the agent forwards its tells to **/me/tells** + Discord DMs when you\'re away. Only you ever see them.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

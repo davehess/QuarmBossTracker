@@ -3301,7 +3301,7 @@ async function _handleAgentCharacterPrefs(req, res) {
   const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
   const rows = await supabase.select(
     'characters',
-    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory&guild_id=eq.wolfpack`,
+    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay&guild_id=eq.wolfpack`,
   ).catch(() => []);
 
   const prefs = {};
@@ -3310,12 +3310,178 @@ async function _handleAgentCharacterPrefs(req, res) {
     prefs[r.name] = {
       exclude_from_stats: !!r.exclude_from_stats,
       exclude_inventory:  !!r.exclude_inventory,
+      tell_relay:         !!r.tell_relay,
     };
   }
   // Any character not in characters table → default (participate). Agents key
   // on lowercased character so include both forms for case-insensitive lookup.
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ prefs }));
+}
+
+// POST /api/agent/tells
+//
+// Inbound /tell relay (opt-in). Body:
+//   { agent_version, character, tells: [
+//       { direction: 'incoming'|'outgoing', other: 'Player', text: '...',
+//         ts: 'ISO', dedup_key: 'sha1...', raw_text: '...' },
+//       ...
+//   ] }
+//
+// Defense-in-depth: even though the agent gates uploads on characters.tell_relay,
+// the bot ALSO re-checks the flag here and rejects with 403 if the character
+// hasn't opted in. The agent's prefs cache could be stale; the DB is truth.
+//
+// DM relay: when accepted, each incoming tell triggers a Discord DM to the
+// linked Discord user (characters.discord_id → wolfpack_members → discord
+// user). Outgoing tells are stored but NOT DMed (the user is already at their
+// keyboard, that would be noise). DM failures are non-fatal.
+async function _handleAgentTells(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => {
+      body += chunk;
+      // Modest cap — tells are tiny but a misbehaving agent shouldn't ddos us.
+      if (body.length > 256 * 1024) { req.destroy(); resolve(); }
+    });
+    req.on('end',   resolve);
+    req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+  const character = String(payload?.character || '').trim();
+  const tells     = Array.isArray(payload?.tells) ? payload.tells : [];
+  if (!character || tells.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' }));
+  }
+
+  // Hard gate: character must be opted in. Also need discord_id to attribute
+  // ownership. Missing either → silently drop (do not write).
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  if (!charRow?.tell_relay) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'tell_relay not enabled for this character' }));
+  }
+  if (!charRow.discord_id) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character has no linked discord_id' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = [];
+  for (const t of tells) {
+    const direction = t?.direction === 'outgoing' ? 'outgoing' : 'incoming';
+    const other     = String(t?.other || '').trim();
+    const text      = String(t?.text  || '').trim();
+    const tsRaw     = t?.ts ? new Date(t.ts) : new Date();
+    const ts        = isNaN(tsRaw.getTime()) ? new Date() : tsRaw;
+    if (!other || !text) continue;
+    rows.push({
+      guild_id:         guildId,
+      owner_character:  charRow.name,
+      owner_discord_id: charRow.discord_id,
+      direction,
+      other_name:       other.slice(0, 64),
+      text:             text.slice(0, 2000),
+      ts:               ts.toISOString(),
+      source:           t?.source || 'live_agent',
+      raw_text:         t?.raw_text ? String(t.raw_text).slice(0, 2000) : null,
+      dedup_key:        t?.dedup_key ? String(t.dedup_key).slice(0, 80) : null,
+    });
+  }
+  if (rows.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+  // Upsert on the partial unique (guild, owner_character, dedup_key). Rows
+  // without dedup_key insert fresh every call — agents should always populate
+  // it but we don't reject if they don't.
+  const withKey    = rows.filter(r => r.dedup_key);
+  const withoutKey = rows.filter(r => !r.dedup_key);
+  let stored = 0;
+  if (withKey.length) {
+    const u = await supabase.upsert('tells', withKey, 'guild_id,owner_character,dedup_key').catch(err => {
+      console.warn('[tells] upsert failed:', err?.message); return null;
+    });
+    if (Array.isArray(u)) stored += u.length;
+  }
+  if (withoutKey.length) {
+    const i = await supabase.insert('tells', withoutKey).catch(err => {
+      console.warn('[tells] insert failed:', err?.message); return null;
+    });
+    if (Array.isArray(i)) stored += i.length;
+  }
+
+  // Fire-and-forget DM relay for incoming tells. Coalesce per-recipient into
+  // a single message when there are multiple, to keep notifications quiet.
+  const incoming = rows.filter(r => r.direction === 'incoming');
+  if (incoming.length > 0) {
+    _relayTellsToDM(charRow.discord_id, charRow.name, incoming).catch(err =>
+      console.warn('[tells] DM relay failed:', err?.message));
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, stored }));
+}
+
+// DM the owner with the freshly-relayed tells. Batched into one message so a
+// rapid volley of tells doesn't fan out as a wall of pings.
+async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
+  try {
+    const user = await client.users.fetch(discordUserId).catch(() => null);
+    if (!user) return;
+    const lines = tellRows.slice(0, 10).map(t =>
+      `**${t.other_name}** → _${ownerCharacter}_: ${t.text}`
+    );
+    if (tellRows.length > 10) lines.push(`_…and ${tellRows.length - 10} more — see /me/tells._`);
+    const header = tellRows.length === 1
+      ? '📬 You got a tell while you were away:'
+      : `📬 You got ${tellRows.length} tells while you were away:`;
+    await user.send({
+      content: header + '\n' + lines.join('\n') +
+        '\n\nMute via the **Tells: ON** toggle on https://wolfpack.quest/me.',
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+    // Best-effort: stamp dm_relayed_at on the rows we just DMed. Failures here
+    // don't block — the tells are already stored.
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      const keys = tellRows.map(r => r.dedup_key).filter(Boolean);
+      if (keys.length) {
+        const inList = '(' + keys.map(k => `"${k.replace(/"/g, '')}"`).join(',') + ')';
+        await supabase.update(
+          'tells',
+          `owner_character=ilike.${encodeURIComponent(ownerCharacter)}&dedup_key=in.${encodeURIComponent(inList)}`,
+          { dm_relayed_at: new Date().toISOString() },
+        ).catch(() => {});
+      }
+    }
+  } catch { /* non-fatal */ }
 }
 
 // POST /api/agent/backfill-requests/:id/:action      — ack | dismiss | complete | error
@@ -4293,6 +4459,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefs(req, res); }
     catch (err) {
       console.error('[character-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/tells') {
+    try { return await _handleAgentTells(req, res); }
+    catch (err) {
+      console.error('[tells] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
