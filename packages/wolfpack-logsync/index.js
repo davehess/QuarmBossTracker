@@ -5580,10 +5580,18 @@ function parsePeopleslayerLd(line) {
 // member's logs and the lines are unambiguous. event_type names are stable;
 // the web /fun aggregation decides how to present them.
 //
-// Regexes are permissive on the exact flavor wording since the verbatim line
-// is "Your hunger/thirst is sedated by the blessing of the harvest/storm".
-const MALTHUR_FOOD_RX  = /\byour hunger (?:is|has been) sedated by the blessing of the harvest/i;
-const MALTHUR_WATER_RX = /\byour thirst (?:is|has been) (?:sedated|quenched) by the blessing of the storm/i;
+// Regex wording — IMPORTANT context. eqemu_spells is empty in our mirror, and
+// even when populated the EQEmu schema doesn't store cast strings (cast_on_you /
+// cast_on_other / spell_fades live in the client's spells_us.txt, not the DB).
+// So we can't look up the verbatim Quarm recipient line. The canonical spell
+// name per eqemu_items is "Spell: Harvest" (id 19434) — the "blessing of the
+// harvest" / "blessing of the storm" wording on the recipient side is the
+// observed flavor text from the user's screenshots. Accept either the
+// "blessing of the …" or just the spell name as a hedge until we get a real
+// log sample to tighten. False positives are bounded by "hunger/thirst …
+// sedated by" which is otherwise non-occurring in EQ logs.
+const MALTHUR_FOOD_RX  = /\byour hunger (?:is|has been) sedated by\b.*\b(?:blessing of the )?harvest\b/i;
+const MALTHUR_WATER_RX = /\byour thirst (?:is|has been) (?:sedated|quenched) by\b.*\b(?:blessing of the )?storm\b/i;
 // Cursor cap — EQ stops handing summoned items to the cursor at ~10 pending.
 const CURSOR_FULL_RX   = /\b(?:your cursor is full|cursor queue full)\b/i;
 

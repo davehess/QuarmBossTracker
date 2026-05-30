@@ -103,6 +103,20 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
+### eqemu_spells sync is empty (queue blocker for spell-name verification)
+The `eqemu_spells` table exists with the right schema (20 cols) but **0 rows**
+in prod — the weekly sync from eqmac isn't populating it. Even when populated,
+the schema doesn't carry cast strings (`cast_on_you`/`cast_on_other`/`spell_fades`
+live in the client's `spells_us.txt`, not the DB). So today we can't verify the
+exact Quarm log wording for spell-detector regexes from the DB. Two follow-ups:
+1. **Fix the sync** (`scripts/sync-from-eqmac.js`) to populate `eqemu_spells`.
+   Also unblocks PoP-flagging tracker's spell-effect lookups.
+2. **Source cast strings**: either scrape PQDI per spell page, or sample real
+   Quarm logs from members (Hitya/Canopy/Malthur). Current detectors (Harm
+   Touch, Lay on Hands, Malthur Harvest/Storm) are best-guess against typical
+   EQ phrasing — loosened in 2.4.33 to accept both "blessing of the X" and bare
+   "X" wording until a real sample arrives.
+
 ### Class signature counters (agent v2.4.31) — collecting; display TODO
 - SK **Harm Touch** damage total (`harm_touch`, reagent_qty=damage) and Paladin
   **Lay on Hands** (`lay_on_hands`, reagent_qty=heal-or-0-for-count) +
