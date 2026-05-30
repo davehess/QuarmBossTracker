@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node index.js",
     "deploy-commands": "node deploy-commands.js",
-    "test:sync": "node scripts/test-sync-parser.js"
+    "test:sync": "node scripts/test-sync-parser.js",
+    "check:dashboard": "node scripts/check-agent-dashboard.js"
   },
   "engines": {
     "node": ">=18.0.0"

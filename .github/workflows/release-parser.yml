@@ -30,6 +30,12 @@ jobs:
             echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
+      # Fail the release before packaging if the agent dashboard template
+      # has a mis-escaped char that would render localhost:7777 blank.
+      # (We've shipped that bug twice — v2.4.25, v2.4.27.)
+      - name: Validate agent dashboard escapes
+        run: node scripts/check-agent-dashboard.js
+
       - name: Assemble WolfPackParser.zip
         run: |
           TAG="${{ steps.tag.outputs.name }}"

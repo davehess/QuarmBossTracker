@@ -2309,6 +2309,25 @@ function _updateBlockedReason() {
   return null;
 }
 
+// ⚠️ ESCAPE HAZARD — READ BEFORE EDITING THE DASHBOARD JS BELOW ⚠️
+// This whole dashboard (HTML + browser-side <script>) is a single backtick
+// template literal. That means TWO layers of escaping apply, and getting it
+// wrong renders the entire dashboard BLANK with an Uncaught SyntaxError
+// (no partial degradation — one bad char kills the page).
+//
+//   • Newlines inside browser JS strings: write `\\n` (NOT `\n`). A bare
+//     `\n` becomes a real newline in the served HTML → unterminated string.
+//   • Apostrophes inside single-quoted browser JS strings (you'll, don't,
+//     didn't): write `\\'` (NOT `\'`). A bare `\'` collapses to `'` in the
+//     served HTML → the apostrophe ends the string early.
+//   • Backslashes for client-side regex/paths: write `\\\\` to get one `\`.
+//   • `${...}` is Node interpolation — fine for server values, but DON'T let
+//     a literal `${foo}` meant for the browser leak through unescaped.
+//
+// We've shipped the blank-page bug TWICE (v2.4.25 newline, v2.4.27 apostrophe).
+// ALWAYS run `node scripts/check-agent-dashboard.js` after touching this
+// template — it extracts the served <script> body and parses it, catching
+// these before they reach a user. (The release workflow runs it too.)
 const WEB_HTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Wolf Pack EQ — Parser</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">

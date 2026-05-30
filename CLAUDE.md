@@ -500,7 +500,22 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
 
 `Shift+U` (CLI) or `?force=1` (HTTP) bypasses. The `/api/state` payload includes `updateBlocked: <reason>` so the dashboard renders the right tooltip.
 
-**Agent UI (localhost:7777, optional `--web-port`):** Dashboard, Tanks, Healers (BETA), DEEPS, Pets, Info/Stats, Opt-in Logs tabs. Versions tracked separately (`agent v2.4.6` etc.); auto-update prompt from `/api/agent/latest-version`. Per-character spell cast counter on the Info tab (reliable for the uploader, "(unknown)" for bystanders since EQ doesn't log spell names for them).
+**Agent UI (localhost:7777, optional `--web-port`):** Dashboard, Tanks, Healers (BETA), DEEPS, Pets, Info/Stats, Opt-in Logs tabs. Versions tracked separately (`agent v2.4.6` etc.); auto-update prompt from `/api/agent/latest-version`. Per-character spell cast counter on the Info tab (reliable for the uploader, "(unknown)" for bystanders since EQ doesn't log spell names for them). `start-logsync.ps1` always passes `--web-port 7777` so the CLI and web UI run together.
+
+> **⚠️ Dashboard escape hazard — ALWAYS check after editing `WEB_HTML`.** The
+> entire agent dashboard (HTML + browser-side `<script>`) lives in one backtick
+> template literal in `packages/wolfpack-logsync/index.js`. Two escape layers
+> apply, and one mis-escaped char renders the WHOLE localhost page **blank**
+> with an `Uncaught SyntaxError` (no partial degradation). The traps:
+> - browser-JS newlines → write `\\n` (a bare `\n` becomes a real newline → unterminated string)
+> - apostrophes in single-quoted browser strings (`you'll`, `don't`) → write `\\'` (a bare `\'` collapses to `'` → string ends early)
+> - client-side backslashes → write `\\\\`
+>
+> We shipped this bug **twice** (v2.4.25 newline, v2.4.27 apostrophe). After
+> ANY change to that template, run **`npm run check:dashboard`** (=
+> `node scripts/check-agent-dashboard.js`), which extracts the served
+> `<script>` body and parses it via `new Function()`. The
+> `release-parser.yml` workflow runs it too and fails the release on a break.
 
 **Fun events (v2.4.18+):** Lightweight side stream for guild-flavor counters. Each detector returns `{ type, caster, ts, raw_text }` or null; matches push into `funEventBuffer` and ride out via the 5s chat-relay flush to `POST /api/agent/fun_event`. Bot upserts into the `fun_events` Supabase table with `unique (guild_id, event_type, caster, event_ts)` so backfill replays are idempotent. First tenant: Peopleslayer LD counter. Planned: CoH Pearl, DI Emerald, Aegolism/Rune Peridot (MGB doubles).
 
