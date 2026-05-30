@@ -748,6 +748,12 @@ while ($true) {
     $nodeArgs += $cfg.BotUrl
     $nodeArgs += "--token"
     $nodeArgs += $cfg.Token
+    # Always launch the local web dashboard on port 7777 so users have both
+    # the CLI window and the web UI available side-by-side without needing
+    # to press [B] to detach. Port collides → falls back inside the agent;
+    # CLI keeps running either way.
+    $nodeArgs += "--web-port"
+    $nodeArgs += "7777"
     if ($DryRun) { $nodeArgs += "--dry-run" }
 
     & node @nodeArgs

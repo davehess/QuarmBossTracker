@@ -14,24 +14,52 @@ async function loadCounters() {
   const sb = supabaseAdmin();
   const counters: { label: string; emoji: string; value: number; sub?: string }[] = [];
 
-  // Peopleslayer LD count — straight from fun_events.
+  // Peopleslayer LD card — count + a running tally of damage logged AFTER his
+  // first LD. The joke: his DPS goes UP after he goes linkdead, so the post-LD
+  // damage number keeps climbing. Queried via FK-joined filter on
+  // encounter_players → encounters.started_at > earliest LD timestamp.
   try {
-    const { count } = await sb
-      .from('fun_events')
-      .select('*', { count: 'exact', head: true })
-      .eq('event_type', 'peopleslayer_ld');
+    const [ldRes, firstLdRow] = await Promise.all([
+      sb.from('fun_events')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_type', 'peopleslayer_ld'),
+      sb.from('fun_events')
+        .select('event_ts')
+        .eq('event_type', 'peopleslayer_ld')
+        .order('event_ts', { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    const ldCount = ldRes.count ?? 0;
+    const firstLdTs = firstLdRow.data?.event_ts;
+
+    let postLdDamage = 0;
+    if (firstLdTs) {
+      const { data: ep } = await sb
+        .from('encounter_players')
+        .select('total_damage, encounters!inner(started_at)')
+        .ilike('character_name', 'Peopleslayer')
+        .gt('encounters.started_at', firstLdTs);
+      postLdDamage = (ep ?? []).reduce(
+        (s: number, r: { total_damage: number | null }) => s + (r.total_damage || 0), 0);
+    }
+
     counters.push({
-      label: 'Peopleslayer linkdead events',
+      label: 'Peopleslayer linkdead',
       emoji: '🔌',
-      value: count ?? 0,
-      sub: 'has gone linkdead — across every opt-in log we know about',
+      value: ldCount,
+      sub: postLdDamage > 0
+        ? `…and ${postLdDamage.toLocaleString()} damage logged AFTER going LD. DPS doesn't stop for sleep.`
+        : (ldCount > 0
+            ? 'no damage logged after going LD yet — give him a minute.'
+            : 'still online.'),
     });
   } catch (err) {
     counters.push({
-      label: 'Peopleslayer linkdead events',
+      label: 'Peopleslayer linkdead',
       emoji: '🔌',
       value: 0,
-      sub: 'no fun_events data yet — opt-in backfills will populate as logs replay',
+      sub: 'no data yet.',
     });
     void err;
   }

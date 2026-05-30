@@ -2368,6 +2368,25 @@ function _updateBlockedReason() {
   return null;
 }
 
+// ⚠️ ESCAPE HAZARD — READ BEFORE EDITING THE DASHBOARD JS BELOW ⚠️
+// This whole dashboard (HTML + browser-side <script>) is a single backtick
+// template literal. That means TWO layers of escaping apply, and getting it
+// wrong renders the entire dashboard BLANK with an Uncaught SyntaxError
+// (no partial degradation — one bad char kills the page).
+//
+//   • Newlines inside browser JS strings: write `\\n` (NOT `\n`). A bare
+//     `\n` becomes a real newline in the served HTML → unterminated string.
+//   • Apostrophes inside single-quoted browser JS strings (you'll, don't,
+//     didn't): write `\\'` (NOT `\'`). A bare `\'` collapses to `'` in the
+//     served HTML → the apostrophe ends the string early.
+//   • Backslashes for client-side regex/paths: write `\\\\` to get one `\`.
+//   • `${...}` is Node interpolation — fine for server values, but DON'T let
+//     a literal `${foo}` meant for the browser leak through unescaped.
+//
+// We've shipped the blank-page bug TWICE (v2.4.25 newline, v2.4.27 apostrophe).
+// ALWAYS run `node scripts/check-agent-dashboard.js` after touching this
+// template — it extracts the served <script> body and parses it, catching
+// these before they reach a user. (The release workflow runs it too.)
 const WEB_HTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Wolf Pack EQ — Parser</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -3095,7 +3114,7 @@ function renderOptin(o) {
   if (reqs.length > 0) {
     h += '<div class="card wide" style="border-color:#a06628">' +
          '<h2 style="color:#f0883e">📋 Officer-requested backfill (' + reqs.length + ')</h2>' +
-         '<div class="subtle">An officer asked you to upload a specific log window. Accept to confirm you\'ll handle it — then run the matching file from the list below. Dismiss if it doesn\'t apply.</div>';
+         '<div class="subtle">An officer asked you to upload a specific log window. Accept to confirm you\\'ll handle it — then run the matching file from the list below. Dismiss if it doesn\\'t apply.</div>';
     for (const r of reqs) {
       const scopeStart = r.scope && r.scope.start_iso ? new Date(r.scope.start_iso).toLocaleString() : '?';
       const scopeEnd   = r.scope && r.scope.end_iso   ? new Date(r.scope.end_iso).toLocaleString()   : '?';
@@ -3190,7 +3209,7 @@ function renderOptin(o) {
         resumeStr =
           '<span style="color:var(--green)" title="' + esc(tip) + '">✓ done</span>' +
           (when ? ' <span class="dim" style="font-size:10px">' + esc(when.replace(/, /, ' ')) + (ver ? ' · ' + esc(ver) : '') + '</span>' : '') +
-          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill on this file in case the log has new data the prior run didn\'t see" style="margin-left:6px;background:transparent;border:1px solid var(--border);color:var(--dim);font-size:10px;padding:1px 6px;border-radius:3px;cursor:pointer">↻ Re-run</button>';
+          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting." style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>';
       }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
         const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
@@ -4567,8 +4586,13 @@ function runOptinBackfill(files, opts = {}) {
             // early return; the line still flows through downstream parsers.
             const ldEvt = parsePeopleslayerLd(line);
             if (ldEvt) funEventBuffer.push(ldEvt);
+            // Both Malthur counters — caster-side (only Malthur's own log,
+            // ground truth) and recipient-side (every member's log, broad
+            // reach) cross-validate each other.
             const provEvt = parseMalthurProvision(line, f.character);
             if (provEvt) funEventBuffer.push(provEvt);
+            const sumProvEvt = parseSummonProvisions(line, f.character);
+            if (sumProvEvt) funEventBuffer.push(sumProvEvt);
             const cursorEvt = parseCursorFull(line, f.character);
             if (cursorEvt) funEventBuffer.push(cursorEvt);
             const htEvt = parseHarmTouch(line, f.character);
@@ -4714,7 +4738,7 @@ function showOptIn() {
   out.push('\n');
   if (_optinState.pane === 'active') {
     out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[A]${C.reset} Select all  ${C.cyan}[X]${C.reset} Ignore highlighted  `);
-    out.push(`${selCount > 0 ? `${C.bold}${C.green}[B]${C.reset} Backfill (${selCount})` : `${C.dim}[B] Backfill${C.reset}`}  `);
+    out.push(`${selCount > 0 ? `${C.bold}${C.green}[G]${C.reset} Go — backfill (${selCount})` : `${C.dim}[G] Go — backfill${C.reset}`}  `);
     out.push(`${C.cyan}[S]${C.reset} Sort (${_optinState.sortMode})  ${C.cyan}[V]${C.reset} View ignored (${_optinState.ignored.length})  ${C.cyan}[D]${C.reset} Back\n`);
   } else {
     out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[R]${C.reset} Restore selected  ${C.cyan}[S]${C.reset} Sort (${_optinState.sortMode})  ${C.cyan}[V]${C.reset} Back to active  ${C.cyan}[D]${C.reset} Back\n`);
@@ -4726,6 +4750,13 @@ function showOptIn() {
   if (!_optinKeyHandler && process.stdin.isTTY) {
     process.stdin.setRawMode(true);
     _optinKeyHandler = (data) => {
+      // Teardown guard. Some terminals deliver a single keystroke as
+      // multiple data events (a few bytes apart); after the first one
+      // tears down the listener, subsequent ones land here with a null
+      // handler reference, and process.removeListener(null) throws
+      // ERR_INVALID_ARG_TYPE — blowing the whole agent up. Drop on the
+      // floor instead.
+      if (_optinKeyHandler === null) return;
       _bumpViewTimer();
       const key = data.toString();
       const ESC = '\x1b';
@@ -4789,13 +4820,17 @@ function showOptIn() {
         _optinState.scanned = false;
         showOptIn(); return;
       }
-      if (key === 'b' || key === 'B') {
+      // [G] Go — start backfill on selected files. (Was [B] before v2.4.26
+      // but collided with the global [B] Background-service key, which
+      // would detach + kill the foreground session before backfill could
+      // start. [G] is unused both globally and on the opt-in tab.)
+      if (key === 'g' || key === 'G') {
         // Only start backfill from the active pane
         if (_optinState.pane !== 'active') { showOptIn(); return; }
         const chosen = _optinState.files.filter(f => f.selected);
         if (chosen.length === 0) return;
 
-        process.removeListener('data', _optinKeyHandler);
+        if (_optinKeyHandler) process.removeListener('data', _optinKeyHandler);
         _optinKeyHandler = null;
         _optinState.scanned = false;
         _exitView();
@@ -4807,7 +4842,7 @@ function showOptIn() {
         return;
       }
       if (key === 'd' || key === 'D' || key === '\x03') {
-        process.removeListener('data', _optinKeyHandler);
+        if (_optinKeyHandler) process.removeListener('data', _optinKeyHandler);
         _optinKeyHandler = null;
         _optinState.scanned = false;
         _exitView();
@@ -5568,34 +5603,47 @@ function parsePeopleslayerLd(line) {
   };
 }
 
-// ── Malthur provisions (recipient-side) ──────────────────────────────────────
-// Malthur summons stacks of food/water (Blessing of the Harvest / Storm). The
-// recipient lines name no caster, so we attribute to the RECIPIENT (the agent's
-// own character) and count "times fed". Summing received across every member's
-// agent approximates total stacks Malthur put out — which is the fun stat.
+// ── Malthur provisions — TWO complementary detectors ────────────────────────
 //
-// ⚠️ ATTRIBUTION NOTE (flag for review): caster = recipient, not "Malthur".
-// If the intended counter is "stacks Malthur summoned" attributed to Malthur,
-// switch to the caster-side "You begin casting Blessing of the Harvest/Storm"
-// detection instead (only the casting client logs that, so only Malthur's own
-// agent would report it). Recipient-side was chosen because it works from every
-// member's logs and the lines are unambiguous. event_type names are stable;
-// the web /fun aggregation decides how to present them.
+// Both ship because they cross-validate each other and capture different
+// vantage points: caster-side is ground truth (one event per cast) but only
+// Malthur's own agent reports it; recipient-side is approximate (one event
+// per recipient-fed) but every member's agent reports.
 //
-// Regex wording — IMPORTANT context. eqemu_spells is empty in our mirror, and
-// even when populated the EQEmu schema doesn't store cast strings (cast_on_you /
-// cast_on_other / spell_fades live in the client's spells_us.txt, not the DB).
-// So we can't look up the verbatim Quarm recipient line. The canonical spell
-// name per eqemu_items is "Spell: Harvest" (id 19434) — the "blessing of the
-// harvest" / "blessing of the storm" wording on the recipient side is the
-// observed flavor text from the user's screenshots. Accept either the
-// "blessing of the …" or just the spell name as a hedge until we get a real
-// log sample to tighten. False positives are bounded by "hunger/thirst …
-// sedated by" which is otherwise non-occurring in EQ logs.
+// Caster-side (parseSummonProvisions, v2.4.29): "You begin casting Blessing
+// of the Harvest" → summon_food. "You begin casting Blessing of the Storm"
+// → summon_water. Each successful cast yields one 10-charge stack.
+//
+// Recipient-side (parseMalthurProvision, v2.4.30): "Your hunger/thirst is
+// sedated by..." → malthur_food_received / malthur_water_received. caster =
+// the RECIPIENT (their own character) since the line names no actual caster.
+//
+// Regex wording context: eqemu_spells is empty in our mirror, and the EQEmu
+// schema doesn't store cast strings anyway (cast_on_you/cast_on_other live in
+// the client's spells_us.txt). So the recipient-side wording can't be DB-
+// verified — accept either "blessing of the harvest/storm" or bare "harvest/
+// storm" as a hedge until a real log sample tightens it. The "hunger/thirst …
+// sedated by" anchor bounds the false-positive surface.
+const SUMMON_FOOD_RX   = /^\[.+?\]\s+You begin casting Blessing of the Harvest\.?\s*$/i;
+const SUMMON_WATER_RX  = /^\[.+?\]\s+You begin casting Blessing of the Storm\.?\s*$/i;
 const MALTHUR_FOOD_RX  = /\byour hunger (?:is|has been) sedated by\b.*\b(?:blessing of the )?harvest\b/i;
 const MALTHUR_WATER_RX = /\byour thirst (?:is|has been) (?:sedated|quenched) by\b.*\b(?:blessing of the )?storm\b/i;
 // Cursor cap — EQ stops handing summoned items to the cursor at ~10 pending.
 const CURSOR_FULL_RX   = /\b(?:your cursor is full|cursor queue full)\b/i;
+
+function parseSummonProvisions(line, character) {
+  let type = null;
+  if (SUMMON_FOOD_RX.test(line))       type = 'summon_food';
+  else if (SUMMON_WATER_RX.test(line)) type = 'summon_water';
+  if (!type) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type,
+    caster:   character || null,
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
 
 function parseMalthurProvision(line, character) {
   let type = null;
@@ -5605,7 +5653,7 @@ function parseMalthurProvision(line, character) {
   const ts = parseEqTimestamp(line);
   return {
     type,
-    caster:   character || null,   // the recipient — see attribution note above
+    caster:   character || null,   // the recipient — see banner above
     ts:       ts ? ts.toISOString() : new Date().toISOString(),
     raw_text: line.slice(0, 200),
   };
@@ -5909,6 +5957,34 @@ function shouldUploadForCharacter(character) {
 // every ~10 min and merge with personal triggers loaded from disk in
 // evaluateTriggersAgainstLine. Each trigger is precompiled to a RegExp at
 // fetch time so the per-line eval is just an exec call.
+// EQLogParser emits .NET regex syntax — some constructs aren't valid in JS.
+// Common ones we see in the guild library:
+//   (?>...)   atomic group — fallback: (?:...) (non-capturing). The
+//             backtracking semantics differ but for EQ log lines (no
+//             ambiguous nested patterns) it matches identically.
+//   {s} {S} {S2} {c}    EQLogParser placeholder variables. We don't have a
+//             {s}-equivalent at the agent yet, so swap to a permissive
+//             capture so the trigger still fires (the regex won't fail to
+//             compile). The capture name {s} is reserved by us.
+// Anything else we leave alone — JS regex supports named captures, lookbehind,
+// lookahead, Unicode property escapes, etc.
+function _translateDotNetRegex(pattern) {
+  let p = String(pattern || '');
+  // (?>...) → (?:...)
+  p = p.replace(/\(\?>/g, '(?:');
+  // {s} / {S} / {S2} / {c} → permissive captures. {c} is the agent's own
+  // character (substituted at match time later, ideally) but as a stop-gap
+  // we use a non-greedy word match so the trigger compiles & fires.
+  p = p.replace(/\{[sScC]\d*\}/g, '(?:[^\\s]+)');
+  return p;
+}
+
+// For literal (non-regex) EQLP triggers, escape regex metacharacters so
+// the source string matches itself when fed to RegExp.
+function _escapeForLiteralMatch(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function pollGuildTriggers({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
   // Pass our characters so server-side targeting can pre-filter
@@ -5947,7 +6023,10 @@ function pollGuildTriggers({ botUrl, token }) {
               for (const t of resp.triggers) {
                 try {
                   const flags = t.pattern_flags || 'i';
-                  compiled.push({ ...t, _regex: new RegExp(t.pattern, flags), _scope: 'guild' });
+                  const pat = t.use_regex === false
+                    ? _escapeForLiteralMatch(t.pattern)
+                    : _translateDotNetRegex(t.pattern);
+                  compiled.push({ ...t, _regex: new RegExp(pat, flags), _scope: 'guild' });
                 } catch (err) {
                   console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
                 }
@@ -5987,7 +6066,10 @@ function loadPersonalTriggers() {
     for (const t of arr) {
       try {
         const flags = t.pattern_flags || 'i';
-        compiled.push({ ...t, _regex: new RegExp(t.pattern, flags), _scope: 'personal' });
+        const pat = t.use_regex === false
+          ? _escapeForLiteralMatch(t.pattern)
+          : _translateDotNetRegex(t.pattern);
+        compiled.push({ ...t, _regex: new RegExp(pat, flags), _scope: 'personal' });
       } catch (err) {
         console.warn(`[personal-triggers] bad pattern "${t.name}":`, err.message);
       }
@@ -6656,10 +6738,14 @@ async function main() {
         // Fun-event detection (Peopleslayer LD, Malthur provisions, future
         // CoH/DI/etc). Don't `return` after a match — fun events are pure
         // side-channel logging and the line might also feed other parsers.
-        const ldEvt = parsePeopleslayerLd(line);
         if (ldEvt && !_sourceExcluded) funEventBuffer.push(ldEvt);
+        // Both Malthur counters — caster-side (only Malthur's own log,
+        // ground truth) and recipient-side (every member's log, broader
+        // reach) cross-validate each other.
         const provEvt = parseMalthurProvision(line, b.character);
         if (provEvt && !_sourceExcluded) funEventBuffer.push(provEvt);
+        const sumProvEvt = parseSummonProvisions(line, b.character);
+        if (sumProvEvt && !_sourceExcluded) funEventBuffer.push(sumProvEvt);
         const cursorEvt = parseCursorFull(line, b.character);
         if (cursorEvt && !_sourceExcluded) funEventBuffer.push(cursorEvt);
         const htEvt = parseHarmTouch(line, b.character);
