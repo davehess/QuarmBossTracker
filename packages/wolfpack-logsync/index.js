@@ -1687,6 +1687,13 @@ const STATS_FILE = path.join(__dirname, 'logsync.stats.json');
 // queue with a loud warning — those won't fix themselves by retrying.
 const QUEUE_FILE             = path.join(__dirname, 'logsync.queue.json');
 const QUEUE_MAX_SIZE         = 5000;     // FIFO cap; oldest dropped with a warning
+// Backpressure watermarks (hysteresis): when a backfill is filling the queue
+// faster than the drain loop empties it, PAUSE the file read at HIGH and don't
+// resume until it drains below LOW. This stops the cap from FIFO-evicting good
+// data during a big --since replay. Live tail is unaffected (it never feeds
+// fast enough to matter).
+const QUEUE_BACKPRESSURE_HIGH = Math.floor(QUEUE_MAX_SIZE * 0.9);   // 4500 — pause
+const QUEUE_BACKPRESSURE_LOW  = Math.floor(QUEUE_MAX_SIZE * 0.6);   // 3000 — resume
 const QUEUE_DRAIN_INTERVAL_MS = 15_000;  // walk the queue every 15s
 const QUEUE_REQUEST_TIMEOUT_MS = 30_000; // per-attempt HTTP timeout
 const QUEUE_MAX_PER_DRAIN_PASS = 50;     // cap parallel work per drain so a
@@ -4421,7 +4428,7 @@ let _optinKeyHandler = null;
 
 // Read entire file with byte-position tracking; supports resume from a stored offset.
 // onLine(line) is called for each line; onProgress({ bytePos, totalBytes, lineNum }) is called every ~256KB.
-async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortCheck) {
+async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortCheck, backpressure) {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(logPath, {
       encoding:      'utf8',
@@ -4433,6 +4440,7 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortC
     let lineNum = 0;
     let sinceLastProgress = 0;
     let cancelled = false;
+    let bpTimer = null;
 
     stream.on('data', chunk => {
       if (cancelled) return;
@@ -4441,6 +4449,7 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortC
       // time. Destroying the stream fires 'close' which resolves us.
       if (abortCheck && abortCheck()) {
         cancelled = true;
+        if (bpTimer) { clearInterval(bpTimer); bpTimer = null; }
         try { onProgress && onProgress({ bytePos, lineNum }); } catch {}
         stream.destroy();
         return;
@@ -4458,10 +4467,23 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortC
         sinceLastProgress = 0;
         try { onProgress({ bytePos, lineNum }); } catch {}
       }
+      // Backpressure: if the upload queue is near its cap, pause the read so
+      // the drain loop can catch up before we feed more (avoids FIFO eviction
+      // during a large backfill). Resume once it drains below the low mark.
+      if (backpressure && !bpTimer && backpressure.queueLen() >= backpressure.high) {
+        stream.pause();
+        bpTimer = setInterval(() => {
+          if (cancelled) { clearInterval(bpTimer); bpTimer = null; return; }
+          if (backpressure.queueLen() < backpressure.low) {
+            clearInterval(bpTimer); bpTimer = null;
+            stream.resume();
+          }
+        }, 500);
+      }
     });
-    stream.on('end',   () => { if (onProgress) try { onProgress({ bytePos, lineNum }); } catch {} ; resolve({ bytePos, lineNum, aborted: cancelled }); });
-    stream.on('close', () => resolve({ bytePos, lineNum, aborted: cancelled }));
-    stream.on('error', reject);
+    stream.on('end',   () => { if (bpTimer) { clearInterval(bpTimer); bpTimer = null; } if (onProgress) try { onProgress({ bytePos, lineNum }); } catch {} ; resolve({ bytePos, lineNum, aborted: cancelled }); });
+    stream.on('close', () => { if (bpTimer) { clearInterval(bpTimer); bpTimer = null; } resolve({ bytePos, lineNum, aborted: cancelled }); });
+    stream.on('error', (err) => { if (bpTimer) { clearInterval(bpTimer); bpTimer = null; } reject(err); });
   });
 }
 
@@ -4545,6 +4567,10 @@ function runOptinBackfill(files, opts = {}) {
             // early return; the line still flows through downstream parsers.
             const ldEvt = parsePeopleslayerLd(line);
             if (ldEvt) funEventBuffer.push(ldEvt);
+            const provEvt = parseMalthurProvision(line, f.character);
+            if (provEvt) funEventBuffer.push(provEvt);
+            const cursorEvt = parseCursorFull(line, f.character);
+            if (cursorEvt) funEventBuffer.push(cursorEvt);
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -4585,7 +4611,8 @@ function runOptinBackfill(files, opts = {}) {
             _saveOptInState();
             onStatus(status);
           },
-          () => _abortedBackfills.has(f.path));
+          () => _abortedBackfills.has(f.path),
+          { queueLen: () => _uploadQueue.length, high: QUEUE_BACKPRESSURE_HIGH, low: QUEUE_BACKPRESSURE_LOW });
         builder.flush();
         await flushChat(true).catch(() => {});
         if (result?.aborted) {
@@ -5477,6 +5504,52 @@ function parsePeopleslayerLd(line) {
   return {
     type:     'peopleslayer_ld',
     caster:   'Peopleslayer',
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+// ── Malthur provisions (recipient-side) ──────────────────────────────────────
+// Malthur summons stacks of food/water (Blessing of the Harvest / Storm). The
+// recipient lines name no caster, so we attribute to the RECIPIENT (the agent's
+// own character) and count "times fed". Summing received across every member's
+// agent approximates total stacks Malthur put out — which is the fun stat.
+//
+// ⚠️ ATTRIBUTION NOTE (flag for review): caster = recipient, not "Malthur".
+// If the intended counter is "stacks Malthur summoned" attributed to Malthur,
+// switch to the caster-side "You begin casting Blessing of the Harvest/Storm"
+// detection instead (only the casting client logs that, so only Malthur's own
+// agent would report it). Recipient-side was chosen because it works from every
+// member's logs and the lines are unambiguous. event_type names are stable;
+// the web /fun aggregation decides how to present them.
+//
+// Regexes are permissive on the exact flavor wording since the verbatim line
+// is "Your hunger/thirst is sedated by the blessing of the harvest/storm".
+const MALTHUR_FOOD_RX  = /\byour hunger (?:is|has been) sedated by the blessing of the harvest/i;
+const MALTHUR_WATER_RX = /\byour thirst (?:is|has been) (?:sedated|quenched) by the blessing of the storm/i;
+// Cursor cap — EQ stops handing summoned items to the cursor at ~10 pending.
+const CURSOR_FULL_RX   = /\b(?:your cursor is full|cursor queue full)\b/i;
+
+function parseMalthurProvision(line, character) {
+  let type = null;
+  if (MALTHUR_FOOD_RX.test(line))       type = 'malthur_food_received';
+  else if (MALTHUR_WATER_RX.test(line)) type = 'malthur_water_received';
+  if (!type) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type,
+    caster:   character || null,   // the recipient — see attribution note above
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+function parseCursorFull(line, character) {
+  if (!CURSOR_FULL_RX.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'provisions_cursor_full',
+    caster:   character || null,
     ts:       ts ? ts.toISOString() : new Date().toISOString(),
     raw_text: line.slice(0, 200),
   };
@@ -6424,11 +6497,15 @@ async function main() {
           return;
         }
 
-        // Fun-event detection (Peopleslayer LD, future CoH/DI/etc). Don't
-        // `return` after a match — fun events are pure side-channel logging
-        // and the line might also be useful to other parsers downstream.
+        // Fun-event detection (Peopleslayer LD, Malthur provisions, future
+        // CoH/DI/etc). Don't `return` after a match — fun events are pure
+        // side-channel logging and the line might also feed other parsers.
         const ldEvt = parsePeopleslayerLd(line);
         if (ldEvt && !_sourceExcluded) funEventBuffer.push(ldEvt);
+        const provEvt = parseMalthurProvision(line, b.character);
+        if (provEvt && !_sourceExcluded) funEventBuffer.push(provEvt);
+        const cursorEvt = parseCursorFull(line, b.character);
+        if (cursorEvt && !_sourceExcluded) funEventBuffer.push(cursorEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);

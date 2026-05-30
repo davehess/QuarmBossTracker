@@ -155,9 +155,20 @@ skipped) hasn't been root-fixed in `/api/agent/encounter` itself yet — that
 remains a follow-up. `/recoverkills` is the fast-path remediation when it
 drifts again.
 
-### 8. Misc queued
-- Recipient-side Malthur detectors + `provisions_cursor_full` event (cursor caps ~10).
-- Backfill queue backpressure (pause feeding near the 5000 cap).
+### 8. ✅ DONE — Misc (agent v2.4.30)
+- **Backfill queue backpressure** — `readFromBytePos` now takes a `backpressure`
+  arg; the backfill pauses the file read at 90% of the 5000 cap (HIGH=4500) and
+  resumes below 60% (LOW=3000), so a big `--since` replay no longer FIFO-evicts
+  good data. Verified pause/resume hysteresis. Live tail unaffected.
+- **Malthur recipient detectors** — `parseMalthurProvision` (`malthur_food_received`
+  / `malthur_water_received`) + `parseCursorFull` (`provisions_cursor_full`). Wired
+  into live tail + backfill, gated by `exclude_from_stats`. Detectors verified
+  against sample lines. **⚠️ NEEDS REVIEW:** caster is attributed to the RECIPIENT
+  (the only name the recipient line carries), not "Malthur". If the intended fun
+  stat is "stacks Malthur summoned" attributed to Malthur, switch to caster-side
+  `You begin casting Blessing of the Harvest/Storm` detection (only Malthur's own
+  agent logs that). Recipient-side chosen because it works from every member's
+  logs. The web `/fun` aggregation/display for these event types is not built yet.
 
 ### 9. Quality-of-life / officer-prep tooling (the actual product north star)
 > **Positioning (user, 2026-05-30):** "Parsing as a whole is table stakes. We're in
