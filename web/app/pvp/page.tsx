@@ -88,8 +88,9 @@ export default async function PvpPage() {
           rows where a pet landed the kill (credited to the owner). Click a name
           for the full kill history — your own deaths are visible only to you.
         </p>
-        <div className="text-xs text-dim mt-2">
-          {rows.length} killer{rows.length === 1 ? '' : 's'} · {totalKills} total kill{totalKills === 1 ? '' : 's'}
+        <div className="text-xs text-dim mt-2 flex items-center gap-3 flex-wrap">
+          <span>{rows.length} killer{rows.length === 1 ? '' : 's'} · {totalKills} total kill{totalKills === 1 ? '' : 's'}</span>
+          <Link href="/pvp/server" className="text-blue hover:underline">See the server-wide top 10 →</Link>
         </div>
       </section>
 

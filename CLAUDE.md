@@ -2,9 +2,9 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 2.5.38 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 2.4.29 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 0.4.28 | `web/package.json` |
+| **Bot** | 2.6.0 | `package.json` |
+| **Agent** (`wolfpack-logsync`) | 2.5.0 | `packages/wolfpack-logsync/package.json` |
+| **Web** (`wolfpack.quest`) | 0.5.0 | `web/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)
@@ -22,6 +22,13 @@ The **bot**, **agent**, and **web** ship and version independently. When changin
 - Web changes → bump `web/package.json`
 
 Default to a **patch** bump unless a minor/major is requested. Commit message convention: `<component> vX.Y.Z — <short reason>` (e.g. `agent v2.4.6 — ...`, `v2.2.39 — ...` for the bot). Railway shows the merge commit message as the deploy name, so always merge with a descriptive `-m` flag — never `--no-edit`.
+
+**Per-release "what's new" bullets.** When bumping the bot version, add a 1–3
+bullet entry to `CHANGELOGS` in `utils/onboarding.js` keyed on the new version
+string. These surface as the diff in `/onboarding` for any member whose
+`member_onboarding_state.last_seen_version` is below the new release — that's
+what makes revision pings useful instead of noisy. Skip the entry if there is
+truly nothing user-facing in the bump.
 
 ---
 
@@ -242,6 +249,7 @@ Each thread contains: cooldown card at top → zone kill cards (mid) → board p
 | `/board` | Re-render all 4 slots + all thread boards. Operates on `TIMER_CHANNEL_ID` regardless of where called |
 | `/cleanup` | Delete transients/duplicates, anchor earliest boards. Historic Kills scan limited to 300 msgs |
 | `/restore <links...>` | Rebuild state from any combination of Active Cooldowns / Daily Summary message links. Latest `nextSpawn` per boss wins |
+| `/recoverkills [since] [dry_run]` | Officer: rebuild timers from Supabase `encounters` in the window (default 72h). `dry_run:true` previews without writing. Use when boards drift after a volume wipe or missed update |
 
 ### Boss management
 | Command | Notes |
@@ -694,6 +702,95 @@ a new member with the role but no OpenDKP entry yet.
 Gap detection / attendance UI should evaluate this predicate per character, not
 fall back to "every name in the OpenDKP roster" — that would flag retired alts,
 trial recruits, etc. as missing raiders.
+
+## Per-Character Data Floor (`member_since`) + Opt-Out
+
+How far back a character's data counts toward *their* stats. Defined in
+`supabase/migrations/20260530120000_character_data_floor.sql` →
+view `public.character_data_floor`.
+
+**Rule:** a player is only credited with the combat / raid chat / guild chat they
+generated *while one of us*. We have no authoritative join date, so we floor at the
+**earliest membership evidence** for the character's whole **family** (main + alts):
+
+```
+member_since = LEAST(first /gu line, first /rs line, first OpenDKP tick)   -- across the family
+```
+
+- **`LEAST`, not "first guild chat":** the earliest signal varies per person.
+  Guild-chat capture only started recently for some, but OpenDKP attendance reaches
+  back to 2024 — so a 2024 raider whose first *captured* `/gu` line is 2026 is
+  correctly floored at their 2024 tick. Conversely some chatted in `/gu` for weeks
+  before their first tick (joined socially, raided later); `LEAST` keeps those
+  pre-raid kills too. First tick = "started raiding"; it is *not* the floor on its
+  own because membership can predate it.
+- **Family fallback:** an alt that never typed in `/gu` and never ticked under its
+  own name inherits its main's floor (group by `coalesce(main_name, name)`).
+  Validated 2026-05-30: collapses pre-floor combat from 1,258 → **27** of 15,609
+  `encounter_players` rows; 145/147 families resolve a floor (47 rescued by ticks).
+- **PvP is EXEMPT** — PvP kills count from the beginning of recorded history,
+  no floor. The view does not touch PvP data.
+- **`floor_source`** column labels which signal won (`guild_chat` / `tick` /
+  `raid_chat`) for a confidence indicator in the UI.
+
+**Opt-out:** two additive flags on `characters` let a member exclude specific
+characters — `exclude_from_stats` (skip in combat/chat/log reporting & display;
+agent should not upload) and `exclude_inventory` (don't catalog bank/inventory).
+Use cases: a char that belongs to another guild, or one whose inventory they'd
+rather not have indexed. Both surface in `character_data_floor`. Agent-side
+honoring (don't upload for excluded chars) is a follow-up wiring task.
+
+Consumers (`/me`, stats commands, agent `--since` backfill window) apply
+`member_since` as the lower bound and skip `exclude_from_stats` characters.
+
+> **Granular per-verb stats are NOT yet available.** `combat_events` is empty and
+> `contributions.raw_parse` only retains per-player aggregates (`damage/dps/rank/
+> duration`) plus a bare `eventCount` — the agent's `events[]` array is dropped
+> after aggregation. A `/me` "grand total by spell/song/crush/stab/bite/…" and the
+> "attacked yourself X times" counter (attacker == defender) therefore require the
+> bot to start persisting per-ability rollups (or `combat_events`) **going
+> forward**; they cannot be backfilled from what we currently store.
+
+## Combat Rollups — Going-Forward Collection + Version Watermark
+
+Defined in `supabase/migrations/20260530130000_combat_rollup_watermark.sql`.
+
+The forward fix for the per-verb totals + self-attack counter:
+
+- **Storage:** `encounter_combat_rollup` — one compact row per character per
+  encounter: `by_skill` jsonb (damage/hits bucketed by skill or named
+  spell/song), `total_hits`, `total_damage`, `self_attack_count` (swings/casts
+  where attacker == defender). Deliberately a rollup, not an event stream, per
+  the long-haul storage note.
+- **Watermark:** `contributions.agent_version` + `contributions.has_ability_detail`
+  stamp which uploads carried rollup data. Rollups exist **only** for uploads at/
+  after the cutover agent version. We never reprocess old contributions — they
+  have nothing to extract. This is the "only pull the new data" guarantee: ongoing
+  collection is automatic; **enriching history is opt-in** (a member re-runs the
+  agent over old logs; `find_or_create_encounter` dedups so the detailed
+  contribution attaches to the existing encounter instead of duplicating it).
+- **Resubmit nudge:** `character_rollup_coverage` view exposes
+  `encounters_resubmittable` per character (total encounters − encounters with
+  detail). `/me` surfaces "N of your past raids could unlock verb totals + fun
+  counters — resubmit your logs" when > 0.
+
+### Stat Visibility & Disclosure (tooltip contract)
+
+Every log-derived stat surfaced anywhere declares a **scope**, a plain-English
+"what we learn", and whether resubmitting unlocks it. Tooltips/popovers render a
+scope badge + the explanation so members always know what's exposed:
+
+| Scope | Meaning | Examples |
+|---|---|---|
+| `PRIVATE` | Shown only in the owner's `/me` (gated to that Discord user). Never named elsewhere. | your verb breakdown, your self-attack count, your inventory/bank, your inbound `/tell`s |
+| `ANON` | Server-wide aggregate with **no names**. Safe to show publicly. | "Wolf Pack has attacked itself 47,000 times", guild-wide provisions summoned, total damage by the pack |
+| `GUILD` | Named, visible to signed-in guild members. | parses/scoreboards, DKP, attendance, kill timers |
+
+Collection gate: log-derived stats require the member to be running the agent with
+logging on (no agent → no rollup). Characters flagged `exclude_from_stats` never
+contribute and are never displayed. The disclosure copy should also state the
+**upside** ("turn on logging / resubmit to unlock your verb totals and see how many
+times you bit yourself") so the value exchange is explicit and opt-in.
 
 ## Gap Detection Signals (design notes — UI not yet built)
 

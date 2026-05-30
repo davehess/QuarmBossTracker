@@ -51,6 +51,7 @@ const fs   = require('fs');
 const path = require('path');
 const https = require('https');
 const http  = require('http');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 // Read version from package.json so we only have to bump it in one place per release.
@@ -1520,6 +1521,52 @@ class EncounterBuilder {
     }
     const activeDurationS = Math.max(1, Math.round(_activeDurationMs / 1000));
 
+    // ── Per-character ability rollup (going-forward telemetry) ─────────────
+    // Bucketed by verb/skill so the server can answer "what did each player
+    // hit with, and how often" without keeping the raw event stream. Pets are
+    // attributed to their owner where known. Self-attacks (attacker resolves
+    // to the same character as defender — charm break, fat-finger /assist,
+    // riposted swings on self) are counted separately.
+    //
+    // Bystander spell names are "(unknown)" in EQ logs — these rollups are
+    // reliable for the uploader and for melee/skill verbs across the board;
+    // remote players' spell names are not.
+    const _uploader = this.character || null;
+    const _resolve = (name) => {
+      if (!name) return _uploader;
+      const owner = this.petLeaders[String(name).toLowerCase()];
+      return owner || name;
+    };
+    const _rollupByChar = {};
+    for (const ev of this.events) {
+      if (ev.type !== 'damage') continue;
+      const attacker = _resolve(ev.attacker);
+      const defender = _resolve(ev.defender);
+      if (!attacker) continue;
+      const amt = Number(ev.amount) || 0;
+      const skillKey = (ev.ability ? String(ev.ability) : 'unknown').slice(0, 64);
+
+      let bucket = _rollupByChar[attacker];
+      if (!bucket) {
+        bucket = _rollupByChar[attacker] = {
+          by_skill: {}, total_hits: 0, total_damage: 0, self_attack_count: 0,
+        };
+      }
+      let s = bucket.by_skill[skillKey];
+      if (!s) s = bucket.by_skill[skillKey] = { hits: 0, dmg: 0 };
+      s.hits += 1;
+      s.dmg  += amt;
+      bucket.total_hits   += 1;
+      bucket.total_damage += amt;
+
+      if (defender && attacker.toLowerCase() === defender.toLowerCase()) {
+        bucket.self_attack_count += 1;
+      }
+    }
+    const _rollup = Object.keys(_rollupByChar).length
+      ? { by_char: _rollupByChar }
+      : undefined;
+
     const payload = {
       agent_version: AGENT_VERSION,
       character:     this.character,
@@ -1566,6 +1613,10 @@ class EncounterBuilder {
         // { tank: name, count: N, maxGapMs: N }
         // null/undefined when no healer data was observed or gaps < 8s.
         heal_gaps:   _healGaps || undefined,
+        // Per-character verb/skill rollup. Server upserts into
+        // encounter_combat_rollup and stamps contributions.has_ability_detail.
+        // Absent on older agents → rollup tables stay empty for those uploads.
+        rollup:      _rollup,
         events:      this.events,
       },
     };
@@ -1636,6 +1687,13 @@ const STATS_FILE = path.join(__dirname, 'logsync.stats.json');
 // queue with a loud warning — those won't fix themselves by retrying.
 const QUEUE_FILE             = path.join(__dirname, 'logsync.queue.json');
 const QUEUE_MAX_SIZE         = 5000;     // FIFO cap; oldest dropped with a warning
+// Backpressure watermarks (hysteresis): when a backfill is filling the queue
+// faster than the drain loop empties it, PAUSE the file read at HIGH and don't
+// resume until it drains below LOW. This stops the cap from FIFO-evicting good
+// data during a big --since replay. Live tail is unaffected (it never feeds
+// fast enough to matter).
+const QUEUE_BACKPRESSURE_HIGH = Math.floor(QUEUE_MAX_SIZE * 0.9);   // 4500 — pause
+const QUEUE_BACKPRESSURE_LOW  = Math.floor(QUEUE_MAX_SIZE * 0.6);   // 3000 — resume
 const QUEUE_DRAIN_INTERVAL_MS = 15_000;  // walk the queue every 15s
 const QUEUE_REQUEST_TIMEOUT_MS = 30_000; // per-attempt HTTP timeout
 const QUEUE_MAX_PER_DRAIN_PASS = 50;     // cap parallel work per drain so a
@@ -1710,6 +1768,7 @@ function _endpointForKind(kind, botUrl) {
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
+    case 'tells':           return base + '/tells';
     default:                return botUrl;
   }
 }
@@ -4388,7 +4447,7 @@ let _optinKeyHandler = null;
 
 // Read entire file with byte-position tracking; supports resume from a stored offset.
 // onLine(line) is called for each line; onProgress({ bytePos, totalBytes, lineNum }) is called every ~256KB.
-async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortCheck) {
+async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortCheck, backpressure) {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(logPath, {
       encoding:      'utf8',
@@ -4400,6 +4459,7 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortC
     let lineNum = 0;
     let sinceLastProgress = 0;
     let cancelled = false;
+    let bpTimer = null;
 
     stream.on('data', chunk => {
       if (cancelled) return;
@@ -4408,6 +4468,7 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortC
       // time. Destroying the stream fires 'close' which resolves us.
       if (abortCheck && abortCheck()) {
         cancelled = true;
+        if (bpTimer) { clearInterval(bpTimer); bpTimer = null; }
         try { onProgress && onProgress({ bytePos, lineNum }); } catch {}
         stream.destroy();
         return;
@@ -4425,10 +4486,23 @@ async function readFromBytePos(logPath, startBytePos, onLine, onProgress, abortC
         sinceLastProgress = 0;
         try { onProgress({ bytePos, lineNum }); } catch {}
       }
+      // Backpressure: if the upload queue is near its cap, pause the read so
+      // the drain loop can catch up before we feed more (avoids FIFO eviction
+      // during a large backfill). Resume once it drains below the low mark.
+      if (backpressure && !bpTimer && backpressure.queueLen() >= backpressure.high) {
+        stream.pause();
+        bpTimer = setInterval(() => {
+          if (cancelled) { clearInterval(bpTimer); bpTimer = null; return; }
+          if (backpressure.queueLen() < backpressure.low) {
+            clearInterval(bpTimer); bpTimer = null;
+            stream.resume();
+          }
+        }, 500);
+      }
     });
-    stream.on('end',   () => { if (onProgress) try { onProgress({ bytePos, lineNum }); } catch {} ; resolve({ bytePos, lineNum, aborted: cancelled }); });
-    stream.on('close', () => resolve({ bytePos, lineNum, aborted: cancelled }));
-    stream.on('error', reject);
+    stream.on('end',   () => { if (bpTimer) { clearInterval(bpTimer); bpTimer = null; } if (onProgress) try { onProgress({ bytePos, lineNum }); } catch {} ; resolve({ bytePos, lineNum, aborted: cancelled }); });
+    stream.on('close', () => { if (bpTimer) { clearInterval(bpTimer); bpTimer = null; } resolve({ bytePos, lineNum, aborted: cancelled }); });
+    stream.on('error', (err) => { if (bpTimer) { clearInterval(bpTimer); bpTimer = null; } reject(err); });
   });
 }
 
@@ -4449,6 +4523,13 @@ function runOptinBackfill(files, opts = {}) {
   for (const f of files) {
     if (_activeBackfills.has(f.path)) {
       log(`  Skipping ${f.character} — backfill already in progress`);
+      continue;
+    }
+    // Honor exclude_from_stats. The historical backfill is the place this
+    // matters most — old logs may contain raids the member would prefer not
+    // to expose. The live tail gate elsewhere covers ongoing capture.
+    if (!shouldUploadForCharacter(f.character)) {
+      log(`  Skipping ${f.character} — exclude_from_stats set on wolfpack.quest /me`);
       continue;
     }
     // Fresh start clears any stale abort flag from a previous run.
@@ -4505,8 +4586,21 @@ function runOptinBackfill(files, opts = {}) {
             // early return; the line still flows through downstream parsers.
             const ldEvt = parsePeopleslayerLd(line);
             if (ldEvt) funEventBuffer.push(ldEvt);
-            const provEvt = parseSummonProvisions(line, f.character);
+            // Both Malthur counters — caster-side (only Malthur's own log,
+            // ground truth) and recipient-side (every member's log, broad
+            // reach) cross-validate each other.
+            const provEvt = parseMalthurProvision(line, f.character);
             if (provEvt) funEventBuffer.push(provEvt);
+            const sumProvEvt = parseSummonProvisions(line, f.character);
+            if (sumProvEvt) funEventBuffer.push(sumProvEvt);
+            const cursorEvt = parseCursorFull(line, f.character);
+            if (cursorEvt) funEventBuffer.push(cursorEvt);
+            const htEvt = parseHarmTouch(line, f.character);
+            if (htEvt) funEventBuffer.push(htEvt);
+            const lohEvt = parseLayOnHands(line, f.character);
+            if (lohEvt) funEventBuffer.push(lohEvt);
+            const pkEvt = parsePvpFlag(line, f.character);
+            if (pkEvt) funEventBuffer.push(pkEvt);
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -4547,7 +4641,8 @@ function runOptinBackfill(files, opts = {}) {
             _saveOptInState();
             onStatus(status);
           },
-          () => _abortedBackfills.has(f.path));
+          () => _abortedBackfills.has(f.path),
+          { queueLen: () => _uploadQueue.length, high: QUEUE_BACKPRESSURE_HIGH, low: QUEUE_BACKPRESSURE_LOW });
         builder.flush();
         await flushChat(true).catch(() => {});
         if (result?.aborted) {
@@ -5062,6 +5157,17 @@ function showHealers() {
 // exponential backoff via the drain loop started in main().
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
   const isBackfill = payload?.backfill === true;
+  // Honor the owner's exclude_from_stats setting for the parser character.
+  // Logged once per character per restart so the owner can see it's in effect
+  // without spamming the dashboard.
+  if (!shouldUploadForCharacter(payload?.character)) {
+    if (!stats._optOutLoggedFor) stats._optOutLoggedFor = new Set();
+    if (!stats._optOutLoggedFor.has(payload.character)) {
+      stats._optOutLoggedFor.add(payload.character);
+      console.log(`[prefs] skipping encounter upload for ${payload.character} — exclude_from_stats set on wolfpack.quest /me`);
+    }
+    return Promise.resolve();
+  }
   if (dryRun) {
     const e = payload.encounter;
     console.log(`[dry-run] ${e.boss_name || '?'} · ${e.events.length} events · ${e.started_at} → ${e.ended_at}`);
@@ -5103,21 +5209,29 @@ const DRUZZIL_KILL_RX = /^\[(.+?)\]\s+Druzzil Ro tells the guild,\s*['"](\w+) of
 
 // ── PVP Druzzil Ro broadcast announcements ─────────────────────────────────
 // Server god broadcasts player deaths: "PVP Druzzil Ro BROADCASTS, 'text'"
-// Two kill-type sub-patterns determine Wolf Pack involvement:
-const PVP_BROADCAST_RX    = /^\[(.+?)\]\s+PVP Druzzil Ro BROADCASTS,\s*['"](.+?)['"]\s*$/;
-const PVP_PLAYER_KILL_RX  = /^(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
-const PVP_NPC_KILL_RX     = /^(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+// Two phrasing styles must be covered or we silently lose kills:
+//   * Victim-first ("X of <G1> has been killed in combat by Y of <G2> ...")
+//   * Killer-first ("X of <G1> has killed Y of <G2> ...") — also how PvP-server
+//     BOSS deaths are announced ("X of <G> has killed Boss in Zone!"). The
+//     parser missed killer-first phrasing entirely before 2.4.32, so /pvp only
+//     showed members whose victims were members of guilds that died in
+//     victim-first form. Diagnosis from real-user report 2026-05-30.
+const PVP_BROADCAST_RX           = /^\[(.+?)\]\s+PVP Druzzil Ro BROADCASTS,\s*['"](.+?)['"]\s*$/;
+const PVP_PLAYER_KILL_RX         = /^(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_NPC_KILL_RX            = /^(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+const PVP_PLAYER_KILL_ACTIVE_RX  = /^(\w+) of <(.+?)> has killed (\w+) of <(.+?)> in (.+?)!$/;
+// Boss kill on PvP server — no victim guild. Zone clause is optional ("...has
+// killed Lord Nagafen!" vs "...has killed Lord Nagafen in Nagafen's Lair!").
+// Try the player-active matcher FIRST: this one's the broader superset.
+const PVP_BOSS_KILL_ACTIVE_RX    = /^(\w+) of <(.+?)> has killed (.+?)(?: in (.+?))?!$/;
 
-// "Bare" PvP kill — same kill body as the two above but landing in the log
+// "Bare" PvP kill — same kill body as the four above but landing in the log
 // without a "PVP Druzzil Ro BROADCASTS," wrapper. Observed when the kill
-// message comes through the player's in-game [PVP] channel directly
-// (Versaci of <Zek> killed by Lutharion of <Wolf Pack> in Akheva Ruins).
-// The body shape (guild brackets + "has been killed in combat by" /
-// "has died to ... in combat in" + zone + "!") is distinctive enough that
-// matching it without a broadcaster prefix doesn't false-positive on
-// regular chat. The optional [PVP] channel marker is also accepted.
-const PVP_BARE_PLAYER_RX  = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
-const PVP_BARE_NPC_RX     = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+// message comes through the player's in-game [PVP] channel directly.
+const PVP_BARE_PLAYER_RX         = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has been killed in combat by (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_BARE_NPC_RX            = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has died to (.+?) in combat in (.+?)!$/;
+const PVP_BARE_PLAYER_ACTIVE_RX  = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (\w+) of <(.+?)> in (.+?)!$/;
+const PVP_BARE_BOSS_ACTIVE_RX    = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (.+?)(?: in (.+?))?!$/;
 
 function parseDruzzilKill(line) {
   const m = DRUZZIL_KILL_RX.exec(line);
@@ -5133,58 +5247,103 @@ function parseDruzzilKill(line) {
 }
 
 function parsePvpBroadcast(line) {
+  const tsOf = () => {
+    const ts = parseEqTimestamp(line);
+    return ts ? ts.toISOString() : new Date().toISOString();
+  };
+
   // Path A: god-broadcast wrapper — "PVP Druzzil Ro BROADCASTS, '...'"
   const m = PVP_BROADCAST_RX.exec(line);
   if (m) {
-    const ts   = parseEqTimestamp(line);
     const text = m[2];
-    let killType = 'npc';
-    let victim = null, victimGuild = null, killer = null, killerGuild = null, zone = null;
+
+    // Victim-first player kill: "X has been killed in combat by Y"
     const ppk = PVP_PLAYER_KILL_RX.exec(text);
-    if (ppk) {
-      killType    = 'pvp';
-      victim      = ppk[1]; victimGuild  = ppk[2];
-      killer      = ppk[3]; killerGuild  = ppk[4];
-      zone        = ppk[5];
-    } else {
-      const npck = PVP_NPC_KILL_RX.exec(text);
-      if (npck) {
-        victim      = npck[1]; victimGuild = npck[2];
-        zone        = npck[4];
-      }
-    }
-    return {
-      ts: ts ? ts.toISOString() : new Date().toISOString(),
-      text, killType,
-      victim, victimGuild, killer, killerGuild, zone,
+    if (ppk) return {
+      ts: tsOf(), text, killType: 'pvp',
+      victim: ppk[1], victimGuild: ppk[2],
+      killer: ppk[3], killerGuild: ppk[4],
+      zone:   ppk[5],
     };
+
+    // Killer-first player kill: "X has killed Y" (added 2.4.32)
+    const ppkA = PVP_PLAYER_KILL_ACTIVE_RX.exec(text);
+    if (ppkA) return {
+      ts: tsOf(), text, killType: 'pvp',
+      killer: ppkA[1], killerGuild: ppkA[2],
+      victim: ppkA[3], victimGuild: ppkA[4],
+      zone:   ppkA[5],
+    };
+
+    // Victim-first NPC death: "X has died to Mob"
+    const npck = PVP_NPC_KILL_RX.exec(text);
+    if (npck) return {
+      ts: tsOf(), text, killType: 'npc',
+      victim: npck[1], victimGuild: npck[2],
+      killer: null,    killerGuild: null,
+      zone:   npck[4],
+    };
+
+    // Killer-first boss kill: "X has killed Boss [in Zone]!" — no victim guild.
+    // Try LAST because this is the broadest "has killed" superset; the player-
+    // active matcher above must win when both could match. Recorded as PvP so
+    // the kill credits to the Wolf Pack killer on /pvp/server.
+    const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
+    if (bossA) return {
+      ts: tsOf(), text, killType: 'pvp',
+      killer: bossA[1], killerGuild: bossA[2],
+      victim: bossA[3], victimGuild: null,
+      zone:   bossA[4] || null,
+    };
+
+    // Wrapper matched but no inner pattern fit. Return null instead of a
+    // partially-filled row (the pre-2.4.32 fallthrough emitted killType='npc'
+    // with everything null, which the bot silently dropped but logs still
+    // ballooned around).
+    return null;
   }
 
   // Path B: bare kill body in the in-game [PVP] channel — no Druzzil prefix.
+  // Order mirrors Path A: most-specific first, broadest active-voice last.
   const ppkBare = PVP_BARE_PLAYER_RX.exec(line);
-  if (ppkBare) {
-    const ts = parseEqTimestamp(line);
-    return {
-      ts: ts ? ts.toISOString() : new Date().toISOString(),
-      text: `${ppkBare[2]} of <${ppkBare[3]}> has been killed in combat by ${ppkBare[4]} of <${ppkBare[5]}> in ${ppkBare[6]}!`,
-      killType:    'pvp',
-      victim:      ppkBare[2], victimGuild: ppkBare[3],
-      killer:      ppkBare[4], killerGuild: ppkBare[5],
-      zone:        ppkBare[6],
-    };
-  }
+  if (ppkBare) return {
+    ts: tsOf(),
+    text: `${ppkBare[2]} of <${ppkBare[3]}> has been killed in combat by ${ppkBare[4]} of <${ppkBare[5]}> in ${ppkBare[6]}!`,
+    killType:    'pvp',
+    victim:      ppkBare[2], victimGuild: ppkBare[3],
+    killer:      ppkBare[4], killerGuild: ppkBare[5],
+    zone:        ppkBare[6],
+  };
+
+  const ppkBareA = PVP_BARE_PLAYER_ACTIVE_RX.exec(line);
+  if (ppkBareA) return {
+    ts: tsOf(),
+    text: `${ppkBareA[2]} of <${ppkBareA[3]}> has killed ${ppkBareA[4]} of <${ppkBareA[5]}> in ${ppkBareA[6]}!`,
+    killType:    'pvp',
+    killer:      ppkBareA[2], killerGuild: ppkBareA[3],
+    victim:      ppkBareA[4], victimGuild: ppkBareA[5],
+    zone:        ppkBareA[6],
+  };
+
   const npcBare = PVP_BARE_NPC_RX.exec(line);
-  if (npcBare) {
-    const ts = parseEqTimestamp(line);
-    return {
-      ts: ts ? ts.toISOString() : new Date().toISOString(),
-      text: `${npcBare[2]} of <${npcBare[3]}> has died to ${npcBare[4]} in combat in ${npcBare[5]}!`,
-      killType:    'npc',
-      victim:      npcBare[2], victimGuild: npcBare[3],
-      killer:      null,       killerGuild: null,
-      zone:        npcBare[5],
-    };
-  }
+  if (npcBare) return {
+    ts: tsOf(),
+    text: `${npcBare[2]} of <${npcBare[3]}> has died to ${npcBare[4]} in combat in ${npcBare[5]}!`,
+    killType:    'npc',
+    victim:      npcBare[2], victimGuild: npcBare[3],
+    killer:      null,       killerGuild: null,
+    zone:        npcBare[5],
+  };
+
+  const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
+  if (bossBareA) return {
+    ts: tsOf(),
+    text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
+    killType:    'pvp',
+    killer:      bossBareA[2], killerGuild: bossBareA[3],
+    victim:      bossBareA[4], victimGuild: null,
+    zone:        bossBareA[5] || null,
+  };
 
   return null;
 }
@@ -5265,6 +5424,55 @@ function parseChatLine(line, selfName) {
   return null;
 }
 
+// /tell capture — opt-in via characters.tell_relay (default off). The byte-
+// level filter (in shouldKeep) normally DROPS tells before they reach the
+// combat parser, so this function runs at the per-line callback site BEFORE
+// the filter. Output shape matches the POST /api/agent/tells body.
+//
+//   Incoming:  "[ts] Player tells you, 'message text'"
+//   Outgoing:  "[ts] You told Player, 'message text'"
+//
+// dedup_key is a stable hash so an agent restart / log re-read can't double-
+// store. Falls back to a synthetic key when ts/text are weird.
+const TELL_INCOMING_RX = /^\[(?<ts>[^\]]+)\]\s+(?<other>[A-Za-z][A-Za-z' ]+?)\s+tells you,\s*['"](?<text>.+?)['"]\s*$/;
+const TELL_OUTGOING_RX = /^\[(?<ts>[^\]]+)\]\s+You told\s+(?<other>[A-Za-z][A-Za-z' ]+?),\s*['"](?<text>.+?)['"]\s*$/;
+
+function parseTellLine(line, selfName) {
+  let m = line.match(TELL_OUTGOING_RX);
+  let direction = null;
+  if (m) direction = 'outgoing';
+  else { m = line.match(TELL_INCOMING_RX); if (m) direction = 'incoming'; }
+  if (!m || !direction) return null;
+  const tsParsed = parseEqTimestamp(line);
+  const tsIso    = tsParsed ? tsParsed.toISOString() : new Date().toISOString();
+  const other    = m.groups.other.trim();
+  // Filter NPC chatter that uses the same "X tells you," pattern — pets and
+  // mobs spam it constantly. Heuristic: NPC names usually contain spaces or
+  // start with lowercase (e.g. "a kobold runner"). Player names are typically
+  // single Capitalized words. False positives on this filter are acceptable
+  // (an NPC tell that slips through is harmless); false NEGATIVES are not
+  // (a real tell that we miss).
+  if (direction === 'incoming') {
+    if (/\s/.test(other)) return null;
+    if (!/^[A-Z]/.test(other)) return null;
+  }
+  const text = transformEqItemLinks(m.groups.text);
+  // Stable dedup: sha1 over the tuple. ts in here so two identical messages
+  // sent later get fresh rows (which is correct — they ARE separate tells).
+  const key = crypto.createHash('sha1')
+    .update([selfName, direction, other, tsIso, text].join(''))
+    .digest('hex')
+    .slice(0, 32);
+  return {
+    direction,
+    other,
+    text,
+    ts:        tsIso,
+    raw_text:  line.slice(0, 500),
+    dedup_key: key,
+  };
+}
+
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
 //   [timestamp] === Current Loot Lockouts ===
@@ -5334,6 +5542,7 @@ const chatBuffer        = [];   // pending guild/raid chat lines
 const pvpBuffer         = [];   // pending PVP broadcast lines
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
+const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
 // _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
 let _uploadOpts    = null;      // set in main() once botUrl/token are known
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
@@ -5353,6 +5562,21 @@ function startChatRelay() {
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
     if (funEventBuffer.length > 0)
       uploadFunEvents(funEventBuffer.splice(0), _uploadOpts).catch(() => {});
+    // Tell relay drains per-character — the endpoint requires one character
+    // per request (it gates on characters.tell_relay before storing).
+    if (tellBuffer.length > 0) {
+      // Group pending tells by character so a single agent watching multiple
+      // logs uploads them separately. Most agents only watch one at a time.
+      const byChar = new Map();
+      for (const t of tellBuffer.splice(0)) {
+        const arr = byChar.get(t.character) || [];
+        arr.push(t);
+        byChar.set(t.character, arr);
+      }
+      for (const [character, tells] of byChar) {
+        uploadTells({ character, tells }, _uploadOpts).catch(() => {});
+      }
+    }
   }, 5000);
 }
 
@@ -5379,27 +5603,160 @@ function parsePeopleslayerLd(line) {
   };
 }
 
-// Malthur's provisions counter — stacks of summoned food + water. The
-// summon spells are self-cast, so only the caster's own log carries the
-// "You begin casting ..." line; caster = the uploading character. Each
-// successful cast yields one stack (10 charges). We key on the cast
-// start line; "Blessing of the Harvest" = food, "Blessing of the Storm"
-// = water. (Per Malthur's Orb of Satisfaction / Wand of Everlasting Water.)
-const SUMMON_FOOD_RX  = /^\[.+?\]\s+You begin casting Blessing of the Harvest\.?\s*$/i;
-const SUMMON_WATER_RX = /^\[.+?\]\s+You begin casting Blessing of the Storm\.?\s*$/i;
+// ── Malthur provisions — TWO complementary detectors ────────────────────────
+//
+// Both ship because they cross-validate each other and capture different
+// vantage points: caster-side is ground truth (one event per cast) but only
+// Malthur's own agent reports it; recipient-side is approximate (one event
+// per recipient-fed) but every member's agent reports.
+//
+// Caster-side (parseSummonProvisions, v2.4.29): "You begin casting Blessing
+// of the Harvest" → summon_food. "You begin casting Blessing of the Storm"
+// → summon_water. Each successful cast yields one 10-charge stack.
+//
+// Recipient-side (parseMalthurProvision, v2.4.30): "Your hunger/thirst is
+// sedated by..." → malthur_food_received / malthur_water_received. caster =
+// the RECIPIENT (their own character) since the line names no actual caster.
+//
+// Regex wording context: eqemu_spells is empty in our mirror, and the EQEmu
+// schema doesn't store cast strings anyway (cast_on_you/cast_on_other live in
+// the client's spells_us.txt). So the recipient-side wording can't be DB-
+// verified — accept either "blessing of the harvest/storm" or bare "harvest/
+// storm" as a hedge until a real log sample tightens it. The "hunger/thirst …
+// sedated by" anchor bounds the false-positive surface.
+const SUMMON_FOOD_RX   = /^\[.+?\]\s+You begin casting Blessing of the Harvest\.?\s*$/i;
+const SUMMON_WATER_RX  = /^\[.+?\]\s+You begin casting Blessing of the Storm\.?\s*$/i;
+const MALTHUR_FOOD_RX  = /\byour hunger (?:is|has been) sedated by\b.*\b(?:blessing of the )?harvest\b/i;
+const MALTHUR_WATER_RX = /\byour thirst (?:is|has been) (?:sedated|quenched) by\b.*\b(?:blessing of the )?storm\b/i;
+// Cursor cap — EQ stops handing summoned items to the cursor at ~10 pending.
+const CURSOR_FULL_RX   = /\b(?:your cursor is full|cursor queue full)\b/i;
 
 function parseSummonProvisions(line, character) {
   let type = null;
-  if (SUMMON_FOOD_RX.test(line))  type = 'summon_food';
+  if (SUMMON_FOOD_RX.test(line))       type = 'summon_food';
   else if (SUMMON_WATER_RX.test(line)) type = 'summon_water';
   if (!type) return null;
   const ts = parseEqTimestamp(line);
   return {
     type,
-    caster:   character || 'unknown',
+    caster:   character || null,
     ts:       ts ? ts.toISOString() : new Date().toISOString(),
     raw_text: line.slice(0, 200),
   };
+}
+
+function parseMalthurProvision(line, character) {
+  let type = null;
+  if (MALTHUR_FOOD_RX.test(line))       type = 'malthur_food_received';
+  else if (MALTHUR_WATER_RX.test(line)) type = 'malthur_water_received';
+  if (!type) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type,
+    caster:   character || null,   // the recipient — see banner above
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+function parseCursorFull(line, character) {
+  if (!CURSOR_FULL_RX.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'provisions_cursor_full',
+    caster:   character || null,
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+// ── Class signature abilities (caster-side) ──────────────────────────────────
+// Shadow Knight Harm Touch damage total + Paladin Lay on Hands count/heal.
+// Both are self-cast "You ..." lines, so only the caster's own agent logs them
+// — same single-perspective limitation as spell names, which is fine (each SK/
+// paladin reports their own). caster = the agent's character.
+//
+// reagent_qty carries the amount: HT damage, or the LoH heal when the line
+// shows it. The bot's fun_event handler already passes reagent_qty through.
+//
+// ⚠️ WORDING FLAGGED FOR REVIEW: these regexes are best-effort against standard
+// EQ phrasing; confirm against real Quarm logs and tighten if a variant is
+// missed. HT also typically lands in encounter_combat_rollup.by_skill (it's a
+// damage event), so the rollup is a cross-check on these fun-event totals.
+//
+// ⚠️ LoH "heal total based on max it can do": Lay on Hands heals for the
+// paladin's MAX HP. The log line may not include the number, so when it doesn't
+// we record the COUNT (reagent_qty=0) and the display layer multiplies count ×
+// that paladin's max HP (from /who or char data) to get the heal total. When the
+// line DOES carry a heal number we record it directly.
+const HARM_TOUCH_RX = /\b(?:you|your)\s+harm[\s-]?touch(?:es|ed)?\b[^\d]*?(\d+)\s+points?\s+of\s+damage/i;
+const LAY_ON_HANDS_RX = /\byou\s+lay\s+(?:your\s+)?hands?\s+on\b/i;
+// Optional heal amount on the LoH line / its companion heal message.
+const LOH_HEAL_RX = /\b(?:lay|laid)\s+hands?\b[^\d]*?(\d+)\s+points?/i;
+
+function parseHarmTouch(line, character) {
+  const m = HARM_TOUCH_RX.exec(line);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:        'harm_touch',
+    caster:      character || null,
+    reagent_qty: parseInt(m[1], 10) || 0,   // HT damage dealt
+    ts:          ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text:    line.slice(0, 200),
+  };
+}
+
+function parseLayOnHands(line, character) {
+  if (!LAY_ON_HANDS_RX.test(line)) return null;
+  const heal = LOH_HEAL_RX.exec(line);
+  const ts = parseEqTimestamp(line);
+  return {
+    type:        'lay_on_hands',
+    caster:      character || null,
+    reagent_qty: heal ? (parseInt(heal[1], 10) || 0) : 0,   // 0 → count only; display × max HP
+    ts:          ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text:    line.slice(0, 200),
+  };
+}
+
+// ── PvP flag toggle (Quarm / Discord-Order alignment) ────────────────────────
+// EQ Quarm uses the "ways of Discord/Order" alignment + a separate "player
+// kill" flag. Exact lines (from user 2026-05-30):
+//
+//   "You are now player kill and follow the ways of Discord."   ← PK flag ON
+//   "You are now player kill."                                  ← PK flag ON (alt)
+//   "You now follow the ways of Order."                         ← peaceful state
+//   "You now follow the ways of Discord."                       ← still PK?
+//   "You no longer follow the ways of discord."                 ← leaving Discord
+//
+// Treat 'You are now player kill' (in any phrasing) as PK ON. Treat 'You now
+// follow the ways of Order' as PK OFF (Order is peaceful by definition).
+// Bare 'You now follow the ways of Discord' without 'player kill' is treated
+// as alignment-only (no PK flag change) and produces no event.
+const PVP_FLAG_ON_RX  = /^\[(.+?)\]\s+You are now player kill\b/i;
+const PVP_FLAG_OFF_RX = /^\[(.+?)\]\s+You now follow the ways of Order\b/i;
+
+function parsePvpFlag(line, character) {
+  if (PVP_FLAG_ON_RX.test(line)) {
+    const ts = parseEqTimestamp(line);
+    return {
+      type:     'pvp_flag_on',
+      caster:   character || null,
+      ts:       ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text: line.slice(0, 200),
+    };
+  }
+  if (PVP_FLAG_OFF_RX.test(line)) {
+    const ts = parseEqTimestamp(line);
+    return {
+      type:     'pvp_flag_off',
+      caster:   character || null,
+      ts:       ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text: line.slice(0, 200),
+    };
+  }
+  return null;
 }
 
 function uploadChat(messages, { botUrl, token, dryRun }) {
@@ -5526,6 +5883,74 @@ function pollBackfillRequests({ botUrl, token }) {
       req.end();
     } catch { resolve(); }
   });
+}
+
+// Poll the bot for per-character data-handling preferences. The owner sets
+// these on wolfpack.quest /me (exclude_from_stats, exclude_inventory). The
+// agent caches them on stats.characterPrefs (lowercased key) and uses
+// shouldUploadForCharacter() at every outbound upload site so a flagged
+// character generates zero traffic from this machine without restart.
+//
+// Default (no entry, request failed, etc.): participate as today. Privacy
+// only ratchets one way — we don't accidentally start uploading because a
+// poll fell through.
+function pollCharacterPrefs({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  if (chars.length === 0) return Promise.resolve();
+
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/character-prefs')
+            + '?characters=' + encodeURIComponent(chars.join(','));
+
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method:   'GET',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname + u.search,
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+        },
+        timeout: 5000,
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const resp = JSON.parse(data);
+            const prefs = (resp && resp.prefs) || {};
+            const norm = {};
+            for (const [name, p] of Object.entries(prefs)) {
+              norm[String(name).toLowerCase()] = {
+                exclude_from_stats: !!(p && p.exclude_from_stats),
+                exclude_inventory:  !!(p && p.exclude_inventory),
+              };
+            }
+            stats.characterPrefs          = norm;
+            stats.characterPrefsCheckedAt = Date.now();
+            scheduleRender();
+          } catch { /* non-fatal — keep previous prefs */ }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
+// Returns true when uploads for this character should proceed. False when the
+// owner has set exclude_from_stats. Always true when no pref data yet (initial
+// poll pending), so we don't accidentally drop anything during startup.
+function shouldUploadForCharacter(character) {
+  if (!character) return true;
+  const p = stats.characterPrefs && stats.characterPrefs[String(character).toLowerCase()];
+  return !p || !p.exclude_from_stats;
 }
 
 // Poll the bot for officer-tuned guild triggers. We refresh stats.guildTriggers
@@ -5785,6 +6210,20 @@ function uploadFunEvents(events, { dryRun } = {}) {
     return Promise.resolve();
   }
   enqueueUpload('fun_event', { agent_version: AGENT_VERSION, events });
+  return Promise.resolve();
+}
+
+// Inbound /tell relay. The bot endpoint re-validates characters.tell_relay
+// before accepting, so this is a safe defense-in-depth — but the agent also
+// gates on stats.characterPrefs[character].tell_relay so we don't burn the
+// queue with rejected uploads.
+function uploadTells({ character, tells }, { dryRun } = {}) {
+  if (!character || !Array.isArray(tells) || tells.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const t of tells) console.log(`[tell:${t.direction}] ${character} ${t.direction === 'outgoing' ? '→' : '←'} ${t.other}: ${t.text}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('tells', { agent_version: AGENT_VERSION, character, tells });
   return Promise.resolve();
 }
 
@@ -6104,6 +6543,11 @@ async function main() {
     loadPersonalTriggers();
     setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
     setInterval(() => pollGuildTriggers({ botUrl, token }), 10 * 60_000);
+    // Per-character data prefs (exclude_from_stats / exclude_inventory).
+    // Polled so the owner's choice on /me takes effect within ~10 min on every
+    // machine they run the agent on — no agent restart required.
+    setTimeout(() => pollCharacterPrefs({ botUrl, token }), 10_000);
+    setInterval(() => pollCharacterPrefs({ botUrl, token }), 10 * 60_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
@@ -6247,30 +6691,69 @@ async function main() {
 
         // ── Special relay lines: checked BEFORE the combat filter ──────────
         // These are NOT combat events and won't pass shouldKeep(), but we
-        // still want to capture and relay them to Discord.
+        // still want to capture and relay them to Discord — UNLESS the owner
+        // has set exclude_from_stats on the source character. Each push
+        // below short-circuits on the prefs gate so an excluded character
+        // generates zero outbound traffic from this machine.
+        const _sourceExcluded = !shouldUploadForCharacter(b.character);
+
+        // /tell relay (opt-in via characters.tell_relay; default off). MUST be
+        // checked BEFORE shouldKeep — the byte-level filter explicitly drops
+        // "tells you" / "you told" lines so we never see them in combat paths.
+        // exclude_from_stats short-circuits this too; both gates must pass.
+        const _tellPrefs = stats.characterPrefs && stats.characterPrefs[String(b.character || '').toLowerCase()];
+        if (!_sourceExcluded && _tellPrefs?.tell_relay) {
+          const tellEvt = parseTellLine(line, b.character);
+          if (tellEvt) {
+            tellBuffer.push({ ...tellEvt, character: b.character });
+            // Don't `return` — tells are side-channel. Continue so any further
+            // processing (e.g. log highlighter, future panels) still sees the line.
+          }
+        }
 
         // /sll lockout output → bot timer (Available entries silently skipped)
         const lockoutEntry = parseSllLine(line);
-        if (lockoutEntry) { _lockoutBuffer.push({ ...lockoutEntry, character: b.character }); return; }
+        if (lockoutEntry) {
+          if (!_sourceExcluded) _lockoutBuffer.push({ ...lockoutEntry, character: b.character });
+          return;
+        }
         // Even if parseSllLine returned null we may have toggled _inLockoutSection;
         // only bail early if we're inside a lockout block (line was consumed).
         if (_inLockoutSection && /^\[.+?\]\s+==/i.test(line)) return;
 
         // Druzzil Ro instance-kill announcement → boss timer + raid channel
         const druzzilKill = parseDruzzilKill(line);
-        if (druzzilKill) { druzzilKillBuffer.push(druzzilKill); return; }
+        if (druzzilKill) {
+          if (!_sourceExcluded) druzzilKillBuffer.push(druzzilKill);
+          return;
+        }
 
         // PVP Druzzil Ro broadcast → PVP channel (with howl/backup logic in bot)
         const pvpBcast = parsePvpBroadcast(line);
-        if (pvpBcast) { pvpBuffer.push(pvpBcast); return; }
+        if (pvpBcast) {
+          if (!_sourceExcluded) pvpBuffer.push(pvpBcast);
+          return;
+        }
 
-        // Fun-event detection (Peopleslayer LD, future CoH/DI/etc). Don't
-        // `return` after a match — fun events are pure side-channel logging
-        // and the line might also be useful to other parsers downstream.
-        const ldEvt = parsePeopleslayerLd(line);
-        if (ldEvt) funEventBuffer.push(ldEvt);
-        const provEvt = parseSummonProvisions(line, b.character);
-        if (provEvt) funEventBuffer.push(provEvt);
+        // Fun-event detection (Peopleslayer LD, Malthur provisions, future
+        // CoH/DI/etc). Don't `return` after a match — fun events are pure
+        // side-channel logging and the line might also feed other parsers.
+        if (ldEvt && !_sourceExcluded) funEventBuffer.push(ldEvt);
+        // Both Malthur counters — caster-side (only Malthur's own log,
+        // ground truth) and recipient-side (every member's log, broader
+        // reach) cross-validate each other.
+        const provEvt = parseMalthurProvision(line, b.character);
+        if (provEvt && !_sourceExcluded) funEventBuffer.push(provEvt);
+        const sumProvEvt = parseSummonProvisions(line, b.character);
+        if (sumProvEvt && !_sourceExcluded) funEventBuffer.push(sumProvEvt);
+        const cursorEvt = parseCursorFull(line, b.character);
+        if (cursorEvt && !_sourceExcluded) funEventBuffer.push(cursorEvt);
+        const htEvt = parseHarmTouch(line, b.character);
+        if (htEvt && !_sourceExcluded) funEventBuffer.push(htEvt);
+        const lohEvt = parseLayOnHands(line, b.character);
+        if (lohEvt && !_sourceExcluded) funEventBuffer.push(lohEvt);
+        const pkEvt = parsePvpFlag(line, b.character);
+        if (pkEvt && !_sourceExcluded) funEventBuffer.push(pkEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
@@ -6279,7 +6762,7 @@ async function main() {
           // add to the whitelist so their incoming damage / deaths show up on
           // the Tank dashboard (NPCs never use /gu or /rs).
           confirmPlayer(chatMsg.speaker);
-          chatBuffer.push(chatMsg);
+          if (!_sourceExcluded) chatBuffer.push(chatMsg);
           return;
         }
 

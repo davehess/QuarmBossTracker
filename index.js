@@ -21,6 +21,36 @@ function _currentAgentVersion() {
   return _cachedAgentVersion;
 }
 
+// Update manifest for the self-updating supervisor (see experiments/mimic-agent
+// + docs/MIMIC_AGENT.md). The agent is a single file shipped in the bot's own
+// image, so we can publish a stable SHA-256 of exactly what `main` holds and a
+// raw URL to fetch it. The supervisor verifies the hash before swapping, so a
+// CDN hiccup or truncated download never replaces a working agent.
+//
+// AGENT_RAW_URL defaults to the raw file on the default branch; override via env
+// if the repo/branch differs. Hash is computed once and cached (file is
+// immutable within a deploy).
+let _cachedAgentSha = undefined;
+function _currentAgentSha256() {
+  if (_cachedAgentSha !== undefined) return _cachedAgentSha;
+  try {
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const buf = fs.readFileSync(require('path').join(__dirname, 'packages/wolfpack-logsync/index.js'));
+    _cachedAgentSha = crypto.createHash('sha256').update(buf).digest('hex');
+  } catch { _cachedAgentSha = null; }
+  return _cachedAgentSha;
+}
+function _agentManifest() {
+  return {
+    latest_agent_version: _currentAgentVersion(),
+    // Raw single-file URL. Override AGENT_RAW_URL if the default branch/repo moves.
+    url: process.env.AGENT_RAW_URL ||
+      'https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/index.js',
+    sha256: _currentAgentSha256(),
+  };
+}
+
 const {
   getAllState, recordKill, clearKill,
   getZoneCard, setZoneCard, clearZoneCard,
@@ -178,21 +208,35 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 });
 
-// Post a brief release note for the current agent version. Idempotent via
-// Supabase (bot_announcements table) so a Railway restart or volume wipe
-// doesn't re-post the same version. Falls back to the state.json marker
-// when Supabase is unavailable.
+// Per-member agent release DMs.
+//
+// Previous design (pre-v2.5.41) posted a single message to a release-announce
+// channel on every agent version bump — which triggered Discord push
+// notifications for every member of every release, the noise the user
+// specifically asked us to fix.
+//
+// New design: only opted-in members (i.e. anyone who has interacted with
+// /onboarding at least once) get a DM, and only if their
+// last_seen_agent_version is below the current release. The DM shows
+// the diff bullets across versions (newest at top), a [Download latest]
+// link button, and a [Don't ping me on revisions] dismiss.
+//
+// Dedup is two-layered:
+//   * bot_announcements row keyed (kind=agent_release, key=<version>) is
+//     claimed at the START of the fanout — so a Railway restart mid-fanout
+//     skips re-running it entirely.
+//   * Per-member, setLastSeenAgentVersion is called on every successful DM.
+//     If the fanout dies halfway, members who already received don't get
+//     re-DMed on the next deploy.
 async function announceAgentReleaseIfNew(discordClient) {
-  const channelId = process.env.RELEASE_ANNOUNCE_CHANNEL_ID || process.env.TIMER_CHANNEL_ID;
-  if (!channelId) return;
   const version = _currentAgentVersion();
   if (!version) return;
-
-  // Durable idempotency check via Supabase first. If we already announced
-  // this version (even from a previous Railway deploy), do nothing.
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const supabase = require('./utils/supabase');
+
+  // Master dedup — claim this version's fanout. If Supabase is up and the
+  // key already exists, somebody else already did the work; bail.
   try {
-    const supabase = require('./utils/supabase');
     if (supabase.isEnabled()) {
       const prior = await supabase.select(
         'bot_announcements',
@@ -203,65 +247,77 @@ async function announceAgentReleaseIfNew(discordClient) {
   } catch (err) {
     console.warn('[release-announce] supabase prior-check failed:', err?.message);
   }
-  // Fallback: the state.json marker. Belt-and-braces; mostly relevant
-  // when Supabase is down.
-  const last = getLastAnnouncedAgentVersion();
-  if (last === version) return;
+  if (getLastAnnouncedAgentVersion() === version) return;
 
-  const channel = await discordClient.channels.fetch(channelId).catch(() => null);
-  if (!channel) return;
-
-  // Look up the per-version what's-new blurb. Falls through to a generic
-  // line when the version isn't in the file.
-  let releaseNotes = [];
+  // Build the cross-version bullets bag — every version from
+  // (member's last_seen_agent_version, current] needs to be available so each
+  // recipient sees only their own diff. We send the entire file's versions[]
+  // and let the embed builder filter per-recipient.
+  let allBullets = {};
   try {
     delete require.cache[require.resolve('./data/agent_release_notes.json')];
     const notes = require('./data/agent_release_notes.json');
-    releaseNotes = Array.isArray(notes?.versions?.[version]) ? notes.versions[version] : [];
-  } catch { /* missing or unreadable — fine */ }
+    if (notes?.versions && typeof notes.versions === 'object') allBullets = notes.versions;
+  } catch { /* missing — fine; we'll DM a bare "version is out" line */ }
 
-  const lines = [
-    `📦 **wolfpack-logsync agent v${version}** is out.`,
-  ];
-  if (releaseNotes.length > 0) {
-    lines.push('');
-    lines.push('**What\'s new:**');
-    for (const note of releaseNotes) lines.push(`• ${note}`);
-  }
-  lines.push('');
-  lines.push('**To update:**');
-  lines.push('1. Re-launch your **Parser.bat** — it auto-pulls the latest agent on start.');
-  lines.push('2. Or click **↻ Check for update** on http://localhost:7777 if the parser is already running.');
-  lines.push('');
-  lines.push(`*Bot v${require('./package.json').version || '?'} · agent ships independently.*`);
+  const {
+    listMembersBehindAgentVersion, setLastSeenAgentVersion,
+    sliceAgentBulletsAfter,
+    buildAgentReleaseEmbed, buildAgentReleaseComponents,
+  } = require('./utils/onboarding');
 
-  try {
-    const sent = await channel.send({ content: lines.join('\n'), allowedMentions: { parse: [] } });
-
-    // Record the announcement durably in Supabase (primary) AND state.json
-    // (secondary). Either alone is sufficient to prevent duplicates; both
-    // gives us cross-redeploy protection plus a fallback if Supabase is
-    // unreachable.
-    try {
-      const supabase = require('./utils/supabase');
-      if (supabase.isEnabled()) {
-        await supabase.upsert('bot_announcements', [{
-          guild_id:     guildId,
-          kind:         'agent_release',
-          key:          version,
-          channel_id:   channelId,
-          message_id:   sent?.id || null,
-          announced_at: new Date().toISOString(),
-        }], 'guild_id,kind,key').catch(err => console.warn('[release-announce] supabase write failed:', err?.message));
-      }
-    } catch (err) {
-      console.warn('[release-announce] supabase persist wrap failed:', err?.message);
-    }
+  const candidates = listMembersBehindAgentVersion(version);
+  if (candidates.length === 0) {
+    // Nobody opted in yet, or everyone is current. Still set the master
+    // marker so we don't keep re-checking on every restart.
     setLastAnnouncedAgentVersion(version);
-    console.log(`[release-announce] posted agent v${version} to channel ${channelId}`);
-  } catch (err) {
-    console.warn('[release-announce] post failed:', err?.message);
+    return;
   }
+
+  let delivered = 0, skipped = 0, failed = 0;
+  for (const { discordId, lastSeenAgentVersion } of candidates) {
+    // Per-recipient bullet slice: everything strictly between their
+    // last_seen and current. Cleaner than blasting the full history,
+    // and uses semver compare (lex would put 2.4.10 below 2.4.9).
+    const sliced = sliceAgentBulletsAfter(allBullets, lastSeenAgentVersion);
+
+    try {
+      const user = await discordClient.users.fetch(discordId).catch(() => null);
+      if (!user) { skipped++; continue; }
+      await user.send({
+        embeds:     [buildAgentReleaseEmbed(version, lastSeenAgentVersion, sliced)],
+        components: buildAgentReleaseComponents(version),
+      });
+      setLastSeenAgentVersion(discordId, version);
+      delivered++;
+    } catch (err) {
+      // DMs disabled for that user, or rate-limited — leave their watermark
+      // alone so they get caught up on a future release.
+      failed++;
+    }
+    // Light throttle to be polite to Discord's DM rate limits. discord.js
+    // also auto-retries 429s; this just keeps us under the radar for the
+    // common case.
+    await new Promise(r => setTimeout(r, 1200));
+  }
+
+  // Mark the version's fanout complete (durable + state.json fallback).
+  try {
+    if (supabase.isEnabled()) {
+      await supabase.upsert('bot_announcements', [{
+        guild_id:     guildId,
+        kind:         'agent_release',
+        key:          version,
+        channel_id:   null,                 // no channel any more
+        message_id:   null,
+        announced_at: new Date().toISOString(),
+      }], 'guild_id,kind,key').catch(err => console.warn('[release-announce] supabase write failed:', err?.message));
+    }
+  } catch (err) {
+    console.warn('[release-announce] supabase persist wrap failed:', err?.message);
+  }
+  setLastAnnouncedAgentVersion(version);
+  console.log(`[release-announce] agent v${version} DM fanout: ${delivered} delivered, ${skipped} skipped (no user), ${failed} failed`);
 }
 
 // OpenDKP mirror: first run 45s after boot (after the wolfpack-members sync
@@ -381,6 +437,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
     if (interaction.customId === 'onb_deeps')                   { await handleOnbDeeps(interaction); return; }
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
+    if (interaction.customId.startsWith('onb_show_full:'))      { await handleOnbShowFull(interaction); return; }
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))           { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('pvp_window_spawned:')) { await handlePvpWindowSpawned(interaction); return; }
@@ -1543,23 +1600,31 @@ async function handleOnbAttend(interaction) {
 
 async function handleOnbIgnore(interaction) {
   const version = interaction.customId.replace('onb_ignore:', '');
-  const { setOptedOut, saveOnboardingData } = require('./utils/onboarding');
+  const { setOptedOut } = require('./utils/onboarding');
   setOptedOut(interaction.user.id, version);
-  await saveOnboardingData(interaction.client);
   await interaction.reply({
     flags:   MessageFlags.Ephemeral,
-    content: `🔕 Got it — you won't see the welcome message on future joins.\nRun \`/onboarding\` any time to see it again or to opt back in.`,
+    content: `🔕 Got it — no more revision pings. Run \`/onboarding\` any time to see what's new or get the full welcome again.`,
   });
 }
 
 async function handleOnbShowAgain(interaction) {
   const pkg = require('./package.json');
-  const { removeOptOut, saveOnboardingData, buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
+  const { removeOptOut, buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
   removeOptOut(interaction.user.id);
-  await saveOnboardingData(interaction.client);
   await interaction.reply({
     embeds:     [buildWelcomeEmbed()],
     components: buildWelcomeComponents(pkg.version),
+    flags:      MessageFlags.Ephemeral,
+  });
+}
+
+async function handleOnbShowFull(interaction) {
+  const version = interaction.customId.replace('onb_show_full:', '');
+  const { buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
+  await interaction.reply({
+    embeds:     [buildWelcomeEmbed()],
+    components: buildWelcomeComponents(version),
     flags:      MessageFlags.Ephemeral,
   });
 }
@@ -1578,45 +1643,40 @@ async function handleWhoFamily(interaction) {
 client.on(Events.GuildMemberAdd, async (member) => {
   const pkg = require('./package.json');
   const {
-    isOptedOut, getOptedOutVersion, changesSince,
+    isOptedOut, getLastSeenVersion, setLastSeenVersion, changesSince,
     buildWelcomeEmbed, buildWelcomeComponents,
+    buildChangesEmbed, buildChangesComponents,
   } = require('./utils/onboarding');
 
   const userId  = member.user.id;
   const version = pkg.version;
 
-  // If opted out — check whether there are new features since they last checked
-  if (isOptedOut(userId)) {
-    const optedAt = getOptedOutVersion(userId);
-    const changes = optedAt ? changesSince(optedAt) : [];
-    if (changes.length > 0) {
-      try {
-        await member.send(
-          `👋 Welcome back! Since you last opted out of onboarding (v${optedAt}), there are new features:\n\n` +
-          changes.join('\n') +
-          `\n\nRun \`/onboarding\` in the server to see the full welcome or opt back in.`
-        );
-      } catch {}
-    }
-    return;
-  }
+  // Opted out (hit "Don't ping me on revisions") → no unsolicited DM. They can
+  // still run /onboarding any time to see the diff or the full welcome.
+  if (isOptedOut(userId)) return;
 
-  // Not opted out — send the welcome message via DM
+  const lastSeen = getLastSeenVersion(userId);
+  const isReturning = !!lastSeen && lastSeen !== version;
+
+  // Diff-only DM for returning members; full welcome for first-timers.
+  const payload = isReturning
+    ? { embeds: [buildChangesEmbed(version, lastSeen, changesSince(lastSeen))],
+        components: buildChangesComponents(version) }
+    : { embeds: [buildWelcomeEmbed()], components: buildWelcomeComponents(version) };
+
+  setLastSeenVersion(userId, version);
+
   try {
-    await member.send({
-      embeds:     [buildWelcomeEmbed()],
-      components: buildWelcomeComponents(version),
-    });
+    await member.send(payload);
   } catch {
-    // DMs disabled — fall back to posting in the onboarding thread with a mention
+    // DMs disabled — fall back to the onboarding thread with a mention.
     const threadId = process.env.ONBOARDING_THREAD_ID;
     if (!threadId) return;
     try {
       const thread = await member.client.channels.fetch(threadId);
       await thread.send({
-        content:    `👋 Welcome, ${member}! Here's how to get started:`,
-        embeds:     [buildWelcomeEmbed()],
-        components: buildWelcomeComponents(version),
+        content: `👋 Welcome, ${member}! Here's ${isReturning ? 'what\'s new' : 'how to get started'}:`,
+        ...payload,
       });
     } catch (err) {
       console.warn('[onboarding] GuildMemberAdd fallback failed:', err?.message);
@@ -3228,6 +3288,235 @@ async function _handleAgentIncomplete(req, res) {
 // user can also dismiss the request from the dashboard.
 //
 // GET  /api/agent/backfill-requests?character=X[,Y]  — list pending for char(s)
+// GET /api/agent/character-prefs?characters=Hitya,Canopy
+//
+// Returns the per-character data-handling preferences the owner has set on
+// `characters` (exclude_from_stats, exclude_inventory). The agent polls this
+// every ~10 min for the chars it's tailing, caches the result, and gates
+// outbound uploads on exclude_from_stats — when true, the agent simply
+// doesn't upload encounters / chat / etc. for that character.
+//
+// exclude_inventory is returned but not yet acted on (no inventory upload
+// path exists yet — slated for the Mimic timeline); surfacing it now lets the
+// agent display the setting and refuse to send when the path lands.
+async function _handleAgentCharacterPrefs(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const raw = url.searchParams.get('characters') || url.searchParams.get('character') || '';
+  const characters = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (characters.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ prefs: {} }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ prefs: {}, note: 'supabase disabled' }));
+  }
+
+  // PostgREST in.() is case-sensitive. The agent uploads canonical EQ names,
+  // which match characters.name as stored — a plain in() handles 99% of cases.
+  // We also accept a comma list to make the round-trip cheap.
+  const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
+  const rows = await supabase.select(
+    'characters',
+    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay&guild_id=eq.wolfpack`,
+  ).catch(() => []);
+
+  const prefs = {};
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    if (!r?.name) continue;
+    prefs[r.name] = {
+      exclude_from_stats: !!r.exclude_from_stats,
+      exclude_inventory:  !!r.exclude_inventory,
+      tell_relay:         !!r.tell_relay,
+    };
+  }
+  // Any character not in characters table → default (participate). Agents key
+  // on lowercased character so include both forms for case-insensitive lookup.
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ prefs }));
+}
+
+// POST /api/agent/tells
+//
+// Inbound /tell relay (opt-in). Body:
+//   { agent_version, character, tells: [
+//       { direction: 'incoming'|'outgoing', other: 'Player', text: '...',
+//         ts: 'ISO', dedup_key: 'sha1...', raw_text: '...' },
+//       ...
+//   ] }
+//
+// Defense-in-depth: even though the agent gates uploads on characters.tell_relay,
+// the bot ALSO re-checks the flag here and rejects with 403 if the character
+// hasn't opted in. The agent's prefs cache could be stale; the DB is truth.
+//
+// DM relay: when accepted, each incoming tell triggers a Discord DM to the
+// linked Discord user (characters.discord_id → wolfpack_members → discord
+// user). Outgoing tells are stored but NOT DMed (the user is already at their
+// keyboard, that would be noise). DM failures are non-fatal.
+async function _handleAgentTells(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => {
+      body += chunk;
+      // Modest cap — tells are tiny but a misbehaving agent shouldn't ddos us.
+      if (body.length > 256 * 1024) { req.destroy(); resolve(); }
+    });
+    req.on('end',   resolve);
+    req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+  const character = String(payload?.character || '').trim();
+  const tells     = Array.isArray(payload?.tells) ? payload.tells : [];
+  if (!character || tells.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' }));
+  }
+
+  // Hard gate: character must be opted in. Also need discord_id to attribute
+  // ownership. Missing either → silently drop (do not write).
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay,tell_dm&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  if (!charRow?.tell_relay) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'tell_relay not enabled for this character' }));
+  }
+  if (!charRow.discord_id) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character has no linked discord_id' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = [];
+  for (const t of tells) {
+    const direction = t?.direction === 'outgoing' ? 'outgoing' : 'incoming';
+    const other     = String(t?.other || '').trim();
+    const text      = String(t?.text  || '').trim();
+    const tsRaw     = t?.ts ? new Date(t.ts) : new Date();
+    const ts        = isNaN(tsRaw.getTime()) ? new Date() : tsRaw;
+    if (!other || !text) continue;
+    rows.push({
+      guild_id:         guildId,
+      owner_character:  charRow.name,
+      owner_discord_id: charRow.discord_id,
+      direction,
+      other_name:       other.slice(0, 64),
+      text:             text.slice(0, 2000),
+      ts:               ts.toISOString(),
+      source:           t?.source || 'live_agent',
+      raw_text:         t?.raw_text ? String(t.raw_text).slice(0, 2000) : null,
+      dedup_key:        t?.dedup_key ? String(t.dedup_key).slice(0, 80) : null,
+    });
+  }
+  if (rows.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+  // Upsert on the partial unique (guild, owner_character, dedup_key). Rows
+  // without dedup_key insert fresh every call — agents should always populate
+  // it but we don't reject if they don't.
+  const withKey    = rows.filter(r => r.dedup_key);
+  const withoutKey = rows.filter(r => !r.dedup_key);
+  let stored = 0;
+  if (withKey.length) {
+    const u = await supabase.upsert('tells', withKey, 'guild_id,owner_character,dedup_key').catch(err => {
+      console.warn('[tells] upsert failed:', err?.message); return null;
+    });
+    if (Array.isArray(u)) stored += u.length;
+  }
+  if (withoutKey.length) {
+    const i = await supabase.insert('tells', withoutKey).catch(err => {
+      console.warn('[tells] insert failed:', err?.message); return null;
+    });
+    if (Array.isArray(i)) stored += i.length;
+  }
+
+  // Fire-and-forget DM relay for incoming tells — only when the per-character
+  // Discord-DM toggle is on. tell_dm defaults true, so opting into tell_relay
+  // gives DMs out of the box; flipping tell_dm off keeps the row + browser
+  // notification but silences the Discord ping. Browser notifications ride
+  // Supabase Realtime on the row insert, independent of this DM path.
+  const incoming = rows.filter(r => r.direction === 'incoming');
+  if (incoming.length > 0 && charRow.tell_dm !== false) {
+    _relayTellsToDM(charRow.discord_id, charRow.name, incoming).catch(err =>
+      console.warn('[tells] DM relay failed:', err?.message));
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, stored }));
+}
+
+// DM the owner with the freshly-relayed tells. Batched into one message so a
+// rapid volley of tells doesn't fan out as a wall of pings.
+async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
+  try {
+    const user = await client.users.fetch(discordUserId).catch(() => null);
+    if (!user) return;
+    const lines = tellRows.slice(0, 10).map(t =>
+      `**${t.other_name}** → _${ownerCharacter}_: ${t.text}`
+    );
+    if (tellRows.length > 10) lines.push(`_…and ${tellRows.length - 10} more — see /me/tells._`);
+    const header = tellRows.length === 1
+      ? '📬 You got a tell while you were away:'
+      : `📬 You got ${tellRows.length} tells while you were away:`;
+    await user.send({
+      content: header + '\n' + lines.join('\n') +
+        '\n\nMute via the **Tells: ON** toggle on https://wolfpack.quest/me.',
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+    // Best-effort: stamp dm_relayed_at on the rows we just DMed. Failures here
+    // don't block — the tells are already stored.
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      const keys = tellRows.map(r => r.dedup_key).filter(Boolean);
+      if (keys.length) {
+        const inList = '(' + keys.map(k => `"${k.replace(/"/g, '')}"`).join(',') + ')';
+        await supabase.update(
+          'tells',
+          `owner_character=ilike.${encodeURIComponent(ownerCharacter)}&dedup_key=in.${encodeURIComponent(inList)}`,
+          { dm_relayed_at: new Date().toISOString() },
+        ).catch(() => {});
+      }
+    }
+  } catch { /* non-fatal */ }
+}
+
 // POST /api/agent/backfill-requests/:id/:action      — ack | dismiss | complete | error
 //   POST body: { reason?, summary?, error_message? } (optional, by action)
 async function _handleAgentBackfillRequests(req, res) {
@@ -4110,6 +4399,8 @@ async function _handleAgentUpload(req, res) {
           contributorDiscordId: null,
           contributorCharacter: character || null,
           source: 'local_agent_v1',
+          agentVersion: payload?.agent_version || null,
+          rollupByChar: encounter.rollup?.by_char || null,
         }).catch(err => console.warn('[agent] recordParse failed:', err?.message));
       } else {
         console.log(`[agent] no bosses_local match for "${bossInternalId}" — encounter not persisted to Supabase`);
@@ -4154,10 +4445,11 @@ http.createServer(async (req, res) => {
   // Lightweight version probe — agents poll this every ~10 minutes to learn
   // about new releases without needing to upload an encounter first.
   if (req.method === 'GET' && req.url === '/api/agent/latest-version') {
+    // Now returns the full update manifest { latest_agent_version, url, sha256 }
+    // for the self-updating supervisor. Older agents read only
+    // latest_agent_version and ignore the extra fields, so this is additive.
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({
-      latest_agent_version: _currentAgentVersion(),
-    }));
+    return res.end(JSON.stringify(_agentManifest()));
   }
 
   // Officer-filed backfill requests — agent polls per character, picks up
@@ -4192,6 +4484,24 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentIncomplete(req, res); }
     catch (err) {
       console.error('[incomplete] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/character-prefs')) {
+    try { return await _handleAgentCharacterPrefs(req, res); }
+    catch (err) {
+      console.error('[character-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/tells') {
+    try { return await _handleAgentTells(req, res); }
+    catch (err) {
+      console.error('[tells] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

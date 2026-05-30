@@ -14,24 +14,52 @@ async function loadCounters() {
   const sb = supabaseAdmin();
   const counters: { label: string; emoji: string; value: number; sub?: string }[] = [];
 
-  // Peopleslayer LD count — straight from fun_events.
+  // Peopleslayer LD card — count + a running tally of damage logged AFTER his
+  // first LD. The joke: his DPS goes UP after he goes linkdead, so the post-LD
+  // damage number keeps climbing. Queried via FK-joined filter on
+  // encounter_players → encounters.started_at > earliest LD timestamp.
   try {
-    const { count } = await sb
-      .from('fun_events')
-      .select('*', { count: 'exact', head: true })
-      .eq('event_type', 'peopleslayer_ld');
+    const [ldRes, firstLdRow] = await Promise.all([
+      sb.from('fun_events')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_type', 'peopleslayer_ld'),
+      sb.from('fun_events')
+        .select('event_ts')
+        .eq('event_type', 'peopleslayer_ld')
+        .order('event_ts', { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    const ldCount = ldRes.count ?? 0;
+    const firstLdTs = firstLdRow.data?.event_ts;
+
+    let postLdDamage = 0;
+    if (firstLdTs) {
+      const { data: ep } = await sb
+        .from('encounter_players')
+        .select('total_damage, encounters!inner(started_at)')
+        .ilike('character_name', 'Peopleslayer')
+        .gt('encounters.started_at', firstLdTs);
+      postLdDamage = (ep ?? []).reduce(
+        (s: number, r: { total_damage: number | null }) => s + (r.total_damage || 0), 0);
+    }
+
     counters.push({
-      label: 'Peopleslayer linkdead events',
+      label: 'Peopleslayer linkdead',
       emoji: '🔌',
-      value: count ?? 0,
-      sub: 'has gone linkdead — across every opt-in log we know about',
+      value: ldCount,
+      sub: postLdDamage > 0
+        ? `…and ${postLdDamage.toLocaleString()} damage logged AFTER going LD. DPS doesn't stop for sleep.`
+        : (ldCount > 0
+            ? 'no damage logged after going LD yet — give him a minute.'
+            : 'still online.'),
     });
   } catch (err) {
     counters.push({
-      label: 'Peopleslayer linkdead events',
+      label: 'Peopleslayer linkdead',
       emoji: '🔌',
       value: 0,
-      sub: 'no fun_events data yet — opt-in backfills will populate as logs replay',
+      sub: 'no data yet.',
     });
     void err;
   }
@@ -77,6 +105,32 @@ async function loadCounters() {
     });
   }
 
+  // ── Malthur's Bounty — stacks of food + water distributed. Recipient-side
+  // detector means each member's agent reports what THEY received; summing
+  // approximates total stacks Malthur put out.
+  try {
+    const [{ count: food }, { count: water }] = await Promise.all([
+      sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_food_received'),
+      sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_water_received'),
+    ]);
+    const total = (food ?? 0) + (water ?? 0);
+    counters.push({
+      label: "Malthur's Bounty",
+      emoji: '🍞',
+      value: total,
+      sub: total > 0
+        ? `${(food ?? 0).toLocaleString()} burnt bread · ${(water ?? 0).toLocaleString()} water — across every opt-in log`
+        : 'no provisions captured yet — agent v2.4.30+ collects these from recipient lines',
+    });
+  } catch (err) {
+    counters.push({
+      label: "Malthur's Bounty",
+      emoji: '🍞',
+      value: 0,
+      sub: 'query failed: ' + (err instanceof Error ? err.message : String(err)),
+    });
+  }
+
   return counters;
 }
 
@@ -114,7 +168,13 @@ export default async function FunPage() {
       </section>
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim">
-        <div className="font-semibold text-text mb-2">Coming soon</div>
+        <div className="font-semibold text-text mb-2">Collecting now — cards land when data shows up</div>
+        <ul className="space-y-1 list-disc list-inside">
+          <li>⚰️ SK Harm Touch damage leaderboard (agent v2.4.31+)</li>
+          <li>✋ Paladin Lay on Hands count + heal total (agent v2.4.31+; total uses count × paladin max HP when the line omits the number)</li>
+          <li>⚔️ Currently PvP-flagged board (agent v2.4.34 captures the toggle)</li>
+        </ul>
+        <div className="font-semibold text-text mt-4 mb-2">Queued (need detectors)</div>
         <ul className="space-y-1 list-disc list-inside">
           <li>🦪 CotH Pearl tally (Magician Call of the Hero casts)</li>
           <li>💚 Emerald counter (Cleric Divine Intervention casts + saves)</li>
