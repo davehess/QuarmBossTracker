@@ -15,6 +15,16 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **Mimic agent scoping + sample** — `docs/MIMIC_AGENT.md` (effort assessment:
+  Path B self-updating Node agent ~2-4 days, Path A Electron MVP ~2-3 weeks /
+  full ~6-10 weeks; coexistence design) + `experiments/mimic-agent/` runnable
+  prototype (version check, hash-verified atomic download/swap, child restart
+  backoff, free-port probe). Verified: semver compare + port probe (7777→7778).
+  **Stub:** `/api/agent/latest-version` returns only a version string — needs
+  `{ version, url, sha256 }` manifest before auto-download is safe (~½ day bot work).
+- **bot v2.5.46 / web v0.4.32** — tell notifications: per-character `tell_dm`
+  Discord toggle + device-local browser notifications (Supabase Realtime on
+  `tells`, visibility-gated, optional WebAudio ping). Migration 20260530170000.
 - **bot v2.5.45 / agent v2.4.29 / web v0.4.31** — tell-bot / Inbound `/tell`.
   Opt-in per character via `characters.tell_relay` (default off). Agent parses
   incoming/outgoing tell lines BEFORE the byte-level filter drops them, batches
