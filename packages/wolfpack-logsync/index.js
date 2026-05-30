@@ -6299,28 +6299,41 @@ async function main() {
 
         // ── Special relay lines: checked BEFORE the combat filter ──────────
         // These are NOT combat events and won't pass shouldKeep(), but we
-        // still want to capture and relay them to Discord.
+        // still want to capture and relay them to Discord — UNLESS the owner
+        // has set exclude_from_stats on the source character. Each push
+        // below short-circuits on the prefs gate so an excluded character
+        // generates zero outbound traffic from this machine.
+        const _sourceExcluded = !shouldUploadForCharacter(b.character);
 
         // /sll lockout output → bot timer (Available entries silently skipped)
         const lockoutEntry = parseSllLine(line);
-        if (lockoutEntry) { _lockoutBuffer.push({ ...lockoutEntry, character: b.character }); return; }
+        if (lockoutEntry) {
+          if (!_sourceExcluded) _lockoutBuffer.push({ ...lockoutEntry, character: b.character });
+          return;
+        }
         // Even if parseSllLine returned null we may have toggled _inLockoutSection;
         // only bail early if we're inside a lockout block (line was consumed).
         if (_inLockoutSection && /^\[.+?\]\s+==/i.test(line)) return;
 
         // Druzzil Ro instance-kill announcement → boss timer + raid channel
         const druzzilKill = parseDruzzilKill(line);
-        if (druzzilKill) { druzzilKillBuffer.push(druzzilKill); return; }
+        if (druzzilKill) {
+          if (!_sourceExcluded) druzzilKillBuffer.push(druzzilKill);
+          return;
+        }
 
         // PVP Druzzil Ro broadcast → PVP channel (with howl/backup logic in bot)
         const pvpBcast = parsePvpBroadcast(line);
-        if (pvpBcast) { pvpBuffer.push(pvpBcast); return; }
+        if (pvpBcast) {
+          if (!_sourceExcluded) pvpBuffer.push(pvpBcast);
+          return;
+        }
 
         // Fun-event detection (Peopleslayer LD, future CoH/DI/etc). Don't
         // `return` after a match — fun events are pure side-channel logging
         // and the line might also be useful to other parsers downstream.
         const ldEvt = parsePeopleslayerLd(line);
-        if (ldEvt) funEventBuffer.push(ldEvt);
+        if (ldEvt && !_sourceExcluded) funEventBuffer.push(ldEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
@@ -6329,7 +6342,7 @@ async function main() {
           // add to the whitelist so their incoming damage / deaths show up on
           // the Tank dashboard (NPCs never use /gu or /rs).
           confirmPlayer(chatMsg.speaker);
-          chatBuffer.push(chatMsg);
+          if (!_sourceExcluded) chatBuffer.push(chatMsg);
           return;
         }
 

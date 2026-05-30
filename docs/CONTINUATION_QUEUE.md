@@ -15,6 +15,11 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **agent v2.4.28** — close the live opt-out gap. Live tail now gates lockout
+  / druzzil-kill / pvp-broadcast / fun-event / chat pushes at the per-line
+  callback site (where `b.character` is known). An excluded source character
+  generates zero outbound traffic from the live tail — matching the encounter
+  + historical-chat gates from v2.4.27.
 - **bot v2.5.42 / agent v2.4.27 / web v0.4.28** — self-serve opt-out wiring.
   New `GET /api/agent/character-prefs` returns each character's
   `exclude_from_stats` / `exclude_inventory` flags; agent polls every 10 min
