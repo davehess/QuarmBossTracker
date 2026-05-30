@@ -3150,7 +3150,7 @@ function renderOptin(o) {
         resumeStr =
           '<span style="color:var(--green)" title="' + esc(tip) + '">✓ done</span>' +
           (when ? ' <span class="dim" style="font-size:10px">' + esc(when.replace(/, /, ' ')) + (ver ? ' · ' + esc(ver) : '') + '</span>' : '') +
-          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill on this file in case the log has new data the prior run didn\\'t see" style="margin-left:6px;background:transparent;border:1px solid var(--border);color:var(--dim);font-size:10px;padding:1px 6px;border-radius:3px;cursor:pointer">↻ Re-run</button>';
+          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting." style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>';
       }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
         const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);

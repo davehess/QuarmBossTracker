@@ -3,7 +3,7 @@
 | Component | Version | Source |
 |---|---|---|
 | **Bot** | 2.5.38 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 2.4.27 | `packages/wolfpack-logsync/package.json` |
+| **Agent** (`wolfpack-logsync`) | 2.4.28 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 0.4.26 | `web/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
