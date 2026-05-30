@@ -87,6 +87,33 @@ Supabase encounters → `mirrorBoardsToSupabase`.
 - Recipient-side Malthur detectors + `provisions_cursor_full` event (cursor caps ~10).
 - Backfill queue backpressure (pause feeding near the 5000 cap).
 
+### 9. Quality-of-life / officer-prep tooling (the actual product north star)
+> **Positioning (user, 2026-05-30):** "Parsing as a whole is table stakes. We're in
+> the quality-of-life business." The real value is carrying the SUBSTANTIAL prep load
+> the organizing officers do day and night. Judge every feature by: does it reduce
+> officer prep burden? Never by: does it grade a player?
+- **Privacy statement** — draft at `docs/PRIVACY.md` (preview only, NOT wired). Pending:
+  wire into installer first-run, wolfpack.quest footer/`/privacy`, and onboarding DM.
+- **Simplify installation** — collapse the Node-install + log-enable + agent-copy steps
+  (`RUN-FIRST-for-Node.js.bat`, `start-logsync.ps1`, `Parser.bat`) toward a single
+  installer; in-app detector banner when no `eqlog_*_pq.proj.txt` exists or is stale.
+  Long-term this is the Mimic installer (one packaged app + auto-update).
+- **PoP flagging tracker** — greenfield (no code yet; grep confirms only generic `flag`
+  usages exist). Officer prep tool: model the Plane of Power flag/key dependency tree
+  per character so organizers can see who needs what before a flagging night. Note PoP
+  bosses are locked until 2026-10-01 (`isPopLocked()`); the *tracker* can be built now.
+  - **Source of truth = the EQEmu DB mirror** (`eqemu_*`), NOT hand-curated links.
+    First task: confirm which tables carry PoP zone-access / flag / key data — the
+    current weekly sync pulls zone/items/npc_types/spells/loottable but progression
+    flags may live in tables we don't mirror yet (qglobals / zone_flags / tasks);
+    likely need to **extend `scripts/sync-from-eqmac.js`** to pull them.
+  - The PoP Discord channel's flagging **links are a secondary reference layer** over
+    the DB-derived tree (better than the user's earlier links, but still supplementary).
+- **Avatar generator (ambitious / Mimic-aligned)** — let members make avatars from
+  shrunken old-model + new-model EQ toons; stretch: a LOCAL generator that takes a
+  third-party screenshot on-device and crops/stylizes it into an avatar. Local-only
+  processing fits the privacy posture (image never leaves the machine).
+
 ## 🏛️ Project Mimic — overarching direction (see `docs/MIMIC.md`)
 Electron desktop client, **new 4th component, major release, BETA channel**, codename
 **mimic**. Consumes (does not rebuild) the agent + wolfpack.quest data and adds
