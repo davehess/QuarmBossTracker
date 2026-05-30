@@ -8,6 +8,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,9 +21,11 @@ type Member = {
   role_names: string[] | null;
 };
 
+type CharInfo = { name: string; className: string | null };
+
 type MemberRow = Member & {
   charCount: number;
-  charNames: string[];
+  charNames: CharInfo[];
   hasLink: boolean;        // any character.discord_id == this member
   chatLast30: number;
   parseLast30: number;
@@ -63,7 +66,7 @@ async function loadMembers(): Promise<MemberRow[]> {
       .order('joined_at', { ascending: false, nullsFirst: false }),
     admin
       .from('characters')
-      .select('name, discord_id, main_name, active')
+      .select('name, class, discord_id, main_name, active')
       .eq('guild_id', 'wolfpack'),
     admin
       .from('chat_messages')
@@ -83,14 +86,14 @@ async function loadMembers(): Promise<MemberRow[]> {
   ]);
 
   const members = (membersRaw ?? []) as Member[];
-  const allChars = (chars ?? []) as { name: string; discord_id: string | null; main_name: string | null; active: boolean }[];
+  const allChars = (chars ?? []) as { name: string; class: string | null; discord_id: string | null; main_name: string | null; active: boolean }[];
 
-  // discord_id → [character names] (only active)
-  const charsByDiscord = new Map<string, string[]>();
+  // discord_id → [character info] (only active)
+  const charsByDiscord = new Map<string, CharInfo[]>();
   for (const c of allChars) {
     if (c.discord_id && c.active) {
       const list = charsByDiscord.get(c.discord_id) ?? [];
-      list.push(c.name);
+      list.push({ name: c.name, className: c.class });
       charsByDiscord.set(c.discord_id, list);
     }
   }
@@ -152,6 +155,7 @@ export default async function AdminMembersPage({
 }) {
   const { tab: tabRaw } = await searchParams;
   const tab: Tab = (['silent', 'unlinked', 'recent', 'all'] as const).includes(tabRaw as Tab) ? (tabRaw as Tab) : 'silent';
+  const demoMode = getDemoMode();
   const members = await loadMembers();
 
   // Activity = any of chat/parse/who in last 30 days
@@ -258,10 +262,10 @@ export default async function AdminMembersPage({
                       <span className="text-orange">— none —</span>
                     ) : (
                       <span className="text-text">
-                        {m.charNames.slice(0, 3).map((n, i) => (
-                          <span key={n}>
+                        {m.charNames.slice(0, 3).map((c, i) => (
+                          <span key={c.name}>
                             {i > 0 && <span className="text-dim">, </span>}
-                            <Link href={`/character/${encodeURIComponent(n)}`} className="text-blue hover:underline">{n}</Link>
+                            <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">{maybeFake(demoMode, c.name, c.className)}</Link>
                           </span>
                         ))}
                         {m.charNames.length > 3 && <span className="text-dim"> +{m.charNames.length - 3}</span>}

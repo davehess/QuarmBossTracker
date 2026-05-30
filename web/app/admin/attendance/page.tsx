@@ -27,6 +27,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 
 export const dynamic = 'force-dynamic';
 
@@ -260,6 +261,7 @@ export default async function AdminAttendancePage({
   const p = await searchParams;
   const targets = parseTargets(p.targets);
   const threshold = p.threshold ? Math.max(0, Math.min(1, parseFloat(p.threshold))) : DEFAULT_THRESHOLD;
+  const demoMode = getDemoMode();
 
   const data = await loadData();
   if (data.raids.length === 0) {
@@ -410,7 +412,7 @@ export default async function AdminAttendancePage({
                         return (
                           <td key={j} className="px-2 py-1" style={bg ? { background: bg } : undefined} title={title}>
                             <Link href={`/character/${encodeURIComponent(r.name)}`} className="hover:underline text-text">
-                              {r.name}
+                              {maybeFake(demoMode, r.name, r.className)}
                             </Link>
                             <div className="text-[10px] text-dim">{pct(r.rate30)}</div>
                           </td>
@@ -435,7 +437,7 @@ export default async function AdminAttendancePage({
           <ul className="px-4 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
             {newAttendees.sort((a, b) => (b.firstSeen || '').localeCompare(a.firstSeen || '')).map(r => (
               <li key={r.name} className="bg-bg border border-border rounded px-2 py-1">
-                <Link href={`/character/${encodeURIComponent(r.name)}`} className="text-text hover:underline">{r.name}</Link>
+                <Link href={`/character/${encodeURIComponent(r.name)}`} className="text-text hover:underline">{maybeFake(demoMode, r.name, r.className)}</Link>
                 <div className="text-dim text-[10px]">{r.className} · {pct(r.rate30)} · first seen {r.firstSeen?.slice(0, 10)}</div>
               </li>
             ))}
@@ -451,7 +453,7 @@ export default async function AdminAttendancePage({
           <ul className="px-4 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
             {downturns.sort((a, b) => (b.ratePrior - b.rate30) - (a.ratePrior - a.rate30)).map(r => (
               <li key={r.name} className="bg-bg border border-border rounded px-2 py-1">
-                <Link href={`/character/${encodeURIComponent(r.name)}`} className="text-text hover:underline">{r.name}</Link>
+                <Link href={`/character/${encodeURIComponent(r.name)}`} className="text-text hover:underline">{maybeFake(demoMode, r.name, r.className)}</Link>
                 <div className="text-dim text-[10px]">
                   {r.className} · {pct(r.ratePrior)} → <span className="text-red-400">{pct(r.rate30)}</span>
                 </div>

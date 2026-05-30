@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 import Nav from '@/components/Nav';
 import AuthBadge from '@/components/AuthBadge';
+import DemoToggle from '@/components/DemoToggle';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 
@@ -49,6 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <Nav showAdmin={showAdmin} showMe={showMe} />
+              <DemoToggle />
               <div className="hidden sm:block"><AuthBadge /></div>
             </div>
           </header>
