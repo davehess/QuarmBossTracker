@@ -3036,7 +3036,7 @@ function renderOptin(o) {
   if (reqs.length > 0) {
     h += '<div class="card wide" style="border-color:#a06628">' +
          '<h2 style="color:#f0883e">📋 Officer-requested backfill (' + reqs.length + ')</h2>' +
-         '<div class="subtle">An officer asked you to upload a specific log window. Accept to confirm you\'ll handle it — then run the matching file from the list below. Dismiss if it doesn\'t apply.</div>';
+         '<div class="subtle">An officer asked you to upload a specific log window. Accept to confirm you\\'ll handle it — then run the matching file from the list below. Dismiss if it doesn\\'t apply.</div>';
     for (const r of reqs) {
       const scopeStart = r.scope && r.scope.start_iso ? new Date(r.scope.start_iso).toLocaleString() : '?';
       const scopeEnd   = r.scope && r.scope.end_iso   ? new Date(r.scope.end_iso).toLocaleString()   : '?';
@@ -3131,7 +3131,7 @@ function renderOptin(o) {
         resumeStr =
           '<span style="color:var(--green)" title="' + esc(tip) + '">✓ done</span>' +
           (when ? ' <span class="dim" style="font-size:10px">' + esc(when.replace(/, /, ' ')) + (ver ? ' · ' + esc(ver) : '') + '</span>' : '') +
-          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill on this file in case the log has new data the prior run didn\'t see" style="margin-left:6px;background:transparent;border:1px solid var(--border);color:var(--dim);font-size:10px;padding:1px 6px;border-radius:3px;cursor:pointer">↻ Re-run</button>';
+          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill on this file in case the log has new data the prior run didn\\'t see" style="margin-left:6px;background:transparent;border:1px solid var(--border);color:var(--dim);font-size:10px;padding:1px 6px;border-radius:3px;cursor:pointer">↻ Re-run</button>';
       }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
         const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
