@@ -26,7 +26,11 @@
 // (Bard=8&Cleric=8&... — useful for testing different raid sizes).
 
 import Link from 'next/link';
+import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isOfficer } from '@/lib/officer';
+import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 
 export const dynamic = 'force-dynamic';
@@ -91,6 +95,53 @@ function parseTargets(raw: string | undefined): Record<string, number> {
     if (key && !Number.isNaN(n)) out[key] = n;
   }
   return out;
+}
+
+// Read the active raid_targets row set from Supabase. Falls back to the
+// hard-coded defaults if the table isn't seeded (first-deploy / disabled
+// supabase). The page can be overridden by ?targets=... for what-if
+// analysis without writing to the table.
+async function loadTargetsFromDb(raidSize: string): Promise<Record<string, number>> {
+  const admin = supabaseAdmin();
+  const { data } = await admin
+    .from('raid_targets')
+    .select('class, target')
+    .eq('guild_id', 'wolfpack')
+    .eq('raid_size', raidSize);
+  if (!data || data.length === 0) return { ...DEFAULT_TARGETS };
+  const out: Record<string, number> = {};
+  for (const r of data as { class: string; target: number }[]) {
+    out[r.class] = r.target;
+  }
+  return out;
+}
+
+async function actionAssertOfficer() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) return null;
+  if (!(await isOfficer(user.id))) return null;
+  return user;
+}
+
+// Server action: upsert every target for the active raid_size from the
+// form. Each input is named `target_<ClassName>`. Officer-only.
+async function saveTargets(formData: FormData) {
+  'use server';
+  const u = await actionAssertOfficer();
+  if (!u) redirect('/?error=admin_required');
+  const raidSize = String(formData.get('raid_size') || '60-man').slice(0, 40);
+  const actor = u!.email || u!.id;
+  const rows: { guild_id: string; raid_size: string; class: string; target: number; updated_by: string }[] = [];
+  for (const cls of [...CLASS_ORDER, FLEX_CLASS]) {
+    const raw = formData.get(`target_${cls}`);
+    if (raw == null) continue;
+    const n = Math.max(0, Math.min(99, parseInt(String(raw), 10) || 0));
+    rows.push({ guild_id: 'wolfpack', raid_size: raidSize, class: cls, target: n, updated_by: actor });
+  }
+  if (rows.length === 0) return;
+  const admin = supabaseAdmin();
+  await admin.from('raid_targets').upsert(rows, { onConflict: 'guild_id,raid_size,class' });
+  revalidatePath('/admin/attendance');
 }
 
 async function loadData() {
@@ -269,9 +320,18 @@ export default async function AdminAttendancePage({
   searchParams: Promise<{ targets?: string; threshold?: string }>;
 }) {
   const p = await searchParams;
-  const targets = parseTargets(p.targets);
+  const raidSize = '60-man';
+  // DB targets are the source of truth; ?targets= URL param overrides for
+  // what-if analysis without writing. Saved defaults persist across reloads.
+  const dbTargets = await loadTargetsFromDb(raidSize);
+  const targets = p.targets ? parseTargets(p.targets) : dbTargets;
+  const isOverriding = !!p.targets;
   const threshold = p.threshold ? Math.max(0, Math.min(1, parseFloat(p.threshold))) : DEFAULT_THRESHOLD;
   const demoMode = getDemoMode();
+
+  // Officer check for showing the edit form
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  const editable = user ? await isOfficer(user.id) : false;
 
   const data = await loadData();
   if (data.raids.length === 0) {
@@ -363,39 +423,74 @@ export default async function AdminAttendancePage({
 
       {/* Class summary */}
       <section className="bg-panel border border-border rounded-lg">
-        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-          Class summary — 60-man target vs current roster headcount (Raid Pack / Officer / Pack Leader / Recruit)
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
+          <span>Class summary — {raidSize} target vs current roster headcount (Raid Pack / Officer / Pack Leader / Recruit)</span>
+          {isOverriding && (
+            <span className="text-blue text-[10px]">
+              ⚠️ Showing URL override targets, not saved values.
+              <Link href="/admin/attendance" className="ml-1 underline">Reset</Link>
+            </span>
+          )}
         </h3>
-        <table className="w-full text-xs">
-          <thead className="text-dim">
-            <tr className="border-b border-border">
-              <th className="text-right px-3 py-2 font-normal">60-man</th>
-              <th className="text-right px-3 py-2 font-normal">Current</th>
-              <th className="text-left  px-3 py-2 font-normal">Class</th>
-              <th className="text-right px-3 py-2 font-normal">Delta</th>
-            </tr>
-          </thead>
-          <tbody>
-            {summaryRows.map(row => (
-              <tr key={row.cls} className="border-b border-border/40 hover:bg-[#1a212c]">
-                <td className="px-3 py-2 text-right text-text">{row.target}</td>
-                <td className={`px-3 py-2 text-right ${row.current >= row.target ? 'text-green' : 'text-text'}`}>{row.current}</td>
-                <td className="px-3 py-2 text-text">{row.cls}</td>
-                <td className={`px-3 py-2 text-right ${row.delta < 0 ? 'text-orange' : row.delta > 0 ? 'text-green' : 'text-dim'}`}>
-                  {row.delta > 0 ? `+${row.delta}` : row.delta}
+        <form action={saveTargets}>
+          <input type="hidden" name="raid_size" value={raidSize} />
+          <table className="w-full text-xs">
+            <thead className="text-dim">
+              <tr className="border-b border-border">
+                <th className="text-right px-3 py-2 font-normal">{raidSize}</th>
+                <th className="text-right px-3 py-2 font-normal">Current</th>
+                <th className="text-left  px-3 py-2 font-normal">Class</th>
+                <th className="text-right px-3 py-2 font-normal">Delta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summaryRows.map(row => (
+                <tr key={row.cls} className="border-b border-border/40 hover:bg-[#1a212c]">
+                  <td className="px-2 py-1 text-right">
+                    {editable && !isOverriding ? (
+                      <input
+                        type="number"
+                        name={`target_${row.cls}`}
+                        defaultValue={row.target}
+                        min={0}
+                        max={99}
+                        className="w-14 bg-bg border border-border rounded px-1 py-0.5 text-right text-text"
+                      />
+                    ) : (
+                      <span className="text-text">{row.target}</span>
+                    )}
+                  </td>
+                  <td className={`px-3 py-2 text-right ${row.current >= row.target ? 'text-green' : 'text-text'}`}>{row.current}</td>
+                  <td className="px-3 py-2 text-text">{row.cls}</td>
+                  <td className={`px-3 py-2 text-right ${row.delta < 0 ? 'text-orange' : row.delta > 0 ? 'text-green' : 'text-dim'}`}>
+                    {row.delta > 0 ? `+${row.delta}` : row.delta}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-border">
+                <td className="px-3 py-2 text-right text-text font-bold">{totalTarget}</td>
+                <td className="px-3 py-2 text-right text-text font-bold">{totalCurrent}</td>
+                <td className="px-3 py-2 text-dim">Total</td>
+                <td className={`px-3 py-2 text-right font-bold ${(totalCurrent - totalTarget) < 0 ? 'text-orange' : 'text-green'}`}>
+                  {(totalCurrent - totalTarget) > 0 ? `+${totalCurrent - totalTarget}` : (totalCurrent - totalTarget)}
                 </td>
               </tr>
-            ))}
-            <tr className="border-t-2 border-border">
-              <td className="px-3 py-2 text-right text-text font-bold">{totalTarget}</td>
-              <td className="px-3 py-2 text-right text-text font-bold">{totalCurrent}</td>
-              <td className="px-3 py-2 text-dim">Total</td>
-              <td className={`px-3 py-2 text-right font-bold ${(totalCurrent - totalTarget) < 0 ? 'text-orange' : 'text-green'}`}>
-                {(totalCurrent - totalTarget) > 0 ? `+${totalCurrent - totalTarget}` : (totalCurrent - totalTarget)}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+          {editable && !isOverriding && (
+            <div className="px-4 py-3 border-t border-border flex items-center gap-2 text-xs">
+              <button type="submit" className="px-3 py-1 rounded border border-blue bg-[#1f6feb] text-white">
+                Save targets
+              </button>
+              <span className="text-dim">Persists for everyone. Total updates on save.</span>
+            </div>
+          )}
+          {!editable && (
+            <div className="px-4 py-2 text-[10px] text-dim border-t border-border">
+              Targets are officer-editable.
+            </div>
+          )}
+        </form>
       </section>
 
       {/* Class roster grid — color-coded per spreadsheet conventions */}
