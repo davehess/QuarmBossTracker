@@ -2,7 +2,7 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 2.5.42 | `package.json` |
+| **Bot** | 2.5.43 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 2.4.28 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 0.4.28 | `web/package.json` |
 
@@ -249,6 +249,7 @@ Each thread contains: cooldown card at top → zone kill cards (mid) → board p
 | `/board` | Re-render all 4 slots + all thread boards. Operates on `TIMER_CHANNEL_ID` regardless of where called |
 | `/cleanup` | Delete transients/duplicates, anchor earliest boards. Historic Kills scan limited to 300 msgs |
 | `/restore <links...>` | Rebuild state from any combination of Active Cooldowns / Daily Summary message links. Latest `nextSpawn` per boss wins |
+| `/recoverkills [since] [dry_run]` | Officer: rebuild timers from Supabase `encounters` in the window (default 72h). `dry_run:true` previews without writing. Use when boards drift after a volume wipe or missed update |
 
 ### Boss management
 | Command | Notes |

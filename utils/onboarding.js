@@ -55,6 +55,9 @@ const CHANGELOGS = {
   '2.5.42': [
     'Self-serve opt-out: every character on `wolfpack.quest /me` has Stats/Inventory toggles you control. Flipping Stats=EXCLUDED stops the agent from uploading for that character within ~10 minutes, and hides their stats from the page.',
   ],
+  '2.5.43': [
+    'New officer command: `/recoverkills [since] [dry_run]` rebuilds boss timers from Supabase encounters when the boards have drifted (volume wipe, missed updates, the recent re-run-as-backfill bug). Dry-run first to preview.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

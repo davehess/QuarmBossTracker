@@ -15,6 +15,13 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **bot v2.5.43** — `/recoverkills [since] [dry_run]` officer command. Rebuilds
+  `state.bosses` + `bot_boards` from Supabase `encounters` when the live state
+  is empty/drifted. Maps `encounter.npc_id → bosses_local.internal_id → bosses.json
+  timerHours`, takes latest `started_at` per boss, skips already-respawned and
+  already-current rows. Refreshes every expansion board, cooldown card, and the
+  main summary slot when committing. Validated against prod: last 72h has 17
+  encounters all mapping to tracked bosses.
 - **agent v2.4.28** — close the live opt-out gap. Live tail now gates lockout
   / druzzil-kill / pvp-broadcast / fun-event / chat pushes at the per-line
   callback site (where `b.character` is known). An excluded source character
@@ -105,10 +112,13 @@ browser tab with highlights (auctions, spawns). No leaderboard of who talks to w
 Top 10 killers + Wolf Pack kills for/against, pulled from the PvP channel. PvP is
 exempt from the data floor (counts from the beginning).
 
-### 7. `/recoverkills` officer command (real bug, user deferred)
-Boards didn't update from the last 2 raids — `state.json` empty, auto-`recordKill`
-gated by `!isBackfill` (recent uploads were re-runs). Rebuild kill state from
-Supabase encounters → `mirrorBoardsToSupabase`.
+### 7. ✅ DONE — `/recoverkills` officer command (bot v2.5.43)
+See "Shipped this session". Rebuilds from Supabase encounters with a `since`
+window + `dry_run` preview. The original re-run-as-backfill upstream bug (where
+recent uploads were tagged backfill=true so the auto-`recordKill` path was
+skipped) hasn't been root-fixed in `/api/agent/encounter` itself yet — that
+remains a follow-up. `/recoverkills` is the fast-path remediation when it
+drifts again.
 
 ### 8. Misc queued
 - Recipient-side Malthur detectors + `provisions_cursor_full` event (cursor caps ~10).
