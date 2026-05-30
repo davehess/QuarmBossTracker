@@ -77,6 +77,32 @@ async function loadCounters() {
     });
   }
 
+  // ── Malthur's Bounty — stacks of food + water distributed. Recipient-side
+  // detector means each member's agent reports what THEY received; summing
+  // approximates total stacks Malthur put out.
+  try {
+    const [{ count: food }, { count: water }] = await Promise.all([
+      sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_food_received'),
+      sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_water_received'),
+    ]);
+    const total = (food ?? 0) + (water ?? 0);
+    counters.push({
+      label: "Malthur's Bounty",
+      emoji: '🍞',
+      value: total,
+      sub: total > 0
+        ? `${(food ?? 0).toLocaleString()} burnt bread · ${(water ?? 0).toLocaleString()} water — across every opt-in log`
+        : 'no provisions captured yet — agent v2.4.30+ collects these from recipient lines',
+    });
+  } catch (err) {
+    counters.push({
+      label: "Malthur's Bounty",
+      emoji: '🍞',
+      value: 0,
+      sub: 'query failed: ' + (err instanceof Error ? err.message : String(err)),
+    });
+  }
+
   return counters;
 }
 
@@ -114,7 +140,13 @@ export default async function FunPage() {
       </section>
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim">
-        <div className="font-semibold text-text mb-2">Coming soon</div>
+        <div className="font-semibold text-text mb-2">Collecting now — cards land when data shows up</div>
+        <ul className="space-y-1 list-disc list-inside">
+          <li>⚰️ SK Harm Touch damage leaderboard (agent v2.4.31+)</li>
+          <li>✋ Paladin Lay on Hands count + heal total (agent v2.4.31+; total uses count × paladin max HP when the line omits the number)</li>
+          <li>⚔️ Currently PvP-flagged board (agent v2.4.34 captures the toggle)</li>
+        </ul>
+        <div className="font-semibold text-text mt-4 mb-2">Queued (need detectors)</div>
         <ul className="space-y-1 list-disc list-inside">
           <li>🦪 CotH Pearl tally (Magician Call of the Hero casts)</li>
           <li>💚 Emerald counter (Cleric Divine Intervention casts + saves)</li>
