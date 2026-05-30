@@ -3312,6 +3312,60 @@ async function _handleAgentBackfillRequests(req, res) {
   return res.end(JSON.stringify({ error: 'method not allowed' }));
 }
 
+// ── Guild triggers ─────────────────────────────────────────────────────────
+// Agents poll this every 10 min for the enabled trigger set. We return a
+// version hash so agents can short-circuit on no-change (HTTP 304 would
+// be cleaner but the agent isn't set up to handle ETag yet).
+async function _handleAgentGuildTriggers(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'guild-triggers disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ triggers: [], note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  // Filter optional: ?category=rampage  ?classes=Warrior,Paladin
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const category = url.searchParams.get('category');
+  const classesRaw = url.searchParams.get('classes') || '';
+  const classes = classesRaw.split(',').map(s => s.trim()).filter(Boolean);
+
+  let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true&order=category.asc,name.asc`;
+  if (category) q += `&category=eq.${encodeURIComponent(category)}`;
+  const rows = await supabase.select('guild_triggers', q);
+
+  // Server-side class targeting filter — applies_to_classes is text[]; we
+  // include triggers where the column is null/empty OR overlaps the
+  // agent's class set. PostgREST handles overlap via &overlap but we
+  // filter in JS to keep the query simple.
+  const filtered = (rows || []).filter(t => {
+    const arr = Array.isArray(t.applies_to_classes) ? t.applies_to_classes : [];
+    if (arr.length === 0) return true;
+    if (classes.length === 0) return true;
+    return classes.some(c => arr.includes(c));
+  });
+
+  // Version hash so the agent can detect no-change quickly. Use the max
+  // updated_at across the filtered set — cheap, sufficient for our cadence.
+  const version = filtered.length
+    ? filtered.map(t => t.updated_at || '').sort().pop()
+    : '0';
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify({ version, triggers: filtered }));
+}
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
@@ -4112,6 +4166,19 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentBackfillRequests(req, res); }
     catch (err) {
       console.error('[backfill-requests] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Guild triggers — officer-tuned raid callouts. Agents poll this every
+  // ~10 min for the enabled trigger set, merge with personal triggers
+  // from local disk, evaluate against the live log tail. Filed via
+  // /admin/triggers.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/guild-triggers')) {
+    try { return await _handleAgentGuildTriggers(req, res); }
+    catch (err) {
+      console.error('[guild-triggers] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

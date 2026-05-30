@@ -1986,6 +1986,14 @@ const stats = {
   // with Accept/Dismiss buttons that POST back to the bot.
   backfillRequests:      [],
   backfillRequestsCheckedAt: null,
+  // Officer-tuned raid triggers — see pollGuildTriggers / evaluateTriggersAgainstLine.
+  // Each entry includes a precompiled _regex for the hot eval path.
+  guildTriggers:           [],
+  guildTriggersVersion:    null,
+  guildTriggersCheckedAt:  null,
+  // Map of character.name (lowercase) → class, used for server-side trigger
+  // targeting (?classes=Warrior,Cleric on the fetch). Populated from /who.
+  characterClasses:        {},
   lastUploadAt:    null,
   lifetime: {                     // persisted across restarts
     totalEvents:       0,
@@ -2261,6 +2269,11 @@ function _serializeForDashboard() {
     requestedCharacters: stats.requestedCharacters,
     backfillRequests:    stats.backfillRequests,
     backfillRequestsCheckedAt: stats.backfillRequestsCheckedAt,
+    // Trigger summary for the dashboard. Strip _regex (not JSON-safe).
+    guildTriggerCount:   (stats.guildTriggers || []).length,
+    guildTriggersCheckedAt: stats.guildTriggersCheckedAt,
+    personalTriggerCount: (_personalTriggers || []).length,
+    activeOverlays:      _activeOverlays,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
     // after that the user knows, and a stale banner is just noise.
@@ -2490,7 +2503,35 @@ function renderHeader(s) {
 }
 
 function renderDash(s) {
-  let h = '<div class="grid">';
+  let h = '';
+
+  // Trigger overlays — fade out after their duration but keep a short
+  // history so users can scroll back through the last few callouts.
+  const now = Date.now();
+  const overlays = (s.activeOverlays || []).filter(o => o && o.text);
+  const live = overlays.filter(o => (now - (o.shownAt || 0)) < (o.duration_ms || 5000));
+  if (live.length > 0) {
+    h += '<div class="card" style="border-color:#a06628">' +
+         '<h2 style="margin-bottom:6px">⚡ Trigger</h2>';
+    for (const o of live.slice(0, 5)) {
+      const cls = o.scope === 'personal' ? 'personal' : 'guild';
+      const remaining = Math.max(0, (o.duration_ms || 5000) - (now - o.shownAt));
+      const alpha = Math.min(1, remaining / (o.duration_ms || 5000));
+      h += '<div style="font-size:22px;font-weight:bold;line-height:1.4;color:' + esc(o.color || 'red') + ';opacity:' + alpha.toFixed(2) + '">' + esc(o.text) + '</div>' +
+           '<div class="dim" style="font-size:10px;margin-top:2px">' + esc(cls) + ' · ' + esc(o.trigger || '') + '</div>';
+    }
+    h += '</div>';
+  }
+  // Trigger summary chip
+  if ((s.guildTriggerCount || 0) > 0 || (s.personalTriggerCount || 0) > 0) {
+    h += '<div class="card"><h2>Triggers</h2>' +
+         '<div class="dim" style="font-size:11px">' +
+         (s.guildTriggerCount || 0) + ' guild · ' +
+         (s.personalTriggerCount || 0) + ' personal' +
+         '</div></div>';
+  }
+
+  h += '<div class="grid">';
   // Recent parses
   h += '<div class="card"><h2>Recent Parses</h2>';
   if (!s.recentParses?.length) h += '<div class="dim">(no uploads yet)</div>';
@@ -5432,6 +5473,157 @@ function pollBackfillRequests({ botUrl, token }) {
   });
 }
 
+// Poll the bot for officer-tuned guild triggers. We refresh stats.guildTriggers
+// every ~10 min and merge with personal triggers loaded from disk in
+// evaluateTriggersAgainstLine. Each trigger is precompiled to a RegExp at
+// fetch time so the per-line eval is just an exec call.
+function pollGuildTriggers({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  // Pass our characters so server-side targeting can pre-filter
+  const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  const classes = [];
+  for (const c of chars) {
+    const cls = stats.characterClasses && stats.characterClasses[c.toLowerCase()];
+    if (cls) classes.push(cls);
+  }
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/guild-triggers')
+            + (classes.length ? `?classes=${encodeURIComponent(classes.join(','))}` : '');
+
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method:  'GET',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname + u.search,
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+        },
+        timeout: 5000,
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const resp = JSON.parse(data);
+            if (Array.isArray(resp.triggers)) {
+              // Compile once; eval per-line is hot path.
+              const compiled = [];
+              for (const t of resp.triggers) {
+                try {
+                  const flags = t.pattern_flags || 'i';
+                  compiled.push({ ...t, _regex: new RegExp(t.pattern, flags), _scope: 'guild' });
+                } catch (err) {
+                  console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
+                }
+              }
+              stats.guildTriggers          = compiled;
+              stats.guildTriggersVersion   = resp.version || '';
+              stats.guildTriggersCheckedAt = Date.now();
+            }
+          } catch { /* non-fatal */ }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
+// Personal triggers — loaded once on startup from <state-dir>/personal_triggers.json.
+// Same schema as guild triggers but only this user sees them. Format:
+//   [
+//     { "name": "Clarity dropping",
+//       "pattern": "Your Clarity (II)? spell has worn off.",
+//       "actions": [{ "type":"text_overlay", "text":"NEED CLARITY", "color":"yellow", "duration_ms": 4000 }] }
+//   ]
+let _personalTriggers = [];
+function loadPersonalTriggers() {
+  try {
+    const dir = path.dirname(_statsPath || '');
+    if (!dir) return;
+    const p = path.join(dir, 'personal_triggers.json');
+    if (!fs.existsSync(p)) return;
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const arr = Array.isArray(raw) ? raw : (Array.isArray(raw.triggers) ? raw.triggers : []);
+    const compiled = [];
+    for (const t of arr) {
+      try {
+        const flags = t.pattern_flags || 'i';
+        compiled.push({ ...t, _regex: new RegExp(t.pattern, flags), _scope: 'personal' });
+      } catch (err) {
+        console.warn(`[personal-triggers] bad pattern "${t.name}":`, err.message);
+      }
+    }
+    _personalTriggers = compiled;
+    console.log(`[personal-triggers] loaded ${compiled.length} from ${p}`);
+  } catch (err) {
+    console.warn('[personal-triggers] load failed:', err.message);
+  }
+}
+
+// Per-trigger last-fire timestamp for cooldown enforcement
+const _triggerLastFire = new Map();
+// Recent overlay queue — surfaced on /api/state for the dashboard to render.
+// Cap at 20 so a runaway trigger can't OOM us.
+const _activeOverlays = [];
+function _pushOverlay(o) {
+  _activeOverlays.unshift(o);
+  if (_activeOverlays.length > 20) _activeOverlays.length = 20;
+}
+
+function _expandTemplate(template, captures) {
+  if (!template) return '';
+  return template.replace(/\{(\w+)\}/g, (_, k) => {
+    if (captures && captures[k] != null) return String(captures[k]);
+    return `{${k}}`;
+  });
+}
+
+// Hot-path: called for every kept log line in the tail loop.
+function evaluateTriggersAgainstLine(line, tsMs) {
+  const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
+  if (all.length === 0) return;
+  for (const t of all) {
+    if (!t._regex) continue;
+    let m;
+    try { m = t._regex.exec(line); } catch { continue; }
+    if (!m) continue;
+    // Cooldown gate
+    if (t.cooldown_seconds && t.cooldown_seconds > 0) {
+      const last = _triggerLastFire.get(t.id || t.name) || 0;
+      if (tsMs - last < t.cooldown_seconds * 1000) continue;
+    }
+    _triggerLastFire.set(t.id || t.name, tsMs);
+    const captures = m.groups || {};
+    for (const a of (t.actions || [])) {
+      if (!a || !a.type) continue;
+      if (a.type === 'text_overlay') {
+        const text = _expandTemplate(a.text || '', captures);
+        const overlay = {
+          text,
+          color:       a.color || 'red',
+          duration_ms: a.duration_ms || 5000,
+          shownAt:     tsMs,
+          trigger:     t.name,
+          scope:       t._scope,
+        };
+        _pushOverlay(overlay);
+        // Also log to stdout so users running the CLI see it.
+        console.log(`[trigger:${t._scope}] ${t.name} → ${text}`);
+        scheduleRender();
+      }
+      // tts / sound / discord / emit_event are intentionally no-ops in v1;
+      // schema is there, evaluator wiring follows in the next agent rev.
+    }
+  }
+}
+
 // Transition a single backfill request via the bot's
 // POST /api/agent/backfill-requests/{id}/{action} endpoint. `body` is the
 // optional payload (reason / summary / error_message depending on action).
@@ -5818,6 +6010,11 @@ async function main() {
     // log-tail enumeration has populated stats.watchedLogs first.
     setTimeout(() => pollBackfillRequests({ botUrl, token }), 8_000);
     setInterval(() => pollBackfillRequests({ botUrl, token }), 5 * 60_000);
+    // Guild triggers: load on startup (after watchedLogs is populated) and
+    // refresh every 10 min. Personal triggers load once from local disk.
+    loadPersonalTriggers();
+    setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
+    setInterval(() => pollGuildTriggers({ botUrl, token }), 10 * 60_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
@@ -5998,6 +6195,9 @@ async function main() {
         // ── Normal combat filter ───────────────────────────────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ts = parseEqTimestamp(line);
+        // Officer-tuned + personal triggers — evaluate each kept line.
+        // Cheap: precompiled regex set; usually < 50 entries, < 50µs each.
+        try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
         const ev = parseEvent(line, ts);
         if (ev) b.builder.add(ev);
       });

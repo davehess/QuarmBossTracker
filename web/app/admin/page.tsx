@@ -64,6 +64,11 @@ export default function AdminPage() {
           body="Class-by-class active roster ≥50% RA in last 30 days vs 60-man target. Color-coded for new attendees and downturn. Replaces the leader's spreadsheet."
           href="/admin/attendance"
         />
+        <Card
+          title="⚡ Raid triggers"
+          body="Officer-tuned callouts (rampage, AE, phase changes, breath) that fire as text overlays on each member's agent during the raid. Centralizes what every raider used to maintain in their own GINA pack."
+          href="/admin/triggers"
+        />
       </section>
     </div>
   );
