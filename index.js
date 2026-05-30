@@ -3258,6 +3258,66 @@ async function _handleAgentIncomplete(req, res) {
 // user can also dismiss the request from the dashboard.
 //
 // GET  /api/agent/backfill-requests?character=X[,Y]  — list pending for char(s)
+// GET /api/agent/character-prefs?characters=Hitya,Canopy
+//
+// Returns the per-character data-handling preferences the owner has set on
+// `characters` (exclude_from_stats, exclude_inventory). The agent polls this
+// every ~10 min for the chars it's tailing, caches the result, and gates
+// outbound uploads on exclude_from_stats — when true, the agent simply
+// doesn't upload encounters / chat / etc. for that character.
+//
+// exclude_inventory is returned but not yet acted on (no inventory upload
+// path exists yet — slated for the Mimic timeline); surfacing it now lets the
+// agent display the setting and refuse to send when the path lands.
+async function _handleAgentCharacterPrefs(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const raw = url.searchParams.get('characters') || url.searchParams.get('character') || '';
+  const characters = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (characters.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ prefs: {} }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ prefs: {}, note: 'supabase disabled' }));
+  }
+
+  // PostgREST in.() is case-sensitive. The agent uploads canonical EQ names,
+  // which match characters.name as stored — a plain in() handles 99% of cases.
+  // We also accept a comma list to make the round-trip cheap.
+  const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
+  const rows = await supabase.select(
+    'characters',
+    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory&guild_id=eq.wolfpack`,
+  ).catch(() => []);
+
+  const prefs = {};
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    if (!r?.name) continue;
+    prefs[r.name] = {
+      exclude_from_stats: !!r.exclude_from_stats,
+      exclude_inventory:  !!r.exclude_inventory,
+    };
+  }
+  // Any character not in characters table → default (participate). Agents key
+  // on lowercased character so include both forms for case-insensitive lookup.
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ prefs }));
+}
+
 // POST /api/agent/backfill-requests/:id/:action      — ack | dismiss | complete | error
 //   POST body: { reason?, summary?, error_message? } (optional, by action)
 async function _handleAgentBackfillRequests(req, res) {
@@ -4224,6 +4284,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentIncomplete(req, res); }
     catch (err) {
       console.error('[incomplete] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/character-prefs')) {
+    try { return await _handleAgentCharacterPrefs(req, res); }
+    catch (err) {
+      console.error('[character-prefs] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

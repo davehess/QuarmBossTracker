@@ -52,6 +52,9 @@ const CHANGELOGS = {
   '2.5.41': [
     'Parser release announcements moved to opt-in DMs — only members who\'ve used `/onboarding` get pinged, and only with the diff since their last seen version. The blasting channel post is gone.',
   ],
+  '2.5.42': [
+    'Self-serve opt-out: every character on `wolfpack.quest /me` has Stats/Inventory toggles you control. Flipping Stats=EXCLUDED stops the agent from uploading for that character within ~10 minutes, and hides their stats from the page.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

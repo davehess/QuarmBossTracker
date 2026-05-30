@@ -15,6 +15,17 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **bot v2.5.42 / agent v2.4.27 / web v0.4.28** — self-serve opt-out wiring.
+  New `GET /api/agent/character-prefs` returns each character's
+  `exclude_from_stats` / `exclude_inventory` flags; agent polls every 10 min
+  and gates the encounter upload + historical-chat backfill on the parser
+  character's flag. `/me` ships per-character Stats/Inventory toggles (server
+  action verifies the owner via `wolfpack_members.user_id → discord_id →
+  characters.discord_id`). Excluded chars surface in an interactive footer so
+  they can be brought back in one click. **Known limitation:** live
+  chat/PvP/fun_event upload sites still aggregate across multiple watched
+  logs — gating those by per-message uploader is a follow-up since the buffer
+  doesn't carry that context today.
 - **web v0.4.27** — `/me` Verb Totals panel: aggregates `encounter_combat_rollup`
   per character (PRIVATE-scoped tooltip), shows top 5 skills by damage, the
   "times you attacked yourself" counter, the `encounters_resubmittable` resubmit

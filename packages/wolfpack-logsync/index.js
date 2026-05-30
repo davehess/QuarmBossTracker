@@ -4482,6 +4482,13 @@ function runOptinBackfill(files, opts = {}) {
       log(`  Skipping ${f.character} — backfill already in progress`);
       continue;
     }
+    // Honor exclude_from_stats. The historical backfill is the place this
+    // matters most — old logs may contain raids the member would prefer not
+    // to expose. The live tail gate elsewhere covers ongoing capture.
+    if (!shouldUploadForCharacter(f.character)) {
+      log(`  Skipping ${f.character} — exclude_from_stats set on wolfpack.quest /me`);
+      continue;
+    }
     // Fresh start clears any stale abort flag from a previous run.
     _abortedBackfills.delete(f.path);
     const status = { character: f.character, path: f.path, chatCount: 0, encounterCount: 0,
@@ -5080,6 +5087,17 @@ function showHealers() {
 // exponential backoff via the drain loop started in main().
 function uploadEncounter(payload, { botUrl, token, dryRun }) {
   const isBackfill = payload?.backfill === true;
+  // Honor the owner's exclude_from_stats setting for the parser character.
+  // Logged once per character per restart so the owner can see it's in effect
+  // without spamming the dashboard.
+  if (!shouldUploadForCharacter(payload?.character)) {
+    if (!stats._optOutLoggedFor) stats._optOutLoggedFor = new Set();
+    if (!stats._optOutLoggedFor.has(payload.character)) {
+      stats._optOutLoggedFor.add(payload.character);
+      console.log(`[prefs] skipping encounter upload for ${payload.character} — exclude_from_stats set on wolfpack.quest /me`);
+    }
+    return Promise.resolve();
+  }
   if (dryRun) {
     const e = payload.encounter;
     console.log(`[dry-run] ${e.boss_name || '?'} · ${e.events.length} events · ${e.started_at} → ${e.ended_at}`);
@@ -5521,6 +5539,74 @@ function pollBackfillRequests({ botUrl, token }) {
       req.end();
     } catch { resolve(); }
   });
+}
+
+// Poll the bot for per-character data-handling preferences. The owner sets
+// these on wolfpack.quest /me (exclude_from_stats, exclude_inventory). The
+// agent caches them on stats.characterPrefs (lowercased key) and uses
+// shouldUploadForCharacter() at every outbound upload site so a flagged
+// character generates zero traffic from this machine without restart.
+//
+// Default (no entry, request failed, etc.): participate as today. Privacy
+// only ratchets one way — we don't accidentally start uploading because a
+// poll fell through.
+function pollCharacterPrefs({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  if (chars.length === 0) return Promise.resolve();
+
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/character-prefs')
+            + '?characters=' + encodeURIComponent(chars.join(','));
+
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method:   'GET',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname + u.search,
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+        },
+        timeout: 5000,
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const resp = JSON.parse(data);
+            const prefs = (resp && resp.prefs) || {};
+            const norm = {};
+            for (const [name, p] of Object.entries(prefs)) {
+              norm[String(name).toLowerCase()] = {
+                exclude_from_stats: !!(p && p.exclude_from_stats),
+                exclude_inventory:  !!(p && p.exclude_inventory),
+              };
+            }
+            stats.characterPrefs          = norm;
+            stats.characterPrefsCheckedAt = Date.now();
+            scheduleRender();
+          } catch { /* non-fatal — keep previous prefs */ }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
+// Returns true when uploads for this character should proceed. False when the
+// owner has set exclude_from_stats. Always true when no pref data yet (initial
+// poll pending), so we don't accidentally drop anything during startup.
+function shouldUploadForCharacter(character) {
+  if (!character) return true;
+  const p = stats.characterPrefs && stats.characterPrefs[String(character).toLowerCase()];
+  return !p || !p.exclude_from_stats;
 }
 
 // Poll the bot for officer-tuned guild triggers. We refresh stats.guildTriggers
@@ -6065,6 +6151,11 @@ async function main() {
     loadPersonalTriggers();
     setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
     setInterval(() => pollGuildTriggers({ botUrl, token }), 10 * 60_000);
+    // Per-character data prefs (exclude_from_stats / exclude_inventory).
+    // Polled so the owner's choice on /me takes effect within ~10 min on every
+    // machine they run the agent on — no agent restart required.
+    setTimeout(() => pollCharacterPrefs({ botUrl, token }), 10_000);
+    setInterval(() => pollCharacterPrefs({ botUrl, token }), 10 * 60_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.

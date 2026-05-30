@@ -26,6 +26,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import ExclusionToggles from './ExclusionToggles';
 
 export const dynamic = 'force-dynamic';
 
@@ -381,13 +382,22 @@ export default async function MePage() {
 
       {excludedChars.length > 0 && (
         <section className="bg-panel border border-border/60 rounded-lg p-4 text-xs">
-          <div className="text-dim">
-            <span className="text-orange">Excluded from stats per your settings:</span>{' '}
-            {excludedChars.map(c => c.name).join(', ')}.
-            <div className="text-[10px] text-dim/70 mt-1">
-              These characters are skipped from log reporting and display. Toggle via an officer
-              or — when self-serve lands — your own settings page.
-            </div>
+          <div className="text-orange mb-2">Excluded from stats per your settings</div>
+          <ul className="space-y-2">
+            {excludedChars.map(c => (
+              <li key={c.name} className="flex items-center justify-between gap-3 flex-wrap">
+                <span className="text-text">{c.name}</span>
+                <ExclusionToggles
+                  character={c.name}
+                  excludeFromStats={!!c.exclude_from_stats}
+                  excludeInventory={!!c.exclude_inventory}
+                />
+              </li>
+            ))}
+          </ul>
+          <div className="text-[10px] text-dim/70 mt-3">
+            Flip Stats off to bring a character back to the main grid. The agent picks up the
+            change within ~10 minutes and resumes uploading for that character.
           </div>
         </section>
       )}
@@ -409,7 +419,12 @@ export default async function MePage() {
                   {[c.race, c.class, c.rank].filter(Boolean).join(' · ') || '—'}
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center gap-2 text-xs flex-wrap">
+                <ExclusionToggles
+                  character={c.name}
+                  excludeFromStats={!!c.exclude_from_stats}
+                  excludeInventory={!!c.exclude_inventory}
+                />
                 <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
                 {c.quarmy_url && (
                   <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
