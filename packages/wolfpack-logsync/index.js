@@ -4622,7 +4622,7 @@ function showOptIn() {
   out.push('\n');
   if (_optinState.pane === 'active') {
     out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[A]${C.reset} Select all  ${C.cyan}[X]${C.reset} Ignore highlighted  `);
-    out.push(`${selCount > 0 ? `${C.bold}${C.green}[B]${C.reset} Backfill (${selCount})` : `${C.dim}[B] Backfill${C.reset}`}  `);
+    out.push(`${selCount > 0 ? `${C.bold}${C.green}[G]${C.reset} Go — backfill (${selCount})` : `${C.dim}[G] Go — backfill${C.reset}`}  `);
     out.push(`${C.cyan}[S]${C.reset} Sort (${_optinState.sortMode})  ${C.cyan}[V]${C.reset} View ignored (${_optinState.ignored.length})  ${C.cyan}[D]${C.reset} Back\n`);
   } else {
     out.push(`  ${C.cyan}[↑/↓]${C.reset} Navigate  ${C.cyan}[Space]${C.reset} Toggle  ${C.cyan}[R]${C.reset} Restore selected  ${C.cyan}[S]${C.reset} Sort (${_optinState.sortMode})  ${C.cyan}[V]${C.reset} Back to active  ${C.cyan}[D]${C.reset} Back\n`);
@@ -4634,6 +4634,13 @@ function showOptIn() {
   if (!_optinKeyHandler && process.stdin.isTTY) {
     process.stdin.setRawMode(true);
     _optinKeyHandler = (data) => {
+      // Teardown guard. Some terminals deliver a single keystroke as
+      // multiple data events (a few bytes apart); after the first one
+      // tears down the listener, subsequent ones land here with a null
+      // handler reference, and process.removeListener(null) throws
+      // ERR_INVALID_ARG_TYPE — blowing the whole agent up. Drop on the
+      // floor instead.
+      if (_optinKeyHandler === null) return;
       _bumpViewTimer();
       const key = data.toString();
       const ESC = '\x1b';
@@ -4697,13 +4704,17 @@ function showOptIn() {
         _optinState.scanned = false;
         showOptIn(); return;
       }
-      if (key === 'b' || key === 'B') {
+      // [G] Go — start backfill on selected files. (Was [B] before v2.4.26
+      // but collided with the global [B] Background-service key, which
+      // would detach + kill the foreground session before backfill could
+      // start. [G] is unused both globally and on the opt-in tab.)
+      if (key === 'g' || key === 'G') {
         // Only start backfill from the active pane
         if (_optinState.pane !== 'active') { showOptIn(); return; }
         const chosen = _optinState.files.filter(f => f.selected);
         if (chosen.length === 0) return;
 
-        process.removeListener('data', _optinKeyHandler);
+        if (_optinKeyHandler) process.removeListener('data', _optinKeyHandler);
         _optinKeyHandler = null;
         _optinState.scanned = false;
         _exitView();
@@ -4715,7 +4726,7 @@ function showOptIn() {
         return;
       }
       if (key === 'd' || key === 'D' || key === '\x03') {
-        process.removeListener('data', _optinKeyHandler);
+        if (_optinKeyHandler) process.removeListener('data', _optinKeyHandler);
         _optinKeyHandler = null;
         _optinState.scanned = false;
         _exitView();
@@ -5477,6 +5488,34 @@ function pollBackfillRequests({ botUrl, token }) {
 // every ~10 min and merge with personal triggers loaded from disk in
 // evaluateTriggersAgainstLine. Each trigger is precompiled to a RegExp at
 // fetch time so the per-line eval is just an exec call.
+// EQLogParser emits .NET regex syntax — some constructs aren't valid in JS.
+// Common ones we see in the guild library:
+//   (?>...)   atomic group — fallback: (?:...) (non-capturing). The
+//             backtracking semantics differ but for EQ log lines (no
+//             ambiguous nested patterns) it matches identically.
+//   {s} {S} {S2} {c}    EQLogParser placeholder variables. We don't have a
+//             {s}-equivalent at the agent yet, so swap to a permissive
+//             capture so the trigger still fires (the regex won't fail to
+//             compile). The capture name {s} is reserved by us.
+// Anything else we leave alone — JS regex supports named captures, lookbehind,
+// lookahead, Unicode property escapes, etc.
+function _translateDotNetRegex(pattern) {
+  let p = String(pattern || '');
+  // (?>...) → (?:...)
+  p = p.replace(/\(\?>/g, '(?:');
+  // {s} / {S} / {S2} / {c} → permissive captures. {c} is the agent's own
+  // character (substituted at match time later, ideally) but as a stop-gap
+  // we use a non-greedy word match so the trigger compiles & fires.
+  p = p.replace(/\{[sScC]\d*\}/g, '(?:[^\\s]+)');
+  return p;
+}
+
+// For literal (non-regex) EQLP triggers, escape regex metacharacters so
+// the source string matches itself when fed to RegExp.
+function _escapeForLiteralMatch(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function pollGuildTriggers({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
   // Pass our characters so server-side targeting can pre-filter
@@ -5515,7 +5554,10 @@ function pollGuildTriggers({ botUrl, token }) {
               for (const t of resp.triggers) {
                 try {
                   const flags = t.pattern_flags || 'i';
-                  compiled.push({ ...t, _regex: new RegExp(t.pattern, flags), _scope: 'guild' });
+                  const pat = t.use_regex === false
+                    ? _escapeForLiteralMatch(t.pattern)
+                    : _translateDotNetRegex(t.pattern);
+                  compiled.push({ ...t, _regex: new RegExp(pat, flags), _scope: 'guild' });
                 } catch (err) {
                   console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
                 }
@@ -5555,7 +5597,10 @@ function loadPersonalTriggers() {
     for (const t of arr) {
       try {
         const flags = t.pattern_flags || 'i';
-        compiled.push({ ...t, _regex: new RegExp(t.pattern, flags), _scope: 'personal' });
+        const pat = t.use_regex === false
+          ? _escapeForLiteralMatch(t.pattern)
+          : _translateDotNetRegex(t.pattern);
+        compiled.push({ ...t, _regex: new RegExp(pat, flags), _scope: 'personal' });
       } catch (err) {
         console.warn(`[personal-triggers] bad pattern "${t.name}":`, err.message);
       }
