@@ -381,6 +381,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_attend')                  { await handleOnbAttend(interaction); return; }
     if (interaction.customId === 'onb_deeps')                   { await handleOnbDeeps(interaction); return; }
     if (interaction.customId.startsWith('onb_ignore:'))         { await handleOnbIgnore(interaction); return; }
+    if (interaction.customId.startsWith('onb_show_full:'))      { await handleOnbShowFull(interaction); return; }
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))           { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('pvp_window_spawned:')) { await handlePvpWindowSpawned(interaction); return; }
@@ -1543,23 +1544,31 @@ async function handleOnbAttend(interaction) {
 
 async function handleOnbIgnore(interaction) {
   const version = interaction.customId.replace('onb_ignore:', '');
-  const { setOptedOut, saveOnboardingData } = require('./utils/onboarding');
+  const { setOptedOut } = require('./utils/onboarding');
   setOptedOut(interaction.user.id, version);
-  await saveOnboardingData(interaction.client);
   await interaction.reply({
     flags:   MessageFlags.Ephemeral,
-    content: `🔕 Got it — you won't see the welcome message on future joins.\nRun \`/onboarding\` any time to see it again or to opt back in.`,
+    content: `🔕 Got it — no more revision pings. Run \`/onboarding\` any time to see what's new or get the full welcome again.`,
   });
 }
 
 async function handleOnbShowAgain(interaction) {
   const pkg = require('./package.json');
-  const { removeOptOut, saveOnboardingData, buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
+  const { removeOptOut, buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
   removeOptOut(interaction.user.id);
-  await saveOnboardingData(interaction.client);
   await interaction.reply({
     embeds:     [buildWelcomeEmbed()],
     components: buildWelcomeComponents(pkg.version),
+    flags:      MessageFlags.Ephemeral,
+  });
+}
+
+async function handleOnbShowFull(interaction) {
+  const version = interaction.customId.replace('onb_show_full:', '');
+  const { buildWelcomeEmbed, buildWelcomeComponents } = require('./utils/onboarding');
+  await interaction.reply({
+    embeds:     [buildWelcomeEmbed()],
+    components: buildWelcomeComponents(version),
     flags:      MessageFlags.Ephemeral,
   });
 }
@@ -1578,45 +1587,40 @@ async function handleWhoFamily(interaction) {
 client.on(Events.GuildMemberAdd, async (member) => {
   const pkg = require('./package.json');
   const {
-    isOptedOut, getOptedOutVersion, changesSince,
+    isOptedOut, getLastSeenVersion, setLastSeenVersion, changesSince,
     buildWelcomeEmbed, buildWelcomeComponents,
+    buildChangesEmbed, buildChangesComponents,
   } = require('./utils/onboarding');
 
   const userId  = member.user.id;
   const version = pkg.version;
 
-  // If opted out — check whether there are new features since they last checked
-  if (isOptedOut(userId)) {
-    const optedAt = getOptedOutVersion(userId);
-    const changes = optedAt ? changesSince(optedAt) : [];
-    if (changes.length > 0) {
-      try {
-        await member.send(
-          `👋 Welcome back! Since you last opted out of onboarding (v${optedAt}), there are new features:\n\n` +
-          changes.join('\n') +
-          `\n\nRun \`/onboarding\` in the server to see the full welcome or opt back in.`
-        );
-      } catch {}
-    }
-    return;
-  }
+  // Opted out (hit "Don't ping me on revisions") → no unsolicited DM. They can
+  // still run /onboarding any time to see the diff or the full welcome.
+  if (isOptedOut(userId)) return;
 
-  // Not opted out — send the welcome message via DM
+  const lastSeen = getLastSeenVersion(userId);
+  const isReturning = !!lastSeen && lastSeen !== version;
+
+  // Diff-only DM for returning members; full welcome for first-timers.
+  const payload = isReturning
+    ? { embeds: [buildChangesEmbed(version, lastSeen, changesSince(lastSeen))],
+        components: buildChangesComponents(version) }
+    : { embeds: [buildWelcomeEmbed()], components: buildWelcomeComponents(version) };
+
+  setLastSeenVersion(userId, version);
+
   try {
-    await member.send({
-      embeds:     [buildWelcomeEmbed()],
-      components: buildWelcomeComponents(version),
-    });
+    await member.send(payload);
   } catch {
-    // DMs disabled — fall back to posting in the onboarding thread with a mention
+    // DMs disabled — fall back to the onboarding thread with a mention.
     const threadId = process.env.ONBOARDING_THREAD_ID;
     if (!threadId) return;
     try {
       const thread = await member.client.channels.fetch(threadId);
       await thread.send({
-        content:    `👋 Welcome, ${member}! Here's how to get started:`,
-        embeds:     [buildWelcomeEmbed()],
-        components: buildWelcomeComponents(version),
+        content: `👋 Welcome, ${member}! Here's ${isReturning ? 'what\'s new' : 'how to get started'}:`,
+        ...payload,
       });
     } catch (err) {
       console.warn('[onboarding] GuildMemberAdd fallback failed:', err?.message);

@@ -2,7 +2,7 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 2.5.39 | `package.json` |
+| **Bot** | 2.5.40 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 2.4.26 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 0.4.26 | `web/package.json` |
 
@@ -22,6 +22,13 @@ The **bot**, **agent**, and **web** ship and version independently. When changin
 - Web changes → bump `web/package.json`
 
 Default to a **patch** bump unless a minor/major is requested. Commit message convention: `<component> vX.Y.Z — <short reason>` (e.g. `agent v2.4.6 — ...`, `v2.2.39 — ...` for the bot). Railway shows the merge commit message as the deploy name, so always merge with a descriptive `-m` flag — never `--no-edit`.
+
+**Per-release "what's new" bullets.** When bumping the bot version, add a 1–3
+bullet entry to `CHANGELOGS` in `utils/onboarding.js` keyed on the new version
+string. These surface as the diff in `/onboarding` for any member whose
+`member_onboarding_state.last_seen_version` is below the new release — that's
+what makes revision pings useful instead of noisy. Skip the entry if there is
+truly nothing user-facing in the bump.
 
 ---
 

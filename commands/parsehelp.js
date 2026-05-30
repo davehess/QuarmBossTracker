@@ -2,8 +2,11 @@
 'use strict';
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { PARSER_DOWNLOAD_URL } = require('../utils/onboarding');
 
-const PARSER_DOWNLOAD = 'https://parser.wolfpack.quest';
+// Direct GitHub-release URL. parser.wolfpack.quest CNAME-to-GitHub can't
+// terminate TLS, so always link the release artifact directly.
+const PARSER_DOWNLOAD = PARSER_DOWNLOAD_URL;
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -17,7 +20,7 @@ module.exports = {
       .addFields(
         {
           name: '📥  Download',
-          value: `**${PARSER_DOWNLOAD}** — unzip anywhere on your drive.`,
+          value: `[**Download WolfPackParser.zip**](${PARSER_DOWNLOAD}) — unzip anywhere on your drive.`,
           inline: false,
         },
         {

@@ -1,18 +1,33 @@
-// utils/onboarding.js — Opt-out registry for the member onboarding welcome message.
-// User IDs are never stored in plaintext; only a salted SHA-256 hash is kept.
-// The registry and the public instructions embed both live in ONBOARDING_THREAD_ID.
+// utils/onboarding.js — Per-member onboarding state, DB-backed (2026-05-30+).
+// State lives in public.member_onboarding_state ((guild_id, discord_id) PK).
+// In-memory cache mirrors the table so existing sync callers (isOptedOut etc.)
+// don't have to await. Writes go to cache + DB via write-through.
+//
+// Previous design stored salted-SHA256 hashes in a hidden embed inside
+// ONBOARDING_THREAD_ID — that was the privacy mitigation when state lived in a
+// Discord channel. Now that we have service-role-only RLS, plain discord_id is
+// fine (we already store it in characters.discord_id and wolfpack_members.discord_id).
+// On startup, if the DB table is empty but a legacy thread embed exists, we
+// preserve the old per-user "opted-out at version" for that user (under their
+// plain discord_id) so nothing is lost in the cutover.
 const crypto        = require('crypto');
 const { EmbedBuilder } = require('discord.js');
 
 const REGISTRY_TITLE     = '📋 Onboarding Opt-Out Registry';
 const INSTRUCTIONS_TITLE = '📖 Wolf Pack Raid Tracker — Quick Start';
 
-// In-memory state loaded on startup
-let _optOuts            = {};   // { sha256hash -> "1.0.0" (version opted-out at) }
-let _registryMsgId      = null;
+// In-memory cache: discord_id → { last_seen_version, opted_out }
+// Mirrors member_onboarding_state. Sync getters read from here; setters
+// write here AND fire-and-forget the upsert to the DB.
+let _state              = {};
 let _instructionsMsgId  = null;
+let _supabaseEnabled    = false;
 
-// ── Changelog — new commands/features per version ─────────────────────────────
+// ── Changelog — focus + difference bullets, per minor/patch release ──────────
+// Add a new entry every release. Keep each line short — these surface as the
+// "what's new since you last looked" diff on /onboarding and the rejoin DM.
+// changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
+// "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
   '1.0.0': [
     '`/kill <boss>` — log a kill and start the respawn timer',
@@ -27,101 +42,152 @@ const CHANGELOGS = {
     '`/who <name>` — look up a character\'s class and main/alt status (ephemeral)',
     '`/whoall <name>` — view a character\'s full family tree (main + alts) (ephemeral)',
   ],
+  '2.5.39': [
+    'Agent v2.4.26 starts collecting per-ability rollups — verb totals + self-attack counter become available on `/me` for new raids',
+  ],
+  '2.5.40': [
+    'Onboarding moved to the database with diff-only revision pings — `/onboarding` now shows only what\'s new since you last looked, with a [Show full welcome] button for everything else',
+    'Parser download link now points to the GitHub release directly (the old subdomain hit a TLS error)',
+  ],
 };
 
-// ── Hashing ───────────────────────────────────────────────────────────────────
-function _salt() {
+// Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
+// string compare would put "2.5.10" before "2.5.9" because '1' < '9').
+function _semverCompare(a, b) {
+  const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+// ── Internal: write-through to Supabase ───────────────────────────────────────
+function _guildId() {
   return process.env.DISCORD_GUILD_ID || 'wolfpack-quarm';
 }
 
-function hashUser(userId) {
-  return crypto.createHash('sha256').update(userId + _salt()).digest('hex');
+function _upsertRow(discordId) {
+  if (!_supabaseEnabled) return;
+  const row = _state[discordId];
+  if (!row) return;
+  const supabase = require('./supabase');
+  supabase.upsert('member_onboarding_state', [{
+    guild_id:          _guildId(),
+    discord_id:        discordId,
+    last_seen_version: row.last_seen_version || null,
+    opted_out:         !!row.opted_out,
+    updated_at:        new Date().toISOString(),
+  }], 'guild_id,discord_id').catch(err =>
+    console.warn('[onboarding] upsert failed:', err?.message));
 }
 
-// ── Opt-out accessors ─────────────────────────────────────────────────────────
+// ── State accessors (sync via cache; writes fire-and-forget to DB) ───────────
+function _ensureRow(discordId) {
+  if (!_state[discordId]) _state[discordId] = { last_seen_version: null, opted_out: false };
+  return _state[discordId];
+}
+
 function isOptedOut(userId) {
-  return hashUser(userId) in _optOuts;
+  return !!_state[userId]?.opted_out;
 }
 
 function getOptedOutVersion(userId) {
-  return _optOuts[hashUser(userId)] || null;
+  // Pre-refactor name kept for compatibility. Semantically this is now
+  // "the version they were on when they opted out" — which == last_seen_version
+  // at the moment they hit the dismiss button.
+  return _state[userId]?.opted_out ? (_state[userId].last_seen_version || null) : null;
 }
 
 function setOptedOut(userId, version) {
-  _optOuts[hashUser(userId)] = version;
+  const row = _ensureRow(userId);
+  row.opted_out         = true;
+  row.last_seen_version = version || row.last_seen_version || null;
+  _upsertRow(userId);
 }
 
 function removeOptOut(userId) {
-  delete _optOuts[hashUser(userId)];
+  if (!_state[userId]) return;
+  _state[userId].opted_out = false;
+  _upsertRow(userId);
+}
+
+function getLastSeenVersion(userId) {
+  return _state[userId]?.last_seen_version || null;
+}
+
+function setLastSeenVersion(userId, version) {
+  const row = _ensureRow(userId);
+  if (row.last_seen_version === version) return;
+  row.last_seen_version = version;
+  _upsertRow(userId);
 }
 
 // ── Changelog helper ──────────────────────────────────────────────────────────
-// Returns an array of new feature strings for versions > sinceVersion.
+// Returns an array of new feature strings for versions strictly greater than
+// sinceVersion. When sinceVersion is falsy, returns every entry.
 function changesSince(sinceVersion) {
-  const versions = Object.keys(CHANGELOGS).sort();
-  const changes  = [];
-  let   counting = false;
+  const versions = Object.keys(CHANGELOGS).sort(_semverCompare);
+  const out = [];
   for (const v of versions) {
-    if (counting) changes.push(...CHANGELOGS[v].map(l => `**${v}** ${l}`));
-    if (v === sinceVersion) counting = true;
+    if (!sinceVersion || _semverCompare(v, sinceVersion) > 0) {
+      for (const l of CHANGELOGS[v]) out.push(`**${v}** ${l}`);
+    }
   }
-  return changes;
+  return out;
 }
 
-// ── Persistence — load from Discord ──────────────────────────────────────────
+// ── Persistence — load from Supabase ─────────────────────────────────────────
 async function loadOnboardingData(client) {
-  const threadId = process.env.ONBOARDING_THREAD_ID;
-  if (!threadId) {
-    console.warn('[onboarding] ONBOARDING_THREAD_ID not set — opt-out tracking disabled');
-    return;
+  // 1) Try Supabase first (canonical store).
+  try {
+    const supabase = require('./supabase');
+    if (supabase.isEnabled()) {
+      _supabaseEnabled = true;
+      const rows = await supabase.select(
+        'member_onboarding_state',
+        `guild_id=eq.${encodeURIComponent(_guildId())}&select=discord_id,last_seen_version,opted_out`
+      );
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          if (!r?.discord_id) continue;
+          _state[r.discord_id] = {
+            last_seen_version: r.last_seen_version || null,
+            opted_out:         !!r.opted_out,
+          };
+        }
+        console.log(`[onboarding] Loaded ${rows.length} member state row(s) from Supabase`);
+      }
+    }
+  } catch (err) {
+    console.warn('[onboarding] Supabase load failed:', err?.message);
   }
+
+  // 2) Locate the instructions message in the onboarding thread so
+  // postOrUpdateInstructions edits in place instead of posting fresh.
+  const threadId = process.env.ONBOARDING_THREAD_ID;
+  if (!threadId) return;
   try {
     const thread = await client.channels.fetch(threadId);
     const msgs   = await thread.messages.fetch({ limit: 100 });
     for (const msg of msgs.values()) {
       if (msg.author.id !== client.user.id) continue;
-      if (msg.embeds[0]?.title === REGISTRY_TITLE) {
-        _registryMsgId = msg.id;
-        try {
-          const data = JSON.parse(msg.embeds[0].description);
-          _optOuts           = data.optOuts           || {};
-          _instructionsMsgId = data.instructionsMsgId || null;
-        } catch {}
+      if (msg.embeds[0]?.title === INSTRUCTIONS_TITLE) {
+        _instructionsMsgId = msg.id;
         break;
       }
     }
-    console.log(`[onboarding] Loaded ${Object.keys(_optOuts).length} opt-out entries`);
   } catch (err) {
-    console.warn('[onboarding] Could not load opt-out data:', err?.message);
+    console.warn('[onboarding] Could not load instructions msg id:', err?.message);
   }
 }
 
-// ── Persistence — save to Discord ─────────────────────────────────────────────
-async function saveOnboardingData(client) {
-  const threadId = process.env.ONBOARDING_THREAD_ID;
-  if (!threadId) return;
-  try {
-    const thread = await client.channels.fetch(threadId);
-    const embed  = new EmbedBuilder()
-      .setTitle(REGISTRY_TITLE)
-      .setColor(0x2b2d31)
-      .setDescription(JSON.stringify({ optOuts: _optOuts, instructionsMsgId: _instructionsMsgId }))
-      .setTimestamp()
-      .setFooter({ text: `${Object.keys(_optOuts).length} opted-out • salted SHA-256 hashes only — no user IDs stored` });
-
-    if (_registryMsgId) {
-      try {
-        const msg = await thread.messages.fetch(_registryMsgId);
-        await msg.edit({ embeds: [embed] });
-        return;
-      } catch {}
-    }
-    const msg      = await thread.send({ embeds: [embed] });
-    _registryMsgId = msg.id;
-  } catch (err) {
-    console.warn('[onboarding] Could not save opt-out data:', err?.message);
-  }
-}
+// ── No-op for compat — DB is canonical now ───────────────────────────────────
+// Existing call sites still invoke this after they mutate state. The actual
+// write happens inline via _upsertRow() in the setters; this is a stub so we
+// don't have to touch every caller.
+async function saveOnboardingData(/* client */) { /* no-op */ }
 
 // ── Public instructions embed (visible to the whole channel) ─────────────────
 function buildInstructionsEmbed() {
@@ -263,6 +329,11 @@ function buildAttendeeEmbed() {
     .setFooter({ text: 'You can get this message again at any time with /onboarding' });
 }
 
+// Direct GitHub-release download URL. The `parser.wolfpack.quest` CNAME-to-
+// GitHub can't terminate TLS, so always link the release artifact directly.
+const PARSER_DOWNLOAD_URL =
+  'https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip';
+
 // ── Onboarding action rows ────────────────────────────────────────────────────
 function buildParseOverviewEmbed() {
   return new EmbedBuilder()
@@ -273,13 +344,47 @@ function buildParseOverviewEmbed() {
       {
         name: '📥 Download',
         value:
-          '**https://parser.wolfpack.quest** — unzip anywhere on your drive.\n' +
+          `[**Download WolfPackParser.zip**](${PARSER_DOWNLOAD_URL}) — unzip anywhere on your drive.\n` +
           'Double-click **`RUN-FIRST-for-Node.js.bat`** once, then **`Parser.bat`** each session.\n' +
           'Full setup walkthrough: `/parsehelp`',
         inline: false,
       },
     )
     .setFooter({ text: 'Run /raidbosshelp for the full command reference' });
+}
+
+// Compact "what's new since you last saw this" embed. Used on /onboarding and
+// the GuildMemberAdd DM whenever last_seen_version < current. The full welcome
+// is accessible via the [Show full welcome] button next to it.
+function buildChangesEmbed(currentVersion, lastSeenVersion, changes) {
+  const since = lastSeenVersion ? `since v${lastSeenVersion}` : 'since you were last here';
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`📦 What's new ${since}`)
+    .setDescription(
+      changes.length
+        ? changes.map(c => `• ${c}`).join('\n')
+        : '_Nothing new since you were last here._'
+    )
+    .setFooter({ text: `Current: v${currentVersion} • Run /raidbosshelp for the full command reference` });
+}
+
+function buildChangesComponents(version) {
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`onb_show_full:${version}`)
+        .setLabel('Show full welcome')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📖'),
+      new ButtonBuilder()
+        .setCustomId(`onb_ignore:${version}`)
+        .setLabel('Don\'t ping me on revisions')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🔕'),
+    ),
+  ];
 }
 
 function buildWelcomeComponents(version) {
@@ -314,11 +419,12 @@ function buildShowAgainComponents() {
 }
 
 module.exports = {
-  hashUser,
   isOptedOut,
   getOptedOutVersion,
   setOptedOut,
   removeOptOut,
+  getLastSeenVersion,
+  setLastSeenVersion,
   changesSince,
   loadOnboardingData,
   saveOnboardingData,
@@ -329,7 +435,10 @@ module.exports = {
   buildParseOverviewEmbed,
   buildWelcomeComponents,
   buildShowAgainComponents,
+  buildChangesEmbed,
+  buildChangesComponents,
   buildInstructionsEmbed,
+  PARSER_DOWNLOAD_URL,
   REGISTRY_TITLE,
   INSTRUCTIONS_TITLE,
 };
