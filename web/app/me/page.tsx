@@ -94,14 +94,35 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
     .eq('user_id', userId)
     .maybeSingle();
   if (!pack?.discord_id) return { discordId: null, nickname: pack?.nickname ?? null, chars: [] };
-  const { data: chars } = await admin
+
+  // Pull every roster character once — small set (~242 today) — and walk the
+  // OpenDKP family from any character ANCHORED to this Discord ID.
+  //
+  // Why family-walk instead of just `where discord_id = me`: the auto-link
+  // sweep only fires when a Discord nickname token unambiguously matches the
+  // character name, so an alt whose name doesn't appear in the owner's
+  // nickname (e.g. Hitya's nickname is "Hitya" → links Hitya, but Canopy is
+  // a SEPARATE row whose own discord_id never auto-linked to Hitya's
+  // account). OpenDKP's main_name IS the source of truth for which characters
+  // belong to the same player, so we use it: any char whose root
+  // (main_name when set, else name) matches the root of any anchored
+  // character is part of the family.
+  const { data: allChars } = await admin
     .from('characters')
-    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm')
-    .eq('guild_id', 'wolfpack')
-    .eq('discord_id', pack.discord_id)
-    .order('active', { ascending: false })
-    .order('name');
-  return { discordId: pack.discord_id, nickname: pack.nickname ?? null, chars: (chars ?? []) as CharRow[] };
+    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm')
+    .eq('guild_id', 'wolfpack');
+  const all = (allChars ?? []) as (CharRow & { discord_id: string | null })[];
+
+  // 1) Anchored characters — directly linked to this Discord user.
+  const anchored = all.filter(c => c.discord_id === pack.discord_id);
+  // 2) Family roots — lowercased main_name, falling back to the char's own name.
+  const familyRoots = new Set(anchored.map(c => (c.main_name || c.name).toLowerCase()));
+  if (familyRoots.size === 0) return { discordId: pack.discord_id, nickname: pack.nickname ?? null, chars: [] };
+  // 3) Whole family — every char whose own root matches one of ours.
+  const family = all
+    .filter(c => familyRoots.has((c.main_name || c.name).toLowerCase()))
+    .sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || a.name.localeCompare(b.name)) as CharRow[];
+  return { discordId: pack.discord_id, nickname: pack.nickname ?? null, chars: family };
 }
 
 async function loadCharStats(name: string): Promise<CharStats> {
@@ -172,7 +193,7 @@ async function loadCharStats(name: string): Promise<CharStats> {
       .select('member_since, floor_source')
       .ilike('character_name', name)
       .maybeSingle(),
-    // Coverage — drives the "N raids could unlock verb totals; resubmit your logs" nudge.
+    // Coverage — drives the "N raids could unlock a full skill breakdown; resubmit your logs" nudge.
     admin
       .from('character_rollup_coverage')
       .select('encounters_total, encounters_with_detail, encounters_resubmittable')
@@ -615,20 +636,20 @@ export default async function MePage() {
                 </Row>
               </Panel>
 
-              {/* Verb totals + self-attack counter (PRIVATE scope per CLAUDE.md
-                  disclosure spec: only the owner sees this; nothing here ever
-                  appears named on a public page). Populated by
-                  encounter_combat_rollup which started collecting at agent v2.4.26
-                  on 2026-05-30 — older raids have no source data and will only
-                  populate if the member opts in to resubmit those logs. */}
+              {/* Skill breakdown + self-attack counter (PRIVATE scope per
+                  CLAUDE.md disclosure spec: only the owner sees this; nothing
+                  here ever appears named on a public page). Populated by
+                  encounter_combat_rollup which started collecting at agent
+                  v2.4.26 — older raids have no source data and only populate
+                  if the member opts in to resubmit those logs. */}
               <Panel
-                title="Verb totals"
+                title="Skill breakdown"
                 badge="PRIVATE"
-                tooltip="Only you see this — never named elsewhere. Crush/stab/bite/slash/spell/etc. across every raid where you ran the agent. Times you attacked yourself = swings/casts where your character resolved as both attacker and defender (charm-break, fat-finger /assist, riposted swings, etc)."
+                tooltip="Only you see this — never named elsewhere. Hits by EQ skill (Crushing, 1H Slash, Backstab, Channeling) and per-spell totals across every raid where you ran the agent. Times you attacked yourself = swings/casts where your character resolved as both attacker and defender (charm break, fat-finger /assist, riposted swing, etc)."
               >
                 {s.rollupHits === 0 && s.encountersWithDetail === 0 ? (
                   <div className="text-dim text-xs italic">
-                    No per-verb data collected for this character yet.{' '}
+                    No skill breakdown collected for this character yet.{' '}
                     {s.encountersResubmittable > 0 && (
                       <>Re-run the agent (v2.4.26+) over your old logs to unlock totals for past raids.</>
                     )}
@@ -663,7 +684,7 @@ export default async function MePage() {
                     <span className="text-orange">
                       {s.encountersResubmittable.toLocaleString()} past raid{s.encountersResubmittable === 1 ? '' : 's'}
                     </span>{' '}
-                    could unlock verb totals if you resubmit those logs with agent v2.4.26+.
+                    could unlock a full skill breakdown if you resubmit those logs with agent v2.4.26+.
                   </div>
                 )}
                 {s.memberSince && (
