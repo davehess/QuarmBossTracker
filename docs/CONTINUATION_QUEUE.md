@@ -94,10 +94,29 @@ Supabase encounters → `mirrorBoardsToSupabase`.
 > officer prep burden? Never by: does it grade a player?
 - **Privacy statement** — draft at `docs/PRIVACY.md` (preview only, NOT wired). Pending:
   wire into installer first-run, wolfpack.quest footer/`/privacy`, and onboarding DM.
-- **Simplify installation** — collapse the Node-install + log-enable + agent-copy steps
-  (`RUN-FIRST-for-Node.js.bat`, `start-logsync.ps1`, `Parser.bat`) toward a single
-  installer; in-app detector banner when no `eqlog_*_pq.proj.txt` exists or is stale.
-  Long-term this is the Mimic installer (one packaged app + auto-update).
+- **Simplify installation — STUPID-SIMPLE (user spec 2026-05-30).** Collapse the
+  Node-install + log-enable + agent-copy steps (`RUN-FIRST-for-Node.js.bat`,
+  `start-logsync.ps1`, `Parser.bat`) into one button. Acceptance criteria:
+  1. **One button, installs with admin** — UAC elevation; bundle the Node runtime so
+     there's no separate Node step. (SmartScreen will flag an unsigned installer →
+     code-sign eventually; until then document "More info → Run anyway".)
+  2. **Verify location** — auto-detect the EQ folder (look for `eqgame.exe` /
+     `eqclient.ini`; check common + Steam paths + registry); show it, let user confirm/override.
+  3. **Turn on logging if it wasn't already** — read `eqclient.ini`, set logging on if
+     off (back up the file first; refuse while EQ is running; validate after — per the
+     EQ-config-write safety rules). Logging master switch lives in `eqclient.ini`; the
+     per-char log file only appears after `/log on` in-game, so detect both.
+  4. **Surface earliest logs up front** — scan `eqlog_*_pq.proj.txt`, report the oldest
+     by file date (and/or first-line timestamp): "Your oldest log on this machine is from
+     <date> — we can rebuild your history back to here." Sets backfill-reach expectations.
+  5. **Antivirus / Windows throttling check** — the log dir is appended constantly;
+     Defender real-time scan or Controlled Folder Access can throttle/block the tailer.
+     Check exclusions (`Get-MpPreference` → `ExclusionPath`); if the EQ folder isn't
+     excluded, offer to add it (`Add-MpPreference -ExclusionPath`, needs admin) and warn
+     about possible throttling/blocking before it bites.
+  - In-app detector banner when no `eqlog_*_pq.proj.txt` exists or is stale.
+  - Long-term this IS the Mimic installer (one packaged app + auto-update); build the
+    detect/verify/enable/AV-check logic now so it carries straight into Mimic.
 - **PoP flagging tracker** — greenfield (no code yet; grep confirms only generic `flag`
   usages exist). Officer prep tool: model the Plane of Power flag/key dependency tree
   per character so organizers can see who needs what before a flagging night. Note PoP
@@ -109,10 +128,22 @@ Supabase encounters → `mirrorBoardsToSupabase`.
     likely need to **extend `scripts/sync-from-eqmac.js`** to pull them.
   - The PoP Discord channel's flagging **links are a secondary reference layer** over
     the DB-derived tree (better than the user's earlier links, but still supplementary).
+  - **Verified 2026-05-30:** flag data is NOT in our current mirror. `eqemu_zone` carries
+    only `expansion` + `min_status` (no `flag_needed`); no `qglobals`/`zone_flags`/`tasks`
+    tables exist. On Quarm, PoP flags live in quest scripts + `quest_globals` (runtime) +
+    key/flag **items** — and key items DO exist in `eqemu_items` (our foothold). Step 1:
+    decide whether flags come from extending the sync (if Quarm exposes a DB table) or
+    from the Quarm quest source; the item-based keys are buildable from `eqemu_items` now.
 - **Avatar generator (ambitious / Mimic-aligned)** — let members make avatars from
   shrunken old-model + new-model EQ toons; stretch: a LOCAL generator that takes a
   third-party screenshot on-device and crops/stylizes it into an avatar. Local-only
   processing fits the privacy posture (image never leaves the machine).
+- **Guided walkthrough tours (wolfpack.quest)** — sequenced product tours with
+  mouseover coachmarks over the vital spots of each page (`/me`, parses, attendance,
+  admin) to teach everyone properly. Same hover-to-explain surface as the
+  PRIVATE/ANON/GUILD disclosure tooltips, just ordered into a path; dismissable with a
+  "show again" option. Candidate libs: driver.js / Shepherd.js / react-joyride. Ties
+  into onboarding so new members get the tour on first sign-in.
 
 ## 🏛️ Project Mimic — overarching direction (see `docs/MIMIC.md`)
 Electron desktop client, **new 4th component, major release, BETA channel**, codename
