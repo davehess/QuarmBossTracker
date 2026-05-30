@@ -728,6 +728,47 @@ Consumers (`/me`, stats commands, agent `--since` backfill window) apply
 > bot to start persisting per-ability rollups (or `combat_events`) **going
 > forward**; they cannot be backfilled from what we currently store.
 
+## Combat Rollups — Going-Forward Collection + Version Watermark
+
+Defined in `supabase/migrations/20260530130000_combat_rollup_watermark.sql`.
+
+The forward fix for the per-verb totals + self-attack counter:
+
+- **Storage:** `encounter_combat_rollup` — one compact row per character per
+  encounter: `by_skill` jsonb (damage/hits bucketed by skill or named
+  spell/song), `total_hits`, `total_damage`, `self_attack_count` (swings/casts
+  where attacker == defender). Deliberately a rollup, not an event stream, per
+  the long-haul storage note.
+- **Watermark:** `contributions.agent_version` + `contributions.has_ability_detail`
+  stamp which uploads carried rollup data. Rollups exist **only** for uploads at/
+  after the cutover agent version. We never reprocess old contributions — they
+  have nothing to extract. This is the "only pull the new data" guarantee: ongoing
+  collection is automatic; **enriching history is opt-in** (a member re-runs the
+  agent over old logs; `find_or_create_encounter` dedups so the detailed
+  contribution attaches to the existing encounter instead of duplicating it).
+- **Resubmit nudge:** `character_rollup_coverage` view exposes
+  `encounters_resubmittable` per character (total encounters − encounters with
+  detail). `/me` surfaces "N of your past raids could unlock verb totals + fun
+  counters — resubmit your logs" when > 0.
+
+### Stat Visibility & Disclosure (tooltip contract)
+
+Every log-derived stat surfaced anywhere declares a **scope**, a plain-English
+"what we learn", and whether resubmitting unlocks it. Tooltips/popovers render a
+scope badge + the explanation so members always know what's exposed:
+
+| Scope | Meaning | Examples |
+|---|---|---|
+| `PRIVATE` | Shown only in the owner's `/me` (gated to that Discord user). Never named elsewhere. | your verb breakdown, your self-attack count, your inventory/bank, your inbound `/tell`s |
+| `ANON` | Server-wide aggregate with **no names**. Safe to show publicly. | "Wolf Pack has attacked itself 47,000 times", guild-wide provisions summoned, total damage by the pack |
+| `GUILD` | Named, visible to signed-in guild members. | parses/scoreboards, DKP, attendance, kill timers |
+
+Collection gate: log-derived stats require the member to be running the agent with
+logging on (no agent → no rollup). Characters flagged `exclude_from_stats` never
+contribute and are never displayed. The disclosure copy should also state the
+**upside** ("turn on logging / resubmit to unlock your verb totals and see how many
+times you bit yourself") so the value exchange is explicit and opt-in.
+
 ## Gap Detection Signals (design notes — UI not yet built)
 
 **Candidate pool:** characters where the guild-membership predicate above is true.
