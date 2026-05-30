@@ -49,6 +49,9 @@ const CHANGELOGS = {
     'Onboarding moved to the database with diff-only revision pings — `/onboarding` now shows only what\'s new since you last looked, with a [Show full welcome] button for everything else',
     'Parser download link now points to the GitHub release directly (the old subdomain hit a TLS error)',
   ],
+  '2.5.41': [
+    'Parser release announcements moved to opt-in DMs — only members who\'ve used `/onboarding` get pinged, and only with the diff since their last seen version. The blasting channel post is gone.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
@@ -74,18 +77,21 @@ function _upsertRow(discordId) {
   if (!row) return;
   const supabase = require('./supabase');
   supabase.upsert('member_onboarding_state', [{
-    guild_id:          _guildId(),
-    discord_id:        discordId,
-    last_seen_version: row.last_seen_version || null,
-    opted_out:         !!row.opted_out,
-    updated_at:        new Date().toISOString(),
+    guild_id:                _guildId(),
+    discord_id:              discordId,
+    last_seen_version:       row.last_seen_version       || null,
+    last_seen_agent_version: row.last_seen_agent_version || null,
+    opted_out:               !!row.opted_out,
+    updated_at:              new Date().toISOString(),
   }], 'guild_id,discord_id').catch(err =>
     console.warn('[onboarding] upsert failed:', err?.message));
 }
 
 // ── State accessors (sync via cache; writes fire-and-forget to DB) ───────────
 function _ensureRow(discordId) {
-  if (!_state[discordId]) _state[discordId] = { last_seen_version: null, opted_out: false };
+  if (!_state[discordId]) {
+    _state[discordId] = { last_seen_version: null, last_seen_agent_version: null, opted_out: false };
+  }
   return _state[discordId];
 }
 
@@ -124,6 +130,44 @@ function setLastSeenVersion(userId, version) {
   _upsertRow(userId);
 }
 
+function getLastSeenAgentVersion(userId) {
+  return _state[userId]?.last_seen_agent_version || null;
+}
+
+function setLastSeenAgentVersion(userId, version) {
+  const row = _ensureRow(userId);
+  if (row.last_seen_agent_version === version) return;
+  row.last_seen_agent_version = version;
+  _upsertRow(userId);
+}
+
+// Return every member who has opted in (any row exists, not opted out) and
+// whose last_seen_agent_version is behind the supplied version. Used by the
+// agent-release DM fanout.
+function listMembersBehindAgentVersion(currentVersion) {
+  const out = [];
+  for (const [discordId, row] of Object.entries(_state)) {
+    if (row?.opted_out) continue;
+    const seen = row?.last_seen_agent_version || null;
+    if (!seen || _semverCompare(seen, currentVersion) < 0) {
+      out.push({ discordId, lastSeenAgentVersion: seen });
+    }
+  }
+  return out;
+}
+
+// Slice an agent-release bullets bag down to the versions strictly between
+// (lastSeen, current]. Uses the same semver compare as changesSince so
+// 2.4.10 sorts above 2.4.9 correctly.
+function sliceAgentBulletsAfter(allBullets, lastSeenAgentVersion) {
+  const out = {};
+  for (const [v, bullets] of Object.entries(allBullets || {})) {
+    if (!Array.isArray(bullets) || !bullets.length) continue;
+    if (!lastSeenAgentVersion || _semverCompare(v, lastSeenAgentVersion) > 0) out[v] = bullets;
+  }
+  return out;
+}
+
 // ── Changelog helper ──────────────────────────────────────────────────────────
 // Returns an array of new feature strings for versions strictly greater than
 // sinceVersion. When sinceVersion is falsy, returns every entry.
@@ -147,14 +191,15 @@ async function loadOnboardingData(client) {
       _supabaseEnabled = true;
       const rows = await supabase.select(
         'member_onboarding_state',
-        `guild_id=eq.${encodeURIComponent(_guildId())}&select=discord_id,last_seen_version,opted_out`
+        `guild_id=eq.${encodeURIComponent(_guildId())}&select=discord_id,last_seen_version,last_seen_agent_version,opted_out`
       );
       if (Array.isArray(rows)) {
         for (const r of rows) {
           if (!r?.discord_id) continue;
           _state[r.discord_id] = {
-            last_seen_version: r.last_seen_version || null,
-            opted_out:         !!r.opted_out,
+            last_seen_version:       r.last_seen_version       || null,
+            last_seen_agent_version: r.last_seen_agent_version || null,
+            opted_out:               !!r.opted_out,
           };
         }
         console.log(`[onboarding] Loaded ${rows.length} member state row(s) from Supabase`);
@@ -387,6 +432,54 @@ function buildChangesComponents(version) {
   ];
 }
 
+// Agent-release DM body. Sent to opted-in members whose
+// last_seen_agent_version < current. Bullets come from
+// data/agent_release_notes.json — one bucket per agent version.
+function buildAgentReleaseEmbed(currentAgentVersion, lastSeenAgentVersion, bulletsByVersion) {
+  const since = lastSeenAgentVersion ? `since v${lastSeenAgentVersion}` : '';
+  const versionsAsc = Object.keys(bulletsByVersion).sort(_semverCompare);
+  const lines = [];
+  for (const v of versionsAsc) {
+    const bullets = bulletsByVersion[v] || [];
+    if (!bullets.length) continue;
+    lines.push(`**v${v}**`);
+    for (const b of bullets) lines.push(`• ${b}`);
+    lines.push('');
+  }
+  return new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle(`📦 Wolf Pack Parser — what's new ${since}`.trim())
+    .setDescription(
+      lines.length
+        ? lines.join('\n').trim()
+        : `Parser is now at **v${currentAgentVersion}**. Re-launch **Parser.bat** to update.`
+    )
+    .setFooter({ text: `Now at v${currentAgentVersion} • Re-launch Parser.bat to update — or click ↻ Check for update at http://localhost:7777` });
+}
+
+function buildAgentReleaseComponents(agentVersion) {
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setURL(PARSER_DOWNLOAD_URL)
+        .setLabel('Download latest')
+        .setStyle(ButtonStyle.Link)
+        .setEmoji('📥'),
+      // Reuses the existing dismiss handler — version tag is the AGENT
+      // version, which the handler treats as a string token; setOptedOut
+      // stores it on row.last_seen_version. That's a slight semantic blur
+      // (we're stashing an agent version in a bot-version field), but it's
+      // fine: the only thing opted_out gates is the GuildMemberAdd DM.
+      new ButtonBuilder()
+        .setCustomId(`onb_ignore:${agentVersion}`)
+        .setLabel('Don\'t ping me on revisions')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🔕'),
+    ),
+  ];
+}
+
 function buildWelcomeComponents(version) {
   const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
   const roleRow = new ActionRowBuilder().addComponents(
@@ -425,6 +518,10 @@ module.exports = {
   removeOptOut,
   getLastSeenVersion,
   setLastSeenVersion,
+  getLastSeenAgentVersion,
+  setLastSeenAgentVersion,
+  listMembersBehindAgentVersion,
+  sliceAgentBulletsAfter,
   changesSince,
   loadOnboardingData,
   saveOnboardingData,
@@ -437,6 +534,8 @@ module.exports = {
   buildShowAgainComponents,
   buildChangesEmbed,
   buildChangesComponents,
+  buildAgentReleaseEmbed,
+  buildAgentReleaseComponents,
   buildInstructionsEmbed,
   PARSER_DOWNLOAD_URL,
   REGISTRY_TITLE,

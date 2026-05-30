@@ -178,21 +178,35 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 });
 
-// Post a brief release note for the current agent version. Idempotent via
-// Supabase (bot_announcements table) so a Railway restart or volume wipe
-// doesn't re-post the same version. Falls back to the state.json marker
-// when Supabase is unavailable.
+// Per-member agent release DMs.
+//
+// Previous design (pre-v2.5.41) posted a single message to a release-announce
+// channel on every agent version bump — which triggered Discord push
+// notifications for every member of every release, the noise the user
+// specifically asked us to fix.
+//
+// New design: only opted-in members (i.e. anyone who has interacted with
+// /onboarding at least once) get a DM, and only if their
+// last_seen_agent_version is below the current release. The DM shows
+// the diff bullets across versions (newest at top), a [Download latest]
+// link button, and a [Don't ping me on revisions] dismiss.
+//
+// Dedup is two-layered:
+//   * bot_announcements row keyed (kind=agent_release, key=<version>) is
+//     claimed at the START of the fanout — so a Railway restart mid-fanout
+//     skips re-running it entirely.
+//   * Per-member, setLastSeenAgentVersion is called on every successful DM.
+//     If the fanout dies halfway, members who already received don't get
+//     re-DMed on the next deploy.
 async function announceAgentReleaseIfNew(discordClient) {
-  const channelId = process.env.RELEASE_ANNOUNCE_CHANNEL_ID || process.env.TIMER_CHANNEL_ID;
-  if (!channelId) return;
   const version = _currentAgentVersion();
   if (!version) return;
-
-  // Durable idempotency check via Supabase first. If we already announced
-  // this version (even from a previous Railway deploy), do nothing.
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const supabase = require('./utils/supabase');
+
+  // Master dedup — claim this version's fanout. If Supabase is up and the
+  // key already exists, somebody else already did the work; bail.
   try {
-    const supabase = require('./utils/supabase');
     if (supabase.isEnabled()) {
       const prior = await supabase.select(
         'bot_announcements',
@@ -203,65 +217,77 @@ async function announceAgentReleaseIfNew(discordClient) {
   } catch (err) {
     console.warn('[release-announce] supabase prior-check failed:', err?.message);
   }
-  // Fallback: the state.json marker. Belt-and-braces; mostly relevant
-  // when Supabase is down.
-  const last = getLastAnnouncedAgentVersion();
-  if (last === version) return;
+  if (getLastAnnouncedAgentVersion() === version) return;
 
-  const channel = await discordClient.channels.fetch(channelId).catch(() => null);
-  if (!channel) return;
-
-  // Look up the per-version what's-new blurb. Falls through to a generic
-  // line when the version isn't in the file.
-  let releaseNotes = [];
+  // Build the cross-version bullets bag — every version from
+  // (member's last_seen_agent_version, current] needs to be available so each
+  // recipient sees only their own diff. We send the entire file's versions[]
+  // and let the embed builder filter per-recipient.
+  let allBullets = {};
   try {
     delete require.cache[require.resolve('./data/agent_release_notes.json')];
     const notes = require('./data/agent_release_notes.json');
-    releaseNotes = Array.isArray(notes?.versions?.[version]) ? notes.versions[version] : [];
-  } catch { /* missing or unreadable — fine */ }
+    if (notes?.versions && typeof notes.versions === 'object') allBullets = notes.versions;
+  } catch { /* missing — fine; we'll DM a bare "version is out" line */ }
 
-  const lines = [
-    `📦 **wolfpack-logsync agent v${version}** is out.`,
-  ];
-  if (releaseNotes.length > 0) {
-    lines.push('');
-    lines.push('**What\'s new:**');
-    for (const note of releaseNotes) lines.push(`• ${note}`);
-  }
-  lines.push('');
-  lines.push('**To update:**');
-  lines.push('1. Re-launch your **Parser.bat** — it auto-pulls the latest agent on start.');
-  lines.push('2. Or click **↻ Check for update** on http://localhost:7777 if the parser is already running.');
-  lines.push('');
-  lines.push(`*Bot v${require('./package.json').version || '?'} · agent ships independently.*`);
+  const {
+    listMembersBehindAgentVersion, setLastSeenAgentVersion,
+    sliceAgentBulletsAfter,
+    buildAgentReleaseEmbed, buildAgentReleaseComponents,
+  } = require('./utils/onboarding');
 
-  try {
-    const sent = await channel.send({ content: lines.join('\n'), allowedMentions: { parse: [] } });
-
-    // Record the announcement durably in Supabase (primary) AND state.json
-    // (secondary). Either alone is sufficient to prevent duplicates; both
-    // gives us cross-redeploy protection plus a fallback if Supabase is
-    // unreachable.
-    try {
-      const supabase = require('./utils/supabase');
-      if (supabase.isEnabled()) {
-        await supabase.upsert('bot_announcements', [{
-          guild_id:     guildId,
-          kind:         'agent_release',
-          key:          version,
-          channel_id:   channelId,
-          message_id:   sent?.id || null,
-          announced_at: new Date().toISOString(),
-        }], 'guild_id,kind,key').catch(err => console.warn('[release-announce] supabase write failed:', err?.message));
-      }
-    } catch (err) {
-      console.warn('[release-announce] supabase persist wrap failed:', err?.message);
-    }
+  const candidates = listMembersBehindAgentVersion(version);
+  if (candidates.length === 0) {
+    // Nobody opted in yet, or everyone is current. Still set the master
+    // marker so we don't keep re-checking on every restart.
     setLastAnnouncedAgentVersion(version);
-    console.log(`[release-announce] posted agent v${version} to channel ${channelId}`);
-  } catch (err) {
-    console.warn('[release-announce] post failed:', err?.message);
+    return;
   }
+
+  let delivered = 0, skipped = 0, failed = 0;
+  for (const { discordId, lastSeenAgentVersion } of candidates) {
+    // Per-recipient bullet slice: everything strictly between their
+    // last_seen and current. Cleaner than blasting the full history,
+    // and uses semver compare (lex would put 2.4.10 below 2.4.9).
+    const sliced = sliceAgentBulletsAfter(allBullets, lastSeenAgentVersion);
+
+    try {
+      const user = await discordClient.users.fetch(discordId).catch(() => null);
+      if (!user) { skipped++; continue; }
+      await user.send({
+        embeds:     [buildAgentReleaseEmbed(version, lastSeenAgentVersion, sliced)],
+        components: buildAgentReleaseComponents(version),
+      });
+      setLastSeenAgentVersion(discordId, version);
+      delivered++;
+    } catch (err) {
+      // DMs disabled for that user, or rate-limited — leave their watermark
+      // alone so they get caught up on a future release.
+      failed++;
+    }
+    // Light throttle to be polite to Discord's DM rate limits. discord.js
+    // also auto-retries 429s; this just keeps us under the radar for the
+    // common case.
+    await new Promise(r => setTimeout(r, 1200));
+  }
+
+  // Mark the version's fanout complete (durable + state.json fallback).
+  try {
+    if (supabase.isEnabled()) {
+      await supabase.upsert('bot_announcements', [{
+        guild_id:     guildId,
+        kind:         'agent_release',
+        key:          version,
+        channel_id:   null,                 // no channel any more
+        message_id:   null,
+        announced_at: new Date().toISOString(),
+      }], 'guild_id,kind,key').catch(err => console.warn('[release-announce] supabase write failed:', err?.message));
+    }
+  } catch (err) {
+    console.warn('[release-announce] supabase persist wrap failed:', err?.message);
+  }
+  setLastAnnouncedAgentVersion(version);
+  console.log(`[release-announce] agent v${version} DM fanout: ${delivered} delivered, ${skipped} skipped (no user), ${failed} failed`);
 }
 
 // OpenDKP mirror: first run 45s after boot (after the wolfpack-members sync

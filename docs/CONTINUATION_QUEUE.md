@@ -15,6 +15,14 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **bot v2.5.41** — agent-release channel post → opt-in DMs. Only members with a
+  `member_onboarding_state` row (interacted with `/onboarding`) get pinged, and
+  only with the diff slice since their `last_seen_agent_version`. Includes the
+  `20260530150000_onboarding_agent_watermark.sql` migration adding that column.
+  Two-layer dedup: `bot_announcements` claims the version once + per-member
+  watermark guards against partial fanouts on restart.
+- **bot v2.5.40** — onboarding state to DB; `/onboarding` is diff-first with
+  `[Show full welcome]`; parser link fix (GitHub release direct).
 - **agent v2.4.26 / bot v2.5.39** — per-ability rollup emission + watermark cutover.
   Agent computes `{ by_skill, total_hits, total_damage, self_attack_count }` per
   character at encounter flush (pets→owners, null attacker→uploader); bot upserts
