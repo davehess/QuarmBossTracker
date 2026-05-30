@@ -4505,6 +4505,8 @@ function runOptinBackfill(files, opts = {}) {
             // early return; the line still flows through downstream parsers.
             const ldEvt = parsePeopleslayerLd(line);
             if (ldEvt) funEventBuffer.push(ldEvt);
+            const provEvt = parseSummonProvisions(line, f.character);
+            if (provEvt) funEventBuffer.push(provEvt);
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -5377,6 +5379,29 @@ function parsePeopleslayerLd(line) {
   };
 }
 
+// Malthur's provisions counter — stacks of summoned food + water. The
+// summon spells are self-cast, so only the caster's own log carries the
+// "You begin casting ..." line; caster = the uploading character. Each
+// successful cast yields one stack (10 charges). We key on the cast
+// start line; "Blessing of the Harvest" = food, "Blessing of the Storm"
+// = water. (Per Malthur's Orb of Satisfaction / Wand of Everlasting Water.)
+const SUMMON_FOOD_RX  = /^\[.+?\]\s+You begin casting Blessing of the Harvest\.?\s*$/i;
+const SUMMON_WATER_RX = /^\[.+?\]\s+You begin casting Blessing of the Storm\.?\s*$/i;
+
+function parseSummonProvisions(line, character) {
+  let type = null;
+  if (SUMMON_FOOD_RX.test(line))  type = 'summon_food';
+  else if (SUMMON_WATER_RX.test(line)) type = 'summon_water';
+  if (!type) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type,
+    caster:   character || 'unknown',
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
 function uploadChat(messages, { botUrl, token, dryRun }) {
   void botUrl; void token; // route info lives in the queue's endpoint resolver
   if (dryRun) {
@@ -6244,6 +6269,8 @@ async function main() {
         // and the line might also be useful to other parsers downstream.
         const ldEvt = parsePeopleslayerLd(line);
         if (ldEvt) funEventBuffer.push(ldEvt);
+        const provEvt = parseSummonProvisions(line, b.character);
+        if (provEvt) funEventBuffer.push(provEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
