@@ -680,6 +680,54 @@ Gap detection / attendance UI should evaluate this predicate per character, not
 fall back to "every name in the OpenDKP roster" — that would flag retired alts,
 trial recruits, etc. as missing raiders.
 
+## Per-Character Data Floor (`member_since`) + Opt-Out
+
+How far back a character's data counts toward *their* stats. Defined in
+`supabase/migrations/20260530120000_character_data_floor.sql` →
+view `public.character_data_floor`.
+
+**Rule:** a player is only credited with the combat / raid chat / guild chat they
+generated *while one of us*. We have no authoritative join date, so we floor at the
+**earliest membership evidence** for the character's whole **family** (main + alts):
+
+```
+member_since = LEAST(first /gu line, first /rs line, first OpenDKP tick)   -- across the family
+```
+
+- **`LEAST`, not "first guild chat":** the earliest signal varies per person.
+  Guild-chat capture only started recently for some, but OpenDKP attendance reaches
+  back to 2024 — so a 2024 raider whose first *captured* `/gu` line is 2026 is
+  correctly floored at their 2024 tick. Conversely some chatted in `/gu` for weeks
+  before their first tick (joined socially, raided later); `LEAST` keeps those
+  pre-raid kills too. First tick = "started raiding"; it is *not* the floor on its
+  own because membership can predate it.
+- **Family fallback:** an alt that never typed in `/gu` and never ticked under its
+  own name inherits its main's floor (group by `coalesce(main_name, name)`).
+  Validated 2026-05-30: collapses pre-floor combat from 1,258 → **27** of 15,609
+  `encounter_players` rows; 145/147 families resolve a floor (47 rescued by ticks).
+- **PvP is EXEMPT** — PvP kills count from the beginning of recorded history,
+  no floor. The view does not touch PvP data.
+- **`floor_source`** column labels which signal won (`guild_chat` / `tick` /
+  `raid_chat`) for a confidence indicator in the UI.
+
+**Opt-out:** two additive flags on `characters` let a member exclude specific
+characters — `exclude_from_stats` (skip in combat/chat/log reporting & display;
+agent should not upload) and `exclude_inventory` (don't catalog bank/inventory).
+Use cases: a char that belongs to another guild, or one whose inventory they'd
+rather not have indexed. Both surface in `character_data_floor`. Agent-side
+honoring (don't upload for excluded chars) is a follow-up wiring task.
+
+Consumers (`/me`, stats commands, agent `--since` backfill window) apply
+`member_since` as the lower bound and skip `exclude_from_stats` characters.
+
+> **Granular per-verb stats are NOT yet available.** `combat_events` is empty and
+> `contributions.raw_parse` only retains per-player aggregates (`damage/dps/rank/
+> duration`) plus a bare `eventCount` — the agent's `events[]` array is dropped
+> after aggregation. A `/me` "grand total by spell/song/crush/stab/bite/…" and the
+> "attacked yourself X times" counter (attacker == defender) therefore require the
+> bot to start persisting per-ability rollups (or `combat_events`) **going
+> forward**; they cannot be backfilled from what we currently store.
+
 ## Gap Detection Signals (design notes — UI not yet built)
 
 **Candidate pool:** characters where the guild-membership predicate above is true.
