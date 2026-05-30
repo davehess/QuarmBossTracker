@@ -48,6 +48,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {/* AuthBadge sits next to title on mobile so the nav row gets the full width */}
               <div className="sm:hidden"><AuthBadge /></div>
             </div>
+            {/* Parser download — always visible at the top so newcomers can grab
+                it without hunting. Always points at the latest GitHub release,
+                no stale links to maintain. target=_blank so people browsing
+                the site don't lose their place. */}
+            <a
+              href="https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip"
+              target="_blank"
+              rel="noreferrer"
+              className="self-start sm:self-auto inline-flex items-center gap-2 px-3 py-1.5 rounded border border-green bg-[#1a7f3733] text-green text-xs sm:text-sm hover:bg-[#1a7f3766] transition-colors whitespace-nowrap no-underline"
+              title="Download the wolfpack-logsync parser — the local agent that streams encounter data to the bot"
+            >
+              <span aria-hidden>📦</span>
+              <span>Download Parser</span>
+              <span aria-hidden className="text-dim text-[10px]">↗</span>
+            </a>
             <div className="flex items-center gap-3 flex-wrap">
               <Nav showAdmin={showAdmin} showMe={showMe} />
               <DemoToggle />
