@@ -15,6 +15,13 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **web v0.4.27** — `/me` Verb Totals panel: aggregates `encounter_combat_rollup`
+  per character (PRIVATE-scoped tooltip), shows top 5 skills by damage, the
+  "times you attacked yourself" counter, the `encounters_resubmittable` resubmit
+  nudge from `character_rollup_coverage`, and `member_since` floor line.
+  Respects `characters.exclude_from_stats` (filtered out of grid + surfaced in a
+  small footer). Updated stale "agent version not stored yet" — now shows
+  `latestAgentVersion` from `contributions.agent_version` (post-v2.5.39).
 - **bot v2.5.41** — agent-release channel post → opt-in DMs. Only members with a
   `member_onboarding_state` row (interacted with `/onboarding`) get pinged, and
   only with the diff slice since their `last_seen_agent_version`. Includes the
