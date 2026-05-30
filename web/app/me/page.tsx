@@ -315,6 +315,30 @@ function relTime(iso: string | null): string {
   return `${Math.floor(days / 365)}y ago`;
 }
 
+// Per-character sync heartbeat from agent_uploads. The encounter endpoint is
+// the freshest signal: it fires per-encounter (live raids) and per-backfill,
+// and the `character` column is populated there (chat/pvp/fun_event upload as
+// null character today — separate follow-up). Returns one row per character
+// the signed-in user owns, regardless of activity, so the banner can still
+// say "no recent uploads" instead of going dark.
+async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, { lastUpload: string; agentVersion: string | null }>> {
+  if (charNames.length === 0) return new Map();
+  const admin = supabaseAdmin();
+  const out = new Map<string, { lastUpload: string; agentVersion: string | null }>();
+  await Promise.all(charNames.map(async (name) => {
+    const { data } = await admin
+      .from('agent_uploads')
+      .select('uploaded_at, agent_version')
+      .ilike('character', name)
+      .eq('endpoint', 'encounter')
+      .order('uploaded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data?.uploaded_at) out.set(name, { lastUpload: data.uploaded_at, agentVersion: data.agent_version });
+  }));
+  return out;
+}
+
 export default async function MePage() {
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
@@ -332,6 +356,27 @@ export default async function MePage() {
   const stats = await Promise.all(chars.map(c => loadCharStats(c.name).then(s => [c.name, s] as const)));
   const byName = new Map(stats);
 
+  // Sync heartbeat: most recent agent upload per owned character. Drives the
+  // top-of-page "syncing now / stale / no upload" banner.
+  const heartbeats = await loadSyncHeartbeats(allChars.map(c => c.name));
+  const now = Date.now();
+  const liveThresholdMs    = 10 * 60 * 1000;     // ≤10 min ago = syncing
+  const recentThresholdMs  =  6 * 60 * 60 * 1000; // ≤6h = "recent"
+  type SyncRow = { name: string; status: 'live' | 'recent' | 'stale' | 'never'; lastUpload: string | null; agentVersion: string | null };
+  const syncRows: SyncRow[] = allChars.map(c => {
+    const hb = heartbeats.get(c.name);
+    if (!hb) return { name: c.name, status: 'never', lastUpload: null, agentVersion: null };
+    const age = now - new Date(hb.lastUpload).getTime();
+    const status: SyncRow['status'] =
+      age <= liveThresholdMs   ? 'live'
+      : age <= recentThresholdMs ? 'recent'
+      : 'stale';
+    return { name: c.name, status, lastUpload: hb.lastUpload, agentVersion: hb.agentVersion };
+  });
+  const liveCount   = syncRows.filter(r => r.status === 'live').length;
+  const recentCount = syncRows.filter(r => r.status === 'recent').length;
+  const everSynced  = syncRows.filter(r => r.lastUpload).length;
+
   // Page-level aggregates
   const agg = {
     chars: chars.length,
@@ -344,8 +389,86 @@ export default async function MePage() {
     dkpSpent: stats.reduce((s, [, x]) => s + x.dkpSpent, 0),
   };
 
+  // Top-of-page sync banner color + headline. Lives ABOVE "My Characters" so
+  // members see immediately whether their parser is transmitting before they
+  // wonder why their stats are empty.
+  let bannerColor: 'green'|'orange'|'red'|'dim' = 'dim';
+  let bannerHeadline = 'Your parser isn\'t syncing.';
+  let bannerSub = 'Run the local parser to start streaming.';
+  if (allChars.length === 0) {
+    bannerColor = 'dim';
+    bannerHeadline = 'No characters linked yet.';
+    bannerSub      = 'Link one below to start syncing.';
+  } else if (liveCount > 0) {
+    bannerColor = 'green';
+    bannerHeadline = liveCount === 1
+      ? `Parser is syncing for ${syncRows.find(r => r.status === 'live')!.name}.`
+      : `Parser is syncing for ${liveCount} characters.`;
+    bannerSub = 'Live in the last 10 minutes.';
+  } else if (recentCount > 0) {
+    bannerColor = 'orange';
+    bannerHeadline = 'Parser was syncing earlier today but isn\'t right now.';
+    bannerSub      = 'Re-launch Parser.bat if you want to keep streaming.';
+  } else if (everSynced > 0) {
+    bannerColor = 'orange';
+    bannerHeadline = 'Parser is offline.';
+    bannerSub      = 'Last upload was hours+ ago. Re-launch Parser.bat to resume.';
+  } else {
+    bannerColor = 'red';
+    bannerHeadline = 'No parser uploads recorded for your characters.';
+    bannerSub      = 'Make sure the local agent is running — see /parsehelp in Discord.';
+  }
+  const bannerBorderClass =
+    bannerColor === 'green'  ? 'border-green/60'   :
+    bannerColor === 'orange' ? 'border-orange/60'  :
+    bannerColor === 'red'    ? 'border-red/60'     : 'border-border';
+  const bannerTextClass =
+    bannerColor === 'green'  ? 'text-green'   :
+    bannerColor === 'orange' ? 'text-orange'  :
+    bannerColor === 'red'    ? 'text-red-400' : 'text-dim';
+
   return (
     <div className="space-y-6">
+      {discordId && (
+        <section className={`bg-panel border ${bannerBorderClass} rounded-lg p-4`}>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className={`text-sm font-semibold ${bannerTextClass}`}>{bannerHeadline}</div>
+              <div className="text-xs text-dim mt-0.5">{bannerSub}</div>
+            </div>
+            <a
+              href="http://localhost:7777"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-blue hover:underline whitespace-nowrap"
+              title="The local parser dashboard — only opens if your wolfpack-logsync agent is running on this machine."
+            >
+              localhost:7777 ↗
+            </a>
+          </div>
+          {syncRows.length > 0 && (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-xs">
+              {syncRows.map(r => (
+                <div key={r.name} className="flex items-center justify-between gap-2 bg-bg border border-border/60 rounded px-2 py-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span aria-hidden className={
+                      r.status === 'live'   ? 'text-green'    :
+                      r.status === 'recent' ? 'text-orange'   :
+                      r.status === 'stale'  ? 'text-orange/70' : 'text-dim/60'
+                    }>●</span>
+                    <span className="text-text truncate">{r.name}</span>
+                  </div>
+                  <div className="text-[10px] text-dim whitespace-nowrap">
+                    {r.status === 'never'
+                      ? 'no uploads'
+                      : <>{relTime(r.lastUpload)}{r.agentVersion && <span className="text-dim/70"> · v{r.agentVersion}</span>}</>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       <section className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>

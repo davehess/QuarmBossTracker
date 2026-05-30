@@ -48,6 +48,7 @@ jobs:
           cp install-node.ps1      "$DIST/"
           cp start-logsync.ps1     "$DIST/"
           cp packages/wolfpack-logsync/index.js      "$DIST/wolfpack-logsync/"
+          cp packages/wolfpack-logsync/supervisor.js "$DIST/wolfpack-logsync/"
           cp packages/wolfpack-logsync/package.json  "$DIST/wolfpack-logsync/"
 
           # Plain-text quick-start guide inside the zip
