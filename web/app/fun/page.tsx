@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 async function loadCounters() {
   const sb = supabaseAdmin();
-  const counters: { label: string; emoji: string; value: number; sub?: string }[] = [];
+  const counters: { label: string; emoji: React.ReactNode; value: number; sub?: string }[] = [];
 
   // Standalone — fetched separately so the Kyinen execution card can render
   // with its own gold-frame styling above the normal counter grid.
@@ -96,21 +96,33 @@ async function loadCounters() {
       // PostgREST doesn't have a direct case-insensitive IN, so we build an
       // .or() chain of speaker.ilike for each family member.
       const orFilter = familyNames.map(n => `speaker.ilike.${n}`).join(',');
-      const { count } = await sb
-        .from('chat_messages')
-        .select('*', { count: 'exact', head: true })
-        .ilike('text', '%tunare%')
-        .or(orFilter);
+      // Two queries: total invocations + most recent for the "N days since"
+      // rant timer. Running in parallel keeps the page snappy.
+      const [{ count }, { data: latest }] = await Promise.all([
+        sb.from('chat_messages')
+          .select('*', { count: 'exact', head: true })
+          .ilike('text', '%tunare%').or(orFilter),
+        sb.from('chat_messages')
+          .select('ts').ilike('text', '%tunare%').or(orFilter)
+          .order('ts', { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      const lastTs = latest?.ts ? new Date(latest.ts) : null;
+      const days   = lastTs ? Math.floor((Date.now() - lastTs.getTime()) / 86400000) : null;
+      const sub = days === null
+        ? 'no Tunare invocations on record yet — first rant resets the clock.'
+        : days === 0
+          ? 'Last rant was today. Stay vigilant.'
+          : `${days} day${days === 1 ? '' : 's'} since the last Tunare Text Rant™.`;
       counters.push({
         label: 'Tunare invocations',
-        emoji: '🌿',
+        emoji: <TunareKissScene />,
         value: count ?? 0,
-        sub: `from Naggato's family (${familyNames.length} character${familyNames.length === 1 ? '' : 's'})`,
+        sub,
       });
     } else {
       counters.push({
         label: 'Tunare invocations',
-        emoji: '🌿',
+        emoji: <TunareKissScene />,
         value: 0,
         sub: 'Naggato family not resolved yet — characters sync needs to run',
       });
@@ -118,7 +130,7 @@ async function loadCounters() {
   } catch (err) {
     counters.push({
       label: 'Tunare invocations',
-      emoji: '🌿',
+      emoji: <TunareKissScene />,
       value: 0,
       sub: 'query failed: ' + (err instanceof Error ? err.message : String(err)),
     });
@@ -191,7 +203,7 @@ export default async function FunPage() {
           <div key={c.label} className="bg-panel border border-border rounded-lg p-4">
             <div className="flex items-baseline justify-between">
               <div className="text-xs text-dim uppercase tracking-wide">{c.label}</div>
-              <span aria-hidden className="text-2xl">{c.emoji}</span>
+              <span aria-hidden className="text-2xl shrink-0">{c.emoji}</span>
             </div>
             <div className="text-3xl text-gold font-bold mt-2">{c.value.toLocaleString()}</div>
             {c.sub && <div className="text-xs text-dim mt-1">{c.sub}</div>}
@@ -227,6 +239,103 @@ export default async function FunPage() {
 // Visual: double gold frame with inset glow + inline SVG of an actual
 // guillotine, since there's no native Unicode guillotine character. Renders
 // even at 0 executions ("…yet.") because the card is the joke.
+// ── Tunare kiss scene ─────────────────────────────────────────────────────────
+// Tunare leaning in to kiss a high-elf paladin on the cheek; the paladin sits
+// on horseback with a flaming epic sword raised. Stylized so the whole scene
+// reads at ~60px (the fun card's emoji slot). Uses real SVG instead of
+// emoji-collage because emoji at thumbnail size collapses to indistinct blobs.
+function TunareKissScene() {
+  return (
+    <svg viewBox="0 0 80 64" width="60" height="48" aria-label="Tunare kissing a high-elf paladin on horseback" role="img" style={{ flexShrink: 0 }}>
+      <defs>
+        <linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0%"   stopColor="#f97316" />
+          <stop offset="55%"  stopColor="#fbbf24" />
+          <stop offset="100%" stopColor="#fef3c7" />
+        </linearGradient>
+        <linearGradient id="bladeGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"  stopColor="#f1f5f9" />
+          <stop offset="100%" stopColor="#94a3b8" />
+        </linearGradient>
+      </defs>
+
+      {/* Pastoral ground line */}
+      <ellipse cx="40" cy="60" rx="38" ry="2" fill="#4ade80" opacity="0.35" />
+
+      {/* ── Horse ──────────────────────────────────────────────────── */}
+      {/* body */}
+      <ellipse cx="48" cy="44" rx="18" ry="7" fill="#92400e" />
+      {/* legs */}
+      <rect x="34" y="44" width="2" height="14" fill="#78350f" />
+      <rect x="40" y="44" width="2" height="14" fill="#78350f" />
+      <rect x="56" y="44" width="2" height="14" fill="#78350f" />
+      <rect x="62" y="44" width="2" height="14" fill="#78350f" />
+      {/* head + neck */}
+      <path d="M 64 44 Q 70 38 70 30 L 72 30 Q 73 38 70 45 Z" fill="#92400e" />
+      {/* mane */}
+      <path d="M 66 32 Q 64 28 67 25 Q 70 30 68 35" fill="#3f1d0a" />
+      {/* tail */}
+      <path d="M 30 42 Q 22 44 24 52" fill="none" stroke="#3f1d0a" strokeWidth="2" strokeLinecap="round" />
+      {/* eye */}
+      <circle cx="69" cy="33" r="0.7" fill="#0e1116" />
+
+      {/* ── Paladin on horse ──────────────────────────────────────── */}
+      {/* torso (silver plate) */}
+      <path d="M 44 32 L 52 32 L 53 42 L 43 42 Z" fill="#cbd5e1" stroke="#64748b" strokeWidth="0.4" />
+      {/* tabard with green Tunare leaf */}
+      <path d="M 47 33 L 49 33 L 49 42 L 47 42 Z" fill="#1f3b1f" />
+      <circle cx="48" cy="37" r="1.1" fill="#86efac" />
+      {/* head — high elf skin */}
+      <circle cx="48" cy="27" r="3.4" fill="#fde7d3" />
+      {/* elf ear point */}
+      <path d="M 51.5 27 L 53 25 L 51.5 28 Z" fill="#fde7d3" />
+      {/* hair (long, blond) */}
+      <path d="M 44.6 25 Q 43 23 45 21 Q 48 19.5 51 21 Q 53 23 51.4 25.5 Q 50 24 48 24 Q 46 24 44.6 25 Z" fill="#fef08a" />
+      {/* halo / divine glow */}
+      <ellipse cx="48" cy="22" rx="3.5" ry="1" fill="none" stroke="#fde047" strokeWidth="0.5" opacity="0.9" />
+      {/* sword arm raised */}
+      <rect x="51" y="22" width="1.6" height="9" fill="#cbd5e1" transform="rotate(20 51.8 26)" />
+
+      {/* ── Flaming epic sword ────────────────────────────────────── */}
+      {/* hilt */}
+      <rect x="55" y="16" width="1.6" height="3" fill="#a16207" />
+      <rect x="53" y="18" width="6" height="1.2" fill="#facc15" />
+      {/* blade */}
+      <polygon points="55,3 57,3 56.6,18 55.4,18" fill="url(#bladeGrad)" stroke="#475569" strokeWidth="0.25" />
+      {/* flame around blade */}
+      <path d="M 55 6 Q 51 4 52 1 Q 55 3 56 0 Q 57 3 60 1 Q 61 4 57 6 Q 58 9 55 7 Z" fill="url(#flameGrad)" opacity="0.95" />
+      <path d="M 55.5 4 Q 54 3 54.5 1 Q 56 2 56.5 0 Q 57 2 58.5 1 Q 59 3 57.5 4 Z" fill="#fff7c2" />
+
+      {/* ── Tunare (left) ─────────────────────────────────────────── */}
+      {/* hair flowing down */}
+      <path d="M 20 22 Q 13 30 17 50 Q 21 38 24 24 Z" fill="#65a30d" opacity="0.85" />
+      <path d="M 28 22 Q 35 30 31 50 Q 27 38 24 24 Z" fill="#65a30d" opacity="0.85" />
+      {/* dress */}
+      <path d="M 19 32 L 29 32 L 32 56 L 16 56 Z" fill="#16a34a" />
+      <path d="M 21 38 L 27 38 L 28 50 L 20 50 Z" fill="#22c55e" opacity="0.7" />
+      {/* arm reaching toward paladin */}
+      <path d="M 28 33 Q 35 30 42 30" fill="none" stroke="#fde7d3" strokeWidth="1.6" strokeLinecap="round" />
+      {/* face */}
+      <circle cx="24" cy="26" r="3.3" fill="#fde7d3" />
+      {/* floral crown */}
+      <circle cx="22" cy="22" r="0.9" fill="#ec4899" />
+      <circle cx="24" cy="21.4" r="1.0" fill="#facc15" />
+      <circle cx="26" cy="22" r="0.9" fill="#ec4899" />
+      {/* leaf in hair */}
+      <path d="M 19 23 Q 17 22 18 24 Q 19.5 24 19 23 Z" fill="#16a34a" />
+      {/* lips toward paladin's cheek */}
+      <path d="M 27.5 27 Q 29 27 28.5 28 Q 27.5 28 27.5 27 Z" fill="#e11d48" />
+
+      {/* ── Kiss spark between them ───────────────────────────────── */}
+      <text x="34" y="24" fontSize="6" fill="#ec4899">💋</text>
+
+      {/* ── Sparkles ──────────────────────────────────────────────── */}
+      <text x="6"  y="14" fontSize="5" fill="#fde047" opacity="0.9">✨</text>
+      <text x="62" y="12" fontSize="4" fill="#fde047" opacity="0.7">✨</text>
+    </svg>
+  );
+}
+
 function KyinenExecutionCard({ executions, latest, zone, tz }: {
   executions: number;
   latest: string | null;
