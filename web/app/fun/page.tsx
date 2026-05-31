@@ -14,6 +14,24 @@ async function loadCounters() {
   const sb = supabaseAdmin();
   const counters: { label: string; emoji: string; value: number; sub?: string }[] = [];
 
+  // Standalone — fetched separately so the Kyinen execution card can render
+  // with its own gold-frame styling above the normal counter grid.
+  let kyinenExecutions = 0;
+  let kyinenLatest: string | null = null;
+  let kyinenZone:   string | null = null;
+  try {
+    const { data, count } = await sb
+      .from('pvp_kills')
+      .select('killed_at, zone', { count: 'exact' })
+      .ilike('killer', 'kyinen')
+      .ilike('victim', 'malthur')
+      .order('killed_at', { ascending: false })
+      .limit(1);
+    kyinenExecutions = count ?? 0;
+    kyinenLatest = data?.[0]?.killed_at ?? null;
+    kyinenZone   = data?.[0]?.zone      ?? null;
+  } catch { /* table not yet populated — show 0 */ }
+
   // Peopleslayer LD card — count + a running tally of damage logged AFTER his
   // first LD. The joke: his DPS goes UP after he goes linkdead, so the post-LD
   // damage number keeps climbing. Queried via FK-joined filter on
@@ -131,14 +149,14 @@ async function loadCounters() {
     });
   }
 
-  return counters;
+  return { counters, kyinen: { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone } };
 }
 
 export default async function FunPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/fun');
 
-  const counters = await loadCounters();
+  const { counters, kyinen } = await loadCounters();
 
   return (
     <div className="space-y-6">
@@ -153,6 +171,12 @@ export default async function FunPage() {
           CotH Pearls, DI Emeralds, Aegolism/Rune Peridots are queued.
         </p>
       </section>
+
+      <KyinenExecutionCard
+        executions={kyinen.executions}
+        latest={kyinen.latest}
+        zone={kyinen.zone}
+      />
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {counters.map(c => (
@@ -183,5 +207,105 @@ export default async function FunPage() {
         </ul>
       </section>
     </div>
+  );
+}
+
+// ── The Kyinen Execution Card ────────────────────────────────────────────────
+// A reserved, rich-person's-picture-frame card commemorating each time the
+// Quarm lead CSR has executed Wolf Pack's longest-tenured player. Detected
+// from pvp_kills (killer=Kyinen, victim=Malthur) — no new agent detector
+// needed; the kill broadcast lands via the standard PvP-channel relay.
+//
+// Visual: double gold frame with inset glow + inline SVG of an actual
+// guillotine, since there's no native Unicode guillotine character. Renders
+// even at 0 executions ("…yet.") because the card is the joke.
+function KyinenExecutionCard({ executions, latest, zone }: {
+  executions: number;
+  latest: string | null;
+  zone: string | null;
+}) {
+  const dateLine = latest
+    ? `Last execution: ${new Date(latest).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      })}${zone ? ` · ${zone}` : ''}`
+    : 'Awaiting the inaugural execution.';
+
+  return (
+    <section
+      className="relative rounded-lg p-5"
+      style={{
+        background: 'linear-gradient(135deg, #1a1208 0%, #0e1116 100%)',
+        border: '3px solid #d4af37',
+        boxShadow: [
+          'inset 0 0 0 1px #8b6914',
+          'inset 0 0 0 5px #f5e6a8',
+          'inset 0 0 0 6px #8b6914',
+          '0 0 24px rgba(212, 175, 55, 0.35)',
+        ].join(', '),
+      }}
+    >
+      <div className="flex items-center gap-5">
+        <Guillotine />
+        <div className="min-w-0 flex-1">
+          <div
+            className="text-[10px] uppercase tracking-[0.18em] font-semibold"
+            style={{ color: '#d4af37' }}
+          >
+            By Royal Decree
+          </div>
+          <div className="text-xl mt-1" style={{ color: '#f5e6a8' }}>
+            Times <span className="font-bold">Kyinen</span> has executed <span className="font-bold">Malthur</span>
+          </div>
+          <div
+            className="font-bold mt-2"
+            style={{ fontSize: '3.5rem', lineHeight: 1, color: '#d4af37', textShadow: '0 0 12px rgba(212,175,55,0.5)' }}
+          >
+            {executions.toLocaleString()}
+          </div>
+          <div className="text-xs mt-2" style={{ color: '#b3a373' }}>
+            {dateLine}
+          </div>
+          <div className="text-[10px] mt-1 italic" style={{ color: '#8b7d4d' }}>
+            Lead Quarm CSR · sealed in gold by the pack
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Guillotine() {
+  // Inline SVG so we don't need an asset pipeline. Two posts, crossbar,
+  // angled blade, basket — small and unmistakably a guillotine.
+  return (
+    <svg viewBox="0 0 64 96" width="64" height="96" aria-label="guillotine" role="img" style={{ flexShrink: 0 }}>
+      <defs>
+        <linearGradient id="gold" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0%"   stopColor="#f5e6a8" />
+          <stop offset="50%"  stopColor="#d4af37" />
+          <stop offset="100%" stopColor="#8b6914" />
+        </linearGradient>
+        <linearGradient id="blade" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%"  stopColor="#e8e8e8" />
+          <stop offset="100%" stopColor="#9aa0a6" />
+        </linearGradient>
+      </defs>
+      {/* posts */}
+      <rect x="8"  y="8" width="6" height="76" fill="url(#gold)" />
+      <rect x="50" y="8" width="6" height="76" fill="url(#gold)" />
+      {/* top crossbar */}
+      <rect x="6"  y="8" width="52" height="6" fill="url(#gold)" />
+      {/* blade (angled, hovering at the cut line) */}
+      <polygon points="14,30 50,30 50,46 14,38" fill="url(#blade)" stroke="#8b6914" strokeWidth="0.6" />
+      {/* lunette plank (the slot where the neck would rest) */}
+      <rect x="6" y="58" width="52" height="4" fill="#3a2a14" />
+      <circle cx="32" cy="60" r="4" fill="#0e1116" stroke="#8b6914" strokeWidth="0.8" />
+      {/* base */}
+      <rect x="2"  y="84" width="60" height="6" fill="url(#gold)" />
+      <rect x="6"  y="80" width="52" height="4" fill="#3a2a14" />
+      {/* basket */}
+      <path d="M 22 90 Q 32 96 42 90" fill="none" stroke="#3a2a14" strokeWidth="2" />
+    </svg>
   );
 }
