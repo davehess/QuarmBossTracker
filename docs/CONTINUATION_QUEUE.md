@@ -103,6 +103,28 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
+### Mimic beta — GET THE BINARY BUILT (one step, needs you)
+`apps/mimic/` (Electron, v0.1.0-beta.1) + `release-mimic.yml` are merged to main.
+The dev sandbox can't run electron-builder, so the installer builds on CI:
+**Publish a GitHub release with tag `mimic-v0.1.0-beta.1`** (same flow as the
+v2.5.1 release — Releases → Draft new release → create tag on publish →
+Publish). That fires `release-mimic.yml` on a windows-latest runner →
+`Wolf-Pack-Mimic-Setup-0.1.0-beta.1.exe` attaches to the prerelease in ~3-5 min.
+Then download + run it (SmartScreen → More info → Run anyway; not signed yet).
+
+Parity shipped in the beta:
+- ✅ Dashboard in a real window (same UI as localhost:7777)
+- ✅ Transparent always-on-top DPS/boss overlay (overlay.html)
+- ✅ Trigger-alert overlay with TTS (triggers.html) — reads
+  `stats.recentTriggerFires` the agent already records; speaks via Web Speech API
+- ✅ NO separate Node install (runs agent under Electron's Node)
+- ✅ Coexists with Parser.bat (own state dir, port 7779+)
+- ⚠️ First live test will likely need a 1-line tweak to overlay.html's
+  /api/state field reads (sessionDeeps shape) — confirm against a real fight.
+- ⏭ Next passes: code signing, electron-updater (shell self-update), the
+  stupid-simple installer criteria (EQ detect / Defender exclusion / logging
+  auto-enable) folded into the Electron first-run.
+
 ### Auto-MIC detection (Phase 2 of ARI guild-messaging — design, not built)
 User ask 2026-05-31: "when you form the raid or invite someone to the raid
 after they send you a MIC message, you are the autoraidinvite MIC officer.
