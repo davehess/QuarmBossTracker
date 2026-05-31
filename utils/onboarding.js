@@ -67,6 +67,9 @@ const CHANGELOGS = {
   '2.5.46': [
     'Tell notifications now come two ways, each toggleable: per-character `DM: ON/off` for Discord pings, and device-local 🔔 browser notifications (with optional sound) on **/me/tells** — they fire live the moment a tell lands while you\'re looking elsewhere.',
   ],
+  '2.6.2': [
+    'PvP fyi-pings: when a non-Wolf-Pack character dies in a PvP-zone broadcast (even to an NPC), the bot now gives the `@PVP` role a heads-up ping. Rate-limited to once per 10 min so flurries don\'t spam. Wolf-Pack-death backup pings and our-kill celebration posts unchanged.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

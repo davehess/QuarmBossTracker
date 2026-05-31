@@ -2685,6 +2685,18 @@ function _isPvpDupe(b) {
   return false;
 }
 
+// Cooldown for the informational @PVP ping on non-WP deaths. The message
+// always posts; the @PVP mention only fires once per N minutes so a flurry
+// of contested-zone deaths doesn't spam everyone with the role.
+const PVP_FYI_PING_COOLDOWN_MS = 10 * 60 * 1000;
+let _lastPvpFyiPingAt = 0;
+function _shouldFireFyiPing() {
+  const now = Date.now();
+  if (now - _lastPvpFyiPingAt < PVP_FYI_PING_COOLDOWN_MS) return false;
+  _lastPvpFyiPingAt = now;
+  return true;
+}
+
 async function _handleAgentPvp(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -2819,8 +2831,13 @@ async function _handleAgentPvp(req, res) {
         const mention = pvpRole ? `<@&${pvpRole.id}> ` : '';
         content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
       } else {
-        // NPC kill or other guild — plain notice
-        content = `☠️ ${text}`;
+        // NPC kill or other-guild kill — informational. Still worth a
+        // @PVP heads-up since it means PvP-relevant activity is happening
+        // somewhere we care about. Rate-limited to 1 ping per 10 min so a
+        // flurry of contested-zone deaths doesn't spam the role.
+        const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
+        const mention = (pvpRole && _shouldFireFyiPing()) ? `<@&${pvpRole.id}> ` : '';
+        content = `${mention}☠️ ${text}`;
       }
 
       const sent = await ch.send({ content });
