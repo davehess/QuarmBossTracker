@@ -223,22 +223,33 @@ def render(size=MASTER):
 
 
 def main():
-    out = Path('apps/mimic/build')
-    out.mkdir(parents=True, exist_ok=True)
+    # build/  → electron-builder buildResources (NOT shipped inside the asar).
+    #          Used for the .exe/.app icon at packaging time.
+    # assets/ → runtime files SHIPPED with the app. main.js loads tray.png
+    #           from here so the tray icon is available after install.
+    build_dir  = Path('apps/mimic/build')
+    assets_dir = Path('apps/mimic/assets')
+    build_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir.mkdir(parents=True, exist_ok=True)
 
     master = render(MASTER)
 
-    master.resize((512, 512), Image.LANCZOS).save(out / 'icon.png', 'PNG')
-    master.resize((16,  16),  Image.LANCZOS).save(out / 'tray.png', 'PNG')
-    master.resize((32,  32),  Image.LANCZOS).save(out / 'tray@2x.png', 'PNG')
-
+    # buildResources (electron-builder)
+    master.resize((512, 512), Image.LANCZOS).save(build_dir / 'icon.png', 'PNG')
     ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48),
                  (64, 64), (128, 128), (256, 256)]
-    master.save(out / 'icon.ico', sizes=ico_sizes)
+    master.save(build_dir / 'icon.ico', sizes=ico_sizes)
+
+    # runtime assets (shipped in asar)
+    master.resize((16, 16), Image.LANCZOS).save(assets_dir / 'tray.png', 'PNG')
+    master.resize((32, 32), Image.LANCZOS).save(assets_dir / 'tray@2x.png', 'PNG')
+    # Also a 256 preview that we can use in the dashboard / about pages later.
+    master.resize((256, 256), Image.LANCZOS).save(assets_dir / 'icon-256.png', 'PNG')
 
     print('wrote:')
-    for p in ['icon.png', 'icon.ico', 'tray.png', 'tray@2x.png']:
-        fp = out / p
+    for p in ['build/icon.png', 'build/icon.ico',
+              'assets/tray.png', 'assets/tray@2x.png', 'assets/icon-256.png']:
+        fp = Path('apps/mimic') / p
         print(f'  {fp}  ({fp.stat().st_size} bytes)')
 
 

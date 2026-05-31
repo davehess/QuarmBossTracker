@@ -27,6 +27,11 @@ const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
 
+// Hide the default File/Edit/View/Window/Help menubar — this is a focused
+// tray app, those entries just look unfinished. Must run before window
+// creation so it applies to all BrowserWindows.
+Menu.setApplicationMenu(null);
+
 // electron-updater is optional in dev (not installed when running `electron .`
 // without an npm install). Tolerate its absence so unpacked launches still work.
 let autoUpdater = null;
@@ -281,10 +286,18 @@ function tooltipFor(s) {
 }
 
 function makeTrayIcon() {
-  // 16x16 wolf-ish dot — a real icon ships in build/ for packaged builds.
-  const img = nativeImage.createFromDataURL(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOElEQVR42mNgGAWjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFIyCUTAKRsEoGAWjYBQAAAyEAAH8m0r3AAAAAElFTkSuQmCC'
-  );
+  // Load the real wolf-in-mimic icon from assets/. Electron picks up the
+  // @2x sibling automatically on high-DPI displays. Falls back to a plain
+  // dot if the file is missing (dev mode without a built icon).
+  const iconPath = path.join(__dirname, 'assets', 'tray.png');
+  let img;
+  if (fs.existsSync(iconPath)) {
+    img = nativeImage.createFromPath(iconPath);
+  } else {
+    img = nativeImage.createFromDataURL(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOElEQVR42mNgGAWjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFIyCUTAKRsEoGAWjYBQAAAyEAAH8m0r3AAAAAElFTkSuQmCC'
+    );
+  }
   tray = new Tray(img);
   tray.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
   buildTrayMenu();
@@ -385,6 +398,13 @@ function safeCheckForUpdates(verbose) {
 }
 function wireAutoUpdater() {
   if (!autoUpdater) return;
+  // Pin Mimic to its own update channel so this repo's other releases (bot
+  // v2.x.y, agent v2.x.y) never get mistaken for Mimic updates. The channel
+  // name matches the publish-config `channel` field in package.json, which
+  // makes electron-builder emit `mimic-beta.yml` instead of `latest.yml`.
+  // Releases without that file are invisible to the updater.
+  autoUpdater.channel = 'mimic-beta';
+  autoUpdater.allowPrerelease = true;
   autoUpdater.autoDownload = true;
   autoUpdater.on('update-available', (info) => {
     appendAgentLog(`[updater] update available: v${info && info.version}\n`);
