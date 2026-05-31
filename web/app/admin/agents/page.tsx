@@ -67,6 +67,33 @@ async function loadData() {
   };
 }
 
+type MimicRelease = {
+  tag_name:     string;
+  name:         string;
+  html_url:     string;
+  published_at: string | null;
+  prerelease:   boolean;
+  assets:       { name: string; browser_download_url: string; size: number; download_count: number }[];
+};
+
+// Fetch Mimic releases from GitHub. Cached for 5 min — at 60 anonymous
+// req/h this is well under the limit even with many officers looking.
+async function loadMimicReleases(): Promise<MimicRelease[]> {
+  try {
+    const res = await fetch(
+      'https://api.github.com/repos/davehess/QuarmBossTracker/releases?per_page=20',
+      { headers: { Accept: 'application/vnd.github+json' }, next: { revalidate: 300 } },
+    );
+    if (!res.ok) return [];
+    const all = (await res.json()) as MimicRelease[];
+    return all
+      .filter(r => r.tag_name.startsWith('mimic-v'))
+      .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
+  } catch {
+    return [];
+  }
+}
+
 type CharSummary = {
   character: string;
   lastUpload: string;
@@ -144,7 +171,10 @@ function fmtTs(iso: string | null): string {
 }
 
 export default async function AdminAgentsPage() {
-  const { uploads, backfills } = await loadData();
+  const [{ uploads, backfills }, mimicReleases] = await Promise.all([
+    loadData(),
+    loadMimicReleases(),
+  ]);
   const summaries = summarize(uploads);
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
@@ -211,6 +241,77 @@ export default async function AdminAgentsPage() {
             ))}
           </div>
         )}
+      </section>
+
+      {/* Mimic — Electron desktop client. Mostly informational until the
+          agent identifies itself as Mimic in agent_state; for now we pull
+          beta-channel state from GitHub releases. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold mb-1">🐺 Mimic <span className="text-[10px] uppercase tracking-widest text-blue ml-1">beta</span></h2>
+        <p className="text-sm text-dim leading-6">
+          The Electron desktop client. Wraps the same <code>wolfpack-logsync</code> agent in a
+          native shell with a DPS overlay + trigger TTS, bundles its own Node runtime, and
+          auto-updates via the <code className="text-blue">mimic-beta</code> channel. Downloads at{' '}
+          <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">wolfpack.quest/mimic</a>{' '}
+          (stable redirect to the latest beta).
+        </p>
+
+        {mimicReleases.length === 0 ? (
+          <EmptyHint>
+            Couldn&apos;t reach the GitHub API to list Mimic releases (rate limit or transient).
+            The download link still works.
+          </EmptyHint>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
+              <Stat label="Latest beta" value={1} color="text-blue" />
+              <Stat label="Total betas cut" value={mimicReleases.length} />
+              <Stat
+                label="Installer size (MB)"
+                value={Math.round((mimicReleases[0]?.assets?.find(a => /\.exe$/i.test(a.name))?.size ?? 0) / (1024 * 1024))}
+              />
+              <Stat
+                label="Downloads (latest)"
+                value={mimicReleases[0]?.assets?.find(a => /\.exe$/i.test(a.name))?.download_count ?? 0}
+                color="text-green"
+              />
+            </div>
+
+            <div className="mt-5">
+              <div className="text-xs text-dim uppercase tracking-widest mb-2">Recent releases</div>
+              <div className="space-y-2">
+                {mimicReleases.slice(0, 6).map((r, i) => {
+                  const exe   = r.assets.find(a => /\.exe$/i.test(a.name));
+                  const isLatest = i === 0;
+                  return (
+                    <div key={r.tag_name} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs border-l-2 border-border pl-3 py-1 hover:border-blue/60">
+                      <span className={isLatest ? 'text-text font-semibold' : 'text-text'}>{r.tag_name}</span>
+                      {isLatest && <span className="text-[9px] uppercase tracking-widest text-green border border-green/50 rounded px-1.5 py-0.5">latest</span>}
+                      <span className="text-dim">{fmtTs(r.published_at)}</span>
+                      {exe ? (
+                        <>
+                          <a href={r.html_url} target="_blank" rel="noreferrer" className="text-blue hover:underline ml-auto">release notes ↗</a>
+                          <a href={exe.browser_download_url} className="text-blue hover:underline" title={`${exe.name} (${Math.round(exe.size / 1024 / 1024)}MB · ${exe.download_count} dl)`}>installer ↗</a>
+                        </>
+                      ) : (
+                        <span className="text-orange ml-auto text-[10px]">no .exe attached (build failed?)</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="mt-5 text-xs text-dim leading-6 border-t border-border/60 pt-4">
+          <div className="text-text mb-1">Officer ops cheat-sheet</div>
+          <ul className="list-disc list-inside space-y-1">
+            <li>Tester reports the engine won&apos;t start? On Mimic v0.1.0-beta.5+ the loading screen shows the agent log inline with a copy button — ask them to paste it.</li>
+            <li>Tester stuck on a pre-beta.3 version? Auto-update was broken before the <code className="text-blue">mimic-beta</code> channel landed. Have them grab a fresh installer from <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">/mimic</a>; settings + state preserved across install.</li>
+            <li>Per-tester fleet visibility (Mimic vs Parser.bat) requires the agent to identify itself in <code>agent_state</code>; planned for a follow-up. Until then this section is informational and the Active table below mixes both clients.</li>
+          </ul>
+        </div>
       </section>
 
       {/* Active uploaders */}
