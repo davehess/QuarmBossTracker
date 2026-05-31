@@ -125,28 +125,33 @@ async function loadCounters() {
 
   // ── Malthur's Bounty — stacks of food + water distributed. Recipient-side
   // detector means each member's agent reports what THEY received; summing
-  // approximates total stacks Malthur put out.
+  // approximates total stacks Malthur put out. Carries an honest 420-stack
+  // founders' baseline (per owner request — joke math, stated in the sub) so
+  // the card reads 420 today and ticks up from there.
+  const MALTHUR_BASELINE = 420;
   try {
     const [{ count: food }, { count: water }] = await Promise.all([
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_food_received'),
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_water_received'),
     ]);
-    const total = (food ?? 0) + (water ?? 0);
+    const captured = (food ?? 0) + (water ?? 0);
+    const baselineNote = `starts at ${MALTHUR_BASELINE} (you know why)`;
     counters.push({
       label: "Malthur's Bounty",
       emoji: '🍞',
-      value: total,
-      sub: total > 0
-        ? `${(food ?? 0).toLocaleString()} burnt bread · ${(water ?? 0).toLocaleString()} water — across every opt-in log`
-        : 'no provisions captured yet — agent v2.4.30+ collects these from recipient lines',
+      value: captured + MALTHUR_BASELINE,
+      sub: captured > 0
+        ? `${baselineNote} · ${captured.toLocaleString()} captured (${(food ?? 0).toLocaleString()} 🍞 burnt bread + ${(water ?? 0).toLocaleString()} 💧 water)`
+        : `${baselineNote} · agent v2.4.30+ will tick this up from recipient lines.`,
     });
   } catch (err) {
     counters.push({
       label: "Malthur's Bounty",
       emoji: '🍞',
-      value: 0,
-      sub: 'query failed: ' + (err instanceof Error ? err.message : String(err)),
+      value: MALTHUR_BASELINE,
+      sub: `starts at ${MALTHUR_BASELINE} (you know why) · captured count unavailable`,
     });
+    void err;
   }
 
   return { counters, kyinen: { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone } };
