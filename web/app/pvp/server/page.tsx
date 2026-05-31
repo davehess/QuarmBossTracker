@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { userTz, fmtDateOnly } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,6 +112,7 @@ export default async function ServerPvpPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp/server');
 
+  const tz = await userTz();
   const { rows, totals, error } = await loadServerLeaderboard();
   if (error) {
     return (
@@ -194,7 +196,7 @@ export default async function ServerPvpPage() {
                         : <span className="text-dim">—</span>}
                     </td>
                     <td className="py-1 pr-2 text-right text-dim">
-                      {new Date(r.last).toLocaleDateString()}
+                      {fmtDateOnly(r.last, tz)}
                     </td>
                   </tr>
                 );
