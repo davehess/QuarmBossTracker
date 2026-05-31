@@ -91,31 +91,39 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   const admin = supabaseAdmin();
   const { data: pack } = await admin
     .from('wolfpack_members')
-    .select('discord_id, nickname, global_name')
+    .select('discord_id, nickname, global_name, merged_into_discord_id')
     .eq('user_id', userId)
     .maybeSingle();
   if (!pack?.discord_id) return { discordId: null, nickname: pack?.nickname ?? null, chars: [] };
 
+  // Household: the signed-in account plus every Discord account that has
+  // declared itself merged-into this one (officer-approved aliases in
+  // wolfpack_members.merged_into_discord_id). Allows a person with multiple
+  // Discord identities to see all their characters under one /me without
+  // touching characters.discord_id. If the signed-in account is itself an
+  // alias, treat the primary as the household root.
+  const householdRoot = pack.merged_into_discord_id || pack.discord_id;
+  const { data: aliases } = await admin
+    .from('wolfpack_members')
+    .select('discord_id')
+    .or(`discord_id.eq.${householdRoot},merged_into_discord_id.eq.${householdRoot}`);
+  const householdIds = new Set(
+    ((aliases ?? []) as { discord_id: string }[]).map(r => r.discord_id).filter(Boolean)
+  );
+  householdIds.add(pack.discord_id);
+  householdIds.add(householdRoot);
+
   // Pull every roster character once — small set (~242 today) — and walk the
-  // OpenDKP family from any character ANCHORED to this Discord ID.
-  //
-  // Why family-walk instead of just `where discord_id = me`: the auto-link
-  // sweep only fires when a Discord nickname token unambiguously matches the
-  // character name, so an alt whose name doesn't appear in the owner's
-  // nickname (e.g. Hitya's nickname is "Hitya" → links Hitya, but Canopy is
-  // a SEPARATE row whose own discord_id never auto-linked to Hitya's
-  // account). OpenDKP's main_name IS the source of truth for which characters
-  // belong to the same player, so we use it: any char whose root
-  // (main_name when set, else name) matches the root of any anchored
-  // character is part of the family.
+  // OpenDKP family from any character ANCHORED to ANY discord_id in the
+  // household.
   const { data: allChars } = await admin
     .from('characters')
     .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm')
     .eq('guild_id', 'wolfpack');
   const all = (allChars ?? []) as (CharRow & { discord_id: string | null })[];
 
-  // 1) Anchored characters — directly linked to this Discord user.
-  const anchored = all.filter(c => c.discord_id === pack.discord_id);
+  // 1) Anchored characters — directly linked to ANY discord_id in the household.
+  const anchored = all.filter(c => c.discord_id && householdIds.has(c.discord_id));
   // 2) Family roots — lowercased main_name, falling back to the char's own name.
   const familyRoots = new Set(anchored.map(c => (c.main_name || c.name).toLowerCase()));
   if (familyRoots.size === 0) return { discordId: pack.discord_id, nickname: pack.nickname ?? null, chars: [] };
