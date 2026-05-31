@@ -3,29 +3,64 @@
 <style>
   body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px}
   h1{color:#f6c365;font-size:16px;font-weight:normal;margin:0 0 4px}
-  .sub{color:#8b949e;font-size:11px;margin-bottom:18px}
+  h2{color:#58a6ff;font-size:12px;font-weight:normal;text-transform:uppercase;letter-spacing:0.08em;margin:22px 0 8px;border-bottom:1px solid #2a3140;padding-bottom:4px}
+  .sub{color:#8b949e;font-size:11px;margin-bottom:8px}
   label{display:block;color:#8b949e;font-size:11px;margin:12px 0 4px}
-  input{width:100%;box-sizing:border-box;background:#161b22;border:1px solid #2a3140;border-radius:4px;
+  input[type=text]{width:100%;box-sizing:border-box;background:#161b22;border:1px solid #2a3140;border-radius:4px;
     color:#c9d1d9;padding:7px 9px;font-family:inherit;font-size:12px}
-  .hint{color:#6b7280;font-size:10px;margin-top:3px}
-  button{margin-top:18px;background:#1f6feb;border:none;color:#fff;padding:8px 16px;border-radius:4px;cursor:pointer;font-family:inherit}
+  .hint{color:#6b7280;font-size:10px;margin-top:3px;line-height:1.4}
+  .row{display:flex;align-items:center;gap:8px;margin:8px 0}
+  .row input[type=checkbox]{accent-color:#1f6feb}
+  .row label{margin:0;color:#c9d1d9;font-size:12px}
+  button{margin-top:14px;background:#1f6feb;border:none;color:#fff;padding:8px 16px;border-radius:4px;cursor:pointer;font-family:inherit}
   .ok{color:#56d364;font-size:11px;margin-left:10px}
+  .lock{color:#f6c365}
 </style></head>
 <body>
   <h1>🐺 Mimic Settings</h1>
   <div class="sub">Stored locally in your user profile. Mimic brings its own Node runtime — nothing else to install.</div>
 
-  <label>EQ folder (optional — auto-detected if blank)</label>
-  <input id="eqPath" placeholder="C:\\Quarm  or  C:\\Program Files\\EverQuest" />
-  <div class="hint">Where your eqlog_*_pq.proj.txt files live.</div>
+  <h2>Wolf Pack connection</h2>
+  <div class="sub">Mimic runs <b>local-only by default</b> — dashboard and overlays work without a token. Add a token to share your parses with the guild and unlock your stats on wolfpack.quest.</div>
+  <label>Agent token</label>
+  <input id="token" type="text" placeholder="paste from /token in Discord, or leave blank for local-only" />
+  <div class="hint">Run <code>/token</code> in the Wolf Pack Discord. Blank = local only (no uploads).</div>
 
   <label>Bot URL</label>
-  <input id="botUrl" />
+  <input id="botUrl" type="text" />
   <div class="hint">Leave the default unless an officer told you otherwise.</div>
 
-  <label>Agent token</label>
-  <input id="token" placeholder="paste from /token in Discord" />
-  <div class="hint">Run /token in the Wolf Pack Discord to get the current value.</div>
+  <h2>EverQuest folder</h2>
+  <label>EQ folder (optional — auto-detected if blank)</label>
+  <input id="eqPath" type="text" placeholder="C:\Quarm  or  C:\Program Files\EverQuest" />
+  <div class="hint">Where your eqlog_*_pq.proj.txt files live.</div>
+
+  <h2>Local UI</h2>
+  <div class="row">
+    <input id="quietMode" type="checkbox" />
+    <label for="quietMode">I use EQLogParser / another parser — Quiet mode (hide HUD + TTS, still upload)</label>
+  </div>
+  <div class="hint">Use this if another tool is already showing you a DPS panel and trigger alerts. Mimic keeps uploading silently so your guild stats stay current.</div>
+
+  <div class="row">
+    <input id="showHud" type="checkbox" />
+    <label for="showHud">Show DPS HUD overlay</label>
+  </div>
+  <div class="row">
+    <input id="enableTriggerTts" type="checkbox" />
+    <label for="enableTriggerTts">Trigger alerts (text-to-speech)</label>
+  </div>
+  <div class="row">
+    <input id="overlayClickThrough" type="checkbox" />
+    <label for="overlayClickThrough">HUD click-through (clicks pass to the game)</label>
+  </div>
+
+  <h2>Private</h2>
+  <div class="row">
+    <input id="tellsEnabled" type="checkbox" />
+    <label for="tellsEnabled"><span class="lock">🔒 PRIVATE</span> &nbsp; Show my /tells in a local overlay <span style="color:#6b7280">(v0.2 — toggle now to opt-in early)</span></label>
+  </div>
+  <div class="hint">Tells stay on your machine. They are never uploaded to the bot and never visible to anyone else. Display window arrives in v0.2.</div>
 
   <div>
     <button id="save">Save &amp; (re)start engine</button>
@@ -38,12 +73,22 @@
     document.getElementById('eqPath').value = c.eqPath || '';
     document.getElementById('botUrl').value = c.botUrl || 'https://wolfpackparse.up.railway.app/api/agent/encounter';
     document.getElementById('token').value  = c.token || '';
+    document.getElementById('quietMode').checked         = !!c.quietMode;
+    document.getElementById('showHud').checked           = !!c.showHud;
+    document.getElementById('enableTriggerTts').checked  = !!c.enableTriggerTts;
+    document.getElementById('overlayClickThrough').checked = !!c.overlayClickThrough;
+    document.getElementById('tellsEnabled').checked      = !!c.tellsEnabled;
   }
   document.getElementById('save').onclick = async () => {
     await window.mimic.saveConfig({
       eqPath: document.getElementById('eqPath').value.trim() || null,
       botUrl: document.getElementById('botUrl').value.trim(),
       token:  document.getElementById('token').value.trim() || null,
+      quietMode:           document.getElementById('quietMode').checked,
+      showHud:             document.getElementById('showHud').checked,
+      enableTriggerTts:    document.getElementById('enableTriggerTts').checked,
+      overlayClickThrough: document.getElementById('overlayClickThrough').checked,
+      tellsEnabled:        document.getElementById('tellsEnabled').checked,
     });
     await window.mimic.relaunchAgent();
     const ok = document.getElementById('ok'); ok.textContent = '✓ saved — engine restarting';

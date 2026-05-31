@@ -4,12 +4,19 @@
   "private": true,
   "description": "Wolf Pack Mimic — Electron desktop client (codename mimic). Wraps the wolfpack-logsync agent in a native shell with a real window + always-on-top overlay. Bundles its own Node runtime, so no separate Node install. BETA.",
   "author": "Wolf Pack EQ",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davehess/QuarmBossTracker.git"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis --publish never",
     "dist:dir": "electron-builder --dir",
     "postinstall": "node scripts/stage-agent.js"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -29,6 +36,13 @@
     ],
     "extraResources": [
       { "from": "staged-agent", "to": "agent" }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "davehess",
+        "repo": "QuarmBossTracker"
+      }
     ],
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],

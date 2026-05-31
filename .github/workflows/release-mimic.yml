@@ -59,5 +59,9 @@ jobs:
             Wolf Pack Mimic — Electron desktop client (BETA).
             Bundles its own Node runtime; no separate Node.js install needed.
             Not code-signed yet — Windows SmartScreen will warn: More info → Run anyway.
+
+            Auto-updates: once installed, future Mimic releases land in place via electron-updater. No re-download.
           files: |
             apps/mimic/dist/*.exe
+            apps/mimic/dist/latest.yml
+            apps/mimic/dist/*.blockmap
