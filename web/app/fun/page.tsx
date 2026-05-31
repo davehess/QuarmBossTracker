@@ -7,6 +7,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { userTz, fmtAbs } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -161,6 +162,7 @@ export default async function FunPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/fun');
 
+  const tz = await userTz();
   const { counters, kyinen } = await loadCounters();
 
   return (
@@ -181,6 +183,7 @@ export default async function FunPage() {
         executions={kyinen.executions}
         latest={kyinen.latest}
         zone={kyinen.zone}
+        tz={tz}
       />
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -224,16 +227,14 @@ export default async function FunPage() {
 // Visual: double gold frame with inset glow + inline SVG of an actual
 // guillotine, since there's no native Unicode guillotine character. Renders
 // even at 0 executions ("…yet.") because the card is the joke.
-function KyinenExecutionCard({ executions, latest, zone }: {
+function KyinenExecutionCard({ executions, latest, zone, tz }: {
   executions: number;
   latest: string | null;
   zone: string | null;
+  tz: string;
 }) {
   const dateLine = latest
-    ? `Last execution: ${new Date(latest).toLocaleString('en-US', {
-        month: 'short', day: 'numeric', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', hour12: false,
-      })}${zone ? ` · ${zone}` : ''}`
+    ? `Last execution: ${fmtAbs(latest, tz)}${zone ? ` · ${zone}` : ''}`
     : 'Awaiting the inaugural execution.';
 
   return (

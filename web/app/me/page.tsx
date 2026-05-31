@@ -26,6 +26,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { userTz, fmtAbs, relTime, fmtDateOnly } from '@/lib/timezone';
 import ExclusionToggles from './ExclusionToggles';
 
 export const dynamic = 'force-dynamic';
@@ -314,27 +315,9 @@ async function loadCharStats(name: string): Promise<CharStats> {
   };
 }
 
-function fmtTs(iso: string | null): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  });
-}
-
-function relTime(iso: string | null): string {
-  if (!iso) return '—';
-  const ms = Date.now() - new Date(iso).getTime();
-  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-  if (days === 0) {
-    const hours = Math.floor(ms / (60 * 60 * 1000));
-    return hours <= 0 ? 'just now' : `${hours}h ago`;
-  }
-  if (days === 1) return 'yesterday';
-  if (days < 30)  return `${days}d ago`;
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
-}
+// fmtTs/relTime now sourced from @/lib/timezone so every page renders in the
+// user's chosen zone (default Eastern). MePage threads `tz` through to every
+// site that prints an absolute time.
 
 // Per-character sync heartbeat from agent_uploads. The encounter endpoint is
 // the freshest signal: it fires per-encounter (live raids) and per-backfill,
@@ -364,6 +347,8 @@ export default async function MePage() {
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/signin?next=/me');
+
+  const tz = await userTz();
 
   const { discordId, nickname, chars: allChars } = await loadOwnedCharacters(user.id);
 
@@ -608,7 +593,7 @@ export default async function MePage() {
               <Panel title="Agent uploads">
                 <Row label="Total contributions">{s.uploadCount.toLocaleString()}</Row>
                 <Row label="Last upload">
-                  {s.lastUpload ? <>{relTime(s.lastUpload)} <span className="text-dim text-[10px]">· {fmtTs(s.lastUpload)}</span></> : '—'}
+                  {s.lastUpload ? <>{relTime(s.lastUpload)} <span className="text-dim text-[10px]">· {fmtAbs(s.lastUpload, tz)}</span></> : '—'}
                 </Row>
                 <Row label="Latest agent version">
                   {s.latestAgentVersion
@@ -689,7 +674,7 @@ export default async function MePage() {
                 )}
                 {s.memberSince && (
                   <div className="mt-1 text-[10px] text-dim">
-                    Counted from <span className="text-text">{new Date(s.memberSince).toLocaleDateString()}</span>
+                    Counted from <span className="text-text">{fmtDateOnly(s.memberSince, tz)}</span>
                     {s.floorSource && (
                       <span className="text-dim/70"> · floor: {s.floorSource.replace('_', ' ')}</span>
                     )}
@@ -707,7 +692,7 @@ export default async function MePage() {
                         <Link href={`/parses/${e.id}`} className="text-blue hover:underline truncate">
                           {e.npc_name || 'unknown'}
                         </Link>
-                        <span className="text-dim text-[10px] whitespace-nowrap">{fmtTs(e.started_at)}</span>
+                        <span className="text-dim text-[10px] whitespace-nowrap">{fmtAbs(e.started_at, tz)}</span>
                         <span className="text-text text-[10px] whitespace-nowrap w-20 text-right">{e.damage.toLocaleString()}</span>
                       </li>
                     ))}

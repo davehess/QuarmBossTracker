@@ -13,6 +13,7 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import TellNotifications from './TellNotifications';
+import { userTz, fmtShort, relTime } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,29 +87,15 @@ function buildConversations(tells: TellRow[]): Conversation[] {
   return [...by.values()].sort((a, b) => b.lastTs.localeCompare(a.lastTs));
 }
 
-function fmtTs(iso: string): string {
-  return new Date(iso).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
-  });
-}
-
-function relTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.floor(ms / 60000);
-  if (min < 1)  return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const h = Math.floor(min / 60);
-  if (h < 24)   return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 30)   return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
+// fmtTs/relTime now come from @/lib/timezone (imported at top of file via
+// the userTz fmtShort/relTime helpers).
 
 export default async function TellsPage() {
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/signin?next=/me/tells');
 
+  const tz = await userTz();
   const { discordId, chars } = await loadOwnerCharacters(user.id);
   const optedIn = chars.filter(c => c.tell_relay);
   const tells   = discordId ? await loadTells(discordId) : [];
@@ -213,7 +200,7 @@ export default async function TellsPage() {
                 <span className="text-dim shrink-0">:</span>
                 <span className="text-text break-words min-w-0 flex-1">{t.text}</span>
                 <span className="text-dim/70 text-[10px] whitespace-nowrap shrink-0" title={t.ts}>
-                  {fmtTs(t.ts)}{t.dm_relayed_at && <span title="DM'd to you">{' '}🔔</span>}
+                  {fmtShort(t.ts, tz)}{t.dm_relayed_at && <span title="DM'd to you">{' '}🔔</span>}
                 </span>
               </li>
             ))}
