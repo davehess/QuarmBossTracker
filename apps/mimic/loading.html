@@ -75,6 +75,20 @@
   .actions .skip{background:transparent;border:1px solid #2a3140;color:#8b949e;
     padding:9px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px}
   .actions .skip:hover{border-color:#8b949e;color:#c9d1d9}
+
+  /* Diagnostics panel — only shown when engine fails to come up */
+  .diag{display:none;margin-top:16px;background:#1a1212;border:1px solid #a3260a;
+    border-radius:6px;padding:12px}
+  .diag.show{display:block}
+  .diag h3{margin:0 0 4px;color:#f87171;font-size:12px;font-weight:600}
+  .diag p{margin:0 0 8px;color:#c9d1d9;font-size:11px;line-height:1.5}
+  .diag pre{margin:0;padding:8px 10px;background:#0e1116;border:1px solid #2a3140;
+    border-radius:4px;color:#8b949e;font-size:10px;line-height:1.4;overflow:auto;max-height:240px;white-space:pre-wrap;word-break:break-word}
+  .diag-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .diag-row button{background:#1f6feb;border:none;color:#fff;padding:6px 12px;
+    border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px}
+  .diag-row button.ghost{background:transparent;border:1px solid #2a3140;color:#8b949e}
+  .diag-row button.ghost:hover{border-color:#58a6ff;color:#58a6ff}
 </style></head>
 <body>
 <div class="wrap">
@@ -153,6 +167,17 @@
     <button id="openDashboard" class="primary" disabled>Waiting for engine…</button>
     <span class="countdown" id="countdown"></span>
     <button id="skipNow" class="skip" title="Open dashboard immediately">Skip & open now</button>
+  </div>
+
+  <div id="diag" class="diag">
+    <h3>⚠ Engine didn't come up</h3>
+    <p id="diagSummary">The parser engine failed to bind to its port within 40 seconds. Last log lines below — paste these to me if you're not sure what happened.</p>
+    <pre id="diagLog">(no log captured yet)</pre>
+    <div class="diag-row">
+      <button id="diagRetry">Retry boot</button>
+      <button id="diagCopy" class="ghost">Copy log to clipboard</button>
+      <button id="diagDashboard" class="ghost">Open dashboard anyway</button>
+    </div>
   </div>
 
 </div>
@@ -237,13 +262,39 @@
         setStep(2, 'error');
         setStep(3, 'error');
         const btn = $('openDashboard');
-        btn.textContent = 'Engine failed to start — retry?';
-        btn.disabled = false;
-        btn.onclick = () => { location.reload(); };
-        $('countdown').innerHTML = 'Engine didn\'t come up in 40s. Check tray → Service → Show agent log.';
+        btn.textContent = 'Engine failed to start';
+        btn.disabled = true;
+        $('countdown').textContent = '';
+        showDiagnostics();
       }
     }, 500);
   }
+
+  // ── Diagnostics (only shown on engine failure) ──────────────────────────
+  async function showDiagnostics(){
+    const d = $('diag');
+    d.classList.add('show');
+    try {
+      const tail = await window.mimic.getAgentLogTail(120);
+      $('diagLog').textContent = (tail && tail.trim()) || '(agent log is empty — process may not have started at all)';
+    } catch (e) {
+      $('diagLog').textContent = 'Failed to read log: ' + (e && e.message ? e.message : String(e));
+    }
+    d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  // The diag buttons are wired here once, at script start, since DOM nodes
+  // exist regardless of whether the panel is visible.
+  setTimeout(() => {
+    const r = $('diagRetry');     if (r) r.onclick    = () => location.reload();
+    const c = $('diagCopy');      if (c) c.onclick    = () => {
+      const txt = $('diagLog').textContent || '';
+      navigator.clipboard.writeText(txt).then(() => {
+        c.textContent = '✓ copied';
+        setTimeout(() => { c.textContent = 'Copy log to clipboard'; }, 1500);
+      }).catch(() => { c.textContent = '✕ copy failed'; });
+    };
+    const od = $('diagDashboard'); if (od) od.onclick = () => openDashboard();
+  }, 0);
 
   // ── Hydrate config + wire cards ──────────────────────────────────────────
   async function hydrate(){

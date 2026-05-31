@@ -20,4 +20,7 @@ contextBridge.exposeInMainWorld('mimic', {
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  // Diagnostics.
+  getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),
 });

@@ -496,6 +496,10 @@ ipcMain.handle('open-dashboard', () => {
   return true;
 });
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); return true; });
+ipcMain.handle('get-agent-log-tail', (_e, lines) => {
+  const n = Math.max(1, Math.min(500, lines || 80));
+  return logTail.slice(-n).join('');
+});
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
