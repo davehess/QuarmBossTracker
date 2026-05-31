@@ -3,6 +3,7 @@
 // Host-based redirects for sibling subdomains on wolfpack.quest:
 //   parser.wolfpack.quest   → TinyURL pointing at the parser installer
 //   discord.wolfpack.quest  → guild Discord invite (DISCORD_INVITE_URL env var)
+//   mimic.wolfpack.quest    → /mimic route (auto-resolves latest beta release)
 //
 // These rules are duplicated in vercel.json so the redirect fires at the
 // Vercel edge regardless of whether Next.js framework detection ran (we
@@ -42,6 +43,12 @@ module.exports = {
         source: '/:path*',
         has: [{ type: 'host', value: 'discord.wolfpack.quest' }],
         destination: DISCORD_INVITE_URL,
+        permanent: false,
+      },
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'mimic.wolfpack.quest' }],
+        destination: 'https://wolfpack.quest/mimic',
         permanent: false,
       },
     ];
