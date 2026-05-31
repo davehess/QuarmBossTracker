@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>overlay</title>
+<style>
+  /* Transparent always-on-top overlay. The window itself is frameless +
+     transparent (set in main.js); this just paints a translucent HUD. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
+  .hud{background:rgba(14,17,22,0.78);border:1px solid rgba(88,166,255,0.4);
+    border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px)}
+  .title{font-size:10px;color:#58a6ff;letter-spacing:0.1em;text-transform:uppercase;
+    display:flex;justify-content:space-between}
+  .boss{font-size:12px;color:#f6c365;margin:4px 0 6px}
+  ul{list-style:none;margin:0;padding:0}
+  li{display:flex;justify-content:space-between;font-size:11px;padding:1px 0}
+  li .n{color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
+  li .d{color:#56d364}
+  .dim{color:#6b7280;font-size:10px}
+  .conn{font-size:9px}
+  .conn.ok{color:#56d364}
+  .conn.bad{color:#f87171}
+</style></head>
+<body>
+  <div class="hud">
+    <div class="title"><span>🐺 Mimic — live</span><span id="conn" class="conn bad">○</span></div>
+    <div class="boss" id="boss">—</div>
+    <ul id="deeps"></ul>
+    <div class="dim" id="empty">waiting for combat…</div>
+  </div>
+<script>
+  // Poll the agent's /api/state and render the top damage + current boss. The
+  // agent exposes the same `stats` object the dashboard uses; we read the
+  // fields defensively since the shape evolves across agent versions.
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  function fmt(n){ n=Number(n)||0; return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(n); }
+
+  async function tick(){
+    try{
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      const s = await r.json();
+      document.getElementById('conn').className='conn ok';
+      document.getElementById('conn').textContent='●';
+
+      // Current boss/threat — try a few likely fields.
+      const boss = (s.currentEncounterThreat && s.currentEncounterThreat.bossName)
+                 || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
+      document.getElementById('boss').textContent = boss ? boss : '—';
+
+      // Top damage: prefer a session deeps map/array; fall back gracefully.
+      let rows = [];
+      const sd = s.sessionDeeps || s.topDamage || s.deeps;
+      if (Array.isArray(sd)) rows = sd.map(d => [d.name||d.character, d.damage||d.dmg||d.total]);
+      else if (sd && typeof sd==='object') rows = Object.entries(sd).map(([k,v]) => [k, (v&&(v.damage||v.total))||v]);
+      rows = rows.filter(x=>x[0]).sort((a,b)=>(b[1]||0)-(a[1]||0)).slice(0,5);
+
+      const ul = document.getElementById('deeps');
+      ul.innerHTML = rows.map(([n,d])=>`<li><span class="n">${n}</span><span class="d">${fmt(d)}</span></li>`).join('');
+      document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
+    }catch(e){
+      const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';
+    }
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+</body></html>

@@ -1,0 +1,45 @@
+{
+  "name": "wolfpack-mimic",
+  "version": "0.1.0-beta.1",
+  "private": true,
+  "description": "Wolf Pack Mimic — Electron desktop client (codename mimic). Wraps the wolfpack-logsync agent in a native shell with a real window + always-on-top overlay. Bundles its own Node runtime, so no separate Node install. BETA.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --dir",
+    "postinstall": "node scripts/stage-agent.js"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "quest.wolfpack.mimic",
+    "productName": "Wolf Pack Mimic",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "overlay.html",
+      "triggers.html",
+      "settings.html",
+      "loading.html",
+      "renderer/**/*"
+    ],
+    "extraResources": [
+      { "from": "staged-agent", "to": "agent" }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "Wolf-Pack-Mimic-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

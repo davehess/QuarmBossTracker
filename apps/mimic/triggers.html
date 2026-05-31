@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>triggers</title>
+<style>
+  /* Centered trigger-alert overlay (GINA / DnDOverlay style). Transparent,
+     click-through, always-on-top. Flashes the trigger text big and speaks it
+     via the Web Speech API. Optional per-trigger sound url. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;
+    display:flex;align-items:center;justify-content:center}
+  #alert{
+    opacity:0; transition:opacity .15s;
+    font-size:40px; font-weight:bold; text-align:center;
+    text-shadow:0 0 8px #000, 0 0 18px rgba(246,195,101,0.8);
+    color:#f6c365; padding:0 24px;
+  }
+  #alert.show{ opacity:1; animation:pop .4s ease-out; }
+  @keyframes pop{ 0%{transform:scale(0.7)} 60%{transform:scale(1.08)} 100%{transform:scale(1)} }
+</style></head>
+<body>
+  <div id="alert"></div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  let lastTs = 0;            // newest fire ts we've already handled
+  let primed = false;        // skip the backlog on first poll
+  const el = document.getElementById('alert');
+  let hideTimer = null;
+
+  function speak(text){
+    try{
+      if (!window.speechSynthesis) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05; u.volume = 1;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
+  function playSound(url){
+    if(!url) return;
+    try{ const a = new Audio(url); a.volume = 0.9; a.play().catch(()=>{}); }catch(e){}
+  }
+  function flash(text){
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(()=>el.classList.remove('show'), 3500);
+  }
+
+  function fire(t){
+    const spoken = t.tts || t.text || t.label || 'Trigger';
+    flash(t.text || t.label || spoken);
+    speak(spoken);
+    playSound(t.sound);
+  }
+
+  async function tick(){
+    try{
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      const s = await r.json();
+      const fires = (s.recentTriggerFires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+      if (!primed){
+        // On first poll, don't replay the existing backlog — just set the cursor.
+        if (fires.length) lastTs = fires[fires.length-1].ts || 0;
+        primed = true;
+        return;
+      }
+      for (const f of fires){
+        if ((f.ts||0) > lastTs){ lastTs = f.ts; fire(f); }
+      }
+    }catch(e){ /* agent not up yet */ }
+  }
+  tick(); setInterval(tick, 700);
+</script>
+</body></html>
