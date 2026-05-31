@@ -49,21 +49,35 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {/* AuthBadge sits next to title on mobile so the nav row gets the full width */}
               <div className="sm:hidden"><AuthBadge /></div>
             </div>
-            {/* Parser download — always visible at the top so newcomers can grab
-                it without hunting. Always points at the latest GitHub release,
-                no stale links to maintain. target=_blank so people browsing
-                the site don't lose their place. */}
-            <a
-              href="https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip"
-              target="_blank"
-              rel="noreferrer"
-              className="self-start sm:self-auto inline-flex items-center gap-2 px-3 py-1.5 rounded border border-green bg-[#1a7f3733] text-green text-xs sm:text-sm hover:bg-[#1a7f3766] transition-colors whitespace-nowrap no-underline"
-              title="Download the wolfpack-logsync parser — the local agent that streams encounter data to the bot"
-            >
-              <span aria-hidden>📦</span>
-              <span>Download Parser</span>
-              <span aria-hidden className="text-dim text-[10px]">↗</span>
-            </a>
+            {/* Download buttons — always visible at the top so newcomers can
+                grab the right one without hunting. Parser = classic CLI agent
+                (proven). Mimic = new Electron desktop app (BETA, 1-click).
+                Both link to GitHub releases; Parser to /latest, Mimic to its
+                specific prerelease page so users see the beta context first. */}
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+              <a
+                href="https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-green bg-[#1a7f3733] text-green text-xs sm:text-sm hover:bg-[#1a7f3766] transition-colors whitespace-nowrap no-underline"
+                title="Download the wolfpack-logsync parser — the local agent that streams encounter data to the bot"
+              >
+                <span aria-hidden>📦</span>
+                <span>Download Parser</span>
+                <span aria-hidden className="text-dim text-[10px]">↗</span>
+              </a>
+              <a
+                href="https://github.com/davehess/QuarmBossTracker/releases/tag/mimic-v0.1.0-beta.2"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-blue bg-[#1f6feb33] text-blue text-xs sm:text-sm hover:bg-[#1f6feb66] transition-colors whitespace-nowrap no-underline"
+                title="Wolf Pack Mimic — Electron desktop app (BETA). One installer, bundles its own Node, transparent DPS overlay + trigger TTS. Coexists with the Parser. SmartScreen will warn (not code-signed yet)."
+              >
+                <span aria-hidden>🐺</span>
+                <span>Mimic <span className="text-[10px] opacity-70">BETA</span></span>
+                <span aria-hidden className="text-dim text-[10px]">↗</span>
+              </a>
+            </div>
             <div className="flex items-center gap-3 flex-wrap">
               <Nav showAdmin={showAdmin} showMe={showMe} />
               <DemoToggle />
