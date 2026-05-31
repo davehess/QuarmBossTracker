@@ -1,0 +1,63 @@
+name: Release Mimic (Electron)
+
+# Builds the Wolf Pack Mimic desktop installer on a real Windows runner and
+# attaches the .exe to a GitHub release. Triggered by a mimic-v* tag, or
+# manually from the Actions tab. This is how the BETA gets a downloadable
+# installer without anyone running electron-builder locally.
+on:
+  push:
+    tags:
+      - 'mimic-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. mimic-v0.1.0-beta.1)'
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install + stage agent
+        working-directory: apps/mimic
+        run: npm install
+        # postinstall (scripts/stage-agent.js) copies the agent into
+        # apps/mimic/staged-agent so electron-builder's extraResources bundles it.
+
+      - name: Build Windows installer
+        working-directory: apps/mimic
+        run: npm run dist
+        env:
+          # electron-builder publishes nothing by itself here; we attach below.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release with installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          prerelease: true
+          body: |
+            Wolf Pack Mimic — Electron desktop client (BETA).
+            Bundles its own Node runtime; no separate Node.js install needed.
+            Not code-signed yet — Windows SmartScreen will warn: More info → Run anyway.
+          files: |
+            apps/mimic/dist/*.exe

@@ -29,6 +29,7 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 
 let mainWindow = null;
 let overlayWindow = null;
+let triggerWindow = null;
 let settingsWindow = null;
 let tray = null;
 let agentProc = null;
@@ -190,6 +191,10 @@ function makeTrayIcon() {
         if (!overlayWindow) createOverlayWindow();
         else overlayWindow.isVisible() ? overlayWindow.hide() : overlayWindow.show();
       } },
+    { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: true, click: (mi) => {
+        if (mi.checked) { if (!triggerWindow) createTriggerOverlay(); else triggerWindow.show(); }
+        else if (triggerWindow) triggerWindow.hide();
+      } },
     { label: 'Overlay click-through', type: 'checkbox', checked: overlayClickThrough, click: (mi) => {
         overlayClickThrough = mi.checked;
         if (overlayWindow) overlayWindow.setIgnoreMouseEvents(overlayClickThrough, { forward: true });
@@ -220,6 +225,7 @@ app.whenReady().then(async () => {
 
   await launchAgent();
   createOverlayWindow();
+  createTriggerOverlay();
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });

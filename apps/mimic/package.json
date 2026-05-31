@@ -22,6 +22,7 @@
       "main.js",
       "preload.js",
       "overlay.html",
+      "triggers.html",
       "settings.html",
       "loading.html",
       "renderer/**/*"
