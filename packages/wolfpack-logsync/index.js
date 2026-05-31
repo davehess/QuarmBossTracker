@@ -6738,6 +6738,7 @@ async function main() {
         // Fun-event detection (Peopleslayer LD, Malthur provisions, future
         // CoH/DI/etc). Don't `return` after a match — fun events are pure
         // side-channel logging and the line might also feed other parsers.
+        const ldEvt = parsePeopleslayerLd(line);
         if (ldEvt && !_sourceExcluded) funEventBuffer.push(ldEvt);
         // Both Malthur counters — caster-side (only Malthur's own log,
         // ground truth) and recipient-side (every member's log, broader
