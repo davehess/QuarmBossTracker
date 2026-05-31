@@ -40,6 +40,7 @@ type Member = {
   joined_at: string | null;
   refreshed_at: string | null;
   role_names: string[] | null;
+  merged_into_discord_id: string | null;
 };
 
 type CharInfo = { name: string; className: string | null; mainName: string | null };
@@ -103,7 +104,7 @@ async function loadMembers(): Promise<MemberRow[]> {
   ] = await Promise.all([
     admin
       .from('wolfpack_members')
-      .select('discord_id, nickname, global_name, joined_at, refreshed_at, role_names')
+      .select('discord_id, nickname, global_name, joined_at, refreshed_at, role_names, merged_into_discord_id')
       .eq('is_member', true)
       .order('joined_at', { ascending: false, nullsFirst: false }),
     admin
@@ -301,6 +302,26 @@ async function linkMainToMember(formData: FormData) {
   revalidatePath('/admin/members');
 }
 
+// Server action: merge one wolfpack_members row into another, declaring the
+// FROM account is an alias of the INTO account (same person, two Discord
+// identities). Officer-only. /me walks the household so both accounts'
+// linked characters show up under either login.
+//
+// Submit fromDiscordId='' to UNMERGE (clear the alias pointer).
+async function mergeMemberInto(formData: FormData) {
+  'use server';
+  if (!(await actionAssertOfficer())) redirect('/?error=admin_required');
+  const fromDiscordId = String(formData.get('from_discord_id') || '');
+  const intoDiscordId = String(formData.get('into_discord_id') || '') || null;
+  if (!fromDiscordId) return;
+  if (intoDiscordId && intoDiscordId === fromDiscordId) return;  // self-merge blocked
+  const admin = supabaseAdmin();
+  await admin.from('wolfpack_members')
+    .update({ merged_into_discord_id: intoDiscordId })
+    .eq('discord_id', fromDiscordId);
+  revalidatePath('/admin/members');
+}
+
 type Tab = 'active' | 'visitor' | 'unlinked' | 'silent' | 'recent' | 'all';
 
 export default async function AdminMembersPage({
@@ -447,6 +468,41 @@ export default async function AdminMembersPage({
                       </form>
                     ) : (
                       <span className="text-orange text-[11px]">— none —</span>
+                    )}
+                    {/* Household merge — declare this Discord account an
+                        alias of another (same person, multiple identities).
+                        When already merged, show the unmerge button instead. */}
+                    {m.merged_into_discord_id ? (
+                      <form action={mergeMemberInto} className="mt-1.5 flex items-center gap-1.5 text-[10px]">
+                        <span className="text-dim">Alias of</span>
+                        <code className="text-text">{members.find(x => x.discord_id === m.merged_into_discord_id)?.nickname || m.merged_into_discord_id.slice(0,8)+'…'}</code>
+                        <input type="hidden" name="from_discord_id" value={m.discord_id} />
+                        <input type="hidden" name="into_discord_id" value="" />
+                        <button type="submit" className="px-1.5 py-0 rounded border border-border text-dim hover:text-orange hover:border-orange/60">unmerge</button>
+                      </form>
+                    ) : (
+                      <details className="mt-1.5 text-[10px]">
+                        <summary className="cursor-pointer text-dim hover:text-text">Merge into another Discord account…</summary>
+                        <form action={mergeMemberInto} className="mt-1 flex items-center gap-1 flex-wrap">
+                          <input type="hidden" name="from_discord_id" value={m.discord_id} />
+                          <select name="into_discord_id" required defaultValue=""
+                            className="bg-bg border border-border rounded px-1.5 py-0.5 text-[10px]">
+                            <option value="" disabled>Pick primary account…</option>
+                            {members
+                              .filter(x => x.discord_id !== m.discord_id && !x.merged_into_discord_id)
+                              .sort((a,b) => (a.nickname||'').localeCompare(b.nickname||''))
+                              .map(x => (
+                                <option key={x.discord_id} value={x.discord_id}>
+                                  {x.nickname || x.global_name || x.discord_id.slice(0,8)+'…'}
+                                </option>
+                              ))}
+                          </select>
+                          <button type="submit" className="px-1.5 py-0.5 rounded border border-blue bg-[#1f6feb] text-white">
+                            Merge
+                          </button>
+                          <span className="text-dim">— characters of both surface together on /me</span>
+                        </form>
+                      </details>
                     )}
                     <div className="text-dim text-[10px] mt-1 sm:hidden">
                       Roles: {(m.role_names ?? []).filter(r => ACTIVE_ROLES.has(r) || r === VISITOR_ROLE || r === APPLICANT_ROLE).join(', ') || '—'}
