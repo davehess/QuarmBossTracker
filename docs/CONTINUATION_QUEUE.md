@@ -103,6 +103,52 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
+### Auto-MIC detection (Phase 2 of ARI guild-messaging — design, not built)
+User ask 2026-05-31: "when you form the raid or invite someone to the raid
+after they send you a MIC message, you are the autoraidinvite MIC officer.
+If someone sends something else via tell and immediately gets a raid invite,
+ask that officer if that thing sent was the password and update the ARI
+accordingly."
+
+Mechanism: agent correlates `tell received` + `invite sent within 60s` → emits
+a `mic_correlation` event. Bot acts on it.
+
+**Agent side (next PR):**
+- New in-memory `_recentInboundTells` ring buffer (last 60s, last 20 entries).
+  Populated for ALL characters regardless of `tell_relay` setting — but
+  NEVER uploaded, NEVER persisted. Lives only for the correlation window.
+  This is the privacy compromise: we can observe tells locally without
+  exposing them.
+- New detector for self-sent raid invite line. EQ canonical:
+  `You invite <Name> to your raid.` + the older `You invite <Name> to your
+  party.` form for testing.
+- On invite-sent: scan recent tells for one from the same target in the last
+  60s. If found, emit fun_event-like `mic_correlation`:
+  `{ type: 'mic_correlation', officer_character, target, tell_text,
+    invited_at, password_match: tell_text === known_ari_password }`.
+
+**Bot side (next PR):**
+- Receive `mic_correlation` on `/api/agent/fun_event` (re-use existing) OR a
+  dedicated `/api/agent/mic_correlation`. Latter is cleaner.
+- **If `password_match=true`**: refresh `ari_state.set_by_*` to this officer
+  (they're now the active MIC) and bump `set_at`. No DM needed — silent
+  confirmation that they took over.
+- **If `password_match=false`** (or no current ARI): DM the officer with
+  two buttons:
+    > 💬 We saw <target> tell you "<tell_text>" and you invited them to the
+    > raid within X seconds.
+    > Was that the new MIC password? [✅ Yes, update] [🚫 No, ignore]
+- On [Yes]: setAri({ character: officer's character, password: tell_text,
+  setBy: officer.id, setByName, setAt: now }).
+- On [No]: nothing happens; future events won't re-prompt for that same
+  text (cache the rejection so we don't ask twice).
+
+**Foundation already shipped (Phase 1, bot v2.6.1 / web v0.5.6):**
+- `ari_state` Supabase table mirrored on every `setAri`/`clearAri`.
+- Front-page banner at `/` shows current MIC + password + Discord DM link
+  to the named character's owner + collapsible list of backup officers.
+- Empty-state banner when no ARI is set.
+
 ### eqemu_spells sync is empty (queue blocker for spell-name verification)
 The `eqemu_spells` table exists with the right schema (20 cols) but **0 rows**
 in prod — the weekly sync from eqmac isn't populating it. Even when populated,
