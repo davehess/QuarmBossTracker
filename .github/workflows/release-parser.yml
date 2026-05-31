@@ -1,15 +1,17 @@
 name: Release Parser Package
 
-# Triggers on any v* tag push (e.g. git tag v2.0.4 && git push --tags)
-# or manually from the Actions tab.
+# Triggers on any version-shaped tag push (v2.0.4, 2.0.4, agent-v2.5.1, etc.)
+# or manually from the Actions tab. Accepting bare-number tags so the GitHub
+# Releases UI 'create new tag' flow works without forcing a 'v' prefix.
 on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to release (e.g. v2.0.4)'
+        description: 'Existing tag to release (e.g. v2.0.4 or 2.0.4)'
         required: true
 
 jobs:
