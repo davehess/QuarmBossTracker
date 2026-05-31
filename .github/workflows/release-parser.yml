@@ -44,11 +44,13 @@ jobs:
           DIST="dist/WolfPackParser"
           mkdir -p "$DIST/wolfpack-logsync"
 
-          # End-user files only — no bot source, no .env, no state
-          cp Parser.bat            "$DIST/"
-          cp install-node.bat      "$DIST/"
-          cp install-node.ps1      "$DIST/"
-          cp start-logsync.ps1     "$DIST/"
+          # End-user files only — no bot source, no .env, no state.
+          # RUN-FIRST-for-Node.js.bat is the elevation shim that invokes
+          # install-node.ps1; both ship in the zip.
+          cp Parser.bat                  "$DIST/"
+          cp RUN-FIRST-for-Node.js.bat   "$DIST/"
+          cp install-node.ps1            "$DIST/"
+          cp start-logsync.ps1           "$DIST/"
           cp packages/wolfpack-logsync/index.js      "$DIST/wolfpack-logsync/"
           cp packages/wolfpack-logsync/supervisor.js "$DIST/wolfpack-logsync/"
           cp packages/wolfpack-logsync/package.json  "$DIST/wolfpack-logsync/"
@@ -59,7 +61,7 @@ jobs:
           ==================================
 
           Step 1 (first time only)
-            Double-click install-node.bat (UAC will appear; click Yes)
+            Double-click RUN-FIRST-for-Node.js.bat (UAC will appear; click Yes)
             This checks whether Node.js is installed and installs it if not.
             If you already have Node.js 18+, skip this step.
 
