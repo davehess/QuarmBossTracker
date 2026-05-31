@@ -20,7 +20,12 @@ module.exports = {
       .addFields(
         {
           name: '📥  Download',
-          value: `[**Download WolfPackParser.zip**](${PARSER_DOWNLOAD}) — unzip anywhere on your drive.`,
+          value: [
+            `Easiest: click the green **📦 Download Parser** button at the top of`,
+            `**https://wolfpack.quest** (always points at the latest build).`,
+            ``,
+            `Direct link: [**WolfPackParser.zip**](${PARSER_DOWNLOAD}) — unzip anywhere on your drive.`,
+          ].join('\n'),
           inline: false,
         },
         {
