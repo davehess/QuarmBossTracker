@@ -142,6 +142,52 @@ function appendAgentLog(line) {
   try { fs.appendFileSync(AGENT_LOG(), line); } catch {}
 }
 
+// ── Character auto-detect (largest eqlog file wins) ────────────────────────
+// The agent normally infers character from log filenames itself, but some
+// uploads (especially right after boot, before any combat) can land with
+// character=null and show up as "(unknown)" in the admin agent fleet view.
+// Detecting on the Mimic side and passing --character closes that gap.
+const EQ_DEFAULT_DIRS = [
+  'C:\\Quarm',
+  'C:\\Project Quarm',
+  'C:\\Project1999',
+  'C:\\Program Files\\EverQuest',
+  'C:\\Program Files (x86)\\EverQuest',
+  'D:\\Quarm',
+  'D:\\Project Quarm',
+];
+function detectEqDir(hint) {
+  const candidates = [hint, ...EQ_DEFAULT_DIRS].filter(Boolean);
+  for (const dir of candidates) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      const entries = fs.readdirSync(dir);
+      if (entries.some(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f))) return dir;
+    } catch {}
+  }
+  return null;
+}
+function detectCharacterFromLogs(dir) {
+  if (!dir) return null;
+  try {
+    const logs = fs.readdirSync(dir)
+      .map(f => {
+        const m = f.match(/^eqlog_(.+)_pq\.proj\.txt$/i);
+        if (!m) return null;
+        try {
+          const stat = fs.statSync(path.join(dir, f));
+          return { name: m[1], size: stat.size, mtime: stat.mtimeMs };
+        } catch { return null; }
+      })
+      .filter(Boolean);
+    if (logs.length === 0) return null;
+    // Largest log wins — that's the character with the most history. If
+    // sizes tie, fall back to most-recently-modified.
+    logs.sort((a, b) => (b.size - a.size) || (b.mtime - a.mtime));
+    return { character: logs[0].name, candidates: logs };
+  } catch { return null; }
+}
+
 // ── Launch the agent under Electron's Node ──────────────────────────────────
 async function launchAgent() {
   if (quitting) return;
@@ -156,8 +202,25 @@ async function launchAgent() {
     args.push('--bot-url', cfg.botUrl);
     args.push('--token', cfg.token);
   }
+  // Character auto-detect — locks the agent's identity to the largest log
+  // file's character so uploads never land as "(unknown)" in the admin
+  // fleet view. The agent's own filename-parsing is fine for tail uploads
+  // but some early-boot pings can leak through without a character.
+  const eqDir     = detectEqDir(cfg.eqPath);
+  const detection = detectCharacterFromLogs(eqDir);
+  if (detection && detection.character) {
+    args.push('--character', detection.character);
+    appendAgentLog(`[mimic] character auto-detected: ${detection.character} (from ${eqDir})\n`);
+    if (detection.candidates.length > 1) {
+      const alts = detection.candidates.slice(1, 5)
+        .map(c => `${c.name} (${Math.round(c.size / 1024)}KB)`).join(', ');
+      appendAgentLog(`[mimic] other candidates: ${alts}\n`);
+    }
+  } else {
+    appendAgentLog(`[mimic] character NOT detected; agent will infer from log tail (eqDir=${eqDir || 'unknown'})\n`);
+  }
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
-  if (cfg.eqPath) env.WOLFPACK_EQ_DIR = cfg.eqPath;
+  if (cfg.eqPath || eqDir) env.WOLFPACK_EQ_DIR = cfg.eqPath || eqDir;
 
   agentProc = spawn(process.execPath, args, {
     env,
@@ -287,11 +350,12 @@ function pushStatus() {
   buildTrayMenu();
 }
 function tooltipFor(s) {
-  if (!s.agentRunning) return 'Wolf Pack Mimic — agent starting…';
+  const v = `v${app.getVersion()}`;
+  if (!s.agentRunning) return `Wolf Pack Mimic ${v} — agent starting…`;
   const mode = s.localOnly ? 'Local only' : 'Uploading';
   const quiet = s.quietMode ? ' · Quiet mode' : '';
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
-  return `Wolf Pack Mimic — ${mode} · port ${s.agentPort}${quiet}${upd}`;
+  return `Wolf Pack Mimic ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
 }
 
 function makeTrayIcon() {
@@ -315,9 +379,10 @@ function makeTrayIcon() {
 function buildTrayMenu() {
   if (!tray) return;
   const s = currentStatus();
+  const v = `v${app.getVersion()}`;
   const headerLabel = s.localOnly
-    ? `🐺 Wolf Pack Mimic — Local only · :${s.agentPort}`
-    : `🐺 Wolf Pack Mimic — Connected · :${s.agentPort}`;
+    ? `🐺 Wolf Pack Mimic ${v} — Local only · :${s.agentPort}`
+    : `🐺 Wolf Pack Mimic ${v} — Connected · :${s.agentPort}`;
 
   const liveAlertsSubmenu = [
     { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
