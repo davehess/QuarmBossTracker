@@ -22,8 +22,9 @@
     "files": [
       "**/*",
       "!**/*.md",
-      "!staged-agent${/*}",
-      "!scripts${/*}",
+      "!staged-agent/**",
+      "!scripts/**",
+      "!dist/**",
       "!.gitignore"
     ],
     "extraResources": [
