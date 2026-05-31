@@ -63,5 +63,5 @@ jobs:
             Auto-updates: once installed, future Mimic releases land in place via electron-updater. No re-download.
           files: |
             apps/mimic/dist/*.exe
-            apps/mimic/dist/latest.yml
+            apps/mimic/dist/*.yml
             apps/mimic/dist/*.blockmap
