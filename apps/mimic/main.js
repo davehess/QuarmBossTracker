@@ -66,12 +66,18 @@ function defaultConfig() {
     enableTriggerTts: true,  // Trigger TTS overlay user pref
     overlayClickThrough: true,
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
-    tellsEnabled: false,     // tells display ships in v0.2; toggle persists now
+    tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
+    onboarded: false,        // false until user dismisses or completes loading
   };
 }
 function loadConfig() {
   try {
     const raw = JSON.parse(fs.readFileSync(CONFIG_FILE(), 'utf8'));
+    // Migration: old `tellsEnabled` boolean → `tellsMode` string.
+    if (raw.tellsEnabled !== undefined && raw.tellsMode === undefined) {
+      raw.tellsMode = raw.tellsEnabled ? 'local' : 'off';
+      delete raw.tellsEnabled;
+    }
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
 }
@@ -173,7 +179,9 @@ async function launchAgent() {
   setTimeout(() => { if (agentProc) restartBackoff = 1000; }, 30000);
 
   const up = await waitForAgent(agentPort);
-  if (up && mainWindow) mainWindow.loadURL(`http://127.0.0.1:${agentPort}/`);
+  // loading.html (renderer) is responsible for navigating to the dashboard
+  // once the user dismisses the setup cards or the auto-timeout fires.
+  // We just push status; the renderer polls /api/state to detect ready.
   pushStatus();
   return up;
 }
@@ -262,10 +270,11 @@ function currentStatus() {
     agentRunning: !!agentProc,
     localOnly,
     quietMode: !!cfg.quietMode,
-    tellsEnabled: !!cfg.tellsEnabled,
+    tellsMode: cfg.tellsMode || 'off',
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
     overlayClickThrough: !!cfg.overlayClickThrough,
+    onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
     botUrl: cfg.botUrl,
   };
@@ -316,10 +325,17 @@ function buildTrayMenu() {
         if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
         pushStatus();
       } },
-    { label: 'My /tells  🔒 PRIVATE  (v0.2)', type: 'checkbox', checked: s.tellsEnabled, click: (mi) => {
-        const cfg = loadConfig(); cfg.tellsEnabled = mi.checked; saveConfig(cfg);
-        pushStatus();
-      } },
+    { label: 'My /tells  🔒 PRIVATE  (display ships v0.2)', submenu: [
+        { label: 'Off — ignore tells',
+          type: 'radio', checked: s.tellsMode === 'off',
+          click: () => { const c = loadConfig(); c.tellsMode = 'off';    saveConfig(c); pushStatus(); } },
+        { label: 'Local only — show on this machine',
+          type: 'radio', checked: s.tellsMode === 'local',
+          click: () => { const c = loadConfig(); c.tellsMode = 'local';  saveConfig(c); pushStatus(); } },
+        { label: 'Synced (encrypted) — read on wolfpack.quest',
+          type: 'radio', checked: s.tellsMode === 'synced',
+          click: () => { const c = loadConfig(); c.tellsMode = 'synced'; saveConfig(c); pushStatus(); } },
+      ] },
     { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
         if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
@@ -458,10 +474,26 @@ ipcMain.handle('set-quiet-mode', (_e, on) => {
   pushStatus();
   return currentStatus();
 });
-ipcMain.handle('set-tells-enabled', (_e, on) => {
-  const cfg = loadConfig(); cfg.tellsEnabled = !!on; saveConfig(cfg);
+ipcMain.handle('set-tells-mode', (_e, mode) => {
+  const valid = ['off', 'local', 'synced'];
+  const cfg = loadConfig();
+  cfg.tellsMode = valid.includes(mode) ? mode : 'off';
+  saveConfig(cfg);
   pushStatus();
   return currentStatus();
+});
+ipcMain.handle('mark-onboarded', () => {
+  const cfg = loadConfig(); cfg.onboarded = true; saveConfig(cfg);
+  pushStatus();
+  return true;
+});
+// Renderer asks the main process to navigate to the agent's dashboard.
+// loading.html calls this once setup is complete (or after auto-timeout).
+ipcMain.handle('open-dashboard', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.loadURL(`http://127.0.0.1:${agentPort}/`);
+  }
+  return true;
 });
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); return true; });
 

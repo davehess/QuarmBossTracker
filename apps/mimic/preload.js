@@ -13,8 +13,10 @@ contextBridge.exposeInMainWorld('mimic', {
   onStatus:      (cb) => ipcRenderer.on('status', (_e, s) => cb(s)),
 
   // User-facing toggles.
-  setQuietMode:    (on) => ipcRenderer.invoke('set-quiet-mode', !!on),
-  setTellsEnabled: (on) => ipcRenderer.invoke('set-tells-enabled', !!on),
+  setQuietMode:    (on)   => ipcRenderer.invoke('set-quiet-mode', !!on),
+  setTellsMode:    (mode) => ipcRenderer.invoke('set-tells-mode', mode),
+  markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
+  openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

@@ -1,22 +1,311 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Mimic — loading</title>
+<html lang="en"><head><meta charset="utf-8"><title>Mimic — getting ready</title>
 <style>
+  *{box-sizing:border-box}
   html,body{height:100%;margin:0;background:#0e1116;color:#c9d1d9;
-    font-family:ui-monospace,Menlo,Consolas,monospace;display:flex;align-items:center;justify-content:center}
-  .box{text-align:center}
-  .wolf{font-size:48px;margin-bottom:12px}
-  .t{color:#58a6ff;font-size:18px}
-  .s{color:#8b949e;font-size:12px;margin-top:8px}
-  .spin{margin-top:18px;width:24px;height:24px;border:3px solid #2a3140;border-top-color:#58a6ff;border-radius:50%;
-    animation:r .8s linear infinite;display:inline-block}
-  @keyframes r{to{transform:rotate(360deg)}}
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;overflow-y:auto}
+  body{padding:32px 28px;display:flex;flex-direction:column;align-items:center}
+  .wrap{width:100%;max-width:720px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+  .wolf{font-size:36px}
+  h1{margin:0;color:#58a6ff;font-size:18px;font-weight:600}
+  .sub{color:#8b949e;font-size:11px;margin-top:2px}
+  .beta{color:#f6c365;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-left:6px}
+
+  /* Status bar */
+  .status{display:flex;gap:8px;margin:18px 0 24px;align-items:stretch}
+  .step{flex:1;padding:10px 12px;border:1px solid #2a3140;border-radius:6px;
+    background:#161b22;display:flex;align-items:center;gap:8px;
+    transition:border-color .2s, background .2s}
+  .step .icon{font-size:14px;width:18px;text-align:center}
+  .step .label{flex:1;font-size:11px;color:#8b949e}
+  .step.active{border-color:#58a6ff;background:#1a2230}
+  .step.active .label{color:#c9d1d9}
+  .step.active .icon{animation:pulse 1s ease-in-out infinite}
+  .step.done{border-color:#1a7f37;background:#1a2a22}
+  .step.done .label{color:#56d364}
+  .step.done .icon{color:#56d364}
+  .step.error{border-color:#a3260a;background:#2a1212}
+  .step.error .label{color:#f87171}
+  @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
+
+  /* Section header */
+  h2{color:#58a6ff;font-size:11px;font-weight:600;text-transform:uppercase;
+    letter-spacing:0.1em;margin:0 0 8px;padding-bottom:5px;border-bottom:1px solid #2a3140}
+  .section-hint{color:#6b7280;font-size:11px;margin-bottom:14px;line-height:1.5}
+
+  /* Setup cards */
+  .card{background:#161b22;border:1px solid #2a3140;border-radius:8px;
+    padding:14px 16px;margin-bottom:12px;transition:border-color .2s}
+  .card:hover{border-color:#3a4150}
+  .card-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .card-h .ico{font-size:16px}
+  .card-h .title{font-size:13px;color:#c9d1d9;font-weight:600}
+  .card-h .badge{margin-left:auto;font-size:9px;padding:2px 6px;border-radius:10px;
+    background:#1a2230;color:#58a6ff;border:1px solid #2a3140;text-transform:uppercase;letter-spacing:0.08em}
+  .card-h .badge.priv{background:#2a2010;color:#f6c365;border-color:#3a3020}
+  .card-h .badge.ok{background:#1a2a22;color:#56d364;border-color:#1a7f37}
+  .card p{margin:0 0 10px;color:#8b949e;font-size:11px;line-height:1.55}
+  .card .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .card input[type=text]{flex:1;min-width:0;background:#0e1116;border:1px solid #2a3140;
+    border-radius:4px;color:#c9d1d9;padding:6px 9px;font-family:inherit;font-size:11px}
+  .card input[type=text]:focus{outline:none;border-color:#58a6ff}
+  .card button{background:#1f6feb;border:none;color:#fff;padding:6px 12px;
+    border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;white-space:nowrap}
+  .card button:hover{background:#3a8bff}
+  .card button:disabled{opacity:0.5;cursor:wait}
+  .card button.ghost{background:transparent;border:1px solid #2a3140;color:#8b949e}
+  .card button.ghost:hover{border-color:#58a6ff;color:#58a6ff}
+  .card label.radio{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;
+    border-radius:4px;cursor:pointer;font-size:11px;color:#c9d1d9}
+  .card label.radio:hover{background:#1a2230}
+  .card label.radio input{margin-top:2px;accent-color:#58a6ff}
+  .card label.radio .desc{display:block;color:#6b7280;font-size:10px;margin-top:1px}
+  .card .saved{color:#56d364;font-size:10px}
+
+  /* Bottom action bar */
+  .actions{position:sticky;bottom:0;background:#0e1116;border-top:1px solid #2a3140;
+    padding:14px 0 6px;margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .actions button.primary{background:#1f6feb;border:none;color:#fff;padding:9px 18px;
+    border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600}
+  .actions button.primary:hover{background:#3a8bff}
+  .actions button.primary:disabled{background:#2a3140;color:#6b7280;cursor:not-allowed}
+  .actions .countdown{color:#8b949e;font-size:11px}
+  .actions .countdown b{color:#58a6ff}
+  .actions .skip{background:transparent;border:1px solid #2a3140;color:#8b949e;
+    padding:9px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px}
+  .actions .skip:hover{border-color:#8b949e;color:#c9d1d9}
 </style></head>
 <body>
-  <div class="box">
+<div class="wrap">
+
+  <header>
     <div class="wolf">🐺</div>
-    <div class="t">Wolf Pack Mimic <span style="color:#8b949e;font-size:11px">beta</span></div>
-    <div class="s">Starting the parser engine…</div>
-    <div class="spin"></div>
-    <div class="s" style="margin-top:16px">No Node.js install needed — Mimic brings its own.</div>
+    <div>
+      <h1>Wolf Pack Mimic<span class="beta">beta</span></h1>
+      <div class="sub">Getting your engine ready — answer a few quick things while we wait.</div>
+    </div>
+  </header>
+
+  <div class="status">
+    <div id="step1" class="step done">
+      <span class="icon">✓</span><span class="label">Mimic loaded</span>
+    </div>
+    <div id="step2" class="step active">
+      <span class="icon">⏳</span><span class="label">Starting parser engine</span>
+    </div>
+    <div id="step3" class="step">
+      <span class="icon">○</span><span class="label">Engine connected</span>
+    </div>
+    <div id="step4" class="step">
+      <span class="icon">○</span><span class="label">Dashboard ready</span>
+    </div>
   </div>
+
+  <h2>Quick setup <span style="color:#6b7280;text-transform:none;font-weight:normal">— change any of these later from the tray menu</span></h2>
+  <p class="section-hint">Everything below is optional. Skip to launch in local-only mode and edit settings whenever.</p>
+
+  <!-- TOKEN -->
+  <div class="card" id="cardToken">
+    <div class="card-h">
+      <span class="ico">🔑</span>
+      <span class="title">Wolf Pack token</span>
+      <span class="badge" id="tokenBadge">Optional</span>
+    </div>
+    <p>Paste your token to share parses with the guild and unlock your stats on wolfpack.quest. Leave blank to use Mimic locally only — no uploads.</p>
+    <div class="row">
+      <input id="token" type="text" placeholder="Run /token in Discord and paste here…" />
+      <button id="saveToken">Save token</button>
+      <span class="saved" id="tokenSaved"></span>
+    </div>
+  </div>
+
+  <!-- TELLS -->
+  <div class="card" id="cardTells">
+    <div class="card-h">
+      <span class="ico">💬</span>
+      <span class="title">Your /tells</span>
+      <span class="badge priv">🔒 PRIVATE</span>
+    </div>
+    <p>EverQuest writes your <i>tells</i> to your log file. Mimic can surface them so you don't miss one mid-raid. Tells never leave your machine unencrypted — even "Synced" stores them encrypted with a key only you hold.</p>
+    <label class="radio"><input type="radio" name="tells" value="off">
+      <span>Off — Mimic ignores tell lines completely<span class="desc">Maximum privacy. The default.</span></span></label>
+    <label class="radio"><input type="radio" name="tells" value="local">
+      <span>Local only — show in a Mimic overlay on this machine<span class="desc">Stays on your machine. No upload, no encryption needed.</span></span></label>
+    <label class="radio"><input type="radio" name="tells" value="synced">
+      <span>Synced (encrypted) — also visible on wolfpack.quest/me/tells from any device<span class="desc">Encrypted with a key only you hold. Display ships in v0.2; toggle now to opt-in early.</span></span></label>
+  </div>
+
+  <!-- QUIET MODE -->
+  <div class="card" id="cardQuiet">
+    <div class="card-h">
+      <span class="ico">🤫</span>
+      <span class="title">Already using EQLogParser or GINA?</span>
+    </div>
+    <p>Quiet mode hides Mimic's local HUD + trigger TTS so you don't get double alerts. Mimic keeps uploading your parses so the guild stats stay current.</p>
+    <label class="radio">
+      <input type="checkbox" id="quietMode">
+      <span>Quiet mode — uploads only, no local overlays<span class="desc">Switch this off anytime from the tray menu.</span></span>
+    </label>
+  </div>
+
+  <div class="actions">
+    <button id="openDashboard" class="primary" disabled>Waiting for engine…</button>
+    <span class="countdown" id="countdown"></span>
+    <button id="skipNow" class="skip" title="Open dashboard immediately">Skip & open now</button>
+  </div>
+
+</div>
+
+<script>
+  // ── State ────────────────────────────────────────────────────────────────
+  let agentPort       = 7779;
+  let agentReady      = false;
+  let userInteracting = false;       // pauses auto-redirect when they're typing
+  let autoTimer       = null;
+  let countdownTimer  = null;
+  let countdownLeft   = 0;
+  const AUTO_DELAY    = 10000;       // ms after ready w/ no interaction
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function $(id){ return document.getElementById(id); }
+  function setStep(n, state){
+    const el = $('step' + n);
+    el.className = 'step ' + state;
+    el.querySelector('.icon').textContent =
+      state === 'done'   ? '✓' :
+      state === 'active' ? '⏳' :
+      state === 'error'  ? '✕' : '○';
+  }
+  function markEngineUp(){
+    setStep(2, 'done');
+    setStep(3, 'done');
+    setStep(4, 'done');
+    agentReady = true;
+    const btn = $('openDashboard');
+    btn.disabled = false;
+    btn.textContent = 'Open dashboard →';
+    startCountdown();
+  }
+  function pingUserInteraction(){
+    userInteracting = true;
+    stopCountdown();
+    // Auto-redirect resumes if they go quiet for 6s.
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(() => {
+      userInteracting = false;
+      if (agentReady) startCountdown();
+    }, 6000);
+  }
+  function startCountdown(){
+    stopCountdown();
+    countdownLeft = Math.round(AUTO_DELAY / 1000);
+    $('countdown').innerHTML = `Auto-opening in <b>${countdownLeft}s</b>… <a href="#" id="cancelAuto" style="color:#8b949e;text-decoration:underline;font-size:11px;margin-left:4px">cancel</a>`;
+    $('cancelAuto').onclick = (e) => { e.preventDefault(); stopCountdown(); $('countdown').textContent = 'Auto-open cancelled. Use the button above when ready.'; };
+    countdownTimer = setInterval(() => {
+      countdownLeft -= 1;
+      if (countdownLeft <= 0) { stopCountdown(); openDashboard(); return; }
+      const cd = $('countdown'); if (cd) cd.innerHTML = `Auto-opening in <b>${countdownLeft}s</b>… <a href="#" id="cancelAuto" style="color:#8b949e;text-decoration:underline;font-size:11px;margin-left:4px">cancel</a>`;
+      const ca = $('cancelAuto'); if (ca) ca.onclick = (e) => { e.preventDefault(); stopCountdown(); $('countdown').textContent = 'Auto-open cancelled. Use the button above when ready.'; };
+    }, 1000);
+  }
+  function stopCountdown(){
+    clearInterval(countdownTimer); countdownTimer = null;
+    $('countdown').textContent = '';
+  }
+  async function openDashboard(){
+    try { await window.mimic.markOnboarded(); } catch (_) {}
+    try { await window.mimic.openDashboard(); } catch (_) {}
+  }
+
+  // ── Engine readiness poll ────────────────────────────────────────────────
+  async function pollEngine(){
+    try {
+      const port = await window.mimic.getAgentPort();
+      if (port) agentPort = port;
+    } catch (_) {}
+    if (!agentReady) setStep(3, 'active');
+    let tries = 0;
+    const id = setInterval(async () => {
+      tries += 1;
+      try {
+        const r = await fetch('http://127.0.0.1:' + agentPort + '/api/state', { cache: 'no-store' });
+        if (r.ok) { clearInterval(id); markEngineUp(); return; }
+      } catch (_) { /* not up yet */ }
+      if (tries > 80) {  // ~40s
+        clearInterval(id);
+        setStep(2, 'error');
+        setStep(3, 'error');
+        const btn = $('openDashboard');
+        btn.textContent = 'Engine failed to start — retry?';
+        btn.disabled = false;
+        btn.onclick = () => { location.reload(); };
+        $('countdown').innerHTML = 'Engine didn\'t come up in 40s. Check tray → Service → Show agent log.';
+      }
+    }, 500);
+  }
+
+  // ── Hydrate config + wire cards ──────────────────────────────────────────
+  async function hydrate(){
+    let cfg = {};
+    try { cfg = await window.mimic.getConfig(); } catch (_) {}
+    if (cfg.token) {
+      $('token').value = cfg.token;
+      $('tokenBadge').textContent = 'Connected';
+      $('tokenBadge').className = 'badge ok';
+    }
+    const mode = cfg.tellsMode || 'off';
+    document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === mode); });
+    $('quietMode').checked = !!cfg.quietMode;
+  }
+
+  // ── Card actions ─────────────────────────────────────────────────────────
+  $('saveToken').onclick = async () => {
+    const btn = $('saveToken');
+    const val = $('token').value.trim() || null;
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await window.mimic.saveConfig({ token: val });
+      await window.mimic.relaunchAgent();
+      $('tokenSaved').textContent = '✓ saved · engine restarting';
+      $('tokenBadge').textContent = val ? 'Connected' : 'Local only';
+      $('tokenBadge').className = 'badge ' + (val ? 'ok' : '');
+      // Re-poll readiness since we just restarted the agent.
+      agentReady = false;
+      setStep(2, 'active'); setStep(3, ''); setStep(4, '');
+      stopCountdown();
+      setTimeout(() => { $('tokenSaved').textContent = ''; }, 4000);
+      pollEngine();
+    } catch (e) {
+      $('tokenSaved').textContent = '✕ ' + (e && e.message ? e.message : String(e));
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save token';
+    }
+  };
+
+  document.querySelectorAll('input[name=tells]').forEach(r => {
+    r.addEventListener('change', async () => {
+      pingUserInteraction();
+      try { await window.mimic.setTellsMode(r.value); } catch (_) {}
+    });
+  });
+
+  $('quietMode').addEventListener('change', async (e) => {
+    pingUserInteraction();
+    try { await window.mimic.setQuietMode(e.target.checked); } catch (_) {}
+  });
+
+  // Any focus/typing on a setup card pauses auto-redirect.
+  document.querySelectorAll('.card input, .card button').forEach(el => {
+    el.addEventListener('focus', pingUserInteraction);
+    el.addEventListener('input', pingUserInteraction);
+  });
+
+  $('openDashboard').onclick = () => { stopCountdown(); openDashboard(); };
+  $('skipNow').onclick        = () => { stopCountdown(); openDashboard(); };
+
+  // ── Boot ─────────────────────────────────────────────────────────────────
+  hydrate();
+  pollEngine();
+</script>
 </body></html>
