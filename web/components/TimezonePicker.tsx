@@ -10,7 +10,7 @@
 // every page renders in their wall clock thereafter.
 
 import { useEffect, useState } from 'react';
-import { TZ_CHOICES, TZ_COOKIE } from '@/lib/timezone';
+import { TZ_CHOICES, TZ_COOKIE } from '@/lib/timezone-shared';
 
 function getCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
