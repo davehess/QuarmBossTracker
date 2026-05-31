@@ -175,8 +175,9 @@ function detectCharacterFromLogs(dir) {
         const m = f.match(/^eqlog_(.+)_pq\.proj\.txt$/i);
         if (!m) return null;
         try {
-          const stat = fs.statSync(path.join(dir, f));
-          return { name: m[1], size: stat.size, mtime: stat.mtimeMs };
+          const fullPath = path.join(dir, f);
+          const stat = fs.statSync(fullPath);
+          return { name: m[1], path: fullPath, size: stat.size, mtime: stat.mtimeMs };
         } catch { return null; }
       })
       .filter(Boolean);
@@ -184,7 +185,7 @@ function detectCharacterFromLogs(dir) {
     // Largest log wins — that's the character with the most history. If
     // sizes tie, fall back to most-recently-modified.
     logs.sort((a, b) => (b.size - a.size) || (b.mtime - a.mtime));
-    return { character: logs[0].name, candidates: logs };
+    return { character: logs[0].name, path: logs[0].path, candidates: logs };
   } catch { return null; }
 }
 
@@ -202,22 +203,30 @@ async function launchAgent() {
     args.push('--bot-url', cfg.botUrl);
     args.push('--token', cfg.token);
   }
-  // Character auto-detect — locks the agent's identity to the largest log
-  // file's character so uploads never land as "(unknown)" in the admin
-  // fleet view. The agent's own filename-parsing is fine for tail uploads
-  // but some early-boot pings can leak through without a character.
+  // Auto-detect the EQ install dir + every eqlog_*_pq.proj.txt file in it.
+  // The agent REQUIRES --log <path> (one per log) or it exits with
+  // "At least one --log is required" — Mimic must thread the discovered
+  // paths through. We also pass --character so the largest log's character
+  // becomes the canonical identity on uploads (avoids "(unknown)" rows).
   const eqDir     = detectEqDir(cfg.eqPath);
   const detection = detectCharacterFromLogs(eqDir);
-  if (detection && detection.character) {
+  if (detection && detection.candidates.length > 0) {
+    for (const c of detection.candidates) {
+      args.push('--log', c.path);
+    }
     args.push('--character', detection.character);
-    appendAgentLog(`[mimic] character auto-detected: ${detection.character} (from ${eqDir})\n`);
+    appendAgentLog(`[mimic] tailing ${detection.candidates.length} log(s) from ${eqDir}; primary character: ${detection.character}\n`);
     if (detection.candidates.length > 1) {
       const alts = detection.candidates.slice(1, 5)
         .map(c => `${c.name} (${Math.round(c.size / 1024)}KB)`).join(', ');
       appendAgentLog(`[mimic] other candidates: ${alts}\n`);
     }
   } else {
-    appendAgentLog(`[mimic] character NOT detected; agent will infer from log tail (eqDir=${eqDir || 'unknown'})\n`);
+    // No logs found anywhere — agent will fail with "At least one --log
+    // required" exactly the way it did before this fix landed. Loading
+    // screen surfaces the error inline. User likely needs to set their
+    // EQ path in Settings.
+    appendAgentLog(`[mimic] NO log files found (eqDir=${eqDir || 'unknown'}). Set your EQ path in Settings if Quarm isn't at C:\\Quarm.\n`);
   }
   const env = {
     ...process.env,
