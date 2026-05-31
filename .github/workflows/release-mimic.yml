@@ -1,17 +1,24 @@
 name: Release Mimic (Electron)
 
 # Builds the Wolf Pack Mimic desktop installer on a real Windows runner and
-# attaches the .exe to a GitHub release. Triggered by a mimic-v* tag, or
-# manually from the Actions tab. This is how the BETA gets a downloadable
-# installer without anyone running electron-builder locally.
+# attaches the .exe + mimic-beta.yml to a GitHub release. The release tag
+# is auto-derived from apps/mimic/package.json's version field.
+#
+# TRIGGERS:
+#   1. Push to main that changes apps/mimic/package.json AND bumps the
+#      version field → workflow runs, builds, and softprops creates a fresh
+#      release tagged mimic-v<new_version> at the merge commit. Tag,
+#      release, and assets all materialize in one pass — no human clicks.
+#   2. Manual workflow_dispatch with a tag input — for retrying a failed
+#      build, or rebuilding from a tag that was created some other way.
 on:
   push:
-    tags:
-      - 'mimic-v*'
+    branches: [main]
+    paths:    ['apps/mimic/package.json']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. mimic-v0.1.0-beta.1)'
+        description: 'Tag to release (e.g. mimic-v0.1.0-beta.4)'
         required: true
 
 jobs:
@@ -21,40 +28,80 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need previous commit so we can diff the package.json version and
+          # decide whether this is a real bump vs an unrelated change.
+          fetch-depth: 2
+
+      - name: Resolve tag (auto-bump or manual)
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            echo "Manual dispatch: tag=$tag"
+            echo "name=$tag"  >> "$GITHUB_OUTPUT"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Auto-bump path. Compare versions HEAD~1 vs HEAD; only build if
+          # the version actually changed (skips dependency-only edits etc).
+          new_version=$(jq -r .version apps/mimic/package.json)
+          prev_version=$(git show HEAD~1:apps/mimic/package.json 2>/dev/null \
+                          | jq -r .version 2>/dev/null || echo "")
+          tag="mimic-v$new_version"
+          echo "Detected: new=$new_version prev=$prev_version tag=$tag"
+
+          if [ -z "$new_version" ] || [ "$new_version" = "null" ]; then
+            echo "No version in package.json — skipping."
+            echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$new_version" = "$prev_version" ]; then
+            echo "Version unchanged — nothing to release."
+            echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Idempotency: if the tag already exists on the remote, the
+          # release was already cut. Don't rebuild on top.
+          if git ls-remote --tags origin "refs/tags/$tag" | grep -q "$tag"; then
+            echo "Tag $tag already exists on remote — skipping."
+            echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          echo "name=$tag"  >> "$GITHUB_OUTPUT"
+          echo "build=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
+        if: steps.tag.outputs.build == 'true'
         with:
           node-version: 20
 
       - name: Install + stage agent
+        if: steps.tag.outputs.build == 'true'
         working-directory: apps/mimic
         run: npm install
         # postinstall (scripts/stage-agent.js) copies the agent into
         # apps/mimic/staged-agent so electron-builder's extraResources bundles it.
 
       - name: Build Windows installer
+        if: steps.tag.outputs.build == 'true'
         working-directory: apps/mimic
         run: npm run dist
         env:
-          # electron-builder publishes nothing by itself here; we attach below.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve tag
-        id: tag
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish release with installer
+        if: steps.tag.outputs.build == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          name: ${{ steps.tag.outputs.name }}
-          prerelease: true
+          tag_name:         ${{ steps.tag.outputs.name }}
+          name:             ${{ steps.tag.outputs.name }}
+          prerelease:       true
+          # softprops creates the tag at this commit if it doesn't exist —
+          # that's how the auto-bump path materializes the tag without us
+          # needing tag-push permissions in the sandbox.
+          target_commitish: ${{ github.sha }}
           body: |
             Wolf Pack Mimic — Electron desktop client (BETA).
             Bundles its own Node runtime; no separate Node.js install needed.
