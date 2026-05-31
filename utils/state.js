@@ -396,8 +396,30 @@ function clearRaidNight()      { const s = loadState(); s.raidNight = null; save
 // ── Auto-raid invite (ARI) state ───────────────────────────────────────────────────────────────
 // Stores { character: string, password: string, setBy: userId } or null
 function getAri()          { return loadState().ari || null; }
-function setAri(data)      { const s = loadState(); s.ari = data; saveState(s); }
-function clearAri()        { const s = loadState(); s.ari = null; saveState(s); }
+function setAri(data)      { const s = loadState(); s.ari = data; saveState(s); _mirrorAriToSupabase(data); }
+function clearAri()        { const s = loadState(); s.ari = null; saveState(s); _mirrorAriToSupabase(null); }
+
+// Mirror to public.ari_state so wolfpack.quest can render the MIC banner
+// without round-tripping through the bot. Fire-and-forget — local state
+// remains canonical. Falls through silently if Supabase isn't configured.
+function _mirrorAriToSupabase(ari) {
+  try {
+    const supabase = require('./supabase');
+    if (!supabase.isEnabled()) return;
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const row = {
+      guild_id:    guildId,
+      character:   ari?.character   || null,
+      password:    ari?.password    || null,
+      set_by_id:   ari?.setBy       || null,
+      set_by_name: ari?.setByName   || null,
+      set_at:      ari?.setAt ? new Date(ari.setAt).toISOString() : null,
+      updated_at:  new Date().toISOString(),
+    };
+    supabase.upsert('ari_state', [row], 'guild_id')
+      .catch(err => console.warn('[ari] mirror failed:', err?.message));
+  } catch { /* non-fatal */ }
+}
 
 // ── Live kill tracking (exact timers, no variance) ───────────────────────────────────────────
 function recordLiveKill(bossId, bossName, timerHours, killedBy, timerUnknown = false, killedAt = null) {
