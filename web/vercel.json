@@ -16,6 +16,12 @@
       "has": [{ "type": "host", "value": "discord.wolfpack.quest" }],
       "destination": "https://discord.gg/VBCs6hCcau",
       "permanent": false
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "mimic.wolfpack.quest" }],
+      "destination": "https://wolfpack.quest/mimic",
+      "permanent": false
     }
   ]
 }

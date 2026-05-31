@@ -1,30 +1,41 @@
 #!/usr/bin/env python3
 """
-Generate the Mimic app icon — a treasure chest with fanged maw open,
-wolf silhouette + glowing eyes inside. Theme: chest = mimic, wolf = Wolf Pack.
+Generate the Mimic app icon — chest's fanged maw spans the FULL height of
+the icon (upper jaw at the very top, lower jaw at the very bottom), with a
+grey + white wolf head exposed in the middle. Theme: chest = mimic, wolf =
+Wolf Pack, but with the wolf as the hero of the composition.
+
+Design notes:
+  - Jaws reach the icon's top + bottom edges (no chest chrome above/below
+    the teeth) — the mouth IS the frame.
+  - Gold chest frame visible only at the sides (a vertical pair of strips
+    with rivets and the iron band) so the silhouette still reads "mimic
+    chest" without crowding the wolf.
+  - Wolf head fills the middle band: grey body, white snout + chest blaze
+    + ear interiors + brow markings, amber glowing eyes.
 
 Outputs:
-  apps/mimic/build/icon.png   (512x512 — Linux fallback, web preview)
-  apps/mimic/build/icon.ico   (multi-res: 16/24/32/48/64/128/256 — Windows)
-  apps/mimic/build/tray.png   (16x16 — tray icon loaded by main.js)
-  apps/mimic/build/tray@2x.png(32x32 — high-DPI tray)
-
-Render once at 1024 for sharp downsampling, then resize via LANCZOS to all
-target sizes. Single source-of-truth for the icon.
+  apps/mimic/build/icon.png   (512x512)
+  apps/mimic/build/icon.ico   (multi-res: 16/24/32/48/64/128/256)
+  apps/mimic/build/tray.png   (16x16)
+  apps/mimic/build/tray@2x.png(32x32)
 """
 from PIL import Image, ImageDraw, ImageFilter
 from pathlib import Path
+import random
 
-# Palette — gold chest, dark interior, white teeth, gray wolf, amber eyes.
+# Palette
 GOLD        = (210, 152, 48,  255)
 GOLD_LIGHT  = (236, 184, 78,  255)
 GOLD_SHADOW = (152, 102, 28,  255)
 BROWN       = (74,  44,  18,  255)
 DARK        = (8,   8,   12,  255)
-TOOTH       = (248, 241, 216, 255)
+TOOTH       = (252, 246, 224, 255)
 TOOTH_SHADE = (200, 195, 175, 255)
-WOLF        = (40,  40,  46,  255)
-WOLF_LIGHT  = (76,  76,  86,  255)
+WOLF_GREY   = (128, 132, 140, 255)
+WOLF_DARK   = (76,  80,  90,  255)
+WOLF_WHITE  = (240, 240, 244, 255)
+WOLF_NOSE   = (28,  28,  34,  255)
 EYE         = (246, 195, 101, 255)
 EYE_HOT     = (255, 240, 180, 255)
 
@@ -38,162 +49,175 @@ def render(size=MASTER):
 
     def px(f): return int(s * f)
 
-    # ── Chest body ─────────────────────────────────────────────────────────
-    body_top   = px(0.46)
-    body_bot   = px(0.94)
-    body_left  = px(0.08)
-    body_right = px(0.92)
-    body_r     = px(0.05)
-    stroke     = max(2, px(0.012))
+    stroke = max(2, px(0.010))
+    rng    = random.Random(7)  # deterministic across runs
 
-    # Drop shadow under chest (subtle)
-    shadow = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(shadow)
-    sd.ellipse([body_left, body_bot - px(0.03), body_right, body_bot + px(0.05)],
-               fill=(0, 0, 0, 90))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(px(0.02)))
-    img.alpha_composite(shadow)
+    # ── Dark interior (the maw cavity, spans full height) ──────────────────
+    # Slight side inset so gold chest strips can run down the sides.
+    cavity_left  = px(0.08)
+    cavity_right = px(0.92)
+    d.rounded_rectangle([cavity_left, 0, cavity_right, s],
+                        radius=px(0.04), fill=DARK)
 
-    d.rounded_rectangle([body_left, body_top, body_right, body_bot],
-                        radius=body_r, fill=GOLD,
-                        outline=BROWN, width=stroke)
+    # ── Gold chest side strips (left + right) ──────────────────────────────
+    strip_w = px(0.08)
+    for x0, x1 in [(0, strip_w), (s - strip_w, s)]:
+        d.rounded_rectangle([x0, 0, x1, s], radius=px(0.03),
+                            fill=GOLD, outline=BROWN, width=stroke)
+        # Rivets running vertically on the strips
+        cx = (x0 + x1) // 2
+        for fy in (0.10, 0.30, 0.70, 0.90):
+            rr = px(0.012)
+            d.ellipse([cx - rr, px(fy) - rr, cx + rr, px(fy) + rr],
+                      fill=GOLD_LIGHT)
 
-    # Horizontal iron band across body
-    band_y   = px(0.78)
-    band_h   = px(0.05)
-    d.rectangle([body_left, band_y - band_h//2, body_right, band_y + band_h//2],
-                fill=BROWN)
-    # Rivets on the band
-    for fx in (0.18, 0.40, 0.60, 0.82):
-        cx = px(fx)
-        rr = px(0.012)
-        d.ellipse([cx - rr, band_y - rr, cx + rr, band_y + rr], fill=GOLD_LIGHT)
-
-    # Lock on the band (mimic-style — central, ornate)
-    lock_w = px(0.16)
-    lock_h = px(0.16)
-    lock_x = s // 2
+    # ── Iron band across the middle (with central lock) ────────────────────
+    band_y = px(0.50)
+    band_h = px(0.07)
+    d.rectangle([0, band_y - band_h//2, s, band_y + band_h//2], fill=BROWN)
+    # Restore the dark cavity where the band crosses it (band sits "behind"
+    # the wolf, but in front of nothing else)
+    d.rectangle([cavity_left + px(0.005), band_y - band_h//2 + px(0.005),
+                 cavity_right - px(0.005), band_y + band_h//2 - px(0.005)],
+                fill=DARK)
+    # Lock (recessed in middle)
+    lock_w = px(0.10)
+    lock_h = px(0.10)
+    cx     = s // 2
     lock_y = band_y
     d.rounded_rectangle(
-        [lock_x - lock_w//2, lock_y - lock_h//2,
-         lock_x + lock_w//2, lock_y + lock_h//2],
-        radius=px(0.015), fill=GOLD_SHADOW, outline=BROWN, width=stroke
+        [cx - lock_w//2, lock_y - lock_h//2, cx + lock_w//2, lock_y + lock_h//2],
+        radius=px(0.012), fill=GOLD_SHADOW, outline=BROWN, width=stroke
     )
-    # Lock keyhole
-    kh_r = px(0.02)
-    d.ellipse([lock_x - kh_r, lock_y - kh_r - px(0.01),
-               lock_x + kh_r, lock_y + kh_r - px(0.01)], fill=DARK)
-    d.polygon([(lock_x - kh_r//2, lock_y - px(0.005)),
-               (lock_x + kh_r//2, lock_y - px(0.005)),
-               (lock_x + kh_r, lock_y + px(0.04)),
-               (lock_x - kh_r, lock_y + px(0.04))], fill=DARK)
+    kh_r = px(0.014)
+    d.ellipse([cx - kh_r, lock_y - kh_r, cx + kh_r, lock_y + kh_r], fill=DARK)
 
-    # ── Open lid (perspective trapezoid tilted back) ───────────────────────
-    lid_top   = px(0.18)
-    lid_left  = body_left + px(0.03)
-    lid_right = body_right - px(0.03)
-    lid_inset = px(0.08)  # how much the back edge narrows
-    lid_polygon = [
-        (lid_left, body_top + px(0.01)),
-        (lid_right, body_top + px(0.01)),
-        (lid_right - lid_inset, lid_top),
-        (lid_left + lid_inset, lid_top),
-    ]
-    d.polygon(lid_polygon, fill=GOLD_LIGHT, outline=BROWN, width=stroke)
-
-    # Lid rivets along bottom edge
-    for fx in (0.16, 0.38, 0.62, 0.84):
-        cx = px(fx)
-        rr = px(0.012)
-        d.ellipse([cx - rr, body_top - px(0.005),
-                   cx + rr, body_top + 2*rr], fill=GOLD_SHADOW)
-
-    # ── Dark mouth opening (where the maw is) ──────────────────────────────
-    mouth_top    = body_top - px(0.005)
-    mouth_bot    = px(0.66)
-    mouth_left   = body_left + px(0.07)
-    mouth_right  = body_right - px(0.07)
-    d.rounded_rectangle([mouth_left, mouth_top, mouth_right, mouth_bot],
-                        radius=px(0.015), fill=DARK)
-
-    # ── Teeth — uneven jagged row on top edge (hanging from upper jaw) ─────
-    tooth_n   = 7
-    tooth_w   = (mouth_right - mouth_left) / tooth_n
-    tooth_max = px(0.075)
-    import random
-    rng = random.Random(42)  # deterministic
+    # ── TOP JAW — teeth hanging from the very top edge ─────────────────────
+    tooth_n   = 9
+    tooth_w   = (cavity_right - cavity_left) / tooth_n
+    tooth_max = px(0.18)
     for i in range(tooth_n):
-        x1 = int(mouth_left + i * tooth_w)
-        x2 = int(mouth_left + (i + 1) * tooth_w)
+        x1 = int(cavity_left + i * tooth_w)
+        x2 = int(cavity_left + (i + 1) * tooth_w)
         mid = (x1 + x2) // 2
-        # Vary height for menacing irregularity
-        h = int(tooth_max * (0.7 + rng.random() * 0.5))
-        # Lean each tooth slightly inward
-        lean = px(0.005) if i < tooth_n // 2 else -px(0.005)
-        d.polygon([(x1, mouth_top), (x2, mouth_top),
-                   (mid + lean, mouth_top + h)],
+        # Bigger fangs toward the center, smaller at the edges.
+        edge_falloff = 1 - abs((i - tooth_n / 2) / (tooth_n / 2)) * 0.35
+        h = int(tooth_max * (0.65 + rng.random() * 0.5) * edge_falloff)
+        d.polygon([(x1, 0), (x2, 0), (mid, h)],
                   fill=TOOTH, outline=TOOTH_SHADE, width=max(1, stroke // 2))
 
-    # Bottom-jaw teeth — fewer, smaller, pointing up
-    for i in range(tooth_n - 2):
-        x1 = int(mouth_left + (i + 0.5) * tooth_w)
-        x2 = int(mouth_left + (i + 1.5) * tooth_w)
+    # ── BOTTOM JAW — teeth rising from the very bottom edge ────────────────
+    bot_tooth_n = 9
+    bot_tooth_w = (cavity_right - cavity_left) / bot_tooth_n
+    bot_tooth_max = px(0.16)
+    for i in range(bot_tooth_n):
+        x1 = int(cavity_left + i * bot_tooth_w)
+        x2 = int(cavity_left + (i + 1) * bot_tooth_w)
         mid = (x1 + x2) // 2
-        h = int(tooth_max * 0.6 * (0.7 + rng.random() * 0.5))
-        d.polygon([(x1, mouth_bot), (x2, mouth_bot),
-                   (mid, mouth_bot - h)],
+        edge_falloff = 1 - abs((i - bot_tooth_n / 2) / (bot_tooth_n / 2)) * 0.35
+        h = int(bot_tooth_max * (0.65 + rng.random() * 0.5) * edge_falloff)
+        d.polygon([(x1, s), (x2, s), (mid, s - h)],
                   fill=TOOTH, outline=TOOTH_SHADE, width=max(1, stroke // 2))
 
-    # ── Wolf silhouette inside the maw ─────────────────────────────────────
-    cx = s // 2
-    wolf_top  = mouth_top + px(0.055)
-    wolf_bot  = mouth_bot - px(0.015)
-    # Triangular ears + rounded head + snout
-    ear_w   = px(0.05)
-    ear_h   = px(0.07)
-    head_w  = px(0.16)
-    head_h  = px(0.10)
-    snout_w = px(0.07)
+    # ── Wolf head (grey + white) — fills the middle band, hero of the icon ─
+    # Anchored around the central horizontal axis. Big enough that ear tips
+    # reach into the top teeth and chin reaches into the bottom teeth.
+    cy = s // 2
 
-    # Left + right ear triangles (poking above where head starts)
-    d.polygon([(cx - head_w//2, wolf_top + px(0.005)),
-               (cx - head_w//2 + ear_w, wolf_top + ear_h),
-               (cx - head_w//2 - ear_w//2, wolf_top + ear_h)],
-              fill=WOLF)
-    d.polygon([(cx + head_w//2, wolf_top + px(0.005)),
-               (cx + head_w//2 - ear_w, wolf_top + ear_h),
-               (cx + head_w//2 + ear_w//2, wolf_top + ear_h)],
-              fill=WOLF)
+    # Ear triangles (poke up above the band, into the top teeth)
+    ear_tip_y   = px(0.18)
+    ear_outer_x = px(0.20)  # how far from center each ear is
+    ear_base_y  = px(0.34)
+    ear_w       = px(0.10)
+    # Left ear
+    d.polygon([(cx - ear_outer_x - ear_w//2, ear_base_y + px(0.02)),
+               (cx - ear_outer_x + ear_w//2, ear_base_y - px(0.01)),
+               (cx - ear_outer_x - ear_w//4, ear_tip_y)],
+              fill=WOLF_DARK)
+    # Right ear
+    d.polygon([(cx + ear_outer_x + ear_w//2, ear_base_y + px(0.02)),
+               (cx + ear_outer_x - ear_w//2, ear_base_y - px(0.01)),
+               (cx + ear_outer_x + ear_w//4, ear_tip_y)],
+              fill=WOLF_DARK)
+    # Inner ears (pink-grey hint)
+    d.polygon([(cx - ear_outer_x - ear_w//5, ear_base_y),
+               (cx - ear_outer_x + ear_w//4, ear_base_y - px(0.005)),
+               (cx - ear_outer_x - ear_w//8, ear_tip_y + px(0.04))],
+              fill=WOLF_WHITE)
+    d.polygon([(cx + ear_outer_x + ear_w//5, ear_base_y),
+               (cx + ear_outer_x - ear_w//4, ear_base_y - px(0.005)),
+               (cx + ear_outer_x + ear_w//8, ear_tip_y + px(0.04))],
+              fill=WOLF_WHITE)
 
-    # Head (rounded rectangle approximation)
-    d.rounded_rectangle([cx - head_w//2, wolf_top + ear_h - px(0.005),
-                         cx + head_w//2, wolf_top + ear_h + head_h],
-                        radius=px(0.03), fill=WOLF)
+    # Head proper — rounded shape from ear-base down to chin
+    head_top    = px(0.30)
+    head_bot    = px(0.72)
+    head_left   = cx - px(0.30)
+    head_right  = cx + px(0.30)
+    d.rounded_rectangle([head_left, head_top, head_right, head_bot],
+                        radius=px(0.12), fill=WOLF_GREY)
 
-    # Snout (small trapezoid below head)
-    snout_top = wolf_top + ear_h + head_h - px(0.005)
-    snout_bot = wolf_bot - px(0.005)
-    d.polygon([(cx - snout_w//2, snout_top),
-               (cx + snout_w//2, snout_top),
-               (cx + snout_w//3, snout_bot),
-               (cx - snout_w//3, snout_bot)], fill=WOLF)
+    # White facial blaze (forehead → snout)
+    blaze_top   = px(0.32)
+    blaze_bot   = px(0.75)
+    blaze_w_top = px(0.05)
+    blaze_w_bot = px(0.10)
+    d.polygon([(cx - blaze_w_top, blaze_top),
+               (cx + blaze_w_top, blaze_top),
+               (cx + blaze_w_bot, blaze_bot),
+               (cx - blaze_w_bot, blaze_bot)], fill=WOLF_WHITE)
 
-    # Eyes (two glowing dots) — slightly into the head
-    eye_y = wolf_top + ear_h + px(0.035)
-    eye_r = max(2, px(0.018))
-    for dx in (-px(0.045), +px(0.045)):
+    # Brow markings (darker patches over the eyes)
+    brow_y    = px(0.43)
+    brow_w    = px(0.10)
+    brow_h    = px(0.04)
+    for bx in (cx - px(0.13), cx + px(0.13)):
+        d.ellipse([bx - brow_w//2, brow_y - brow_h//2,
+                   bx + brow_w//2, brow_y + brow_h//2], fill=WOLF_DARK)
+
+    # Snout — extends below the head into the bottom-teeth area
+    snout_top   = px(0.60)
+    snout_bot   = px(0.83)
+    snout_w_top = px(0.10)
+    snout_w_bot = px(0.07)
+    d.polygon([(cx - snout_w_top, snout_top),
+               (cx + snout_w_top, snout_top),
+               (cx + snout_w_bot, snout_bot),
+               (cx - snout_w_bot, snout_bot)], fill=WOLF_GREY)
+    # White underside of snout
+    d.polygon([(cx - snout_w_top + px(0.01), snout_top + px(0.01)),
+               (cx + snout_w_top - px(0.01), snout_top + px(0.01)),
+               (cx + snout_w_bot - px(0.005), snout_bot - px(0.005)),
+               (cx - snout_w_bot + px(0.005), snout_bot - px(0.005))],
+              fill=WOLF_WHITE)
+    # Nose (black bulb at snout tip)
+    nose_r = px(0.025)
+    d.ellipse([cx - nose_r, snout_bot - nose_r * 2 - px(0.005),
+               cx + nose_r, snout_bot - px(0.005)], fill=WOLF_NOSE)
+
+    # Cheek tufts (white, jutting out to the sides — wolfy)
+    for sign in (-1, +1):
+        d.polygon([(cx + sign * px(0.20), px(0.62)),
+                   (cx + sign * px(0.32), px(0.68)),
+                   (cx + sign * px(0.20), px(0.72))],
+                  fill=WOLF_WHITE)
+
+    # Eyes — bright amber, slightly above the brow line
+    eye_y = px(0.46)
+    eye_r = max(2, px(0.022))
+    for dx in (-px(0.10), +px(0.10)):
         # Outer glow
-        d.ellipse([cx + dx - eye_r - px(0.006), eye_y - eye_r - px(0.006),
-                   cx + dx + eye_r + px(0.006), eye_y + eye_r + px(0.006)],
-                  fill=(246, 195, 101, 120))
-        # Eye proper
+        d.ellipse([cx + dx - eye_r - px(0.008), eye_y - eye_r - px(0.008),
+                   cx + dx + eye_r + px(0.008), eye_y + eye_r + px(0.008)],
+                  fill=(246, 195, 101, 140))
         d.ellipse([cx + dx - eye_r, eye_y - eye_r,
-                   cx + dx + eye_r, eye_y + eye_r],
-                  fill=EYE)
-        # Hot spot
+                   cx + dx + eye_r, eye_y + eye_r], fill=EYE)
         d.ellipse([cx + dx - eye_r//2, eye_y - eye_r//2,
-                   cx + dx + eye_r//2, eye_y + eye_r//2],
-                  fill=EYE_HOT)
+                   cx + dx + eye_r//2, eye_y + eye_r//2], fill=EYE_HOT)
+        # Black pupil slit
+        d.rectangle([cx + dx - px(0.004), eye_y - eye_r + px(0.004),
+                     cx + dx + px(0.004), eye_y + eye_r - px(0.004)],
+                    fill=WOLF_NOSE)
 
     return img
 
@@ -204,12 +228,10 @@ def main():
 
     master = render(MASTER)
 
-    # PNG outputs (transparent background).
     master.resize((512, 512), Image.LANCZOS).save(out / 'icon.png', 'PNG')
     master.resize((16,  16),  Image.LANCZOS).save(out / 'tray.png', 'PNG')
     master.resize((32,  32),  Image.LANCZOS).save(out / 'tray@2x.png', 'PNG')
 
-    # Multi-resolution ICO for Windows. Pillow handles all sizes in one file.
     ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48),
                  (64, 64), (128, 128), (256, 256)]
     master.save(out / 'icon.ico', sizes=ico_sizes)
