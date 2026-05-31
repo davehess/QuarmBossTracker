@@ -1779,6 +1779,19 @@ function enqueueUpload(kind, payload) {
     _queueCapEvictCount++;
     console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped oldest ${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
   }
+  // Decorate every payload with agent_state so the bot's admin tooling can
+  // tell who/what is uploading without each call-site repeating the info.
+  // WOLFPACK_CLIENT identifies the wrapper (e.g. 'mimic'); default 'parser'
+  // for Parser.bat installs. WOLFPACK_APP_VERSION lets Mimic stamp its own
+  // semver so the admin board can show beta.X without parsing tray strings.
+  if (payload && typeof payload === 'object' && !payload.agent_state) {
+    payload.agent_state = {
+      client:       process.env.WOLFPACK_CLIENT      || 'parser',
+      app_version:  process.env.WOLFPACK_APP_VERSION || null,
+      platform:     process.platform,
+      node_version: process.versions && process.versions.node,
+    };
+  }
   const entry = {
     id:          _queueId(),
     kind,

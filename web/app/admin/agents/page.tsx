@@ -107,6 +107,13 @@ type CharSummary = {
   lastError: { ts: string; endpoint: string; message: string | null } | null;
   queuePending: number | null;
   fightActive: boolean | null;
+  // Most-recent client identification from agent_state.client. 'mimic' when
+  // the uploader is the Electron desktop client; 'parser' for Parser.bat
+  // installs running agent v2.5.2+; null/'?' for older agents that didn't
+  // stamp the field. appVersion is Mimic's own semver (only set when
+  // client='mimic').
+  client: string | null;
+  appVersion: string | null;
 };
 
 function summarize(uploads: UploadRow[]): CharSummary[] {
@@ -126,6 +133,8 @@ function summarize(uploads: UploadRow[]): CharSummary[] {
         byEndpoint: new Map(),
         errors30d: 0,
         lastError: null,
+        client: null,
+        appVersion: null,
         queuePending: null,
         fightActive: null,
       };
@@ -138,6 +147,8 @@ function summarize(uploads: UploadRow[]): CharSummary[] {
       if (u.agent_state && typeof u.agent_state === 'object') {
         s.queuePending = (u.agent_state.queue_pending ?? null) as number | null;
         s.fightActive  = (u.agent_state.fight_active ?? null) as boolean | null;
+        s.client       = (u.agent_state.client ?? null) as string | null;
+        s.appVersion   = (u.agent_state.app_version ?? null) as string | null;
       }
     }
     s.uploads30d++;
@@ -344,6 +355,7 @@ export default async function AdminAgentsPage() {
                 <tr key={s.character} className="border-b border-border/40 hover:bg-[#1a212c]">
                   <td className="px-2 sm:px-3 py-2 text-text">
                     <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
+                    <ClientChip client={s.client} appVersion={s.appVersion} />
                     <div className="text-dim text-[10px] md:hidden">{s.agentVersion || '—'} · {s.uploads24h}/24h</div>
                   </td>
                   <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap">{rel(s.lastUpload)}</td>
@@ -503,4 +515,23 @@ function Stat({ label, value, color = 'text-text' }: { label: string; value: num
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
   return <div className="p-6 text-sm text-dim leading-6">{children}</div>;
+}
+
+// Client identification chip — colored per client so Mimic installs are
+// visually distinct from Parser.bat installs on the agent fleet table.
+// 'mimic' is blue (matches the Mimic button branding), 'parser' is dim,
+// null/unknown is hidden entirely so older agents don't show a noisy chip.
+function ClientChip({ client, appVersion }: { client: string | null; appVersion: string | null }) {
+  if (!client) return null;
+  const isMimic = client === 'mimic';
+  const cls = isMimic
+    ? 'bg-[#1f6feb22] text-blue border-blue/40'
+    : 'bg-[#1a212c] text-dim border-border';
+  const label = isMimic ? '🐺 Mimic' : 'Parser.bat';
+  return (
+    <span className={`inline-block ml-1.5 align-middle text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded border ${cls}`}
+          title={appVersion ? `${client} v${appVersion}` : client}>
+      {label}{appVersion ? <span className="ml-1 opacity-70 normal-case tracking-normal">v{appVersion}</span> : null}
+    </span>
+  );
 }
