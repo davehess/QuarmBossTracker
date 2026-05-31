@@ -219,7 +219,15 @@ async function launchAgent() {
   } else {
     appendAgentLog(`[mimic] character NOT detected; agent will infer from log tail (eqDir=${eqDir || 'unknown'})\n`);
   }
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  const env = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE:   '1',
+    // Identify uploads on the admin agent fleet board so Mimic installs
+    // are visibly distinct from Parser.bat installs (agent v2.5.2+ reads
+    // these and stamps every payload's agent_state with them).
+    WOLFPACK_CLIENT:        'mimic',
+    WOLFPACK_APP_VERSION:   app.getVersion(),
+  };
   if (cfg.eqPath || eqDir) env.WOLFPACK_EQ_DIR = cfg.eqPath || eqDir;
 
   agentProc = spawn(process.execPath, args, {
