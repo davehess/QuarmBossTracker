@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel } from '@/lib/format';
+import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 
 export const dynamic = 'force-dynamic';
@@ -66,11 +66,6 @@ const TANK_CLASSES = new Set(['Warrior', 'Paladin', 'Shadow Knight']);
 // EQEmu names scripted/event mobs with a leading '#' and underscores
 // ("#Grieg_Veneficus", "Lord_Inquisitor_Seru"). Clean those for display so
 // the page shows "Grieg Veneficus" instead of the raw spawn name.
-function cleanBossName(raw: string | null | undefined): string {
-  if (!raw) return 'Unknown boss';
-  return raw.replace(/^#/, '').replace(/_/g, ' ').trim() || 'Unknown boss';
-}
-
 async function load(id: string) {
   try {
     const sb = supabaseAdmin();

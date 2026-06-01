@@ -12,7 +12,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import KillCard, { type KillCardData } from '@/components/KillCard';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
-import { dayKey, dayLabel, fmtDmg } from '@/lib/format';
+import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -158,7 +158,7 @@ function toCardData(enc: EncounterRow): KillCardData {
     duration_sec: enc.duration_sec,
     total_damage: enc.total_damage,
     total_dps: enc.total_dps,
-    boss_name: enc.eqemu_npc_types?.name ?? 'Unknown boss',
+    boss_name: cleanBossName(enc.eqemu_npc_types?.name),
     player_count: players.length,
     top_players: players.slice(0, 5).map(p => ({
       character_name: p.character_name,
@@ -214,7 +214,7 @@ function computeNightStats(day: DayBucket, dayDate: string): NightStats {
   for (const e of encs) {
     const d = e.duration_sec || 0;
     if (!longest || d > longest.duration_sec) {
-      longest = { boss: e.eqemu_npc_types?.name || 'Unknown boss', duration_sec: d };
+      longest = { boss: cleanBossName(e.eqemu_npc_types?.name), duration_sec: d };
     }
   }
   return {

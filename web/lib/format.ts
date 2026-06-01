@@ -1,5 +1,15 @@
 // Shared display formatters for the web app.
 
+// Strip EQEmu naming artifacts from a boss/NPC name for display.
+// eqemu_npc_types.name uses internal naming (leading "#" for instanced
+// versions, "_" for spaces) which leaks through to /parses, /boss/[id],
+// and anywhere else we surface raw names. Convert both to a human-
+// readable form.
+export function cleanBossName(raw: string | null | undefined): string {
+  if (!raw) return 'Unknown boss';
+  return raw.replace(/^#/, '').replace(/_/g, ' ').trim() || 'Unknown boss';
+}
+
 export function fmtDmg(n: number | null | undefined) {
   if (n == null) return '—';
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;

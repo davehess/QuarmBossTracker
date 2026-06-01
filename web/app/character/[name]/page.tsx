@@ -9,7 +9,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
-import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel } from '@/lib/format';
+import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import {
   loadFamily,
   loadEraTimeline,
@@ -213,7 +213,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           <Stat
             label="Best parse"
             value={bestParse ? fmtDmg(bestParse.total_damage) : '—'}
-            sub={bestParse?.encounters?.eqemu_npc_types?.name || null}
+            sub={cleanBossName(bestParse?.encounters?.eqemu_npc_types?.name) === 'Unknown boss' ? null : cleanBossName(bestParse?.encounters?.eqemu_npc_types?.name)}
             accent="text-gold"
           />
           <Stat
@@ -284,7 +284,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           </thead>
           <tbody>
             {recentParses.map((p) => {
-              const boss = p.encounters?.eqemu_npc_types?.name ?? '?';
+              const boss = cleanBossName(p.encounters?.eqemu_npc_types?.name);
               const ts   = p.encounters?.started_at;
               return (
                 <tr key={p.encounter_id} className="border-b border-border/30 hover:bg-[#1a212c]">

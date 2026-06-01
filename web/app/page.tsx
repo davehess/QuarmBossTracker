@@ -5,7 +5,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
-import { fmtDmg, fmtTime, dayKey, dayLabel } from '@/lib/format';
+import { fmtDmg, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -173,7 +173,7 @@ export default async function HomePage() {
             {recent.map((r) => (
               <li key={r.id} className="flex justify-between gap-2 border-b border-border/30 py-0.5">
                 <Link href={`/parses/${r.id}`} className="text-text hover:text-blue truncate">
-                  <span className="text-gold">{r.eqemu_npc_types?.name || '?'}</span>
+                  <span className="text-gold">{cleanBossName(r.eqemu_npc_types?.name)}</span>
                   <span className="text-dim"> · {dayLabel(dayKey(r.started_at))} {fmtTime(r.started_at)}</span>
                 </Link>
                 <span className="text-dim whitespace-nowrap">{fmtDmg(r.total_damage)}</span>
