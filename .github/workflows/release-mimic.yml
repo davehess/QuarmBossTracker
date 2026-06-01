@@ -4,11 +4,19 @@ name: Release Mimic (Electron)
 # attaches the .exe + mimic-beta.yml to a GitHub release. The release tag
 # is auto-derived from apps/mimic/package.json's version field.
 #
+# TAG FORMAT — must be plain semver `v<version>` (e.g. v0.1.0-mimic-beta.17).
+# electron-updater resolves Mimic's custom `mimic-beta` channel by parsing the
+# tag with semver.prerelease() and matching the prerelease identifier against
+# the channel. A `mimic-v…` prefix is NOT valid semver → parses to null →
+# nothing matches → "No published versions on GitHub". The channel lives in
+# the VERSION's prerelease (`-mimic-beta.N`), not in a tag prefix. The parser
+# release workflow excludes `*mimic*` tags so this never triggers a bot build.
+#
 # TRIGGERS:
 #   1. Push to main that changes apps/mimic/package.json AND bumps the
 #      version field → workflow runs, builds, and softprops creates a fresh
-#      release tagged mimic-v<new_version> at the merge commit. Tag,
-#      release, and assets all materialize in one pass — no human clicks.
+#      release tagged v<new_version> at the merge commit. Tag, release, and
+#      assets all materialize in one pass — no human clicks.
 #   2. Manual workflow_dispatch with a tag input — for retrying a failed
 #      build, or rebuilding from a tag that was created some other way.
 on:
@@ -18,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. mimic-v0.1.0-beta.4)'
+        description: 'Tag to release (e.g. v0.1.0-mimic-beta.17)'
         required: true
 
 jobs:
@@ -51,7 +59,9 @@ jobs:
           new_version=$(jq -r .version apps/mimic/package.json)
           prev_version=$(git show HEAD~1:apps/mimic/package.json 2>/dev/null \
                           | jq -r .version 2>/dev/null || echo "")
-          tag="mimic-v$new_version"
+          # Plain semver tag (v-prefixed) so electron-updater can parse the
+          # prerelease channel. NOT `mimic-v…` — that breaks the updater.
+          tag="v$new_version"
           echo "Detected: new=$new_version prev=$prev_version tag=$tag"
 
           if [ -z "$new_version" ] || [ "$new_version" = "null" ]; then

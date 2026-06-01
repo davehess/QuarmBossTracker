@@ -86,8 +86,12 @@ async function loadMimicReleases(): Promise<MimicRelease[]> {
     );
     if (!res.ok) return [];
     const all = (await res.json()) as MimicRelease[];
+    // Detect Mimic releases by their unique mimic-beta.yml update-channel
+    // asset, not by tag prefix — tags are now plain semver (v0.1.0-mimic-beta.N)
+    // so electron-updater can parse the channel, and they share the v* namespace
+    // with bot/parser releases.
     return all
-      .filter(r => r.tag_name.startsWith('mimic-v'))
+      .filter(r => r.assets.some(a => a.name.toLowerCase() === 'mimic-beta.yml'))
       .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
   } catch {
     return [];

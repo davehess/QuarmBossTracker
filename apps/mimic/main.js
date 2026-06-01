@@ -753,10 +753,22 @@ function safeCheckForUpdates(verbose) {
 function wireAutoUpdater() {
   if (!autoUpdater) return;
   // Pin Mimic to its own update channel so this repo's other releases (bot
-  // v2.x.y, agent v2.x.y) never get mistaken for Mimic updates. The channel
-  // name matches the publish-config `channel` field in package.json, which
-  // makes electron-builder emit `mimic-beta.yml` instead of `latest.yml`.
-  // Releases without that file are invisible to the updater.
+  // v2.x.y, agent v2.x.y) never get mistaken for Mimic updates.
+  //
+  // CRITICAL — how electron-updater (v6) resolves a CUSTOM channel:
+  // it scans the GitHub releases atom feed and, for a custom channel name
+  // (anything other than "alpha"/"beta"), only accepts a release whose tag
+  // satisfies `semver.prerelease(tag)[0] === channel`. That means the
+  // release VERSION must carry the channel as its prerelease identifier —
+  // i.e. `0.1.0-mimic-beta.N` — and the TAG must be plain semver (`v<ver>`)
+  // so `semver.prerelease()` can parse it. A `mimic-v…` tag prefix is NOT
+  // valid semver, so it parses to null and NOTHING matches → the updater
+  // throws "No published versions on GitHub". (That was the beta.16 bug.)
+  //
+  // So the contract is, all in lockstep:
+  //   • package.json version  → `0.1.0-mimic-beta.N`  (prerelease = mimic-beta)
+  //   • git tag               → `v0.1.0-mimic-beta.N` (plain semver)
+  //   • publish channel below → `mimic-beta`          (emits mimic-beta.yml)
   autoUpdater.channel = 'mimic-beta';
   autoUpdater.allowPrerelease = true;
   autoUpdater.autoDownload = true;

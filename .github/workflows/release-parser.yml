@@ -3,11 +3,18 @@ name: Release Parser Package
 # Triggers on any version-shaped tag push (v2.0.4, 2.0.4, agent-v2.5.1, etc.)
 # or manually from the Actions tab. Accepting bare-number tags so the GitHub
 # Releases UI 'create new tag' flow works without forcing a 'v' prefix.
+#
+# `!*mimic*` exclusion: Mimic releases are now tagged with plain semver
+# (v0.1.0-mimic-beta.N) so electron-updater can parse them — that matches the
+# `v*` glob above. The exclusion (evaluated after the includes) keeps a Mimic
+# tag push from spinning up a Parser build on the same tag. Real bot/parser
+# tags never contain "mimic".
 on:
   push:
     tags:
       - 'v*'
       - '[0-9]*'
+      - '!*mimic*'
   workflow_dispatch:
     inputs:
       tag:
