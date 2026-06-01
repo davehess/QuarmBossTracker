@@ -59,6 +59,10 @@ let agentPort = BASE_PORT;
 let restartBackoff = 1000;
 let quitting = false;
 let updatePending = null; // { version } once an update is downloaded and ready
+// Setup mode — when true, every overlay is shown + unlocked and gets an
+// inline control strip with opacity / hide / lock-here. Lets a user place
+// every overlay at once instead of toggling them on individually.
+let setupMode = false;
 
 // ── Config ────────────────────────────────────────────────────────────────
 function defaultConfig() {
@@ -78,6 +82,9 @@ function defaultConfig() {
     overlaysLocked: true,
     hudBounds:     null,     // { x, y, width, height } | null (use default)
     triggerBounds: null,
+    // Per-overlay opacity. Keyed by 'hud', 'trigger', or 'panel:<panelKey>'.
+    // Defaults to 1.0 (opaque). 0.25 = mostly transparent.
+    overlayOpacity: {},
   };
 }
 function loadConfig() {
@@ -388,24 +395,74 @@ function _persistBounds(key, win) {
 // Apply lock state to an overlay WITHOUT restarting anything. Locked =
 // click-through + not resizable + drag handle hidden (renderer). Unlocked =
 // interactive + resizable + drag handle shown so the user can grab + move it.
+// Iterate every overlay window with its identifying key. The key is used to
+// look up per-window state in config (opacity bounds) and to address
+// individual windows over IPC.
+function _overlayEntries() {
+  const out = [];
+  if (overlayWindow && !overlayWindow.isDestroyed()) out.push(['hud',     overlayWindow]);
+  if (triggerWindow && !triggerWindow.isDestroyed()) out.push(['trigger', triggerWindow]);
+  for (const [panelKey, win] of panelOverlays.entries()) {
+    if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
+  }
+  return out;
+}
+
+// Apply the per-window opacity saved in config (defaults to 1.0). Called on
+// window create + whenever a slider in setup mode moves.
+function applyOverlayOpacity(win, key) {
+  if (!win || win.isDestroyed()) return;
+  const cfg = loadConfig();
+  const o = (cfg.overlayOpacity || {})[key];
+  const val = (typeof o === 'number' && o >= 0.15 && o <= 1.0) ? o : 1.0;
+  try { win.setOpacity(val); } catch {}
+}
+function applyAllOverlayOpacities() {
+  for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
+}
+
 function applyOverlayInteractivity() {
   const cfg = loadConfig();
-  const locked = cfg.overlaysLocked !== false; // default locked
-  // All overlays share the global lock state: DPS HUD, trigger overlay,
-  // and every per-panel overlay opened via createPanelOverlay.
-  const all = [overlayWindow, triggerWindow, ...panelOverlays.values()];
-  for (const win of all) {
-    if (!win || win.isDestroyed()) continue;
+  // Setup mode overrides: every overlay is unlocked + visible regardless of
+  // user prefs, so they can all be placed at once.
+  const locked = !setupMode && cfg.overlaysLocked !== false;
+  for (const [key, win] of _overlayEntries()) {
     if (locked) {
       win.setIgnoreMouseEvents(true, { forward: true });
       win.setResizable(false);
     } else {
       win.setIgnoreMouseEvents(false);
       win.setResizable(true);
-      win.showInactive(); // make sure it's visible to grab, without stealing game focus
+      win.showInactive();
     }
-    try { win.webContents.send('overlay-locked', locked); } catch {}
+    try {
+      win.webContents.send('overlay-locked', locked);
+      // Tell the renderer who it is (for opacity slider IPC) and whether
+      // we're in setup mode (so it can show the control strip).
+      win.webContents.send('setup-mode', { active: setupMode, overlayKey: key });
+    } catch {}
   }
+}
+
+// Master setup-mode toggle. ON: force-show every overlay (DPS HUD, trigger,
+// every panel overlay) + unlock so the user can place them all at once.
+// Also ensures HUD + trigger exist (creates them if user hid them earlier).
+// OFF: restore user prefs (visibility + lock), keep opacities.
+function applySetupMode(on) {
+  setupMode = !!on;
+  if (setupMode) {
+    if (!overlayWindow) createOverlayWindow();
+    if (!triggerWindow) createTriggerOverlay();
+    // Force-show every overlay
+    for (const [, win] of _overlayEntries()) {
+      try { win.showInactive(); } catch {}
+    }
+  }
+  applyOverlayInteractivity();
+  applyOverlayVisibility();
+  applyTriggerVisibility();
+  applyAllOverlayOpacities();
+  pushStatus();
 }
 
 // Create (or focus) a panel-overlay window for a specific dashboard panel.
@@ -447,6 +504,7 @@ function createPanelOverlay(panelKey) {
   win.once('ready-to-show', () => {
     win.showInactive();
     applyOverlayInteractivity();
+    applyOverlayOpacity(win, 'panel:' + panelKey);
   });
   panelOverlays.set(panelKey, win);
   return true;
@@ -472,6 +530,7 @@ function createOverlayWindow() {
     overlayWindow.webContents.send('agent-port', agentPort);
     applyOverlayVisibility();
     applyOverlayInteractivity();
+    applyOverlayOpacity(overlayWindow, 'hud');
   });
 }
 
@@ -495,6 +554,7 @@ function createTriggerOverlay() {
     triggerWindow.webContents.send('agent-port', agentPort);
     applyTriggerVisibility();
     applyOverlayInteractivity();
+    applyOverlayOpacity(triggerWindow, 'trigger');
   });
 }
 
@@ -540,6 +600,7 @@ function currentStatus() {
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
     overlaysLocked: cfg.overlaysLocked !== false,
+    setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
     botUrl: cfg.botUrl,
@@ -619,6 +680,10 @@ function buildTrayMenu() {
         applyOverlayInteractivity();
         pushStatus();
       } },
+    // Setup mode — shows every overlay at once with opacity sliders so the
+    // user can place + dial them all in a single pass.
+    { label: setupMode ? '🛠 Exit setup mode' : '🛠 Setup mode — place all overlays',
+      click: () => { applySetupMode(!setupMode); } },
   ];
 
   const wolfpackSubmenu = [
@@ -782,6 +847,22 @@ ipcMain.handle('open-settings', () => { openSettings(); return true; });
 // (stable <h2> prefix); spawns a transparent always-on-top window that
 // loads the dashboard with ?overlay=<key> for live updates.
 ipcMain.handle('create-panel-overlay', (_e, panelKey) => createPanelOverlay(panelKey));
+// Master setup-mode toggle — every overlay shown + unlocked at once for
+// placement; opacity sliders + lock-here buttons appear on each.
+ipcMain.handle('set-setup-mode', (_e, on) => { applySetupMode(!!on); return setupMode; });
+// Per-overlay opacity (renderer slider in setup mode). key matches the
+// _overlayEntries() taxonomy: 'hud' | 'trigger' | 'panel:<panelKey>'.
+ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
+  if (typeof key !== 'string' || typeof value !== 'number') return false;
+  value = Math.max(0.15, Math.min(1.0, value));
+  const cfg = loadConfig();
+  cfg.overlayOpacity = cfg.overlayOpacity || {};
+  cfg.overlayOpacity[key] = value;
+  saveConfig(cfg);
+  // Apply to the matching live window.
+  for (const [k, win] of _overlayEntries()) if (k === key) applyOverlayOpacity(win, k);
+  return true;
+});
 // Open an external URL in the OS default browser. Allowlist to wolfpack.quest
 // and the GitHub repo so a compromised renderer can't open arbitrary links.
 ipcMain.handle('open-external', (_e, url) => {
