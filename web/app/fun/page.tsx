@@ -141,31 +141,29 @@ async function loadCounters() {
 
   // ── Malthur's Bounty — stacks of food + water distributed. Recipient-side
   // detector means each member's agent reports what THEY received; summing
-  // approximates total stacks Malthur put out. Carries an honest 420-stack
-  // founders' baseline (per owner request — joke math, stated in the sub) so
-  // the card reads 420 today and ticks up from there.
-  const MALTHUR_BASELINE = 420;
+  // approximates total stacks Malthur put out. Plain captured count (the
+  // 420 founders' baseline was removed per owner request).
+  const MALTHUR_BASELINE = 0;
   try {
     const [{ count: food }, { count: water }] = await Promise.all([
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_food_received'),
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'malthur_water_received'),
     ]);
     const captured = (food ?? 0) + (water ?? 0);
-    const baselineNote = `starts at ${MALTHUR_BASELINE} (you know why)`;
     counters.push({
       label: "Malthur's Bounty",
       emoji: '🍞',
       value: captured + MALTHUR_BASELINE,
       sub: captured > 0
-        ? `${baselineNote} · ${captured.toLocaleString()} captured (${(food ?? 0).toLocaleString()} 🍞 burnt bread + ${(water ?? 0).toLocaleString()} 💧 water)`
-        : `${baselineNote} · agent v2.4.30+ will tick this up from recipient lines.`,
+        ? `${(food ?? 0).toLocaleString()} 🍞 burnt bread + ${(water ?? 0).toLocaleString()} 💧 water`
+        : `agent v2.4.30+ ticks this up from recipient lines.`,
     });
   } catch (err) {
     counters.push({
       label: "Malthur's Bounty",
       emoji: '🍞',
       value: MALTHUR_BASELINE,
-      sub: `starts at ${MALTHUR_BASELINE} (you know why) · captured count unavailable`,
+      sub: `captured count unavailable`,
     });
     void err;
   }

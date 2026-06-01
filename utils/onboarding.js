@@ -85,6 +85,9 @@ const CHANGELOGS = {
   '2.6.7': [
     '`@PVP` pings now ONLY fire when Wolf Pack is actually involved (our kill or our death). Non-WP deaths in PvP-zone broadcasts post as plain death notices with no role mention, raid hours or not. Also fixed: a Wolf Pack member killing an NPC (e.g. "Adiwen killed Lord of Ire of <null>") no longer triggers the AWROOOO PvP-celebration path — NPC victims with no real guild post as informational notices.',
   ],
+  '2.6.8': [
+    'Squashed double-posting: when one Mimic install tails a main + alts, server/guild broadcasts (guild chat, PvP kills) were captured once per log and posted twice. Now deduped at the source + by normalized text on the bot. Also fixed the stray `[]` after some chat names (empty class tag) and the GMT-instead-of-local timestamps on the chat history page.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

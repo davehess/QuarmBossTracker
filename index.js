@@ -2405,10 +2405,15 @@ const http = require('http');
 
 // ── Guild/raid chat relay dedup cache ─────────────────────────────────────────
 // Multiple parsers watching the same raid will all see the same chat lines.
-// Keep a 5-second fingerprint cache so each unique message posts to Discord once.
-const _chatDedup = new Map(); // key: "channel|speaker|text" → timestamp
+// Window is 60s (was 5s): agents flush their chat buffers on independent 5s
+// timers and network/queue latency can space two perspectives of the same
+// line many seconds apart, so a 5s window let dupes through. 60s is still far
+// shorter than anyone re-typing the exact same /gu line, so genuine repeats
+// aren't suppressed.
+const CHAT_DEDUP_WINDOW_MS = 60_000;
+const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
 setInterval(() => {
-  const cutoff = Date.now() - 5000;
+  const cutoff = Date.now() - CHAT_DEDUP_WINDOW_MS;
   for (const [k, v] of _chatDedup) if (v < cutoff) _chatDedup.delete(k);
 }, 10_000);
 
@@ -2600,8 +2605,15 @@ async function _handleAgentChat(req, res) {
       : (getChatThreadId(channel, era.key) || fallback);  // past era → thread (or main if unset)
     if (!channelId) continue; // channel not configured — silently skip
 
-    // Dedup: same speaker + text within 5s = multiple parsers saw same line
-    const key = `${channel}|${speaker.toLowerCase()}|${text}`;
+    // Dedup: same speaker + text = multiple parsers saw the same line.
+    // CRITICAL: normalize the text in the key. EQ shows the SPEAKER their own
+    // /gu line lowercase-as-typed ("man both of you guys lol") but broadcasts
+    // an auto-capitalized version to every BYSTANDER ("Man both of you guys
+    // lol"). With multiple agents running, both casings arrive and a raw-text
+    // key fails to dedup → the message double-posts. Lowercasing + collapsing
+    // whitespace in the KEY (display text keeps original casing) closes it.
+    const normText = String(text).toLowerCase().replace(/\s+/g, ' ').trim();
+    const key = `${channel}|${speaker.toLowerCase()}|${normText}`;
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
 
@@ -2617,12 +2629,14 @@ async function _handleAgentChat(req, res) {
       uploaded_by: payload?.uploaded_by || null,
     });
 
-    // Class/level tag: try server-side whoData first, fall back to what the agent sent
+    // Class/level tag: try server-side whoData first, fall back to what the agent sent.
+    // Only render the tag when we actually have level/race/class content —
+    // otherwise an empty whoEntry produced a bare " []" after the name
+    // (the bug behind "Wabumkin []: no :(").
     const { getWhoEntry } = require('./utils/state');
     const whoEntry = getWhoEntry(speaker) || uploadedWho || null;
-    const whoTag   = whoEntry
-      ? ` [${[whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean).join(' ')}]`
-      : '';
+    const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
+    const whoTag   = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
 
     try {
       const ch = await client.channels.fetch(channelId).catch(() => null);
@@ -2669,14 +2683,19 @@ async function _handleAgentChat(req, res) {
 const WP_GUILD_NAME = process.env.PVP_GUILD_NAME || 'Wolf Pack';
 
 // Dedup cache: when multiple parsers see the same Druzzil Ro broadcast,
-// each uploads it independently. Key on second-granular timestamp + text
-// so we only post each unique broadcast once. 5-min TTL is plenty since
-// real duplicate kills of the same player by the same mob in the same
-// zone never happen within 5 min.
+// each uploads it independently. One Mimic install also tails MULTIPLE log
+// files from the same box (a player's main + alts), so the same server-wide
+// broadcast is captured once per log → uploaded several times within the
+// same second or a second apart.
+//
+// Key on the NORMALIZED broadcast TEXT only — NOT the timestamp. The two
+// perspectives of one kill can have ts a second apart (client clock skew /
+// parse timing), which a second-granular key let slip through (the visible
+// "posted twice" bug). The 5-min TTL bounds it: the identical kill text
+// ("X killed Y in Z") doesn't legitimately repeat within 5 minutes.
 const _recentPvpBroadcasts = new Map();
 function _pvpDedupKey(b) {
-  const sec = b?.ts ? new Date(b.ts).toISOString().slice(0, 19) : '';
-  return `${sec}|${b?.text || ''}`;
+  return String(b?.text || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 function _isPvpDupe(b) {
   const now = Date.now();
@@ -2684,6 +2703,7 @@ function _isPvpDupe(b) {
     if (exp < now) _recentPvpBroadcasts.delete(k);
   }
   const key = _pvpDedupKey(b);
+  if (!key) return false;
   if (_recentPvpBroadcasts.has(key)) return true;
   _recentPvpBroadcasts.set(key, now + 5 * 60_000);
   return false;
