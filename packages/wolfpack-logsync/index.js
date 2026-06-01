@@ -914,6 +914,14 @@ class EncounterBuilder {
     // fight (e.g. Lady Vox Complete Heal). Surfaced on parse cards via the
     // encounter payload's npc_healed_total field.
     this.npcHealedTotal = 0;
+    // Damage-shield reflects — every damage event with no attacker landing on
+    // one of our combat targets is treated as a reflect (DS spell, thorns
+    // song, clicky shield, etc.). We track per-ability { count, total, min,
+    // max, examples[]} so the dashboard can later distinguish fixed-value
+    // shields (Inner Fire family — all hits the same number) from variable
+    // ones (Elemental Illusion bard song, clickies — values fan out).
+    //   abilityName -> { count, total, min, max, examples: number[] }
+    this.dsReflects = new Map();
     // Charm session tracking (this encounter only).
     //   _activeCharms: petLower → open session record (started_at, owner, …)
     //   charmSessions: closed sessions (charm broke or owner re-charmed
@@ -1026,6 +1034,15 @@ class EncounterBuilder {
       flushedAt: null,
       perPlayer,
     };
+    // Mirror current DS-reflect accumulator so the dashboard can render
+    // a live "🛡 Damage Shield" panel without poking builder internals.
+    if (this.dsReflects && this.dsReflects.size > 0) {
+      const out = {};
+      for (const [k, v] of this.dsReflects.entries()) out[k] = v;
+      stats.currentDsReflects = { bossName: this.bossName, abilities: out };
+    } else {
+      stats.currentDsReflects = null;
+    }
   }
 
   _bumpHealer(healer, target, amount) {
@@ -1277,6 +1294,22 @@ class EncounterBuilder {
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
         ? (this.character || 'You')
         : rawAtk;
+      // Damage-shield reflect detection: the line is "X was hit by ABILITY for
+      // N damage" with attacker=null (EQ never reveals who applied the DS to
+      // the tank). When the defender is a mob we're currently fighting AND an
+      // ability name is present, count it as a reflect.
+      if (rawAtk === null && event.ability && event.defender && this.targets.has(event.defender)) {
+        const abil = String(event.ability).trim();
+        if (abil && abil.length < 40) { // sanity bound; real spell names are short
+          let r = this.dsReflects.get(abil);
+          if (!r) { r = { count: 0, total: 0, min: event.amount, max: event.amount, examples: [] }; this.dsReflects.set(abil, r); }
+          r.count++;
+          r.total += event.amount;
+          if (event.amount < r.min) r.min = event.amount;
+          if (event.amount > r.max) r.max = event.amount;
+          if (r.examples.length < 8) r.examples.push(event.amount);
+        }
+      }
       // Charm-session damage attribution. If the attacker is a pet with
       // an open charm session, add the damage to its session total so
       // the bot can compute avg DPS over the charmed duration.
@@ -1798,6 +1831,16 @@ class EncounterBuilder {
         // Surfaced on parse cards as "27.1k (+10k healed)" so the raid sees
         // how much HP they actually had to push through.
         npc_healed_total: this.npcHealedTotal > 0 ? this.npcHealedTotal : undefined,
+        // Damage-shield reflects observed during this fight, keyed by
+        // ability name. Each entry: { count, total, min, max, examples[] }.
+        // Fixed-value DS (min == max) is distinguishable from variable
+        // (Elemental Illusion / clickies / songs) at render time.
+        ds_reflects: (() => {
+          if (this.dsReflects.size === 0) return undefined;
+          const out = {};
+          for (const [k, v] of this.dsReflects.entries()) out[k] = v;
+          return out;
+        })(),
         // Per-pet charm sessions during this encounter — start + end + damage
         // accumulated while charmed. Closed sessions already in
         // this.charmSessions; any still-open sessions get closed here with
@@ -4484,6 +4527,63 @@ async function dismissTopDamage(key) {
   setInterval(function(){ render(lastPets); }, 1000);
   setInterval(fetchPets, 3000);
   fetchPets();
+})();
+
+// ── 🛡 Damage Shield reflects panel ─────────────────────────────────────────
+// Tracks "X was hit by ABILITY for N damage" lines where the target is a
+// mob we're currently fighting and there's no attacker (i.e. the damage
+// shield on the tank reflected the boss's swing). Per ability we show
+// hits / total / per-hit pattern (fixed value → likely Inner Fire family;
+// variable → likely Elemental Illusion / clicky / song). All-zero hides.
+(function(){
+  function makeCard(){
+    var c = document.createElement("div");
+    c.id = "wpDsCard";
+    c.className = "card";
+    c.style.display = "none";
+    c.innerHTML = "<h2>🛡 Damage Shield reflects <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · while boss is hitting the tank</span></h2><div class=card-body></div>";
+    return c;
+  }
+  var card = makeCard();
+  function ensure(){
+    if (document.getElementById("wpDsCard")) return;
+    var dash = document.getElementById("dash"); if (!dash) return;
+    var grid = dash.querySelector(".grid"); var host = grid || dash;
+    host.insertBefore(card, host.firstChild);
+  }
+  function fmt(n){ n=Number(n)||0; return n.toLocaleString(); }
+  function render(payload){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    if (!payload || !payload.abilities || Object.keys(payload.abilities).length === 0){
+      card.style.display = "none"; return;
+    }
+    card.style.display = "block";
+    var boss = (payload.bossName || "?").replace(/_/g, " ");
+    var rows = Object.entries(payload.abilities).map(function(kv){
+      var name = kv[0]; var v = kv[1] || {};
+      var avg = v.count > 0 ? Math.round(v.total / v.count) : 0;
+      var fixed = (v.min === v.max);
+      return { name: name, count: v.count||0, total: v.total||0, min: v.min||0, max: v.max||0, avg: avg, fixed: fixed };
+    }).sort(function(a,b){ return b.total - a.total; });
+    var html = "<div class=dim style=margin-bottom:6px>vs <b>" + boss + "</b> — " + rows.length + " ability/-ies</div>";
+    html += "<table><tr><th>Ability</th><th class=num>Hits</th><th class=num>Total</th><th class=num>Per hit</th><th>Type</th></tr>";
+    rows.forEach(function(r){
+      var perHit = r.fixed ? fmt(r.avg) : (fmt(r.min) + "–" + fmt(r.max) + " (avg " + fmt(r.avg) + ")");
+      var typeLabel = r.fixed ? "<span style='color:var(--green)'>fixed</span>" : "<span style='color:var(--orange)'>variable (song/clicky)</span>";
+      html += "<tr><td class=name>" + r.name + "</td><td class=num>" + r.count + "</td><td class=num>" + fmt(r.total) + "</td><td class=num>" + perHit + "</td><td style=font-size:11px>" + typeLabel + "</td></tr>";
+    });
+    html += "</table>";
+    body.innerHTML = html;
+  }
+  function refresh(){
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      ensure();
+      render(s && s.currentDsReflects);
+    }).catch(function(){});
+  }
+  refresh();
+  setInterval(refresh, 3000);
 })();
 </script></body></html>`;
 
