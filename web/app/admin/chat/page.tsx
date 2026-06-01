@@ -41,7 +41,27 @@ type Params = {
   day?: string;
   era?: string;
   alldates?: string;  // "1" → flatten to every message across all dates (for infrequent speakers)
+  nospam?: string;    // "1" → hide mechanical raid callouts (DA up/down, CH/heal chains) from the log
 };
+
+// Heuristic classifier for mechanical raid callouts — defensive-disc timers
+// ("DA up" / ">>DA DOWN<<" / "6 SECONDS DA"), CH/heal chains, and mana
+// announcements — as opposed to actual conversation. Used by the opt-in
+// "hide callouts" toggle. It's deliberately conservative-ish but a false
+// positive only hides a line the user can re-reveal by toggling off.
+function isCombatCallout(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  if (/[<>]{2}/.test(t)) return true;                                  // >>...<< wrappers
+  if (/\bda\b/.test(lower) && /(\bup\b|\bdown\b|\bsec)/.test(lower)) return true; // DA up/down/seconds
+  if (/\bch\s*\d|\bch up\b|complete heal/.test(lower)) return true;   // CH chain / complete heal
+  if (/\bremedy on\b|celestial elixir|ethereal light/.test(lower)) return true;  // heal-target callouts
+  if (/\bmana[:\s]+\d{1,3}\s*%/.test(lower)) return true;             // "Mana: 96%" / "Mana 100%"
+  if (/^\s*(?:ch\s*)?\d{1,3}\s*$/.test(lower)) return true;           // bare CH-chain numbers
+  if (/\binc\b.*\bmana\b/.test(lower)) return true;                   // "Elixir INC ... Mana"
+  return false;
+}
 
 // RPC arg helpers — shared by the bucket-count + top-speaker helpers below.
 function rpcChannel(p: Params): string | null {
@@ -262,6 +282,7 @@ function paramsToQuery(p: Params): string {
   if (p.day)     u.set('day',     p.day);
   if (p.era)     u.set('era',     p.era);
   if (p.alldates) u.set('alldates', p.alldates);
+  if (p.nospam)  u.set('nospam',  p.nospam);
   const qs = u.toString();
   return qs ? `?${qs}` : '';
 }
@@ -402,6 +423,7 @@ export default async function AdminChatPage({
   let days: [number, number][] = [];
   let log: ChatRow[] = [];
 
+  let hiddenCallouts = 0;
   if (inAllDates) {
     log = await loadAllDates(p);
   } else if (inLogMode) {
@@ -415,6 +437,15 @@ export default async function AdminChatPage({
     // ones with 0 matches for the active filter. Otherwise narrowing the
     // filter would hide the rest of the timeline.
     [years, yearAxis] = await Promise.all([yearBuckets(p), allYearsAxis()]);
+  }
+
+  // Opt-in: strip mechanical raid callouts from the rendered log so actual
+  // conversation is readable. Applied after load (the filter is in JS), so the
+  // hidden count is informational.
+  if (p.nospam === '1' && (inLogMode || inAllDates)) {
+    const before = log.length;
+    log = log.filter(r => !isCombatCallout(r.text));
+    hiddenCallouts = before - log.length;
   }
 
   // Speaker swap menu — independent of the speaker filter so you can swap
@@ -682,11 +713,24 @@ export default async function AdminChatPage({
               (all-dates mode). */}
           {(inLogMode || inAllDates) && (
             <section className="bg-panel border border-border rounded-lg p-3 font-mono text-xs">
-              {inAllDates && (
-                <div className="text-dim text-[11px] mb-2 pb-2 border-b border-border">
-                  📜 All messages across every date for the current filter (oldest first).
-                </div>
-              )}
+              <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-border">
+                <span className="text-dim text-[11px]">
+                  {inAllDates ? '📜 All messages across every date (oldest first).' : 'Chat log.'}
+                  {p.nospam === '1' && hiddenCallouts > 0 && (
+                    <span className="ml-1 text-orange">{hiddenCallouts} callout{hiddenCallouts === 1 ? '' : 's'} hidden.</span>
+                  )}
+                </span>
+                <Link
+                  href={`/admin/chat${paramsToQuery({ ...p, nospam: p.nospam === '1' ? undefined : '1' })}`}
+                  className={[
+                    'shrink-0 px-2 py-0.5 rounded border text-[11px] no-underline font-sans',
+                    p.nospam === '1' ? 'border-blue bg-[#1f6feb33] text-blue' : 'border-border bg-bg text-dim hover:border-blue',
+                  ].join(' ')}
+                  title="Hide defensive-disc timers, CH/heal chains, and mana callouts"
+                >
+                  {p.nospam === '1' ? '✓ Callouts hidden' : 'Hide combat callouts'}
+                </Link>
+              </div>
               {log.length === 0 && (
                 <div className="text-dim italic p-2">
                   {inAllDates ? 'No messages anywhere for the current filter.' : 'No messages on this day with the current filters.'}
