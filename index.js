@@ -3152,6 +3152,40 @@ async function _handleAgentServerPanel(req, res) {
         rows: (rows || []).slice(0, 40),
       }));
     }
+    if (key === 'threat') {
+      if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      // Pull recent snapshots for any encounter where this character appears
+      // in per_player. PostgREST JSONB existence: per_player=cs.{character}
+      // (contains) is the cheap test.
+      const rows = await supabase.select(
+        'encounter_threat_snapshots',
+        `select=boss_name,snapshot_at,per_player,total` +
+        `&guild_id=eq.${encodeURIComponent(guildId)}` +
+        `&snapshot_at=gte.${since}` +
+        `&per_player=cs.${encodeURIComponent(JSON.stringify({ [character]: {} }))}` +
+        `&order=snapshot_at.desc&limit=2000`
+      );
+      // Rank the character within each snapshot; aggregate.
+      let topCount = 0, top3Count = 0;
+      const recent = [];
+      for (const r of (rows || [])) {
+        const entries = Object.entries(r.per_player || {}).map(([n, v]) => [n, (v.swing||0)+(v.proc||0)+(v.spell||0)+(v.heal||0)]).sort((a,b)=>b[1]-a[1]);
+        const idx = entries.findIndex(e => (e[0]||'').toLowerCase() === character.toLowerCase());
+        if (idx === 0) topCount++;
+        if (idx >= 0 && idx < 3) top3Count++;
+        if (recent.length < 10) recent.push({ boss: r.boss_name, snapshot_at: r.snapshot_at, rank: idx + 1, of: entries.length });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        key, character, scope: 'last 30d',
+        updated_at: new Date().toISOString(),
+        snapshots: (rows || []).length,
+        times_topped_threat: topCount,
+        times_top3:          top3Count,
+        recent,
+      }));
+    }
     if (key === 'bids') {
       // Previous bids for a list of items (comma-separated item_ids). Returns
       // winning bid + runners-up + which character won. Used by the dashboard
@@ -3192,6 +3226,52 @@ async function _handleAgentServerPanel(req, res) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'query failed' }));
   }
+}
+
+// Receive a threat snapshot from a running agent (uploader's view of the
+// currentEncounterThreat.perPlayer map). One row per (guild, uploader,
+// boss, snapshot_at); the unique constraint dedups re-uploads.
+async function _handleAgentThreatSnapshot(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'threat-snapshot disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const row = {
+    guild_id:    guildId,
+    encounter_id: payload?.encounter_id || null,
+    boss_name:   payload?.boss_name || null,
+    started_at:  payload?.started_at || null,
+    snapshot_at: payload?.snapshot_at || new Date().toISOString(),
+    uploader:    payload?.uploader || payload?.character || null,
+    per_player:  payload?.per_player || {},
+    total:       Number.isFinite(payload?.total) ? payload.total : null,
+  };
+  if (!row.uploader || !row.per_player || Object.keys(row.per_player).length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'empty' }));
+  }
+  await supabase.upsert('encounter_threat_snapshots', [row], 'guild_id,uploader,boss_name,snapshot_at')
+    .catch(err => console.warn('[threat-snap] upsert failed:', err?.message));
+  _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, written: 1 }));
 }
 
 async function _handleAgentFunEvent(req, res) {
@@ -4841,6 +4921,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentFunEvent(req, res); }
     catch (err) {
       console.error('[fun-event] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/threat-snapshot') {
+    try { return await _handleAgentThreatSnapshot(req, res); }
+    catch (err) {
+      console.error('[threat-snap] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
