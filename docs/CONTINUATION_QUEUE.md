@@ -4,7 +4,7 @@
 > session. When you come back, point me at this file: **"pick up the continuation
 > queue."** Branch in flight: `claude/sharp-lamport-dC0TW`.
 >
-> Last updated: 2026-05-30.
+> Last updated: 2026-06-01 (overnight).
 
 ## How to resume
 - This container is ephemeral — everything below is already committed + pushed.
@@ -15,6 +15,30 @@
 - Resume command: **"pick up the continuation queue, start at #1."**
 
 ## ✅ Shipped this session (recent)
+- **Overnight 2026-06-01 batch** (raid-night + after):
+  - **Mimic beta.13** — moveable/lockable overlays without engine restart;
+    animated compass move-affordance + resize grips; bounds persist with a
+    screen-resolution signature (reset/rescue if monitors change).
+  - **bot v2.6.9** — fixed PvP-leaderboard backfill undercount (the 2.6.8
+    text-only dedup collapsed repeat kills; now time-bucketed + backfill-exempt).
+  - **bot v2.6.8 / agent v2.5.7 / mimic beta.12** — killed main+alt double-posts
+    (agent cross-log dedup + bot normalized-text dedup), stray `[]` chat tags,
+    chat-page GMT timestamps; Mimic stopped forcing a global `--character`.
+  - **bot v2.6.7** — @PVP pings only when WP involved; NPC-victim (Lord of Ire)
+    no longer triggers AWROOOO.
+  - **agent v2.5.5/v2.5.6 / bot v2.6.4-6 / web v0.5.12-17** — charm sessions +
+    Longest Dire Charm card; boss self-heal + Feral Avatar/Savagery collection;
+    wizard-familiar pet bucketing; OpenDKP sync 30min; Watched-Logs dedup;
+    clean underscore boss names everywhere.
+  - **web v0.5.19** — officer PvP-kill removal on `/pvp/<killer>`; footer
+    local-dashboard link auto-detects agent port (7777 Parser / 7779 Mimic).
+  - **Mimic auto-release pipeline** — version bump in `apps/mimic/package.json`
+    on merge to main now auto-tags + builds + attaches the installer. No manual
+    release step.
+  - **STILL PENDING (owner asleep, do with eyes-on):** the ⭐ customizable
+    dashboard (see priority queue #1). Design is captured; NOT built because the
+    agent dashboard is the documented escape-hazard template + the blast radius
+    (every live agent) is too high for an unattended overnight rewrite.
 - **Mimic agent scoping + sample** — `docs/MIMIC_AGENT.md` (effort assessment:
   Path B self-updating Node agent ~2-4 days, Path A Electron MVP ~2-3 weeks /
   full ~6-10 weeks; coexistence design) + `experiments/mimic-agent/` runnable
@@ -102,6 +126,56 @@
 - Migrations are file-only; they apply to Supabase on **merge to `main`**.
 
 ## 🔜 Priority queue (next concrete steps)
+
+### ⭐ Customizable local dashboard (owner's big vision — design ready, build with care)
+**Asked 2026-06-01 (overnight).** The local agent dashboard (served by the
+agent at `localhost:7777`/`7779`, the big `WEB_HTML` template literal in
+`packages/wolfpack-logsync/index.js`) should become a customizable, widescreen-
+friendly workspace. Owner's words:
+
+> "Customizable sidebars would be huge for widescreen monitors. Selecting your
+> specific pieces or 'sending to home dashboard' then dragging around would be
+> ideal. 'I want the threat meter to the right side but the loot for the
+> currently engaged mob off to the side and the previous bid amounts posted for
+> the item with the bid amount.'" + "settings as an available option with a Gear
+> icon in the top right" + "being able to get rid of the overview."
+
+**Target design:**
+- **Panels become draggable widgets.** Each existing dashboard section (Overview,
+  Threat meter, DEEPS, Tanks, Healers, Pets, Watched Logs, Info/Stats, Triggers,
+  + NEW: Engaged-mob Loot, Previous Bids) is a self-contained card with a header
+  grip.
+- **Layout grid** (CSS grid or a light lib — but agent has ZERO deps, so hand-roll
+  a simple column-based drag with HTML5 drag-and-drop or pointer events). Persist
+  layout to a localStorage key per resolution signature (mirror the Mimic overlay
+  resolution rule — record resolution, reset/re-flow if it changes).
+- **"Send to home dashboard" / show-hide per panel** — a panel picker (gear menu)
+  with checkboxes; unchecked panels hide. "Get rid of the overview" = hide Overview.
+- **Gear icon top-right** opens the panel picker + layout reset + (in Mimic) a
+  bridge to the Electron Settings window.
+- **Widescreen sidebars**: left/center/right columns; user drags panels between.
+- **NEW panels needing data:**
+  - *Engaged-mob loot*: the boss currently being fought → its PQDI/eqemu drop
+    table. Agent knows `currentEncounterThreat.bossName`; bot already has
+    `eqemu_npc_drops` view. Either agent fetches from bot (`/api/agent/...` new
+    endpoint) or the panel calls the bot's web API. Lean: new bot endpoint
+    `GET /api/agent/loot-for-boss?name=` returning the drop table.
+  - *Previous bids*: for items on the engaged mob, show historical winning +
+    runner-up bids (`loot_drops.dkp_spent`, `runner_up_bids` JSONB). New bot
+    endpoint or web API.
+
+**⚠️ Build constraints (why this is queued, not rushed):**
+- The dashboard lives in ONE backtick template literal with the documented
+  **dashboard-escape hazard** (CLAUDE.md). Run `npm run check:dashboard` after
+  EVERY edit. A drag-and-drop rewrite is a LOT of new browser JS in that
+  template — high risk of a blank-page escape bug. Build incrementally, check
+  each step.
+- Zero-dep constraint: no React/grid libs in the agent. Hand-rolled pointer-event
+  drag + a layout JSON in localStorage.
+- Suggested increments: (1) wrap each panel in a `.widget` with a header grip +
+  hide toggle + gear menu (no drag yet); (2) persist show/hide + order to
+  localStorage; (3) add pointer-drag reordering between columns; (4) add the two
+  new data panels (loot, bids) behind new bot endpoints.
 
 ### Mimic beta — GET THE BINARY BUILT (one step, needs you)
 `apps/mimic/` (Electron, v0.1.0-beta.1) + `release-mimic.yml` are merged to main.
