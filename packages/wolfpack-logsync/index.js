@@ -5759,6 +5759,32 @@ const pvpBuffer         = [];   // pending PVP broadcast lines
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
 const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
+
+// ── Cross-log broadcast dedup ────────────────────────────────────────────────
+// One Mimic install tails MULTIPLE log files for the same person (main +
+// alts). Server-wide / guild-wide broadcasts (guild chat, raid chat, PvP
+// kills, Druzzil Ro boss kills) land in EVERY one of that person's logs that
+// received them — once as a self-form line, once as a bystander-form line —
+// so without deduping here the bot receives the same logical message several
+// times and posts it twice (e.g. "Wabumkin: no :(" + "Adiwen: no :(", or a
+// PvP kill posted twice). We collapse them at the source: a normalized
+// fingerprint seen within 90s is dropped before it reaches the upload buffer.
+// Safe because within ONE install it's one physical person — the same guild
+// line across their main + alt logs is one message, not two.
+const _crossLogSeen = new Map(); // fingerprint → expiry ms
+const CROSSLOG_TTL_MS = 90_000;
+function _crossLogDupe(fp) {
+  if (!fp) return false;
+  const now = Date.now();
+  // Opportunistic prune
+  if (_crossLogSeen.size > 500) {
+    for (const [k, exp] of _crossLogSeen) if (exp < now) _crossLogSeen.delete(k);
+  }
+  const exp = _crossLogSeen.get(fp);
+  if (exp && exp > now) return true;
+  _crossLogSeen.set(fp, now + CROSSLOG_TTL_MS);
+  return false;
+}
 // _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
 let _uploadOpts    = null;      // set in main() once botUrl/token are known
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
@@ -6981,17 +7007,24 @@ async function main() {
         // only bail early if we're inside a lockout block (line was consumed).
         if (_inLockoutSection && /^\[.+?\]\s+==/i.test(line)) return;
 
-        // Druzzil Ro instance-kill announcement → boss timer + raid channel
+        // Druzzil Ro instance-kill announcement → boss timer + raid channel.
+        // These server-god broadcasts are byte-identical across every log on
+        // the box that received them, so a raw-text fingerprint dedups the
+        // main-vs-alt double cleanly.
         const druzzilKill = parseDruzzilKill(line);
         if (druzzilKill) {
-          if (!_sourceExcluded) druzzilKillBuffer.push(druzzilKill);
+          const _dkFp = 'druzzil|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (!_sourceExcluded && !_crossLogDupe(_dkFp)) druzzilKillBuffer.push(druzzilKill);
           return;
         }
 
-        // PVP Druzzil Ro broadcast → PVP channel (with howl/backup logic in bot)
+        // PVP Druzzil Ro broadcast → PVP channel (with howl/backup logic in bot).
+        // Same cross-log dedup — this is the "Wabumkin killed Qados posted
+        // twice" fix at the source.
         const pvpBcast = parsePvpBroadcast(line);
         if (pvpBcast) {
-          if (!_sourceExcluded) pvpBuffer.push(pvpBcast);
+          const _pvpFp = 'pvp|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (!_sourceExcluded && !_crossLogDupe(_pvpFp)) pvpBuffer.push(pvpBcast);
           return;
         }
 
@@ -7023,7 +7056,14 @@ async function main() {
           // add to the whitelist so their incoming damage / deaths show up on
           // the Tank dashboard (NPCs never use /gu or /rs).
           confirmPlayer(chatMsg.speaker);
-          if (!_sourceExcluded) chatBuffer.push(chatMsg);
+          // Cross-log dedup: same channel + normalized text within 90s = the
+          // same message captured from this person's main + alt logs (self-
+          // form in one, bystander-form in the other). Speaker is intentionally
+          // excluded from the fingerprint since the two forms resolve to
+          // different names ("Wabumkin" via self vs "Adiwen" if the alt log
+          // also carried a self-form). Drop the duplicate.
+          const _chatFp = `chat|${chatMsg.channel}|${String(chatMsg.text).toLowerCase().replace(/\s+/g, ' ').trim()}`;
+          if (!_sourceExcluded && !_crossLogDupe(_chatFp)) chatBuffer.push(chatMsg);
           return;
         }
 

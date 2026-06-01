@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { dayLabel } from '@/lib/format';
 import { loadItemCatalog, linkifyItems, type ItemCatalog } from '@/lib/item-link';
+import { userTz } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -242,9 +243,10 @@ function paramsToQuery(p: Params): string {
   return qs ? `?${qs}` : '';
 }
 
-function fmtTime(iso: string) {
+function fmtTime(iso: string, tz: string) {
   return new Date(iso).toLocaleTimeString('en-US', {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    timeZone: tz,
   });
 }
 
@@ -314,6 +316,7 @@ export default async function AdminChatPage({
   searchParams: Promise<Params>;
 }) {
   const p = await searchParams;
+  const tz = await userTz();
   const year  = p.year  ? parseInt(p.year,  10) : null;
   const month = p.month ? parseInt(p.month, 10) : null;
   const day   = p.day   ? parseInt(p.day,   10) : null;
@@ -619,7 +622,7 @@ export default async function AdminChatPage({
                     const chip = channelChip(r.channel);
                     return (
                       <li key={r.id} className="flex gap-2 hover:bg-[#1a212c] -mx-1 px-1 rounded leading-5">
-                        <span className="text-dim shrink-0 w-16">{fmtTime(r.ts)}</span>
+                        <span className="text-dim shrink-0 w-16">{fmtTime(r.ts, tz)}</span>
                         <span className={`shrink-0 w-6 ${chip.color}`}>[{chip.label}]</span>
                         <span className="shrink-0">
                           <Link href={`/character/${encodeURIComponent(r.speaker)}`} className="text-text hover:text-blue">

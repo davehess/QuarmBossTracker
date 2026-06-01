@@ -234,20 +234,26 @@ async function launchAgent() {
   // Auto-detect the EQ install dir + every eqlog_*_pq.proj.txt file in it.
   // The agent REQUIRES --log <path> (one per log) or it exits with
   // "At least one --log is required" — Mimic must thread the discovered
-  // paths through. We also pass --character so the largest log's character
-  // becomes the canonical identity on uploads (avoids "(unknown)" rows).
+  // paths through.
+  //
+  // IMPORTANT: do NOT pass a global --character. With multiple --log files
+  // the agent applies one --character to EVERY log, which mis-attributes
+  // an alt's combat + chat to the main (the "Wabumkin/Adiwen" bug). Each
+  // log self-identifies from its filename (characterFromFilename) when no
+  // --character is given, which is exactly what we want for a multi-char
+  // install. Single-character installs still resolve correctly from the
+  // filename, so the flag is unnecessary.
   const eqDir     = detectEqDir(cfg.eqPath);
   const detection = detectCharacterFromLogs(eqDir);
   if (detection && detection.candidates.length > 0) {
     for (const c of detection.candidates) {
       args.push('--log', c.path);
     }
-    args.push('--character', detection.character);
-    appendAgentLog(`[mimic] tailing ${detection.candidates.length} log(s) from ${eqDir}; primary character: ${detection.character}\n`);
+    appendAgentLog(`[mimic] tailing ${detection.candidates.length} log(s) from ${eqDir}; each self-identifies from filename. Primary: ${detection.character}\n`);
     if (detection.candidates.length > 1) {
       const alts = detection.candidates.slice(1, 5)
         .map(c => `${c.name} (${Math.round(c.size / 1024)}KB)`).join(', ');
-      appendAgentLog(`[mimic] other candidates: ${alts}\n`);
+      appendAgentLog(`[mimic] other characters: ${alts}\n`);
     }
   } else {
     // No logs found anywhere — agent will fail with "At least one --log
