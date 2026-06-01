@@ -234,6 +234,106 @@ function detectCharacterFromLogs(dir) {
   } catch { return null; }
 }
 
+// ── EQ install discovery (eqgame.exe) ──────────────────────────────────────
+// Scans the common EQ default dirs (and the walk-up-from-Mimic path) for
+// eqgame.exe — the actual game binary, present from install regardless of
+// whether the user has combat-logged yet. Returns ALL candidates so the
+// settings/loading UIs can present a picker rather than guessing.
+//
+// `scanned` is the literal list of paths probed so we can show the user
+// exactly where we looked ("we scanned these common EQ directories").
+function findEqInstalls(hint) {
+  const scanned = [];
+  const found   = [];
+  const seen    = new Set();
+  const probe   = (dir, source) => {
+    if (!dir) return;
+    const norm = path.normalize(dir);
+    if (seen.has(norm.toLowerCase())) return;
+    seen.add(norm.toLowerCase());
+    scanned.push(norm);
+    try {
+      if (!fs.existsSync(norm)) return;
+      const entries = fs.readdirSync(norm);
+      const hasEqgame = entries.some(f => /^eqgame\.exe$/i.test(f));
+      const hasLogs   = entries.some(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f));
+      if (hasEqgame || hasLogs) {
+        const logCount = entries.filter(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f)).length;
+        found.push({ path: norm, hasEqgame, hasLogs, logCount, source });
+      }
+    } catch { /* unreadable dir — fine */ }
+  };
+
+  // 1. Explicit override always wins (still recorded so the UI can show it).
+  if (hint) probe(hint, 'override');
+
+  // 2. Walk UP from the Mimic exe — if Mimic was installed inside the EQ dir
+  //    (e.g. A:\EQ\Mimic\), eqgame.exe is one or two levels up.
+  try {
+    const exePath = app.getPath('exe');
+    let dir = path.dirname(exePath);
+    for (let i = 0; i < 5; i++) {
+      probe(dir, 'walk-up');
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {}
+
+  // 3. The 14 known common EQ install paths.
+  for (const dir of EQ_DEFAULT_DIRS) probe(dir, 'common');
+
+  // Rank: eqgame.exe present beats logs-only; more logs wins as a tiebreaker.
+  found.sort((a, b) => (Number(b.hasEqgame) - Number(a.hasEqgame)) || (b.logCount - a.logCount));
+  return { scanned, found };
+}
+
+// ── Manual window drag (replaces broken CSS -webkit-app-region) ────────────
+// Chromium's drag region implementation is buggy on transparent (WS_EX_LAYERED)
+// Windows: cursor deltas are wrong, the window jumps, lags, sometimes
+// teleports. Renderers signal start/end; main polls screen.getCursorScreenPoint
+// at ~60fps and applies setBounds. 1:1 cursor-to-window motion, no Chromium
+// hit-test path involved.
+let _dragSession = null;  // { win, offsetX, offsetY, width, height, interval }
+function _startWindowDrag(win) {
+  if (!win || win.isDestroyed()) return;
+  _stopWindowDrag();
+  try {
+    const c = screen.getCursorScreenPoint();
+    const b = win.getBounds();
+    _dragSession = {
+      win,
+      offsetX: c.x - b.x,
+      offsetY: c.y - b.y,
+      width:   b.width,
+      height:  b.height,
+      interval: null,
+    };
+    _dragSession.interval = setInterval(() => {
+      if (!_dragSession) return;
+      if (_dragSession.win.isDestroyed()) { _stopWindowDrag(); return; }
+      try {
+        const cur = screen.getCursorScreenPoint();
+        _dragSession.win.setBounds({
+          x: cur.x - _dragSession.offsetX,
+          y: cur.y - _dragSession.offsetY,
+          width:  _dragSession.width,
+          height: _dragSession.height,
+        });
+      } catch {}
+    }, 16);  // ~60fps
+  } catch {}
+}
+function _stopWindowDrag() {
+  if (_dragSession) {
+    clearInterval(_dragSession.interval);
+    // Final persist — the periodic setBounds calls fire 'moved' but the
+    // debounce may swallow the last one if the user lifts quickly.
+    try { _persistBounds(_dragSession.persistKey, _dragSession.win); } catch {}
+    _dragSession = null;
+  }
+}
+
 // ── Launch the agent under Electron's Node ──────────────────────────────────
 async function launchAgent() {
   if (quitting) return;
