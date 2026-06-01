@@ -4,6 +4,7 @@ import Nav from '@/components/Nav';
 import AuthBadge from '@/components/AuthBadge';
 import DemoToggle from '@/components/DemoToggle';
 import TimezonePicker from '@/components/TimezonePicker';
+import LocalDashboardLink from '@/components/LocalDashboardLink';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 
@@ -90,15 +91,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <div>
               Data shared with the Discord bot via Supabase · the local agent dashboard
               lives at{' '}
-              <a
-                href="http://localhost:7777"
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue hover:underline"
-              >
-                http://localhost:7777
-              </a>{' '}
-              for live in-raid stats (only opens if your wolfpack-logsync agent is running).
+              <LocalDashboardLink />{' '}
+              for live in-raid stats (Parser.bat uses 7777, Mimic 7779 — this auto-detects whichever is running).
             </div>
             <div>
               <a href="/privacy" className="text-blue hover:underline">Privacy</a>{' '}
