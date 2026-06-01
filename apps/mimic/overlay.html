@@ -131,12 +131,25 @@
                  || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       document.getElementById('boss').textContent = boss ? boss : '—';
 
-      // Top damage: prefer a session deeps map/array; fall back gracefully.
+      // Top damage from the agent's sessionDeeps map. Each entry is bucketed by
+      // melee / spell / proc / dot — there is NO top-level .damage/.total, so we
+      // sum the category totals (mirrors the agent's own DEEPS tab). Reading
+      // v.damage||v.total used to miss every bucket and fall back to the object
+      // itself → fmt(object) → 0, which is why every row showed 0.
+      const deepsTotal = (v) => {
+        if (!v || typeof v !== 'object') return Number(v) || 0;
+        if (typeof v.damage === 'number') return v.damage;   // tolerate flat/array shapes
+        if (typeof v.total  === 'number') return v.total;
+        return ((v.melee && v.melee.total) || 0) + ((v.spell && v.spell.total) || 0)
+             + ((v.proc  && v.proc.total)  || 0) + ((v.dot   && v.dot.total)   || 0);
+      };
       let rows = [];
       const sd = s.sessionDeeps || s.topDamage || s.deeps;
-      if (Array.isArray(sd)) rows = sd.map(d => [d.name||d.character, d.damage||d.dmg||d.total]);
-      else if (sd && typeof sd==='object') rows = Object.entries(sd).map(([k,v]) => [k, (v&&(v.damage||v.total))||v]);
-      rows = rows.filter(x=>x[0]).sort((a,b)=>(b[1]||0)-(a[1]||0)).slice(0,5);
+      if (Array.isArray(sd)) rows = sd.map(d => [d.name||d.character, deepsTotal(d)]);
+      else if (sd && typeof sd==='object') rows = Object.entries(sd).map(([k,v]) => [k, deepsTotal(v)]);
+      // Drop NPCs (names with a space, same as the dashboard) and zero rows.
+      rows = rows.filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
+                 .sort((a,b)=>(b[1]||0)-(a[1]||0)).slice(0,5);
 
       const ul = document.getElementById('deeps');
       ul.innerHTML = rows.map(([n,d])=>`<li><span class="n">${n}</span><span class="d">${fmt(d)}</span></li>`).join('');
