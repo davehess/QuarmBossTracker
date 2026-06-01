@@ -2610,6 +2610,14 @@ tr:hover td { background:#1f242c }
 .tag.invuln { background:#1a7f3722; color:var(--green) }
 .pet { color:var(--blue) }
 .card.wp-hidden { display:none !important }
+/* Increment 2a — wolfpack.quest links woven in. A delegated click handler
+   makes every .name cell open the matching character page in a new tab.
+   The hover style telegraphs "this is clickable." */
+.card td.name, .card .name { cursor:pointer; }
+.card td.name:hover, .card .name:hover { text-decoration:underline; color:var(--blue); }
+.wp-quicklinks { display:flex; gap:8px; align-items:center; margin:6px 0 12px 0; font-size:12px; color:var(--dim); flex-wrap:wrap; }
+.wp-quicklinks a { color:var(--blue); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; }
+.wp-quicklinks a:hover { background:#21262d; border-color:var(--blue); }
 .wp-gear { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 11px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:13px; }
 .wp-gear:hover { background:#30363d; border-color:var(--blue); color:var(--blue) }
 .wp-menu { position:absolute; z-index:1000; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; box-shadow:0 8px 24px rgba(0,0,0,.5); max-height:60vh; overflow:auto; min-width:240px; }
@@ -2621,6 +2629,15 @@ tr:hover td { background:#1f242c }
 </style></head><body>
 <h1>🐺 Wolf Pack EQ — Parser</h1>
 <div class="subtle" id="header"></div>
+<div class="wp-quicklinks" id="wpQuickLinks">
+  <span>Jump to wolfpack.quest:</span>
+  <a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" title="Your /me dashboard — stats, settings, recent">/me</a>
+  <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" title="Recent parses (last 30 days)">parses</a>
+  <a href="https://wolfpack.quest/pvp" target="_blank" rel="noreferrer" title="PvP leaderboard">pvp</a>
+  <a href="https://wolfpack.quest/leaderboards" target="_blank" rel="noreferrer" title="Damage leaderboards">leaderboards</a>
+  <a href="https://wolfpack.quest/fun" target="_blank" rel="noreferrer" title="Fun counters (Peopleslayer LD, Longest Dire Charm, etc.)">fun</a>
+  <span id="wpUploaderLinks"></span>
+</div>
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="tanks">Tanks</button>
@@ -3675,6 +3692,79 @@ async function dismissTopDamage(key) {
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
   applyHidden();
+})();
+
+// ── Increment 2a — wolfpack.quest links woven into the local dashboard ──────
+// 1. Delegated click on any .name cell opens /character/<Name> in a new tab.
+//    Names are filtered to "looks like a real character" (capitalised single
+//    word) so we do not turn placeholders like "(unknown)" or "Pets" into
+//    links. NPC / pet entries fall through unchanged.
+// 2. The uploader (first watched-logs character) gets quicklinks added to the
+//    top bar — "/me", "/pvp/<You>", and "/character/<You>" — so the local
+//    dashboard becomes the launchpad for that user's own pages.
+(function(){
+  function looksLikeCharacter(name){
+    if (!name) return false;
+    name = name.trim();
+    // Real EQ player names are single-word, capitalised, alpha. NPCs are
+    // usually multi-word ("an air elemental"); pets/aliases often contain
+    // non-alpha or are bracketed.
+    if (!/^[A-Z][a-zA-Z]{2,}$/.test(name)) return false;
+    if (name === "Pets" || name === "Unknown" || name === "You") return false;
+    return true;
+  }
+  function openCharacter(name){
+    var u = "https://wolfpack.quest/character/" + encodeURIComponent(name);
+    window.open(u, "_blank", "noopener,noreferrer");
+  }
+  document.addEventListener("click", function(e){
+    var t = e.target;
+    if (!t) return;
+    // Walk up to a .name node (covers nested spans like the threat-meter).
+    var hit = t.closest ? t.closest(".name") : null;
+    if (!hit) return;
+    // Skip the gear menu and quicklinks bar.
+    if (hit.closest(".wp-menu") || hit.closest(".wp-quicklinks")) return;
+    var text = (hit.textContent || "").trim();
+    // Strip any inline " ⚠ aggro risk" / class-tag suffixes by taking the
+    // first token bounded by space / "(" / "[". Built via indexOf instead of
+    // a regex to avoid backtick-literal escape issues (the dashboard escape
+    // hazard documented in CLAUDE.md).
+    var name = text;
+    var cuts = [" ", "(", "["];
+    for (var i = 0; i < cuts.length; i++) {
+      var ix = name.indexOf(cuts[i]);
+      if (ix >= 0) name = name.substring(0, ix);
+    }
+    if (!looksLikeCharacter(name)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openCharacter(name);
+  }, true);
+
+  // Populate uploader-specific quicklinks once watchedLogs has loaded. The
+  // dashboard refresh writes the header with parser version + character; the
+  // shorter path is to poll /api/state for the first watched character.
+  function refreshUploaderLinks(){
+    var slot = document.getElementById("wpUploaderLinks");
+    if (!slot) return;
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      var wls = (s && s.watchedLogs) || [];
+      var me = null;
+      for (var i = 0; i < wls.length; i++){
+        var c = (wls[i] && wls[i].character) || "";
+        if (looksLikeCharacter(c)) { me = c; break; }
+      }
+      if (!me) { slot.textContent = ""; return; }
+      slot.innerHTML =
+        " · <a href='https://wolfpack.quest/character/" + encodeURIComponent(me) +
+        "' target='_blank' rel='noreferrer' title='Your character page on wolfpack.quest'>/character/" + me + "</a>" +
+        " <a href='https://wolfpack.quest/pvp/" + encodeURIComponent(me) +
+        "' target='_blank' rel='noreferrer' title='Your PvP record'>/pvp/" + me + "</a>";
+    }).catch(function(){});
+  }
+  refreshUploaderLinks();
+  setInterval(refreshUploaderLinks, 30000);
 })();
 </script></body></html>`;
 

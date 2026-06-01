@@ -128,41 +128,55 @@
 ## 🔜 Priority queue (next concrete steps)
 
 ### ⭐ Customizable local dashboard (owner's big vision — design ready, build with care)
-**Asked 2026-06-01 (overnight).** The local agent dashboard (served by the
+**Asked 2026-06-01 (overnight + morning).** The local agent dashboard (served by the
 agent at `localhost:7777`/`7779`, the big `WEB_HTML` template literal in
 `packages/wolfpack-logsync/index.js`) should become a customizable, widescreen-
-friendly workspace. Owner's words:
+friendly workspace AND a launchpad into wolfpack.quest AND the source from
+which any data point can be pulled out as an overlay.
 
-> "Customizable sidebars would be huge for widescreen monitors. Selecting your
-> specific pieces or 'sending to home dashboard' then dragging around would be
-> ideal. 'I want the threat meter to the right side but the loot for the
-> currently engaged mob off to the side and the previous bid amounts posted for
-> the item with the bid amount.'" + "settings as an available option with a Gear
-> icon in the top right" + "being able to get rid of the overview."
-
-**Target design:**
-- **Panels become draggable widgets.** Each existing dashboard section (Overview,
-  Threat meter, DEEPS, Tanks, Healers, Pets, Watched Logs, Info/Stats, Triggers,
-  + NEW: Engaged-mob Loot, Previous Bids) is a self-contained card with a header
-  grip.
-- **Layout grid** (CSS grid or a light lib — but agent has ZERO deps, so hand-roll
-  a simple column-based drag with HTML5 drag-and-drop or pointer events). Persist
-  layout to a localStorage key per resolution signature (mirror the Mimic overlay
-  resolution rule — record resolution, reset/re-flow if it changes).
-- **"Send to home dashboard" / show-hide per panel** — a panel picker (gear menu)
-  with checkboxes; unchecked panels hide. "Get rid of the overview" = hide Overview.
-- **Gear icon top-right** opens the panel picker + layout reset + (in Mimic) a
-  bridge to the Electron Settings window.
-- **Widescreen sidebars**: left/center/right columns; user drags panels between.
-- **NEW panels needing data:**
-  - *Engaged-mob loot*: the boss currently being fought → its PQDI/eqemu drop
-    table. Agent knows `currentEncounterThreat.bossName`; bot already has
-    `eqemu_npc_drops` view. Either agent fetches from bot (`/api/agent/...` new
-    endpoint) or the panel calls the bot's web API. Lean: new bot endpoint
-    `GET /api/agent/loot-for-boss?name=` returning the drop table.
-  - *Previous bids*: for items on the engaged mob, show historical winning +
-    runner-up bids (`loot_drops.dkp_spent`, `runner_up_bids` JSONB). New bot
-    endpoint or web API.
+**Build order (each increment ships independently, escape-check on every step):**
+1. ✅ **Increment 1 — show/hide panels via ⚙ gear** (agent v2.5.8). Per-panel
+   checkboxes, localStorage persistence, MutationObserver-survives-rerender,
+   stable `<h2>`-prefix keys. Escape-safe (double-quoted strings, literal
+   chars, no backslashes).
+2. **Increment 2a — wolfpack.quest links woven into local dashboard** (next).
+   Player names, boss names, parse rows become clickable into the right
+   wolfpack.quest page (/character/Name, /pvp/Name, /boss/<slug>,
+   /parses/<encId>, /me). New-tab `target="_blank"`. Cheap, additive, makes
+   the local dashboard the launchpad you described.
+3. **Increment 2b — drag-to-reorder + column placement.** Pointer-events drag
+   between left/center/right columns. Layout persists per resolution signature
+   (same rule as Mimic overlay bounds). Higher risk — drag logic is where
+   layout bugs + escape-hazard typos bite hardest; do it eyes-on.
+4. **Increment 2c — drag suggestions.** When a member drops a panel into a
+   column, suggest related panels that mention their character (e.g. "you put
+   Threat in the right column — also relevant: Deaths, Incoming Damage").
+   Driven by scanning panel HTML for the uploader character's name. Pure
+   suggestion sidebar inside the gear menu; doesn't alter layout without a
+   click. Owner's words: "suggestions based on data points that have their
+   characters in them for the drag and drop options."
+   **⭐ Owner-flagged priority panels (2026-06-01):** Parses and Threat are
+   the data points members *most* want to see and they currently do NOT flow
+   to wolfpack.quest/me (only DPS/kill aggregates do). The suggester should
+   weight these highest, and increment 2d's "send to overlay" should prefer
+   them as the first overlay candidates. Tracking work: capturing parse +
+   threat snapshots into a server-side table so wolfpack.quest/me eventually
+   shows them too is a separate follow-up (TBD when the local UX settles).
+5. **Increment 2d — "send to overlay" / "make this an overlay."** Per-panel
+   button in unlock mode: spawn a NEW always-on-top Mimic overlay window that
+   renders that panel only, with its own bounds/lock. Owner's words: "you can
+   take any of those tracked data points and then turn them into overlay
+   items." Requires Mimic to expose a new IPC + a generic panel-overlay HTML
+   that fetches a single panel from the dashboard. Parser.bat installs (no
+   Mimic) get a tooltip explaining the feature is Mimic-only.
+6. **Increment 2e — send-to-home + per-panel pin order** within columns.
+7. **Increment 3 — new data panels behind new bot endpoints:**
+   - *Engaged-mob loot*: agent has `currentEncounterThreat.bossName`; bot has
+     `eqemu_npc_drops` view. New `GET /api/agent/loot-for-boss?name=` returns
+     the drop table. Panel updates as boss changes.
+   - *Previous bids*: for items on the engaged mob, show winning + runner-up
+     bids from `loot_drops` + `loot_drops.runner_up_bids` JSONB. New endpoint
+     `GET /api/agent/bids-for-items?npc=`.
 
 **⚠️ Build constraints (why this is queued, not rushed):**
 - The dashboard lives in ONE backtick template literal with the documented
@@ -172,10 +186,6 @@ friendly workspace. Owner's words:
   each step.
 - Zero-dep constraint: no React/grid libs in the agent. Hand-rolled pointer-event
   drag + a layout JSON in localStorage.
-- Suggested increments: (1) wrap each panel in a `.widget` with a header grip +
-  hide toggle + gear menu (no drag yet); (2) persist show/hide + order to
-  localStorage; (3) add pointer-drag reordering between columns; (4) add the two
-  new data panels (loot, bids) behind new bot endpoints.
 
 ### Mimic beta — GET THE BINARY BUILT (one step, needs you)
 `apps/mimic/` (Electron, v0.1.0-beta.1) + `release-mimic.yml` are merged to main.
