@@ -355,7 +355,7 @@ export default async function AdminAgentsPage() {
                 <tr key={s.character} className="border-b border-border/40 hover:bg-[#1a212c]">
                   <td className="px-2 sm:px-3 py-2 text-text">
                     <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
-                    <ClientChip client={s.client} appVersion={s.appVersion} />
+                    <ClientChip client={s.client} appVersion={s.appVersion} agentVersion={s.agentVersion} />
                     <div className="text-dim text-[10px] md:hidden">{s.agentVersion || '—'} · {s.uploads24h}/24h</div>
                   </td>
                   <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap">{rel(s.lastUpload)}</td>
@@ -520,18 +520,32 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
 // Client identification chip — colored per client so Mimic installs are
 // visually distinct from Parser.bat installs on the agent fleet table.
 // 'mimic' is blue (matches the Mimic button branding), 'parser' is dim,
-// null/unknown is hidden entirely so older agents don't show a noisy chip.
-function ClientChip({ client, appVersion }: { client: string | null; appVersion: string | null }) {
-  if (!client) return null;
-  const isMimic = client === 'mimic';
+// null/unknown gets a tentative chip ONLY if the agent version matches
+// the Mimic-bundled bundle (2.5.2+) — Parser.bat installs haven't auto-
+// updated to 2.5.2 yet so it's a reliable temporary heuristic. Once
+// every active install reports agent_state.client explicitly, the
+// heuristic stops matching anything and naturally retires.
+function ClientChip({ client, appVersion, agentVersion }: { client: string | null; appVersion: string | null; agentVersion?: string | null }) {
+  // Heuristic fallback for missing client tag.
+  let resolved = client;
+  let inferred = false;
+  if (!resolved && agentVersion && /^2\.5\.[2-9]|^2\.[6-9]|^[3-9]\./.test(agentVersion)) {
+    resolved = 'mimic';
+    inferred = true;
+  }
+  if (!resolved) return null;
+  const isMimic = resolved === 'mimic';
   const cls = isMimic
     ? 'bg-[#1f6feb22] text-blue border-blue/40'
     : 'bg-[#1a212c] text-dim border-border';
   const label = isMimic ? '🐺 Mimic' : 'Parser.bat';
+  const suffix = appVersion ? `v${appVersion}` : (inferred ? '?' : null);
+  const tooltip = inferred
+    ? `Likely Mimic — agent v${agentVersion} matches the Mimic bundle but the client tag wasn't stamped. Update to the latest beta for an explicit tag.`
+    : (appVersion ? `${resolved} v${appVersion}` : resolved);
   return (
-    <span className={`inline-block ml-1.5 align-middle text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded border ${cls}`}
-          title={appVersion ? `${client} v${appVersion}` : client}>
-      {label}{appVersion ? <span className="ml-1 opacity-70 normal-case tracking-normal">v{appVersion}</span> : null}
+    <span className={`inline-block ml-1.5 align-middle text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded border ${cls}`} title={tooltip}>
+      {label}{suffix ? <span className="ml-1 opacity-70 normal-case tracking-normal">{suffix}</span> : null}
     </span>
   );
 }
