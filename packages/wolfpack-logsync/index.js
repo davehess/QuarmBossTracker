@@ -853,6 +853,43 @@ function recordWhoEvent(ev) {
   confirmPlayer(ev.name);
 }
 
+// Class inference from class-EXCLUSIVE abilities. When a watched box shows up
+// with no /who row yet, we can still tell its class from what it does: "I used
+// Harm Touch, so I'm a Shadow Knight." Only these unambiguous, single-class
+// abilities are used (no false positives). We get the character name from the
+// log file, so this is about the operator's own boxes (the ones whose
+// first-person lines we see). A real /who row always overrides an inference.
+const ABILITY_CLASS = {
+  'harm touch':   'Shadow Knight',
+  'lay on hands': 'Paladin',
+  'mend':         'Monk',
+  'backstab':     'Rogue',
+  'flying kick':  'Monk',
+  'round kick':   'Monk',
+  'dragon punch': 'Monk',
+  'eagle strike': 'Monk',
+  'tail rake':    'Monk',  // iksar monk equivalent of Dragon Punch
+};
+function inferClassFromAbility(character, ability) {
+  if (!character || !ability) return;
+  const cls = ABILITY_CLASS[String(ability).toLowerCase().trim()];
+  if (!cls) return;
+  const k   = String(character).toLowerCase();
+  const old = whoData.get(k) || {};
+  // Never override a /who-sourced class; only fill a gap or refine a prior
+  // inference. (classSource is absent on /who rows = authoritative.)
+  if (old.class && old.classSource !== 'inferred') return;
+  if (old.class === cls) return;
+  whoData.set(k, {
+    ...old,
+    name:        old.name || character,
+    class:       cls,
+    classSource: 'inferred',
+    observedAt:  old.observedAt || new Date().toISOString(),
+  });
+  confirmPlayer(character);
+}
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -1213,6 +1250,7 @@ class EncounterBuilder {
     // Crit rate is a per-character session stat surfaced on the Info screen.
     // Silent builders skip this so old log replays don't move the mend counter.
     if (event.type === 'mend') {
+      inferClassFromAbility(this.character, 'mend');  // Monk-exclusive
       if (!this.silent) {
         stats.sessionMends.attempts++;
         if (event.outcome === 'crit')        { stats.sessionMends.crit++;    stats.sessionMends.success++; }
@@ -1295,6 +1333,10 @@ class EncounterBuilder {
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
         ? (this.character || 'You')
         : rawAtk;
+      // Class inference from a class-exclusive verb the BOX itself used
+      // (first-person, rawAtk===null) — e.g. Backstab → Rogue, Flying Kick →
+      // Monk. Only fires for the names in ABILITY_CLASS; no-op otherwise.
+      if (rawAtk === null && event.ability) inferClassFromAbility(this.character, event.ability);
       // Damage-shield reflect detection: the line is "X was hit by ABILITY for
       // N damage" with attacker=null (EQ never reveals who applied the DS to
       // the tank). When the defender is a mob we're currently fighting AND an
@@ -7411,6 +7453,7 @@ const LOH_HEAL_RX = /\b(?:lay|laid)\s+hands?\b[^\d]*?(\d+)\s+points?/i;
 function parseHarmTouch(line, character) {
   const m = HARM_TOUCH_RX.exec(line);
   if (!m) return null;
+  inferClassFromAbility(character, 'harm touch');  // SK-exclusive
   const ts = parseEqTimestamp(line);
   return {
     type:        'harm_touch',
@@ -7423,6 +7466,7 @@ function parseHarmTouch(line, character) {
 
 function parseLayOnHands(line, character) {
   if (!LAY_ON_HANDS_RX.test(line)) return null;
+  inferClassFromAbility(character, 'lay on hands');  // Paladin-exclusive
   const heal = LOH_HEAL_RX.exec(line);
   const ts = parseEqTimestamp(line);
   return {
