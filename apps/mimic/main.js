@@ -49,6 +49,10 @@ let mainWindow = null;
 let overlayWindow = null;
 let triggerWindow = null;
 let settingsWindow = null;
+// Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
+// "damage-done-this-session"). One window per panel; calling
+// createPanelOverlay again with the same key focuses the existing window.
+const panelOverlays = new Map(); // panelKey -> BrowserWindow
 let tray = null;
 let agentProc = null;
 let agentPort = BASE_PORT;
@@ -387,7 +391,10 @@ function _persistBounds(key, win) {
 function applyOverlayInteractivity() {
   const cfg = loadConfig();
   const locked = cfg.overlaysLocked !== false; // default locked
-  for (const win of [overlayWindow, triggerWindow]) {
+  // All overlays share the global lock state: DPS HUD, trigger overlay,
+  // and every per-panel overlay opened via createPanelOverlay.
+  const all = [overlayWindow, triggerWindow, ...panelOverlays.values()];
+  for (const win of all) {
     if (!win || win.isDestroyed()) continue;
     if (locked) {
       win.setIgnoreMouseEvents(true, { forward: true });
@@ -399,6 +406,50 @@ function applyOverlayInteractivity() {
     }
     try { win.webContents.send('overlay-locked', locked); } catch {}
   }
+}
+
+// Create (or focus) a panel-overlay window for a specific dashboard panel.
+// Loads the agent dashboard with ?overlay=<panelKey>; the dashboard JS
+// strips chrome + hides everything except the target panel. Reuses the
+// dashboard's live render loop so the overlay updates with zero
+// duplication. Bounds + screen-signature persist per panelKey.
+function createPanelOverlay(panelKey) {
+  if (typeof panelKey !== 'string' || !panelKey) return false;
+  // Normalize so caller can pass loose user input (e.g. an <h2> text);
+  // matched against the dashboard's own panelKey() lowercasing.
+  panelKey = panelKey.toLowerCase().trim();
+  // Focus existing
+  const existing = panelOverlays.get(panelKey);
+  if (existing && !existing.isDestroyed()) {
+    existing.showInactive();
+    return true;
+  }
+  const boundsKey = 'panelBounds_' + panelKey;
+  const sigKey    = 'panelBoundsSig_' + panelKey;
+  const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 });
+  const win = new BrowserWindow({
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 200, minHeight: 100,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true,
+    focusable: true,
+    show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true);
+  // Load the live dashboard with the overlay flag — the dashboard JS reads
+  // ?overlay=<key> and applies overlay styling + single-panel filtering.
+  win.loadURL(`http://127.0.0.1:${agentPort}/?overlay=${encodeURIComponent(panelKey)}`);
+  win.on('moved',  () => _persistBounds(boundsKey, win));
+  win.on('resize', () => _persistBounds(boundsKey, win));
+  win.on('closed', () => { panelOverlays.delete(panelKey); });
+  win.once('ready-to-show', () => {
+    win.showInactive();
+    applyOverlayInteractivity();
+  });
+  panelOverlays.set(panelKey, win);
+  return true;
 }
 
 function createOverlayWindow() {
@@ -726,6 +777,11 @@ ipcMain.handle('open-dashboard', () => {
 });
 // Gear icon on the dashboard opens the Settings window.
 ipcMain.handle('open-settings', () => { openSettings(); return true; });
+// "Send this panel to its own overlay window" — increment 2d of the
+// customizable-dashboard work. Renderer passes a normalized panel key
+// (stable <h2> prefix); spawns a transparent always-on-top window that
+// loads the dashboard with ?overlay=<key> for live updates.
+ipcMain.handle('create-panel-overlay', (_e, panelKey) => createPanelOverlay(panelKey));
 // Open an external URL in the OS default browser. Allowlist to wolfpack.quest
 // and the GitHub repo so a compromised renderer can't open arbitrary links.
 ipcMain.handle('open-external', (_e, url) => {

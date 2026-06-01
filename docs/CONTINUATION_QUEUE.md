@@ -170,6 +170,21 @@ which any data point can be pulled out as an overlay.
    that fetches a single panel from the dashboard. Parser.bat installs (no
    Mimic) get a tooltip explaining the feature is Mimic-only.
 6. **Increment 2e — send-to-home + per-panel pin order** within columns.
+6.5. **Increment 2f — local-vs-server source toggle per panel.** Each panel
+   gets a click-to-switch between two data sources:
+     - **Local** (default): what the running agent is observing right now
+       (live tail, this-session aggregates).
+     - **Server** (wolfpack.quest): the aggregated history from Supabase
+       for the same scope (e.g. "lifetime DPS for this character",
+       "last 30 days of parses").
+   Implementation: each panel that has a server counterpart gets a tiny
+   "🛰 local | 🌐 server" toggle in its header. Server mode fetches from
+   the relevant wolfpack.quest API route (most exist already as the bot's
+   read-only endpoints; some will need a new `/api/agent/server-panel/<key>`
+   gateway so the agent can proxy with auth). Selection persists per panel
+   in localStorage. Owner: "ideally we would be able to see the data that
+   was observed locally and the data that came from wolfpack.quest as
+   well — like a click to separate sources."
 7. **Increment 3 — new data panels behind new bot endpoints:**
    - *Engaged-mob loot*: agent has `currentEncounterThreat.bossName`; bot has
      `eqemu_npc_drops` view. New `GET /api/agent/loot-for-boss?name=` returns

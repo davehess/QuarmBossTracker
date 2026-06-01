@@ -2626,6 +2626,26 @@ tr:hover td { background:#1f242c }
 .wp-menu .wp-actions { margin-top:8px; border-top:1px solid var(--border); padding-top:8px; display:flex; gap:8px; }
 .wp-menu .wp-actions button { background:#21262d; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 9px; font-size:11px; cursor:pointer; font-family:inherit; }
 .wp-menu .wp-actions button:hover { border-color:var(--blue); color:var(--blue) }
+/* Increment 2d — "send this panel to its own overlay window" (Mimic only).
+   Tiny button placed in each panel's <h2>; the dashboard JS shows it only
+   when running under Mimic (window.mimic.createPanelOverlay exists). */
+.wp-overlay-btn { float:right; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:4px; padding:0 8px; font-size:11px; cursor:pointer; line-height:1.6; margin-left:8px; font-family:inherit; text-transform:none; letter-spacing:0; }
+.wp-overlay-btn:hover { color:var(--blue); border-color:var(--blue); }
+/* Overlay mode — when the dashboard is loaded with ?overlay=<panelKey>,
+   strip all chrome and show just the target panel as a transparent overlay
+   tile. Reuses the live render loop for free updates. */
+body.wp-overlay-mode { background:transparent !important; padding:0 !important; }
+body.wp-overlay-mode h1,
+body.wp-overlay-mode .nav,
+body.wp-overlay-mode .wp-quicklinks,
+body.wp-overlay-mode #header,
+body.wp-overlay-mode .wp-gear,
+body.wp-overlay-mode .wp-menu,
+body.wp-overlay-mode .banner,
+body.wp-overlay-mode .wp-overlay-btn { display:none !important; }
+body.wp-overlay-mode .section { display:block !important; }
+body.wp-overlay-mode .section .card { display:none !important; }
+body.wp-overlay-mode .section .card.wp-overlay-target { display:block !important; margin:0 !important; box-shadow:0 0 0 1px rgba(31,111,235,.5); background:rgba(22,27,34,.92) !important; }
 </style></head><body>
 <h1>🐺 Wolf Pack EQ — Parser</h1>
 <div class="subtle" id="header"></div>
@@ -3765,6 +3785,89 @@ async function dismissTopDamage(key) {
   }
   refreshUploaderLinks();
   setInterval(refreshUploaderLinks, 30000);
+})();
+
+// ── Increment 2d — "send this panel to its own overlay window" (Mimic only)
+// AND overlay-mode rendering (when loaded with ?overlay=<panelKey> in URL).
+(function(){
+  function panelKeyForCard(card){
+    var h = card.querySelector("h2");
+    var t = h ? (h.textContent || "") : "";
+    t = t.split("(")[0].split("—")[0].split("·")[0];
+    return t.trim().toLowerCase();
+  }
+  // Are we hosted by Mimic? The preload exposes window.mimic.createPanelOverlay
+  // only on Mimic; in a normal browser this stays undefined and no buttons
+  // appear (silently degrades for Parser.bat users).
+  function mimicHosts(){
+    return !!(window.mimic && typeof window.mimic.createPanelOverlay === "function");
+  }
+  function decorateButtons(){
+    if (!mimicHosts()) return;
+    var cards = document.querySelectorAll(".section .card");
+    for (var i = 0; i < cards.length; i++){
+      var card = cards[i];
+      var h = card.querySelector("h2");
+      if (!h) continue;
+      if (h.querySelector(".wp-overlay-btn")) continue; // already decorated
+      var key = panelKeyForCard(card);
+      if (!key) continue;
+      var btn = document.createElement("button");
+      btn.className = "wp-overlay-btn";
+      btn.setAttribute("data-panel-key", key);
+      btn.title = "Open this panel in its own always-on-top overlay window";
+      btn.textContent = "🪟 overlay";
+      h.appendChild(btn);
+    }
+  }
+  document.addEventListener("click", function(e){
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains("wp-overlay-btn")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var pk = t.getAttribute("data-panel-key");
+    try { if (window.mimic) window.mimic.createPanelOverlay(pk); } catch (err) {}
+  }, true);
+  var obs = new MutationObserver(decorateButtons);
+  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) obs.observe(el, { childList: true, subtree: true });
+  });
+  decorateButtons();
+
+  // OVERLAY MODE — when loaded with ?overlay=<key>, mark only the matching
+  // panel as the target and let CSS hide everything else. Re-applies after
+  // each section re-render via the same observer above (decorateButtons
+  // doesn't tag the overlay target; this does).
+  var overlayKey = null;
+  try {
+    var qs = (window.location.search || "");
+    var m = qs.match(/[?&]overlay=([^&]+)/);
+    if (m) overlayKey = decodeURIComponent(m[1]).toLowerCase();
+  } catch (err) {}
+  if (overlayKey){
+    document.body.classList.add("wp-overlay-mode");
+    function applyOverlayTarget(){
+      var cards = document.querySelectorAll(".section .card");
+      var matched = false;
+      for (var i = 0; i < cards.length; i++){
+        var c = cards[i];
+        var k = panelKeyForCard(c);
+        if (k === overlayKey){ c.classList.add("wp-overlay-target"); matched = true; }
+        else c.classList.remove("wp-overlay-target");
+      }
+      // If the panel hasn't rendered yet (data not received), the overlay
+      // shows nothing — by design. Once render lands, the observer fires
+      // and the target lights up.
+      return matched;
+    }
+    var obs2 = new MutationObserver(applyOverlayTarget);
+    ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) obs2.observe(el, { childList: true, subtree: true });
+    });
+    applyOverlayTarget();
+  }
 })();
 </script></body></html>`;
 
