@@ -4316,6 +4316,25 @@ async function _handleAgentUpload(req, res) {
   // playerTotals: name → { direct, pet }
   // direct = damage the player dealt themselves; pet = share of pet damage attributed to them.
   // Pet damage is divided equally across all /pet-leader owners of that pet name.
+  // Scope the encounter to the fight the UPLOADER was actually in. An agent's
+  // log shows every combat line in the uploader's vicinity — including other
+  // raiders meleeing DIFFERENT mobs nearby. Without scoping, those bleed into
+  // this encounter as phantom contributors (e.g. a solo Royal Scribe Kaavin
+  // kill showing 4 extra characters who were each fighting their own mob).
+  // validTargets = every NPC the uploader personally damaged, plus the boss.
+  // We then only count damage dealt to one of those targets.
+  const _bossLower = encounter.boss_name ? String(encounter.boss_name).toLowerCase() : null;
+  const validTargets = new Set();
+  if (_bossLower) validTargets.add(_bossLower);
+  for (const ev of encounter.events) {
+    if (ev.type !== 'damage' || !ev.defender) continue;
+    // The uploader's own outgoing damage is first-person (attacker === null).
+    // Its defender is the mob they're engaging — that's a target of this fight.
+    if (ev.attacker === null && !/^you$/i.test(ev.defender)) {
+      validTargets.add(String(ev.defender).toLowerCase());
+    }
+  }
+
   const playerTotals = new Map();
   const _addDmg = (name, amount, isPet) => {
     if (!playerTotals.has(name)) playerTotals.set(name, { direct: 0, pet: 0 });
@@ -4330,6 +4349,10 @@ async function _handleAgentUpload(req, res) {
     // Without this guard, every incoming hit would be attributed to the character as outgoing
     // DPS because rawAttacker=null gets rewritten to character below.
     if (rawAttacker === null && !ev.defender) continue;
+    // Fight-scope filter: only count damage dealt to a target the uploader
+    // engaged (computed above). Events with a defender outside the set are
+    // someone else's separate fight that merely showed up in this log.
+    if (ev.defender && validTargets.size > 0 && !validTargets.has(String(ev.defender).toLowerCase())) continue;
     // Re-attribute first-person (null) events to the uploading character
     const attacker = rawAttacker ?? character ?? null;
     if (!attacker) continue;

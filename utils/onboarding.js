@@ -100,6 +100,9 @@ const CHANGELOGS = {
   '2.6.15': [
     'Boards now rebuild spawn timers from Supabase (the parse/kill record) automatically on startup and every 6h — so after a redeploy or volume reset the cooldowns repopulate themselves instead of showing everything "Available now." `/recoverkills` still does it on demand.',
   ],
+  '2.6.16': [
+    'Parses are now scoped to the fight you were actually in. Before, a nearby raider meleeing a *different* mob could show up as a phantom contributor on your kill (e.g. a solo named kill listing 4 extra names). Damage now only counts toward an encounter if it landed on a target the uploader engaged.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
