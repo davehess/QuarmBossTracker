@@ -13,7 +13,10 @@ export const dynamic = 'force-dynamic';
 
 async function loadCounters() {
   const sb = supabaseAdmin();
-  const counters: { label: string; emoji: React.ReactNode; value: number; sub?: string }[] = [];
+  // value is `number | string` so cards like "Longest Dire Charm" can show
+  // a pre-formatted "4h 23m" string while normal counter cards stay numeric.
+  // The renderer calls value.toLocaleString() which works for both.
+  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string }[] = [];
 
   // Standalone — fetched separately so the Kyinen execution card can render
   // with its own gold-frame styling above the normal counter grid.
@@ -164,6 +167,47 @@ async function loadCounters() {
       value: MALTHUR_BASELINE,
       sub: `starts at ${MALTHUR_BASELINE} (you know why) · captured count unavailable`,
     });
+    void err;
+  }
+
+  // ── Longest Dire Charm — for the bragging-rights enchanter who walked off
+  //    with a charmed mob and held it the longest. Pulls from charm_sessions
+  //    where is_dire_charm=true; pick the row with the highest duration_sec.
+  //    Empty until the agent v2.5.5+ first DC fires.
+  try {
+    const { data: rows } = await sb
+      .from('charm_sessions')
+      .select('pet_name, owner, duration_sec, total_damage, ended_at')
+      .eq('is_dire_charm', true)
+      .not('duration_sec', 'is', null)
+      .order('duration_sec', { ascending: false })
+      .limit(1);
+    const top = (rows ?? [])[0] as { pet_name: string; owner: string; duration_sec: number; total_damage: number; ended_at: string } | undefined;
+    if (top && top.duration_sec > 0) {
+      const fmtDur = (sec: number) => {
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = Math.floor(sec % 60);
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+      };
+      const dps = top.duration_sec > 0 ? Math.round(top.total_damage / top.duration_sec) : 0;
+      counters.push({
+        label: 'Longest Dire Charm',
+        emoji: '🔗',
+        value: fmtDur(top.duration_sec),
+        sub: `${top.pet_name} · ${top.owner}${dps > 0 ? ` · ${dps.toLocaleString()}/s avg` : ''}`,
+      });
+    } else {
+      counters.push({
+        label: 'Longest Dire Charm',
+        emoji: '🔗',
+        value: '—',
+        sub: 'no Dire Charms recorded yet (agent v2.5.5+ will tick this up)',
+      });
+    }
+  } catch (err) {
     void err;
   }
 

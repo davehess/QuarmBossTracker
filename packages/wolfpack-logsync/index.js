@@ -272,6 +272,12 @@ const PRIORITY_KEEP_PATTERNS = [
   // filter — used to attribute charmed mobs to their enchanter for
   // damage display (Mistmoore glyphed familiars, etc.).
   /\bregards\s+\S+\s+as\s+an\s+ally\b/i,
+  // Charm BREAK — bystander visible. Closes the charm session for
+  // duration + DPS computation.
+  /\b(?:snaps out of(?: the)? charm|is no longer charmed|has been freed of(?: the)? charm)\b/i,
+  // Dire Charm cast detection — flags the next charm-land as the AA
+  // permanent variant (vs regular Charm cycling).
+  /\b(?:begin(?:s)?\s+(?:to\s+cast|casting))\s+Dire\s+Charm\b/i,
   // /who output lines — '[60 Storm Warden] Alice (Wood Elf) <Wolf Pack>' etc.
   // Listed here so they can never be dropped by some future broad filter.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -675,6 +681,23 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__' };
   }
 
+  // Dire Charm cast detection — flags the next charm-land as the long
+  // permanent AA variant rather than a regular Charm cycle. Bystander-
+  // visible cast line ("X begins casting Dire Charm") so any agent with a
+  // line of sight can pick it up. Self-cast variant also covered.
+  m = line.match(/\]\s+(?:You\s+begin\s+casting\s+Dire\s+Charm|(.+?)\s+begins\s+(?:to\s+cast|casting)\s+Dire\s+Charm)\b/i);
+  if (m) {
+    return { ts: tsIso, type: 'dire_charm_cast', caster: m[1] || '__SELF__' };
+  }
+
+  // Charm BREAK — bystander visible. Closes any open charm session on
+  // this pet so the bot can compute final duration + DPS. Several
+  // phrasings observed across classic / Quarm; alternation kept loose.
+  m = line.match(/\]\s+(.+?)\s+(?:snaps out of(?: the)? charm|is no longer charmed|has been freed of(?: the)? charm)\s*\.?\s*$/i);
+  if (m) {
+    return { ts: tsIso, type: 'charm_break', pet: m[1] };
+  }
+
   // Charm-LAND attribution (bystander-visible). Form:
   //   "A glyphed familiar regards Lihliana as an ally."
   // Visible to everyone in the zone, so any agent can pick it up and
@@ -689,7 +712,7 @@ function parseEvent(line, ts) {
   // get "regards X as an ally" pointed at a Wolf Pack member by name.
   m = line.match(/\]\s+(.+?)\s+regards\s+(\S+)\s+as\s+an\s+ally\.?\s*$/i);
   if (m) {
-    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
+    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2], source: 'charm_land' };
   }
 
   // ── /who output line ──────────────────────────────────────────────────────
@@ -866,6 +889,17 @@ class EncounterBuilder {
     // fight (e.g. Lady Vox Complete Heal). Surfaced on parse cards via the
     // encounter payload's npc_healed_total field.
     this.npcHealedTotal = 0;
+    // Charm session tracking (this encounter only).
+    //   _activeCharms: petLower → open session record (started_at, owner, …)
+    //   charmSessions: closed sessions (charm broke or owner re-charmed
+    //                  with a different caster). Flushed in the encounter
+    //                  payload's charm_sessions array.
+    //   _pendingDireCharm: { caster, ts } set by the Dire Charm cast
+    //                      detector; consumed by the next matching charm-
+    //                      land within 10s.
+    this._activeCharms     = new Map();
+    this.charmSessions     = [];
+    this._pendingDireCharm = null;
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   _bumpDefender(name, key, amount) {
@@ -982,6 +1016,34 @@ class EncounterBuilder {
   add(event) {
     if (!event) return;
 
+    // Dire Charm cast → flag the next charm-land within ~10s as a DC
+    // session, not a regular Charm cycle. Stored on the builder so it's
+    // reset between encounters automatically (DC casts don't survive a
+    // wipe + new pull).
+    if (event.type === 'dire_charm_cast') {
+      const caster = event.caster === '__SELF__' ? (this.character || null) : event.caster;
+      this._pendingDireCharm = { caster, ts: this.lastEvent || Date.now() };
+      return;
+    }
+
+    // Charm break → close any open charm session for this pet so the
+    // bot computes final duration + DPS. Sessions persist on the
+    // builder in this.charmSessions for inclusion in the encounter
+    // payload.
+    if (event.type === 'charm_break') {
+      const petKey = String(event.pet || '').toLowerCase();
+      if (!petKey) return;
+      const open = this._activeCharms?.get(petKey);
+      if (open) {
+        open.ended_at = this.lastEvent || open.started_at;
+        open.end_reason = 'charm_break';
+        open.duration_sec = Math.max(0, (open.ended_at - open.started_at) / 1000);
+        this.charmSessions.push(open);
+        this._activeCharms.delete(petKey);
+      }
+      return;
+    }
+
     // Pet leader declarations update the map but don't count as combat events.
     // The parser emits owner='__SELF__' for charm-pet "Attacking X Master."
     // lines (which EQ only shows to the charmer) — resolve to this.character.
@@ -993,6 +1055,45 @@ class EncounterBuilder {
       const _pk = event.pet.toLowerCase();
       if (!knownPetOwners.has(_pk)) knownPetOwners.set(_pk, new Set());
       knownPetOwners.get(_pk).add(owner);
+      // Charm-land specifically also starts a charm_session record. Other
+      // pet_leader sources (the pet's own "My leader is" declare line or
+      // the charm-tell "Attacking X Master") don't — those are summon /
+      // group-pet flows, not the per-session-tracked charm cycle.
+      if (event.source === 'charm_land') {
+        const petKey = _pk;
+        const startTs = this.lastEvent || Date.now();
+        // De-dupe: if there's already an open session on this pet (same
+        // owner), don't overwrite it. EQ sometimes fires the regards line
+        // twice as the charm refreshes.
+        const existing = (this._activeCharms ||= new Map()).get(petKey);
+        if (existing && existing.owner === owner) return;
+        // If the existing session is with a different owner, the previous
+        // charm broke (we may not have caught the break line). Close it.
+        if (existing) {
+          existing.ended_at = startTs;
+          existing.end_reason = 'charm_break';
+          existing.duration_sec = Math.max(0, (startTs - existing.started_at) / 1000);
+          this.charmSessions.push(existing);
+        }
+        // Was this Dire-Charmed? Match the pending DC flag within 10s by
+        // caster name.
+        const isDC = !!(this._pendingDireCharm
+          && this._pendingDireCharm.caster
+          && this._pendingDireCharm.caster.toLowerCase() === owner.toLowerCase()
+          && (startTs - this._pendingDireCharm.ts) < 10_000);
+        if (isDC) this._pendingDireCharm = null;
+        this._activeCharms.set(petKey, {
+          pet:           event.pet,
+          owner,
+          started_at:    startTs,
+          last_damage_at: startTs,
+          total_damage:  0,
+          is_dire_charm: isDC,
+          end_reason:    null,
+          ended_at:      null,
+          duration_sec:  null,
+        });
+      }
       return;
     }
 
@@ -1143,6 +1244,16 @@ class EncounterBuilder {
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
         ? (this.character || 'You')
         : rawAtk;
+      // Charm-session damage attribution. If the attacker is a pet with
+      // an open charm session, add the damage to its session total so
+      // the bot can compute avg DPS over the charmed duration.
+      if (attacker && this._activeCharms?.size > 0) {
+        const open = this._activeCharms.get(attacker.toLowerCase());
+        if (open) {
+          open.total_damage += event.amount;
+          open.last_damage_at = this.lastEvent || Date.now();
+        }
+      }
       // Skip player-on-player damage (direct PvP or charm mechanics):
       //   • Named confirmed player as defender: "PlayerA hits PlayerB for N"
       //   • Uploader as defender AND attacker is a 3rd-party confirmed player:
@@ -1654,6 +1765,26 @@ class EncounterBuilder {
         // Surfaced on parse cards as "27.1k (+10k healed)" so the raid sees
         // how much HP they actually had to push through.
         npc_healed_total: this.npcHealedTotal > 0 ? this.npcHealedTotal : undefined,
+        // Per-pet charm sessions during this encounter — start + end + damage
+        // accumulated while charmed. Closed sessions already in
+        // this.charmSessions; any still-open sessions get closed here with
+        // end_reason='encounter_flush' so the bot has a complete record
+        // even when the charm break line wasn't seen. Dire Charm sessions
+        // that survive past the encounter would normally need cross-fight
+        // tracking — for now we still close at flush since the encounter
+        // is the persistence unit; subsequent damage in another fight
+        // produces a new session (which is fine, the bot dedupes on
+        // started_at).
+        charm_sessions: (() => {
+          const all = [...this.charmSessions];
+          for (const open of this._activeCharms.values()) {
+            open.ended_at     = open.last_damage_at || this.lastEvent || open.started_at;
+            open.end_reason   = open.end_reason || 'encounter_flush';
+            open.duration_sec = Math.max(0, (open.ended_at - open.started_at) / 1000);
+            all.push(open);
+          }
+          return all.length > 0 ? all : undefined;
+        })(),
         // Per-character verb/skill rollup. Server upserts into
         // encounter_combat_rollup and stamps contributions.has_ability_detail.
         // Absent on older agents → rollup tables stay empty for those uploads.
