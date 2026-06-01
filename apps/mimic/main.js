@@ -724,6 +724,8 @@ ipcMain.handle('open-dashboard', () => {
   }
   return true;
 });
+// Gear icon on the dashboard opens the Settings window.
+ipcMain.handle('open-settings', () => { openSettings(); return true; });
 // Open an external URL in the OS default browser. Allowlist to wolfpack.quest
 // and the GitHub repo so a compromised renderer can't open arbitrary links.
 ipcMain.handle('open-external', (_e, url) => {
