@@ -322,9 +322,13 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
-    title: 'Wolf Pack Mimic (beta)',
+    title: 'Wolf Pack Mimic — Main window (Dashboard)',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
+  // Keep the OS/Task-Manager title stable instead of letting the loaded page
+  // (loading.html → the agent dashboard) overwrite it — so this process stays
+  // identifiable as the main window rather than "Mimic — getting ready" etc.
+  mainWindow.on('page-title-updated', (e) => e.preventDefault());
   mainWindow.loadFile('loading.html');
   mainWindow.on('close', (e) => {
     if (!quitting) { e.preventDefault(); mainWindow.hide(); } // close to tray
@@ -485,6 +489,10 @@ function createPanelOverlay(panelKey) {
   const sigKey    = 'panelBoundsSig_' + panelKey;
   const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 });
   const win = new BrowserWindow({
+    // Descriptive title so this process is identifiable in Task Manager /
+    // Alt-Tab (e.g. "Wolf Pack Mimic — DEEPS panel overlay") instead of a
+    // wall of identical "Wolf Pack Mimic" entries.
+    title: `Wolf Pack Mimic — ${panelKey} panel overlay`,
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -513,6 +521,7 @@ function createPanelOverlay(panelKey) {
 function createOverlayWindow() {
   const b = _resolveBounds('hudBounds', 'hudBoundsSig', { x: 40, y: 40, width: 320, height: 220 });
   overlayWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 180, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -537,6 +546,7 @@ function createOverlayWindow() {
 function createTriggerOverlay() {
   const b = _resolveBounds('triggerBounds', 'triggerBoundsSig', { x: 700, y: 200, width: 600, height: 200 });
   triggerWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Triggers overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
