@@ -2609,6 +2609,15 @@ tr:hover td { background:#1f242c }
 .tag.ramp { background:#9e6a0322; color:var(--gold) }
 .tag.invuln { background:#1a7f3722; color:var(--green) }
 .pet { color:var(--blue) }
+.card.wp-hidden { display:none !important }
+.wp-gear { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 11px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:13px; }
+.wp-gear:hover { background:#30363d; border-color:var(--blue); color:var(--blue) }
+.wp-menu { position:absolute; z-index:1000; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; box-shadow:0 8px 24px rgba(0,0,0,.5); max-height:60vh; overflow:auto; min-width:240px; }
+.wp-menu h4 { margin:0 0 8px; color:var(--blue); font-size:12px; text-transform:uppercase; font-weight:normal; border:none; }
+.wp-menu label { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:13px; color:var(--text); cursor:pointer; text-transform:none; }
+.wp-menu .wp-actions { margin-top:8px; border-top:1px solid var(--border); padding-top:8px; display:flex; gap:8px; }
+.wp-menu .wp-actions button { background:#21262d; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 9px; font-size:11px; cursor:pointer; font-family:inherit; }
+.wp-menu .wp-actions button:hover { border-color:var(--blue); color:var(--blue) }
 </style></head><body>
 <h1>🐺 Wolf Pack EQ — Parser</h1>
 <div class="subtle" id="header"></div>
@@ -2623,7 +2632,9 @@ tr:hover td { background:#1f242c }
   <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
      class="nav-quest"
      title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
+  <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections">⚙ Panels</button>
 </div>
+<div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <div id="dash" class="section active"></div>
 <div id="tanks" class="section"></div>
 <div id="healers" class="section"></div>
@@ -3570,6 +3581,101 @@ async function dismissTopDamage(key) {
     refresh();
   } catch {}
 }
+
+// ── Panel customization (increment 1: show/hide via the gear menu) ──────────
+// Each dashboard .card is a panel, keyed by a STABLE prefix of its <h2> title
+// (text before the first "(", em-dash, or middot so dynamic counts like
+// "Watched Logs (1 char...)" or "Live Threat — Boss" stay stable). Users hide
+// panels they do not want; the choice persists in localStorage and re-applies
+// after every section re-render via a MutationObserver. Drag-to-arrange and
+// the new loot/bids panels come in later increments.
+(function(){
+  var LS_KEY = "wpHiddenPanels";
+  function loadHidden(){
+    try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) || "[]")); }
+    catch (e) { return new Set(); }
+  }
+  function saveHidden(set){
+    try { localStorage.setItem(LS_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+  }
+  function panelKey(card){
+    var h = card.querySelector("h2");
+    var t = h ? (h.textContent || "") : "";
+    t = t.split("(")[0].split("—")[0].split("·")[0];
+    return t.trim().toLowerCase();
+  }
+  function allCards(){
+    return Array.prototype.slice.call(document.querySelectorAll(".section .card"));
+  }
+  function applyHidden(){
+    var hidden = loadHidden();
+    allCards().forEach(function(card){
+      var k = panelKey(card);
+      if (k && hidden.has(k)) card.classList.add("wp-hidden");
+      else card.classList.remove("wp-hidden");
+    });
+  }
+  function buildMenu(){
+    var menu = document.getElementById("wpPanelMenu");
+    if (!menu) return;
+    var hidden = loadHidden();
+    var seen = {};
+    var rows = [];
+    allCards().forEach(function(card){
+      var k = panelKey(card);
+      if (!k || seen[k]) return;
+      seen[k] = true;
+      var h = card.querySelector("h2");
+      var label = h ? (h.textContent || k) : k;
+      label = label.split("(")[0].split("—")[0].split("·")[0].trim();
+      rows.push({ key: k, label: label });
+    });
+    var html = "<h4>Show panels</h4>";
+    rows.forEach(function(r){
+      var checked = hidden.has(r.key) ? "" : " checked";
+      html += "<label><input type=checkbox data-pk='" + r.key + "'" + checked + "> " + r.label + "</label>";
+    });
+    html += "<div class=wp-actions><button id=wpShowAll>Show all</button><button id=wpClose>Close</button></div>";
+    menu.innerHTML = html;
+    Array.prototype.slice.call(menu.querySelectorAll("input[data-pk]")).forEach(function(cb){
+      cb.addEventListener("change", function(){
+        var set = loadHidden();
+        var pk = cb.getAttribute("data-pk");
+        if (cb.checked) set.delete(pk); else set.add(pk);
+        saveHidden(set);
+        applyHidden();
+      });
+    });
+    var showAll = document.getElementById("wpShowAll");
+    if (showAll) showAll.addEventListener("click", function(){ saveHidden(new Set()); applyHidden(); buildMenu(); });
+    var closeBtn = document.getElementById("wpClose");
+    if (closeBtn) closeBtn.addEventListener("click", function(){ menu.style.display = "none"; });
+  }
+  var gear = document.getElementById("wpGear");
+  var menu = document.getElementById("wpPanelMenu");
+  if (gear && menu){
+    gear.addEventListener("click", function(e){
+      e.stopPropagation();
+      if (menu.style.display !== "block"){
+        buildMenu();
+        menu.style.top = (gear.getBoundingClientRect().bottom + window.scrollY + 4) + "px";
+        menu.style.right = "16px";
+        menu.style.display = "block";
+      } else {
+        menu.style.display = "none";
+      }
+    });
+    document.addEventListener("click", function(e){
+      if (menu.style.display === "block" && !menu.contains(e.target) && e.target !== gear) menu.style.display = "none";
+    });
+  }
+  var obs = new MutationObserver(function(){ applyHidden(); });
+  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) obs.observe(el, { childList: true, subtree: true });
+  });
+  applyHidden();
+})();
 </script></body></html>`;
 
 async function _readBody(req, max = 64 * 1024) {
