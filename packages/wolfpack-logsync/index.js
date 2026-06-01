@@ -1941,6 +1941,7 @@ function _endpointForKind(kind, botUrl) {
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
     case 'tells':           return base + '/tells';
+    case 'threat_snapshot': return base + '/threat-snapshot';
     default:                return botUrl;
   }
 }
@@ -3895,6 +3896,8 @@ async function dismissTopDamage(key) {
     "top damage this session":  "damage",
     "pvp":                       "pvp",
     "recent parses":             "parses",
+    "live threat":               "threat",
+    "threat detail":             "threat",
   };
   var LS_KEY = "wpPanelSource";
   function loadModes(){
@@ -3943,6 +3946,18 @@ async function dismissTopDamage(key) {
       html += "</table>";
     } else if (serverKey === "pvp"){
       html += "<div>Kills <b>" + (data.total_kills||0) + "</b> · Unique victims <b>" + (data.unique_victims||0) + "</b> · Deaths <b>" + (data.total_deaths||0) + "</b></div>";
+    } else if (serverKey === "threat"){
+      html += "<div>Snapshots seen <b>" + (data.snapshots||0) + "</b> · Topped threat <b>" + (data.times_topped_threat||0) + "</b> · Top-3 <b>" + (data.times_top3||0) + "</b></div>";
+      var recent = data.recent || [];
+      if (recent.length > 0) {
+        html += "<table><tr><th>Boss</th><th>When</th><th class=num>Rank</th></tr>";
+        recent.forEach(function(r){
+          var boss = (r.boss || "?").replace(/_/g, " ");
+          var when = r.snapshot_at ? new Date(r.snapshot_at).toLocaleString() : "";
+          html += "<tr><td class=name>" + boss + "</td><td class=dim>" + when + "</td><td class=num>" + r.rank + " of " + r.of + "</td></tr>";
+        });
+        html += "</table>";
+      }
     } else if (serverKey === "parses" && data.rows){
       html += "<table><tr><th>Boss</th><th>When</th><th class=num>Total</th><th class=num>DPS</th></tr>";
       data.rows.slice(0,10).forEach(function(r){
@@ -6435,6 +6450,37 @@ function startChatRelay() {
       }
     }
   }, 5000);
+
+  // Threat-snapshot uploader — every 15s while a fight is active, post the
+  // current per-player threat picture to /api/agent/threat-snapshot. The bot
+  // dedups identical (uploader, boss, second-granular ts) so the rare
+  // overlap from two parsers collapses naturally. No-op when no fight is
+  // active or no token is set.
+  let _lastSnapAt = 0;
+  setInterval(() => {
+    if (!_uploadOpts || !_uploadOpts.botUrl || !_uploadOpts.token) return;
+    const et = stats.currentEncounterThreat;
+    if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) return;
+    if (et.flushedAt) return; // fight already wrapped up
+    const now = Date.now();
+    if (now - _lastSnapAt < 14_000) return; // safety: never faster than ~15s
+    _lastSnapAt = now;
+    // pick the first watched character as the uploader; fall back to "?".
+    let uploader = "?";
+    for (const w of stats.watchedLogs || []) {
+      if (w && w.character) { uploader = w.character; break; }
+    }
+    // Use the queue so a network blip retries with the rest.
+    enqueueUpload('threat_snapshot', {
+      agent_version: AGENT_VERSION,
+      uploader,
+      boss_name:   et.bossName || null,
+      started_at:  et.startedAt ? new Date(et.startedAt).toISOString() : null,
+      snapshot_at: new Date(now).toISOString(),
+      per_player:  et.perPlayer,
+      total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
+    });
+  }, 15_000);
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
