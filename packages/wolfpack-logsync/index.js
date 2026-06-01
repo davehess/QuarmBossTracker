@@ -2065,6 +2065,20 @@ function _endpointForKind(kind, botUrl) {
   }
 }
 
+// The operator's "main" box, used to attribute operator-level uploads
+// (chat/pvp/fun_event/historical_chat) so the admin board shows the player
+// instead of "(unknown)". Prefers an explicit --character (the operator's
+// declared identity), else the first real-looking watched-log character.
+// Computed lazily so it picks up watched logs registered after startup.
+let _primaryCharacterOverride = null;  // set from args.flags.character in main()
+function _primaryCharacter() {
+  const looksReal = (c) => c && /^[A-Z][a-z]+$/.test(c);
+  if (looksReal(_primaryCharacterOverride)) return _primaryCharacterOverride;
+  const wls = (stats && stats.watchedLogs) || [];
+  for (const w of wls) if (looksReal(w && w.character)) return w.character;
+  return null;
+}
+
 function enqueueUpload(kind, payload) {
   // Cross-instance guard: only the elected uploader sends. A read-only
   // instance (another Parser/Mimic on this machine already owns the lock)
@@ -2075,6 +2089,15 @@ function enqueueUpload(kind, payload) {
     const dropped = _uploadQueue.shift();
     _queueCapEvictCount++;
     console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped oldest ${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
+  }
+  // Attribute operator-level streams (chat / pvp / fun_event / historical_chat)
+  // to the operator's primary box. These aggregate across every watched log so
+  // they carry no per-box `character`, which made the admin board file them all
+  // under "(unknown)". Encounters already set their own per-box character and
+  // are left untouched.
+  if (payload && typeof payload === 'object' && !payload.character) {
+    const pc = _primaryCharacter();
+    if (pc) payload.character = pc;
   }
   // Decorate every payload with agent_state so the bot's admin tooling can
   // tell who/what is uploading without each call-site repeating the info.
@@ -8305,6 +8328,9 @@ async function main() {
   // Make opts available to the chat relay flush (module-level so the interval can see them)
   _uploadOpts    = { botUrl, token, dryRun };
   _isServiceMode = !!args.flags.noServiceCheck;
+  // Operator's declared main (if the launcher passed --character) — used to
+  // attribute operator-level uploads instead of "(unknown)".
+  _primaryCharacterOverride = args.flags.character || null;
 
   // Elect the single machine-wide uploader BEFORE the queue drain kicks, so a
   // read-only instance (another Parser/Mimic already uploading) doesn't replay
