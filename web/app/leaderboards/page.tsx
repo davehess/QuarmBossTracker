@@ -12,7 +12,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
-import { fmtDmg, fmtDuration, fmtDkp } from '@/lib/format';
+import { fmtDmg, fmtDuration, fmtDkp, cleanBossName } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -131,7 +131,7 @@ export default async function LeaderboardsPage() {
                 <td className="py-1 pr-2 text-dim">
                   {p.encounters?.id ? (
                     <Link href={`/parses/${p.encounters.id}`} className="hover:text-blue hover:underline">
-                      {p.encounters.eqemu_npc_types?.name || '?'}
+                      {cleanBossName(p.encounters.eqemu_npc_types?.name)}
                     </Link>
                   ) : '?'}
                 </td>
