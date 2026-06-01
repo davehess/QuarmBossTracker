@@ -88,6 +88,9 @@ const CHANGELOGS = {
   '2.6.8': [
     'Squashed double-posting: when one Mimic install tails a main + alts, server/guild broadcasts (guild chat, PvP kills) were captured once per log and posted twice. Now deduped at the source + by normalized text on the bot. Also fixed the stray `[]` after some chat names (empty class tag) and the GMT-instead-of-local timestamps on the chat history page.',
   ],
+  '2.6.9': [
+    'Fixed a PvP-leaderboard undercount: backfilling your full log collapsed every repeat kill of the same player into one (the text-only dedup from 2.6.8 was too aggressive on historical replays). PvP dedup now buckets by time so distinct kills are kept and only true live duplicates collapse.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
