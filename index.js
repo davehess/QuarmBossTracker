@@ -4448,7 +4448,7 @@ async function _handleAgentUpload(req, res) {
         `internal_id=eq.${encodeURIComponent(bossInternalId)}&select=internal_id&limit=1`
       );
       if (Array.isArray(localMatches) && localMatches.length) {
-        await supabase.recordParse({
+        const recParseResult = await supabase.recordParse({
           bossInternalId,
           parsed: rawParse,
           timestampMs: startedMs,
@@ -4458,7 +4458,32 @@ async function _handleAgentUpload(req, res) {
           agentVersion: payload?.agent_version || null,
           rollupByChar: encounter.rollup?.by_char || null,
           npcHealedTotal: encounter.npc_healed_total || 0,
-        }).catch(err => console.warn('[agent] recordParse failed:', err?.message));
+        }).catch(err => { console.warn('[agent] recordParse failed:', err?.message); return null; });
+
+        // Persist charm sessions for this encounter. Upsert dedup'd by
+        // (guild_id, pet_name, owner, started_at) so re-uploads from
+        // backfill don't duplicate rows.
+        if (recParseResult?.encounterId && Array.isArray(encounter.charm_sessions) && encounter.charm_sessions.length > 0) {
+          const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+          const charmRows = encounter.charm_sessions.map(s => ({
+            guild_id:      guildId,
+            pet_name:      s.pet,
+            owner:         s.owner,
+            started_at:    new Date(s.started_at).toISOString(),
+            ended_at:      s.ended_at ? new Date(s.ended_at).toISOString() : null,
+            duration_sec:  s.duration_sec || null,
+            total_damage:  s.total_damage || 0,
+            is_dire_charm: !!s.is_dire_charm,
+            encounter_id:  recParseResult.encounterId,
+            end_reason:    s.end_reason || null,
+            uploaded_by:   character || null,
+          }));
+          try {
+            await supabase.upsert('charm_sessions', charmRows, 'guild_id,pet_name,owner,started_at');
+          } catch (err) {
+            console.warn('[agent] charm_sessions upsert failed:', err?.message);
+          }
+        }
       } else {
         console.log(`[agent] no bosses_local match for "${bossInternalId}" — encounter not persisted to Supabase`);
       }

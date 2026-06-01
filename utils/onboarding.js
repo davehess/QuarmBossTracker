@@ -79,6 +79,9 @@ const CHANGELOGS = {
   '2.6.5': [
     'OpenDKP sync now runs every 30 min (was 6h) so the **/parses Tonight** panel reflects in-progress raid attendance as ticks come in. Web also adds pattern-based pet detection so wizard familiars and similar pets stop inflating the "Unknown" bucket on the Damage-by-class chart.',
   ],
+  '2.6.6': [
+    'Charm sessions: every charm landing (Mistmoore glyphed familiars, etc.) now starts a tracked session — pet name + owner + total damage + duration. Dire Charm casts flag the next landing as a DC session. The `/fun` page gets a new "Longest Dire Charm" card for bragging rights.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
