@@ -2,6 +2,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('mimic', {
+  openSettings:  ()     => ipcRenderer.invoke('open-settings'),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
@@ -30,3 +31,67 @@ contextBridge.exposeInMainWorld('mimic', {
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),
 });
+
+// ── Dashboard chrome injection (Mimic only) ─────────────────────────────────
+// The main window loads the AGENT dashboard (served over http on localhost),
+// which is shared verbatim with Parser.bat and has no Mimic-specific UI. We
+// inject two Mimic affordances into THAT page only (file:// overlays/settings
+// are skipped):
+//   1. A ⚙ gear button, top-right → opens the Mimic Settings window.
+//   2. A "Not connected" banner when no token is set, so a missing token is
+//      surfaced as a fixable problem instead of silently not uploading.
+// This runs in the isolated preload world; it only touches the DOM + the
+// already-exposed window.mimic bridge, so there's no security surface change.
+if (location.protocol === 'http:') {
+  const ready = (fn) => {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else fn();
+  };
+  ready(() => {
+    // Gear button
+    const gear = document.createElement('button');
+    gear.textContent = '⚙';
+    gear.title = 'Mimic Settings';
+    gear.setAttribute('style', [
+      'position:fixed', 'top:10px', 'right:12px', 'z-index:99999',
+      'width:34px', 'height:34px', 'border-radius:8px',
+      'background:#161b22', 'color:#c9d1d9', 'border:1px solid #2a3140',
+      'font-size:17px', 'cursor:pointer', 'line-height:1',
+    ].join(';'));
+    gear.onmouseenter = () => { gear.style.borderColor = '#58a6ff'; gear.style.color = '#58a6ff'; };
+    gear.onmouseleave = () => { gear.style.borderColor = '#2a3140'; gear.style.color = '#c9d1d9'; };
+    gear.onclick = () => { try { ipcRenderer.invoke('open-settings'); } catch (e) {} };
+    document.body.appendChild(gear);
+
+    // Token / connection banner
+    const banner = document.createElement('div');
+    banner.id = 'mimic-conn-banner';
+    banner.setAttribute('style', [
+      'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99998',
+      'display:none', 'align-items:center', 'justify-content:center', 'gap:10px',
+      'padding:8px 14px', 'background:#3a2a0a', 'color:#f6c365',
+      'border-bottom:1px solid #6b5320', 'font-size:13px', 'font-family:ui-monospace,Consolas,monospace',
+    ].join(';'));
+    const connectBtn = document.createElement('button');
+    connectBtn.textContent = 'Connect now';
+    connectBtn.setAttribute('style', [
+      'background:#1f6feb', 'color:#fff', 'border:none', 'border-radius:5px',
+      'padding:4px 12px', 'cursor:pointer', 'font-size:12px',
+    ].join(';'));
+    connectBtn.onclick = () => { try { ipcRenderer.invoke('open-settings'); } catch (e) {} };
+    const msg = document.createElement('span');
+    msg.innerHTML = '⚠ <b>Not connected</b> — no Wolf Pack token set, so your parses aren\'t being shared. Paste your <code>/token</code> to fix.';
+    banner.appendChild(msg);
+    banner.appendChild(connectBtn);
+    document.body.appendChild(banner);
+
+    const refreshBanner = (s) => {
+      const localOnly = s && s.localOnly;
+      banner.style.display = localOnly ? 'flex' : 'none';
+      gear.style.top = localOnly ? '50px' : '10px'; // nudge gear below banner
+    };
+    // Initial + live updates.
+    ipcRenderer.invoke('get-status').then(refreshBanner).catch(() => {});
+    ipcRenderer.on('status', (_e, s) => refreshBanner(s));
+  });
+}
