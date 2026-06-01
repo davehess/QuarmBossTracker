@@ -2,7 +2,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('mimic', {
-  openSettings:  ()     => ipcRenderer.invoke('open-settings'),
+  openSettings:        ()         => ipcRenderer.invoke('open-settings'),
+  createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
