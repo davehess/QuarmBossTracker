@@ -3129,6 +3129,62 @@ async function _handleAgentServerPanel(req, res) {
         })),
       }));
     }
+    if (key === 'loot') {
+      // Engaged-mob loot — the drop table for the boss the agent is currently
+      // fighting. Caller passes ?boss=<name>; tolerate "_" vs " " variants
+      // since EQEmu npc_types names use underscores.
+      const bossRaw = (url.searchParams.get('boss') || '').trim();
+      if (!bossRaw) { res.writeHead(400); return res.end(JSON.stringify({ error: 'boss required' })); }
+      const variants = [bossRaw, bossRaw.replace(/ /g, '_'), bossRaw.replace(/_/g, ' ')];
+      let rows = [];
+      for (const v of variants) {
+        const r = await supabase.select(
+          'eqemu_npc_drops',
+          `select=npc_id,npc_name,item_id,item_name,effective_chance,lore_flag` +
+          `&npc_name=ilike.${encodeURIComponent(v)}&order=effective_chance.desc&limit=80`
+        );
+        if (r && r.length) { rows = r; break; }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        key, boss: bossRaw, scope: 'drop table',
+        updated_at: new Date().toISOString(),
+        rows: (rows || []).slice(0, 40),
+      }));
+    }
+    if (key === 'bids') {
+      // Previous bids for a list of items (comma-separated item_ids). Returns
+      // winning bid + runners-up + which character won. Used by the dashboard
+      // alongside the Loot panel for the boss the agent is currently fighting.
+      const itemsRaw = (url.searchParams.get('items') || '').trim();
+      if (!itemsRaw) { res.writeHead(400); return res.end(JSON.stringify({ error: 'items required (comma-separated item_ids)' })); }
+      const ids = itemsRaw.split(',').map(s => parseInt(s, 10)).filter(n => Number.isFinite(n) && n > 0).slice(0, 60);
+      if (ids.length === 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'no valid item_ids' })); }
+      const rows = await supabase.select(
+        'loot_drops',
+        `select=item_id,winner_character,dkp_spent,runner_up_bids,awarded_at,eqemu_items!inner(name)` +
+        `&item_id=in.(${ids.join(',')})&order=awarded_at.desc&limit=300`
+      );
+      // Group by item_id; return last 5 awards each.
+      const byItem = new Map();
+      for (const r of (rows || [])) {
+        const k = r.item_id;
+        if (!byItem.has(k)) byItem.set(k, []);
+        if (byItem.get(k).length < 5) byItem.get(k).push({
+          item_name:  r.eqemu_items?.name || null,
+          winner:     r.winner_character,
+          dkp_spent:  r.dkp_spent,
+          awarded_at: r.awarded_at,
+          runners:    Array.isArray(r.runner_up_bids) ? r.runner_up_bids.slice(0, 5) : null,
+        });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        key, scope: 'last 5 awards per item',
+        updated_at: new Date().toISOString(),
+        items: Array.from(byItem.entries()).map(([id, awards]) => ({ item_id: id, awards })),
+      }));
+    }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'unknown panel key', key }));
   } catch (err) {

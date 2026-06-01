@@ -2640,6 +2640,7 @@ tr:hover td { background:#1f242c }
 .wp-server-overlay h5 { margin:0 0 6px; color:var(--blue); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
 .wp-server-overlay .meta { color:var(--dim); font-size:10px; margin-bottom:4px; }
 .wp-server-overlay table { font-size:12px; }
+.wp-bid-block { margin:8px 0; border-top:1px solid var(--border); padding-top:6px; }
 /* Overlay mode — when the dashboard is loaded with ?overlay=<panelKey>,
    strip all chrome and show just the target panel as a transparent overlay
    tile. Reuses the live render loop for free updates. */
@@ -4019,6 +4020,135 @@ async function dismissTopDamage(key) {
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
   decorate();
+})();
+
+// ── Increment 3 — Engaged-mob Loot + Previous Bids panels ───────────────────
+// Two new cards prepended to the Dashboard section that watch the agent's
+// currentEncounterThreat.bossName. When that changes (i.e. a new pull
+// starts), we fetch the boss's drop table from /api/server/loot and the
+// previous award history for those items from /api/server/bids, then
+// render compact tables.
+//
+// All server fetches are gated on a token being set — if the local-only
+// install has no token, the agent's /api/server passthrough returns 503
+// and we render a small "connect to see loot" note instead.
+(function(){
+  function makeCard(id, title){
+    var c = document.createElement("div");
+    c.id = id;
+    c.className = "card";
+    c.style.display = "none";
+    c.innerHTML = "<h2>" + title + "</h2><div class=card-body><div class=dim>waiting for combat…</div></div>";
+    return c;
+  }
+  var lootCard = makeCard("wpLootCard", "💰 Engaged-mob loot");
+  var bidsCard = makeCard("wpBidsCard", "📜 Previous bids");
+  function ensureCards(){
+    var dash = document.getElementById("dash");
+    if (!dash) return;
+    if (!document.getElementById("wpLootCard")) {
+      // Insert as first children of the first .grid in #dash (or append to dash).
+      var firstGrid = dash.querySelector(".grid");
+      var host = firstGrid || dash;
+      host.insertBefore(bidsCard, host.firstChild);
+      host.insertBefore(lootCard, host.firstChild);
+    }
+  }
+  var lastBoss = null;
+  var lastItemIds = null;
+  function fmtPct(n){ if (n == null) return ""; var p = Number(n)*100; if (p < 0.01) return p.toFixed(3) + "%"; if (p < 1) return p.toFixed(2) + "%"; return p.toFixed(1) + "%"; }
+  function fmtDkp(n){ n = Number(n)||0; return n.toLocaleString(); }
+  function fmtAgo(iso){
+    if (!iso) return "?";
+    var t = new Date(iso).getTime(); if (!t) return "?";
+    var s = Math.max(0, Math.floor((Date.now() - t)/1000));
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.floor(s/60) + "m ago";
+    if (s < 86400) return Math.floor(s/3600) + "h ago";
+    return Math.floor(s/86400) + "d ago";
+  }
+  function renderLoot(boss, data){
+    var body = lootCard.querySelector(".card-body");
+    if (!body) return;
+    if (!data || data.error){
+      body.innerHTML = "<div class=dim>" + ((data && data.error) ? data.error : "no data") + "</div>";
+      return;
+    }
+    var rows = data.rows || [];
+    if (rows.length === 0){
+      body.innerHTML = "<div class=dim>no drop data for <b>" + boss + "</b> — not in eqemu_npc_drops view</div>";
+      return;
+    }
+    var html = "<div class=dim style=margin-bottom:6px>Boss <b>" + boss + "</b> · " + rows.length + " possible drops</div>";
+    html += "<table><tr><th>Item</th><th class=num>Chance</th></tr>";
+    rows.forEach(function(r){
+      var name = (r.item_name || "?").replace(/_/g, " ");
+      var lore = r.lore_flag ? " <span class=tag>LORE</span>" : "";
+      html += "<tr><td class=name>" + name + lore + "</td><td class=num>" + fmtPct(r.effective_chance) + "</td></tr>";
+    });
+    html += "</table>";
+    body.innerHTML = html;
+  }
+  function renderBids(data){
+    var body = bidsCard.querySelector(".card-body");
+    if (!body) return;
+    if (!data || data.error){
+      body.innerHTML = "<div class=dim>" + ((data && data.error) ? data.error : "no data") + "</div>";
+      return;
+    }
+    var items = data.items || [];
+    if (items.length === 0){
+      body.innerHTML = "<div class=dim>no previous awards for these items</div>";
+      return;
+    }
+    var html = "";
+    items.forEach(function(it){
+      var awards = it.awards || [];
+      if (awards.length === 0) return;
+      var name = (awards[0].item_name || "?").replace(/_/g, " ");
+      html += "<div class=wp-bid-block><div class=name>" + name + "</div>";
+      html += "<table>";
+      awards.forEach(function(a){
+        html += "<tr><td class=name>" + (a.winner || "?") + "</td><td class=num>" + fmtDkp(a.dkp_spent) + " DKP</td><td class=dim>" + fmtAgo(a.awarded_at) + "</td></tr>";
+      });
+      html += "</table></div>";
+    });
+    body.innerHTML = html;
+  }
+  function refresh(){
+    ensureCards();
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      var et = s && s.currentEncounterThreat;
+      var boss = et && et.bossName;
+      // Show/hide cards based on whether we know a boss.
+      lootCard.style.display = boss ? "block" : "none";
+      bidsCard.style.display = boss ? "block" : "none";
+      if (!boss) return;
+      if (boss === lastBoss) return; // unchanged
+      lastBoss = boss;
+      // Loot fetch
+      fetch("/api/server/loot?boss=" + encodeURIComponent(boss)).then(function(r){
+        return r.json().then(function(j){ return { ok: r.ok, body: j }; });
+      }).then(function(out){
+        renderLoot(boss, out.ok ? out.body : { error: (out.body && out.body.error) || "fetch failed" });
+        // Chain into bids if we got items
+        if (out.ok && out.body && out.body.rows) {
+          var ids = out.body.rows.map(function(r){ return r.item_id; }).filter(Boolean);
+          var key = ids.join(",");
+          if (key && key !== lastItemIds) {
+            lastItemIds = key;
+            fetch("/api/server/bids?items=" + encodeURIComponent(key)).then(function(r){
+              return r.json().then(function(j){ return { ok: r.ok, body: j }; });
+            }).then(function(bout){
+              renderBids(bout.ok ? bout.body : { error: (bout.body && bout.body.error) || "fetch failed" });
+            }).catch(function(){ renderBids({ error: "network error" }); });
+          }
+        }
+      }).catch(function(){ renderLoot(boss, { error: "network error" }); });
+    }).catch(function(){});
+  }
+  refresh();
+  setInterval(refresh, 5000);
 })();
 </script></body></html>`;
 
