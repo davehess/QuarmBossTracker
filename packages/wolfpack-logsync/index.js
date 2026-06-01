@@ -2646,6 +2646,11 @@ tr:hover td { background:#1f242c }
 .wp-drag-handle:hover { color:var(--blue); }
 .card.wp-dragging { opacity:0.45; }
 .card.wp-drop-target { box-shadow:0 0 0 2px var(--blue) inset; }
+.wp-suggest { background:rgba(31,111,235,.08); border:1px solid rgba(31,111,235,.4); border-radius:6px; padding:8px 10px; margin-bottom:8px; font-size:12px; }
+.wp-suggest h5 { margin:0 0 6px; color:var(--blue); font-size:11px; text-transform:uppercase; }
+.wp-suggest button { background:#21262d; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin:2px; }
+.wp-suggest button.priority { border-color:var(--gold); color:var(--gold); }
+.wp-suggest button:hover { background:#30363d; border-color:var(--blue); color:var(--blue); }
 /* Overlay mode — when the dashboard is loaded with ?overlay=<panelKey>,
    strip all chrome and show just the target panel as a transparent overlay
    tile. Reuses the live render loop for free updates. */
@@ -4268,6 +4273,101 @@ async function dismissTopDamage(key) {
   var dash = document.getElementById("dash");
   if (dash) obs.observe(dash, { childList: true, subtree: true });
   decorate();
+})();
+
+// ── Increment 2c — drag suggestions ─────────────────────────────────────────
+// When the gear panel opens, we surface "panels that mention you" as priority
+// pins so members see relevance fast. Per the owner's flag: Parses + Threat
+// outrank everything else since they're the data most members care about and
+// (until 2g shipped) weren't in /me. Suggestions render inside the existing
+// gear menu's existing slot — additive, no layout move.
+(function(){
+  // Keywords whose presence in the panel body bumps relevance. Higher number
+  // means stronger weight.
+  var PRIORITY_PANELS = {
+    "recent parses":  10,
+    "live threat":    10,
+    "threat detail":   9,
+    "damage done this session": 7,
+    "top damage this session":  7,
+    "incoming damage":          5,
+    "deaths this session":      5,
+  };
+  function getMe(){
+    return new Promise(function(resolve){
+      fetch("/api/state").then(function(r){return r.json();}).then(function(s){
+        var wls = (s && s.watchedLogs) || [];
+        for (var i=0;i<wls.length;i++){
+          var c = wls[i] && wls[i].character;
+          if (c && /^[A-Z][a-zA-Z]{2,}$/.test(c)) return resolve(c);
+        }
+        resolve(null);
+      }).catch(function(){ resolve(null); });
+    });
+  }
+  function panelKeyFor(card){
+    var h = card.querySelector("h2");
+    var t = h ? (h.textContent || "") : "";
+    t = t.split("(")[0].split("—")[0].split("·")[0];
+    return t.trim().toLowerCase();
+  }
+  function scoreCard(card, me){
+    var key = panelKeyFor(card);
+    var score = PRIORITY_PANELS[key] || 0;
+    if (me) {
+      // Bump if the card's text contains the uploader's name — that's the
+      // "data points that have their character in them" signal.
+      var text = (card.textContent || "");
+      if (text.indexOf(me) !== -1) score += 5;
+    }
+    return { key: key, score: score, label: (card.querySelector("h2") || {}).textContent || key };
+  }
+  function injectIntoMenu(){
+    var menu = document.getElementById("wpPanelMenu");
+    if (!menu || menu.style.display !== "block") return;
+    if (menu.querySelector(".wp-suggest")) return; // already injected this open
+    getMe().then(function(me){
+      var dash = document.getElementById("dash");
+      if (!dash) return;
+      var cards = Array.prototype.slice.call(dash.querySelectorAll(".card"));
+      var ranked = cards.map(function(c){ return scoreCard(c, me); }).filter(function(x){ return x.score > 0; });
+      ranked.sort(function(a, b){ return b.score - a.score; });
+      ranked = ranked.slice(0, 6);
+      if (ranked.length === 0) return;
+      var box = document.createElement("div");
+      box.className = "wp-suggest";
+      var html = "<h5>🎯 Suggested for you" + (me ? " (" + me + ")" : "") + "</h5>";
+      ranked.forEach(function(r){
+        var cls = r.score >= 10 ? "priority" : "";
+        var label = (r.label || r.key).replace(/^✥\s*/, "").split("(")[0].split("—")[0].trim();
+        html += "<button class='" + cls + "' data-suggest-key='" + r.key + "'>" + label + "</button>";
+      });
+      box.innerHTML = html;
+      // Inject as first child of the menu so suggestions appear above the
+      // show/hide list.
+      menu.insertBefore(box, menu.firstChild);
+      // Wire clicks: scroll the matching card into view + give it a brief flash.
+      Array.prototype.slice.call(box.querySelectorAll("button[data-suggest-key]")).forEach(function(btn){
+        btn.addEventListener("click", function(){
+          var k = btn.getAttribute("data-suggest-key");
+          var cards = Array.prototype.slice.call(document.querySelectorAll(".section .card"));
+          for (var i=0;i<cards.length;i++){
+            if (panelKeyFor(cards[i]) === k){
+              cards[i].scrollIntoView({ behavior: "smooth", block: "center" });
+              cards[i].classList.add("wp-drop-target");
+              setTimeout(function(){ cards[i].classList.remove("wp-drop-target"); }, 1500);
+              menu.style.display = "none";
+              break;
+            }
+          }
+        });
+      });
+    });
+  }
+  // Watch the menu for visibility changes via attribute mutation.
+  var menuObs = new MutationObserver(injectIntoMenu);
+  var menu = document.getElementById("wpPanelMenu");
+  if (menu) menuObs.observe(menu, { attributes: true, attributeFilter: ["style"] });
 })();
 </script></body></html>`;
 
