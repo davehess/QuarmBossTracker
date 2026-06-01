@@ -2631,6 +2631,15 @@ tr:hover td { background:#1f242c }
    when running under Mimic (window.mimic.createPanelOverlay exists). */
 .wp-overlay-btn { float:right; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:4px; padding:0 8px; font-size:11px; cursor:pointer; line-height:1.6; margin-left:8px; font-family:inherit; text-transform:none; letter-spacing:0; }
 .wp-overlay-btn:hover { color:var(--blue); border-color:var(--blue); }
+.wp-source-toggle { float:right; display:inline-flex; gap:0; margin-left:8px; }
+.wp-source-toggle button { background:#21262d; color:var(--dim); border:1px solid var(--border); padding:0 8px; font-size:11px; cursor:pointer; line-height:1.6; font-family:inherit; text-transform:none; letter-spacing:0; }
+.wp-source-toggle button.active { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+.wp-source-toggle button:first-child { border-radius:4px 0 0 4px; }
+.wp-source-toggle button:last-child { border-radius:0 4px 4px 0; border-left:none; }
+.wp-server-overlay { background:rgba(31,111,235,.07); border-top:1px solid rgba(31,111,235,.4); padding:8px 12px; margin:8px -14px -14px; font-size:12px; }
+.wp-server-overlay h5 { margin:0 0 6px; color:var(--blue); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+.wp-server-overlay .meta { color:var(--dim); font-size:10px; margin-bottom:4px; }
+.wp-server-overlay table { font-size:12px; }
 /* Overlay mode — when the dashboard is loaded with ?overlay=<panelKey>,
    strip all chrome and show just the target panel as a transparent overlay
    tile. Reuses the live render loop for free updates. */
@@ -3869,6 +3878,148 @@ async function dismissTopDamage(key) {
     applyOverlayTarget();
   }
 })();
+
+// ── Increment 2f — local vs server source toggle per panel ──────────────────
+// Each panel whose <h2> matches a known key (damage / pvp / parses) gets a
+// "🛰 local | 🌐 server" toggle in its header. Server mode fetches from the
+// agent's GET /api/server/<key>?character=<uploader> passthrough and renders
+// a small JSON overlay below the local content — so members can SEE the
+// difference between live (this-session) and aggregated (wolfpack.quest)
+// without leaving the dashboard. Selection persists per panel in localStorage.
+(function(){
+  // Map dashboard panel header (lowercased <h2> prefix) → server-panel key.
+  // Local stays default; toggle adds the server view on top.
+  var PANEL_TO_SERVER_KEY = {
+    "damage done this session": "damage",
+    "top damage this session":  "damage",
+    "pvp":                       "pvp",
+    "recent parses":             "parses",
+  };
+  var LS_KEY = "wpPanelSource";
+  function loadModes(){
+    try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+  function saveModes(o){
+    try { localStorage.setItem(LS_KEY, JSON.stringify(o)); } catch (e) {}
+  }
+  function panelKey(card){
+    var h = card.querySelector("h2");
+    var t = h ? (h.textContent || "") : "";
+    t = t.split("(")[0].split("—")[0].split("·")[0];
+    return t.trim().toLowerCase();
+  }
+  function fmt(n){ n = Number(n)||0; if (n>=1e6) return (n/1e6).toFixed(1)+"M"; if (n>=1e3) return (n/1e3).toFixed(1)+"k"; return String(n); }
+  function getUploader(){
+    return new Promise(function(resolve){
+      fetch("/api/state").then(function(r){return r.json();}).then(function(s){
+        var wls = (s && s.watchedLogs) || [];
+        for (var i=0;i<wls.length;i++){
+          var c = wls[i] && wls[i].character;
+          if (c && /^[A-Z][a-zA-Z]{2,}$/.test(c)) return resolve(c);
+        }
+        resolve(null);
+      }).catch(function(){ resolve(null); });
+    });
+  }
+  function renderServer(card, serverKey, data){
+    var existing = card.querySelector(".wp-server-overlay");
+    if (existing) existing.remove();
+    var box = document.createElement("div");
+    box.className = "wp-server-overlay";
+    var html = "<h5>🌐 wolfpack.quest — " + (data && data.scope || "server view") + "</h5>";
+    if (!data || data.error){
+      html += "<div class=meta>" + (data && data.error || "fetch failed") + "</div>";
+      box.innerHTML = html;
+      card.appendChild(box);
+      return;
+    }
+    html += "<div class=meta>updated " + (data.updated_at ? new Date(data.updated_at).toLocaleTimeString() : "") + "</div>";
+    if (serverKey === "damage" && data.rows){
+      html += "<table><tr><th>#</th><th>Character</th><th class=num>Total</th><th class=num>Peak DPS</th><th class=num>Enc</th></tr>";
+      data.rows.slice(0,12).forEach(function(r, i){
+        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + r.character + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + r.encounters + "</td></tr>";
+      });
+      html += "</table>";
+    } else if (serverKey === "pvp"){
+      html += "<div>Kills <b>" + (data.total_kills||0) + "</b> · Unique victims <b>" + (data.unique_victims||0) + "</b> · Deaths <b>" + (data.total_deaths||0) + "</b></div>";
+    } else if (serverKey === "parses" && data.rows){
+      html += "<table><tr><th>Boss</th><th>When</th><th class=num>Total</th><th class=num>DPS</th></tr>";
+      data.rows.slice(0,10).forEach(function(r){
+        var boss = (r.boss || "?").replace(/_/g, " ");
+        var when = r.started_at ? new Date(r.started_at).toLocaleString() : "";
+        html += "<tr><td class=name>" + boss + "</td><td class=dim>" + when + "</td><td class=num>" + fmt(r.total_damage) + "</td><td class=num>" + fmt(r.dps) + "</td></tr>";
+      });
+      html += "</table>";
+    }
+    box.innerHTML = html;
+    card.appendChild(box);
+  }
+  function fetchServer(card, serverKey){
+    var existing = card.querySelector(".wp-server-overlay");
+    if (existing) { existing.innerHTML = "<div class=meta>loading…</div>"; }
+    else { var box=document.createElement("div"); box.className="wp-server-overlay"; box.innerHTML="<div class=meta>loading…</div>"; card.appendChild(box); }
+    getUploader().then(function(me){
+      var qs = me ? ("?character=" + encodeURIComponent(me)) : "";
+      return fetch("/api/server/" + serverKey + qs).then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); });
+    }).then(function(out){
+      renderServer(card, serverKey, out && out.body);
+    }).catch(function(){
+      renderServer(card, serverKey, { error: "network error" });
+    });
+  }
+  function clearServer(card){
+    var existing = card.querySelector(".wp-server-overlay");
+    if (existing) existing.remove();
+  }
+  function decorateOne(card, key, serverKey){
+    // Per-card closure — avoids the for-var loop trap so every button has
+    // its own card / key bound.
+    var h = card.querySelector("h2");
+    if (!h) return;
+    var modes = loadModes();
+    if (h.querySelector(".wp-source-toggle")) {
+      if (modes[key] === "server" && !card.querySelector(".wp-server-overlay")) fetchServer(card, serverKey);
+      return;
+    }
+    var wrap = document.createElement("span");
+    wrap.className = "wp-source-toggle";
+    var localBtn  = document.createElement("button"); localBtn.textContent  = "🛰 local";   localBtn.title  = "What the agent is observing live (this session)";
+    var serverBtn = document.createElement("button"); serverBtn.textContent = "🌐 server"; serverBtn.title = "wolfpack.quest aggregates (Supabase, last 30d / lifetime)";
+    var mode = modes[key] === "server" ? "server" : "local";
+    if (mode === "local")  localBtn.classList.add("active");
+    if (mode === "server") serverBtn.classList.add("active");
+    localBtn.addEventListener("click", function(){
+      var m = loadModes(); m[key] = "local"; saveModes(m);
+      localBtn.classList.add("active"); serverBtn.classList.remove("active");
+      clearServer(card);
+    });
+    serverBtn.addEventListener("click", function(){
+      var m = loadModes(); m[key] = "server"; saveModes(m);
+      serverBtn.classList.add("active"); localBtn.classList.remove("active");
+      fetchServer(card, serverKey);
+    });
+    wrap.appendChild(localBtn);
+    wrap.appendChild(serverBtn);
+    h.appendChild(wrap);
+    if (mode === "server") fetchServer(card, serverKey);
+  }
+  function decorate(){
+    var cards = document.querySelectorAll(".section .card");
+    for (var i=0;i<cards.length;i++){
+      var card = cards[i];
+      var key = panelKey(card);
+      var serverKey = PANEL_TO_SERVER_KEY[key];
+      if (!serverKey) continue;
+      decorateOne(card, key, serverKey);
+    }
+  }
+  var obs = new MutationObserver(decorate);
+  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) obs.observe(el, { childList: true, subtree: true });
+  });
+  decorate();
+})();
 </script></body></html>`;
 
 async function _readBody(req, max = 64 * 1024) {
@@ -3929,6 +4080,41 @@ function startWebDashboard(port) {
       if (req.url === '/api/state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeForDashboard()));
+      }
+      // Increment 2f passthrough: GET /api/server/<key>?character=... proxies
+      // to the bot's /api/agent/server-panel/<key> with our stored bearer
+      // token so the dashboard can render wolfpack.quest aggregates next to
+      // its local data. No-op if we have no token (local-only install).
+      if (req.method === 'GET' && req.url.startsWith('/api/server/')) {
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'not connected — set a token in Mimic Settings' }));
+        }
+        try {
+          const tail = req.url.substring('/api/server/'.length); // e.g. damage?character=Hitya
+          const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/server-panel/');
+          const target = base + tail;
+          const u = new URL(target);
+          const mod = u.protocol === 'https:' ? https : http;
+          const upstream = mod.request({
+            method: 'GET', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname + (u.search || ''),
+            headers: { 'Authorization': `Bearer ${opts.token}`, 'Accept': 'application/json' },
+          }, (upRes) => {
+            res.writeHead(upRes.statusCode || 502, { 'Content-Type': 'application/json' });
+            upRes.pipe(res);
+          });
+          upstream.on('error', (err) => {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'upstream failed', detail: err.message }));
+          });
+          upstream.end();
+          return;
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'proxy error', detail: err.message }));
+        }
       }
       if (req.url === '/api/shutdown' && req.method === 'POST') {
         // Save session + drop PID file + exit. Used by parser.bat re-launches

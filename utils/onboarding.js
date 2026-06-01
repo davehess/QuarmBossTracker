@@ -91,6 +91,9 @@ const CHANGELOGS = {
   '2.6.9': [
     'Fixed a PvP-leaderboard undercount: backfilling your full log collapsed every repeat kill of the same player into one (the text-only dedup from 2.6.8 was too aggressive on historical replays). PvP dedup now buckets by time so distinct kills are kept and only true live duplicates collapse.',
   ],
+  '2.6.10': [
+    'Local dashboard panels (Damage, Recent Parses, PvP) get a `🛰 local | 🌐 server` header toggle — click 🌐 to swap to the wolfpack.quest aggregates (last 30 days / lifetime) right in place. Selection persists per panel.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
