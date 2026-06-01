@@ -323,7 +323,11 @@ async function announceAgentReleaseIfNew(discordClient) {
 // OpenDKP mirror: first run 45s after boot (after the wolfpack-members sync
 // kicks off so we don't double up on Cognito auth), then every 6h. We don't
 // block on completion — the helper does its own per-call error logging.
-const OPENDKP_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// 30 min so /parses attendee counts catch up during a live raid (officers
+// run /tick mid-raid; the bot's Supabase mirror needs to pull those rows
+// quickly enough for the web "Tonight" panel to be useful). Was 6h, which
+// hid in-progress raid attendance until well after the raid ended.
+const OPENDKP_SYNC_INTERVAL_MS = 30 * 60 * 1000;
 function startOpenDkpSync() {
   // Sync uses bearer auth exclusively now (post-v2.5.11) — characters,
   // raids list, raid detail, and auctions all live under /clients/{name}/*
