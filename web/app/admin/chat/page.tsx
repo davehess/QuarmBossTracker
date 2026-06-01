@@ -42,7 +42,32 @@ type Params = {
   era?: string;
   alldates?: string;  // "1" → flatten to every message across all dates (for infrequent speakers)
   nospam?: string;    // "1" → hide mechanical raid callouts (DA up/down, CH/heal chains) from the log
+  raw?: string;       // "1" → show every captured perspective (skip clock-skew comingling)
 };
+
+// Comingle clock-skew duplicates. The same in-game line captured by several
+// uploaders lands as multiple rows with slightly different `ts` (each box logs
+// off its own system clock), so the dedup index — which keys on exact ts —
+// keeps them all. For READING, collapse repeats of the same channel+speaker+
+// text within a window down to the earliest one. People don't retype an
+// identical line within a minute, so this is safe; a genuine re-say after the
+// window still shows. Rows must be ts-ascending.
+function comingleLog(rows: ChatRow[]): { rows: ChatRow[]; merged: number } {
+  const WINDOW_MS = 60_000;
+  const firstSeen = new Map<string, number>();
+  const out: ChatRow[] = [];
+  let merged = 0;
+  for (const r of rows) {
+    const norm = r.text.toLowerCase().replace(/\s+/g, ' ').trim();
+    const key  = `${r.channel}|${r.speaker.toLowerCase()}|${norm}`;
+    const tms  = new Date(r.ts).getTime();
+    const prev = firstSeen.get(key);
+    if (prev !== undefined && tms - prev <= WINDOW_MS) { merged++; continue; }
+    firstSeen.set(key, tms);
+    out.push(r);
+  }
+  return { rows: out, merged };
+}
 
 // Heuristic classifier for mechanical raid callouts — defensive-disc timers
 // ("DA up" / ">>DA DOWN<<" / "6 SECONDS DA"), CH/heal chains, and mana
@@ -283,6 +308,7 @@ function paramsToQuery(p: Params): string {
   if (p.era)     u.set('era',     p.era);
   if (p.alldates) u.set('alldates', p.alldates);
   if (p.nospam)  u.set('nospam',  p.nospam);
+  if (p.raw)     u.set('raw',     p.raw);
   const qs = u.toString();
   return qs ? `?${qs}` : '';
 }
@@ -446,6 +472,14 @@ export default async function AdminChatPage({
     const before = log.length;
     log = log.filter(r => !isCombatCallout(r.text));
     hiddenCallouts = before - log.length;
+  }
+
+  // Comingle clock-skew duplicates (on by default; ?raw=1 shows every capture).
+  let mergedDupes = 0;
+  if (p.raw !== '1' && (inLogMode || inAllDates)) {
+    const res = comingleLog(log);
+    log = res.rows;
+    mergedDupes = res.merged;
   }
 
   // Speaker swap menu — independent of the speaker filter so you can swap
@@ -713,23 +747,38 @@ export default async function AdminChatPage({
               (all-dates mode). */}
           {(inLogMode || inAllDates) && (
             <section className="bg-panel border border-border rounded-lg p-3 font-mono text-xs">
-              <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-border">
+              <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-border flex-wrap">
                 <span className="text-dim text-[11px]">
                   {inAllDates ? '📜 All messages across every date (oldest first).' : 'Chat log.'}
                   {p.nospam === '1' && hiddenCallouts > 0 && (
                     <span className="ml-1 text-orange">{hiddenCallouts} callout{hiddenCallouts === 1 ? '' : 's'} hidden.</span>
                   )}
+                  {p.raw !== '1' && mergedDupes > 0 && (
+                    <span className="ml-1 text-blue">{mergedDupes} skew-duplicate{mergedDupes === 1 ? '' : 's'} merged.</span>
+                  )}
                 </span>
-                <Link
-                  href={`/admin/chat${paramsToQuery({ ...p, nospam: p.nospam === '1' ? undefined : '1' })}`}
-                  className={[
-                    'shrink-0 px-2 py-0.5 rounded border text-[11px] no-underline font-sans',
-                    p.nospam === '1' ? 'border-blue bg-[#1f6feb33] text-blue' : 'border-border bg-bg text-dim hover:border-blue',
-                  ].join(' ')}
-                  title="Hide defensive-disc timers, CH/heal chains, and mana callouts"
-                >
-                  {p.nospam === '1' ? '✓ Callouts hidden' : 'Hide combat callouts'}
-                </Link>
+                <div className="flex items-center gap-1.5 shrink-0 font-sans">
+                  <Link
+                    href={`/admin/chat${paramsToQuery({ ...p, raw: p.raw === '1' ? undefined : '1' })}`}
+                    className={[
+                      'px-2 py-0.5 rounded border text-[11px] no-underline',
+                      p.raw === '1' ? 'border-blue bg-[#1f6feb33] text-blue' : 'border-border bg-bg text-dim hover:border-blue',
+                    ].join(' ')}
+                    title="Show every uploader's capture of each line (skip clock-skew merging)"
+                  >
+                    {p.raw === '1' ? '✓ Showing all captures' : 'Show all captures'}
+                  </Link>
+                  <Link
+                    href={`/admin/chat${paramsToQuery({ ...p, nospam: p.nospam === '1' ? undefined : '1' })}`}
+                    className={[
+                      'px-2 py-0.5 rounded border text-[11px] no-underline',
+                      p.nospam === '1' ? 'border-blue bg-[#1f6feb33] text-blue' : 'border-border bg-bg text-dim hover:border-blue',
+                    ].join(' ')}
+                    title="Hide defensive-disc timers, CH/heal chains, and mana callouts"
+                  >
+                    {p.nospam === '1' ? '✓ Callouts hidden' : 'Hide combat callouts'}
+                  </Link>
+                </div>
               </div>
               {log.length === 0 && (
                 <div className="text-dim italic p-2">

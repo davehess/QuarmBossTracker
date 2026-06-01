@@ -1,6 +1,6 @@
 {
   "name": "wolfpack-tracker-web",
-  "version": "0.5.24",
+  "version": "0.5.25",
   "private": true,
   "description": "Wolf Pack EQ — guild-wide tracker dashboard (Vercel-hosted, reads from the same Supabase as the Discord bot).",
   "scripts": {
