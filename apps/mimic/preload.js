@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // Overlay lock state — main pushes this to overlay renderers so they can
   // show/hide their drag handle.
   onOverlayLocked: (cb)   => ipcRenderer.on('overlay-locked', (_e, locked) => cb(locked)),
+  // Setup-mode state — pushed to each overlay with its identifying key so
+  // the renderer can show the per-window control strip (opacity slider, etc.)
+  onSetupMode:      (cb)         => ipcRenderer.on('setup-mode', (_e, payload) => cb(payload)),
+  setSetupMode:     (on)         => ipcRenderer.invoke('set-setup-mode', !!on),
+  setOverlayOpacity:(key, value) => ipcRenderer.invoke('set-overlay-opacity', key, value),
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
