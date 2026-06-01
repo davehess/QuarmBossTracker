@@ -18,8 +18,39 @@
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
   .conn.bad{color:#f87171}
+  /* Drag bar — visible only when overlays are UNLOCKED. The whole strip is a
+     draggable region (-webkit-app-region: drag) so grabbing it moves the
+     frameless window. The lock button (no-drag) re-locks in place. */
+  #dragbar{display:none;align-items:center;justify-content:space-between;
+    gap:6px;margin:4px 4px 0;padding:4px 8px;border-radius:6px;
+    background:rgba(31,111,235,0.85);color:#fff;font-size:10px;
+    -webkit-app-region:drag;user-select:none}
+  body.unlocked #dragbar{display:flex}
+  body.unlocked .hud{border-color:rgba(31,111,235,0.9);
+    box-shadow:0 0 0 1px rgba(31,111,235,0.6)}
+  #lockbtn{-webkit-app-region:no-drag;cursor:pointer;background:#0e1116;
+    border:1px solid rgba(255,255,255,0.3);border-radius:4px;color:#fff;
+    font-size:10px;padding:2px 7px}
+  #lockbtn:hover{background:#1a2230}
+  .movehint{display:flex;align-items:center;gap:4px}
+  .compass{display:inline-block;font-size:13px;line-height:1;cursor:move;
+    animation:nudge 1.4s ease-in-out infinite}
+  /* A gentle 4-direction nudge so the move affordance reads at a glance. */
+  @keyframes nudge{
+    0%,100%{transform:translate(0,0)}
+    25%{transform:translate(0,-1.5px)}
+    50%{transform:translate(1.5px,0)}
+    75%{transform:translate(0,1.5px)}
+  }
+  /* When unlocked, also show resize grips at the corners as a hint. */
+  body.unlocked::after{content:'⤡';position:fixed;right:2px;bottom:0;
+    color:rgba(31,111,235,0.9);font-size:14px;pointer-events:none}
 </style></head>
 <body>
+  <div id="dragbar">
+    <span class="movehint"><span class="compass">✥</span> drag to move&nbsp; · &nbsp;resize from edges</span>
+    <button id="lockbtn">🔒 Lock here</button>
+  </div>
   <div class="hud">
     <div class="title"><span>🐺 Mimic — live</span><span id="conn" class="conn bad">○</span></div>
     <div class="boss" id="boss">—</div>
@@ -33,6 +64,17 @@
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  // Lock/unlock — main process pushes the state; we toggle the body class so
+  // the drag bar appears. The Lock-here button re-locks via IPC (no restart).
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => {
+      document.body.classList.toggle('unlocked', !locked);
+    });
+  }
+  document.getElementById('lockbtn') && (document.getElementById('lockbtn').onclick = () => {
+    try { window.mimic.setOverlaysLocked(true); } catch (e) {}
+  });
 
   function fmt(n){ n=Number(n)||0; return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(n); }
 

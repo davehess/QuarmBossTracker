@@ -15,9 +15,14 @@ contextBridge.exposeInMainWorld('mimic', {
   // User-facing toggles.
   setQuietMode:    (on)   => ipcRenderer.invoke('set-quiet-mode', !!on),
   setTellsMode:    (mode) => ipcRenderer.invoke('set-tells-mode', mode),
+  setOverlaysLocked: (on) => ipcRenderer.invoke('set-overlays-locked', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),
+
+  // Overlay lock state — main pushes this to overlay renderers so they can
+  // show/hide their drag handle.
+  onOverlayLocked: (cb)   => ipcRenderer.on('overlay-locked', (_e, locked) => cb(locked)),
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

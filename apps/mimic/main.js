@@ -20,7 +20,7 @@
 // BETA. Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen } = require('electron');
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
@@ -64,10 +64,16 @@ function defaultConfig() {
     token: null,
     showHud: true,           // DPS HUD overlay user pref
     enableTriggerTts: true,  // Trigger TTS overlay user pref
-    overlayClickThrough: true,
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
     tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
     onboarded: false,        // false until user dismisses or completes loading
+    // Overlay positioning. Locked = click-through, lives in place. Unlocked =
+    // draggable + resizable handle shown, NOT click-through, so the user can
+    // reposition. Toggling lock is a pure window operation — NEVER restarts
+    // the agent. Bounds persist so position survives a restart.
+    overlaysLocked: true,
+    hudBounds:     null,     // { x, y, width, height } | null (use default)
+    triggerBounds: null,
   };
 }
 function loadConfig() {
@@ -314,40 +320,130 @@ function createMainWindow() {
   });
 }
 
+// Current total screen resolution signature — the sum of all displays'
+// work areas, used to detect "did the user's monitor setup change?" When it
+// does, saved overlay coordinates may point off-screen, so we discard them
+// and fall back to defaults instead of stranding an overlay where it can't
+// be seen or grabbed.
+function _screenSignature() {
+  try {
+    return screen.getAllDisplays()
+      .map(d => `${d.bounds.x},${d.bounds.y},${d.size.width}x${d.size.height}`)
+      .sort().join('|');
+  } catch { return ''; }
+}
+
+// True if a bounds rect is at least partially visible on some display, so a
+// saved overlay isn't restored fully off-screen (e.g. after unplugging a
+// second monitor without a full resolution-signature change).
+function _boundsOnScreen(b) {
+  if (!b) return false;
+  try {
+    return screen.getAllDisplays().some(d => {
+      const a = d.workArea;
+      const ix = Math.max(a.x, b.x), iy = Math.max(a.y, b.y);
+      const ax = Math.min(a.x + a.width, b.x + b.width), ay = Math.min(a.y + a.height, b.y + b.height);
+      return (ax - ix) > 40 && (ay - iy) > 24; // at least a grabbable sliver visible
+    });
+  } catch { return false; }
+}
+
+// Resolve the starting bounds for an overlay: use the saved rect only if the
+// screen signature still matches what it was saved under AND it's on-screen;
+// otherwise use the default. This is the "persist position unless resolution
+// changes" rule.
+function _resolveBounds(boundsKey, sigKey, def) {
+  const cfg = loadConfig();
+  const saved = cfg[boundsKey];
+  const savedSig = cfg[sigKey];
+  if (saved && savedSig === _screenSignature() && _boundsOnScreen(saved)) {
+    return { x: saved.x, y: saved.y, width: saved.width, height: saved.height };
+  }
+  return def;
+}
+
+// Debounced bounds persistence — writes overlay x/y/w/h + the screen
+// signature to config on move/resize so position survives a restart. The
+// signature lets the next launch decide whether the saved coords are still
+// valid for the current monitor layout.
+const _boundsSaveTimers = {};
+function _persistBounds(key, win) {
+  if (!win || win.isDestroyed()) return;
+  clearTimeout(_boundsSaveTimers[key]);
+  _boundsSaveTimers[key] = setTimeout(() => {
+    try {
+      const b = win.getBounds();
+      const cfg = loadConfig();
+      cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
+      cfg[key + 'Sig'] = _screenSignature();
+      saveConfig(cfg);
+    } catch {}
+  }, 400);
+}
+
+// Apply lock state to an overlay WITHOUT restarting anything. Locked =
+// click-through + not resizable + drag handle hidden (renderer). Unlocked =
+// interactive + resizable + drag handle shown so the user can grab + move it.
+function applyOverlayInteractivity() {
+  const cfg = loadConfig();
+  const locked = cfg.overlaysLocked !== false; // default locked
+  for (const win of [overlayWindow, triggerWindow]) {
+    if (!win || win.isDestroyed()) continue;
+    if (locked) {
+      win.setIgnoreMouseEvents(true, { forward: true });
+      win.setResizable(false);
+    } else {
+      win.setIgnoreMouseEvents(false);
+      win.setResizable(true);
+      win.showInactive(); // make sure it's visible to grab, without stealing game focus
+    }
+    try { win.webContents.send('overlay-locked', locked); } catch {}
+  }
+}
+
 function createOverlayWindow() {
+  const b = _resolveBounds('hudBounds', 'hudBoundsSig', { x: 40, y: 40, width: 320, height: 220 });
   overlayWindow = new BrowserWindow({
-    width: 320, height: 220, x: 40, y: 40,
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 180, minHeight: 90,
     frame: false, transparent: true, resizable: true,
-    alwaysOnTop: true, skipTaskbar: true, focusable: false,
-    show: false, // visibility decided from config + quiet mode below
+    alwaysOnTop: true, skipTaskbar: true,
+    focusable: true, // needed so it can be dragged when unlocked
+    show: false,     // visibility decided from config + quiet mode below
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true);
   overlayWindow.loadFile('overlay.html');
-  const cfg = loadConfig();
-  overlayWindow.setIgnoreMouseEvents(cfg.overlayClickThrough, { forward: true });
+  overlayWindow.on('moved',   () => _persistBounds('hudBounds', overlayWindow));
+  overlayWindow.on('resize',  () => _persistBounds('hudBounds', overlayWindow));
   overlayWindow.once('ready-to-show', () => {
     overlayWindow.webContents.send('agent-port', agentPort);
     applyOverlayVisibility();
+    applyOverlayInteractivity();
   });
 }
 
 function createTriggerOverlay() {
+  const b = _resolveBounds('triggerBounds', 'triggerBoundsSig', { x: 700, y: 200, width: 600, height: 200 });
   triggerWindow = new BrowserWindow({
-    width: 600, height: 200, x: 700, y: 200,
-    frame: false, transparent: true, resizable: false,
-    alwaysOnTop: true, skipTaskbar: true, focusable: false,
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 240, minHeight: 80,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true,
+    focusable: true,
     show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
   triggerWindow.setAlwaysOnTop(true, 'screen-saver');
   triggerWindow.setVisibleOnAllWorkspaces(true);
-  triggerWindow.setIgnoreMouseEvents(true, { forward: true });
   triggerWindow.loadFile('triggers.html');
+  triggerWindow.on('moved',  () => _persistBounds('triggerBounds', triggerWindow));
+  triggerWindow.on('resize', () => _persistBounds('triggerBounds', triggerWindow));
   triggerWindow.once('ready-to-show', () => {
     triggerWindow.webContents.send('agent-port', agentPort);
     applyTriggerVisibility();
+    applyOverlayInteractivity();
   });
 }
 
@@ -362,17 +458,22 @@ function openSettings() {
 }
 
 // ── Visibility helpers (quiet mode is the master override) ─────────────────
+// When overlays are UNLOCKED (positioning mode) we keep them visible
+// regardless of quiet mode / pref toggles so the user can actually grab them
+// — otherwise "unlock to move" would hide the thing you're trying to move.
 function applyOverlayVisibility() {
   if (!overlayWindow) return;
   const cfg = loadConfig();
-  const shouldShow = cfg.showHud && !cfg.quietMode;
-  if (shouldShow) overlayWindow.show(); else overlayWindow.hide();
+  const unlocked  = cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showHud && !cfg.quietMode);
+  if (shouldShow) overlayWindow.showInactive(); else overlayWindow.hide();
 }
 function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
-  const shouldShow = cfg.enableTriggerTts && !cfg.quietMode;
-  if (shouldShow) triggerWindow.show(); else triggerWindow.hide();
+  const unlocked  = cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.enableTriggerTts && !cfg.quietMode);
+  if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
 
 // ── Status + Tray ──────────────────────────────────────────────────────────
@@ -387,7 +488,7 @@ function currentStatus() {
     tellsMode: cfg.tellsMode || 'off',
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
-    overlayClickThrough: !!cfg.overlayClickThrough,
+    overlaysLocked: cfg.overlaysLocked !== false,
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
     botUrl: cfg.botUrl,
@@ -457,9 +558,14 @@ function buildTrayMenu() {
         if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
         pushStatus();
       } },
-    { label: 'HUD click-through', type: 'checkbox', checked: s.overlayClickThrough, enabled: !s.quietMode, click: (mi) => {
-        const cfg = loadConfig(); cfg.overlayClickThrough = mi.checked; saveConfig(cfg);
-        if (overlayWindow) overlayWindow.setIgnoreMouseEvents(mi.checked, { forward: true });
+    { type: 'separator' },
+    // Lock toggle — unchecking makes the overlays grabbable so you can drag +
+    // resize them; checking locks them click-through in place. Pure window
+    // op, never restarts the agent.
+    { label: s.overlaysLocked ? 'Overlays: Locked (click to move)' : 'Overlays: Unlocked — drag to position',
+      type: 'checkbox', checked: !s.overlaysLocked, click: (mi) => {
+        const cfg = loadConfig(); cfg.overlaysLocked = !mi.checked; saveConfig(cfg);
+        applyOverlayInteractivity();
         pushStatus();
       } },
   ];
@@ -577,9 +683,16 @@ function wireAutoUpdater() {
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.handle('save-config', (_e, cfg) => {
   saveConfig(Object.assign(loadConfig(), cfg));
-  applyOverlayVisibility(); applyTriggerVisibility();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyOverlayInteractivity();
   pushStatus();
   return true;
+});
+// Lock / unlock overlays — pure window op, NEVER restarts the agent.
+ipcMain.handle('set-overlays-locked', (_e, locked) => {
+  const cfg = loadConfig(); cfg.overlaysLocked = !!locked; saveConfig(cfg);
+  applyOverlayInteractivity();
+  pushStatus();
+  return currentStatus();
 });
 ipcMain.handle('get-agent-port', () => agentPort);
 ipcMain.handle('relaunch-agent', async () => { if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); } return true; });
@@ -641,6 +754,26 @@ app.whenReady().then(async () => {
   createOverlayWindow();
   createTriggerOverlay();
   pushStatus();
+
+  // Rescue overlays if the monitor layout changes while running (unplug a
+  // second display, resolution switch, etc.). If an overlay ends up off the
+  // new screen, snap it back to its default position so it's never lost.
+  const _rescueOverlays = () => {
+    for (const [win, def] of [
+      [overlayWindow, { x: 40, y: 40, width: 320, height: 220 }],
+      [triggerWindow, { x: 700, y: 200, width: 600, height: 200 }],
+    ]) {
+      if (!win || win.isDestroyed()) continue;
+      try {
+        if (!_boundsOnScreen(win.getBounds())) {
+          const p = screen.getPrimaryDisplay().workArea;
+          win.setBounds({ x: p.x + def.x, y: p.y + def.y, width: def.width, height: def.height });
+        }
+      } catch {}
+    }
+  };
+  screen.on('display-removed',          _rescueOverlays);
+  screen.on('display-metrics-changed',  _rescueOverlays);
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });

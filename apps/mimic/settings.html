@@ -67,19 +67,19 @@
     <label for="enableTriggerTts">Trigger alerts (text-to-speech)</label>
   </div>
   <div class="row">
-    <input id="overlayClickThrough" type="checkbox" />
-    <label for="overlayClickThrough">HUD click-through (clicks pass to the game)</label>
+    <input id="overlaysUnlocked" type="checkbox" />
+    <label for="overlaysUnlocked">Unlock overlays to move/resize them (uncheck = locked + click-through in place)</label>
   </div>
+  <div class="hint">When unlocked, a blue drag bar appears on each overlay — drag to move, pull the edges to resize, then re-lock. Changes apply instantly, no engine restart.</div>
 
-  <h2>Private</h2>
-  <div class="row">
-    <input id="tellsEnabled" type="checkbox" />
-    <label for="tellsEnabled"><span class="lock">🔒 PRIVATE</span> &nbsp; Show my /tells in a local overlay <span style="color:#6b7280">(v0.2 — toggle now to opt-in early)</span></label>
-  </div>
-  <div class="hint">Tells stay on your machine. They are never uploaded to the bot and never visible to anyone else. Display window arrives in v0.2.</div>
+  <h2>Private — /tells <span class="lock">🔒</span></h2>
+  <div class="hint" style="margin-bottom:8px">EQ writes your tells to your log. These never upload to the bot. Display window ships in v0.2; the choice persists now.</div>
+  <div class="row"><input type="radio" name="tells" value="off" id="tells_off"><label for="tells_off">Off — ignore tells</label></div>
+  <div class="row"><input type="radio" name="tells" value="local" id="tells_local"><label for="tells_local">Local only — show on this machine</label></div>
+  <div class="row"><input type="radio" name="tells" value="synced" id="tells_synced"><label for="tells_synced">Synced (encrypted) — read on wolfpack.quest, key only you hold</label></div>
 
   <div>
-    <button id="save">Save &amp; restart engine</button>
+    <button id="save">Save</button>
   </div>
 
 <script>
@@ -93,6 +93,7 @@
   }
   function hideToast(){ document.getElementById('toast').classList.remove('show'); }
 
+  let _loaded = { eqPath: null, botUrl: '', token: null };
   async function load(){
     const c = await window.mimic.getConfig();
     document.getElementById('eqPath').value = c.eqPath || '';
@@ -101,8 +102,11 @@
     document.getElementById('quietMode').checked         = !!c.quietMode;
     document.getElementById('showHud').checked           = !!c.showHud;
     document.getElementById('enableTriggerTts').checked  = !!c.enableTriggerTts;
-    document.getElementById('overlayClickThrough').checked = !!c.overlayClickThrough;
-    document.getElementById('tellsEnabled').checked      = !!c.tellsEnabled;
+    document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
+    // tellsMode radios (off/local/synced)
+    const tm = c.tellsMode || 'off';
+    document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
+    _loaded = { eqPath: c.eqPath || null, botUrl: c.botUrl || '', token: c.token || null };
   }
   document.getElementById('save').onclick = async () => {
     const btn = document.getElementById('save');
@@ -112,21 +116,32 @@
     btn.className = '';
     showToast('pending', 'Saving settings…', 0);
     try {
+      const eqPath = document.getElementById('eqPath').value.trim() || null;
+      const botUrl = document.getElementById('botUrl').value.trim();
+      const token  = document.getElementById('token').value.trim() || null;
+      const tellsMode = (document.querySelector('input[name=tells]:checked') || {}).value || 'off';
       await window.mimic.saveConfig({
-        eqPath: document.getElementById('eqPath').value.trim() || null,
-        botUrl: document.getElementById('botUrl').value.trim(),
-        token:  document.getElementById('token').value.trim() || null,
-        quietMode:           document.getElementById('quietMode').checked,
-        showHud:             document.getElementById('showHud').checked,
-        enableTriggerTts:    document.getElementById('enableTriggerTts').checked,
-        overlayClickThrough: document.getElementById('overlayClickThrough').checked,
-        tellsEnabled:        document.getElementById('tellsEnabled').checked,
+        eqPath, botUrl, token, tellsMode,
+        quietMode:        document.getElementById('quietMode').checked,
+        showHud:          document.getElementById('showHud').checked,
+        enableTriggerTts: document.getElementById('enableTriggerTts').checked,
+        overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
       });
-      await window.mimic.relaunchAgent();
+      // Only restart the engine when a CONNECTION setting actually changed —
+      // UI prefs (overlays, HUD, TTS, tells, quiet) apply live without a
+      // restart. This is the "click-through / move / lock without restarting
+      // the engine" requirement.
+      const connChanged = (eqPath !== _loaded.eqPath) || (botUrl !== _loaded.botUrl) || (token !== _loaded.token);
+      if (connChanged) {
+        await window.mimic.relaunchAgent();
+        showToast('success', '✓ Saved · engine restarting (connection changed)', 3500);
+      } else {
+        showToast('success', '✓ Saved · applied live', 2500);
+      }
       btn.textContent = '✓ Saved';
       btn.className = 'success';
-      showToast('success', '✓ Settings saved · agent restarting', 3500);
-      setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 3500);
+      _loaded = { eqPath, botUrl, token };
+      setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 3000);
     } catch (e) {
       btn.textContent = '✕ Save failed';
       btn.className = 'error';
