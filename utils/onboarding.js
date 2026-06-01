@@ -97,6 +97,9 @@ const CHANGELOGS = {
   '2.6.13': [
     'New **💸 Live Bidding** panel on the local dashboard (and as an overlay). Shows OpenDKP auctions in real time with a one-click bid input, marks items already on your wishlist with a ★, and lists your currently-placed bids underneath so you can keep track when you spread DKP across multiple items.',
   ],
+  '2.6.15': [
+    'Boards now rebuild spawn timers from Supabase (the parse/kill record) automatically on startup and every 6h — so after a redeploy or volume reset the cooldowns repopulate themselves instead of showing everything "Available now." `/recoverkills` still does it on demand.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

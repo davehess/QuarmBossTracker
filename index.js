@@ -126,6 +126,19 @@ client.once(Events.ClientReady, async (readyClient) => {
   startRaidHelperSync();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 
+  // Safety-net board reconcile from Supabase encounters every 6h. Cheap when
+  // nothing drifted (it only writes/refreshes when it finds kills not yet
+  // reflected in state), so steady-state this is a no-op; it self-heals the
+  // board after a missed update or volume loss between deploys.
+  setInterval(() => {
+    try {
+      const { reconcileKillsFromSupabase } = require('./utils/reconcileKills');
+      reconcileKillsFromSupabase({ client: readyClient })
+        .then(r => { if (r.ok && r.recoverList.length) console.log(`[reconcile] recovered ${r.recoverList.length} timer(s) from ${r.scanned} encounter(s)`); })
+        .catch(err => console.warn('[reconcile] interval failed:', err?.message));
+    } catch (err) { console.warn('[reconcile] interval init failed:', err?.message); }
+  }, 6 * 60 * 60 * 1000);
+
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
   // kill triggers postKillUpdate).
@@ -391,6 +404,19 @@ async function runStartupSequence(readyClient) {
   await runAutoRestore(readyClient).catch(err => console.warn('[startup] runAutoRestore:', err?.message));
   await delay(60_000);
   await runBoard(readyClient).catch(err => console.warn('[startup] runBoard:', err?.message));
+
+  // Reconcile spawn timers from Supabase `encounters` — the authoritative kill
+  // record — so the board reflects real kills (parses/agent uploads) instead of
+  // showing everything "Available now" after a volume wipe. Upgrade-only: it
+  // never downgrades a fresher state row, so it complements the Discord-sourced
+  // runAutoRestore above. Runs after runBoard so the cards exist to update.
+  try {
+    const { reconcileKillsFromSupabase } = require('./utils/reconcileKills');
+    const r = await reconcileKillsFromSupabase({ client: readyClient });
+    if (r.ok) console.log(`[startup] reconcile: recovered ${r.recoverList.length} timer(s) from ${r.scanned} encounter(s) scanned`);
+    else      console.log(`[startup] reconcile skipped: ${r.reason}`);
+  } catch (err) { console.warn('[startup] reconcile failed:', err?.message); }
+
   await delay(60_000);
   await runCleanup(readyClient).catch(err => console.warn('[startup] runCleanup:', err?.message));
 }
