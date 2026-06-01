@@ -70,6 +70,9 @@ const CHANGELOGS = {
   '2.6.2': [
     'PvP fyi-pings: when a non-Wolf-Pack character dies in a PvP-zone broadcast (even to an NPC), the bot now gives the `@PVP` role a heads-up ping. Rate-limited to once per 10 min so flurries don\'t spam. Wolf-Pack-death backup pings and our-kill celebration posts unchanged.',
   ],
+  '2.6.3': [
+    'PvP fyi-pings now silent during raid hours (Sun/Wed/Thu 8:30–11:30 PM Eastern) — raiders aren\'t getting paged about an Old Guk NPC kill against a random Mayhem player mid-pull. Wolf-Pack-death backup pings are unchanged and still fire any time.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

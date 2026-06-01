@@ -2697,6 +2697,33 @@ function _shouldFireFyiPing() {
   return true;
 }
 
+// Raid-window check — fyi-pings on non-WP deaths are silenced during the
+// raid window (Sun/Wed/Thu, 8:30 PM – 11:30 PM Eastern). Raiders are busy
+// with the boss; an Old Guk NPC kill against a random Mayhem player is
+// noise they don't want piped to their phone mid-pull. WP-death backup
+// pings ignore this — those are urgent regardless of timing.
+function _isInRaidWindow(now = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    }).formatToParts(now);
+    const get = (t) => parts.find(p => p.type === t)?.value;
+    const day = get('weekday'); // 'Sun', 'Mon', 'Tue', ...
+    const hh  = parseInt(get('hour'),   10);
+    const mm  = parseInt(get('minute'), 10);
+    if (Number.isNaN(hh) || Number.isNaN(mm)) return false;
+    const minOfDay = hh * 60 + mm;
+    const RAID_DAYS = new Set(['Sun', 'Wed', 'Thu']);
+    const START = 20 * 60 + 30; // 8:30 PM
+    const END   = 23 * 60 + 30; // 11:30 PM
+    return RAID_DAYS.has(day) && minOfDay >= START && minOfDay < END;
+  } catch { return false; }
+}
+
 async function _handleAgentPvp(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -2832,11 +2859,15 @@ async function _handleAgentPvp(req, res) {
         content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
       } else {
         // NPC kill or other-guild kill — informational. Still worth a
-        // @PVP heads-up since it means PvP-relevant activity is happening
-        // somewhere we care about. Rate-limited to 1 ping per 10 min so a
-        // flurry of contested-zone deaths doesn't spam the role.
+        // @PVP heads-up outside raid hours since it means PvP-relevant
+        // activity is happening somewhere. Suppressed entirely during
+        // raid (Sun/Wed/Thu 8:30-11:30 PM Eastern — raiders are busy);
+        // outside raid, rate-limited to 1 ping per 10 min so flurries
+        // of contested-zone deaths don't spam the role.
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const mention = (pvpRole && _shouldFireFyiPing()) ? `<@&${pvpRole.id}> ` : '';
+        const inRaid  = _isInRaidWindow();
+        const allowed = pvpRole && !inRaid && _shouldFireFyiPing();
+        const mention = allowed ? `<@&${pvpRole.id}> ` : '';
         content = `${mention}☠️ ${text}`;
       }
 
