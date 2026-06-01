@@ -2824,6 +2824,10 @@ async function _handleAgentPvp(req, res) {
   // other-guild noise is not. Pet attribution: if the killer is a known pet
   // (state petOwners map), credit the owner and flag via_pet.
   const pvpKillRows = [];
+  // Fun-counter rows emitted alongside the kill ledger — currently just Lord
+  // of Ire kills by Wolf Pack members. Upserted to fun_events at the end so a
+  // failure here can never lose a PvP post or ledger row.
+  const funEventRows = [];
   const _petOwners = (() => { try { return getPetOwners() || {}; } catch { return {}; } })();
   // Roster harvest from the broadcast bodies. Every PvP kill names two
   // characters and their guilds; that's free who-data we wouldn't otherwise
@@ -2932,6 +2936,27 @@ async function _handleAgentPvp(req, res) {
         content = `☠️ ${text}`;
       }
 
+      // Lord of Ire fun counter — when a Wolf Pack member kills "Lord of Ire"
+      // (the Plane of Hate instance boss), emit a fun_events row so /fun and
+      // /me can show a per-killer scoreboard. Detected from the broadcast's
+      // victim+killer fields so it survives any text-format variation; we
+      // dedupe at the table via (guild_id, event_type, caster, event_ts).
+      if (
+        killerGuild === WP_GUILD_NAME
+        && killer
+        && typeof victim === 'string'
+        && /^\s*lord\s+of\s+ire\s*$/i.test(victim)
+      ) {
+        funEventRows.push({
+          guild_id:   process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          event_ts:   b?.ts || new Date().toISOString(),
+          event_type: 'lord_of_ire_killed',
+          caster:     killer,
+          target:     'Lord of Ire',
+          raw_text:   (text || '').slice(0, 300),
+        });
+      }
+
       const sent = await ch.send({ content });
 
       // Attach Howl button only when Wolf Pack is involved (either side).
@@ -2957,6 +2982,21 @@ async function _handleAgentPvp(req, res) {
       }
     } catch (err) {
       console.warn('[pvp-relay] pvp_kills persist wrap failed:', err?.message);
+    }
+  }
+
+  // Persist any fun-event counters (Lord of Ire kills, etc.). Dedup'd on
+  // (guild_id, event_type, caster, event_ts) so replays from multiple agents
+  // collapse to one row.
+  if (funEventRows.length > 0) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        await supabase.upsert('fun_events', funEventRows, 'guild_id,event_type,caster,event_ts')
+          .catch(err => console.warn('[pvp-relay] fun_events upsert failed:', err?.message));
+      }
+    } catch (err) {
+      console.warn('[pvp-relay] fun_events persist wrap failed:', err?.message);
     }
   }
 
