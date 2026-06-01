@@ -840,6 +840,10 @@ class EncounterBuilder {
     this._rampageTs     = null;
     this._rampageTarget = null;
     this.bossMaxMelee   = 0;
+    // Boss self-heal accumulator. Bumped when an NPC heals itself during the
+    // fight (e.g. Lady Vox Complete Heal). Surfaced on parse cards via the
+    // encounter payload's npc_healed_total field.
+    this.npcHealedTotal = 0;
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
   _bumpDefender(name, key, amount) {
@@ -1303,6 +1307,16 @@ class EncounterBuilder {
         }
         this.threatBy.get(healer).heal += event.amount * 0.5;
       }
+      // ── Boss self-heal (Lady Vox, Naggy, Vyrkma etc. Complete Heal themselves) ──
+      // If the same name appears on both sides of a heal AND it's a name we've
+      // been damaging this fight, attribute the amount to npcHealedTotal.
+      // The bot shows this as "27.1k (+10k healed)" on parse cards so the
+      // raid sees how much HP they pushed through, not just damage dealt.
+      if (event.amount > 0 && event.attacker && event.defender
+          && event.attacker.toLowerCase() === event.defender.toLowerCase()
+          && this.targets.has(event.attacker)) {
+        this.npcHealedTotal = (this.npcHealedTotal || 0) + event.amount;
+      }
     }
     // ── Player death tracking ────────────────────────────────────────────────
     // Record deaths of player characters in this.deaths[] and the session
@@ -1613,6 +1627,11 @@ class EncounterBuilder {
         // { tank: name, count: N, maxGapMs: N }
         // null/undefined when no healer data was observed or gaps < 8s.
         heal_gaps:   _healGaps || undefined,
+        // Boss self-heal total — sum of damage the NPC healed back to itself
+        // during the fight (Lady Vox Complete Heal, Naggy AE heal, etc.).
+        // Surfaced on parse cards as "27.1k (+10k healed)" so the raid sees
+        // how much HP they actually had to push through.
+        npc_healed_total: this.npcHealedTotal > 0 ? this.npcHealedTotal : undefined,
         // Per-character verb/skill rollup. Server upserts into
         // encounter_combat_rollup and stamps contributions.has_ability_detail.
         // Absent on older agents → rollup tables stay empty for those uploads.
@@ -4614,6 +4633,13 @@ function runOptinBackfill(files, opts = {}) {
             if (lohEvt) funEventBuffer.push(lohEvt);
             const pkEvt = parsePvpFlag(line, f.character);
             if (pkEvt) funEventBuffer.push(pkEvt);
+            // Beastlord buff receives — recipient-side. The bot correlates
+            // these to specific encounters at display time via ts range, so
+            // the agent only needs to emit the bare event.
+            const faEvt = parseFeralAvatarReceived(line, f.character);
+            if (faEvt) funEventBuffer.push(faEvt);
+            const savEvt = parseSavageryReceived(line, f.character);
+            if (savEvt) funEventBuffer.push(savEvt);
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -5730,6 +5756,50 @@ function parseLayOnHands(line, character) {
     reagent_qty: heal ? (parseInt(heal[1], 10) || 0) : 0,   // 0 → count only; display × max HP
     ts:          ts ? ts.toISOString() : new Date().toISOString(),
     raw_text:    line.slice(0, 200),
+  };
+}
+
+// ── Beastlord buff receive counters (Feral Avatar + Savagery) ──────────────
+// Per-fight tally of how many times a player had Feral Avatar or Savagery
+// landed on them. Recipient-perspective is the broad-reach side (every
+// member's agent reports their own receives); we don't bother with caster-
+// perspective since there are typically only 1-2 BLs in a raid.
+//
+// ⚠️ WORDING FLAGGED FOR REVIEW: these regexes are best-effort against
+// standard EQ phrasing. Verify against real Quarm logs and tighten on
+// false-positives. The caster line is also accepted as a fallback so
+// the BL's own log reports their casts even if their target was outside
+// our roster.
+//
+// Quarm-confirmed phrasings expected:
+//   Feral Avatar (BL/SHM, Velious-era):
+//     receive: "Your form expands as you become a feral avatar."
+//     receive (alt): "You feel the spirit of the wolf course through your body."
+//   Savagery (BL):
+//     receive: "Your blood boils with savagery."
+//     receive (alt): "Savagery courses through you."
+const FERAL_AVATAR_RECV_RX = /\b(?:Your form expands as you become a feral avatar|You feel the spirit of the wolf course through your body)\b/i;
+const SAVAGERY_RECV_RX     = /\b(?:Your blood boils with savagery|Savagery courses through you)\b/i;
+
+function parseFeralAvatarReceived(line, character) {
+  if (!FERAL_AVATAR_RECV_RX.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'feral_avatar_received',
+    caster:   character || null,   // recipient — see banner above
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+function parseSavageryReceived(line, character) {
+  if (!SAVAGERY_RECV_RX.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'savagery_received',
+    caster:   character || null,
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
   };
 }
 

@@ -73,6 +73,9 @@ const CHANGELOGS = {
   '2.6.3': [
     'PvP fyi-pings now silent during raid hours (Sun/Wed/Thu 8:30–11:30 PM Eastern) — raiders aren\'t getting paged about an Old Guk NPC kill against a random Mayhem player mid-pull. Wolf-Pack-death backup pings are unchanged and still fire any time.',
   ],
+  '2.6.4': [
+    'Parse-card extras (data starts collecting now; display lights up after the next agent push): boss self-heal totals (Lady Vox CH and the like) will show as `27.1k (+10k healed)` on kill cards, and Feral Avatar / Savagery receives will give per-fight `FE×3 SAV×2` badges next to player names plus a totals strip on the `/fun` page.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

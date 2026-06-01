@@ -171,6 +171,12 @@ async function recordParse({
   zoneShort = null,
   agentVersion = null,
   rollupByChar = null,
+  // Boss self-heal accumulated by the agent (Lady Vox CH etc.). Persisted
+  // on the encounters row via a follow-up PATCH after find_or_create
+  // returns. Max-keep semantics: if multiple parsers report different
+  // totals for the same fight, the highest wins (matches our
+  // max-damage-per-player merge convention).
+  npcHealedTotal = 0,
 }) {
   if (!isEnabled()) return null;
 
@@ -213,6 +219,26 @@ async function recordParse({
   if (hasAbilityDetail) {
     try { await upsertCombatRollup(encounterId, agentVersion, rollupByChar); }
     catch (err) { console.warn('[supabase] combat rollup upsert failed:', err?.message); }
+  }
+
+  // Stamp the boss self-heal total on the encounter row. Max-keep: read the
+  // current value, only PATCH if the incoming total is strictly higher. This
+  // matches the max-damage-per-player merge semantics used elsewhere — if a
+  // backfill parser saw fewer heal events than the live one (or vice versa),
+  // we keep the higher tally rather than letting the last-write win.
+  if (npcHealedTotal > 0) {
+    try {
+      const existing = await select(
+        'encounters',
+        `id=eq.${encounterId}&select=npc_healed_total&limit=1`
+      );
+      const current = (Array.isArray(existing) && existing[0]?.npc_healed_total) || 0;
+      if (npcHealedTotal > current) {
+        await update('encounters', `id=eq.${encounterId}`, { npc_healed_total: npcHealedTotal });
+      }
+    } catch (err) {
+      console.warn('[supabase] npc_healed_total patch failed:', err?.message);
+    }
   }
 
   return { encounterId, contributionId, npcId };
