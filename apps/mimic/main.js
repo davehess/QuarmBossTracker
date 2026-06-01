@@ -148,23 +148,51 @@ function appendAgentLog(line) {
 // character=null and show up as "(unknown)" in the admin agent fleet view.
 // Detecting on the Mimic side and passing --character closes that gap.
 const EQ_DEFAULT_DIRS = [
-  'C:\\Quarm',
-  'C:\\Project Quarm',
-  'C:\\Project1999',
-  'C:\\Program Files\\EverQuest',
-  'C:\\Program Files (x86)\\EverQuest',
-  'D:\\Quarm',
-  'D:\\Project Quarm',
+  // C: drive — most common
+  'C:\\Quarm', 'C:\\Project Quarm', 'C:\\Project1999',
+  'C:\\Program Files\\EverQuest', 'C:\\Program Files (x86)\\EverQuest',
+  'C:\\EQ',
+  // D: drive — second most common
+  'D:\\Quarm', 'D:\\Project Quarm', 'D:\\Project1999', 'D:\\EQ',
+  // A: / B: / E: / F: — power-user partitions (Hitya runs A:)
+  'A:\\Quarm', 'A:\\Project Quarm', 'A:\\EQ',
+  'B:\\Quarm', 'B:\\EQ',
+  'E:\\Quarm', 'E:\\Project Quarm', 'E:\\EQ',
+  'F:\\Quarm', 'F:\\Project Quarm', 'F:\\EQ',
 ];
+
+// True if `dir` contains at least one EQ log file. Cheap probe — used by
+// both the default-dirs scan and the walk-up-from-Mimic-exe scan below.
+function _dirHasEqLogs(dir) {
+  try {
+    if (!dir || !fs.existsSync(dir)) return false;
+    return fs.readdirSync(dir).some(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f));
+  } catch { return false; }
+}
+
 function detectEqDir(hint) {
-  const candidates = [hint, ...EQ_DEFAULT_DIRS].filter(Boolean);
-  for (const dir of candidates) {
-    try {
-      if (!fs.existsSync(dir)) continue;
-      const entries = fs.readdirSync(dir);
-      if (entries.some(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f))) return dir;
-    } catch {}
+  // 1. Honor an explicit hint (user-configured EQ path) first.
+  if (hint && _dirHasEqLogs(hint)) return hint;
+
+  // 2. Walk UP from the Mimic .exe's install dir — if a user installs
+  //    Mimic inside their EQ folder (Hitya did: A:\EQ\Mimic\...), the EQ
+  //    dir is one or two levels up. Stops at the drive root.
+  try {
+    const exePath = app.getPath('exe');
+    let dir = path.dirname(exePath);
+    for (let i = 0; i < 5; i++) {
+      if (_dirHasEqLogs(dir)) return dir;
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {}
+
+  // 3. Fall back to scanning the common default install locations.
+  for (const dir of EQ_DEFAULT_DIRS) {
+    if (_dirHasEqLogs(dir)) return dir;
   }
+
   return null;
 }
 function detectCharacterFromLogs(dir) {
