@@ -49,6 +49,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const os   = require('os');
 const https = require('https');
 const http  = require('http');
 const crypto = require('crypto');
@@ -2023,6 +2024,11 @@ function _endpointForKind(kind, botUrl) {
 }
 
 function enqueueUpload(kind, payload) {
+  // Cross-instance guard: only the elected uploader sends. A read-only
+  // instance (another Parser/Mimic on this machine already owns the lock)
+  // drops outbound uploads so the same line isn't posted twice. Its local
+  // dashboard still works — local stats come from parseEvent, not the queue.
+  if (!_isUploaderInstance) return null;
   if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
     const dropped = _uploadQueue.shift();
     _queueCapEvictCount++;
@@ -2133,6 +2139,10 @@ function _onUploadSuccess(entry, responseText) {
 async function _drainUploadQueue() {
   if (_queueDraining) return;
   if (!_queueUploadOpts) return;
+  // Read-only instance: don't replay the persisted queue either (it may hold
+  // entries from a prior run, and the active uploader is covering live data).
+  // Draining resumes automatically if this instance takes over the lock.
+  if (!_isUploaderInstance) return;
   if (_uploadQueue.length === 0) return;
   _queueDraining = true;
   try {
@@ -2406,6 +2416,112 @@ function readActivePid() {
   } catch { return null; }
 }
 
+// ── Cross-instance uploader lock ───────────────────────────────────────────
+// The PID file above lives next to THIS index.js, so it's per-install. Mimic
+// bundles its own copy of the agent and Parser runs another — different
+// __dirname, different PID file — so they never see each other. Result: a
+// Parser + Mimic (or two Parsers) all tail the SAME logs and upload the SAME
+// chat/encounters → duplicate Discord posts + double-counted parses.
+//
+// This lock elects ONE uploader per machine. It lives in the OS temp dir, so
+// every install on the box shares it. The holder uploads; everyone else still
+// tails and shows its own local dashboard, but suppresses uploads. If the
+// holder exits or crashes, a non-uploader takes over (lock is "stale" when the
+// pid is dead OR the heartbeat is older than the TTL).
+const UPLOADER_LOCK_FILE    = path.join(os.tmpdir(), 'wolfpack-logsync-uploader.json');
+const UPLOADER_LOCK_TTL_MS  = 45_000;   // stale after this long without a heartbeat
+const UPLOADER_HEARTBEAT_MS = 15_000;   // holder refreshes; others re-check to take over
+let _isUploaderInstance   = true;       // assume yes until the election says otherwise
+let _uploaderLockHolder   = null;       // last-seen holder info (for the dashboard)
+let _uploaderLockTimer    = null;
+let _uploaderLockStartedAt = null;
+
+function _readUploaderLock() {
+  try {
+    if (!fs.existsSync(UPLOADER_LOCK_FILE)) return null;
+    const raw = JSON.parse(fs.readFileSync(UPLOADER_LOCK_FILE, 'utf8'));
+    return (raw && raw.pid) ? raw : null;
+  } catch { return null; }
+}
+
+function _uploaderLockIsLive(lock) {
+  if (!lock || !lock.pid) return false;
+  if (lock.pid === process.pid) return true;
+  try { process.kill(lock.pid, 0); } catch { return false; }   // dead pid
+  const hb = Date.parse(lock.heartbeatAt || lock.startedAt || 0) || 0;
+  return (Date.now() - hb) <= UPLOADER_LOCK_TTL_MS;            // stale heartbeat = not live
+}
+
+function _writeUploaderLock(webPort) {
+  if (!_uploaderLockStartedAt) _uploaderLockStartedAt = new Date().toISOString();
+  try {
+    fs.writeFileSync(UPLOADER_LOCK_FILE, JSON.stringify({
+      pid:          process.pid,
+      webPort:      webPort || null,
+      client:       process.env.WOLFPACK_CLIENT || 'parser',
+      startedAt:    _uploaderLockStartedAt,
+      heartbeatAt:  new Date().toISOString(),
+      agentVersion: AGENT_VERSION,
+    }));
+    return true;
+  } catch { return false; }
+}
+
+// Grab the lock if it's free or stale. Returns true if we now hold it.
+function _tryAcquireUploaderLock(webPort) {
+  const existing = _readUploaderLock();
+  if (existing && existing.pid !== process.pid && _uploaderLockIsLive(existing)) {
+    _uploaderLockHolder = existing;
+    return false;
+  }
+  const ok = _writeUploaderLock(webPort);
+  if (ok) _uploaderLockHolder = _readUploaderLock();
+  return ok;
+}
+
+function _releaseUploaderLock() {
+  const cur = _readUploaderLock();
+  if (cur && cur.pid === process.pid) {
+    try { fs.unlinkSync(UPLOADER_LOCK_FILE); } catch {}
+  }
+}
+
+// Elect once at startup, then maintain: the holder heartbeats; a non-holder
+// watches for a stale lock and takes over. Call after the web port is known.
+function startUploaderElection(webPort) {
+  _isUploaderInstance = _tryAcquireUploaderLock(webPort);
+  if (_isUploaderInstance) {
+    console.log(`${ANSI.green}[uploader] this instance is the active uploader.${ANSI.reset}`);
+  } else {
+    const h = _uploaderLockHolder || {};
+    const where = h.webPort ? ` — its dashboard: http://localhost:${h.webPort}` : '';
+    console.log(`${ANSI.yellow}[uploader] another agent is already uploading (${h.client || '?'}, pid ${h.pid})${where}. This instance runs read-only (no uploads) to avoid duplicates.${ANSI.reset}`);
+  }
+  if (_uploaderLockTimer) clearInterval(_uploaderLockTimer);
+  _uploaderLockTimer = setInterval(() => {
+    if (_isUploaderInstance) {
+      // Re-assert; step down only if another LIVE instance somehow took it.
+      const cur = _readUploaderLock();
+      if (cur && cur.pid !== process.pid && _uploaderLockIsLive(cur)) {
+        _isUploaderInstance = false;
+        _uploaderLockHolder = cur;
+        console.log('[uploader] another instance took the lock — stepping down to read-only.');
+      } else {
+        _writeUploaderLock(webPort);
+        _uploaderLockHolder = _readUploaderLock();
+      }
+    } else {
+      const cur = _readUploaderLock();
+      _uploaderLockHolder = cur;
+      if (!_uploaderLockIsLive(cur) && _tryAcquireUploaderLock(webPort)) {
+        _isUploaderInstance = true;
+        console.log(`${ANSI.green}[uploader] previous uploader is gone — taking over uploads.${ANSI.reset}`);
+      }
+    }
+  }, UPLOADER_HEARTBEAT_MS);
+  process.on('exit', _releaseUploaderLock);
+}
+
 // Cross-platform "open a URL in the default browser" — non-blocking, errors
 // swallowed so a missing browser binary doesn't crash the agent. On Windows
 // the empty quoted string after `start` is the window title slot (without it
@@ -2583,6 +2699,15 @@ function _serializeForDashboard() {
     updateAvailable:    stats.updateAvailable,
     latestAgentVersion: stats.latestAgentVersion,
     currentEncounterThreat: stats.currentEncounterThreat,
+    // Cross-instance uploader status. active=true → this instance is the one
+    // sending data to the bot; false → another Parser/Mimic on this machine
+    // owns the upload lock and we're read-only (local dashboard still live).
+    uploader: {
+      active: _isUploaderInstance,
+      holder: (!_isUploaderInstance && _uploaderLockHolder)
+        ? { client: _uploaderLockHolder.client || null, webPort: _uploaderLockHolder.webPort || null }
+        : null,
+    },
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -4772,6 +4897,38 @@ async function dismissTopDamage(key) {
   }
   fetchAll();
   setInterval(fetchAll, 5000);
+})();
+
+// ── Read-only uploader banner ──────────────────────────────────────────────
+// When another Parser/Mimic on this machine owns the upload lock, this
+// instance is read-only (it still tails + shows local stats, but does not
+// upload). Surface that clearly so it is obvious why nothing is posting.
+(function(){
+  function ensure(){
+    var b = document.getElementById("wpUploaderBanner");
+    if (b) return b;
+    b = document.createElement("div");
+    b.id = "wpUploaderBanner";
+    b.style.cssText = "display:none;position:sticky;top:0;z-index:60;background:#3a2a00;color:#f6c365;border-bottom:1px solid #6b5200;padding:6px 12px;font-size:12px;text-align:center";
+    document.body.insertBefore(b, document.body.firstChild);
+    return b;
+  }
+  function refresh(){
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      var u = s && s.uploader;
+      var b = ensure();
+      if (u && u.active === false){
+        var who  = (u.holder && u.holder.client) ? u.holder.client : "another agent";
+        var port = (u.holder && u.holder.webPort) ? (" (localhost:" + u.holder.webPort + ")") : "";
+        b.textContent = "Read-only mode: " + who + port + " is the active uploader on this machine, so this instance is not uploading (prevents duplicate posts). Local stats below are still live.";
+        b.style.display = "block";
+      } else {
+        b.style.display = "none";
+      }
+    }).catch(function(){});
+  }
+  refresh();
+  setInterval(refresh, 5000);
 })();
 </script></body></html>`;
 
@@ -8104,6 +8261,11 @@ async function main() {
   // Make opts available to the chat relay flush (module-level so the interval can see them)
   _uploadOpts    = { botUrl, token, dryRun };
   _isServiceMode = !!args.flags.noServiceCheck;
+
+  // Elect the single machine-wide uploader BEFORE the queue drain kicks, so a
+  // read-only instance (another Parser/Mimic already uploading) doesn't replay
+  // its queue or send live data. dry-run never uploads, so skip the election.
+  if (!dryRun) startUploaderElection(args.flags.webPort);
 
   // Start the durable upload queue drain. Loads any pending entries from
   // disk first and kicks an immediate replay attempt — so anything left
