@@ -16,13 +16,31 @@
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isOfficer } from '@/lib/officer';
 import { fmtTime, dayKey, dayLabel } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
+// Officer-only: remove a bogus PvP kill row (mis-parsed broadcast, NPC kill
+// that leaked in, duplicate, etc.). Gated server-side on the officer role —
+// the form only renders for officers, and this re-checks before deleting so
+// a crafted POST from a non-officer can't slip through.
+async function deletePvpKill(formData: FormData) {
+  'use server';
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user || !(await isOfficer(user.id))) redirect('/?error=admin_required');
+  const id = String(formData.get('id') || '');
+  const back = String(formData.get('back') || '/pvp');
+  if (!id) return;
+  await supabaseAdmin().from('pvp_kills').delete().eq('guild_id', 'wolfpack').eq('id', id);
+  revalidatePath(back);
+}
+
 type Kill = {
+  id: string;
   killer: string;
   victim: string;
   victim_guild: string | null;
@@ -105,7 +123,7 @@ async function load(name: string) {
 
   const [{ data: kills }, { data: deaths }] = await Promise.all([
     sb.from('pvp_kills')
-      .select('killer, victim, victim_guild, zone, via_pet, pet_name, killed_at')
+      .select('id, killer, victim, victim_guild, zone, via_pet, pet_name, killed_at')
       .eq('guild_id', 'wolfpack')
       .ilike('killer', decoded)
       .order('killed_at', { ascending: false })
@@ -135,6 +153,8 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   const { kills, deaths, displayName } = await load(name);
   const owned = await ownedNames();
   const viewerOwns = owned.has(displayName.toLowerCase());
+  const officer = await isOfficer(user.id);
+  const backPath = `/pvp/${encodeURIComponent(name)}`;
 
   // Per-victim breakdown (public)
   const byVictim = new Map<string, { victim: string; count: number; pet: number }>();
@@ -211,17 +231,19 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
         {kills.length === 0 ? (
           <div className="text-sm text-dim italic">No kills recorded.</div>
         ) : (
+          <>
           <table className="w-full text-xs">
             <thead className="text-dim text-left">
               <tr className="border-b border-border">
                 <th className="py-1 pr-2">When</th>
                 <th className="py-1 pr-2">Victim</th>
                 <th className="py-1 pr-2">Zone</th>
+                {officer && <th className="py-1 pr-2 text-right">Officer</th>}
               </tr>
             </thead>
             <tbody>
-              {kills.slice(0, 200).map((k, i) => (
-                <tr key={i} className="border-b border-border/30 hover:bg-[#1a212c]">
+              {kills.slice(0, 200).map((k) => (
+                <tr key={k.id} className="border-b border-border/30 hover:bg-[#1a212c]">
                   <td className="py-1 pr-2 text-dim whitespace-nowrap">
                     {dayLabel(dayKey(k.killed_at))} · {fmtTime(k.killed_at)}
                   </td>
@@ -230,10 +252,27 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
                     {k.via_pet && <span className="text-orange ml-1" title={k.pet_name ? `pet: ${k.pet_name}` : 'pet kill'}>*</span>}
                   </td>
                   <td className="py-1 pr-2 text-dim">{k.zone || '—'}</td>
+                  {officer && (
+                    <td className="py-1 pr-2 text-right">
+                      <form action={deletePvpKill} className="inline">
+                        <input type="hidden" name="id" value={k.id} />
+                        <input type="hidden" name="back" value={backPath} />
+                        <button
+                          type="submit"
+                          className="text-dim hover:text-red-400 border border-border hover:border-red-400/60 rounded px-1.5 py-0.5 text-[10px]"
+                          title="Remove this kill (officer) — for mis-parsed broadcasts, NPC kills, or duplicates"
+                        >✕ remove</button>
+                      </form>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
+          {officer && (
+            <div className="text-[10px] text-dim mt-2">Officer: removing a kill deletes it from the ledger and recomputes the leaderboard. There is no undo — re-running the killer&apos;s log backfill restores any real kill.</div>
+          )}
+          </>
         )}
       </section>
 
