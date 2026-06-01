@@ -3027,7 +3027,117 @@ const HISTORICAL_CHAT_PATH = require('path').join(__dirname, 'data', 'historical
 // future CoH/DI/Aegolism/Rune) and upserts into the fun_events Supabase
 // table. The table's unique constraint on (guild_id, event_type, caster,
 // event_ts) makes backfill replays idempotent — re-running the same opt-in
-// log just hits on-conflict-do-nothing and ends up with no double-count.
+// ── Server-view panels for the local dashboard (increment 2f) ──────────────
+// The local agent dashboard panels show LOCAL (this-session) data. Members
+// can click 🌐 server on a panel to see the SERVER-AGGREGATED view of the
+// same scope. The agent calls GET /api/agent/server-panel/<key> with
+// ?character=<You>; we return a small JSON shape the dashboard can render.
+//
+// Currently supported keys (additive — unknown keys 404 cleanly):
+//   - "damage"  → recent 30d per-character encounter totals + DPS, ranked
+//   - "pvp"     → caller's PvP record summary (kills, unique victims, deaths)
+//   - "parses"  → caller's last 10 encounters (boss, ts, dps, total)
+// Threat is intentionally NOT here — it's a live-only stat with no server
+// counterpart (see CONTINUATION_QUEUE: increment 2f notes).
+async function _handleAgentServerPanel(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'server-panel disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+  const url = new URL(req.url, 'http://localhost');
+  const parts = url.pathname.split('/'); // ['', 'api', 'agent', 'server-panel', '<key>']
+  const key = (parts[4] || '').toLowerCase();
+  const character = (url.searchParams.get('character') || '').trim();
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    if (key === 'damage') {
+      // Top characters by 30d total damage (recent_encounters via
+      // encounter_players → encounters). Keep response small; dashboard
+      // overlays rank+total+dps onto its existing "Damage" panel layout.
+      const rows = await supabase.select(
+        'encounter_players',
+        `select=character_name,total_damage,dps,encounters!inner(started_at)` +
+        `&encounters.started_at=gte.${since30d}` +
+        `&order=total_damage.desc&limit=200`
+      );
+      // Aggregate by character (multiple encounter rows per char)
+      const byChar = new Map();
+      for (const r of (rows || [])) {
+        const k = r.character_name;
+        if (!k) continue;
+        const cur = byChar.get(k) || { character: k, totalDamage: 0, encounters: 0, peakDps: 0 };
+        cur.totalDamage += r.total_damage || 0;
+        cur.encounters  += 1;
+        if ((r.dps || 0) > cur.peakDps) cur.peakDps = r.dps || 0;
+        byChar.set(k, cur);
+      }
+      const list = [...byChar.values()].sort((a, b) => b.totalDamage - a.totalDamage).slice(0, 25);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ key, scope: 'last 30d', updated_at: new Date().toISOString(), rows: list }));
+    }
+    if (key === 'pvp') {
+      if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
+      const [killsRows, deathRows] = await Promise.all([
+        supabase.select('pvp_kills', `select=victim,killed_at&guild_id=eq.${encodeURIComponent(guildId)}&killer=ilike.${encodeURIComponent(character)}&order=killed_at.desc&limit=500`),
+        supabase.select('pvp_kills', `select=killer,killed_at&guild_id=eq.${encodeURIComponent(guildId)}&victim=ilike.${encodeURIComponent(character)}&order=killed_at.desc&limit=500`),
+      ]);
+      const kills = killsRows || [];
+      const deaths = deathRows || [];
+      const uniqueVictims = new Set(kills.map(k => (k.victim || '').toLowerCase())).size;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        key, character, scope: 'lifetime',
+        updated_at: new Date().toISOString(),
+        total_kills: kills.length, unique_victims: uniqueVictims,
+        total_deaths: deaths.length,
+        recent_kills:  kills.slice(0, 10),
+        recent_deaths: deaths.slice(0, 10),
+      }));
+    }
+    if (key === 'parses') {
+      if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
+      const rows = await supabase.select(
+        'encounter_players',
+        `select=character_name,total_damage,dps,duration_sec,encounters!inner(id,started_at,eqemu_npc_types(name))` +
+        `&character_name=ilike.${encodeURIComponent(character)}` +
+        `&order=encounters(started_at).desc&limit=20`
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        key, character, scope: 'last 20 encounters',
+        updated_at: new Date().toISOString(),
+        rows: (rows || []).map(r => ({
+          encounter_id: r.encounters?.id,
+          boss: r.encounters?.eqemu_npc_types?.name || null,
+          started_at: r.encounters?.started_at,
+          total_damage: r.total_damage,
+          dps: r.dps,
+          duration_sec: r.duration_sec,
+        })),
+      }));
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unknown panel key', key }));
+  } catch (err) {
+    console.warn('[server-panel] query failed:', err?.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'query failed' }));
+  }
+}
+
 async function _handleAgentFunEvent(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
   if (!expected) {
@@ -4582,6 +4692,19 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefs(req, res); }
     catch (err) {
       console.error('[character-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Local-dashboard "server view" panels — increment 2f of the customizable
+  // dashboard. The agent fetches these and the dashboard renders the result
+  // alongside / in place of its live local data so members can flip between
+  // "what I'm seeing right now" and "what wolfpack.quest knows about me."
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/server-panel/')) {
+    try { return await _handleAgentServerPanel(req, res); }
+    catch (err) {
+      console.error('[server-panel] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
