@@ -267,6 +267,11 @@ const PRIORITY_KEEP_PATTERNS = [
   // pet → owner mapping for charm pets. parseEvent below resolves owner
   // to the uploading character (this.character) when it sees this form.
   /\btells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i,
+  // Charm-LAND attribution (bystander-visible). "<Mob> regards <Charmer>
+  // as an ally." Required so the line survives any future broad drop
+  // filter — used to attribute charmed mobs to their enchanter for
+  // damage display (Mistmoore glyphed familiars, etc.).
+  /\bregards\s+\S+\s+as\s+an\s+ally\b/i,
   // /who output lines — '[60 Storm Warden] Alice (Wood Elf) <Wolf Pack>' etc.
   // Listed here so they can never be dropped by some future broad filter.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -668,6 +673,23 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+(.+?)\s+tells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i);
   if (m) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__' };
+  }
+
+  // Charm-LAND attribution (bystander-visible). Form:
+  //   "A glyphed familiar regards Lihliana as an ally."
+  // Visible to everyone in the zone, so any agent can pick it up and
+  // attribute the mob to the casting enchanter for the rest of the fight.
+  // Useful for Mistmoore raids (glyphed familiars), zoo / charm-cycling
+  // groups, and any time we don't have a direct line of sight from the
+  // charmer's own agent (e.g. enchanter not running Mimic).
+  //
+  // ⚠️ WORDING FLAGGED: this is the classic EQ phrasing. If Quarm uses a
+  // variant ("regards <name> as their master", "is yours to command",
+  // etc.) extend the alternation. False positives are bounded — only mobs
+  // get "regards X as an ally" pointed at a Wolf Pack member by name.
+  m = line.match(/\]\s+(.+?)\s+regards\s+(\S+)\s+as\s+an\s+ally\.?\s*$/i);
+  if (m) {
+    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
   }
 
   // ── /who output line ──────────────────────────────────────────────────────
