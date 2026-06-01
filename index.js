@@ -4430,6 +4430,10 @@ async function _handleAgentUpload(req, res) {
         totalDps,
         players,
         eventCount: encounter.events.length,
+        // Boss self-heal accumulated by the agent's EncounterBuilder. Surfaced
+        // on parse cards as "27.1k (+10k healed)" for Complete-Healing bosses.
+        // Undefined for older agents (<2.5.3) so it gracefully no-ops.
+        npcHealedTotal: encounter.npc_healed_total || undefined,
       };
 
       // Prefer the bossId from bosses.json match; fall back to slugified name lookup
@@ -4449,6 +4453,7 @@ async function _handleAgentUpload(req, res) {
           source: 'local_agent_v1',
           agentVersion: payload?.agent_version || null,
           rollupByChar: encounter.rollup?.by_char || null,
+          npcHealedTotal: encounter.npc_healed_total || 0,
         }).catch(err => console.warn('[agent] recordParse failed:', err?.message));
       } else {
         console.log(`[agent] no bosses_local match for "${bossInternalId}" — encounter not persisted to Supabase`);
