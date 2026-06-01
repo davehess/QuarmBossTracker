@@ -134,64 +134,40 @@ agent at `localhost:7777`/`7779`, the big `WEB_HTML` template literal in
 friendly workspace AND a launchpad into wolfpack.quest AND the source from
 which any data point can be pulled out as an overlay.
 
-**Build order (each increment ships independently, escape-check on every step):**
-1. ✅ **Increment 1 — show/hide panels via ⚙ gear** (agent v2.5.8). Per-panel
-   checkboxes, localStorage persistence, MutationObserver-survives-rerender,
-   stable `<h2>`-prefix keys. Escape-safe (double-quoted strings, literal
-   chars, no backslashes).
-2. **Increment 2a — wolfpack.quest links woven into local dashboard** (next).
-   Player names, boss names, parse rows become clickable into the right
-   wolfpack.quest page (/character/Name, /pvp/Name, /boss/<slug>,
-   /parses/<encId>, /me). New-tab `target="_blank"`. Cheap, additive, makes
-   the local dashboard the launchpad you described.
-3. **Increment 2b — drag-to-reorder + column placement.** Pointer-events drag
-   between left/center/right columns. Layout persists per resolution signature
-   (same rule as Mimic overlay bounds). Higher risk — drag logic is where
-   layout bugs + escape-hazard typos bite hardest; do it eyes-on.
-4. **Increment 2c — drag suggestions.** When a member drops a panel into a
-   column, suggest related panels that mention their character (e.g. "you put
-   Threat in the right column — also relevant: Deaths, Incoming Damage").
-   Driven by scanning panel HTML for the uploader character's name. Pure
-   suggestion sidebar inside the gear menu; doesn't alter layout without a
-   click. Owner's words: "suggestions based on data points that have their
-   characters in them for the drag and drop options."
-   **⭐ Owner-flagged priority panels (2026-06-01):** Parses and Threat are
-   the data points members *most* want to see and they currently do NOT flow
-   to wolfpack.quest/me (only DPS/kill aggregates do). The suggester should
-   weight these highest, and increment 2d's "send to overlay" should prefer
-   them as the first overlay candidates. Tracking work: capturing parse +
-   threat snapshots into a server-side table so wolfpack.quest/me eventually
-   shows them too is a separate follow-up (TBD when the local UX settles).
-5. **Increment 2d — "send to overlay" / "make this an overlay."** Per-panel
-   button in unlock mode: spawn a NEW always-on-top Mimic overlay window that
-   renders that panel only, with its own bounds/lock. Owner's words: "you can
-   take any of those tracked data points and then turn them into overlay
-   items." Requires Mimic to expose a new IPC + a generic panel-overlay HTML
-   that fetches a single panel from the dashboard. Parser.bat installs (no
-   Mimic) get a tooltip explaining the feature is Mimic-only.
-6. **Increment 2e — send-to-home + per-panel pin order** within columns.
-6.5. **Increment 2f — local-vs-server source toggle per panel.** Each panel
-   gets a click-to-switch between two data sources:
-     - **Local** (default): what the running agent is observing right now
-       (live tail, this-session aggregates).
-     - **Server** (wolfpack.quest): the aggregated history from Supabase
-       for the same scope (e.g. "lifetime DPS for this character",
-       "last 30 days of parses").
-   Implementation: each panel that has a server counterpart gets a tiny
-   "🛰 local | 🌐 server" toggle in its header. Server mode fetches from
-   the relevant wolfpack.quest API route (most exist already as the bot's
-   read-only endpoints; some will need a new `/api/agent/server-panel/<key>`
-   gateway so the agent can proxy with auth). Selection persists per panel
-   in localStorage. Owner: "ideally we would be able to see the data that
-   was observed locally and the data that came from wolfpack.quest as
-   well — like a click to separate sources."
-7. **Increment 3 — new data panels behind new bot endpoints:**
-   - *Engaged-mob loot*: agent has `currentEncounterThreat.bossName`; bot has
-     `eqemu_npc_drops` view. New `GET /api/agent/loot-for-boss?name=` returns
-     the drop table. Panel updates as boss changes.
-   - *Previous bids*: for items on the engaged mob, show winning + runner-up
-     bids from `loot_drops` + `loot_drops.runner_up_bids` JSONB. New endpoint
-     `GET /api/agent/bids-for-items?npc=`.
+**All increments shipped 2026-06-01 (overnight + morning):**
+1. ✅ **1 — show/hide panels via ⚙ gear** (agent v2.5.8). Per-panel checkboxes,
+   localStorage persistence, MutationObserver-survives-rerender, stable
+   `<h2>`-prefix keys. Escape-safe.
+2. ✅ **2a — wolfpack.quest links woven in** (agent v2.5.9). Every `.name`
+   cell is a click → `wolfpack.quest/character/<Name>`; quicklinks bar with
+   `/me /parses /pvp /leaderboards /fun` + uploader-specific
+   `/character/<You>` + `/pvp/<You>`.
+3. ✅ **2d — send-to-overlay any panel** (agent v2.5.10 / Mimic beta.15).
+   Per-panel 🪟 button (Mimic only); transparent always-on-top window loads
+   the dashboard with `?overlay=<key>` and CSS strips chrome. Bounds persist
+   per panel with screen-signature validation. Lock state applies to panel
+   overlays too.
+4. ✅ **2f — local vs server source toggle** (bot v2.6.10 / agent v2.5.11).
+   Per-panel `🛰 local | 🌐 server` switch on Damage, Parses, PvP.
+   `GET /api/agent/server-panel/<key>` bearer-auth endpoint; agent
+   `/api/server/<key>` passthrough. Selection persists per panel.
+5. ✅ **3 — Engaged-mob Loot + Previous Bids panels** (bot v2.6.11 / agent
+   v2.5.12). Two new dashboard cards auto-show when a boss is engaged;
+   chain-fetch drop table + last-5-awards-per-item.
+   `/api/agent/server-panel/loot` from `eqemu_npc_drops`,
+   `/api/agent/server-panel/bids` from `loot_drops`.
+6. ✅ **2g — Threat snapshots → server** (bot v2.6.12 / agent v2.5.13).
+   Migration `encounter_threat_snapshots`; agent posts a 15s snapshot
+   during active combat (durable queue); server-panel `threat` key ranks
+   the caller per snapshot. Threat panel now has the 🌐 server toggle.
+7. ✅ **2b + 2e — drag-to-reorder + persisted home order** (agent v2.5.14).
+   HTML5 DnD on each Dashboard panel; ✥ grip in `<h2>`; order persists per
+   screen-size signature; MutationObserver re-decorates dynamic panels.
+8. ✅ **2c — drag suggestions** (agent v2.5.15). Gear menu surfaces
+   "🎯 Suggested for you" — panels mentioning the uploader OR matching the
+   owner-flagged priority list (Parses + Live Threat weighted 10; Threat
+   Detail 9; Damage 7; Incoming Damage + Deaths 5). Click scroll-snaps and
+   highlights the target.
 
 **⚠️ Build constraints (why this is queued, not rushed):**
 - The dashboard lives in ONE backtick template literal with the documented
