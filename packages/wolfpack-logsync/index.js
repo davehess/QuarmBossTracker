@@ -3627,7 +3627,7 @@ function renderOptin(o) {
       if (act === 'rescan')       { await postOptin('rescan');       refreshOptin(); return; }
       if (act === 'backfill') {
         const paths = [...root.querySelectorAll('input[type=checkbox][data-path]:checked')].map(x => x.dataset.path);
-        if (paths.length > 0 && confirm('Start chat-only backfill on ' + paths.length + ' file(s)?')) {
+        if (paths.length > 0 && confirm('Start backfill on ' + paths.length + ' file(s)?')) {
           await postOptin('backfill', { paths });
         }
         refreshOptin(); return;
@@ -6338,7 +6338,7 @@ function showOptIn() {
         runOptinBackfill(chosen, {
           log: (msg) => process.stdout.write(`  ${C.dim}${msg}${C.reset}\n`),
         });
-        process.stdout.write(`  ${C.dim}(Combat events SKIPPED — chat only. Resume saved every ~256KB.)${C.reset}\n`);
+        process.stdout.write(`  ${C.dim}(Captures guild/raid chat + boss-matched combat + /who. Resume saved every ~256KB.)${C.reset}\n`);
         return;
       }
       if (key === 'd' || key === 'D' || key === '\x03') {
