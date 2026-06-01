@@ -26,17 +26,21 @@ export function fmtDuration(sec: number | null | undefined) {
   return s === 0 ? `${m}m` : `${m}m${s}s`;
 }
 
-export function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour: 'numeric', minute: '2-digit', hour12: true,
-  });
-}
-
 // Raid nights run in Eastern time (matches the bot's DEFAULT_TIMEZONE), so
 // bucket every timestamp by US Eastern day instead of UTC. Otherwise a 9 PM
 // ET kill lands at 01:00 UTC the next day and gets pushed into "tomorrow"
-// when rendered on Vercel's UTC server.
-const RAID_TZ = 'America/New_York';
+// when rendered on Vercel's UTC server. Also used by fmtTime to keep the
+// server-rendered string identical to the client-rendered string — without
+// it React saw a hydration mismatch (UTC → local TZ) and re-rendered every
+// recent-kill timestamp on mount. That re-render IS the "blink" users saw.
+export const RAID_TZ = 'America/New_York';
+
+export function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', {
+    hour: 'numeric', minute: '2-digit', hour12: true,
+    timeZone: RAID_TZ,
+  });
+}
 
 // YYYY-MM-DD for grouping. Forces RAID_TZ so the day boundary is midnight
 // Eastern, not midnight UTC.
