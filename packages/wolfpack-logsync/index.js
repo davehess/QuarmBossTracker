@@ -562,10 +562,19 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'damage', attacker: null, defender: m[1], ability: 'dot', amount: parseInt(m[2], 10) };
   }
 
-  // "X Scores a critical hit!(N)" — the (N) is the BONUS amount on top of the preceding hit
+  // "X Scores a critical hit!(N)" — melee crit; (N) is the BONUS on top of the hit.
   m = line.match(/\]\s+(.+?)\s+[Ss]cores?\s+a\s+critical\s+hit!\s*\((\d+)\)/);
   if (m) {
-    return { ts: tsIso, type: 'critical', attacker: m[1], amount: parseInt(m[2], 10) };
+    return { ts: tsIso, type: 'critical', kind: 'melee', attacker: m[1], amount: parseInt(m[2], 10) };
+  }
+
+  // "X delivers a critical blast!(N)" — SPELL crit (EQEmu/Fury). First-person
+  // form is "You deliver a critical blast!". NOTE: this format is the standard
+  // EQEmu string but is unverified against a live Quarm log — confirm with a
+  // real spell-crit line and adjust if Quarm words it differently.
+  m = line.match(/\]\s+(.+?)\s+delivers?\s+a\s+critical\s+blast!\s*\((\d+)\)/i);
+  if (m) {
+    return { ts: tsIso, type: 'critical', kind: 'spell', attacker: m[1], amount: parseInt(m[2], 10) };
   }
 
   // ── Death events ──────────────────────────────────────────────────────────
@@ -1418,6 +1427,18 @@ class EncounterBuilder {
       const critOnPlayer = event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender);
       if (!critOnPlayer && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         this._bumpDeeps(attacker, 'crit', event.amount, null);
+        // My Crits tracker — only the box's OWN crits (attacker resolves to
+        // this.character), split melee vs spell. Skip silent/backfill so the
+        // live panel reflects this session. event.kind is set by the parser.
+        if (!this.silent && attacker === this.character) {
+          const kind = event.kind === 'spell' ? 'spell' : 'melee';
+          const c = stats.sessionCrits[attacker]
+                 || (stats.sessionCrits[attacker] = { melee: { count: 0, total: 0, max: 0 }, spell: { count: 0, total: 0, max: 0 } });
+          const b = c[kind];
+          b.count++;
+          b.total += event.amount;
+          if (event.amount > b.max) b.max = event.amount;
+        }
       }
     }
 
@@ -2348,6 +2369,10 @@ const stats = {
   // populates from a single parser anywhere in the raid, no healer-side
   // adoption required. { [healerName]: { count, total, max, lastSeen } }
   sessionCritHeals: {},
+  // sessionCrits: per-box melee + spell critical totals (count / summed bonus /
+  // biggest single bonus). Powers the "My Crits" panel — only the box's OWN
+  // crits are tracked, split melee vs spell. { [name]: { melee:{count,total,max}, spell:{...} } }
+  sessionCrits: {},
   // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
   // { mobName: { [abilityName]: { count, totalDmg } } }
   sessionProcs:    {},
@@ -2425,6 +2450,7 @@ function resetSessionStats() {
   stats.sessionDefenders   = {};
   stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
   stats.sessionCritHeals   = {};
+  stats.sessionCrits       = {};
   stats.sessionProcs       = {};
   stats.sessionDeeps       = {};
   stats.castCounts         = {};
@@ -2666,6 +2692,7 @@ function saveSessionState() {
       sessionDeaths:      stats.sessionDeaths,
       sessionMends:       stats.sessionMends,
       sessionCritHeals:   stats.sessionCritHeals,
+      sessionCrits:       stats.sessionCrits,
       sessionDeeps:       stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       castCounts:         stats.castCounts,
@@ -2700,6 +2727,7 @@ function loadSessionState() {
     if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
     if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
     if (raw.sessionCritHeals)   stats.sessionCritHeals   = raw.sessionCritHeals;
+    if (raw.sessionCrits)       stats.sessionCrits       = raw.sessionCrits;
     if (raw.sessionDeeps)       stats.sessionDeeps       = raw.sessionDeeps;
     if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
     if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
@@ -2753,6 +2781,7 @@ function _serializeForDashboard() {
     sessionDefenders:   stats.sessionDefenders,
     sessionHealers:     healersOut,
     sessionCritHeals:   stats.sessionCritHeals || {},
+    sessionCrits:       stats.sessionCrits || {},
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
     sessionMends:       stats.sessionMends,
@@ -4994,6 +5023,69 @@ async function dismissTopDamage(key) {
   }
   refresh();
   setInterval(refresh, 5000);
+})();
+
+// ── 💥 My Crits panel ───────────────────────────────────────────────────────
+// The operator's own melee + spell criticals this session, per box. Send-to-
+// overlay works via the panel auto-registration (h2 text = key). Spell crits
+// depend on the critical-blast parse, which still needs a real Quarm sample.
+(function(){
+  function makeCard(){
+    var c = document.createElement("div");
+    c.id = "wpCritsCard";
+    c.className = "card";
+    c.style.display = "none";
+    c.innerHTML = "<h2>💥 My Crits <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · this session</span></h2><div class=card-body></div>";
+    return c;
+  }
+  var card = makeCard();
+  function ensure(){
+    if (document.getElementById("wpCritsCard")) return;
+    var dash = document.getElementById("dash"); if (!dash) return;
+    var grid = dash.querySelector(".grid"); var host = grid || dash;
+    host.insertBefore(card, host.firstChild);
+  }
+  function fmt(n){ n = Number(n) || 0; return n.toLocaleString(); }
+  function render(crits){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    var names = crits ? Object.keys(crits) : [];
+    names = names.filter(function(nm){
+      var c = crits[nm] || {};
+      var mc = (c.melee && c.melee.count) || 0;
+      var sc = (c.spell && c.spell.count) || 0;
+      return (mc + sc) > 0;
+    });
+    if (names.length === 0){ card.style.display = "none"; return; }
+    card.style.display = "block";
+    names.sort(function(a, b){
+      var ca = crits[a], cb = crits[b];
+      var ta = (ca.melee.count || 0) + (ca.spell.count || 0);
+      var tb = (cb.melee.count || 0) + (cb.spell.count || 0);
+      return tb - ta;
+    });
+    var html = "<table><tr><th>Character</th><th>Type</th><th class=num>Crits</th><th class=num>Biggest</th><th class=num>Bonus dmg</th></tr>";
+    names.forEach(function(nm){
+      var c = crits[nm];
+      var types = [["⚔️ melee", c.melee], ["✨ spell", c.spell]];
+      types.forEach(function(r){
+        var b = r[1] || { count: 0, total: 0, max: 0 };
+        if (!b.count) return;
+        html += "<tr><td class=name>" + nm + "</td><td>" + r[0] + "</td><td class=num>" + fmt(b.count) + "</td><td class=num>" + fmt(b.max) + "</td><td class=num>" + fmt(b.total) + "</td></tr>";
+      });
+    });
+    html += "</table>";
+    html += "<div class=dim style=font-size:10px;margin-top:4px>Amount shown is the crit bonus on top of the hit. Spell crits need a Quarm critical-blast line to confirm.</div>";
+    body.innerHTML = html;
+  }
+  function refresh(){
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      ensure();
+      render(s && s.sessionCrits);
+    }).catch(function(){});
+  }
+  refresh();
+  setInterval(refresh, 3000);
 })();
 </script></body></html>`;
 
