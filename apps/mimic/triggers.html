@@ -15,13 +15,50 @@
   }
   #alert.show{ opacity:1; animation:pop .4s ease-out; }
   @keyframes pop{ 0%{transform:scale(0.7)} 60%{transform:scale(1.08)} 100%{transform:scale(1)} }
+  /* Drag bar — visible only when UNLOCKED so this centered alert box can be
+     repositioned. Pinned to the top of the window. */
+  #dragbar{display:none;position:fixed;top:0;left:0;right:0;
+    align-items:center;justify-content:space-between;gap:6px;
+    padding:4px 8px;background:rgba(31,111,235,0.85);color:#fff;font-size:10px;
+    -webkit-app-region:drag;user-select:none}
+  body.unlocked #dragbar{display:flex}
+  body.unlocked{outline:2px solid rgba(31,111,235,0.7);outline-offset:-2px}
+  body.unlocked #placeholder{display:block}
+  #placeholder{display:none;color:rgba(255,255,255,0.5);font-size:13px}
+  #lockbtn{-webkit-app-region:no-drag;cursor:pointer;background:#0e1116;
+    border:1px solid rgba(255,255,255,0.3);border-radius:4px;color:#fff;
+    font-size:10px;padding:2px 7px}
+  #lockbtn:hover{background:#1a2230}
+  .compass{display:inline-block;font-size:13px;line-height:1;cursor:move;
+    animation:nudge 1.4s ease-in-out infinite}
+  @keyframes nudge{
+    0%,100%{transform:translate(0,0)}
+    25%{transform:translate(0,-1.5px)}
+    50%{transform:translate(1.5px,0)}
+    75%{transform:translate(0,1.5px)}
+  }
 </style></head>
 <body>
+  <div id="dragbar">
+    <span><span class="compass">✥</span> trigger alerts appear here — drag to move</span>
+    <button id="lockbtn">🔒 Lock here</button>
+  </div>
+  <div id="placeholder">⚡ trigger alert box</div>
   <div id="alert"></div>
 <script>
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  // Lock/unlock from main — show the drag bar when unlocked.
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => {
+      document.body.classList.toggle('unlocked', !locked);
+    });
+  }
+  document.getElementById('lockbtn') && (document.getElementById('lockbtn').onclick = () => {
+    try { window.mimic.setOverlaysLocked(true); } catch (e) {}
+  });
 
   let lastTs = 0;            // newest fire ts we've already handled
   let primed = false;        // skip the backlog on first poll
