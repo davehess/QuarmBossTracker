@@ -802,6 +802,31 @@ function confirmPlayer(name) {
 // petNameLower → Set<ownerName>  (one-to-many: charm pets can cycle through owners)
 const knownPetOwners = new Map();
 
+// ── Charm-pet tick tracker (module-level, survives encounter resets) ───────
+// Knowledge from the owner (2026-06-02):
+//   - Each mob has its own 6-second "mob tick" anchored to its spawn time.
+//   - Charmed pets re-roll their charm check on the mob's OWN tick (not
+//     server tick).
+//   - A charm BREAK fires on that mob tick → the break event itself IS a
+//     fresh anchor for the 6s cycle.
+// We track each pet's last known tick anchor + current charm state; the
+// dashboard "Charm Pets" panel renders a 6s countdown so enchanters can
+// see the next check coming and re-cast pre-emptively.
+//   petLower -> { pet, owner, last_tick_at, last_event ('land'|'break'),
+//                 is_active }
+const _charmTickTracker = new Map();
+function _bumpCharmTick(pet, owner, eventKind, atMs) {
+  if (!pet) return;
+  const k = String(pet).toLowerCase();
+  _charmTickTracker.set(k, {
+    pet,
+    owner: owner || null,
+    last_tick_at: atMs || Date.now(),
+    last_event: eventKind,         // 'land' or 'break'
+    is_active: eventKind === 'land',
+  });
+}
+
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
   // Skip level 1-4 characters — these are almost always traders parked in EC/WC.
@@ -1034,6 +1059,7 @@ class EncounterBuilder {
       const petKey = String(event.pet || '').toLowerCase();
       if (!petKey) return;
       const open = this._activeCharms?.get(petKey);
+      const ownerWas = open ? open.owner : (_charmTickTracker.get(petKey)?.owner || null);
       if (open) {
         open.ended_at = this.lastEvent || open.started_at;
         open.end_reason = 'charm_break';
@@ -1041,6 +1067,10 @@ class EncounterBuilder {
         this.charmSessions.push(open);
         this._activeCharms.delete(petKey);
       }
+      // The break event lands ON the mob's tick — fresh anchor for the 6s
+      // cycle. Even when there was no open session (e.g. enchanter joined
+      // mid-charm), we still want to begin tracking ticks now.
+      _bumpCharmTick(event.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
       return;
     }
 
@@ -1093,6 +1123,9 @@ class EncounterBuilder {
           ended_at:      null,
           duration_sec:  null,
         });
+        // Charm landed → that moment is the mob's tick; start the 6s
+        // countdown on the global tracker.
+        _bumpCharmTick(event.pet, owner, 'land', startTs);
       }
       return;
     }
@@ -2507,6 +2540,24 @@ function _serializeForDashboard() {
     updateAvailable:    stats.updateAvailable,
     latestAgentVersion: stats.latestAgentVersion,
     currentEncounterThreat: stats.currentEncounterThreat,
+    // Charm-pet tick tracker — array form so the dashboard can render
+    // a 6s countdown to next mob tick / next charm check. Sorted most-
+    // recently-updated first; capped to 12 to keep the payload small.
+    charmPets: (() => {
+      const arr = [];
+      for (const [key, info] of _charmTickTracker.entries()) {
+        arr.push({
+          key,
+          pet: info.pet,
+          owner: info.owner,
+          last_tick_at: info.last_tick_at,
+          last_event:   info.last_event,
+          is_active:    info.is_active,
+        });
+      }
+      arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
+      return arr.slice(0, 12);
+    })(),
     characterInventories:   stats.characterInventories,
     hiddenLoadoutChars:     [...(_optinState.hiddenLoadoutChars || [])],
     activeBandolier:        stats.activeBandolier,
@@ -4368,6 +4419,71 @@ async function dismissTopDamage(key) {
   var menuObs = new MutationObserver(injectIntoMenu);
   var menu = document.getElementById("wpPanelMenu");
   if (menu) menuObs.observe(menu, { attributes: true, attributeFilter: ["style"] });
+})();
+
+// ── Charm Pets panel (6-second mob-tick countdowns) ─────────────────────────
+// Owner-supplied knowledge: charm checks fire on the mob's OWN 6s tick, and
+// a charm break is itself a fresh anchor for that cycle. The agent tracks
+// the last-tick anchor per pet; this panel renders a 1Hz countdown showing
+// the next mob tick + a flash when one is imminent (<1s).
+(function(){
+  var TICK_MS = 6000;
+  function makeCard(){
+    var c = document.createElement("div");
+    c.id = "wpCharmCard";
+    c.className = "card";
+    c.style.display = "none";
+    c.innerHTML = "<h2>🪄 Charm Pets <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · 6s mob-tick check</span></h2><div class=card-body></div>";
+    return c;
+  }
+  var card = makeCard();
+  function ensureCard(){
+    if (document.getElementById("wpCharmCard")) return;
+    var dash = document.getElementById("dash");
+    if (!dash) return;
+    var grid = dash.querySelector(".grid");
+    var host = grid || dash;
+    host.insertBefore(card, host.firstChild);
+  }
+  function render(pets){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    if (!pets || pets.length === 0){
+      card.style.display = "none";
+      return;
+    }
+    card.style.display = "block";
+    var now = Date.now();
+    var html = "<table><tr><th>Pet</th><th>Owner</th><th class=num>Next tick</th><th>State</th></tr>";
+    pets.forEach(function(p){
+      var since = Math.max(0, now - (p.last_tick_at || now));
+      var ticksPassed = Math.floor(since / TICK_MS);
+      var nextAt = (p.last_tick_at || now) + (ticksPassed + 1) * TICK_MS;
+      var msToNext = Math.max(0, nextAt - now);
+      var sec = (msToNext / 1000).toFixed(1);
+      var imminent = msToNext < 1000;
+      var stateColor = p.is_active ? "var(--green)" : "var(--orange)";
+      var stateText  = p.is_active ? (p.last_event === "land" ? "charmed" : "charmed (post-break)") : "broken";
+      var petName = (p.pet || "?").replace(/_/g, " ");
+      var rowStyle = imminent ? " style=background:rgba(214,153,34,0.18)" : "";
+      html += "<tr" + rowStyle + "><td class=pet>" + petName + "</td><td class=name>" + (p.owner || "?") + "</td><td class=num>" + sec + "s</td><td style='color:" + stateColor + "'>" + stateText + "</td></tr>";
+    });
+    html += "</table>";
+    body.innerHTML = html;
+  }
+  var lastPets = [];
+  function fetchPets(){
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      lastPets = (s && s.charmPets) || [];
+      ensureCard();
+      render(lastPets);
+    }).catch(function(){});
+  }
+  // Render at 1Hz from cache (so the countdown ticks smoothly) + refetch
+  // every 3s for state changes.
+  setInterval(function(){ render(lastPets); }, 1000);
+  setInterval(fetchPets, 3000);
+  fetchPets();
 })();
 </script></body></html>`;
 
