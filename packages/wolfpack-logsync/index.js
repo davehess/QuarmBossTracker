@@ -2817,9 +2817,22 @@ function renderDash(s) {
     h += '</table>';
   }
   h += '</div>';
-  // Watched logs
-  h += '<div class="card"><h2>Watched Logs (' + (s.watchedLogs?.length||0) + ')</h2><table>';
-  const recent = [...(s.watchedLogs||[])].sort((a,b)=>(b.lastSeen||0)-(a.lastSeen||0)).slice(0,15);
+  // Watched logs — collapse to one row per character (most-recent lastSeen
+  // wins) so an install that tails many log files for the same char
+  // doesn't render as 51 duplicate Hitya rows. The full file count still
+  // shows in the header for context.
+  const _wls = s.watchedLogs || [];
+  const _byChar = new Map();
+  for (const w of _wls) {
+    const k = (w.character || '?').toLowerCase();
+    const cur = _byChar.get(k);
+    if (!cur || (w.lastSeen || 0) > (cur.lastSeen || 0)) _byChar.set(k, w);
+  }
+  const _uniqueChars = _byChar.size;
+  h += '<div class="card"><h2>Watched Logs (' + _uniqueChars +
+       (_wls.length > _uniqueChars ? ' chars · ' + _wls.length + ' files' : '') +
+       ')</h2><table>';
+  const recent = [..._byChar.values()].sort((a,b)=>(b.lastSeen||0)-(a.lastSeen||0)).slice(0,15);
   for (const w of recent) {
     const hot = w.lastSeen && (Date.now()-w.lastSeen) < 3600000;
     h += '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') +
@@ -4090,8 +4103,19 @@ function renderDashboard() {
     }
   }
   right.push('');
-  right.push(`${C.dim}Watching ${stats.watchedLogs.length} log file(s):${C.reset}`);
-  const recent = [...stats.watchedLogs].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 8);
+  // Dedup by character so chars with many log files (post-Mimic, Mimic
+  // tails every eqlog_*_pq.proj.txt in the EQ dir) collapse to one row.
+  const _byCharCli = new Map();
+  for (const w of stats.watchedLogs) {
+    const k = (w.character || '?').toLowerCase();
+    const cur = _byCharCli.get(k);
+    if (!cur || (w.lastSeen || 0) > (cur.lastSeen || 0)) _byCharCli.set(k, w);
+  }
+  const _suffix = stats.watchedLogs.length > _byCharCli.size
+    ? ` (${stats.watchedLogs.length} files)`
+    : '';
+  right.push(`${C.dim}Watching ${_byCharCli.size} char(s)${_suffix}:${C.reset}`);
+  const recent = [..._byCharCli.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 8);
   for (const w of recent) {
     const hot = (Date.now() - (w.lastSeen || 0)) < 60 * 60 * 1000;
     const dot = hot ? `${C.green}*${C.reset}` : ` `;
