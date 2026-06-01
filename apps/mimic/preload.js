@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('mimic', {
   setTellsMode:    (mode) => ipcRenderer.invoke('set-tells-mode', mode),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
+  openExternal:    (url)  => ipcRenderer.invoke('open-external', url),
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

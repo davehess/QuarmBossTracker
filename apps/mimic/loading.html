@@ -171,13 +171,19 @@
 
   <div id="diag" class="diag">
     <h3>⚠ Engine didn't come up</h3>
-    <p id="diagSummary">The parser engine failed to bind to its port within 40 seconds. Last log lines below — paste these to me if you're not sure what happened.</p>
+    <p id="diagSummary">The parser engine failed to bind to its port within 40 seconds. Last log lines below — paste these to an officer if you're not sure what happened.</p>
     <pre id="diagLog">(no log captured yet)</pre>
     <div class="diag-row">
       <button id="diagRetry">Retry boot</button>
+      <button id="diagDownload">⬇ Download latest Mimic</button>
       <button id="diagCopy" class="ghost">Copy log to clipboard</button>
       <button id="diagDashboard" class="ghost">Open dashboard anyway</button>
     </div>
+    <p style="margin-top:10px;font-size:10px;color:#6b7280">
+      A newer beta probably has the fix. Reinstall over your existing copy —
+      settings + token are preserved. Direct link:
+      <a href="#" id="diagDownloadLink" style="color:#58a6ff">wolfpack.quest/mimic</a>
+    </p>
   </div>
 
 </div>
@@ -294,6 +300,13 @@
       }).catch(() => { c.textContent = '✕ copy failed'; });
     };
     const od = $('diagDashboard'); if (od) od.onclick = () => openDashboard();
+    const dl = $('diagDownload'); if (dl) dl.onclick = () => {
+      try { window.mimic.openExternal('https://wolfpack.quest/mimic'); } catch (_) {}
+    };
+    const dll = $('diagDownloadLink'); if (dll) dll.onclick = (e) => {
+      e.preventDefault();
+      try { window.mimic.openExternal('https://wolfpack.quest/mimic'); } catch (_) {}
+    };
   }, 0);
 
   // ── Hydrate config + wire cards ──────────────────────────────────────────

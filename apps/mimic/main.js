@@ -605,6 +605,17 @@ ipcMain.handle('open-dashboard', () => {
   }
   return true;
 });
+// Open an external URL in the OS default browser. Allowlist to wolfpack.quest
+// and the GitHub repo so a compromised renderer can't open arbitrary links.
+ipcMain.handle('open-external', (_e, url) => {
+  if (typeof url !== 'string') return false;
+  if (!/^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker)/i.test(url)) {
+    appendAgentLog(`[mimic] refused open-external: ${url}\n`);
+    return false;
+  }
+  shell.openExternal(url);
+  return true;
+});
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); return true; });
 ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   const n = Math.max(1, Math.min(500, lines || 80));
