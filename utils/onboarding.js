@@ -76,6 +76,9 @@ const CHANGELOGS = {
   '2.6.4': [
     'Parse-card extras (data starts collecting now; display lights up after the next agent push): boss self-heal totals (Lady Vox CH and the like) will show as `27.1k (+10k healed)` on kill cards, and Feral Avatar / Savagery receives will give per-fight `FE×3 SAV×2` badges next to player names plus a totals strip on the `/fun` page.',
   ],
+  '2.6.5': [
+    'OpenDKP sync now runs every 30 min (was 6h) so the **/parses Tonight** panel reflects in-progress raid attendance as ticks come in. Web also adds pattern-based pet detection so wizard familiars and similar pets stop inflating the "Unknown" bucket on the Damage-by-class chart.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

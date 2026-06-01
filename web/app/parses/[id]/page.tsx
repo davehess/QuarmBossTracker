@@ -199,7 +199,22 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     );
   }
   const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date } = data;
-  const isPet = (name: string) => petSet.has(name.toLowerCase());
+  // Pet detection: explicit pet_names table first, then a name-pattern
+  // fallback for pets we don't track by name yet. Wizard familiars
+  // ("X's familiar", generic "familiar") and the "an air/earth/fire/water
+  // elemental"-style pets generate a lot of distinct attacker rows that
+  // otherwise inflate the "Unknown" class bucket on big fights. Patterns
+  // are anchored to phrasings that real player names don't match
+  // (lowercase article prefixes + the word "familiar" itself).
+  const looksLikePet = (lower: string): boolean => (
+    /\bfamiliar\b/.test(lower) ||
+    /^an? (air|earth|fire|water|undead) elemental\b/.test(lower) ||
+    /^a (sentient|skeletal|spectral|swarming) /.test(lower)
+  );
+  const isPet = (name: string) => {
+    const lower = name.toLowerCase();
+    return petSet.has(lower) || looksLikePet(lower);
+  };
 
   const bossName = cleanBossName(enc.eqemu_npc_types?.name);
   const bossId   = enc.npc_id;
