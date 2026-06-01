@@ -8178,7 +8178,17 @@ async function main() {
 
   // One encounter builder per log file (per character)
   const builders = args.logs.map(logPath => {
-    const character = args.flags.character || characterFromFilename(logPath) || 'unknown';
+    // Per-file character: the filename (eqlog_<Name>_pq.proj.txt) is
+    // authoritative. A single global --character override must NOT be smeared
+    // across every log when tailing multiple files — doing so mislabeled every
+    // watched log as the main (e.g. all "Hitya") AND made the chat parser treat
+    // each alt's own "You say to your guild" line as the main, double-posting
+    // guild chat under the wrong speaker. Use --character only as a fallback,
+    // and only when there's a single log for it to describe.
+    const fromName  = characterFromFilename(logPath);
+    const character = fromName
+      || (args.logs.length === 1 ? args.flags.character : null)
+      || 'unknown';
     // Register this log in the dashboard's watched list. Seed lastSeen from
     // file mtime so the dashboard shows useful "ago" times immediately —
     // without this seed, every log shows '?' until a fresh line arrives,

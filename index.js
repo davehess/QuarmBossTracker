@@ -2412,9 +2412,21 @@ const http = require('http');
 // aren't suppressed.
 const CHAT_DEDUP_WINDOW_MS = 60_000;
 const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
+// Relay-only dedup. The same in-game line captured by two different uploaders
+// can arrive with DIFFERENT speaker attribution (self "You say to your guild"
+// vs third-person "Canopy tells the guild", or a multi-log mis-attribution) —
+// so the speaker-keyed dedup above sees two distinct keys and double-posts to
+// Discord. This text-only window collapses the relay POST regardless of who it
+// was attributed to. It deliberately does NOT gate the Supabase mirror, which
+// keeps every per-speaker perspective for CH-chain / attribution analysis.
+// Agents flush chat ~every 5s, so 12s absorbs cross-agent arrival jitter while
+// still letting a genuinely distinct later repeat through.
+const CHAT_RELAY_DEDUP_WINDOW_MS = 12_000;
+const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
 setInterval(() => {
-  const cutoff = Date.now() - CHAT_DEDUP_WINDOW_MS;
-  for (const [k, v] of _chatDedup) if (v < cutoff) _chatDedup.delete(k);
+  const now = Date.now();
+  for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
+  for (const [k, v] of _chatRelayDedup) if (v < now - CHAT_RELAY_DEDUP_WINDOW_MS) _chatRelayDedup.delete(k);
 }, 10_000);
 
 // ── Era boundaries for chat thread routing ─────────────────────────────────
@@ -2617,6 +2629,14 @@ async function _handleAgentChat(req, res) {
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
 
+    // Relay-only dedup keyed on text alone (ignores speaker) — see the
+    // _chatRelayDedup comment. If another uploader already relayed this exact
+    // line within the window, still record the Supabase perspective below but
+    // skip the duplicate Discord post.
+    const relayKey      = `${channel}|${normText}`;
+    const alreadyRelayed = _chatRelayDedup.has(relayKey);
+    _chatRelayDedup.set(relayKey, Date.now());
+
     // Stage for chat_messages upsert. Same shape as historical_chat path so
     // the table has one canonical row format regardless of ingestion route.
     supabaseChatRows.push({
@@ -2637,6 +2657,10 @@ async function _handleAgentChat(req, res) {
     const whoEntry = getWhoEntry(speaker) || uploadedWho || null;
     const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
     const whoTag   = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
+
+    // Another uploader already relayed this exact line to Discord within the
+    // window — corpus row was recorded above; skip the duplicate post.
+    if (alreadyRelayed) continue;
 
     try {
       const ch = await client.channels.fetch(channelId).catch(() => null);
