@@ -740,8 +740,14 @@ async function syncCharacters() {
     if (c?.CharacterId && c?.Name) idToName.set(c.CharacterId, c.Name);
   }
 
+  // Keep Deleted=true characters in the upsert. OpenDKP keeps historical
+  // loot pointing at deleted CharacterIds; dropping them here used to make
+  // 45% of auction winner_character_ids unresolvable, which made the loot
+  // leaderboard fall through to raw bidder strings. The deleted flag lets
+  // live-roster views filter them back out (WHERE NOT deleted) while
+  // preserving name resolution for historic awards.
   const rows = chars
-    .filter(c => c && c.Name && !c.Deleted)
+    .filter(c => c && c.Name)
     .map(c => {
       const isRoot = c.ParentId === 0 || c.ParentId == null;
       const mainName = isRoot ? c.Name : (idToName.get(c.ParentId) || null);
@@ -754,6 +760,7 @@ async function syncCharacters() {
         main_name:  mainName,
         opendkp_id: Number.isFinite(c.CharacterId) ? c.CharacterId : null,
         active:     c.Active === 1 || c.Active === true,
+        deleted:    c.Deleted === 1 || c.Deleted === true,
         updated_at: nowIso,
       };
     });
