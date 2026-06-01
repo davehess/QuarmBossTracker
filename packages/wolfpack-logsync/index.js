@@ -2642,6 +2642,10 @@ tr:hover td { background:#1f242c }
 .wp-server-overlay .meta { color:var(--dim); font-size:10px; margin-bottom:4px; }
 .wp-server-overlay table { font-size:12px; }
 .wp-bid-block { margin:8px 0; border-top:1px solid var(--border); padding-top:6px; }
+.wp-drag-handle { cursor:grab; color:var(--dim); margin-right:6px; user-select:none; }
+.wp-drag-handle:hover { color:var(--blue); }
+.card.wp-dragging { opacity:0.45; }
+.card.wp-drop-target { box-shadow:0 0 0 2px var(--blue) inset; }
 /* Overlay mode — when the dashboard is loaded with ?overlay=<panelKey>,
    strip all chrome and show just the target panel as a transparent overlay
    tile. Reuses the live render loop for free updates. */
@@ -4164,6 +4168,106 @@ async function dismissTopDamage(key) {
   }
   refresh();
   setInterval(refresh, 5000);
+})();
+
+// ── Increments 2b + 2e — drag-to-reorder + persisted home order ─────────────
+// Pure HTML5 drag-and-drop on each .card inside the Dashboard section. A grip
+// (✥) is prepended to each <h2>; dragging reorders cards within the section
+// and the resulting order is persisted to localStorage keyed by resolution
+// signature (matches the Mimic overlay rule — different monitor layout
+// resets to default).
+//
+// Scoped to #dash only so the dense tabs (Tanks / Healers / DEEPS / Pets /
+// Info / Opt-in) keep their server-driven order — those are denser layouts
+// where reordering would confuse more than help in this first slice.
+(function(){
+  var SIG_KEY   = "wpDashOrderSig";
+  var ORDER_KEY = "wpDashOrder";
+  function sig(){
+    return (window.screen ? (window.screen.width + "x" + window.screen.height) : "?");
+  }
+  function loadOrder(){
+    try {
+      if (localStorage.getItem(SIG_KEY) !== sig()) return null;
+      return JSON.parse(localStorage.getItem(ORDER_KEY) || "null");
+    } catch (e) { return null; }
+  }
+  function saveOrder(arr){
+    try { localStorage.setItem(SIG_KEY, sig()); localStorage.setItem(ORDER_KEY, JSON.stringify(arr)); } catch (e) {}
+  }
+  function panelKey(card){
+    var h = card.querySelector("h2");
+    var t = h ? (h.textContent || "") : "";
+    t = t.split("(")[0].split("—")[0].split("·")[0];
+    return t.trim().toLowerCase();
+  }
+  function applyOrder(host){
+    var saved = loadOrder();
+    if (!saved || !Array.isArray(saved)) return;
+    // Map key → card
+    var byKey = {};
+    var cards = Array.prototype.slice.call(host.querySelectorAll(":scope > .card, :scope > .grid > .card"));
+    cards.forEach(function(c){ var k = panelKey(c); if (k) byKey[k] = c; });
+    // Walk saved order; reposition cards that exist now.
+    saved.forEach(function(k){
+      var c = byKey[k];
+      if (!c) return;
+      // Append to host's grid if present (keeps the .grid container intact),
+      // otherwise to host directly.
+      var grid = c.closest(".grid") || host;
+      grid.appendChild(c);
+    });
+  }
+  function decorateCard(card){
+    var h = card.querySelector("h2");
+    if (!h || h.querySelector(".wp-drag-handle")) return;
+    var grip = document.createElement("span");
+    grip.className = "wp-drag-handle";
+    grip.textContent = "✥";
+    grip.title = "Drag to reorder (drop where you want this panel)";
+    grip.setAttribute("draggable", "true");
+    h.insertBefore(grip, h.firstChild);
+    // Drag origin
+    grip.addEventListener("dragstart", function(e){
+      try { e.dataTransfer.setData("text/plain", panelKey(card)); e.dataTransfer.effectAllowed = "move"; } catch (err) {}
+      card.classList.add("wp-dragging");
+    });
+    grip.addEventListener("dragend", function(){
+      card.classList.remove("wp-dragging");
+      document.querySelectorAll(".wp-drop-target").forEach(function(el){ el.classList.remove("wp-drop-target"); });
+    });
+    // Drag target
+    card.addEventListener("dragover", function(e){
+      if (!document.querySelector(".wp-dragging")) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = "move"; } catch (err) {}
+      card.classList.add("wp-drop-target");
+    });
+    card.addEventListener("dragleave", function(){ card.classList.remove("wp-drop-target"); });
+    card.addEventListener("drop", function(e){
+      e.preventDefault();
+      card.classList.remove("wp-drop-target");
+      var moving = document.querySelector(".wp-dragging");
+      if (!moving || moving === card) return;
+      // Insert moving BEFORE the drop target.
+      card.parentNode.insertBefore(moving, card);
+      // Persist new order — collect every .card under #dash (incl grids).
+      var dash = document.getElementById("dash"); if (!dash) return;
+      var allCards = Array.prototype.slice.call(dash.querySelectorAll(".card"));
+      var order = allCards.map(panelKey).filter(Boolean);
+      saveOrder(order);
+    });
+  }
+  function decorate(){
+    var dash = document.getElementById("dash");
+    if (!dash) return;
+    Array.prototype.slice.call(dash.querySelectorAll(".card")).forEach(decorateCard);
+    applyOrder(dash);
+  }
+  var obs = new MutationObserver(decorate);
+  var dash = document.getElementById("dash");
+  if (dash) obs.observe(dash, { childList: true, subtree: true });
+  decorate();
 })();
 </script></body></html>`;
 
