@@ -2689,44 +2689,11 @@ function _isPvpDupe(b) {
   return false;
 }
 
-// Cooldown for the informational @PVP ping on non-WP deaths. The message
-// always posts; the @PVP mention only fires once per N minutes so a flurry
-// of contested-zone deaths doesn't spam everyone with the role.
-const PVP_FYI_PING_COOLDOWN_MS = 10 * 60 * 1000;
-let _lastPvpFyiPingAt = 0;
-function _shouldFireFyiPing() {
-  const now = Date.now();
-  if (now - _lastPvpFyiPingAt < PVP_FYI_PING_COOLDOWN_MS) return false;
-  _lastPvpFyiPingAt = now;
-  return true;
-}
-
-// Raid-window check — fyi-pings on non-WP deaths are silenced during the
-// raid window (Sun/Wed/Thu, 8:30 PM – 11:30 PM Eastern). Raiders are busy
-// with the boss; an Old Guk NPC kill against a random Mayhem player is
-// noise they don't want piped to their phone mid-pull. WP-death backup
-// pings ignore this — those are urgent regardless of timing.
-function _isInRaidWindow(now = new Date()) {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      weekday: 'short',
-      hour: 'numeric',
-      minute: 'numeric',
-      hour12: false,
-    }).formatToParts(now);
-    const get = (t) => parts.find(p => p.type === t)?.value;
-    const day = get('weekday'); // 'Sun', 'Mon', 'Tue', ...
-    const hh  = parseInt(get('hour'),   10);
-    const mm  = parseInt(get('minute'), 10);
-    if (Number.isNaN(hh) || Number.isNaN(mm)) return false;
-    const minOfDay = hh * 60 + mm;
-    const RAID_DAYS = new Set(['Sun', 'Wed', 'Thu']);
-    const START = 20 * 60 + 30; // 8:30 PM
-    const END   = 23 * 60 + 30; // 11:30 PM
-    return RAID_DAYS.has(day) && minOfDay >= START && minOfDay < END;
-  } catch { return false; }
-}
+// Note: earlier versions had a rate-limited "@PVP fyi-ping" on non-WP
+// deaths plus a raid-window suppressor. Per Dant's feedback ("don't like
+// getting a ping every kill"), all non-WP-involvement events now post
+// silently as plain death notices. Pings are reserved for Wolf Pack kills
+// + Wolf Pack deaths only.
 
 async function _handleAgentPvp(req, res) {
   const expected = process.env.WOLFPACK_AGENT_TOKEN;
@@ -2825,8 +2792,15 @@ async function _handleAgentPvp(req, res) {
       const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
       if (!ch) continue;
 
-      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME;  // WP member got a kill
-      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME;  // WP member died
+      // True PvP requires BOTH sides to have a real player guild. Druzzil Ro
+      // broadcasts NPC kills with empty/null/<null> victim guilds — those
+      // should never trigger AWROOOO celebrations or backup-requested pings
+      // even when a Wolf Pack member is the killer (e.g. "Adiwen killed
+      // Lord of Ire of <null>"). The plain death-notice fallback handles
+      // them as informational posts.
+      const _hasRealGuild = (g) => typeof g === 'string' && g.length > 0 && g.toLowerCase() !== 'null' && g !== '<>' && g.toLowerCase() !== '<null>';
+      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME && _hasRealGuild(victimGuild);
+      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME && _hasRealGuild(killerGuild);
 
       // Record the kill to the PvP ledger (player-vs-player, WP involved).
       if (killType === 'pvp' && (isWpKill || isWpDeath) && killer && victim) {
@@ -2862,17 +2836,13 @@ async function _handleAgentPvp(req, res) {
         const mention = pvpRole ? `<@&${pvpRole.id}> ` : '';
         content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
       } else {
-        // NPC kill or other-guild kill — informational. Still worth a
-        // @PVP heads-up outside raid hours since it means PvP-relevant
-        // activity is happening somewhere. Suppressed entirely during
-        // raid (Sun/Wed/Thu 8:30-11:30 PM Eastern — raiders are busy);
-        // outside raid, rate-limited to 1 ping per 10 min so flurries
-        // of contested-zone deaths don't spam the role.
-        const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const inRaid  = _isInRaidWindow();
-        const allowed = pvpRole && !inRaid && _shouldFireFyiPing();
-        const mention = allowed ? `<@&${pvpRole.id}> ` : '';
-        content = `${mention}☠️ ${text}`;
+        // NPC kill or other-guild kill — informational only, NO @PVP
+        // mention regardless of raid window or cooldown. Pings are
+        // reserved for events where Wolf Pack is actually involved
+        // (our kill or our death); anything else is just a death notice
+        // people can scroll past. ("Hmm don't like getting a ping every
+        // kill" — Dant, 2026-06-01)
+        content = `☠️ ${text}`;
       }
 
       const sent = await ch.send({ content });

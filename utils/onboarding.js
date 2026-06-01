@@ -82,6 +82,9 @@ const CHANGELOGS = {
   '2.6.6': [
     'Charm sessions: every charm landing (Mistmoore glyphed familiars, etc.) now starts a tracked session — pet name + owner + total damage + duration. Dire Charm casts flag the next landing as a DC session. The `/fun` page gets a new "Longest Dire Charm" card for bragging rights.',
   ],
+  '2.6.7': [
+    '`@PVP` pings now ONLY fire when Wolf Pack is actually involved (our kill or our death). Non-WP deaths in PvP-zone broadcasts post as plain death notices with no role mention, raid hours or not. Also fixed: a Wolf Pack member killing an NPC (e.g. "Adiwen killed Lord of Ire of <null>") no longer triggers the AWROOOO PvP-celebration path — NPC victims with no real guild post as informational notices.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular
