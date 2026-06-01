@@ -2682,30 +2682,47 @@ async function _handleAgentChat(req, res) {
 //   npc (or other)                 → plain death notice
 const WP_GUILD_NAME = process.env.PVP_GUILD_NAME || 'Wolf Pack';
 
-// Dedup cache: when multiple parsers see the same Druzzil Ro broadcast,
-// each uploads it independently. One Mimic install also tails MULTIPLE log
-// files from the same box (a player's main + alts), so the same server-wide
-// broadcast is captured once per log → uploaded several times within the
-// same second or a second apart.
+// Dedup cache: when multiple LIVE parsers (different machines) see the same
+// Druzzil Ro broadcast, each uploads it independently within ~1-2s of each
+// other. We collapse those to one Discord post + one ledger row.
 //
-// Key on the NORMALIZED broadcast TEXT only — NOT the timestamp. The two
-// perspectives of one kill can have ts a second apart (client clock skew /
-// parse timing), which a second-granular key let slip through (the visible
-// "posted twice" bug). The 5-min TTL bounds it: the identical kill text
-// ("X killed Y in Z") doesn't legitimately repeat within 5 minutes.
+// Key = normalized text + a coarse 15-second time bucket. The bucket is what
+// keeps DISTINCT kills apart: two observers of ONE kill land in the same
+// bucket (deduped), but the same killer killing the same victim in the same
+// zone on a DIFFERENT day is many buckets away (kept). This is the fix for
+// the regression where a pure text-only key collapsed a backfill's worth of
+// identical-text historical kills into one row (Malthur's "1 kill" bug).
+//
+// CRITICAL: backfill uploads skip this entirely (see _isPvpDupe). A backfill
+// replays months of kills in one batch — wall-clock Date.now() bucketing is
+// meaningless for them, and the pvp_kills DB dedup_key (which includes the
+// kill's real second-granular timestamp) already guarantees idempotency.
 const _recentPvpBroadcasts = new Map();
-function _pvpDedupKey(b) {
+const PVP_DEDUP_BUCKET_MS = 15_000;
+function _pvpNorm(b) {
   return String(b?.text || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
+function _pvpBucket(b) {
+  const tms = b?.ts ? new Date(b.ts).getTime() : Date.now();
+  return Math.floor(tms / PVP_DEDUP_BUCKET_MS);
+}
 function _isPvpDupe(b) {
+  // Backfill is idempotent via the DB dedup_key (real timestamp). Never let
+  // the in-memory wall-clock dedup collapse distinct historical kills.
+  if (b?.backfill) return false;
   const now = Date.now();
   for (const [k, exp] of _recentPvpBroadcasts) {
     if (exp < now) _recentPvpBroadcasts.delete(k);
   }
-  const key = _pvpDedupKey(b);
-  if (!key) return false;
-  if (_recentPvpBroadcasts.has(key)) return true;
-  _recentPvpBroadcasts.set(key, now + 5 * 60_000);
+  const norm = _pvpNorm(b);
+  if (!norm) return false;
+  const bucket = _pvpBucket(b);
+  // Check the current bucket AND its neighbors so two observers whose
+  // timestamps straddle a 15s boundary still collapse to one.
+  for (const nb of [bucket - 1, bucket, bucket + 1]) {
+    if (_recentPvpBroadcasts.has(`${nb}|${norm}`)) return true;
+  }
+  _recentPvpBroadcasts.set(`${bucket}|${norm}`, now + 5 * 60_000);
   return false;
 }
 
