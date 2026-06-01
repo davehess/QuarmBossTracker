@@ -4585,6 +4585,194 @@ async function dismissTopDamage(key) {
   refresh();
   setInterval(refresh, 3000);
 })();
+
+// ── 💸 Live Bidding panel ──────────────────────────────────────────────────
+// Pulls active OpenDKP auctions via /api/server/auctions (bot passthrough),
+// renders a list with bid input + Place Bid button per row, and shows the
+// caller's currently-placed bids underneath. Wishlisted items get a star.
+// The character dropdown is populated from watchedLogs (your uploader +
+// any alts whose logs you are tailing — those are the chars you can bid on
+// because OpenDKP needs their CharacterId).
+(function(){
+  var lastChar = null;        // last character used (sticks across refreshes)
+  function makeCard(){
+    var c = document.createElement("div");
+    c.id = "wpBiddingCard";
+    c.className = "card";
+    c.style.display = "none";
+    c.innerHTML = "<h2>💸 Live Bidding <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · OpenDKP auctions</span></h2><div class=card-body><div class=dim style=padding:6px>loading…</div></div>";
+    return c;
+  }
+  var card = makeCard();
+  function ensure(){
+    if (document.getElementById("wpBiddingCard")) return;
+    var dash = document.getElementById("dash"); if (!dash) return;
+    var grid = dash.querySelector(".grid"); var host = grid || dash;
+    host.insertBefore(card, host.firstChild);
+  }
+  function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
+  function looksLikeCharacter(name){
+    if (!name) return false;
+    return /^[A-Z][a-z]+$/.test(String(name).trim());
+  }
+  function pickDefaultChar(wls){
+    if (lastChar) return lastChar;
+    for (var i = 0; i < (wls || []).length; i++){
+      var c = (wls[i] && wls[i].character) || "";
+      if (looksLikeCharacter(c)) return c;
+    }
+    return null;
+  }
+  function renderEmpty(label){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    body.innerHTML = "<div class=dim style=padding:6px>" + label + "</div>";
+  }
+  function endsInLabel(ts){
+    if (!ts) return "";
+    var t = Date.parse(ts);
+    if (!isFinite(t)) return "";
+    var ms = t - Date.now();
+    if (ms <= 0) return "<span style=color:var(--orange)>ended</span>";
+    var s = Math.round(ms / 1000);
+    if (s < 60) return "ends in " + s + "s";
+    var m = Math.floor(s / 60);
+    return "ends in " + m + "m " + (s % 60) + "s";
+  }
+  function placeBid(auctionId, character, value, btn){
+    var body = JSON.stringify({ character: character, auction_id: auctionId, value: value });
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+    fetch("/api/server/place-bid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body,
+    }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
+      .then(function(out){
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = out.ok ? "✓ bid" : "✗";
+          btn.title = out.ok ? "bid placed" : (out.body && out.body.error) || "failed";
+          setTimeout(function(){ if (btn) btn.textContent = "Bid"; btn.title = ""; }, 2500);
+        }
+        if (out.ok) fetchAll();
+      })
+      .catch(function(){ if (btn) { btn.disabled = false; btn.textContent = "✗"; } });
+  }
+  function render(state){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    var wls = (state && state.watchedLogs) || [];
+    var chars = [];
+    for (var i = 0; i < wls.length; i++){
+      var c = (wls[i] && wls[i].character) || "";
+      if (looksLikeCharacter(c)) chars.push(c);
+    }
+    if (chars.length === 0){
+      card.style.display = "none";
+      return;
+    }
+    var current = pickDefaultChar(wls);
+    if (!current) { card.style.display = "none"; return; }
+    var auctions = (window.__wpAuctions && window.__wpAuctions.auctions) || [];
+    var myBids   = (window.__wpMyBids   && window.__wpMyBids.bids)        || [];
+    if (auctions.length === 0 && myBids.length === 0){
+      // Hide entirely when nothing is up for bid AND no live bids — keeps
+      // the dashboard quiet outside of loot calls.
+      card.style.display = "none";
+      return;
+    }
+    card.style.display = "block";
+    var html = "";
+    html += "<div style='display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px'>";
+    html += "<span class=dim>bidding as</span>";
+    html += "<select id=wpBidChar style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit'>";
+    for (var j = 0; j < chars.length; j++){
+      var sel = (chars[j] === current) ? " selected" : "";
+      html += "<option value='" + chars[j] + "'" + sel + ">" + chars[j] + "</option>";
+    }
+    html += "</select>";
+    html += "</div>";
+    if (auctions.length === 0){
+      html += "<div class=dim style='padding:4px 0 8px'>no auctions open right now</div>";
+    } else {
+      html += "<table><tr><th>Item</th><th class=num>Top</th><th>Ends</th><th>Bid</th></tr>";
+      for (var k = 0; k < auctions.length; k++){
+        var a = auctions[k];
+        var star = a.wishlisted ? " <span title='on your wishlist' style=color:var(--gold)>★</span>" : "";
+        var top = a.top_bid != null ? fmt(a.top_bid) : "—";
+        var ends = endsInLabel(a.ends_at);
+        var aid = a.auction_id;
+        html += "<tr>";
+        html += "<td class=name>" + (a.item_name || "?") + star + "</td>";
+        html += "<td class=num>" + top + "</td>";
+        html += "<td style=font-size:11px>" + ends + "</td>";
+        html += "<td><input id=wpBidVal_" + aid + " type=number min=1 placeholder='dkp' style='width:60px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:inherit'>";
+        html += " <button id=wpBidBtn_" + aid + " data-aid='" + aid + "' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>Bid</button></td>";
+        html += "</tr>";
+      }
+      html += "</table>";
+    }
+    if (myBids.length > 0){
+      html += "<div class=wp-bid-block><div style='font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px'>your bids</div>";
+      html += "<table><tr><th>Item</th><th>Character</th><th class=num>Value</th><th class=num>Rank</th></tr>";
+      for (var m = 0; m < myBids.length; m++){
+        var b = myBids[m];
+        html += "<tr><td class=name>" + (b.item_name || "?") + "</td><td class=name>" + (b.character || "?") + "</td><td class=num>" + fmt(b.value) + "</td><td class=num>" + (b.rank || "—") + "</td></tr>";
+      }
+      html += "</table></div>";
+    }
+    body.innerHTML = html;
+    // Wire char dropdown
+    var charSel = document.getElementById("wpBidChar");
+    if (charSel){
+      charSel.addEventListener("change", function(){
+        lastChar = charSel.value;
+        fetchAll();
+      });
+    }
+    // Wire bid buttons
+    var btns = card.querySelectorAll("button[data-aid]");
+    for (var n = 0; n < btns.length; n++){
+      (function(btn){
+        btn.addEventListener("click", function(){
+          var aid = btn.getAttribute("data-aid");
+          var input = document.getElementById("wpBidVal_" + aid);
+          var val = input ? parseInt(input.value, 10) : 0;
+          if (!val || val <= 0){ btn.textContent = "?"; setTimeout(function(){ btn.textContent = "Bid"; }, 1500); return; }
+          var who = (document.getElementById("wpBidChar") || {}).value || lastChar;
+          if (!who) return;
+          placeBid(aid, who, val, btn);
+        });
+      })(btns[n]);
+    }
+  }
+  var lastState = null;
+  function fetchState(){
+    return fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      lastState = s; return s;
+    }).catch(function(){ return null; });
+  }
+  function fetchAll(){
+    ensure();
+    fetchState().then(function(s){
+      if (!s) return;
+      var wls = s.watchedLogs || [];
+      var who = pickDefaultChar(wls);
+      if (!who){ card.style.display = "none"; return; }
+      var qs = "?character=" + encodeURIComponent(who);
+      Promise.all([
+        fetch("/api/server/auctions" + qs).then(function(r){ return r.ok ? r.json() : { auctions: [] }; }).catch(function(){ return { auctions: [] }; }),
+        fetch("/api/server/my-bids" + qs).then(function(r){ return r.ok ? r.json() : { bids: [] }; }).catch(function(){ return { bids: [] }; }),
+      ]).then(function(both){
+        window.__wpAuctions = both[0];
+        window.__wpMyBids   = both[1];
+        render(s);
+      });
+    });
+  }
+  fetchAll();
+  setInterval(fetchAll, 5000);
+})();
 </script></body></html>`;
 
 async function _readBody(req, max = 64 * 1024) {
@@ -4675,6 +4863,52 @@ function startWebDashboard(port) {
             res.end(JSON.stringify({ error: 'upstream failed', detail: err.message }));
           });
           upstream.end();
+          return;
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'proxy error', detail: err.message }));
+        }
+      }
+      // POST /api/server/<action> — mutation passthrough. Today this is just
+      // place-bid (live bidding overlay) but keeping the routing generic so
+      // future "do something on the bot" buttons reuse it.
+      if (req.method === 'POST' && req.url.startsWith('/api/server/')) {
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'not connected — set a token in Mimic Settings' }));
+        }
+        try {
+          const action = req.url.substring('/api/server/'.length);
+          const map = { 'place-bid': '/api/agent/place-bid' };
+          const remotePath = map[action];
+          if (!remotePath) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'unknown action', action }));
+          }
+          const body = await _readBody(req);
+          const base = opts.botUrl.replace(/\/api\/agent\/encounter(\?.*)?$/, '');
+          const target = base + remotePath;
+          const u = new URL(target);
+          const mod = u.protocol === 'https:' ? https : http;
+          const upstream = mod.request({
+            method: 'POST', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname,
+            headers: {
+              'Authorization': `Bearer ${opts.token}`,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body || ''),
+              'Accept': 'application/json',
+            },
+          }, (upRes) => {
+            res.writeHead(upRes.statusCode || 502, { 'Content-Type': 'application/json' });
+            upRes.pipe(res);
+          });
+          upstream.on('error', (err) => {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'upstream failed', detail: err.message }));
+          });
+          upstream.end(body || '');
           return;
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'application/json' });

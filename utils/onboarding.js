@@ -94,6 +94,9 @@ const CHANGELOGS = {
   '2.6.10': [
     'Local dashboard panels (Damage, Recent Parses, PvP) get a `🛰 local | 🌐 server` header toggle — click 🌐 to swap to the wolfpack.quest aggregates (last 30 days / lifetime) right in place. Selection persists per panel.',
   ],
+  '2.6.13': [
+    'New **💸 Live Bidding** panel on the local dashboard (and as an overlay). Shows OpenDKP auctions in real time with a one-click bid input, marks items already on your wishlist with a ★, and lists your currently-placed bids underneath so you can keep track when you spread DKP across multiple items.',
+  ],
 };
 
 // Semver-aware ascending compare. "2.5.9" < "2.5.10" the right way (regular

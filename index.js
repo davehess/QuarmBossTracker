@@ -3219,6 +3219,105 @@ async function _handleAgentServerPanel(req, res) {
         items: Array.from(byItem.entries()).map(([id, awards]) => ({ item_id: id, awards })),
       }));
     }
+    if (key === 'auctions') {
+      // Live OpenDKP auctions — what's currently up for bid. Used by the
+      // in-game Bidding overlay (Mimic) + the dashboard "💸 Live Bidding"
+      // panel. We also enrich with the caller's matching wishlist entries
+      // so the overlay can show "you wishlisted this for X DKP" inline.
+      const opendkp = require('./utils/opendkp');
+      try {
+        const auctions = await opendkp.getAuctions().catch(() => ({}));
+        const list = Array.isArray(auctions?.Items) ? auctions.Items
+                    : Array.isArray(auctions) ? auctions
+                    : [];
+        // Wishlist enrichment for the caller (optional ?character=).
+        let wishById = new Map();
+        if (character) {
+          // wishlists.bid_amount_enc is encrypted with WISHLIST_BID_KEY; we
+          // only return the item_id + priority so the OVERLAY can flag
+          // "you wishlisted this." Bid value stays private — only viewable
+          // on /me/wishlist.
+          const wlRows = await supabase.select(
+            'wishlists',
+            `select=item_id,priority` +
+            `&guild_id=eq.${encodeURIComponent(guildId)}` +
+            `&character_name=ilike.${encodeURIComponent(character)}`
+          );
+          for (const r of (wlRows || [])) wishById.set(r.item_id, { priority: r.priority });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          key, character,
+          updated_at: new Date().toISOString(),
+          auctions: list.map(a => ({
+            auction_id: a.AuctionId || a.SessionId || a.Id,
+            item_id:    a.ItemId || a.Item?.Id,
+            item_name:  a.ItemName || a.Item?.Name,
+            top_bid:    a.TopBid || a.HighestBid || null,
+            ends_at:    a.EndTime || a.EndsAt || null,
+            wishlisted: !!wishById.get(a.ItemId || a.Item?.Id),
+          })),
+        }));
+      } catch (err) {
+        console.warn('[server-panel:auctions] failed:', err?.message);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'opendkp fetch failed' }));
+      }
+    }
+    if (key === 'my-bids') {
+      // The caller's currently-active bids across all open auctions. OpenDKP
+      // doesn't expose a "list my bids" endpoint, so we walk the auctions
+      // list and pull each auction's Bids[] (getAuction returns them) and
+      // filter to entries whose CharacterId belongs to the caller's
+      // characters. Returns one row per (auction, item) the caller has bid on.
+      if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
+      const opendkp = require('./utils/opendkp');
+      try {
+        const chars = await opendkp.getCharacters().catch(() => []);
+        const myCharIds = new Set(
+          (Array.isArray(chars) ? chars : (chars?.Items || []))
+            .filter(c => (c.Name || '').toLowerCase() === character.toLowerCase() || (c.ParentName || '').toLowerCase() === character.toLowerCase())
+            .map(c => c.Id || c.CharacterId)
+        );
+        const auctions = await opendkp.getAuctions().catch(() => ({}));
+        const list = Array.isArray(auctions?.Items) ? auctions.Items
+                    : Array.isArray(auctions) ? auctions
+                    : [];
+        const mine = [];
+        for (const a of list) {
+          const aid = a.AuctionId || a.SessionId || a.Id;
+          if (!aid) continue;
+          // getAuction returns Bids[]; cap concurrent fetches to keep this cheap.
+          let full;
+          try { full = await opendkp.getAuction(aid); } catch { continue; }
+          const bids = (full && (full.Bids || full.bids)) || [];
+          for (const b of bids) {
+            if (myCharIds.has(b.CharacterId)) {
+              mine.push({
+                auction_id: aid,
+                item_id:    a.ItemId || a.Item?.Id,
+                item_name:  a.ItemName || a.Item?.Name,
+                bid_id:     b.Id || b.BidId,
+                value:      b.Value,
+                rank:       b.Rank,
+                priority:   b.Priority,
+                character:  b.CharacterName || character,
+              });
+            }
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          key, character, scope: 'currently-open auctions',
+          updated_at: new Date().toISOString(),
+          bids: mine,
+        }));
+      } catch (err) {
+        console.warn('[server-panel:my-bids] failed:', err?.message);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'opendkp fetch failed' }));
+      }
+    }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'unknown panel key', key }));
   } catch (err) {
@@ -3272,6 +3371,67 @@ async function _handleAgentThreatSnapshot(req, res) {
   _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, written: 1 }));
+}
+
+// POST /api/agent/place-bid
+// Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
+// Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
+// Returns the OpenDKP response (or a 4xx if the input is bad).
+async function _handleAgentPlaceBid(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'place-bid disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const character  = String(payload?.character || '').trim();
+  const auctionId  = payload?.auction_id;
+  const value      = Number(payload?.value);
+  const priority   = Number.isFinite(payload?.priority) ? Number(payload.priority) : 1;
+  if (!character || !auctionId || !Number.isFinite(value) || value <= 0) {
+    res.writeHead(400);
+    return res.end(JSON.stringify({ error: 'character, auction_id, and positive value are required' }));
+  }
+
+  const opendkp = require('./utils/opendkp');
+  try {
+    const chars = await opendkp.getCharacters().catch(() => []);
+    const list  = Array.isArray(chars) ? chars : (chars?.Items || []);
+    const me    = list.find(c => (c.Name || '').toLowerCase() === character.toLowerCase());
+    if (!me) {
+      res.writeHead(404);
+      return res.end(JSON.stringify({ error: `character not found in roster: ${character}` }));
+    }
+    const characterId = me.Id || me.CharacterId;
+    const rank        = me.Rank || me.RankName || 'Member';
+    const out = await opendkp.submitBid(auctionId, {
+      CharacterId: characterId,
+      SessionId:   auctionId,
+      Rank:        rank,
+      Priority:    priority,
+      Value:       value,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, bid: out }));
+  } catch (err) {
+    console.warn('[place-bid] failed:', err?.message);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'opendkp bid failed', detail: err?.message }));
+  }
 }
 
 async function _handleAgentFunEvent(req, res) {
@@ -4930,6 +5090,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentThreatSnapshot(req, res); }
     catch (err) {
       console.error('[threat-snap] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/place-bid') {
+    try { return await _handleAgentPlaceBid(req, res); }
+    catch (err) {
+      console.error('[place-bid] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
