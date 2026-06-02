@@ -4394,7 +4394,31 @@ async function refresh() {
     // polls rewrite nothing (no shift); when the ACTIVE section does rewrite
     // with a different height, restoring scroll keeps the page from bouncing.
     const _sx = window.scrollX, _sy = window.scrollY;
-    renderHeader(s); renderDash(s); renderTanks(s); renderHealers(s); renderDeeps(s); renderPets(s); renderInfo(s);
+    // Render each section in ISOLATION. Previously all seven ran on one line
+    // inside this try, so a single throwing section (e.g. one bad data shape in
+    // 51-character installs) aborted the rest AND was swallowed by the outer
+    // catch below — leaving the body blank with no error anywhere. Now a
+    // failing section shows its own error card (visible on-screen, not just the
+    // log) and the other sections still render.
+    var _sections = [['header', renderHeader], ['dash', renderDash], ['tanks', renderTanks],
+                     ['healers', renderHealers], ['deeps', renderDeeps], ['pets', renderPets], ['info', renderInfo]];
+    for (var _si = 0; _si < _sections.length; _si++) {
+      var _sid = _sections[_si][0], _sfn = _sections[_si][1];
+      try { _sfn(s); }
+      catch (_re) {
+        try { console.error('[dashboard] render ' + _sid + ' failed:', _re && (_re.stack || _re.message || _re)); } catch (_) {}
+        try {
+          var _sel = document.getElementById(_sid);
+          if (_sel) {
+            _sel.innerHTML = '<div class="card" style="border-color:#a3260a">' +
+              '<h2 style="color:#f85149">⚠ This panel failed to render</h2>' +
+              '<div class="dim" style="font-size:11px;white-space:pre-wrap;word-break:break-word">' +
+              esc(String(_re && (_re.stack || _re.message) || _re)) + '</div></div>';
+            _sel._wpLastHtml = null;  // bust morph cache so a later good render re-applies
+          }
+        } catch (_) {}
+      }
+    }
     if (window.scrollX !== _sx || window.scrollY !== _sy) window.scrollTo(_sx, _sy);
     // Surface pending backfill request count on the Opt-in tab so officers
     // notice without clicking through.
