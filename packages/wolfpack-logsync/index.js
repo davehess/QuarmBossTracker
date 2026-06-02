@@ -3057,6 +3057,7 @@ body.wp-overlay-mode .section .card.wp-overlay-target { display:block !important
      class="nav-quest"
      title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
   <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections">⚙ Panels</button>
+  <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <div id="dash" class="section active"></div>
