@@ -181,10 +181,13 @@ async function loadCharStats(name: string): Promise<CharStats> {
       .from('pvp_kills')
       .select('id', { count: 'exact', head: true })
       .ilike('victim', name),
+    // Loot from the OpenDKP mirror (the bot's loot_drops table is unused —
+    // auction-award wiring is stubbed). opendkp_loot_recent resolves the
+    // winner to a character name and carries the DKP spent + item + date.
     admin
-      .from('loot_drops')
-      .select('id, dkp_spent')
-      .eq('winner_character', name),
+      .from('opendkp_loot_recent')
+      .select('item_name, dkp, raid_date, raid_name')
+      .eq('character_name', name),
     admin
       .from('wishlists')
       .select('id', { count: 'exact', head: true })
@@ -253,8 +256,8 @@ async function loadCharStats(name: string): Promise<CharStats> {
   }
 
   const contribs = (contribRows ?? []) as { encounter_id: string; created_at: string; source: string | null; agent_version: string | null; has_ability_detail: boolean | null }[];
-  const lootRows = (lootRes.data ?? []) as { id: string; dkp_spent: number | null }[];
-  const dkpSpent = lootRows.reduce((s, r) => s + (r.dkp_spent || 0), 0);
+  const lootRows = (lootRes.data ?? []) as { item_name: string | null; dkp: number | null; raid_date: string | null; raid_name: string | null }[];
+  const dkpSpent = lootRows.reduce((s, r) => s + (r.dkp || 0), 0);
 
   // ── Aggregate the per-ability rollups ──────────────────────────────────────
   // Each row: { total_hits, total_damage, self_attack_count, by_skill: jsonb }.
@@ -404,6 +407,18 @@ export default async function MePage() {
   // Build per-character stats in parallel
   const stats = await Promise.all(chars.map(c => loadCharStats(c.name).then(s => [c.name, s] as const)));
   const byName = new Map(stats);
+
+  // Order the cards: the MAIN (family root — its name equals its main_name)
+  // pinned at the very top, then the alts by DKP spent (desc), then name.
+  chars.sort((a, b) => {
+    const aMain = (a.main_name || a.name).toLowerCase() === a.name.toLowerCase();
+    const bMain = (b.main_name || b.name).toLowerCase() === b.name.toLowerCase();
+    if (aMain !== bMain) return aMain ? -1 : 1;
+    const aDkp = byName.get(a.name)?.dkpSpent || 0;
+    const bDkp = byName.get(b.name)?.dkpSpent || 0;
+    if (aDkp !== bDkp) return bDkp - aDkp;
+    return a.name.localeCompare(b.name);
+  });
 
   // Sync heartbeat: most recent agent upload per owned character. Drives the
   // top-of-page "syncing now / stale / no upload" banner.
