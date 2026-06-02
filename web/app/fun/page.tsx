@@ -36,34 +36,61 @@ async function loadCounters() {
     kyinenZone   = data?.[0]?.zone      ?? null;
   } catch { /* table not yet populated — show 0 */ }
 
-  // Peopleslayer LD card — count + a running tally of damage logged AFTER his
-  // first LD. The joke: his DPS goes UP after he goes linkdead, so the post-LD
-  // damage number keeps climbing. Queried via FK-joined filter on
-  // encounter_players → encounters.started_at > earliest LD timestamp.
+  // Peopleslayer LD card — count + damage he logged in fights he was ACTUALLY
+  // disconnected during. The joke: he goes linkdead mid-fight and his character
+  // keeps swinging. The earlier version summed his total_damage across EVERY
+  // encounter that started after his first-ever LD — i.e. essentially his whole
+  // damage history since the first LD, a meaningless multi-million number. Now
+  // we only count an encounter if one of his LD timestamps falls inside that
+  // encounter's window [started_at, started_at + duration_sec] — "damage dealt
+  // while he was disconnected." Still only his own encounter_players rows.
   try {
-    const [ldRes, firstLdRow] = await Promise.all([
+    const LD_GRACE_MS = 5 * 60 * 1000; // a fight that kicked off ≤5m after an LD still counts (he stayed LD)
+    const [ldRes, ldRows] = await Promise.all([
       sb.from('fun_events')
         .select('*', { count: 'exact', head: true })
         .eq('event_type', 'peopleslayer_ld'),
       sb.from('fun_events')
         .select('event_ts')
         .eq('event_type', 'peopleslayer_ld')
-        .order('event_ts', { ascending: true })
-        .limit(1)
-        .maybeSingle(),
+        .order('event_ts', { ascending: true }),
     ]);
     const ldCount = ldRes.count ?? 0;
-    const firstLdTs = firstLdRow.data?.event_ts;
+    const ldTimes = ((ldRows.data ?? []) as { event_ts: string }[])
+      .map(r => new Date(r.event_ts).getTime())
+      .filter(t => !Number.isNaN(t));
 
     let postLdDamage = 0;
-    if (firstLdTs) {
+    if (ldTimes.length > 0) {
+      const earliestLd = ldTimes[0];
+      // His encounters that could overlap an LD must START at or before the
+      // last LD. Pull them with duration so we can test the window in JS
+      // (PostgREST can't filter started_at + duration). Bounded to his rows.
       const { data: ep } = await sb
         .from('encounter_players')
-        .select('total_damage, encounters!inner(started_at)')
+        .select('encounter_id, total_damage, encounters!inner(started_at, duration_sec)')
         .ilike('character_name', 'Peopleslayer')
-        .gt('encounters.started_at', firstLdTs);
-      postLdDamage = (ep ?? []).reduce(
-        (s: number, r: { total_damage: number | null }) => s + (r.total_damage || 0), 0);
+        .gte('encounters.started_at', new Date(earliestLd - LD_GRACE_MS).toISOString())
+        .lte('encounters.started_at', new Date(ldTimes[ldTimes.length - 1] + LD_GRACE_MS).toISOString())
+        .limit(5000);
+      type EpRow = { encounter_id: string; total_damage: number | null; encounters: { started_at: string; duration_sec: number | null } | { started_at: string; duration_sec: number | null }[] | null };
+      const seen = new Set<string>();
+      for (const r of (ep ?? []) as unknown as EpRow[]) {
+        // PostgREST returns the to-one join as an object, but the generated
+        // types model it as an array — accept either.
+        const enc = Array.isArray(r.encounters) ? r.encounters[0] : r.encounters;
+        if (!enc || !enc.started_at) continue;
+        const start = new Date(enc.started_at).getTime();
+        if (Number.isNaN(start)) continue;
+        const end = start + (enc.duration_sec ?? 0) * 1000;
+        // Counts if any LD happened during the fight, or the fight began within
+        // the grace window after an LD (he hadn't reconnected yet).
+        const overlapsLd = ldTimes.some(ld => (ld >= start - LD_GRACE_MS && ld <= end) || (start >= ld && start <= ld + LD_GRACE_MS));
+        if (overlapsLd && !seen.has(r.encounter_id)) {
+          seen.add(r.encounter_id);
+          postLdDamage += r.total_damage || 0;
+        }
+      }
     }
 
     counters.push({
@@ -71,9 +98,9 @@ async function loadCounters() {
       emoji: '🔌',
       value: ldCount,
       sub: postLdDamage > 0
-        ? `…and ${postLdDamage.toLocaleString()} damage logged AFTER going LD. DPS doesn't stop for sleep.`
+        ? `…and ${postLdDamage.toLocaleString()} damage logged while LD. DPS doesn't stop for sleep.`
         : (ldCount > 0
-            ? 'no damage logged after going LD yet — give him a minute.'
+            ? 'no damage logged while LD yet — give him a minute.'
             : 'still online.'),
     });
   } catch (err) {
