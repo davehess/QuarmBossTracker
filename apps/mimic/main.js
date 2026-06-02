@@ -67,7 +67,9 @@ let setupMode = false;
 // ── Config ────────────────────────────────────────────────────────────────
 function defaultConfig() {
   return {
-    eqPath: null,
+    eqPath: null,            // legacy single-folder (kept for back-compat read)
+    eqPaths: [],             // multi-folder picker — every EQ install to tail
+    eqPathsExcluded: [],     // auto-detected paths the user explicitly unchecked
     botUrl: 'https://wolfpackparse.up.railway.app/api/agent/encounter',
     token: null,
     showHud: true,           // DPS HUD overlay user pref
@@ -94,6 +96,15 @@ function loadConfig() {
     if (raw.tellsEnabled !== undefined && raw.tellsMode === undefined) {
       raw.tellsMode = raw.tellsEnabled ? 'local' : 'off';
       delete raw.tellsEnabled;
+    }
+    // Migration: legacy single-folder eqPath → eqPaths array. We keep eqPath
+    // populated alongside eqPaths for one release so anything still reading
+    // the old field gets at least the primary folder.
+    if (!Array.isArray(raw.eqPaths)) {
+      raw.eqPaths = raw.eqPath ? [raw.eqPath] : [];
+    }
+    if (!Array.isArray(raw.eqPathsExcluded)) {
+      raw.eqPathsExcluded = [];
     }
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
@@ -360,35 +371,59 @@ async function launchAgent() {
   // --character is given, which is exactly what we want for a multi-char
   // install. Single-character installs still resolve correctly from the
   // filename, so the flag is unnecessary.
-  const eqDir     = detectEqDir(cfg.eqPath);
-  const detection = detectCharacterFromLogs(eqDir);
-  if (detection && detection.candidates.length > 0) {
-    for (const c of detection.candidates) {
+  // Multi-folder EQ discovery. Build a deduplicated set of folders to tail:
+  //   1. Every cfg.eqPaths (the multi-folder picker UI saves these).
+  //   2. Legacy cfg.eqPath (single-folder, kept for back-compat).
+  //   3. Walk-up + 14-path autodetect (only if cfg.eqPaths is empty AND
+  //      not explicitly excluded by the user).
+  // Logs from all folders get appended as --log args; each self-identifies
+  // from its filename so multi-char + multi-install boxers parse correctly.
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  const excluded  = new Set((cfg.eqPathsExcluded || []).map(p => String(p || '').toLowerCase()));
+  const dirSet    = new Set();
+  for (const p of userPaths) {
+    if (!excluded.has(String(p).toLowerCase()) && _dirHasEqLogs(p)) dirSet.add(p);
+  }
+  // If the user hasn't configured anything explicitly, fall back to autodetect.
+  if (dirSet.size === 0) {
+    const auto = detectEqDir(null);
+    if (auto && !excluded.has(auto.toLowerCase())) dirSet.add(auto);
+  }
+  const eqDirs = [...dirSet];
+  const primaryEqDir = eqDirs[0] || null;
+
+  let totalLogs = 0;
+  let firstCharacter = null;
+  const allCandidates = [];
+  for (const dir of eqDirs) {
+    const det = detectCharacterFromLogs(dir);
+    if (!det || det.candidates.length === 0) continue;
+    if (!firstCharacter) firstCharacter = det.character;
+    for (const c of det.candidates) {
       args.push('--log', c.path);
+      allCandidates.push({ ...c, dir });
+      totalLogs++;
     }
-    appendAgentLog(`[mimic] tailing ${detection.candidates.length} log(s) from ${eqDir}; each self-identifies from filename. Primary: ${detection.character}\n`);
-    if (detection.candidates.length > 1) {
-      const alts = detection.candidates.slice(1, 5)
+  }
+  if (totalLogs > 0) {
+    appendAgentLog(`[mimic] tailing ${totalLogs} log(s) across ${eqDirs.length} folder(s); each self-identifies from filename. Primary: ${firstCharacter}\n`);
+    if (allCandidates.length > 1) {
+      const alts = allCandidates.slice(1, 5)
         .map(c => `${c.name} (${Math.round(c.size / 1024)}KB)`).join(', ');
       appendAgentLog(`[mimic] other characters: ${alts}\n`);
     }
   } else {
-    // No logs found anywhere — agent will fail with "At least one --log
-    // required" exactly the way it did before this fix landed. Loading
-    // screen surfaces the error inline. User likely needs to set their
-    // EQ path in Settings.
-    appendAgentLog(`[mimic] NO log files found (eqDir=${eqDir || 'unknown'}). Set your EQ path in Settings if Quarm isn't at C:\\Quarm.\n`);
+    appendAgentLog(`[mimic] NO log files found across ${eqDirs.length} configured folder(s). Open Settings → EverQuest folders to add or fix.\n`);
   }
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE:   '1',
-    // Identify uploads on the admin agent fleet board so Mimic installs
-    // are visibly distinct from Parser.bat installs (agent v2.5.2+ reads
-    // these and stamps every payload's agent_state with them).
     WOLFPACK_CLIENT:        'mimic',
     WOLFPACK_APP_VERSION:   app.getVersion(),
   };
-  if (cfg.eqPath || eqDir) env.WOLFPACK_EQ_DIR = cfg.eqPath || eqDir;
+  if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
 
   agentProc = spawn(process.execPath, args, {
     env,

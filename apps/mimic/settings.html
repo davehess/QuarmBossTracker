@@ -46,10 +46,28 @@
   <input id="botUrl" type="text" />
   <div class="hint">Leave the default unless an officer told you otherwise.</div>
 
-  <h2>EverQuest folder</h2>
-  <label>EQ folder (optional — auto-detected if blank)</label>
-  <input id="eqPath" type="text" placeholder="C:\Quarm  or  C:\Program Files\EverQuest" />
-  <div class="hint">Where your eqlog_*_pq.proj.txt files live.</div>
+  <h2>EverQuest folders</h2>
+  <div class="sub">Mimic tails every character log in every folder listed here. Auto-detected installs appear pre-checked; tick the ones you want included.</div>
+
+  <div id="eqDetected" style="margin-top:10px">
+    <div class="hint" id="eqDetectedHint">Scanning for <code>eqgame.exe</code>…</div>
+    <div id="eqDetectedList"></div>
+  </div>
+
+  <div style="margin-top:14px">
+    <div class="hint">Additional folders</div>
+    <div id="eqManualList"></div>
+    <button id="eqAddFolder" type="button" style="margin-top:6px;background:#21262d;border:1px solid #2a3140">📁 Add another folder…</button>
+  </div>
+
+  <details id="eqScannedDisclosure" style="margin-top:10px;font-size:11px;color:#6b7280">
+    <summary style="cursor:pointer">Where did we look?</summary>
+    <div id="eqScannedList" style="margin-top:4px;font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:1.6"></div>
+  </details>
+
+  <div id="eqWarning" style="display:none;margin-top:10px;padding:8px 10px;border-radius:4px;background:#2a2010;border:1px solid #6b5320;color:#f6c365;font-size:11px">
+    ⚠ No EQ folders configured. Mimic won't tail any log files until you add at least one.
+  </div>
 
   <h2>Local UI</h2>
   <div class="row">
@@ -93,21 +111,155 @@
   }
   function hideToast(){ document.getElementById('toast').classList.remove('show'); }
 
-  let _loaded = { eqPath: null, botUrl: '', token: null };
+  // EQ-folder picker state. Three pieces:
+  //   _foundCandidates : auto-detected from findEqInstalls() (eqgame.exe scan)
+  //   _manualFolders   : user-added paths (Browse / Add another)
+  //   _checkedFound    : the SET of detected paths currently checked
+  //   _excludedFound   : detected paths the user explicitly UNchecked; we
+  //                      remember these so the next scan doesn't keep
+  //                      re-suggesting a folder they rejected.
+  let _foundCandidates = [];
+  let _checkedFound    = new Set();
+  let _manualFolders   = [];
+  let _excludedFound   = new Set();
+
+  function _norm(p) { return String(p || '').replace(/\\\\/g, '\\').toLowerCase(); }
+
+  function _renderFolderPicker(){
+    const list = document.getElementById('eqDetectedList');
+    const hint = document.getElementById('eqDetectedHint');
+    if (_foundCandidates.length === 0) {
+      hint.textContent = 'No EQ installs auto-detected. Use “Add another folder…” below.';
+      list.innerHTML = '';
+    } else {
+      hint.textContent = 'Auto-detected installs:';
+      list.innerHTML = _foundCandidates.map((c, i) => {
+        const checked = _checkedFound.has(_norm(c.path));
+        const meta = [];
+        if (c.hasEqgame) meta.push('<span style="color:#56d364">eqgame.exe</span>');
+        if (c.hasLogs)   meta.push(c.logCount + ' log file' + (c.logCount === 1 ? '' : 's'));
+        else             meta.push('<span style="color:#6b7280">no logs yet</span>');
+        return '<div class="row" style="margin:4px 0">' +
+          '<input type="checkbox" class="eqDetectedCheck" data-idx="' + i + '" ' + (checked ? 'checked' : '') + ' />' +
+          '<label style="font-size:12px"><code>' + c.path.replace(/</g,'&lt;') + '</code> ' +
+          '<span style="font-size:10px;color:#8b949e;margin-left:6px">' + meta.join(' · ') + '</span></label>' +
+        '</div>';
+      }).join('');
+      list.querySelectorAll('.eqDetectedCheck').forEach(cb => {
+        cb.addEventListener('change', e => {
+          const idx = parseInt(e.target.dataset.idx, 10);
+          const p   = _norm(_foundCandidates[idx].path);
+          if (e.target.checked) { _checkedFound.add(p); _excludedFound.delete(p); }
+          else                  { _checkedFound.delete(p); _excludedFound.add(p); }
+          _updateWarning();
+        });
+      });
+    }
+
+    const ml = document.getElementById('eqManualList');
+    if (_manualFolders.length === 0) {
+      ml.innerHTML = '<div class="hint" style="font-style:italic;color:#6b7280;font-size:11px">None.</div>';
+    } else {
+      ml.innerHTML = _manualFolders.map((p, i) =>
+        '<div class="row" style="margin:4px 0;justify-content:space-between">' +
+          '<code style="font-size:12px;color:#c9d1d9">' + p.replace(/</g,'&lt;') + '</code>' +
+          '<button type="button" class="eqRemove" data-idx="' + i + '" style="background:#2a1212;border:1px solid #a3260a;color:#f87171;padding:2px 8px;font-size:11px;margin:0">✕ Remove</button>' +
+        '</div>'
+      ).join('');
+      ml.querySelectorAll('.eqRemove').forEach(btn => {
+        btn.addEventListener('click', e => {
+          const idx = parseInt(e.target.dataset.idx, 10);
+          _manualFolders.splice(idx, 1);
+          _renderFolderPicker();
+        });
+      });
+    }
+    _updateWarning();
+  }
+
+  function _updateWarning() {
+    const total = _checkedFound.size + _manualFolders.length;
+    document.getElementById('eqWarning').style.display = total === 0 ? 'block' : 'none';
+  }
+
+  async function _loadEqFolders(c) {
+    // Read existing config + run discovery in parallel.
+    const [discovery] = await Promise.all([ window.mimic.findEqInstalls() ]);
+    _foundCandidates = (discovery && discovery.found) || [];
+    const cfgPaths = Array.isArray(c.eqPaths) ? c.eqPaths
+                   : (c.eqPath ? [c.eqPath] : []);    // legacy single-folder migration
+    const cfgPathsLower = new Set(cfgPaths.map(_norm));
+    const cfgExcludedLower = new Set((c.eqPathsExcluded || []).map(_norm));
+
+    // Found paths: checked if in cfgPaths OR (not explicitly excluded AND not yet known).
+    _checkedFound = new Set();
+    _excludedFound = new Set();
+    for (const f of _foundCandidates) {
+      const np = _norm(f.path);
+      if (cfgExcludedLower.has(np)) {
+        _excludedFound.add(np);
+      } else if (cfgPathsLower.has(np)) {
+        _checkedFound.add(np);
+      } else if (f.hasEqgame && cfgPaths.length === 0) {
+        // First-run helper: prefill detected installs that have eqgame.exe.
+        _checkedFound.add(np);
+      }
+    }
+
+    // Manual = configured paths NOT matched to any auto-detected candidate.
+    const foundSet = new Set(_foundCandidates.map(f => _norm(f.path)));
+    _manualFolders = cfgPaths.filter(p => !foundSet.has(_norm(p)));
+
+    // Disclosure list — show every path probed during discovery.
+    const scannedEl = document.getElementById('eqScannedList');
+    scannedEl.innerHTML = (discovery.scanned || []).map(p =>
+      '<div>· <code>' + p.replace(/</g,'&lt;') + '</code></div>'
+    ).join('') || '<div class="hint">No scan results.</div>';
+
+    _renderFolderPicker();
+  }
+
+  function _collectEqPaths() {
+    const out = [];
+    for (const c of _foundCandidates) if (_checkedFound.has(_norm(c.path))) out.push(c.path);
+    for (const p of _manualFolders)   out.push(p);
+    return out;
+  }
+
+  // "+ Add another folder…" — Browse for a directory, push to manual list.
+  document.getElementById('eqAddFolder').addEventListener('click', async () => {
+    try {
+      const picked = await window.mimic.pickEqDir();
+      if (!picked) return;
+      const np = _norm(picked);
+      // If user picks a folder that's already on the detected list, just
+      // tick it instead of duplicating into manual.
+      const foundMatch = _foundCandidates.find(c => _norm(c.path) === np);
+      if (foundMatch) {
+        _checkedFound.add(np);
+        _excludedFound.delete(np);
+      } else if (!_manualFolders.some(p => _norm(p) === np)) {
+        _manualFolders.push(picked);
+      }
+      _renderFolderPicker();
+    } catch (e) {}
+  });
+
+  let _loaded = { eqPaths: [], botUrl: '', token: null };
   async function load(){
     const c = await window.mimic.getConfig();
-    document.getElementById('eqPath').value = c.eqPath || '';
+    await _loadEqFolders(c);
     document.getElementById('botUrl').value = c.botUrl || 'https://wolfpackparse.up.railway.app/api/agent/encounter';
     document.getElementById('token').value  = c.token || '';
     document.getElementById('quietMode').checked         = !!c.quietMode;
     document.getElementById('showHud').checked           = !!c.showHud;
     document.getElementById('enableTriggerTts').checked  = !!c.enableTriggerTts;
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
-    // tellsMode radios (off/local/synced)
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
-    _loaded = { eqPath: c.eqPath || null, botUrl: c.botUrl || '', token: c.token || null };
+    _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: c.token || null };
   }
+
   document.getElementById('save').onclick = async () => {
     const btn = document.getElementById('save');
     const origLabel = btn.textContent;
@@ -116,22 +268,23 @@
     btn.className = '';
     showToast('pending', 'Saving settings…', 0);
     try {
-      const eqPath = document.getElementById('eqPath').value.trim() || null;
+      const eqPaths = _collectEqPaths();
+      const eqPathsExcluded = [..._excludedFound];
       const botUrl = document.getElementById('botUrl').value.trim();
       const token  = document.getElementById('token').value.trim() || null;
       const tellsMode = (document.querySelector('input[name=tells]:checked') || {}).value || 'off';
       await window.mimic.saveConfig({
-        eqPath, botUrl, token, tellsMode,
+        eqPaths, eqPathsExcluded,
+        eqPath: null,    // clear the legacy single-folder field
+        botUrl, token, tellsMode,
         quietMode:        document.getElementById('quietMode').checked,
         showHud:          document.getElementById('showHud').checked,
         enableTriggerTts: document.getElementById('enableTriggerTts').checked,
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
       });
-      // Only restart the engine when a CONNECTION setting actually changed —
-      // UI prefs (overlays, HUD, TTS, tells, quiet) apply live without a
-      // restart. This is the "click-through / move / lock without restarting
-      // the engine" requirement.
-      const connChanged = (eqPath !== _loaded.eqPath) || (botUrl !== _loaded.botUrl) || (token !== _loaded.token);
+      const pathsChanged = JSON.stringify(_loaded.eqPaths.slice().sort()) !==
+                           JSON.stringify(eqPaths.slice().sort());
+      const connChanged  = pathsChanged || (botUrl !== _loaded.botUrl) || (token !== _loaded.token);
       if (connChanged) {
         await window.mimic.relaunchAgent();
         showToast('success', '✓ Saved · engine restarting (connection changed)', 3500);
@@ -140,7 +293,7 @@
       }
       btn.textContent = '✓ Saved';
       btn.className = 'success';
-      _loaded = { eqPath, botUrl, token };
+      _loaded = { eqPaths: eqPaths.slice(), botUrl, token };
       setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 3000);
     } catch (e) {
       btn.textContent = '✕ Save failed';
