@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.4': [
+    '**Tells now actually persist** — the upsert was silently rejected by a partial unique index, so DMs fired but `/me/tells` stayed at 0. Index rebuilt; tells store again.',
+    '**Tells DM now shows the conversation** — incoming + outgoing are grouped by counterparty in chronological order, so the DM reads as the back-and-forth instead of just the last incoming line.',
+  ],
   '2.7.3': [
     '**Tells fix** — the `/me` toggle now actually saves for alts (was silently rejected when the alt had no linked Discord ID), and the bot stores incoming tells against the family root when an alt is unlinked — so `/me/tells` and Discord DM relay both reach you.',
   ],

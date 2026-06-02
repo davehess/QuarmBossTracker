@@ -44,7 +44,16 @@ async function _request(path, opts = {}) {
     try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
 
     if (!res.ok) {
-      console.warn(`[supabase] ${opts.method || 'GET'} ${path} → ${res.status}:`, parsed);
+      // Stringify the parsed body so Node's util.inspect doesn't truncate it
+      // to "{" when an object spans multiple keys. PostgREST 4xx bodies carry
+      // {code, details, hint, message} and you NEED the full hint to debug
+      // (e.g. "there is no unique or exclusion constraint matching the
+      // ON CONFLICT specification" — the partial-index bug we just shipped a
+      // fix for). Truncating to 800 chars keeps a flood from blowing the log.
+      const bodyStr = parsed && typeof parsed === 'object'
+        ? JSON.stringify(parsed).slice(0, 800)
+        : String(parsed || '').slice(0, 800);
+      console.warn(`[supabase] ${opts.method || 'GET'} ${path} → ${res.status}: ${bodyStr}`);
       return null;
     }
     return parsed;

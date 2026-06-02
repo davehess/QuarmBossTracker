@@ -4350,9 +4350,14 @@ async function _handleAgentTells(req, res) {
   // gives DMs out of the box; flipping tell_dm off keeps the row + browser
   // notification but silences the Discord ping. Browser notifications ride
   // Supabase Realtime on the row insert, independent of this DM path.
-  const incoming = rows.filter(r => r.direction === 'incoming');
-  if (incoming.length > 0 && charRow.tell_dm !== false) {
-    _relayTellsToDM(ownerDiscordId, charRow.name, incoming).catch(err =>
+  // DM the whole batch (incoming + outgoing) but ONLY when at least one
+  // incoming arrived — outgoing-only is the user typing while afk, no DM is
+  // expected. Passing both directions lets _relayTellsToDM render the
+  // back-and-forth in chronological order, so the DM reads as a conversation
+  // ("you → them: ..., them → you: ...") instead of a one-line snippet.
+  const incomingCount = rows.reduce((n, r) => n + (r.direction === 'incoming' ? 1 : 0), 0);
+  if (incomingCount > 0 && charRow.tell_dm !== false) {
+    _relayTellsToDM(ownerDiscordId, charRow.name, rows).catch(err =>
       console.warn('[tells] DM relay failed:', err?.message));
   }
 
@@ -4366,13 +4371,48 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
   try {
     const user = await client.users.fetch(discordUserId).catch(() => null);
     if (!user) return;
-    const lines = tellRows.slice(0, 10).map(t =>
-      `**${t.other_name}** → _${ownerCharacter}_: ${t.text}`
-    );
-    if (tellRows.length > 10) lines.push(`_…and ${tellRows.length - 10} more — see /me/tells._`);
-    const header = tellRows.length === 1
+
+    // Group by counterparty so a back-and-forth shows up as one conversation
+    // block instead of an interleaved stream. Chronological within each group.
+    // Direction arrow: '→' = outgoing (you sent), '←' = incoming (they sent).
+    const byOther = new Map();   // key = other_name lowercased → { other, rows: [] }
+    for (const t of tellRows) {
+      const k = String(t.other_name || '').toLowerCase();
+      if (!k) continue;
+      let g = byOther.get(k);
+      if (!g) { g = { other: t.other_name, rows: [] }; byOther.set(k, g); }
+      g.rows.push(t);
+    }
+    const conversations = [...byOther.values()].map(g => {
+      g.rows.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+      return g;
+    });
+
+    // Cap total rendered lines to keep the DM under Discord's 2000-char limit
+    // by a comfortable margin. 12 lines covers all real conversations we've
+    // observed; an overflow tail points to /me/tells for the rest.
+    const MAX_LINES = 12;
+    const lines = [];
+    let omitted = 0;
+    for (const c of conversations) {
+      if (lines.length >= MAX_LINES) { omitted += c.rows.length; continue; }
+      // One blank-line spacer between conversations after the first.
+      if (lines.length > 0) lines.push('');
+      for (const r of c.rows) {
+        if (lines.length >= MAX_LINES) { omitted++; continue; }
+        const arrow = r.direction === 'outgoing' ? '→' : '←';
+        const who   = r.direction === 'outgoing'
+          ? `_${ownerCharacter}_ ${arrow} **${r.other_name}**`
+          : `**${r.other_name}** ${arrow} _${ownerCharacter}_`;
+        lines.push(`${who}: ${r.text}`);
+      }
+    }
+    if (omitted > 0) lines.push(`_…and ${omitted} more — see /me/tells._`);
+
+    const incomingCount = tellRows.reduce((n, r) => n + (r.direction === 'incoming' ? 1 : 0), 0);
+    const header = incomingCount === 1
       ? '📬 You got a tell while you were away:'
-      : `📬 You got ${tellRows.length} tells while you were away:`;
+      : `📬 You got ${incomingCount} tells while you were away:`;
     await user.send({
       content: header + '\n' + lines.join('\n') +
         '\n\nMute via the **Tells: ON** toggle on https://wolfpack.quest/me.',
