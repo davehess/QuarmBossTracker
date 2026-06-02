@@ -593,6 +593,7 @@ if (require.main !== module) return;
   _dropOrphans('eqemu_spawnentry',        'spawngroup_id','eqemu_spawngroup',  'id');
   _dropOrphans('eqemu_spawnentry',        'npc_id',       'eqemu_npc_types',   'id');
   _dropOrphans('eqemu_spawn2',            'spawngroup_id','eqemu_spawngroup',  'id');
+  _dropOrphans('eqemu_spawn2',            'zone_short',   'eqemu_zone',        'short_name');
 
   const counts = {};
   // Upsert in dependency order (parents before children)
