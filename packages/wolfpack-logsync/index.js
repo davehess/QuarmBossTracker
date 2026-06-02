@@ -4187,9 +4187,12 @@ async function refreshOptin() {
   } catch { renderOptin(null); }
 }
 
+var _refreshFailures = 0;
 async function refresh() {
   try {
-    const s = await (await fetch('/api/state')).json();
+    const s = await (await fetch('/api/state', { cache: 'no-store' })).json();
+    _refreshFailures = 0;
+    var _eb = document.getElementById('wpConnError'); if (_eb) _eb.remove();
     // Preserve scroll across the render batch. Change-detection means most
     // polls rewrite nothing (no shift); when the ACTIVE section does rewrite
     // with a different height, restoring scroll keeps the page from bouncing.
@@ -4205,7 +4208,29 @@ async function refresh() {
       optinBtn.textContent = pending > 0 ? (baseLabel + ' (' + pending + ')') : baseLabel;
       optinBtn.style.color = pending > 0 ? '#f0883e' : '';
     }
-  } catch (e) { /* network blip — just retry next tick */ }
+  } catch (e) {
+    // The /api/state poll failed — the engine is unreachable from this page
+    // (usually the window is pointed at a stale port after an agent restart).
+    // Make it VISIBLE instead of a silent blank, with the exact origin so the
+    // problem is obvious, plus a one-click reload to the live engine.
+    _refreshFailures++;
+    if (_refreshFailures >= 2 && !document.getElementById('wpConnError')) {
+      var d = document.createElement('div');
+      d.id = 'wpConnError';
+      d.setAttribute('style', 'margin:16px;padding:14px 16px;border:1px solid #a3260a;background:#2a1212;color:#ffd2c2;border-radius:8px;font-size:13px;line-height:1.5');
+      d.innerHTML =
+        '⚠ <b>Can’t reach the parser engine</b> at <code>' + (location.origin || '?') + '</code>.<br>' +
+        'The agent likely restarted on a different port and this window is still on the old one.' +
+        '<div style="margin-top:8px"><button id="wpConnReload" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:12px">🔄 Reload to the live engine</button> <span style="color:#c98">— or fully restart Mimic.</span></div>';
+      var host = document.querySelector('.section.active') || document.body;
+      host.insertBefore(d, host.firstChild);
+      var rb = document.getElementById('wpConnReload');
+      if (rb) rb.onclick = function () {
+        try { if (window.mimic && window.mimic.openDashboard) { window.mimic.openDashboard(); return; } } catch (_) {}
+        location.reload();
+      };
+    }
+  }
 }
 
 // Tab switcher — scoped to .nav buttons that have a data-tab attribute.
@@ -5431,8 +5456,11 @@ function _serializeOptinForWeb() {
 function startWebDashboard(port) {
   const server = http.createServer(async (req, res) => {
     try {
-      if (req.url === '/' || req.url === '/index.html') {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      if (req.url === '/' || req.url === '/index.html' || (req.url && req.url.indexOf('/?') === 0)) {
+        // no-store so Electron's BrowserWindow (and browsers) never serve a
+        // stale dashboard after a hot-swap — caching the old HTML was a prime
+        // suspect for the "blank in app, fine in browser" reports.
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' });
         return res.end(WEB_HTML);
       }
       if (req.url === '/api/state') {
