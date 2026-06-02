@@ -3047,21 +3047,110 @@ function fmtK(n) { n=Number(n||0); if (n<1000) return String(n); if (n<1e6) retu
 function fmtAgo(ms) { if(!ms) return '?'; const d=Date.now()-ms; if(d<60000)return Math.floor(d/1000)+'s ago'; if(d<3600000)return Math.floor(d/60000)+'m ago'; if(d<86400000)return Math.floor(d/3600000)+'h ago'; return Math.floor(d/86400000)+'d ago'; }
 function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]); }
 
-// Change-detection guard for panel renders. The dashboard polls /api/state
-// every 2s and each render function rebuilds its section's innerHTML. Writing
-// innerHTML unconditionally — even when the produced HTML is byte-identical to
-// what's already on screen — flashed the whole panel every 2s (scroll, hover,
-// and <details> open-state all reset). setSectionHTML only writes when the
-// HTML actually changed, and returns true in that case so callers can skip
-// re-binding event handlers on unchanged (still-live) DOM nodes. Between
-// fights, where the data doesn't move, this means zero rewrites = zero flicker.
-var _lastSectionHtml = {};
-function setSectionHTML(id, html) {
-  if (_lastSectionHtml[id] === html) return false;   // unchanged → no rewrite
-  _lastSectionHtml[id] = html;
-  var el = document.getElementById(id);
-  if (el) el.innerHTML = html;
+// In-place DOM updates for panel renders. The dashboard polls /api/state every
+// 2s; each render function builds its section's HTML. The old approach wrote
+// el.innerHTML = h every poll, which tears down + rebuilds every node — a
+// visible flash, lost scroll/selection/<details> state, and (worst) it
+// DESTROYED app-injected cards (My Crits, Charm Pets, DS, bidding, uploader
+// banner — all id="wp…") that their own loops then re-inserted, so those cards
+// flickered in and out every 2s.
+//
+// setSectionHTML now:
+//   1. Short-circuits when the produced HTML is byte-identical (idle = no work).
+//   2. Otherwise MORPHS the live DOM to match — updating only the text /
+//      attributes that actually changed, keeping node identity. No flash,
+//      scroll holds, form/focus/<details> state preserved.
+//   3. Never touches app-injected wp* nodes (they're managed by their own
+//      loops); morph reconciles around them.
+// Returns true when it changed something so callers re-run their (idempotent)
+// event binding.
+// Morph an arbitrary element's contents to the given HTML in place. Caches the
+// last HTML on the element so an unchanged update is a no-op. Used by section
+// renders AND by the injected cards (My Crits, Charm Pets, DS, bidding) so
+// their inner tables update without an innerHTML flash too.
+function morphInto(el, html) {
+  if (!el) return false;
+  if (el._wpLastHtml === html) return false;
+  el._wpLastHtml = html;
+  try {
+    var scratch = document.createElement('div');
+    scratch.innerHTML = html;
+    _morphEl(el, scratch);
+  } catch (e) {
+    el.innerHTML = html;   // safety net — never leave it blank
+  }
   return true;
+}
+function setSectionHTML(id, html) {
+  return morphInto(document.getElementById(id), html);
+}
+function _isInjected(node) {
+  // App-injected cards carry an id that starts with "wp" and are owned by
+  // their own render loops. Morph must leave them in place.
+  return node && node.nodeType === 1 && node.id && node.id.indexOf('wp') === 0;
+}
+function _morphAttrs(live, tmpl) {
+  var i, a;
+  // Drop live attrs the template no longer has — except class, handled below.
+  for (i = live.attributes.length - 1; i >= 0; i--) {
+    a = live.attributes[i].name;
+    if (a === 'class') continue;
+    if (!tmpl.hasAttribute(a)) live.removeAttribute(a);
+  }
+  for (i = 0; i < tmpl.attributes.length; i++) {
+    a = tmpl.attributes[i];
+    if (a.name === 'class') {
+      // Merge: template's classes PLUS any wp-* state classes the app applied
+      // live (wp-hidden from the show/hide-panels feature, wp-drop-target
+      // flash). Stripping those would un-hide hidden panels every poll.
+      var keep = [];
+      var lc = (live.getAttribute('class') || '').split(/\s+/);
+      for (var j = 0; j < lc.length; j++) if (lc[j].indexOf('wp-') === 0) keep.push(lc[j]);
+      var merged = a.value + (keep.length ? ' ' + keep.join(' ') : '');
+      if (live.getAttribute('class') !== merged) live.setAttribute('class', merged);
+      continue;
+    }
+    if (live.getAttribute(a.name) !== a.value) live.setAttribute(a.name, a.value);
+  }
+  // Template has no class but live carries wp-* state classes → keep just those.
+  if (!tmpl.hasAttribute('class') && live.hasAttribute('class')) {
+    var k2 = (live.getAttribute('class') || '').split(/\s+/).filter(function (x) { return x.indexOf('wp-') === 0; });
+    if (k2.length) live.setAttribute('class', k2.join(' ')); else live.removeAttribute('class');
+  }
+}
+function _morphEl(live, tmpl) {
+  if (live.nodeType === 1 && tmpl.nodeType === 1) _morphAttrs(live, tmpl);
+  // Reconcilable live children = everything except injected wp* nodes.
+  var liveKids = [];
+  for (var k = 0; k < live.childNodes.length; k++) {
+    if (_isInjected(live.childNodes[k])) continue;
+    liveKids.push(live.childNodes[k]);
+  }
+  var tc = tmpl.childNodes;
+  var li = 0;
+  for (var ti = 0; ti < tc.length; ti++) {
+    var t = tc[ti];
+    var l = liveKids[li];
+    if (l === undefined) { live.appendChild(t.cloneNode(true)); continue; }
+    if (l.nodeType !== t.nodeType || (l.nodeType === 1 && l.nodeName !== t.nodeName)) {
+      live.replaceChild(t.cloneNode(true), l); li++; continue;
+    }
+    if (l.nodeType === 3 || l.nodeType === 8) {
+      if (l.nodeValue !== t.nodeValue) l.nodeValue = t.nodeValue; li++; continue;
+    }
+    _morphEl(l, t); li++;
+  }
+  for (var r = li; r < liveKids.length; r++) live.removeChild(liveKids[r]);
+}
+// Idempotent event binding — under morph, nodes persist across polls, so the
+// per-render addEventListener calls would stack duplicate handlers. _bindOnce
+// tags the node with a per-event marker so a handler is attached exactly once.
+function _bindOnce(el, ev, fn) {
+  if (!el) return;
+  var key = '_wpb_' + ev;
+  if (el[key]) return;
+  el[key] = 1;
+  el.addEventListener(ev, fn);
 }
 
 function renderHeader(s) {
@@ -3144,7 +3233,7 @@ function renderHeader(s) {
       return false;
     }
   }
-  if (manual) manual.addEventListener('click', async () => {
+  _bindOnce(manual, 'click', async () => {
     if (!confirm('Restart agent and pull the latest version? Session will be saved and resumed.')) return;
     manual.disabled = true; manual.textContent = 'Restarting...';
     const ok = await _attemptUpdate(manual, false);
@@ -3156,12 +3245,12 @@ function renderHeader(s) {
   });
   // Inline [install] link mirrors the banner Install button
   const inline = document.getElementById('inlineUpdateBtn');
-  if (inline) inline.addEventListener('click', (e) => {
+  _bindOnce(inline, 'click', (e) => {
     e.preventDefault();
     document.getElementById('updateBtn')?.click();
   });
   const u = document.getElementById('updateBtn');
-  if (u) u.addEventListener('click', async () => {
+  _bindOnce(u, 'click', async () => {
     if (!confirm('Update agent now? Session will be saved and resumed automatically.')) return;
     u.disabled = true; u.textContent = 'Restarting...';
     const ok = await _attemptUpdate(u, false);
@@ -3174,7 +3263,7 @@ function renderHeader(s) {
   // Reset-dashboard click — zeros session counters server-side, then we
   // re-pull /api/state so the UI refreshes immediately without a hard reload.
   const r = document.getElementById('resetSessionBtn');
-  if (r) r.addEventListener('click', async () => {
+  _bindOnce(r, 'click', async () => {
     if (!confirm('Reset session counters? Recent Parses, top damage and per-class panes go back to empty. Lifetime totals and opt-in backfill progress are preserved.')) return;
     r.disabled = true; r.textContent = 'Resetting...';
     try { await fetch('/api/reset-session', { method: 'POST' }); } catch {}
@@ -3317,8 +3406,8 @@ function renderDash(s) {
   h += '</div></div>';
   h += '</div>';
   if (!setSectionHTML('dash', h)) return;
-  // Wire dismiss buttons after innerHTML replaces the DOM
-  document.querySelectorAll('#dash .dismiss-td').forEach(b => b.addEventListener('click', () => {
+  // Wire dismiss buttons. Idempotent under morph (nodes persist across polls).
+  document.querySelectorAll('#dash .dismiss-td').forEach(b => _bindOnce(b, 'click', () => {
     try { dismissTopDamage(JSON.parse(b.dataset.key)); } catch {}
   }));
 }
@@ -3480,13 +3569,14 @@ function renderTanks(s) {
   h += '</div>';
   h += '</div>';
   if (!setSectionHTML('tanks', h)) return;
-  // Wire the hide/show character buttons in the Weapon Loadouts table
-  document.querySelectorAll('[data-hide-char]').forEach(b => b.addEventListener('click', async () => {
+  // Wire the hide/show character buttons in the Weapon Loadouts table.
+  // Idempotent under morph (nodes persist across polls).
+  document.querySelectorAll('[data-hide-char]').forEach(b => _bindOnce(b, 'click', async () => {
     await fetch('/api/loadouts/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'hide', chars: [b.dataset.hideChar] }) });
     refresh();
   }));
-  document.querySelectorAll('[data-show-char]').forEach(b => b.addEventListener('click', async () => {
+  document.querySelectorAll('[data-show-char]').forEach(b => _bindOnce(b, 'click', async () => {
     await fetch('/api/loadouts/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'show', chars: [b.dataset.showChar] }) });
     refresh();
@@ -3495,7 +3585,7 @@ function renderTanks(s) {
   // picks a different set. Must mirror the server-side renderSet so
   // long item names continue to wrap inside their column.
   document.querySelectorAll('[data-bandolier-char]').forEach(sel => {
-    sel.addEventListener('change', () => {
+    _bindOnce(sel, 'change', () => {
       const char = sel.dataset.bandolierChar;
       const display = document.querySelector('[data-bandolier][data-char="' + char + '"]');
       if (!display) return;
@@ -4500,7 +4590,7 @@ async function dismissTopDamage(key) {
       html += "<tr><td class=name>" + name + lore + "</td><td class=num>" + fmtPct(r.effective_chance) + "</td></tr>";
     });
     html += "</table>";
-    body.innerHTML = html;
+    morphInto(body, html);
   }
   function renderBids(data){
     var body = bidsCard.querySelector(".card-body");
@@ -4526,7 +4616,7 @@ async function dismissTopDamage(key) {
       });
       html += "</table></div>";
     });
-    body.innerHTML = html;
+    morphInto(body, html);
   }
   function refresh(){
     ensureCards();
@@ -4807,7 +4897,7 @@ async function dismissTopDamage(key) {
       html += "<tr" + rowStyle + "><td class=pet>" + petName + "</td><td class=name>" + (p.owner || "?") + "</td><td class=num>" + sec + "s</td><td style='color:" + stateColor + "'>" + stateText + "</td></tr>";
     });
     html += "</table>";
-    body.innerHTML = html;
+    morphInto(body, html);
   }
   var lastPets = [];
   function fetchPets(){
@@ -4869,7 +4959,7 @@ async function dismissTopDamage(key) {
       html += "<tr><td class=name>" + r.name + "</td><td class=num>" + r.count + "</td><td class=num>" + fmt(r.total) + "</td><td class=num>" + perHit + "</td><td style=font-size:11px>" + typeLabel + "</td></tr>";
     });
     html += "</table>";
-    body.innerHTML = html;
+    morphInto(body, html);
   }
   function refresh(){
     fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
@@ -5016,7 +5106,7 @@ async function dismissTopDamage(key) {
       }
       html += "</table></div>";
     }
-    body.innerHTML = html;
+    morphInto(body, html);
     // Wire char dropdown
     var charSel = document.getElementById("wpBidChar");
     if (charSel){
@@ -5152,7 +5242,7 @@ async function dismissTopDamage(key) {
     });
     html += "</table>";
     html += "<div class=dim style=font-size:10px;margin-top:4px>Amount shown is the crit bonus on top of the hit. Spell crits need a Quarm critical-blast line to confirm.</div>";
-    body.innerHTML = html;
+    morphInto(body, html);
   }
   function refresh(){
     fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
