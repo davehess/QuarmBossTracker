@@ -578,6 +578,10 @@ function createMainWindow() {
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
     title: 'Wolf Pack Mimic — Main window (Dashboard)',
+    // Window + taskbar icon while running. build/icon.ico is buildResources
+    // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
+    // comes separately from build/icon.ico via electron-builder win.icon.
+    icon: path.join(__dirname, 'assets', 'icon-256.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
   // Keep the OS/Task-Manager title stable instead of letting the loaded page
