@@ -549,9 +549,25 @@ async function launchAgent() {
   setTimeout(() => { if (agentProc) restartBackoff = 1000; }, 30000);
 
   const up = await waitForAgent(agentPort);
-  // loading.html (renderer) is responsible for navigating to the dashboard
-  // once the user dismisses the setup cards or the auto-timeout fires.
-  // We just push status; the renderer polls /api/state to detect ready.
+  // loading.html (renderer) drives the FIRST navigation to the dashboard once
+  // setup is dismissed. But on a RESTART (agent hot-swap, crash-restart, or a
+  // relaunch from a settings change) the dashboard window is already showing
+  // the agent — and findFreePort may have landed on a DIFFERENT port than the
+  // previous run (if the old process hadn't released 7779 yet). The loaded
+  // page keeps polling the dead old port → every /api/state fails → blank
+  // bodies even though the static shell is still there. It also still holds
+  // the OLD dashboard HTML/JS after a hot-swap. Reloading the window to the
+  // live port fixes both. Skipped on first launch (window is on loading.html,
+  // a file:// URL — not http — so the guard below is false there).
+  try {
+    if (up && mainWindow && !mainWindow.isDestroyed()) {
+      const cur = mainWindow.webContents.getURL() || '';
+      if (/^http:\/\/127\.0\.0\.1:\d+\//.test(cur) &&
+          cur.indexOf('127.0.0.1:' + agentPort + '/') === -1) {
+        mainWindow.loadURL('http://127.0.0.1:' + agentPort + '/');
+      }
+    }
+  } catch (e) { /* non-fatal — window will still self-heal if port is unchanged */ }
   pushStatus();
   return up;
 }
