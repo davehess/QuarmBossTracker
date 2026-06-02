@@ -322,7 +322,7 @@ const KEEP_PATTERNS = [
   /\byou cast /i,
   /\bresisted your/i,
   /\byou resist the .+ spell/i,                   // incoming spell we resisted (names the spell)
-  / (?:is|are) (?:an?|the) (?:leader|officer|member|recruit) of /i,  // /guildstatus rank line
+  / (?:is|are) (?:an?|the) (?:leader|officer|member) of /i,  // /guildstatus rank line
   /\byour .+ has worn off/i,
   /\bhas fainted/i,
   // Bard dirges — no "You begin casting" prefix, just this flavor text. Needed
@@ -603,7 +603,10 @@ function parseEvent(line, ts) {
   //   "Whiskeyjacks is an Officer of Dial a Port."
   //   "Soandso is a Member of <Guild>."   "X is the Leader of <Guild>."
   //   "You are an Officer of <Guild>."     (self)
-  m = line.match(/\]\s+(\S+)\s+(?:is|are)\s+(?:an?|the)\s+(Leader|Officer|Member|Recruit)\s+of\s+(.+?)\.?\s*$/i);
+  // Ranks are Member / Officer / Leader (owner-confirmed; no Recruit). The
+  // Leader phrasing is "is the Leader of" — verify against a real leader's
+  // /guildstatus and widen here if Quarm words it differently.
+  m = line.match(/\]\s+(\S+)\s+(?:is|are)\s+(?:an?|the)\s+(Leader|Officer|Member)\s+of\s+(.+?)\.?\s*$/i);
   if (m) {
     const rank = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
     return { ts: tsIso, type: 'guildstatus', character: m[1], guildRank: rank, guild: m[3].trim() };
