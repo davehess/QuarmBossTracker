@@ -127,6 +127,22 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
+### 🩹 Dashboard refresh flicker (reported 2026-06-02, video)
+The agent dashboard polls `/api/state` every ~2s and rebuilds entire panels via
+`innerHTML = ...`, which causes a visible flash/jump on every poll (scroll
+position, hover state, and `<details>` open state all reset). The Spell Casts
+panel got a targeted fix (v2.5.28 — snapshot+restore open state), but the whole
+dashboard needs the same treatment. Options, cheapest first:
+1. **Throttle the rewrite** — only re-render a panel when its serialized data
+   actually changed (hash the slice of `/api/state` it consumes; skip if equal).
+   Kills 90% of the flicker since most polls are no-ops between fights.
+2. **Preserve scroll + open state globally** — wrap every `innerHTML` assignment
+   in a save/restore of `scrollTop` + `details[open]` (generalize the v2.5.28
+   pattern into a helper).
+3. **Diff-and-patch** — only touch changed table rows. Most work; best result.
+Recommend #1 + #2 together for the next agent bump. Escape-hazard applies
+(`WEB_HTML` template) — run `npm run check:dashboard` after.
+
 ### ⭐ Customizable local dashboard (owner's big vision — design ready, build with care)
 **Asked 2026-06-01 (overnight + morning).** The local agent dashboard (served by the
 agent at `localhost:7777`/`7779`, the big `WEB_HTML` template literal in
