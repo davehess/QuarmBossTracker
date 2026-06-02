@@ -3118,6 +3118,8 @@ tr:hover td { background:#1f242c }
 .banner.update { background:#9e6a03; color:#fff }
 .banner.resumed { background:#1a7f37; color:#fff }
 .subtle { color:var(--dim); font-size:12px; margin:4px 0 12px 0; }
+.spell-link { color:inherit; text-decoration:none; border-bottom:1px dotted var(--blue); }
+.spell-link:hover { color:var(--blue); border-bottom-color:transparent; }
 .tag { background:#1f6feb22; color:var(--blue); padding:2px 6px; border-radius:4px; font-size:11px; }
 .tag.ramp { background:#9e6a0322; color:var(--gold) }
 .tag.invuln { background:#1a7f3722; color:var(--green) }
@@ -3226,6 +3228,29 @@ function _isNewerVersion(a, b) {
 function fmtK(n) { n=Number(n||0); if (n<1000) return String(n); if (n<1e6) return (n/1000).toFixed(2)+'K'; return (n/1e6).toFixed(2)+'M'; }
 function fmtAgo(ms) { if(!ms) return '?'; const d=Date.now()-ms; if(d<60000)return Math.floor(d/1000)+'s ago'; if(d<3600000)return Math.floor(d/60000)+'m ago'; if(d<86400000)return Math.floor(d/3600000)+'h ago'; return Math.floor(d/86400000)+'d ago'; }
 function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]); }
+// PQDI spell-link helper. The agent fetches the spell catalog from the bot
+// once at startup; it's served to the browser at /api/spells.json as a flat
+// { lowercaseName: id } map. spellLink(name) returns an <a> tag pointing at
+// the PQDI spell page, or the bare escaped name if we don't have an id (e.g.
+// boss-unique spells the catalog doesn't cover, or a local-only install with
+// no token to fetch the catalog).
+var _spellIdByName = {};
+(function _loadSpellMap(){
+  // One-shot fetch at script start. Cached for the page lifetime; refetched on
+  // a full reload. Failures are silent — links just won't appear.
+  try {
+    fetch('/api/spells.json').then(function(r){ return r.ok ? r.json() : null; }).then(function(map){
+      if (map && typeof map === 'object') _spellIdByName = map;
+    }).catch(function(){});
+  } catch(_){}
+})();
+function spellLink(name) {
+  var safe = esc(name);
+  if (!name) return safe;
+  var id = _spellIdByName[String(name).toLowerCase().trim()];
+  if (!id) return safe;
+  return '<a href="https://www.pqdi.cc/spell/' + id + '" target="_blank" rel="noopener" class="spell-link">' + safe + '</a>';
+}
 
 // In-place DOM updates for panel renders. The dashboard polls /api/state every
 // 2s; each render function builds its section's HTML. The old approach wrote
@@ -4021,7 +4046,7 @@ function renderInfo(s) {
         html += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + c.total + ' cast' + (c.total === 1 ? '' : 's') + '</span></summary>';
         html += '<table>';
         for (var k = 0; k < spellEntries.length; k++) {
-          html += '<tr><td>' + esc(spellEntries[k][0]) + '</td><td class="num">' + spellEntries[k][1] + '</td></tr>';
+          html += '<tr><td>' + spellLink(spellEntries[k][0]) + '</td><td class="num">' + spellEntries[k][1] + '</td></tr>';
         }
         html += '</table>';
         // Name what this mob's anonymous "a spell" casts actually were, from
@@ -4031,7 +4056,7 @@ function renderInfo(s) {
           if (rs.length > 0) {
             html += '<div class="subtle" style="font-size:10px;margin:4px 0 2px">Named via resists off this mob:</div><table>';
             for (var r = 0; r < rs.length; r++) {
-              html += '<tr><td>' + esc(rs[r][0]) + '</td><td class="num">' + rs[r][1] + ' resisted</td></tr>';
+              html += '<tr><td>' + spellLink(rs[r][0]) + '</td><td class="num">' + rs[r][1] + ' resisted</td></tr>';
             }
             html += '</table>';
           }
@@ -4061,7 +4086,7 @@ function renderInfo(s) {
     _rsNames.map(function (n) { return [n, _rs[n]]; })
       .sort(function (a, b) { return (b[1].count || 0) - (a[1].count || 0); })
       .forEach(function (e) {
-        h += '<tr><td class="name">' + esc(e[0]) + '</td>' +
+        h += '<tr><td class="name">' + spellLink(e[0]) + '</td>' +
              '<td class="num">' + (e[1].count || 0) + '</td>' +
              '<td class="dim">' + (e[1].lastMob ? esc(e[1].lastMob) : '—') + '</td></tr>';
       });
@@ -4095,7 +4120,7 @@ function renderInfo(s) {
       h += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + fmtK(c.rec.total || 0) + ' over ' + (c.rec.count || 0) + ' hit' + ((c.rec.count === 1) ? '' : 's') + '</span></summary>';
       h += '<table><tr><th>Spell</th><th class="num">Total</th><th class="num">Hits</th><th class="num">Max</th></tr>';
       for (var k = 0; k < spells.length; k++) {
-        h += '<tr><td>' + esc(spells[k][0]) + '</td>' +
+        h += '<tr><td>' + spellLink(spells[k][0]) + '</td>' +
              '<td class="num">' + fmtK(spells[k][1].total || 0) + '</td>' +
              '<td class="num">' + (spells[k][1].count || 0) + '</td>' +
              '<td class="num">' + fmtK(spells[k][1].max || 0) + '</td></tr>';
@@ -5634,6 +5659,22 @@ function startWebDashboard(port) {
       if (req.url === '/api/state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeForDashboard()));
+      }
+      // Browser-side spell lookup. The dashboard fetches this ONCE on load to
+      // turn spell names rendered on the resisted / inbound-damage / NPC cast
+      // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
+      // chars ≈ 110KB) rather than the whole catalog — the full messages are
+      // only needed by the agent itself for effect-text inference.
+      if (req.url === '/api/spells.json') {
+        const map = {};
+        if (_spellByNameLower && _spellByNameLower.size) {
+          for (const [k, v] of _spellByNameLower) if (v && v.id) map[k] = v.id;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'max-age=86400',  // 1 day; dashboard refetches across full reloads
+        });
+        return res.end(JSON.stringify(map));
       }
       // Increment 2f passthrough: GET /api/server/<key>?character=... proxies
       // to the bot's /api/agent/server-panel/<key> with our stored bearer
@@ -8241,6 +8282,109 @@ function pollLatestVersion({ botUrl }) {
   });
 }
 
+// ── Spell catalog (name -> PQDI id + landing messages) ─────────────────────
+// Fetched once at startup from the bot's /api/agent/spell-catalog endpoint and
+// cached to disk so subsequent runs don't refetch unnecessarily. Powers:
+//   (a) PQDI links on spell names rendered on the dashboard (resisted card,
+//       inbound-spell-damage card, NPC-cast "named via resists" attribution)
+//   (b) effect-text spell inference (matching the cast_on_you / cast_on_other
+//       messages from logs to identify which spell landed) — wired in a
+//       follow-up commit; the catalog itself ships first since it's the
+//       prerequisite.
+//
+// In-memory shape:
+//   _spellByNameLower:   Map<string, { id, name, you, other, fades }>
+//   _spellCatalogMeta:   { fetchedAt, etag, count }
+let _spellByNameLower = new Map();
+let _spellCatalogMeta = null;
+const SPELL_CATALOG_FILE = path.join(__dirname, 'logsync.spell-catalog.json');
+
+function _loadSpellCatalogFromDisk() {
+  try {
+    if (!fs.existsSync(SPELL_CATALOG_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(SPELL_CATALOG_FILE, 'utf8'));
+    if (!Array.isArray(raw.entries)) return;
+    _spellByNameLower = new Map();
+    for (const e of raw.entries) {
+      if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
+    }
+    _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
+  } catch (err) {
+    console.warn('[spell-catalog] disk load failed:', err && err.message);
+  }
+}
+
+function fetchSpellCatalog({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/spell-catalog');
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      };
+      if (_spellCatalogMeta && _spellCatalogMeta.etag) {
+        headers['If-None-Match'] = _spellCatalogMeta.etag;
+      }
+      const req = mod.request({
+        method: 'GET',
+        hostname: u.hostname,
+        port:     u.port,
+        path:     u.pathname + u.search,
+        headers,
+        timeout:  30000,
+      }, (res) => {
+        // 304 Not Modified — disk cache is still current; nothing to do.
+        if (res.statusCode === 304) { res.resume(); return resolve(); }
+        if (res.statusCode !== 200) {
+          res.resume();
+          console.warn(`[spell-catalog] HTTP ${res.statusCode} from bot — keeping disk cache`);
+          return resolve();
+        }
+        const etag = res.headers && res.headers.etag;
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (!Array.isArray(data.entries)) { resolve(); return; }
+            _spellByNameLower = new Map();
+            for (const e of data.entries) {
+              if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
+            }
+            _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            try {
+              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
+              fs.writeFileSync(SPELL_CATALOG_FILE + '.tmp', JSON.stringify(out));
+              fs.renameSync(SPELL_CATALOG_FILE + '.tmp', SPELL_CATALOG_FILE);
+            } catch (e) { /* disk cache best-effort */ }
+            console.log(`[spell-catalog] fetched ${data.entries.length} spells from bot`);
+            scheduleRender();
+          } catch (err) {
+            console.warn('[spell-catalog] parse failed:', err && err.message);
+          }
+          resolve();
+        });
+      });
+      req.on('error',   (err) => { console.warn('[spell-catalog] fetch error:', err && err.message); resolve(); });
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch (err) { console.warn('[spell-catalog] setup error:', err && err.message); resolve(); }
+  });
+}
+
+// Returns the PQDI URL for a spell NAME (case-insensitive), or null if we
+// don't have it in the catalog. Used by the dashboard renderer to turn spell
+// names into clickable PQDI links.
+function spellPqdiUrlForName(name) {
+  if (!name || !_spellByNameLower.size) return null;
+  const e = _spellByNameLower.get(String(name).toLowerCase().trim());
+  return (e && e.id) ? `https://www.pqdi.cc/spell/${e.id}` : null;
+}
+
 // Poll the bot for officer-filed backfill requests targeting any character
 // this agent is watching. Server returns pending|acked|running rows. We
 // store them on stats.backfillRequests so the dashboard can render an
@@ -8914,6 +9058,21 @@ async function main() {
   // Make opts available to the chat relay flush (module-level so the interval can see them)
   _uploadOpts    = { botUrl, token, dryRun };
   _isServiceMode = !!args.flags.noServiceCheck;
+
+  // Spell catalog: load any cached copy from disk synchronously so the first
+  // dashboard render has spell names + PQDI ids, then fire a background fetch
+  // to refresh from the bot. We don't await — a slow fetch must not delay
+  // boot, and the resisted-spell card just shows plain names until it lands.
+  _loadSpellCatalogFromDisk();
+  if (!dryRun && token) {
+    fetchSpellCatalog({ botUrl, token }).catch(() => {});
+    // Re-fetch daily — the catalog only changes on the weekly upstream sync,
+    // but a daily check is cheap (the bot serves a 304 if nothing changed)
+    // and stops a long-running agent from drifting indefinitely.
+    setInterval(() => {
+      fetchSpellCatalog({ botUrl, token }).catch(() => {});
+    }, 24 * 60 * 60 * 1000).unref();
+  }
   // Operator's declared main (if the launcher passed --character) — used to
   // attribute operator-level uploads instead of "(unknown)".
   _primaryCharacterOverride = args.flags.character || null;

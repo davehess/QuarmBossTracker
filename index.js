@@ -4058,6 +4058,91 @@ async function _handleAgentIncomplete(req, res) {
   }));
 }
 
+// GET /api/agent/spell-catalog
+//
+// Returns the EQ spell catalog from `eqemu_spells` so the agent can:
+//   (a) turn a logged spell NAME into a PQDI link (/spell/<id>) on its
+//       dashboard cards (resisted spells, inbound spell damage), and
+//   (b) infer which spell landed from an effect-text line in the log by
+//       matching cast_on_you / cast_on_other / spell_fades messages.
+//
+// Cached on the bot side for 1h — the catalog only changes after the weekly
+// sync run. Response is compact JSON (~250-500KB for ~3.9k spells).
+// Response shape:
+//   { version, fetched_at, count, entries: [{ id, name, you, other, fades }, ...] }
+// Bot-side cache for /api/agent/spell-catalog. The catalog is built from
+// eqemu_spells, which is only touched by the weekly sync, so a 1h TTL is
+// generous enough that a fresh sync becomes visible within an hour without
+// pounding Supabase on every agent restart.
+let _spellCatalogCache = null;       // { fetchedAt: ms, body: string, etag: string }
+const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
+async function _handleAgentSpellCatalog(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'spell-catalog disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const fresh = _spellCatalogCache && (Date.now() - _spellCatalogCache.fetchedAt) < _SPELL_CATALOG_TTL_MS;
+  if (!fresh) {
+    try {
+      const supabase = require('./utils/supabase');
+      // Stream the catalog in 1k-row pages — Supabase's PostgREST caps a single
+      // SELECT at 1000 rows by default, so a naive .select() would silently
+      // return the first 1k of ~3.9k spells.
+      const entries = [];
+      let from = 0;
+      const PAGE = 1000;
+      while (true) {
+        const { data, error } = await supabase
+          .from('eqemu_spells')
+          .select('id, name, cast_on_you, cast_on_other, spell_fades')
+          .order('id', { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        for (const r of data) {
+          // Compact key names so the over-the-wire payload stays small.
+          entries.push({ id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades });
+        }
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      const body = JSON.stringify({
+        version: 1,
+        fetched_at: new Date().toISOString(),
+        count: entries.length,
+        entries,
+      });
+      // Lightweight ETag = sha1 of the JSON body. Lets the agent skip the parse
+      // on a 304 if its cached copy is current.
+      const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+      _spellCatalogCache = { fetchedAt: Date.now(), body, etag };
+    } catch (err) {
+      console.error('[spell-catalog] fetch failed:', err && err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'fetch failed', message: String(err && err.message || err) }));
+    }
+  }
+
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch && ifNoneMatch === _spellCatalogCache.etag) {
+    res.writeHead(304, { 'ETag': _spellCatalogCache.etag, 'Cache-Control': 'max-age=3600' });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'ETag': _spellCatalogCache.etag,
+    'Cache-Control': 'max-age=3600',
+  });
+  return res.end(_spellCatalogCache.body);
+}
+
 // ── Backfill requests ──────────────────────────────────────────────────────
 // Officer-filed via /admin/encounters → agent polls here per character to
 // pick up its pending rows. Lifecycle: pending → acked (agent claimed it,
@@ -5315,6 +5400,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentIncomplete(req, res); }
     catch (err) {
       console.error('[incomplete] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/spell-catalog')) {
+    try { return await _handleAgentSpellCatalog(req, res); }
+    catch (err) {
+      console.error('[spell-catalog] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
