@@ -4268,20 +4268,36 @@ async function _handleAgentTells(req, res) {
     return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' }));
   }
 
-  // Hard gate: character must be opted in. Also need discord_id to attribute
-  // ownership. Missing either → silently drop (do not write).
+  // Hard gate: character must be opted in. Also need a discord_id to attribute
+  // ownership for /me/tells display + DM relay. Missing either → silently drop.
+  //
+  // Discord ID resolution: prefer the character's own discord_id, fall back to
+  // the family root (main_name) when the char row has none. Roster imports
+  // routinely leave alts with NULL discord_id even though the main is linked —
+  // without this fallback, tells from those alts succeed at upload but land
+  // with owner_discord_id=NULL, so /me/tells filters them out and the DM relay
+  // has no target. The web /me toggle has the symmetric family-root fallback.
   const charRows = await supabase.select(
     'characters',
-    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay,tell_dm&guild_id=eq.wolfpack&limit=1`,
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay,tell_dm,main_name&guild_id=eq.wolfpack&limit=1`,
   ).catch(() => []);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (!charRow?.tell_relay) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'tell_relay not enabled for this character' }));
   }
-  if (!charRow.discord_id) {
+  let ownerDiscordId = charRow.discord_id || null;
+  if (!ownerDiscordId && charRow.main_name && charRow.main_name !== charRow.name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    const rootRow = Array.isArray(rootRows) ? rootRows[0] : null;
+    if (rootRow?.discord_id) ownerDiscordId = rootRow.discord_id;
+  }
+  if (!ownerDiscordId) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'character has no linked discord_id' }));
+    return res.end(JSON.stringify({ error: 'character has no linked discord_id (and no family root to fall back to)' }));
   }
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
@@ -4296,7 +4312,7 @@ async function _handleAgentTells(req, res) {
     rows.push({
       guild_id:         guildId,
       owner_character:  charRow.name,
-      owner_discord_id: charRow.discord_id,
+      owner_discord_id: ownerDiscordId,
       direction,
       other_name:       other.slice(0, 64),
       text:             text.slice(0, 2000),
@@ -4336,7 +4352,7 @@ async function _handleAgentTells(req, res) {
   // Supabase Realtime on the row insert, independent of this DM path.
   const incoming = rows.filter(r => r.direction === 'incoming');
   if (incoming.length > 0 && charRow.tell_dm !== false) {
-    _relayTellsToDM(charRow.discord_id, charRow.name, incoming).catch(err =>
+    _relayTellsToDM(ownerDiscordId, charRow.name, incoming).catch(err =>
       console.warn('[tells] DM relay failed:', err?.message));
   }
 

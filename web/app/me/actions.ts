@@ -33,14 +33,32 @@ export async function setCharacterExclusion(
   if (!pack?.discord_id) return { ok: false, error: 'no discord link' };
 
   // Verify the target character is actually owned by this discord_id.
+  //
+  // Ownership rule: the target row's discord_id matches yours, OR the target's
+  // FAMILY ROOT (resolved via main_name) is yours. Alts very often have a NULL
+  // or stale discord_id — the OpenDKP roster import only fills it reliably for
+  // the main, and weekly roster syncs reset alt rows. Without the family-root
+  // fallback, toggling Tells/Stats/Inventory on any alt silently fails (the UI
+  // optimistically shows "ON" then never persists) while only the main works,
+  // which is the exact symptom that left Canopy stuck OFF in production.
   const { data: target } = await admin
     .from('characters')
-    .select('name, discord_id')
+    .select('name, discord_id, main_name')
     .eq('guild_id', 'wolfpack')
     .ilike('name', characterName)
     .maybeSingle();
   if (!target) return { ok: false, error: 'unknown character' };
-  if (target.discord_id !== pack.discord_id) {
+  let owned = target.discord_id === pack.discord_id;
+  if (!owned && target.main_name && target.main_name !== target.name) {
+    const { data: root } = await admin
+      .from('characters')
+      .select('discord_id')
+      .eq('guild_id', 'wolfpack')
+      .ilike('name', target.main_name)
+      .maybeSingle();
+    if (root?.discord_id === pack.discord_id) owned = true;
+  }
+  if (!owned) {
     return { ok: false, error: 'not your character' };
   }
 

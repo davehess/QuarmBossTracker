@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.3': [
+    '**Tells fix** — the `/me` toggle now actually saves for alts (was silently rejected when the alt had no linked Discord ID), and the bot stores incoming tells against the family root when an alt is unlinked — so `/me/tells` and Discord DM relay both reach you.',
+  ],
   '2.7.0': [
     '**UI Studio (Mimic)** — back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and `eqclient.ini` to wolfpack.quest. Restore on any computer in one click. Files are encrypted before they leave your machine.',
     '**Multi-folder EQ picker (Mimic)** — scans for `eqgame.exe` in 14 common locations, lets you pick multiple installs, Browse to add more, with a "Where did we look?" disclosure.',
