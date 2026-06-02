@@ -32,6 +32,35 @@ const { spawn } = require('child_process');
 // creation so it applies to all BrowserWindows.
 Menu.setApplicationMenu(null);
 
+// ── Single-instance lock ────────────────────────────────────────────────────
+// Mimic bundles + runs its own parser engine on a fixed port. Launching a
+// SECOND copy (e.g. clicking the taskbar/Start-menu shortcut while one is
+// already running) used to spawn a second window whose engine immediately
+// exited ("Service already running") — leaving a blank "Engine failed to
+// start" dashboard while the FIRST instance was fine. Now the second launch
+// surrenders the lock + quits, and the running instance just surfaces its
+// window (the dashboard). This must run before app.whenReady().
+const _gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!_gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // A second launch was attempted — show + focus the existing window
+    // instead of starting another copy.
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        if (!mainWindow.isVisible()) mainWindow.show();
+        mainWindow.focus();
+      } else {
+        // Window was closed-to-tray and destroyed — recreate it on the dash.
+        createMainWindow();
+        navigateToDashboard('second-instance-recreate');
+      }
+    } catch (e) { /* non-fatal */ }
+  });
+}
+
 // electron-updater is optional in dev (not installed when running `electron .`
 // without an npm install). Tolerate its absence so unpacked launches still work.
 let autoUpdater = null;
@@ -570,7 +599,7 @@ async function launchAgent() {
       // Re-navigating to the live port forces fresh code + a reconnect.
       // (First launch shows loading.html on file://, so this is skipped there.)
       if (/^https?:\/\/127\.0\.0\.1:\d+\//.test(cur)) {
-        mainWindow.loadURL('http://127.0.0.1:' + agentPort + '/');
+        navigateToDashboard('agent-restart');
       }
     }
   } catch (e) { /* non-fatal */ }
@@ -579,6 +608,43 @@ async function launchAgent() {
 }
 
 // ── Windows ─────────────────────────────────────────────────────────────────
+
+// Centralized, instrumented navigation to the agent dashboard. Every
+// blank-dashboard report so far has the same shape — "works in a browser,
+// blank in the Mimic window" — which points at one of two things: (a) a stale
+// HTTP cache in the window's session still serving an OLDER (broken) dashboard
+// build after a hot-swap, or (b) a silent load failure with no retry, leaving
+// the window stranded on a blank/dead page. This helper addresses both: it
+// clears the session cache before loading, sends no-cache request headers, and
+// logs the attempt + outcome to the agent log so a stuck load is diagnosable
+// from the log tail (and the loading.html diagnostics panel) even when the
+// renderer itself shows nothing.
+let _dashNavSeq = 0;
+function _curWindowUrl() {
+  try { return (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.getURL()) || '(none)'; }
+  catch { return '(err)'; }
+}
+function navigateToDashboard(reason) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    appendAgentLog(`[mimic] dashboard nav skipped — no window (reason=${reason})\n`);
+    return;
+  }
+  const seq = ++_dashNavSeq;
+  const url = 'http://127.0.0.1:' + agentPort + '/';
+  appendAgentLog(`[mimic] dashboard nav #${seq}: loading ${url} (reason=${reason}, was=${_curWindowUrl()})\n`);
+  const wc = mainWindow.webContents;
+  Promise.resolve()
+    .then(() => wc.session.clearCache())
+    .catch((e) => appendAgentLog(`[mimic] dashboard nav #${seq}: clearCache failed (${e && e.message})\n`))
+    .then(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      return wc.loadURL(url, { extraHeaders: 'pragma: no-cache\nCache-Control: no-cache\n' });
+    })
+    .then(() => appendAgentLog(`[mimic] dashboard nav #${seq}: load OK (url=${_curWindowUrl()})\n`))
+    .catch((err) => appendAgentLog(`[mimic] dashboard nav #${seq}: load REJECTED — ${err && err.message}\n`));
+}
+
+let _lastConsoleMsg = '';
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
@@ -594,6 +660,40 @@ function createMainWindow() {
   // (loading.html → the agent dashboard) overwrite it — so this process stays
   // identifiable as the main window rather than "Mimic — getting ready" etc.
   mainWindow.on('page-title-updated', (e) => e.preventDefault());
+
+  // ── Load diagnostics ──────────────────────────────────────────────────────
+  // These make a blank window self-explanatory from the agent log: which URL
+  // loaded, which failed (and why), renderer crashes, and dashboard JS errors
+  // (e.g. the WEB_HTML escape-hazard SyntaxError that blanks the page). A
+  // failed DASHBOARD load (http://127.0.0.1:<port>) auto-retries — loading.html
+  // is file:// and drives its own retry via pollEngine, so we leave that alone.
+  const wc = mainWindow.webContents;
+  wc.on('did-finish-load', () => appendAgentLog(`[mimic] window did-finish-load url=${_curWindowUrl()}\n`));
+  wc.on('did-fail-load', (_e, code, desc, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    if (code === -3) return; // ERR_ABORTED — a newer navigation superseded this one
+    appendAgentLog(`[mimic] window did-fail-load code=${code} desc=${desc} url=${validatedURL}\n`);
+    if (/^https?:\/\/127\.0\.0\.1:\d+\//.test(validatedURL || '')) {
+      setTimeout(() => navigateToDashboard('retry-after-fail'), 1200);
+    }
+  });
+  wc.on('render-process-gone', (_e, details) => {
+    appendAgentLog(`[mimic] window render-process-gone reason=${details && details.reason}\n`);
+    if (/^https?:\/\//.test(_curWindowUrl())) setTimeout(() => navigateToDashboard('render-process-gone'), 800);
+  });
+  wc.on('unresponsive', () => appendAgentLog(`[mimic] window unresponsive\n`));
+  wc.on('console-message', (_e, level, message, lineNo, sourceId) => {
+    // Surface renderer warnings/errors (level 2=warning, 3=error) into the
+    // agent log — a blank page from a dashboard script error is otherwise
+    // invisible. Dedupe consecutive identical lines so a per-poll warning
+    // can't flood the capped log tail.
+    if (level < 2) return;
+    const sig = `${level}:${message}:${sourceId}:${lineNo}`;
+    if (sig === _lastConsoleMsg) return;
+    _lastConsoleMsg = sig;
+    appendAgentLog(`[mimic] dashboard console[${level === 3 ? 'error' : 'warn'}]: ${message} (${sourceId}:${lineNo})\n`);
+  });
+
   mainWindow.loadFile('loading.html');
   mainWindow.on('close', (e) => {
     if (!quitting) { e.preventDefault(); mainWindow.hide(); } // close to tray
@@ -1453,9 +1553,7 @@ ipcMain.handle('mark-onboarded', () => {
 // Renderer asks the main process to navigate to the agent's dashboard.
 // loading.html calls this once setup is complete (or after auto-timeout).
 ipcMain.handle('open-dashboard', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.loadURL(`http://127.0.0.1:${agentPort}/`);
-  }
+  navigateToDashboard('renderer-open-dashboard');
   return true;
 });
 // Gear icon on the dashboard opens the Settings window.
@@ -1499,7 +1597,13 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
 });
 
 // ── Boot ────────────────────────────────────────────────────────────────────
+// Guard the entire boot on the single-instance lock. A second launch already
+// called app.quit() above, but app.quit() is async — without this guard the
+// losing instance would race ahead, spawn a second agent (which then dies with
+// "Service already running"), and flash a blank dashboard before quitting.
 app.whenReady().then(async () => {
+  if (!_gotSingleInstanceLock) return;
+  appendAgentLog(`[mimic] boot — Mimic v${app.getVersion()}, single-instance lock acquired, userData=${app.getPath('userData')}\n`);
   createMainWindow();
   makeTrayIcon();
   wireAutoUpdater();

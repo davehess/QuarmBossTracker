@@ -2112,16 +2112,41 @@ let _queueCapEvictCount      = 0;   // FIFO evictions because queue hit MAX_SIZE
 
 function _loadQueueFromDisk() {
   if (!fs.existsSync(QUEUE_FILE)) return;
+  let buf;
+  try { buf = fs.readFileSync(QUEUE_FILE); }   // Buffer (up to ~2GB) — never a giant string
+  catch (err) { console.warn(`[upload-queue] could not read queue file (${err.message}); starting empty`); return; }
   try {
-    const raw = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
-    if (Array.isArray(raw?.pending)) {
-      _uploadQueue = raw.pending;
-      console.log(`[upload-queue] loaded ${_uploadQueue.length} pending entr${_uploadQueue.length === 1 ? 'y' : 'ies'} from disk`);
+    // Detect format from the first non-whitespace byte: '{' → legacy
+    // single-object `{ "pending": [...] }`; anything else → NDJSON (one entry
+    // per line, the current format). Legacy files are necessarily small (the
+    // old code couldn't successfully WRITE an oversized queue), so a one-shot
+    // string parse is safe there.
+    let i = 0;
+    while (i < buf.length && (buf[i] === 0x20 || buf[i] === 0x09 || buf[i] === 0x0a || buf[i] === 0x0d)) i++;
+    if (buf[i] === 0x7b /* '{' */) {
+      const raw = JSON.parse(buf.toString('utf8'));
+      if (Array.isArray(raw?.pending)) _uploadQueue = raw.pending;
+    } else {
+      // NDJSON — walk the buffer splitting on '\n' (0x0a) so we only ever
+      // stringify one (small) line at a time. A single corrupt line is
+      // skipped rather than nuking the whole queue.
+      const out = [];
+      let start = 0;
+      for (let j = 0; j <= buf.length; j++) {
+        if (j === buf.length || buf[j] === 0x0a) {
+          if (j > start) {
+            const line = buf.toString('utf8', start, j).trim();
+            if (line) { try { out.push(JSON.parse(line)); } catch { /* skip bad line */ } }
+          }
+          start = j + 1;
+        }
+      }
+      _uploadQueue = out;
     }
+    console.log(`[upload-queue] loaded ${_uploadQueue.length} pending entr${_uploadQueue.length === 1 ? 'y' : 'ies'} from disk`);
   } catch (err) {
-    // The file exists but couldn't be parsed — likely truncated during a
-    // crash mid-write. Move it aside (instead of silently dropping its
-    // contents) so the user can recover or report it if it matters.
+    // The file exists but couldn't be parsed at all — move it aside (instead
+    // of silently dropping its contents) so the user can recover or report it.
     const aside = QUEUE_FILE + '.corrupt-' + Date.now();
     try { fs.renameSync(QUEUE_FILE, aside); }
     catch (renameErr) { console.warn(`[upload-queue] could not move corrupt queue aside: ${renameErr.message}`); }
@@ -2140,14 +2165,44 @@ function _saveQueueToDisk() {
 
 // Synchronous flush used by debounced timer AND by every process-exit
 // pathway. Cancels any pending debounce so we don't race with ourselves.
+//
+// Persisted as NDJSON (one entry per line) rather than one
+// `JSON.stringify({ pending: [...] })` blob. During a big --since backfill the
+// queue holds thousands of entries, each an encounter payload up to 10MB —
+// serializing the WHOLE array into a single string blew past V8's ~512MB
+// max-string-length cap and threw "Invalid string length" on every save,
+// silently losing crash-recovery (hundreds of failures seen in the field).
+// Stringifying each entry on its own keeps every string tiny; we stream them
+// to the fd so the big buffer never has to exist either.
+const _QUEUE_ENTRY_MAX_BYTES = 64 * 1024 * 1024; // one entry should never near this
 function _flushQueueToDiskSync() {
   if (_queueSaveTimer) { clearTimeout(_queueSaveTimer); _queueSaveTimer = null; }
+  const tmp = QUEUE_FILE + '.tmp';
+  let fd;
   try {
-    const tmp = QUEUE_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify({ pending: _uploadQueue }));
+    fd = fs.openSync(tmp, 'w');
+    for (const entry of _uploadQueue) {
+      let line;
+      try { line = JSON.stringify(entry); }
+      catch (e) {
+        // A single circular/unserializable entry — skip it rather than abort
+        // the whole save (which would forfeit the rest of the queue on crash).
+        console.warn(`[upload-queue] dropping unserializable entry ${entry && entry.id}: ${e.message}`);
+        continue;
+      }
+      if (line.length > _QUEUE_ENTRY_MAX_BYTES) {
+        console.warn(`[upload-queue] skipping oversized entry ${entry && entry.id} (${Math.round(line.length / 1048576)}MB) from persistence`);
+        continue;
+      }
+      fs.writeSync(fd, line + '\n');
+    }
+    try { fs.fsyncSync(fd); } catch { /* best effort */ }
+    fs.closeSync(fd); fd = undefined;
     fs.renameSync(tmp, QUEUE_FILE);
   } catch (err) {
     console.warn(`[upload-queue] save failed: ${err.message}`);
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
   }
 }
 
@@ -8295,7 +8350,11 @@ function pollGuildTriggers({ botUrl, token }) {
 let _personalTriggers = [];
 function loadPersonalTriggers() {
   try {
-    const dir = path.dirname(_statsPath || '');
+    // personal_triggers.json lives next to the agent's other state files
+    // (logsync.stats.json etc.) — i.e. the agent dir. STATS_FILE is the
+    // canonical anchor for that directory. (Earlier code referenced an
+    // undefined `_statsPath`, which threw ReferenceError on every load.)
+    const dir = path.dirname(STATS_FILE || '');
     if (!dir) return;
     const p = path.join(dir, 'personal_triggers.json');
     if (!fs.existsSync(p)) return;
@@ -8973,9 +9032,18 @@ async function main() {
         if (!_hailFound) {
           const m = HAIL_RE.exec(line);
           if (m) {
-            _hailFound = true;
             const inLogName = m[1];
-            if (inLogName && inLogName !== b.character) {
+            // The whole regex carries /i (so "an old man" / "Welcome" match
+            // regardless of case), which ALSO lets the name group [A-Z][a-z]+
+            // match a lowercase English word — "the captain says, 'Welcome to
+            // Qeynos!'" captured "to" and renamed the builder to "To". Real EQ
+            // hails address the player with a genuinely capitalized name
+            // ("Hail, Dant!"), so re-validate the capture CASE-SENSITIVELY and
+            // run it through the plausible-attacker guard. If it's junk we do
+            // NOT latch _hailFound — keep listening for a later, valid hail.
+            const validHailName = inLogName && /^[A-Z][a-z]+$/.test(inLogName) && isPlausibleAttacker(inLogName);
+            if (validHailName) _hailFound = true;
+            if (validHailName && inLogName !== b.character) {
               console.log(`[mimic] log "${path.basename(b.logPath)}" filename says ${b.character}, NPC hailed ${inLogName} — using ${inLogName}`);
               const old = b.character;
               b.character = inLogName;
