@@ -157,6 +157,21 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
     );
   }
 
+  // 404 for names with ZERO footprint anywhere — no roster row, no /who
+  // sighting, no parses, no loot, no attendance, no family link. Without this,
+  // ANY letter-only string (a resisted-spell fragment like "Invoke"/"Chilling",
+  // a typo, an NPC word) passed the regex guard above and rendered a full empty
+  // "0 parses" profile, making non-characters look like real-but-empty members.
+  // A genuine roster character with no combat data still has `who` (from the
+  // characters table) or a family link, so it still renders correctly.
+  const hasFootprint =
+    !!data.who ||
+    data.parses.length > 0 ||
+    data.loot.length > 0 ||
+    !!data.attendance ||
+    data.family.length > 0;
+  if (!hasFootprint) notFound();
+
   const { displayName, who, parses, loot, attendance, family, familyRoot, timeline, familyAgg } = data;
 
   // Aggregates

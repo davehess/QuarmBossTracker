@@ -1349,9 +1349,13 @@ class EncounterBuilder {
     if (event.type === 'resist') {
       if (!this.silent && event.spell) {
         const r = stats.resistedSpells[event.spell]
-               || (stats.resistedSpells[event.spell] = { count: 0, lastMob: null });
+               || (stats.resistedSpells[event.spell] = { count: 0, lastMob: null, byMob: {} });
+        if (!r.byMob) r.byMob = {};   // migrate older saved snapshots
         r.count++;
-        if (this.bossName) r.lastMob = this.bossName;
+        if (this.bossName) {
+          r.lastMob = this.bossName;
+          r.byMob[this.bossName] = (r.byMob[this.bossName] || 0) + 1;
+        }
       }
       return;
     }
@@ -2519,7 +2523,9 @@ const stats = {
   // resistedSpells: incoming spells the uploader RESISTED this session. EQ
   // hides the spell name on a mob's "begins to cast a spell" line, but the
   // resist line names it — so this reveals what mobs are actually casting at
-  // us. { [spellName]: { count, lastMob } }
+  // us. byMob attributes each resist to the mob we were fighting when it
+  // landed, so the NPC-cast view can name what a mob's anonymous "a spell"
+  // casts actually were. { [spellName]: { count, lastMob, byMob: { [mob]: count } } }
   resistedSpells: {},
   // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
   // { mobName: { [abilityName]: { count, totalDmg } } }
@@ -3943,7 +3949,22 @@ function renderInfo(s) {
       if (/\s/.test(n)) return false;
       return /^[A-Z][a-zA-Z]{2,}$/.test(n);
     }
-    function _ccRenderGroup(title, names, hint) {
+    // Resisted-spell attribution per mob: EQ logs a mob's cast as the anonymous
+    // "a spell", but a resist names it — so for the NPC cast list we can reveal
+    // what some of a mob's "a spell" casts actually were. _rsByMob(mob) returns
+    // the [spell, count] pairs we resisted from that mob this session.
+    var _rsAll = s.resistedSpells || {};
+    function _rsByMob(mob) {
+      var out = [];
+      var keys = Object.keys(_rsAll);
+      for (var i = 0; i < keys.length; i++) {
+        var rec = _rsAll[keys[i]] || {};
+        var n = (rec.byMob && rec.byMob[mob]) || 0;
+        if (n > 0) out.push([keys[i], n]);
+      }
+      return out.sort(function(a, b){ return b[1] - a[1]; });
+    }
+    function _ccRenderGroup(title, names, hint, withResists) {
       if (names.length === 0) return '';
       var html = '<div class="card wide"><h2>' + title + '</h2>';
       if (hint) html += '<div class="subtle" style="font-size:11px;margin-bottom:6px">' + hint + '</div>';
@@ -3961,7 +3982,20 @@ function renderInfo(s) {
         for (var k = 0; k < spellEntries.length; k++) {
           html += '<tr><td>' + esc(spellEntries[k][0]) + '</td><td class="num">' + spellEntries[k][1] + '</td></tr>';
         }
-        html += '</table></details>';
+        html += '</table>';
+        // Name what this mob's anonymous "a spell" casts actually were, from
+        // spells we resisted off it this session.
+        if (withResists === true) {
+          var rs = _rsByMob(c.name);
+          if (rs.length > 0) {
+            html += '<div class="subtle" style="font-size:10px;margin:4px 0 2px">Named via resists off this mob:</div><table>';
+            for (var r = 0; r < rs.length; r++) {
+              html += '<tr><td>' + esc(rs[r][0]) + '</td><td class="num">' + rs[r][1] + ' resisted</td></tr>';
+            }
+            html += '</table>';
+          }
+        }
+        html += '</details>';
       });
       html += '</div>';
       return html;
@@ -3969,9 +4003,9 @@ function renderInfo(s) {
     var playerNames = casters.filter(_ccIsPlayerName);
     var otherNames  = casters.filter(function(n){ return !_ccIsPlayerName(n); });
     h += _ccRenderGroup('Spell Casts This Session — Players', playerNames,
-      'Reliable for the uploader. Other casters land under <code>(unknown)</code> because EQ does not log the spell name for bystanders.');
+      'Reliable for the uploader. Other casters land under <code>(unknown)</code> because EQ does not log the spell name for bystanders.', false);
     h += _ccRenderGroup('Spell Casts This Session — NPCs / Unknown', otherNames,
-      'Casts attributed to NPCs or to bystanders whose spell name EQ does not reveal.');
+      'Casts attributed to NPCs or to bystanders whose spell name EQ does not reveal. A mob\\'s "a spell" casts are named below where we resisted them.', true);
   }
 
   // Resisted incoming spells — names what mobs are actually casting at us.
