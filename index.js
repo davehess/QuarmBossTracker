@@ -61,6 +61,7 @@ const {
   getAnnounce, removeAnnounce, getAnnounceByThreadId,
   updateAnnounceTargets, updateAnnounceEasterEgg, getAllAnnounces,
   getAllPvpKills, clearPvpKill, getQuake, saveQuake, clearQuake,
+  recordPvpKill, setPvpKillThreadMessageId,
   addPvpAlertHowler,
   hasSeenWelcome, markWelcomeSeen,
   getRaidSession, clearRaidSession, accumulateSessionDamage,
@@ -2945,6 +2946,75 @@ async function _handleAgentPvp(req, res) {
         // people can scroll past. ("Hmm don't like getting a ping every
         // kill" — Dant, 2026-06-01)
         content = `☠️ ${text}`;
+      }
+
+      // Auto-record PvP boss respawn timer when the broadcast names a known
+      // boss from data/bosses.json. PvP boss respawns are server-wide — they
+      // tick whether Wolf Pack made the kill or another guild did — so we
+      // record on ANY guild's boss kill. Detected as: killType='pvp' with no
+      // victimGuild (PVP_BOSS_KILL_ACTIVE_RX shape: "X of <G> has killed Boss
+      // [in Zone]!"). Auto-records call recordPvpKill with the broadcast
+      // timestamp so the ±20% window is anchored to when the kill actually
+      // happened, not when the relay landed.
+      if (killType === 'pvp' && !victimGuild && victim) {
+        try {
+          delete require.cache[require.resolve('./data/bosses.json')];
+          const bosses = require('./data/bosses.json');
+          const needle = String(victim).trim().toLowerCase();
+          const candidates = bosses.filter(b =>
+            b.name.toLowerCase() === needle ||
+            (b.nicknames || []).some(n => String(n).toLowerCase() === needle)
+          );
+          if (candidates.length === 1) {
+            const boss = candidates[0];
+            const existing = getAllPvpKills()[boss.id];
+            // Don't overwrite a fresh active timer — only auto-record when there
+            // is no existing entry or the previous one's window has expired.
+            const alreadyActive = existing
+              && !existing.timerUnknown
+              && existing.nextSpawnLatest > Date.now();
+            if (!alreadyActive) {
+              const killedAtMs = b?.ts ? new Date(b.ts).getTime() : Date.now();
+              const killedByLabel = `auto:${killer || '?'}${killerGuild ? '/' + killerGuild : ''}`;
+              recordPvpKill(boss.name, boss.timerHours, killedByLabel, boss.id, false, killedAtMs);
+              content += `\n_⏱️ Auto-tracked — respawns in ~${boss.timerHours}h (±20%) · see /timers_`;
+
+              // Post a richer card to PVP_KILLS_THREAD_ID mirroring /pvpkill.
+              const killsThreadId = process.env.PVP_KILLS_THREAD_ID;
+              if (killsThreadId) {
+                try {
+                  const { EmbedBuilder } = require('discord.js');
+                  const entry = getAllPvpKills()[boss.id];
+                  const embed = new EmbedBuilder()
+                    .setColor(0xcc0000)
+                    .setTitle(`🗡️ PVP Kill — ${boss.name}`)
+                    .setDescription('Auto-recorded from PvP server broadcast.')
+                    .addFields(
+                      { name: 'Zone',       value: boss.zone, inline: true },
+                      { name: 'Killed by',  value: `${killer || '?'}${killerGuild ? ' of <' + killerGuild + '>' : ''}`, inline: true },
+                      { name: 'Base Timer', value: `${boss.timerHours}h (±20%)`, inline: true },
+                      { name: '⏰ Earliest Spawn',
+                        value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
+                        inline: false },
+                      { name: '⏳ Latest Spawn',
+                        value: `${discordAbsoluteTime(entry.nextSpawnLatest)} (${discordRelativeTime(entry.nextSpawnLatest)}) — guaranteed by this time`,
+                        inline: false },
+                    )
+                    .setTimestamp();
+                  const thread = await client.channels.fetch(killsThreadId);
+                  const msg = await thread.send({ embeds: [embed] });
+                  setPvpKillThreadMessageId(boss.id, msg.id);
+                } catch (err) {
+                  console.warn('[pvp-auto] could not post kill card:', err?.message);
+                }
+              }
+            }
+          } else if (candidates.length > 1) {
+            console.warn(`[pvp-auto] ambiguous boss match for "${victim}" (${candidates.length} candidates in bosses.json) — skipping auto-record. Use /pvpkill to disambiguate.`);
+          }
+        } catch (err) {
+          console.warn('[pvp-auto] boss-kill auto-record failed:', err?.message);
+        }
       }
 
       // Lord of Ire fun counter — when a Wolf Pack member kills "Lord of Ire"

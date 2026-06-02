@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.7': [
+    '**Auto-`/pvpkill` from PvP server broadcasts** — when Druzzil announces "X of <Guild> has killed Boss in Zone!" and the victim matches a boss in `data/bosses.json`, the bot auto-starts the respawn timer (±20% window) and posts a kill card to `PVP_KILLS_THREAD_ID`. Fires regardless of which guild made the kill — server-wide respawns tick the same for everyone.',
+  ],
   '2.7.6': [
     '**PvP howl edits in place again** — second & later howlers were appending new "X and Y howl back!" lines instead of replacing the existing one (the filter only caught the singular "howls back!" form).',
   ],
