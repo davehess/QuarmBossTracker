@@ -767,17 +767,61 @@ async function syncCharacters() {
 
   if (rows.length === 0) return { upserted: 0 };
 
+  // Dedup by (guild_id, lower(name)) BEFORE upserting. OpenDKP rosters
+  // frequently contain duplicate character names — the same toon registered
+  // twice, a main + a stale dupe, etc. (the live roster shows "Fronzz" listed
+  // twice). The upsert conflict target is (guild_id, name), so two rows with
+  // the same name in ONE PostgREST batch trigger Postgres's "ON CONFLICT DO
+  // UPDATE command cannot affect row a second time" error — which fails the
+  // ENTIRE batch and silently drops up to 200 unrelated characters. THIS is
+  // why Ashieron / Abrahms / Damyu / Ghalix never imported despite being
+  // clearly present in OpenDKP: they happened to share a batch with a
+  // duplicate-name pair. Collapse duplicates first, keeping the best row.
+  const RANK_SCORE = {
+    'Pack Leader': 6, 'Officer': 5, 'Raid Pack': 4,
+    'Recruit': 3, 'Raid Alt': 2, 'Non-raid Alt': 1, 'Inactive': 0,
+  };
+  const _score = (r) =>
+      (r.deleted ? -5000 : 0)
+    + (r.active ? 1000 : 0)
+    + (RANK_SCORE[r.rank] != null ? RANK_SCORE[r.rank] * 10 : 0)
+    + (r.opendkp_id != null ? 1 : 0);
+  const byName = new Map();   // lower(name) -> best row
+  for (const r of rows) {
+    const k = r.name.toLowerCase();
+    const prev = byName.get(k);
+    if (!prev || _score(r) > _score(prev)) byName.set(k, r);
+  }
+  const deduped = [...byName.values()];
+  const droppedDupes = rows.length - deduped.length;
+  if (droppedDupes > 0) {
+    console.log(`[opendkp-sync] characters: collapsed ${droppedDupes} duplicate-name row(s) before upsert`);
+  }
+
   // Batch in chunks so a huge guild roster doesn't single-shot a big PostgREST
   // payload. 200/batch is well under PostgREST's limit and matches our other
-  // upsert helpers' implicit batching.
+  // upsert helpers' implicit batching. supabase.upsert returns null (not a
+  // throw) on failure — so on a null/failed batch, fall back to per-row
+  // upserts so a single bad row can't silently drop the other ~199.
   const BATCH = 200;
   let upserted = 0;
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const slice = rows.slice(i, i + BATCH);
+  let failedRows = 0;
+  for (let i = 0; i < deduped.length; i += BATCH) {
+    const slice = deduped.slice(i, i + BATCH);
     const written = await supabase.upsert('characters', slice, 'guild_id,name');
-    if (Array.isArray(written)) upserted += written.length;
+    if (Array.isArray(written)) {
+      upserted += written.length;
+      continue;
+    }
+    // Batch failed — retry each row individually.
+    console.warn(`[opendkp-sync] characters: batch ${i}-${i + slice.length} failed; retrying ${slice.length} row(s) individually`);
+    for (const row of slice) {
+      const one = await supabase.upsert('characters', [row], 'guild_id,name');
+      if (Array.isArray(one)) upserted += one.length;
+      else { failedRows++; console.warn(`[opendkp-sync] character "${row.name}" upsert failed`); }
+    }
   }
-  return { upserted, pages: pagesWalked };
+  return { upserted, pages: pagesWalked, dropped_dupes: droppedDupes, failed_rows: failedRows };
 }
 
 module.exports = { runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments };
