@@ -415,7 +415,7 @@ function parseEvent(line, ts) {
   // "<Name>'s <Spell> hits/strikes X for N points of damage." (third-party spell)
   m = line.match(/\]\s+(\S+(?:`s|'s))\s+(.+?)\s+(?:hits?|strikes?)\s+(.+?)\s+for\s+(\d+)(?:\s+\((\d+)\))?\s+points?\s+of\s+(?:non-melee\s+)?damage/i);
   if (m) {
-    return { ts: tsIso, type: 'damage', attacker: m[1].replace(/['`]s$/, ''), defender: m[3], ability: m[2], amount: parseInt(m[4], 10) };
+    return { ts: tsIso, type: 'damage', attacker: m[1].replace(/['`]s$/, ''), defender: m[3], ability: m[2], amount: parseInt(m[4], 10), spellName: m[2].trim() };
   }
 
   // Attack verbs in EQ. Comprehensive list covering player abilities and the
@@ -456,7 +456,7 @@ function parseEvent(line, ts) {
   // "X was hit by SPELL for N (points of) damage." (proc / unsourced spell hit)
   m = line.match(/\]\s+(You|.+?)\s+(?:was|were)\s+hit\s+by\s+(.+?)\s+for\s+(\d+)(?:\s+points?\s+of)?\s+(?:non-melee\s+)?damage/i);
   if (m) {
-    return { ts: tsIso, type: 'damage', attacker: null, defender: m[1] === 'You' ? null : m[1], ability: m[2], amount: parseInt(m[3], 10) };
+    return { ts: tsIso, type: 'damage', attacker: null, defender: m[1] === 'You' ? null : m[1], ability: m[2], amount: parseInt(m[3], 10), spellName: m[2].trim() };
   }
 
   // "X has taken N (points of) damage from your SPELLNAME." (DoT/spell from uploader)
@@ -468,7 +468,7 @@ function parseEvent(line, ts) {
   // "X has taken N (points of) damage from PlayerName's SPELLNAME." (DoT/spell from third party)
   m = line.match(/\]\s+(.+?)\s+has\s+taken\s+(\d+)(?:\s+points?\s+of)?\s+damage\s+from\s+(\S+?)(?:`s|'s)\s+([^.]+)\./i);
   if (m) {
-    return { ts: tsIso, type: 'damage', attacker: m[3], defender: m[1], ability: m[4].trim(), amount: parseInt(m[2], 10) };
+    return { ts: tsIso, type: 'damage', attacker: m[3], defender: m[1], ability: m[4].trim(), amount: parseInt(m[2], 10), spellName: m[4].trim() };
   }
 
   // "You <verb> X for N points of damage." (player attacking, second-person)
@@ -1433,6 +1433,35 @@ class EncounterBuilder {
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
         ? (this.character || 'You')
         : rawAtk;
+
+      // ── Inbound spell damage on the uploader (by caster → spell) ────────────
+      // Counterpart to the resisted-spells card: what landed on US. Only when
+      // the parse rule tagged a real spell name (event.spellName) and WE are the
+      // defender. The spell name stays in spells{}/ability; the CASTER (a real
+      // mob/player or '(unknown)') is the group key — never the spell — so this
+      // can't manufacture a phantom character.
+      if (!this.silent && event.spellName) {
+        const def = event.defender;
+        const defenderIsUploader =
+          def === null ||
+          /^you$/i.test(def || '') ||
+          (this.character && String(def).toLowerCase() === this.character.toLowerCase());
+        if (defenderIsUploader) {
+          const caster = (rawAtk && !/^you$/i.test(rawAtk)) ? rawAtk : '(unknown)';
+          const spell  = String(event.spellName).trim();
+          if (spell) {
+            const byC = stats.inboundSpellDamage[caster]
+                     || (stats.inboundSpellDamage[caster] = { total: 0, count: 0, lastSeen: 0, spells: {} });
+            byC.total += event.amount;
+            byC.count++;
+            byC.lastSeen = Date.now();
+            const sp = byC.spells[spell] || (byC.spells[spell] = { total: 0, count: 0, max: 0 });
+            sp.total += event.amount;
+            sp.count++;
+            if (event.amount > sp.max) sp.max = event.amount;
+          }
+        }
+      }
       // Class inference from a class-exclusive verb the BOX itself used
       // (first-person, rawAtk===null) — e.g. Backstab → Rogue, Flying Kick →
       // Monk. Only fires for the names in ABILITY_CLASS; no-op otherwise.
@@ -2527,6 +2556,14 @@ const stats = {
   // landed, so the NPC-cast view can name what a mob's anonymous "a spell"
   // casts actually were. { [spellName]: { count, lastMob, byMob: { [mob]: count } } }
   resistedSpells: {},
+  // inboundSpellDamage: spell damage that LANDED on the UPLOADER this session,
+  // grouped by caster then spell. Counterpart to resistedSpells (resists) — this
+  // is what got through. Only the uploader's own inbound is tracked (EQ logs it
+  // with reliable spell + caster attribution; bystander inbound is not). Session
+  // counter only; never added to encounter events (so a spell name can never
+  // leak into the attacker/character namespace).
+  // { [caster]: { total, count, lastSeen, spells: { [spell]: { total, count, max } } } }
+  inboundSpellDamage: {},
   // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
   // { mobName: { [abilityName]: { count, totalDmg } } }
   sessionProcs:    {},
@@ -2606,6 +2643,7 @@ function resetSessionStats() {
   stats.sessionCritHeals   = {};
   stats.sessionCrits       = {};
   stats.resistedSpells     = {};
+  stats.inboundSpellDamage = {};
   stats.sessionProcs       = {};
   stats.sessionDeeps       = {};
   stats.castCounts         = {};
@@ -2849,6 +2887,7 @@ function saveSessionState() {
       sessionCritHeals:   stats.sessionCritHeals,
       sessionCrits:       stats.sessionCrits,
       resistedSpells:     stats.resistedSpells,
+      inboundSpellDamage: stats.inboundSpellDamage,
       sessionDeeps:       stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       castCounts:         stats.castCounts,
@@ -2885,6 +2924,7 @@ function loadSessionState() {
     if (raw.sessionCritHeals)   stats.sessionCritHeals   = raw.sessionCritHeals;
     if (raw.sessionCrits)       stats.sessionCrits       = raw.sessionCrits;
     if (raw.resistedSpells)     stats.resistedSpells     = raw.resistedSpells;
+    if (raw.inboundSpellDamage) stats.inboundSpellDamage = raw.inboundSpellDamage;
     if (raw.sessionDeeps)       stats.sessionDeeps       = raw.sessionDeeps;
     if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
     if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
@@ -2940,6 +2980,7 @@ function _serializeForDashboard() {
     sessionCritHeals:   stats.sessionCritHeals || {},
     sessionCrits:       stats.sessionCrits || {},
     resistedSpells:     stats.resistedSpells || {},
+    inboundSpellDamage: stats.inboundSpellDamage || {},
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
     sessionMends:       stats.sessionMends,
@@ -4026,6 +4067,44 @@ function renderInfo(s) {
       });
     h += '</table></div>';
   }
+
+  // Inbound spell damage on YOU, grouped by caster → spell. Counterpart to the
+  // resisted card: what got through. Caster is the group; the spell names sit
+  // underneath. (Only the uploader's own inbound is tracked.)
+  var _isd = s.inboundSpellDamage || {};
+  var _isdCasters = Object.keys(_isd);
+  if (_isdCasters.length > 0) {
+    var _isdOpen = new Set();
+    try {
+      var _ie = document.querySelectorAll('#info details[data-isd-name]');
+      for (var _j = 0; _j < _ie.length; _j++) {
+        if (_ie[_j].hasAttribute('open')) _isdOpen.add(_ie[_j].getAttribute('data-isd-name'));
+      }
+    } catch (e) {}
+    h += '<div class="card wide"><h2>🔥 Spell Damage Inbound (who cast it)</h2>';
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spell / DoT / proc damage that landed on <b>you</b> this session, grouped by caster then spell. <code>(unknown)</code> = EQ logged the spell but not the caster.</div>';
+    var _isdOrdered = _isdCasters.map(function (name) {
+      return { name: name, rec: _isd[name] || { total: 0, count: 0, spells: {} } };
+    }).sort(function (a, b) { return (b.rec.total || 0) - (a.rec.total || 0); });
+    _isdOrdered.slice(0, 12).forEach(function (c) {
+      var spells = Object.entries(c.rec.spells || {})
+        .sort(function (a, b) { return (b[1].total || 0) - (a[1].total || 0); })
+        .slice(0, 12);
+      var openAttr = _isdOpen.has(c.name) ? ' open' : '';
+      h += '<details data-isd-name="' + esc(c.name) + '"' + openAttr + '>';
+      h += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + fmtK(c.rec.total || 0) + ' over ' + (c.rec.count || 0) + ' hit' + ((c.rec.count === 1) ? '' : 's') + '</span></summary>';
+      h += '<table><tr><th>Spell</th><th class="num">Total</th><th class="num">Hits</th><th class="num">Max</th></tr>';
+      for (var k = 0; k < spells.length; k++) {
+        h += '<tr><td>' + esc(spells[k][0]) + '</td>' +
+             '<td class="num">' + fmtK(spells[k][1].total || 0) + '</td>' +
+             '<td class="num">' + (spells[k][1].count || 0) + '</td>' +
+             '<td class="num">' + fmtK(spells[k][1].max || 0) + '</td></tr>';
+      }
+      h += '</table></details>';
+    });
+    h += '</div>';
+  }
+
   h += '</div>';
   setSectionHTML('info', h);
 }
