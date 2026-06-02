@@ -8635,7 +8635,21 @@ async function main() {
       // log; once captured, the builder's character is promoted and we never
       // re-check on this log to avoid mis-attributing a /who response, a
       // pet, etc.
-      const HAIL_RE = /\]\s+[A-Z][^\[\]]+?\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
+      //
+      // SPEAKER MUST LOOK LIKE AN NPC, NOT A PLAYER. v2.5.26 used a loose
+      // /[A-Z][^\[\]]+? says/ that matched OTHER PLAYERS' /say lines too —
+      // e.g. "Foo says, 'Hail, Hitya!'" in Canopy's log would rename
+      // Canopy's builder to Hitya and pollute castCounts['Hitya'] with
+      // Canopy's druid spells. Restricting the speaker to:
+      //   - "a/an <lowercase rest>"      (a frog, an old man)
+      //   - "the <lowercase rest>"       (the village elder)
+      //   - "<Capitalized> <Capitalized>" (Captain Yorla, Sir Robin)
+      // Single-word Title-cased speakers (real player names) are excluded —
+      // EQ NPCs that look like single Capitalized words DO exist (Nillipuss,
+      // Vox), but their hail responses to a player still include the
+      // player's name in the captured group, so the rename is correct in
+      // those cases too as long as the speaker isn't a friendly player.
+      const HAIL_RE = /\]\s+(?:a\s+[a-z][^\[\]]*?|an\s+[a-z][^\[\]]*?|the\s+[a-z][^\[\]]*?|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
       let _hailFound = false;
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
@@ -8650,13 +8664,18 @@ async function main() {
               b.character = inLogName;
               b.builder.character = inLogName;
               if (watched) watched.character = inLogName;
-              // Confirm as a real player on the inferred name too so chat /
-              // tank tracking doesn't trip the NPC filter on the corrected name.
               try { confirmPlayer(inLogName); } catch {}
               try {
                 stats.canonicalCharacter = stats.canonicalCharacter || {};
                 stats.canonicalCharacter[old] = inLogName;
               } catch {}
+              // Recalibrate: drop the OLD key's accumulated session-stats so
+              // the renamed-from data doesn't continue to appear under the
+              // new label. The user explicitly asked for "create a new entry
+              // for the active character" semantics on rename.
+              try { if (stats.castCounts && stats.castCounts[old])  delete stats.castCounts[old]; } catch {}
+              try { if (stats.sessionDeeps && stats.sessionDeeps[old]) delete stats.sessionDeeps[old]; } catch {}
+              try { if (stats.sessionMends && stats.sessionMends[old]) delete stats.sessionMends[old]; } catch {}
             }
           }
         }
