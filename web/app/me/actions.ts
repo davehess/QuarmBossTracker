@@ -76,3 +76,81 @@ export async function setCharacterExclusion(
   revalidatePath('/me');
   return { ok: true };
 }
+
+// Bulk-flip a single flag across every character the signed-in user owns
+// (direct discord_id match OR family-root match). Built for /me/tells so a
+// 50+-character user can opt every alt in/out in one click instead of toggling
+// each one on /me. Returns the count of rows that actually changed so the UI
+// can render a precise "Enabled tells on N characters" confirmation.
+export async function bulkSetCharacterFlag(
+  flag: 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm',
+  value: boolean,
+): Promise<{ ok: boolean; changed?: number; total?: number; error?: string }> {
+  const supabase = supabaseServer();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'not signed in' };
+
+  const admin = supabaseAdmin();
+  const { data: pack } = await admin
+    .from('wolfpack_members')
+    .select('discord_id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!pack?.discord_id) return { ok: false, error: 'no discord link' };
+
+  // Whitelist the column name before we interpolate it into a select string,
+  // so a hostile caller can't drift the flag through the type system. The
+  // `Flag` type already enforces this at compile time; the runtime check is
+  // belt-and-suspenders for the dynamic select string.
+  const allowed = ['exclude_from_stats', 'exclude_inventory', 'tell_relay', 'tell_dm'] as const;
+  if (!allowed.includes(flag)) return { ok: false, error: 'invalid flag' };
+  const selectCols = `name, main_name, ${flag}`;
+
+  // Resolve every character the user can own: rows whose discord_id is theirs,
+  // PLUS rows whose main_name is one of their direct chars (covers the unlinked
+  // alts the family-root fallback would also accept).
+  const { data: direct } = await admin
+    .from('characters')
+    .select(selectCols)
+    .eq('guild_id', 'wolfpack')
+    .eq('discord_id', pack.discord_id);
+  const directRows = (direct ?? []) as unknown as Record<string, unknown>[];
+  const myMainNames = new Set(directRows.map(r => r.name as string));
+  const { data: alts } = myMainNames.size > 0
+    ? await admin
+        .from('characters')
+        .select(selectCols)
+        .eq('guild_id', 'wolfpack')
+        .in('main_name', [...myMainNames])
+    : { data: [] as Record<string, unknown>[] };
+
+  const byName = new Map<string, { name: string; current: boolean }>();
+  for (const r of directRows) {
+    const name = r.name as string;
+    byName.set(name.toLowerCase(), { name, current: !!r[flag] });
+  }
+  for (const r of (alts ?? []) as unknown as Record<string, unknown>[]) {
+    const name = r.name as string;
+    if (!byName.has(name.toLowerCase())) byName.set(name.toLowerCase(), { name, current: !!r[flag] });
+  }
+  const targets = [...byName.values()].filter(c => c.current !== value).map(c => c.name);
+  const total   = byName.size;
+  if (targets.length === 0) {
+    revalidatePath('/me');
+    revalidatePath('/me/tells');
+    return { ok: true, changed: 0, total };
+  }
+
+  // Bulk update — PostgREST in() is case-sensitive but we have canonical names.
+  const inList = '(' + targets.map(n => `"${n.replace(/"/g, '')}"`).join(',') + ')';
+  const { error } = await admin
+    .from('characters')
+    .update({ [flag]: value })
+    .eq('guild_id', 'wolfpack')
+    .filter('name', 'in', inList);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/me');
+  revalidatePath('/me/tells');
+  return { ok: true, changed: targets.length, total };
+}

@@ -13,6 +13,7 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import TellNotifications from './TellNotifications';
+import BulkTellsToggle from './BulkTellsToggle';
 import { userTz, fmtShort, relTime } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -133,12 +134,19 @@ export default async function TellsPage() {
           <Stat label="Incoming"      value={tells.filter(t => t.direction === 'incoming').length} color="text-blue" />
           <Stat label="Outgoing"      value={tells.filter(t => t.direction === 'outgoing').length} color="text-green" />
         </div>
-        {chars.length > 0 && optedIn.length === 0 && (
-          <div className="mt-4 bg-bg border border-orange/40 rounded p-3 text-sm">
-            <span className="text-orange">None of your characters have Tells enabled.</span>{' '}
-            Toggle <span className="text-text">Tells: ON</span> next to a character on{' '}
-            <Link href="/me" className="text-blue hover:underline">/me</Link> to start
-            collecting. Default is off — your tells stay private until you opt in.
+        {chars.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-border/40">
+            <div className="text-[10px] text-dim mb-2">
+              One-click opt-in for every character you own (covers alts whose Discord link the roster
+              import missed). Per-character toggles still live on <Link href="/me" className="text-blue hover:underline">/me</Link>.
+            </div>
+            <BulkTellsToggle optedIn={optedIn.length} total={chars.length} />
+            {optedIn.length === 0 && (
+              <div className="mt-3 bg-bg border border-orange/40 rounded p-3 text-sm">
+                <span className="text-orange">None of your characters have Tells enabled.</span>{' '}
+                Default is off — your tells stay private until you opt in.
+              </div>
+            )}
           </div>
         )}
       </section>
