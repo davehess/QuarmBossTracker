@@ -3075,7 +3075,11 @@ function morphInto(el, html) {
   try {
     var scratch = document.createElement('div');
     scratch.innerHTML = html;
-    _morphEl(el, scratch);
+    // Reconcile el's CHILDREN against the scratch wrapper's children. We must
+    // NOT morph el's own attributes against the scratch <div> — that would
+    // strip el's id + class (e.g. #dash's "section active"), blanking the
+    // whole dashboard. Only the inner content is replaced.
+    _morphChildren(el, scratch);
   } catch (e) {
     el.innerHTML = html;   // safety net — never leave it blank
   }
@@ -3119,7 +3123,13 @@ function _morphAttrs(live, tmpl) {
   }
 }
 function _morphEl(live, tmpl) {
+  // Sync this element's own attributes, then its children. Used for matched
+  // element pairs DISCOVERED during child reconciliation — never for the
+  // top-level container passed to morphInto (see _morphChildren there).
   if (live.nodeType === 1 && tmpl.nodeType === 1) _morphAttrs(live, tmpl);
+  _morphChildren(live, tmpl);
+}
+function _morphChildren(live, tmpl) {
   // Reconcilable live children = everything except injected wp* nodes.
   var liveKids = [];
   for (var k = 0; k < live.childNodes.length; k++) {
