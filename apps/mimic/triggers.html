@@ -15,39 +15,38 @@
   }
   #alert.show{ opacity:1; animation:pop .4s ease-out; }
   @keyframes pop{ 0%{transform:scale(0.7)} 60%{transform:scale(1.08)} 100%{transform:scale(1)} }
-  /* Drag bar — visible only when UNLOCKED so this centered alert box can be
-     repositioned. Pinned to the top of the window. */
-  #dragbar{display:none;position:fixed;top:0;left:0;right:0;
-    align-items:center;justify-content:space-between;gap:6px;
-    padding:4px 8px;background:rgba(31,111,235,0.85);color:#fff;font-size:10px;
-    -webkit-app-region:drag;user-select:none}
-  body.unlocked #dragbar{display:flex}
+  /* Move-handle ✥ button + lock — visible only when UNLOCKED. Manual drag,
+     no CSS -webkit-app-region (same Chromium bug fix as overlay.html). */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
   body.unlocked{outline:2px solid rgba(31,111,235,0.7);outline-offset:-2px}
   body.unlocked #placeholder{display:block}
   #placeholder{display:none;color:rgba(255,255,255,0.5);font-size:13px}
-  #lockbtn{-webkit-app-region:no-drag;cursor:pointer;background:#0e1116;
-    border:1px solid rgba(255,255,255,0.3);border-radius:4px;color:#fff;
-    font-size:10px;padding:2px 7px}
-  #lockbtn:hover{background:#1a2230}
-  .compass{display:inline-block;font-size:13px;line-height:1;cursor:move;
-    animation:nudge 1.4s ease-in-out infinite}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;
+    justify-content:center;background:rgba(31,111,235,0.92);color:#fff;
+    border:1px solid rgba(255,255,255,0.4);border-radius:4px;font-size:13px;
+    line-height:1;cursor:move;user-select:none;
+    box-shadow:0 1px 3px rgba(0,0,0,0.4)}
+  .drag-btn:hover{background:rgba(58,139,255,1)}
+  #move-handle{animation:nudge 1.6s ease-in-out infinite}
+  #lock-btn{cursor:pointer;font-size:11px}
   @keyframes nudge{
     0%,100%{transform:translate(0,0)}
-    25%{transform:translate(0,-1.5px)}
-    50%{transform:translate(1.5px,0)}
-    75%{transform:translate(0,1.5px)}
+    25%{transform:translate(0,-1px)}
+    50%{transform:translate(1px,0)}
+    75%{transform:translate(0,1px)}
   }
   #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;
     gap:8px;padding:4px 8px;background:rgba(214,153,34,0.92);color:#222;
-    font-size:10px;-webkit-app-region:no-drag;font-weight:600;z-index:50}
+    font-size:10px;font-weight:600;z-index:50}
   body.setup #setupbar{display:flex}
-  body.setup #dragbar{top:24px}
+  body.setup #drag-controls{top:28px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
 </style></head>
 <body>
-  <div id="dragbar">
-    <span><span class="compass">✥</span> trigger alerts appear here — drag to move</span>
-    <button id="lockbtn">🔒 Lock here</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
   </div>
   <div id="setupbar">
     <span>🛠 Setup</span><span>opacity</span>
@@ -62,14 +61,39 @@
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
 
-  // Lock/unlock from main — show the drag bar when unlocked.
+  // Lock/unlock from main — show the move + lock buttons when unlocked.
   if (window.mimic && window.mimic.onOverlayLocked) {
     window.mimic.onOverlayLocked(locked => {
       document.body.classList.toggle('unlocked', !locked);
     });
   }
-  document.getElementById('lockbtn') && (document.getElementById('lockbtn').onclick = () => {
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function() {
     try { window.mimic.setOverlaysLocked(true); } catch (e) {}
+  });
+
+  // Manual drag — see overlay.html for the rationale.
+  var moveHandle = document.getElementById('move-handle');
+  var _isDragging = false;
+  if (moveHandle) {
+    moveHandle.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      _isDragging = true;
+      try { window.mimic.overlayDragStart(); } catch (err) {}
+    });
+  }
+  document.addEventListener('mouseup', function() {
+    if (_isDragging) {
+      _isDragging = false;
+      try { window.mimic.overlayDragEnd(); } catch (err) {}
+    }
+  });
+  window.addEventListener('blur', function() {
+    if (_isDragging) {
+      _isDragging = false;
+      try { window.mimic.overlayDragEnd(); } catch (err) {}
+    }
   });
 
   // Setup-mode wiring — see overlay.html for the explainer.

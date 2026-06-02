@@ -18,31 +18,33 @@
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
   .conn.bad{color:#f87171}
-  /* Drag bar — visible only when overlays are UNLOCKED. The whole strip is a
-     draggable region (-webkit-app-region: drag) so grabbing it moves the
-     frameless window. The lock button (no-drag) re-locks in place. */
-  #dragbar{display:none;align-items:center;justify-content:space-between;
-    gap:6px;margin:4px 4px 0;padding:4px 8px;border-radius:6px;
-    background:rgba(31,111,235,0.85);color:#fff;font-size:10px;
-    -webkit-app-region:drag;user-select:none}
-  body.unlocked #dragbar{display:flex}
+  /* Move-handle ✥ button + lock — visible only when overlays are UNLOCKED.
+     The handle is the EXPLICIT drag affordance: mousedown sends IPC to
+     main.js, which polls cursor and applies setBounds. We no longer rely
+     on CSS -webkit-app-region: drag — that path is buggy on transparent
+     (WS_EX_LAYERED) windows and produced the jumpy/unpredictable drag. */
+  #drag-controls{display:none;position:absolute;top:4px;left:4px;gap:4px;z-index:50}
+  body.unlocked #drag-controls{display:flex}
   body.unlocked .hud{border-color:rgba(31,111,235,0.9);
-    box-shadow:0 0 0 1px rgba(31,111,235,0.6)}
-  #lockbtn{-webkit-app-region:no-drag;cursor:pointer;background:#0e1116;
-    border:1px solid rgba(255,255,255,0.3);border-radius:4px;color:#fff;
-    font-size:10px;padding:2px 7px}
-  #lockbtn:hover{background:#1a2230}
-  .movehint{display:flex;align-items:center;gap:4px}
-  .compass{display:inline-block;font-size:13px;line-height:1;cursor:move;
-    animation:nudge 1.4s ease-in-out infinite}
+    box-shadow:0 0 0 1px rgba(31,111,235,0.6);
+    margin-top:32px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;
+    justify-content:center;background:rgba(31,111,235,0.92);color:#fff;
+    border:1px solid rgba(255,255,255,0.4);border-radius:4px;font-size:13px;
+    line-height:1;cursor:move;user-select:none;
+    box-shadow:0 1px 3px rgba(0,0,0,0.4)}
+  .drag-btn:hover{background:rgba(58,139,255,1)}
+  #move-handle{animation:nudge 1.6s ease-in-out infinite}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #lock-btn:hover{background:rgba(58,139,255,1)}
   /* A gentle 4-direction nudge so the move affordance reads at a glance. */
   @keyframes nudge{
     0%,100%{transform:translate(0,0)}
-    25%{transform:translate(0,-1.5px)}
-    50%{transform:translate(1.5px,0)}
-    75%{transform:translate(0,1.5px)}
+    25%{transform:translate(0,-1px)}
+    50%{transform:translate(1px,0)}
+    75%{transform:translate(0,1px)}
   }
-  /* When unlocked, also show resize grips at the corners as a hint. */
+  /* When unlocked, show resize grips at the corners as a hint. */
   body.unlocked::after{content:'⤡';position:fixed;right:2px;bottom:0;
     color:rgba(31,111,235,0.9);font-size:14px;pointer-events:none}
   /* Setup-mode control strip — appears on every overlay at once when the
@@ -54,9 +56,9 @@
   #setupbar input[type=range]{flex:1;cursor:pointer}
 </style></head>
 <body>
-  <div id="dragbar">
-    <span class="movehint"><span class="compass">✥</span> drag to move&nbsp; · &nbsp;resize from edges</span>
-    <button id="lockbtn">🔒 Lock here</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
   </div>
   <div id="setupbar">
     <span>🛠 Setup</span>
@@ -80,14 +82,45 @@
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
 
   // Lock/unlock — main process pushes the state; we toggle the body class so
-  // the drag bar appears. The Lock-here button re-locks via IPC (no restart).
+  // the move + lock buttons appear. The Lock button re-locks via IPC.
   if (window.mimic && window.mimic.onOverlayLocked) {
     window.mimic.onOverlayLocked(locked => {
       document.body.classList.toggle('unlocked', !locked);
     });
   }
-  document.getElementById('lockbtn') && (document.getElementById('lockbtn').onclick = () => {
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function() {
     try { window.mimic.setOverlaysLocked(true); } catch (e) {}
+  });
+
+  // Manual drag — mousedown on ✥ → IPC start; document mouseup → IPC end.
+  // We listen at document level for mouseup so we still get the end signal
+  // even when the cursor leaves the 24×24 handle mid-drag (which it always
+  // does — the window moves with the cursor but the handle stays at top-left
+  // of the window). main.js polls cursor at 60fps and applies setBounds.
+  var moveHandle = document.getElementById('move-handle');
+  var _isDragging = false;
+  if (moveHandle) {
+    moveHandle.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;  // left click only
+      e.preventDefault();
+      _isDragging = true;
+      try { window.mimic.overlayDragStart(); } catch (err) {}
+    });
+  }
+  document.addEventListener('mouseup', function() {
+    if (_isDragging) {
+      _isDragging = false;
+      try { window.mimic.overlayDragEnd(); } catch (err) {}
+    }
+  });
+  // Safety net: if the window loses focus mid-drag (alt-tab, etc.), end the
+  // drag so we don't get a stuck-on-cursor window.
+  window.addEventListener('blur', function() {
+    if (_isDragging) {
+      _isDragging = false;
+      try { window.mimic.overlayDragEnd(); } catch (err) {}
+    }
   });
 
   // Setup-mode wiring — main pushes { active, overlayKey } when entering /

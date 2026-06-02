@@ -918,6 +918,57 @@ function wireAutoUpdater() {
 }
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
+// Manual overlay drag — the renderer signals start/end when its ✥ handle
+// button gets mousedown'd. We track cursor via screen.getCursorScreenPoint
+// at 60fps and apply setBounds; this bypasses Chromium's broken
+// app-region drag hit-test on transparent (WS_EX_LAYERED) windows.
+ipcMain.handle('overlay-drag-start', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    _startWindowDrag(win);
+  } catch {}
+  return true;
+});
+ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
+
+// EQ install discovery — surfaced to the multi-folder picker UI.
+ipcMain.handle('find-eq-installs', () => {
+  const cfg = loadConfig();
+  // Probe every user-configured path PLUS the autodetection passes. The
+  // picker UI uses `scanned` to show "we looked in these paths".
+  const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
+  const merged = { scanned: [], found: [] };
+  const seen = new Set();
+  for (const h of [...hints, null]) {
+    const r = findEqInstalls(h);
+    for (const p of r.scanned) {
+      const k = p.toLowerCase();
+      if (!seen.has(k)) { seen.add(k); merged.scanned.push(p); }
+    }
+    for (const f of r.found) {
+      const k = f.path.toLowerCase();
+      if (!merged.found.some(x => x.path.toLowerCase() === k)) merged.found.push(f);
+    }
+  }
+  return merged;
+});
+
+// Browse-for-folder. Used by both the Settings page "+ Add folder…" button
+// and the loading.html first-run EQ-folder card.
+ipcMain.handle('pick-eq-dir', async (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showOpenDialog(win || null, {
+      title: 'Select your EverQuest folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) return null;
+    return result.filePaths[0];
+  } catch (err) {
+    return null;
+  }
+});
+
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.handle('save-config', (_e, cfg) => {
   saveConfig(Object.assign(loadConfig(), cfg));
