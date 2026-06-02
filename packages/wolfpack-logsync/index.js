@@ -3019,7 +3019,24 @@ function _serializeForDashboard() {
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
-    characterInventories:   stats.characterInventories,
+    // Send ONLY the inventory fields the dashboard's Weapon Loadouts table
+    // uses (weapons + bandolier + meta). The full parsed inventory also carries
+    // `worn` and a large `bagged` array (every bag + bank slot) per character —
+    // with 50+ alts that bloated /api/state into a payload re-fetched, re-parsed
+    // and re-rendered every 2s poll, loading the renderer for nothing. Strip it.
+    characterInventories:   (() => {
+      const slim = {};
+      for (const [name, inv] of Object.entries(stats.characterInventories || {})) {
+        if (!inv) continue;
+        slim[name] = {
+          weapons:    inv.weapons    || {},
+          bandolier:  inv.bandolier  || {},
+          _path:      inv._path,
+          _updatedAt: inv._updatedAt,
+        };
+      }
+      return slim;
+    })(),
     hiddenLoadoutChars:     [...(_optinState.hiddenLoadoutChars || [])],
     activeBandolier:        stats.activeBandolier,
     sessionDeeps:           stats.sessionDeeps,
@@ -3572,38 +3589,13 @@ function renderDash(s) {
   }
   h += '</table></div>';
 
-  // ── Live Threat (current encounter) ─────────────────────────────────────
-  const et = s.currentEncounterThreat;
-  if (et && et.perPlayer && Object.keys(et.perPlayer).length > 0) {
-    const ranked = Object.entries(et.perPlayer)
-      .sort((a, b) => b[1].total - a[1].total)
-      .slice(0, 12);
-    const topT = ranked[0]?.[1].total || 1;
-    const staleLabel = et.flushedAt ? ' <span style="color:var(--dim);font-size:12px;font-weight:normal">(ended ' + fmtAgo(et.flushedAt) + ')</span>' : '';
-    h += '<div class="card wide"><h2>⚔️ Live Threat — ' + esc(et.bossName || 'current fight') + staleLabel + '</h2>';
-    h += '<div class="subtle">Estimated from observable damage + heals (Phase 1 proxy). Real spell/proc hate tables not yet wired up.</div>';
-    h += '<table style="margin-top:6px"><tr><th></th><th>Player</th><th>Threat</th><th style="width:40%">Bar</th><th>Breakdown</th></tr>';
-    for (let i = 0; i < ranked.length; i++) {
-      const [name, t] = ranked[i];
-      const pct = Math.max(2, Math.round(t.total / topT * 100));
-      const rank = i + 1;
-      // Warn if a non-top player is within 90% of #1 (aggro risk)
-      const closeRisk = i > 0 && t.total / topT >= 0.9;
-      const barColor = i === 0 ? '#1f6feb' : (closeRisk ? '#f85149' : '#56d364');
-      const parts = [];
-      if (t.swing) parts.push('swing ' + fmtK(t.swing));
-      if (t.proc)  parts.push('proc ' + fmtK(t.proc));
-      if (t.spell) parts.push('spell ' + fmtK(t.spell));
-      if (t.heal)  parts.push('heal ' + fmtK(t.heal));
-      h += '<tr><td class="dim">' + rank + '</td>' +
-           '<td class="name">' + esc(name) + (closeRisk ? ' <span style="color:var(--red);font-size:11px">⚠ aggro risk</span>' : '') + '</td>' +
-           '<td class="num">' + fmtK(t.total) + '</td>' +
-           '<td><div style="background:#1f242c;border-radius:4px;height:14px;overflow:hidden">' +
-             '<div style="background:' + barColor + ';height:100%;width:' + pct + '%"></div></div></td>' +
-           '<td class="dim" style="font-size:11px">' + parts.join(' · ') + '</td></tr>';
-    }
-    h += '</table></div>';
-  }
+  // Live Threat moved OFF the Dashboard → it lives on the Tanks tab
+  // (renderTanks → "Threat Detail"). The summary here was a Phase-1 proxy
+  // (observable damage + heals only); it did NOT account for tank threat procs,
+  // hate spells, stuns, or taunts, so it was misleading on the primary page.
+  // It stays on the Tanks tab — in context with the other tank tooling — until
+  // the real hate model (proc/spell hate, stun-to-top, taunt = top+1 onto the
+  // taunter) is built.
 
   // Top damage
   h += '<div class="card wide"><h2>Top Damage This Session</h2>' +
@@ -5113,15 +5105,28 @@ async function dismissTopDamage(key) {
       saveOrder(order);
     });
   }
+  var obs = null;
   function decorate(){
     var dash = document.getElementById("dash");
     if (!dash) return;
-    Array.prototype.slice.call(dash.querySelectorAll(".card")).forEach(decorateCard);
-    applyOrder(dash);
+    // CRITICAL: pause the observer while WE mutate #dash. decorateCard inserts a
+    // drag grip and applyOrder re-appends saved cards — both are childList
+    // mutations. The observer's callback IS decorate, so applyOrder's
+    // unconditional appendChild made an INFINITE loop (appendChild → observer →
+    // decorate → appendChild → …) the instant a saved reorder existed. That
+    // pegged the renderer main thread → "window unresponsive" → blank dashboard,
+    // and crashed the page on drop (which writes a saved order). Disconnect
+    // around our own writes; reconnect after so genuine refresh() rewrites still
+    // re-decorate.
+    if (obs) obs.disconnect();
+    try {
+      Array.prototype.slice.call(dash.querySelectorAll(".card")).forEach(decorateCard);
+      applyOrder(dash);
+    } finally {
+      if (obs) obs.observe(dash, { childList: true, subtree: true });
+    }
   }
-  var obs = new MutationObserver(decorate);
-  var dash = document.getElementById("dash");
-  if (dash) obs.observe(dash, { childList: true, subtree: true });
+  obs = new MutationObserver(decorate);
   decorate();
 })();
 
