@@ -4501,6 +4501,7 @@ async function _handleAgentUpload(req, res) {
             race:        w.race  || null,
             class:       w.class || null,
             guild_name:  w.guild || null,
+            guild_rank:  w.guildRank || null,   // from /guildstatus — survives /anon
             anonymous:   !!w.anonymous,
             gm:          !!w.gm,
             observed_at: w.observedAt ? new Date(w.observedAt).toISOString() : new Date().toISOString(),
