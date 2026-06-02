@@ -8533,6 +8533,12 @@ function pollCharacterPrefs({ botUrl, token }) {
               norm[String(name).toLowerCase()] = {
                 exclude_from_stats: !!(p && p.exclude_from_stats),
                 exclude_inventory:  !!(p && p.exclude_inventory),
+                // tell_relay MUST be carried through — the tail loop gates tell
+                // capture on stats.characterPrefs[char].tell_relay. Dropping it
+                // here (as the original normalization did) left the gate
+                // permanently falsy, so NO tells were ever captured even with
+                // the web toggle on and the bot endpoint returning it.
+                tell_relay:         !!(p && p.tell_relay),
               };
             }
             stats.characterPrefs          = norm;
