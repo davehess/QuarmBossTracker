@@ -59,17 +59,26 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
   // foreign-key relationship; one execute_sql round-trip is simpler here.
   // But we don't have a server-side raw SQL helper in web/lib, so two queries.
   const admin = supabaseAdmin();
-  const [{ data: encs }, { data: npcRows }] = await Promise.all([
-    admin
-      .from('encounters')
-      .select('id, npc_id, zone_short, started_at, duration_sec, total_damage, total_dps, data_incomplete, data_incomplete_reason')
-      .gte('started_at', sinceIso)
-      .order('started_at', { ascending: false })
-      .limit(200),
-    admin
-      .from('eqemu_npc_types')
-      .select('id, name, hp'),
-  ]);
+  const { data: encs } = await admin
+    .from('encounters')
+    .select('id, npc_id, zone_short, started_at, duration_sec, total_damage, total_dps, data_incomplete, data_incomplete_reason')
+    .gte('started_at', sinceIso)
+    .order('started_at', { ascending: false })
+    .limit(200);
+
+  // eqemu_npc_types has ~14k rows and Supabase caps unfiltered selects at 1000
+  // by default, so a plain .select('id,name,hp') silently dropped every NPC
+  // with id > ~1000 (basically all instance bosses) — boss column rendered
+  // "npc <id>" and the HP% column said "no HP catalog" for everything. Filter
+  // the lookup to ONLY the npc_ids present in this batch.
+  const uniqueNpcIds = Array.from(new Set(
+    ((encs ?? []) as { npc_id: number | null }[])
+      .map(e => e.npc_id)
+      .filter((id): id is number => id != null),
+  ));
+  const { data: npcRows } = uniqueNpcIds.length > 0
+    ? await admin.from('eqemu_npc_types').select('id, name, hp').in('id', uniqueNpcIds)
+    : { data: [] };
   const npcById = new Map<number, { name: string; hp: number | null }>();
   for (const n of (npcRows ?? []) as { id: number; name: string; hp: number | null }[]) {
     npcById.set(n.id, { name: n.name, hp: n.hp });
