@@ -2516,6 +2516,12 @@ const stats = {
   startedAt:       Date.now(),
   watchedLogs:     [],            // [{character, logPath, lastSeen}]
   recentParses:    [],            // last 8 uploads: {bossName, eventCount, totalDamage, spellDotDamage, when}
+  // recentTells: in-memory ring buffer for the LOCAL Mimic dashboard. Populated
+  // any time parseTellLine matches on a non-excluded character, regardless of
+  // the per-character tell_relay opt-in flag — that flag gates the UPLOAD path,
+  // not local display. Never persisted to STATS_FILE (resets each launch), so
+  // closing Mimic clears the panel without an explicit "purge" step.
+  recentTells:     [],            // last 50 tells: {character, direction, other, text, ts, capturedAt}
   topDamageSaw:    [],            // top 5 high-damage events from others   (1 entry per attacker)
   topDamageDid:    [],            // top 5 high-damage events from the uploader (1 entry per attacker)
   sessionEvents:   0,             // cumulative events parsed this run
@@ -2973,6 +2979,7 @@ function _serializeForDashboard() {
     sessionTotalDamage: stats.sessionTotalDamage,
     sessionDamageBy:    stats.sessionDamageBy,
     recentParses:       stats.recentParses,
+    recentTells:        stats.recentTells,
     topDamageSaw:       stats.topDamageSaw,
     topDamageDid:       stats.topDamageDid,
     sessionDefenders:   stats.sessionDefenders,
@@ -3588,6 +3595,29 @@ function renderDash(s) {
          '<td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
   }
   h += '</table></div>';
+
+  // Recent Tells — local-only view fed by stats.recentTells. Hidden when the
+  // ring buffer is empty so the panel doesn't sit there as dead space on a
+  // fresh boot. Direction arrows: → outgoing, ← incoming. Always renders
+  // newest-first; cap at 15 rows visible (buffer holds 50 internally).
+  const _rt = s.recentTells || [];
+  if (_rt.length > 0) {
+    h += '<div class="card wide"><h2>📬 Recent Tells <span class="dim" style="font-size:11px;font-weight:normal">(local, this machine only)</span></h2>';
+    h += '<table style="font-size:11px"><tr><th>Who</th><th>Message</th><th>When</th></tr>';
+    const _rtVisible = _rt.slice(-15).reverse();
+    for (const t of _rtVisible) {
+      const outgoing = t.direction === 'outgoing';
+      const arrow = outgoing ? '→' : '←';
+      const who = outgoing
+        ? '<span class="dim">' + esc(t.character) + '</span> ' + arrow + ' <span class="name">' + esc(t.other) + '</span>'
+        : '<span class="name">' + esc(t.other) + '</span> ' + arrow + ' <span class="dim">' + esc(t.character) + '</span>';
+      const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
+      h += '<tr><td style="white-space:nowrap">' + who + '</td>' +
+           '<td>' + esc(t.text) + '</td>' +
+           '<td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
+    }
+    h += '</table></div>';
+  }
 
   // Live Threat moved OFF the Dashboard → it lives on the Tanks tab
   // (renderTanks → "Threat Detail"). The summary here was a Phase-1 proxy
@@ -7866,6 +7896,23 @@ function parseTellLine(line, selfName) {
   };
 }
 
+// Append a parsed tell to the LOCAL ring buffer that feeds the Mimic dashboard
+// "Recent Tells" card. Only the display fields ride along (raw_text/dedup_key
+// dropped) so the /api/state payload stays small. Capped at 50 entries FIFO.
+const _RECENT_TELLS_MAX = 50;
+function _pushRecentTell(tellEvt, character) {
+  stats.recentTells.push({
+    character,
+    direction:  tellEvt.direction,
+    other:      tellEvt.other,
+    text:       tellEvt.text,
+    ts:         tellEvt.ts,
+    capturedAt: Date.now(),
+  });
+  const over = stats.recentTells.length - _RECENT_TELLS_MAX;
+  if (over > 0) stats.recentTells.splice(0, over);
+}
+
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
 //   [timestamp] === Current Loot Lockouts ===
@@ -9410,15 +9457,28 @@ async function main() {
         // generates zero outbound traffic from this machine.
         const _sourceExcluded = !shouldUploadForCharacter(b.character);
 
-        // /tell relay (opt-in via characters.tell_relay; default off). MUST be
-        // checked BEFORE shouldKeep — the byte-level filter explicitly drops
-        // "tells you" / "you told" lines so we never see them in combat paths.
-        // exclude_from_stats short-circuits this too; both gates must pass.
+        // /tell handling — MUST be checked BEFORE shouldKeep because the byte-
+        // level drop list filters out "tells you" / "you told" so neither the
+        // local panel nor the upload path would otherwise see them.
+        //
+        // Two consumers, two gates:
+        //   • LOCAL ring buffer (recentTells) — populated whenever parseTellLine
+        //     matches on a non-excluded source. Powers the Mimic dashboard's
+        //     "Recent Tells" card so a user can review tells without leaving
+        //     the parser, even when they haven't opted into uploading.
+        //   • UPLOAD buffer — gated on the per-character tell_relay opt-in
+        //     flag (default off). Only opted-in characters reach Discord
+        //     DM / wolfpack.quest/me/tells.
+        // exclude_from_stats short-circuits both — an excluded character
+        // generates zero tell traffic of any kind from this machine.
         const _tellPrefs = stats.characterPrefs && stats.characterPrefs[String(b.character || '').toLowerCase()];
-        if (!_sourceExcluded && _tellPrefs?.tell_relay) {
+        if (!_sourceExcluded) {
           const tellEvt = parseTellLine(line, b.character);
           if (tellEvt) {
-            tellBuffer.push({ ...tellEvt, character: b.character });
+            _pushRecentTell(tellEvt, b.character);
+            if (_tellPrefs?.tell_relay) {
+              tellBuffer.push({ ...tellEvt, character: b.character });
+            }
             // Don't `return` — tells are side-channel. Continue so any further
             // processing (e.g. log highlighter, future panels) still sees the line.
           }
