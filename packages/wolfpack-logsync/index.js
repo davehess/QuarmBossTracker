@@ -3953,7 +3953,11 @@ function renderPets(s) {
 
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
-  const lifetimeMin = (s.lifetime?.totalMinutes||0) + sessionMin;
+  // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
+  // so it IS the lifetime — don't add sessionMin again or the current session
+  // double-counts. Floor to sessionMin so a brand-new install isn't shown below
+  // the session that's already running.
+  const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '<div class="grid">';
   // 🥋 Monk Mending — only if attempts > 0
   const m = s.sessionMends || {};
@@ -5993,6 +5997,19 @@ function saveStatsSoon() {
     _saveTimer = null;
     try {
       const sessionMin = Math.round((Date.now() - stats.startedAt) / 60000);
+      // Roll this session's elapsed minutes into the PERSISTED lifetime total
+      // incrementally. Previously totalMinutes was never advanced, so lifetime
+      // connected time always equalled the current session (the dashboard did
+      // totalMinutes + sessionMin with totalMinutes stuck at 0). We add only
+      // the delta since the last save so restarts accumulate instead of reset.
+      // _accountedSessionMin is process-scoped (not persisted) and resets to 0
+      // each launch, matching the fresh startedAt.
+      const accounted = stats._accountedSessionMin || 0;
+      const delta = sessionMin - accounted;
+      if (delta > 0) {
+        stats.lifetime.totalMinutes = (stats.lifetime.totalMinutes || 0) + delta;
+        stats._accountedSessionMin = sessionMin;
+      }
       if (stats.sessionEvents > stats.lifetime.topSessionEvents) {
         stats.lifetime.topSessionEvents  = stats.sessionEvents;
         stats.lifetime.topSessionMinutes = sessionMin;
@@ -7200,7 +7217,9 @@ function showOptIn() {
 function showInfo() {
   const out = [];
   const sessionMin  = Math.max(1, Math.round((Date.now() - stats.startedAt) / 60000));
-  const lifetimeMin = stats.lifetime.totalMinutes + sessionMin;
+  // totalMinutes accumulates the live session incrementally (saveStatsSoon), so
+  // it already IS lifetime — don't add sessionMin again.
+  const lifetimeMin = Math.max(stats.lifetime.totalMinutes || 0, sessionMin);
 
   out.push(`\n${C.bold}${C.cyan}Parser info${C.reset}\n`);
   out.push(`  ${C.dim}This session:${C.reset} ${C.bold}${stats.sessionEvents}${C.reset} events in ${C.bold}${sessionMin}${C.reset} min`);
@@ -8345,9 +8364,20 @@ function fetchSpellCatalog({ botUrl, token }) {
           return resolve();
         }
         const etag = res.headers && res.headers.etag;
+        const ctype = (res.headers && res.headers['content-type']) || '';
         let body = '';
         res.on('data', c => body += c);
         res.on('end', () => {
+          // Guard: an OLDER bot without the /api/agent/spell-catalog route
+          // falls through to the health-check handler and returns "200 OK"
+          // (plain text). Don't try to JSON.parse that — quietly note the
+          // endpoint isn't live yet (the bot needs deploying) instead of
+          // logging a confusing "Unexpected token 'O'" parse error.
+          const looksJson = /json/i.test(ctype) || /^\s*[{[]/.test(body);
+          if (!looksJson) {
+            console.log('[spell-catalog] endpoint not available yet (bot pre-v2.7.3) — PQDI links disabled until the bot deploys');
+            return resolve();
+          }
           try {
             const data = JSON.parse(body);
             if (!Array.isArray(data.entries)) { resolve(); return; }
