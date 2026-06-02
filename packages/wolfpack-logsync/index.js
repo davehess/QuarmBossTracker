@@ -3922,8 +3922,13 @@ async function refresh() {
   } catch (e) { /* network blip — just retry next tick */ }
 }
 
-document.querySelectorAll('.nav button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('.nav button').forEach(x => x.classList.remove('active'));
+// Tab switcher — scoped to .nav buttons that have a data-tab attribute.
+// The selector USED to be just '.nav button' which also matched the
+// '⚙ Panels' popover button; clicking it wiped every section's .active
+// state and then threw on getElementById(undefined). Net effect: dashboard
+// blanked. Scoping to [data-tab] keeps the popover button out of the loop.
+document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.nav button[data-tab]').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.section').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   document.getElementById(b.dataset.tab).classList.add('active');
