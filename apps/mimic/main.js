@@ -999,6 +999,124 @@ function safeCheckForUpdates(verbose) {
     appendAgentLog(`[updater] check threw: ${e.message || e}\n`);
   }
 }
+// ── In-place AGENT hot-swap (no installer, no window restart) ───────────────
+// The wolfpack-logsync agent — which does all the real work (log tail,
+// encounter build, dashboard, uploads) — bumps constantly (v2.5.x) while the
+// Electron shell (1.0.0) rarely changes. We update the agent in place by
+// downloading the new single-file index.js (hash-verified against the bot's
+// /api/agent/latest-version manifest), writing it to the writable agent dir,
+// and restarting ONLY the child process. The window stays up; no .exe runs.
+// The Electron shell still uses electron-updater/NSIS for its own rare changes.
+let _agentUpdateInFlight = false;
+
+function _readAgentVersion() {
+  try { return JSON.parse(fs.readFileSync(path.join(AGENT_DIR(), 'package.json'), 'utf8')).version || null; }
+  catch { return null; }
+}
+// Plain semver-ish compare (agent versions are x.y.z, no prerelease). Returns
+// true if `a` is strictly newer than `b`.
+function _agentVersionNewer(a, b) {
+  if (!a) return false;
+  if (!b) return true;
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+function _httpsGetBuffer(url) {
+  const lib = new URL(url).protocol === 'http:' ? require('http') : require('https');
+  return new Promise((resolve, reject) => {
+    const req = lib.get(url, { timeout: 30000 }, (res) => {
+      // Follow a single redirect (GitHub raw → CDN).
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return resolve(_httpsGetBuffer(res.headers.location));
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+  });
+}
+
+async function checkAgentUpdate() {
+  if (_agentUpdateInFlight) return;
+  _agentUpdateInFlight = true;
+  try {
+    const cfg = loadConfig();
+    const base = _botBaseUrl(cfg);
+    let manifest;
+    try {
+      manifest = await _httpsJson(`${base}/api/agent/latest-version`,
+        cfg.token ? { headers: { 'Authorization': 'Bearer ' + cfg.token } } : {});
+    } catch (e) { return; }  // bot unreachable — try again next cycle
+    const latest = manifest && manifest.latest_agent_version;
+    const url    = manifest && manifest.url;
+    const sha    = manifest && manifest.sha256;
+    if (!latest || !url) return;
+
+    const current = _readAgentVersion();
+    if (!_agentVersionNewer(latest, current)) return;  // already current/ahead
+
+    // Respect the agent's OWN update gate — don't bounce it mid-fight, mid
+    // opt-in-backfill, or with a non-empty upload queue. /api/state exposes
+    // updateBlocked: <reason> | null when those conditions hold.
+    try {
+      const st = await _httpsJson(`http://127.0.0.1:${agentPort}/api/state`);
+      if (st && st.updateBlocked) {
+        appendAgentLog(`[mimic] agent ${current}→${latest} deferred: ${st.updateBlocked}\n`);
+        return;
+      }
+    } catch {}
+
+    appendAgentLog(`[mimic] agent update ${current} → ${latest} available; downloading…\n`);
+    const buf = await _httpsGetBuffer(url);
+    if (sha) {
+      const crypto = require('crypto');
+      const got = crypto.createHash('sha256').update(buf).digest('hex');
+      if (got.toLowerCase() !== String(sha).toLowerCase()) {
+        // Common + benign during the Railway redeploy window: the bot still
+        // serves its OLD image's sha while `url` (GitHub main) already has the
+        // new file. Fail safe — keep the working agent, retry next cycle.
+        appendAgentLog(`[mimic] agent update held: sha256 mismatch (bot redeploy in progress?) expected ${String(sha).slice(0,12)}… got ${got.slice(0,12)}…\n`);
+        return;
+      }
+    }
+    // Atomic write of index.js, then bump package.json version so the new code
+    // (which reads ./package.json.version) reports the new version and we don't
+    // re-trigger on the next poll.
+    const dst = path.join(AGENT_DIR(), 'index.js');
+    const tmp = dst + '.tmp-' + Date.now();
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, dst);
+    try {
+      const pkgPath = path.join(AGENT_DIR(), 'package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      pkg.version = latest;
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+    } catch (e) {
+      appendAgentLog(`[mimic] warn: could not bump agent package.json: ${e && e.message}\n`);
+    }
+
+    appendAgentLog(`[mimic] agent updated to ${latest}; restarting child (window stays up)\n`);
+    // Restart ONLY the agent child. The exit handler relaunches via
+    // launchAgent(), which re-reads the freshly-written AGENT_DIR/index.js.
+    restartBackoff = 1000;
+    if (agentProc) { try { agentProc.kill(); } catch {} }
+    else { launchAgent(); }
+  } catch (err) {
+    appendAgentLog(`[mimic] agent update check failed: ${err && err.message ? err.message : err}\n`);
+  } finally {
+    _agentUpdateInFlight = false;
+  }
+}
+
 function wireAutoUpdater() {
   if (!autoUpdater) return;
   // Pin Mimic to its own update channel so this repo's other releases (bot
@@ -1054,6 +1172,15 @@ function wireAutoUpdater() {
   // Initial + hourly. Delay 8s so the agent boot doesn't compete for bandwidth.
   setTimeout(() => safeCheckForUpdates(false), 8000);
   setInterval(() => safeCheckForUpdates(false), 60 * 60 * 1000);
+}
+
+// Agent hot-swap poll — independent of the Electron-shell updater above.
+// First check 45s after boot (let the agent come up + settle), then every
+// 30 min. The agent self-update gate (updateBlocked) keeps it from bouncing
+// mid-fight; checkAgentUpdate is also a no-op when already current.
+function scheduleAgentUpdates() {
+  setTimeout(() => { checkAgentUpdate(); }, 45 * 1000);
+  setInterval(() => { checkAgentUpdate(); }, 30 * 60 * 1000);
 }
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
@@ -1325,7 +1452,7 @@ ipcMain.handle('open-external', (_e, url) => {
   shell.openExternal(url);
   return true;
 });
-ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); return true; });
+ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate(); return true; });
 ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   const n = Math.max(1, Math.min(500, lines || 80));
   return logTail.slice(-n).join('');
@@ -1336,6 +1463,7 @@ app.whenReady().then(async () => {
   createMainWindow();
   makeTrayIcon();
   wireAutoUpdater();
+  scheduleAgentUpdates();
 
   // First launch: NO token wall. Agent boots in local-only mode; dashboard
   // works immediately. User clicks "Connect to Wolf Pack" in the tray menu
