@@ -160,18 +160,34 @@ export default function LootBrowser({ loot }: { loot: LootEntry[] }) {
       ) : (
         <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
           {shown.map((l, i) => {
-            const href = l.game_item_id ? `https://www.pqdi.cc/item/${l.game_item_id}` : null;
+            // Item name → PQDI item page; DKP amount → OpenDKP bidding results
+            // for that item across all bidders. Both keyed on the same game item
+            // id (PQDI /item/<id>, OpenDKP /#/items/<id>).
+            const pqdiHref   = l.game_item_id ? `https://www.pqdi.cc/item/${l.game_item_id}` : null;
+            const opendkpHref = l.game_item_id ? `https://wolfpack.opendkp.com/#/items/${l.game_item_id}` : null;
             return (
               <li key={`${l.item_name}-${l.raid_date}-${i}`} className="flex justify-between gap-2 border-b border-border/40 py-0.5">
                 <span className="truncate">
-                  {href ? (
-                    <a href={href} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{l.item_name}</a>
+                  {pqdiHref ? (
+                    <a href={pqdiHref} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{l.item_name}</a>
                   ) : (
                     <span className="text-text">{l.item_name}</span>
                   )}
                   <span className="text-dim ml-2">{new Date(l.raid_date).toLocaleDateString()}</span>
                 </span>
-                <span className="text-gold whitespace-nowrap">{fmtDkp(l.dkp)}</span>
+                {opendkpHref ? (
+                  <a
+                    href={opendkpHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Bidding results for this item on OpenDKP"
+                    className="text-gold whitespace-nowrap hover:underline"
+                  >
+                    {fmtDkp(l.dkp)}
+                  </a>
+                ) : (
+                  <span className="text-gold whitespace-nowrap">{fmtDkp(l.dkp)}</span>
+                )}
               </li>
             );
           })}
