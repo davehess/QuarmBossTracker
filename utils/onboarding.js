@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.5': [
+    '**PvP kills now ping `@PVP`** — Wolf Pack PvP kills are the rallying moment, not the scroll-past ones. Deaths still ping for backup; other-guild / NPC kills remain silent.',
+  ],
   '2.7.4': [
     '**Tells now actually persist** — the upsert was silently rejected by a partial unique index, so DMs fired but `/me/tells` stayed at 0. Index rebuilt; tells store again.',
     '**Tells DM now shows the conversation** — incoming + outgoing are grouped by counterparty in chronological order, so the DM reads as the back-and-forth instead of just the last incoming line.',

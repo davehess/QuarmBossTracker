@@ -2919,8 +2919,14 @@ async function _handleAgentPvp(req, res) {
 
       let content;
       if (isWpKill) {
-        // Celebrate — Wolf Pack got a PvP kill
-        content = `⚔️ **${killer}** of <${killerGuild}> killed **${victim}** of <${victimGuild}> in ${zone}! AWROOOO!`;
+        // Celebrate — Wolf Pack got a PvP kill. Ping @PVP so the pack joins the
+        // howl. The previous "no ping on our kills" rule (Dant, 2026-06-01) is
+        // reversed: Wolf Pack PvP kills are the rallying moment, not the
+        // afk-able ones. Deaths still ping for backup; other-guild / NPC kills
+        // remain informational with no mention.
+        const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
+        const mention = pvpRole ? `<@&${pvpRole.id}> ` : '';
+        content = `${mention}⚔️ **${killer}** of <${killerGuild}> killed **${victim}** of <${victimGuild}> in ${zone}! AWROOOO!`;
       } else if (isWpDeath) {
         // Request backup — Wolf Pack member was killed
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
