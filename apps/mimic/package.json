@@ -1,6 +1,6 @@
 {
   "name": "wolfpack-mimic",
-  "version": "1.0.0-mimic-beta.25",
+  "version": "1.0.0-mimic-beta.26",
   "private": true,
   "description": "Wolf Pack Mimic — Electron desktop client (codename mimic). Wraps the wolfpack-logsync agent in a native shell with a real window + always-on-top overlay. Bundles its own Node runtime, so no separate Node install. BETA.",
   "author": "Wolf Pack EQ",
