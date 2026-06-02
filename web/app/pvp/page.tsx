@@ -18,23 +18,33 @@ export const dynamic = 'force-dynamic';
 
 type KillRow = {
   killer: string;
-  killer_guild: string | null;
   victim: string;
   via_pet: boolean;
   killed_at: string;
 };
 
-const WP_GUILD = 'Wolf Pack';
-
 async function loadLeaderboard() {
   const sb = supabaseAdmin();
-  // Pull every kill credited to a Wolf Pack killer. PvP kills are rare, so
-  // aggregating in JS is fine (matches the chat-browser approach).
+  // Ownership = "is the killer currently a Wolf Pack character", NOT "was the
+  // killer's pvp_kills.killer_guild equal to 'Wolf Pack' at the time of the
+  // broadcast". Older broadcasts had no guild suffix and members who
+  // transferred IN from other guilds carry their prior guild on their old
+  // rows — both cases would silently drop from the leaderboard otherwise.
+  // (Concrete example: Malthur, 218 kills, 144 stamped 'Wolf Pack', 62 stamped
+  // his prior guild Tranquility, 12 NULL — the broken filter showed 144 then
+  // 73 once a partial fetch landed.) Filter by roster membership instead.
+  const { data: roster } = await sb
+    .from('characters')
+    .select('name')
+    .eq('guild_id', 'wolfpack');
+  const rosterNames = (roster ?? []).map(r => (r as { name: string }).name);
+  if (rosterNames.length === 0) return { rows: [], error: null as string | null };
+
   const { data, error } = await sb
     .from('pvp_kills')
-    .select('killer, killer_guild, victim, via_pet, killed_at')
+    .select('killer, victim, via_pet, killed_at')
     .eq('guild_id', 'wolfpack')
-    .eq('killer_guild', WP_GUILD)
+    .in('killer', rosterNames)
     .order('killed_at', { ascending: false })
     .limit(20000);
   if (error) return { rows: [], error: error.message };
