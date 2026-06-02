@@ -10,6 +10,8 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel, cleanBossName } from '@/lib/format';
+import { eraForTimestamp } from '@/lib/eras';
+import LootBrowser, { type LootCategory, type LootEntry } from '@/components/LootBrowser';
 import {
   loadFamily,
   loadEraTimeline,
@@ -32,7 +34,27 @@ type ParseRow = {
   has_pets: boolean | null;
   encounters: { id: string; started_at: string; duration_sec: number | null; zone_short: string | null; eqemu_npc_types: { name: string } | null } | null;
 };
-type LootRow      = { item_name: string; dkp: number; raid_name: string; raid_date: string; game_item_id: number | null };
+type LootRow      = {
+  item_name: string; dkp: number; raid_name: string; raid_date: string;
+  game_item_id: number | null;
+  eqemu_items: { itemtype: number | null; damage: number | null; delay: number | null; slots: number | null; ac: number | null } | null;
+};
+
+// Classify a loot row into a UI bucket so the player can filter weapons vs
+// armor. EQEmu itemtype is the most reliable signal — 0/1/2/3/4/5/7/35/45 are
+// weapon types, 10/12 are containers/armor (we then disambiguate armor by ac+
+// slots > 0 since itemtype 10 includes augments/jewelry/etc.), 11 is misc and
+// our fallback for "quest / misc". When we can't join (catalog miss, e.g. the
+// 211xxx Rune of Judgement) we land in 'other'.
+const WEAPON_TYPES = new Set<number>([0, 1, 2, 3, 4, 5, 7, 35, 45]);
+function classifyLoot(row: LootRow): LootCategory {
+  const it = row.eqemu_items;
+  if (!it || it.itemtype == null) return 'other';
+  if (WEAPON_TYPES.has(it.itemtype) || (it.damage != null && it.damage > 0 && it.delay != null && it.delay > 0)) return 'weapon';
+  if ((it.ac ?? 0) > 0 && (it.slots ?? 0) > 0) return 'armor';
+  if (it.itemtype === 11) return 'quest';
+  return 'other';
+}
 type AttendanceRow = { character_name: string; raids_attended: number; last_30d: number; last_90d: number; first_attended: string; last_attended: string };
 
 async function load(name: string) {
@@ -84,14 +106,27 @@ async function load(name: string) {
       .limit(200);
     const parses = (parseRowsRaw as unknown as ParseRow[]) ?? [];
 
-    // 3. Loot — opendkp_loot rows where character_name matches.
+    // 3. Loot — every opendkp_loot row this character has won, joined to
+    // eqemu_items so we can classify weapon vs armor on the server. No row
+    // cap: the new LootBrowser filters + paginates client-side.
     const { data: lootRaw } = await sb
       .from('opendkp_loot_recent')
-      .select('item_name, dkp, raid_name, raid_date, game_item_id')
+      .select(`
+        item_name, dkp, raid_name, raid_date, game_item_id,
+        eqemu_items ( itemtype, damage, delay, slots, ac )
+      `)
       .ilike('character_name', displayName)
-      .order('raid_date', { ascending: false })
-      .limit(200);
-    const loot = (lootRaw as LootRow[]) ?? [];
+      .order('raid_date', { ascending: false });
+    const loot = (lootRaw as unknown as LootRow[]) ?? [];
+    const lootEnriched: LootEntry[] = loot.map(l => ({
+      item_name:    l.item_name,
+      game_item_id: l.game_item_id,
+      dkp:          l.dkp,
+      raid_name:    l.raid_name,
+      raid_date:    l.raid_date,
+      category:     classifyLoot(l),
+      era:          eraForTimestamp(l.raid_date),
+    }));
 
     // 4. Attendance.
     const { data: attRaw } = await sb
@@ -113,6 +148,7 @@ async function load(name: string) {
       who,
       parses,
       loot,
+      lootEnriched,
       attendance,
       family: members,
       familyRoot: root,
@@ -126,6 +162,7 @@ async function load(name: string) {
       who: null as WhoObs | null,
       parses: [] as ParseRow[],
       loot: [] as LootRow[],
+      lootEnriched: [] as LootEntry[],
       attendance: null as AttendanceRow | null,
       family: [] as FamilyMember[],
       familyRoot: null as FamilyMember | null,
@@ -172,7 +209,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
     data.family.length > 0;
   if (!hasFootprint) notFound();
 
-  const { displayName, who, parses, loot, attendance, family, familyRoot, timeline, familyAgg } = data;
+  const { displayName, who, parses, loot, lootEnriched, attendance, family, familyRoot, timeline, familyAgg } = data;
 
   // Aggregates
   const totalParses = parses.length;
@@ -332,34 +369,8 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
         </table>
       </section>
 
-      {/* Loot */}
-      {loot.length > 0 && (
-        <section className="bg-panel border border-border rounded-lg p-4">
-          <h3 className="text-sm text-gold mb-3 flex items-center gap-2">
-            <span aria-hidden>💰</span>
-            <span>Loot won</span>
-            <span className="text-dim text-xs">· {loot.length} items, {totalLootSpent} DKP total</span>
-          </h3>
-          <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
-            {loot.map((l, i) => {
-              const href = l.game_item_id ? `https://www.pqdi.cc/item/${l.game_item_id}` : null;
-              return (
-                <li key={`${l.item_name}-${i}`} className="flex justify-between gap-2 border-b border-border/40 py-0.5">
-                  <span className="truncate">
-                    {href ? (
-                      <a href={href} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{l.item_name}</a>
-                    ) : (
-                      <span className="text-text">{l.item_name}</span>
-                    )}
-                    <span className="text-dim ml-2">{new Date(l.raid_date).toLocaleDateString()}</span>
-                  </span>
-                  <span className="text-gold whitespace-nowrap">{fmtDkp(l.dkp)}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+      {/* Loot — interactive browser: era + type filters, sort, pagination. */}
+      {lootEnriched.length > 0 && <LootBrowser loot={lootEnriched} />}
 
       {/* Alt family — list every other character that shares this family root */}
       {altFamily.length > 0 && (
