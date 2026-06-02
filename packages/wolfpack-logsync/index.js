@@ -3138,7 +3138,20 @@ function _morphEl(live, tmpl) {
     if (l.nodeType === 3 || l.nodeType === 8) {
       if (l.nodeValue !== t.nodeValue) l.nodeValue = t.nodeValue; li++; continue;
     }
-    _morphEl(l, t); li++;
+    _morphEl(l, t);
+    // Checkbox/radio: reflect the template's checked state as a PROPERTY. A
+    // dirtied checkbox ignores attribute changes, so setAttribute alone won't
+    // re-check it. (Matches what innerHTML did implicitly — opt-in selection
+    // boxes still mirror server state.) Deliberately NOT done for <select>/
+    // <option> so the bandolier dropdown keeps the user's live selection.
+    if (l.nodeName === 'INPUT') {
+      var _tp = (l.getAttribute('type') || '').toLowerCase();
+      if (_tp === 'checkbox' || _tp === 'radio') {
+        var _want = t.hasAttribute('checked');
+        if (l.checked !== _want) l.checked = _want;
+      }
+    }
+    li++;
   }
   for (var r = li; r < liveKids.length; r++) live.removeChild(liveKids[r]);
 }
@@ -3835,7 +3848,7 @@ async function postOptin(action, extra) {
 }
 
 function renderOptin(o) {
-  if (!o) { document.getElementById('optin').innerHTML = '<div class="dim">Loading...</div>'; return; }
+  if (!o) { morphInto(document.getElementById('optin'), '<div class="dim">Loading...</div>'); return; }
   const list = _optinPane === 'active' ? o.files : o.ignored;
   const selCount = (o.files||[]).filter(f => f.selected).length;
 
@@ -3983,17 +3996,17 @@ function renderOptin(o) {
   }
   h += '</table></div>';
   const root = document.getElementById('optin');
-  root.innerHTML = h;
+  if (!setSectionHTML('optin', h)) return;   // morph in place; skip if unchanged
 
-  // Wire interactions
+  // Wire interactions — idempotent under morph (nodes persist across polls).
   root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
-    cb.addEventListener('change', async () => {
+    _bindOnce(cb, 'change', async () => {
       await postOptin(cb.checked ? 'select' : 'deselect', { paths: [cb.dataset.path] });
       refreshOptin();
     });
   });
   root.querySelectorAll('button[data-act]').forEach(b => {
-    b.addEventListener('click', async () => {
+    _bindOnce(b, 'click', async () => {
       const act = b.dataset.act;
       if (act === 'pane-active')  { _optinPane = 'active';  refreshOptin(); return; }
       if (act === 'pane-ignored') { _optinPane = 'ignored'; refreshOptin(); return; }
@@ -4026,7 +4039,7 @@ function renderOptin(o) {
   // server-side dedup (encounters window + chat unique key + fun_events
   // unique key) keeps re-uploaded events from inflating any totals.
   root.querySelectorAll('button[data-rerun]').forEach(b => {
-    b.addEventListener('click', async () => {
+    _bindOnce(b, 'click', async () => {
       const p = b.dataset.rerun;
       if (!p) return;
       if (!confirm('Re-run backfill on this file from the beginning? Useful when the log has grown since the last completion.')) return;
@@ -4036,7 +4049,7 @@ function renderOptin(o) {
   });
   // Backfill request Accept / Dismiss buttons
   root.querySelectorAll('button[data-bf-act]').forEach(b => {
-    b.addEventListener('click', async () => {
+    _bindOnce(b, 'click', async () => {
       const id  = b.dataset.bfId;
       const act = b.dataset.bfAct;
       if (!id || !act) return;
@@ -4052,7 +4065,7 @@ function renderOptin(o) {
     });
   });
   const sel = root.querySelector('#sortMode');
-  if (sel) sel.addEventListener('change', async () => { await postOptin('sort', { mode: sel.value }); refreshOptin(); });
+  _bindOnce(sel, 'change', async () => { await postOptin('sort', { mode: sel.value }); refreshOptin(); });
 }
 
 async function refreshOptin() {
@@ -4274,12 +4287,12 @@ async function dismissTopDamage(key) {
         var c = (wls[i] && wls[i].character) || "";
         if (looksLikeCharacter(c)) { me = c; break; }
       }
-      if (!me) { slot.textContent = ""; return; }
-      slot.innerHTML =
+      if (!me) { morphInto(slot, ""); return; }
+      morphInto(slot,
         " · <a href='https://wolfpack.quest/character/" + encodeURIComponent(me) +
         "' target='_blank' rel='noreferrer' title='Your character page on wolfpack.quest'>/character/" + me + "</a>" +
         " <a href='https://wolfpack.quest/pvp/" + encodeURIComponent(me) +
-        "' target='_blank' rel='noreferrer' title='Your PvP record'>/pvp/" + me + "</a>";
+        "' target='_blank' rel='noreferrer' title='Your PvP record'>/pvp/" + me + "</a>");
     }).catch(function(){});
   }
   refreshUploaderLinks();
