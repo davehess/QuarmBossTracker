@@ -127,6 +127,40 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
+### 🎁 /me loot — per-expansion grouping + current-era default (owner 2026-06-02)
+Loot now shows on /me (v0.5.31, from `opendkp_loot_recent`). Remaining asks:
+- Show the actual item list (name · DKP · raid · date), not just count + total.
+- **Group by expansion**, default to showing only the CURRENT era (Luclin),
+  with a "show all eras" expander.
+- **Totals spent per expansion.**
+Blocker: no clean item→expansion mapping. `opendkp_loot_recent` has
+`game_item_id` + `item_name` + `raid_name`. Options to resolve expansion:
+(a) `game_item_id` → `eqemu_items` (check for an era/expansion column — likely
+absent), (b) item → loot tree → NPC → zone → expansion (deep join; eqemu spawn
+data is incomplete), (c) map `raid_name` strings to expansions (free-form,
+fuzzy), (d) reuse `bosses.json` expansion if the item can be tied to a boss.
+Recommend a small `item_expansion` lookup table seeded from PQDI/known drops,
+filled incrementally. Until then, show a flat recent-items list.
+
+### 🧙 CothBot labels + parked location (owner 2026-06-02)
+Some characters are CoTH-bot porter mages (Okigetyou, Pearlclutcher, etc.) —
+parked to Call-of-the-Hero raiders. Add a per-character flag + a free-text
+"parked location" so /me (and rosters) can label them. Schema: add
+`characters.is_cothbot boolean default false` + `characters.cothbot_location
+text`. UI: a toggle + location field on /me per character (officer or
+self-serve for own chars), and a small "🪄 CoTH bot · <location>" badge on the
+card. "it's just the mages" → could default-suggest the flag for Magician-class
+alts, but keep it manual.
+
+### 📍 Last logout location on /me (owner 2026-06-02)
+Show where each character last logged out, from the logs. EQ writes a zone line
+on entry ("You have entered <Zone>.") and the agent already sees `/who`/zone
+context. Capture the most recent zone per character (agent → a `last_zone` +
+`last_zone_at` field, uploaded like who_observations or folded into an existing
+heartbeat), store per character, and surface on the /me card ("Last seen:
+<Zone>, <relative time>"). Pairs well with the CothBot location (confirm the
+bot is still parked where expected).
+
 ### ✅ DONE — Dashboard refresh flicker (reported 2026-06-02; fixed v2.5.28/31/32)
 The 2s poll rewrote every panel via `innerHTML = h`, flashing the page and
 destroying app-injected cards (My Crits etc.) that their own loops re-added —
