@@ -322,6 +322,7 @@ const KEEP_PATTERNS = [
   /\byou cast /i,
   /\bresisted your/i,
   /\byou resist the .+ spell/i,                   // incoming spell we resisted (names the spell)
+  / (?:is|are) (?:an?|the) (?:leader|officer|member|recruit) of /i,  // /guildstatus rank line
   /\byour .+ has worn off/i,
   /\bhas fainted/i,
   // Bard dirges — no "You begin casting" prefix, just this flavor text. Needed
@@ -595,6 +596,17 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+(.+?)\s+delivers?\s+a\s+critical\s+blast!\s*\((\d+)\)/i);
   if (m && isPlausibleAttacker(m[1])) {
     return { ts: tsIso, type: 'critical', kind: 'spell', attacker: m[1], amount: parseInt(m[2], 10) };
+  }
+
+  // "/guildstatus" response — reveals guild + rank even for /anon players,
+  // which /who hides. Forms:
+  //   "Whiskeyjacks is an Officer of Dial a Port."
+  //   "Soandso is a Member of <Guild>."   "X is the Leader of <Guild>."
+  //   "You are an Officer of <Guild>."     (self)
+  m = line.match(/\]\s+(\S+)\s+(?:is|are)\s+(?:an?|the)\s+(Leader|Officer|Member|Recruit)\s+of\s+(.+?)\.?\s*$/i);
+  if (m) {
+    const rank = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
+    return { ts: tsIso, type: 'guildstatus', character: m[1], guildRank: rank, guild: m[3].trim() };
   }
 
   // "You resist the <Spell> spell!" — the uploader resisted an incoming spell.
@@ -883,12 +895,30 @@ function recordWhoEvent(ev) {
     level:     ev.level || old.level || null,
     race:      ev.race  || old.race  || null,
     guild:     ev.guild || old.guild || null,
+    guildRank: old.guildRank || null,   // /who never carries rank — preserve any /guildstatus value
     anonymous: !!ev.anonymous,
     gm:        !!ev.gm || !!old.gm,
     observedAt: ev.ts || new Date().toISOString(),
   });
   // Anyone we /who'd is a player — whitelist for downstream tank/death tracking
   confirmPlayer(ev.name);
+}
+
+// Capture a /guildstatus result — guild + rank, even for /anon players. Merges
+// into whoData (preserving class/level if a prior /who saw them), so it rides
+// the normal who_data upload to the bot → who_observations.
+function recordGuildStatus(name, guild, rank) {
+  if (!name) return;
+  const k   = name.toLowerCase();
+  const old = whoData.get(k) || {};
+  whoData.set(k, {
+    ...old,
+    name:      old.name || name,
+    guild:     guild || old.guild || null,
+    guildRank: rank  || old.guildRank || null,
+    observedAt: new Date().toISOString(),
+  });
+  confirmPlayer(name);
 }
 
 // Class inference from class-EXCLUSIVE abilities. When a watched box shows up
@@ -1240,6 +1270,14 @@ class EncounterBuilder {
     // buffer and ship in the next encounter upload.
     if (event.type === 'who') {
       recordWhoEvent(event);
+      return;
+    }
+
+    // /guildstatus — guild + rank for any character (survives /anon). "You"
+    // resolves to this log's character.
+    if (event.type === 'guildstatus') {
+      const who = /^you$/i.test(event.character) ? (this.character || null) : event.character;
+      if (who) recordGuildStatus(who, event.guild, event.guildRank);
       return;
     }
 
