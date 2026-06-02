@@ -321,6 +321,7 @@ const KEEP_PATTERNS = [
   /\bbegins? to cast/i,
   /\byou cast /i,
   /\bresisted your/i,
+  /\byou resist the .+ spell/i,                   // incoming spell we resisted (names the spell)
   /\byour .+ has worn off/i,
   /\bhas fainted/i,
   // Bard dirges — no "You begin casting" prefix, just this flavor text. Needed
@@ -594,6 +595,15 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+(.+?)\s+delivers?\s+a\s+critical\s+blast!\s*\((\d+)\)/i);
   if (m && isPlausibleAttacker(m[1])) {
     return { ts: tsIso, type: 'critical', kind: 'spell', attacker: m[1], amount: parseInt(m[2], 10) };
+  }
+
+  // "You resist the <Spell> spell!" — the uploader resisted an incoming spell.
+  // EQ hides the spell name on the NPC's cast line ("X begins to cast a
+  // spell.") but the RESIST line names it — so this is how we learn what's
+  // being thrown at us. Attribute to the mob being fought (set in add()).
+  m = line.match(/\]\s+You resist the\s+(.+?)\s+spell!/i);
+  if (m) {
+    return { ts: tsIso, type: 'resist', spell: m[1].trim() };
   }
 
   // ── Death events ──────────────────────────────────────────────────────────
@@ -1284,6 +1294,21 @@ class EncounterBuilder {
         if (event.outcome === 'crit')        { stats.sessionMends.crit++;    stats.sessionMends.success++; }
         else if (event.outcome === 'regular'){ stats.sessionMends.success++; }
         else if (event.outcome === 'fail')   { stats.sessionMends.fail++; }
+      }
+      return;
+    }
+
+    // ── Resisted incoming spell ──────────────────────────────────────────────
+    // "You resist the <Spell> spell!" — names a spell a mob is casting at us
+    // (the mob's own cast line only says "a spell"). Attribute to the mob
+    // being fought right now (this.bossName) as a best-effort caster. Counter
+    // only; not added to this.events. Silent backfill skips it.
+    if (event.type === 'resist') {
+      if (!this.silent && event.spell) {
+        const r = stats.resistedSpells[event.spell]
+               || (stats.resistedSpells[event.spell] = { count: 0, lastMob: null });
+        r.count++;
+        if (this.bossName) r.lastMob = this.bossName;
       }
       return;
     }
@@ -2393,6 +2418,11 @@ const stats = {
   // biggest single bonus). Powers the "My Crits" panel — only the box's OWN
   // crits are tracked, split melee vs spell. { [name]: { melee:{count,total,max}, spell:{...} } }
   sessionCrits: {},
+  // resistedSpells: incoming spells the uploader RESISTED this session. EQ
+  // hides the spell name on a mob's "begins to cast a spell" line, but the
+  // resist line names it — so this reveals what mobs are actually casting at
+  // us. { [spellName]: { count, lastMob } }
+  resistedSpells: {},
   // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
   // { mobName: { [abilityName]: { count, totalDmg } } }
   sessionProcs:    {},
@@ -2471,6 +2501,7 @@ function resetSessionStats() {
   stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
   stats.sessionCritHeals   = {};
   stats.sessionCrits       = {};
+  stats.resistedSpells     = {};
   stats.sessionProcs       = {};
   stats.sessionDeeps       = {};
   stats.castCounts         = {};
@@ -2713,6 +2744,7 @@ function saveSessionState() {
       sessionMends:       stats.sessionMends,
       sessionCritHeals:   stats.sessionCritHeals,
       sessionCrits:       stats.sessionCrits,
+      resistedSpells:     stats.resistedSpells,
       sessionDeeps:       stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       castCounts:         stats.castCounts,
@@ -2748,6 +2780,7 @@ function loadSessionState() {
     if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
     if (raw.sessionCritHeals)   stats.sessionCritHeals   = raw.sessionCritHeals;
     if (raw.sessionCrits)       stats.sessionCrits       = raw.sessionCrits;
+    if (raw.resistedSpells)     stats.resistedSpells     = raw.resistedSpells;
     if (raw.sessionDeeps)       stats.sessionDeeps       = raw.sessionDeeps;
     if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
     if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
@@ -2802,6 +2835,7 @@ function _serializeForDashboard() {
     sessionHealers:     healersOut,
     sessionCritHeals:   stats.sessionCritHeals || {},
     sessionCrits:       stats.sessionCrits || {},
+    resistedSpells:     stats.resistedSpells || {},
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
     sessionMends:       stats.sessionMends,
@@ -3839,6 +3873,25 @@ function renderInfo(s) {
       'Reliable for the uploader. Other casters land under <code>(unknown)</code> because EQ does not log the spell name for bystanders.');
     h += _ccRenderGroup('Spell Casts This Session — NPCs / Unknown', otherNames,
       'Casts attributed to NPCs or to bystanders whose spell name EQ does not reveal.');
+  }
+
+  // Resisted incoming spells — names what mobs are actually casting at us.
+  // EQ hides the spell on a mob's cast line ("a spell"), but a resist names
+  // it. This is the only way to learn a mob's spell list from our own log.
+  var _rs = s.resistedSpells || {};
+  var _rsNames = Object.keys(_rs);
+  if (_rsNames.length > 0) {
+    h += '<div class="card wide"><h2>🛡 Spells Resisted (incoming)</h2>';
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spells mobs cast at you that you resisted — this names what their "a spell" casts actually were.</div>';
+    h += '<table><tr><th>Spell</th><th class="num">Resisted</th><th>Last seen from</th></tr>';
+    _rsNames.map(function (n) { return [n, _rs[n]]; })
+      .sort(function (a, b) { return (b[1].count || 0) - (a[1].count || 0); })
+      .forEach(function (e) {
+        h += '<tr><td class="name">' + esc(e[0]) + '</td>' +
+             '<td class="num">' + (e[1].count || 0) + '</td>' +
+             '<td class="dim">' + (e[1].lastMob ? esc(e[1].lastMob) : '—') + '</td></tr>';
+      });
+    h += '</table></div>';
   }
   h += '</div>';
   setSectionHTML('info', h);
