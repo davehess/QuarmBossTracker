@@ -29,6 +29,11 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.0': [
+    '**UI Studio (Mimic)** — back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and `eqclient.ini` to wolfpack.quest. Restore on any computer in one click. Files are encrypted before they leave your machine.',
+    '**Multi-folder EQ picker (Mimic)** — scans for `eqgame.exe` in 14 common locations, lets you pick multiple installs, Browse to add more, with a "Where did we look?" disclosure.',
+    '**Smoother overlay drag (Mimic)** — replaced the buggy Chromium drag with a small ✥ handle and 1:1 cursor tracking. First-run token gate; in-log NPC-hail character inference catches renamed log files automatically.',
+  ],
   '1.0.0': [
     '`/kill <boss>` — log a kill and start the respawn timer',
     '`/timers [zone] [filter]` — view all spawn timers by zone or status',
