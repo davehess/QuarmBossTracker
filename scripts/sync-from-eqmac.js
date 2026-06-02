@@ -65,6 +65,7 @@ const WHITELIST = {
   spawngroup:          { dest: 'eqemu_spawngroup',        transform: 'spawngroup' },
   spawnentry:          { dest: 'eqemu_spawnentry',        transform: 'spawnentry' },
   spawn2:              { dest: 'eqemu_spawn2',            transform: 'spawn2' },
+  spells_new:          { dest: 'eqemu_spells',            transform: 'spells' },
 };
 
 // ── Supabase REST helper ────────────────────────────────────────────────────
@@ -420,6 +421,46 @@ const TRANSFORMS = {
       enabled: r.enabled === null ? true : !!toBool(r.enabled),
     };
   },
+  // spells_new → eqemu_spells. Beyond the proc/effect columns the threat calc
+  // already wanted, we pull the three CLIENT message strings — cast_on_you,
+  // cast_on_other, spell_fades — which are EQ's exact landing text:
+  //   cast_on_you  = "You feel a little better."
+  //   cast_on_other= " feels a little better."   (client prepends the name)
+  //   spell_fades  = "Your skin returns to normal."
+  // These power (a) name→PQDI-id links on the agent dashboard and (b) message→
+  // spell inference (matching effect lines in the log to the spell that landed).
+  // Names are the standard EQEmu/EQMacEmu spells_new columns; pick() is
+  // case-insensitive and tolerant, so an absent column simply lands NULL.
+  spells: (cols, row) => {
+    const r = pick(cols, row, [
+      'id', 'name', 'mana', 'buffduration', 'buffdurationformula', 'recourse_link',
+      'targettype', 'skill',
+      'effectid1', 'effect_base_value1', 'effectid2', 'effect_base_value2', 'effectid3', 'effect_base_value3',
+      'effect_id_1', 'effect_base_value_1', 'effect_id_2', 'effect_base_value_2', 'effect_id_3', 'effect_base_value_3',
+      'cast_time', 'recast_time', 'pushback', 'zonetype',
+      'cast_on_you', 'cast_on_other', 'spell_fades',
+    ]);
+    if (!r.id || !r.name) return null;
+    // EQEmu has historically used both `effectid1` and `effect_id_1` styles
+    // across forks — accept either so the effect columns aren't silently NULL.
+    const eff = (a, b) => (r[a] !== undefined ? r[a] : r[b]);
+    return {
+      id: r.id, name: r.name, mana: r.mana,
+      buffduration: r.buffduration, buffdurationformula: r.buffdurationformula,
+      recourse_link: r.recourse_link, targettype: r.targettype, skill: r.skill,
+      effect_id_1: eff('effect_id_1', 'effectid1'),
+      effect_base_value_1: eff('effect_base_value_1', 'effect_base_value1'),
+      effect_id_2: eff('effect_id_2', 'effectid2'),
+      effect_base_value_2: eff('effect_base_value_2', 'effect_base_value2'),
+      effect_id_3: eff('effect_id_3', 'effectid3'),
+      effect_base_value_3: eff('effect_base_value_3', 'effect_base_value3'),
+      cast_time: r.cast_time, recast_time: r.recast_time,
+      pushback: r.pushback, zonetype: r.zonetype,
+      cast_on_you: r.cast_on_you || null,
+      cast_on_other: r.cast_on_other || null,
+      spell_fades: r.spell_fades || null,
+    };
+  },
 };
 
 function pick(cols, row, wanted) {
@@ -482,6 +523,7 @@ const PK_MAP = {
   eqemu_spawngroup:        ['id'],
   eqemu_spawnentry:        ['spawngroup_id', 'npc_id'],
   eqemu_spawn2:            ['id'],
+  eqemu_spells:            ['id'],
 };
 
 // ── Exports for tests ───────────────────────────────────────────────────────
@@ -535,6 +577,7 @@ if (require.main !== module) return;
     'eqemu_zone', 'eqemu_items', 'eqemu_npc_types',
     'eqemu_loottable', 'eqemu_lootdrop', 'eqemu_loottable_entries', 'eqemu_lootdrop_entries',
     'eqemu_spawngroup', 'eqemu_spawnentry', 'eqemu_spawn2',
+    'eqemu_spells',
   ];
   for (const dest of ORDER) {
     if (!buffers[dest] || !buffers[dest].length) continue;
