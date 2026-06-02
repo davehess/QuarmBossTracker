@@ -208,6 +208,17 @@
       state === 'active' ? '⏳' :
       state === 'error'  ? '✕' : '○';
   }
+  // First-run gate: if the user has NEVER onboarded AND has no token, the
+  // auto-redirect countdown would blow past the setup cards before they can
+  // even read them. Require an explicit "Save token" or "Skip & open now"
+  // click on the very first launch. After that, normal countdown resumes.
+  let _firstRun = false;
+  async function _checkFirstRun(){
+    try {
+      const cfg = await window.mimic.getConfig();
+      _firstRun = !cfg.onboarded && !cfg.token;
+    } catch { _firstRun = false; }
+  }
   function markEngineUp(){
     setStep(2, 'done');
     setStep(3, 'done');
@@ -216,16 +227,23 @@
     const btn = $('openDashboard');
     btn.disabled = false;
     btn.textContent = 'Open dashboard →';
-    startCountdown();
+    if (_firstRun) {
+      // Don't auto-open on the first launch — let the user decide on the
+      // setup cards explicitly. The Skip button is always available.
+      $('countdown').innerHTML =
+        '🔑 Paste a token above (or click <b>Skip &amp; open now</b>) when ready.';
+    } else {
+      startCountdown();
+    }
   }
   function pingUserInteraction(){
     userInteracting = true;
     stopCountdown();
-    // Auto-redirect resumes if they go quiet for 6s.
+    // Auto-redirect resumes if they go quiet for 6s — but NOT on first run.
     clearTimeout(autoTimer);
     autoTimer = setTimeout(() => {
       userInteracting = false;
-      if (agentReady) startCountdown();
+      if (agentReady && !_firstRun) startCountdown();
     }, 6000);
   }
   function startCountdown(){
@@ -369,7 +387,25 @@
   $('skipNow').onclick        = () => { stopCountdown(); openDashboard(); };
 
   // ── Boot ─────────────────────────────────────────────────────────────────
+  // First-run check runs before pollEngine so _firstRun is known by the
+  // time markEngineUp fires; small race is fine because pollEngine's first
+  // request takes ~500ms minimum.
+  _checkFirstRun();
   hydrate();
   pollEngine();
+
+  // Once the user clicks Save token (in the existing handler) OR Skip,
+  // we want to behave like a "post-first-run" session for the rest of
+  // this load. The Save token handler already calls saveConfig + relaunches;
+  // we clear the gate here. The Skip handler is the openDashboard call,
+  // which markOnboarded()s before navigating.
+  var origSave = $('saveToken') && $('saveToken').onclick;
+  // Saving any token (even null/local-only) counts as a deliberate decision.
+  if (origSave) {
+    $('saveToken').addEventListener('click', function() {
+      _firstRun = false;  // future markEngineUp calls auto-redirect again
+      $('countdown').textContent = '';
+    });
+  }
 </script>
 </body></html>

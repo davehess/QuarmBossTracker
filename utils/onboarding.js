@@ -29,6 +29,11 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.0': [
+    '**UI Studio (Mimic)** — back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and `eqclient.ini` to wolfpack.quest. Restore on any computer in one click. Files are encrypted before they leave your machine.',
+    '**Multi-folder EQ picker (Mimic)** — scans for `eqgame.exe` in 14 common locations, lets you pick multiple installs, Browse to add more, with a "Where did we look?" disclosure.',
+    '**Smoother overlay drag (Mimic)** — replaced the buggy Chromium drag with a small ✥ handle and 1:1 cursor tracking. First-run token gate; in-log NPC-hail character inference catches renamed log files automatically.',
+  ],
   '1.0.0': [
     '`/kill <boss>` — log a kill and start the respawn timer',
     '`/timers [zone] [filter]` — view all spawn timers by zone or status',
@@ -93,6 +98,15 @@ const CHANGELOGS = {
   ],
   '2.6.10': [
     'Local dashboard panels (Damage, Recent Parses, PvP) get a `🛰 local | 🌐 server` header toggle — click 🌐 to swap to the wolfpack.quest aggregates (last 30 days / lifetime) right in place. Selection persists per panel.',
+  ],
+  '2.6.13': [
+    'New **💸 Live Bidding** panel on the local dashboard (and as an overlay). Shows OpenDKP auctions in real time with a one-click bid input, marks items already on your wishlist with a ★, and lists your currently-placed bids underneath so you can keep track when you spread DKP across multiple items.',
+  ],
+  '2.6.15': [
+    'Boards now rebuild spawn timers from Supabase (the parse/kill record) automatically on startup and every 6h — so after a redeploy or volume reset the cooldowns repopulate themselves instead of showing everything "Available now." `/recoverkills` still does it on demand.',
+  ],
+  '2.6.16': [
+    'Parses are now scoped to the fight you were actually in. Before, a nearby raider meleeing a *different* mob could show up as a phantom contributor on your kill (e.g. a solo named kill listing 4 extra names). Damage now only counts toward an encounter if it landed on a target the uploader engaged.',
   ],
 };
 

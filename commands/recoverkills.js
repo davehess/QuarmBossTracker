@@ -21,42 +21,10 @@
 'use strict';
 
 const { SlashCommandBuilder, MessageFlags, EmbedBuilder } = require('discord.js');
-const fs   = require('fs');
-const path = require('path');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
-const { EXPANSION_ORDER, getThreadId } = require('../utils/config');
 const { parseTimeString } = require('../utils/timer');
-const {
-  postOrUpdateExpansionBoard,
-  refreshSummaryCard,
-  refreshSpawningTomorrowCard,
-  refreshThreadCooldownCard,
-  mirrorBoardsToSupabase,
-} = require('../utils/killops');
+const { reconcileKillsFromSupabase } = require('../utils/reconcileKills');
 const supabase = require('../utils/supabase');
-
-function getBosses() {
-  delete require.cache[require.resolve('../data/bosses.json')];
-  return require('../data/bosses.json');
-}
-
-function writeKillsToState(killMap) {
-  const f = path.join(__dirname, '../data/state.json');
-  let raw;
-  try { raw = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { raw = {}; }
-  if (!raw.bosses) raw.bosses = {};
-  for (const [bossId, entry] of Object.entries(killMap)) {
-    raw.bosses[bossId] = { killedAt: entry.killedAt, nextSpawn: entry.nextSpawn, killedBy: 'recovered' };
-  }
-  const tmp = f + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(raw, null, 2), 'utf8');
-  fs.renameSync(tmp, f);
-}
-
-function loadStateBosses() {
-  const f = path.join(__dirname, '../data/state.json');
-  try { return JSON.parse(fs.readFileSync(f, 'utf8'))?.bosses || {}; } catch { return {}; }
-}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -96,62 +64,21 @@ module.exports = {
       return interaction.editReply(`❌ Couldn't parse "${sinceRaw}". Try formats like \`72h\`, \`3d\`, or \`2 days\`.`);
     }
 
-    const now     = Date.now();
-    const sinceTs = new Date(now - windowMs).toISOString();
-    const bosses  = getBosses();
-    const bossById = Object.fromEntries(bosses.map(b => [b.id, b]));
-
-    // Pull every encounter in the window. The bot writes encounters with
-    // started_at = the kill time, which is what we use to seed killedAt.
-    const encounters = await supabase.select(
-      'encounters',
-      `started_at=gte.${encodeURIComponent(sinceTs)}&select=id,npc_id,started_at,zone_short&order=started_at.desc&limit=500`,
-    ).catch(err => { console.warn('[recoverkills] encounters select failed:', err?.message); return []; });
-    if (!Array.isArray(encounters) || encounters.length === 0) {
-      return interaction.editReply(`No encounters found since ${sinceRaw}. Nothing to recover.`);
-    }
-
-    // Map npc_id → internal_id via bosses_local so we can pick a tracked boss.
-    const npcIds = Array.from(new Set(encounters.map(e => e.npc_id).filter(Boolean)));
-    const inList = '(' + npcIds.join(',') + ')';
-    const localRows = await supabase.select(
-      'bosses_local',
-      `npc_id=in.${encodeURIComponent(inList)}&select=internal_id,npc_id`,
-    ).catch(() => []);
-    const internalByNpc = new Map((Array.isArray(localRows) ? localRows : []).map(r => [r.npc_id, r.internal_id]));
-
-    // Build the kill map. Latest started_at per boss wins.
-    const existing = loadStateBosses();
-    const killMap  = {};
-    const skipped  = { notTracked: 0, noTimer: 0, alreadyRespawned: 0, alreadyCurrent: 0 };
-    for (const enc of encounters) {
-      const bossId = internalByNpc.get(enc.npc_id);
-      if (!bossId)             { skipped.notTracked++; continue; }
-      const boss = bossById[bossId];
-      if (!boss?.timerHours)   { skipped.noTimer++;    continue; }
-      const killedAt  = new Date(enc.started_at).getTime();
-      const nextSpawn = killedAt + boss.timerHours * 3600000;
-      if (nextSpawn <= now)    { skipped.alreadyRespawned++; continue; }
-      // Don't downgrade a state row that's already at/past this encounter.
-      const live = existing[bossId];
-      if (live?.nextSpawn && live.nextSpawn >= nextSpawn) { skipped.alreadyCurrent++; continue; }
-      // Latest started_at wins (encounters were ordered desc, so the first
-      // hit for a boss is its latest kill).
-      if (!killMap[bossId] || killMap[bossId].nextSpawn < nextSpawn) {
-        killMap[bossId] = { killedAt, nextSpawn, bossName: boss.name, zone: boss.zone };
-      }
-    }
-    const recoverList = Object.entries(killMap)
-      .map(([bossId, k]) => ({ bossId, ...k }))
-      .sort((a, b) => a.nextSpawn - b.nextSpawn);
+    // Compute + (unless dry-run) apply via the shared reconcile, so the manual
+    // command and the startup/interval auto-reconcile can't drift apart.
+    const { recoverList, skipped, scanned } = await reconcileKillsFromSupabase({
+      client: interaction.client,
+      sinceMs: windowMs,
+      dryRun,
+    });
 
     if (recoverList.length === 0) {
       return interaction.editReply(
-        `Looked at **${encounters.length}** encounters since ${sinceRaw}, nothing to recover.\n` +
-        `• Already-respawned: ${skipped.alreadyRespawned}\n` +
-        `• Already-current in state: ${skipped.alreadyCurrent}\n` +
-        `• Not tracked (no bosses_local mapping): ${skipped.notTracked}\n` +
-        `• No timerHours configured: ${skipped.noTimer}`
+        `Looked at **${scanned}** encounters since ${sinceRaw}, nothing to recover.\n` +
+        `• Already-respawned: ${skipped.alreadyRespawned || 0}\n` +
+        `• Already-current in state: ${skipped.alreadyCurrent || 0}\n` +
+        `• Not tracked (no bosses_local mapping): ${skipped.notTracked || 0}\n` +
+        `• No timerHours configured: ${skipped.noTimer || 0}`
       );
     }
 
@@ -168,24 +95,6 @@ module.exports = {
       );
     }
 
-    // Commit: write state + mirror + refresh every board.
-    writeKillsToState(Object.fromEntries(recoverList.map(r => [r.bossId, r])));
-    try { await mirrorBoardsToSupabase(bosses); }
-    catch (err) { console.warn('[recoverkills] bot_boards mirror failed:', err?.message); }
-
-    const client        = interaction.client;
-    const mainChannelId = process.env.TIMER_CHANNEL_ID;
-    await Promise.allSettled(EXPANSION_ORDER.map(async (exp) => {
-      const threadId = getThreadId(exp);
-      if (!threadId) return;
-      await postOrUpdateExpansionBoard(client, exp, threadId, bosses).catch(err => console.warn('[recoverkills] board refresh failed:', err?.message));
-      await refreshThreadCooldownCard(client, exp, threadId, bosses).catch(err => console.warn('[recoverkills] thread cooldown failed:', err?.message));
-    }));
-    if (mainChannelId) {
-      await refreshSummaryCard(client, mainChannelId, bosses).catch(err => console.warn('[recoverkills] summary refresh failed:', err?.message));
-      await refreshSpawningTomorrowCard(client, mainChannelId, bosses).catch(err => console.warn('[recoverkills] spawning-tomorrow refresh failed:', err?.message));
-    }
-
     const lines = recoverList.slice(0, 12).map(r => {
       const respawnSec = Math.max(0, Math.floor(r.nextSpawn / 1000));
       return `• **${r.bossName}** _(${r.zone})_ — respawn <t:${respawnSec}:R>`;
@@ -197,7 +106,7 @@ module.exports = {
       .setTitle(`✅ Recovered ${recoverList.length} boss timer${recoverList.length === 1 ? '' : 's'}`)
       .setDescription(lines.join('\n'))
       .setFooter({ text:
-        `Looked back ${sinceRaw} · ${encounters.length} encounters scanned · ` +
+        `Looked back ${sinceRaw} · ${scanned} encounters scanned · ` +
         `${skipped.alreadyRespawned} already respawned, ${skipped.alreadyCurrent} already current, ` +
         `${skipped.notTracked} untracked, ${skipped.noTimer} no-timer`
       });

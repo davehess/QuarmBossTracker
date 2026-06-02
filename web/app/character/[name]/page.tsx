@@ -6,7 +6,7 @@
 // the canonical character name.
 
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel, cleanBossName } from '@/lib/format';
@@ -138,6 +138,13 @@ async function load(name: string) {
 
 export default async function CharacterPage({ params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
+  // Reject sentinel / non-character names like "(unknown)". Real EQ player
+  // names are letters only, so anything with parens/digits/spaces — or the
+  // "unknown"/"unattributed" fallbacks — isn't a character and shouldn't
+  // render a phantom 0s page.
+  const _decoded = decodeURIComponent(name).trim();
+  if (!/^[A-Za-z]{2,}$/.test(_decoded) || ['unknown', 'unattributed'].includes(_decoded.toLowerCase())) notFound();
+
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}`);
 

@@ -49,6 +49,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const os   = require('os');
 const https = require('https');
 const http  = require('http');
 const crypto = require('crypto');
@@ -561,10 +562,19 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'damage', attacker: null, defender: m[1], ability: 'dot', amount: parseInt(m[2], 10) };
   }
 
-  // "X Scores a critical hit!(N)" — the (N) is the BONUS amount on top of the preceding hit
+  // "X Scores a critical hit!(N)" — melee crit; (N) is the BONUS on top of the hit.
   m = line.match(/\]\s+(.+?)\s+[Ss]cores?\s+a\s+critical\s+hit!\s*\((\d+)\)/);
   if (m) {
-    return { ts: tsIso, type: 'critical', attacker: m[1], amount: parseInt(m[2], 10) };
+    return { ts: tsIso, type: 'critical', kind: 'melee', attacker: m[1], amount: parseInt(m[2], 10) };
+  }
+
+  // "X delivers a critical blast!(N)" — SPELL crit (EQEmu/Fury). First-person
+  // form is "You deliver a critical blast!". NOTE: this format is the standard
+  // EQEmu string but is unverified against a live Quarm log — confirm with a
+  // real spell-crit line and adjust if Quarm words it differently.
+  m = line.match(/\]\s+(.+?)\s+delivers?\s+a\s+critical\s+blast!\s*\((\d+)\)/i);
+  if (m) {
+    return { ts: tsIso, type: 'critical', kind: 'spell', attacker: m[1], amount: parseInt(m[2], 10) };
   }
 
   // ── Death events ──────────────────────────────────────────────────────────
@@ -850,6 +860,43 @@ function recordWhoEvent(ev) {
   });
   // Anyone we /who'd is a player — whitelist for downstream tank/death tracking
   confirmPlayer(ev.name);
+}
+
+// Class inference from class-EXCLUSIVE abilities. When a watched box shows up
+// with no /who row yet, we can still tell its class from what it does: "I used
+// Harm Touch, so I'm a Shadow Knight." Only these unambiguous, single-class
+// abilities are used (no false positives). We get the character name from the
+// log file, so this is about the operator's own boxes (the ones whose
+// first-person lines we see). A real /who row always overrides an inference.
+const ABILITY_CLASS = {
+  'harm touch':   'Shadow Knight',
+  'lay on hands': 'Paladin',
+  'mend':         'Monk',
+  'backstab':     'Rogue',
+  'flying kick':  'Monk',
+  'round kick':   'Monk',
+  'dragon punch': 'Monk',
+  'eagle strike': 'Monk',
+  'tail rake':    'Monk',  // iksar monk equivalent of Dragon Punch
+};
+function inferClassFromAbility(character, ability) {
+  if (!character || !ability) return;
+  const cls = ABILITY_CLASS[String(ability).toLowerCase().trim()];
+  if (!cls) return;
+  const k   = String(character).toLowerCase();
+  const old = whoData.get(k) || {};
+  // Never override a /who-sourced class; only fill a gap or refine a prior
+  // inference. (classSource is absent on /who rows = authoritative.)
+  if (old.class && old.classSource !== 'inferred') return;
+  if (old.class === cls) return;
+  whoData.set(k, {
+    ...old,
+    name:        old.name || character,
+    class:       cls,
+    classSource: 'inferred',
+    observedAt:  old.observedAt || new Date().toISOString(),
+  });
+  confirmPlayer(character);
 }
 
 class EncounterBuilder {
@@ -1212,6 +1259,7 @@ class EncounterBuilder {
     // Crit rate is a per-character session stat surfaced on the Info screen.
     // Silent builders skip this so old log replays don't move the mend counter.
     if (event.type === 'mend') {
+      inferClassFromAbility(this.character, 'mend');  // Monk-exclusive
       if (!this.silent) {
         stats.sessionMends.attempts++;
         if (event.outcome === 'crit')        { stats.sessionMends.crit++;    stats.sessionMends.success++; }
@@ -1294,6 +1342,10 @@ class EncounterBuilder {
       const attacker = (rawAtk === null || /^you$/i.test(rawAtk || ''))
         ? (this.character || 'You')
         : rawAtk;
+      // Class inference from a class-exclusive verb the BOX itself used
+      // (first-person, rawAtk===null) — e.g. Backstab → Rogue, Flying Kick →
+      // Monk. Only fires for the names in ABILITY_CLASS; no-op otherwise.
+      if (rawAtk === null && event.ability) inferClassFromAbility(this.character, event.ability);
       // Damage-shield reflect detection: the line is "X was hit by ABILITY for
       // N damage" with attacker=null (EQ never reveals who applied the DS to
       // the tank). When the defender is a mob we're currently fighting AND an
@@ -1375,6 +1427,18 @@ class EncounterBuilder {
       const critOnPlayer = event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender);
       if (!critOnPlayer && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         this._bumpDeeps(attacker, 'crit', event.amount, null);
+        // My Crits tracker — only the box's OWN crits (attacker resolves to
+        // this.character), split melee vs spell. Skip silent/backfill so the
+        // live panel reflects this session. event.kind is set by the parser.
+        if (!this.silent && attacker === this.character) {
+          const kind = event.kind === 'spell' ? 'spell' : 'melee';
+          const c = stats.sessionCrits[attacker]
+                 || (stats.sessionCrits[attacker] = { melee: { count: 0, total: 0, max: 0 }, spell: { count: 0, total: 0, max: 0 } });
+          const b = c[kind];
+          b.count++;
+          b.total += event.amount;
+          if (event.amount > b.max) b.max = event.amount;
+        }
       }
     }
 
@@ -2022,11 +2086,39 @@ function _endpointForKind(kind, botUrl) {
   }
 }
 
+// The operator's "main" box, used to attribute operator-level uploads
+// (chat/pvp/fun_event/historical_chat) so the admin board shows the player
+// instead of "(unknown)". Prefers an explicit --character (the operator's
+// declared identity), else the first real-looking watched-log character.
+// Computed lazily so it picks up watched logs registered after startup.
+let _primaryCharacterOverride = null;  // set from args.flags.character in main()
+function _primaryCharacter() {
+  const looksReal = (c) => c && /^[A-Z][a-z]+$/.test(c);
+  if (looksReal(_primaryCharacterOverride)) return _primaryCharacterOverride;
+  const wls = (stats && stats.watchedLogs) || [];
+  for (const w of wls) if (looksReal(w && w.character)) return w.character;
+  return null;
+}
+
 function enqueueUpload(kind, payload) {
+  // Cross-instance guard: only the elected uploader sends. A read-only
+  // instance (another Parser/Mimic on this machine already owns the lock)
+  // drops outbound uploads so the same line isn't posted twice. Its local
+  // dashboard still works — local stats come from parseEvent, not the queue.
+  if (!_isUploaderInstance) return null;
   if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
     const dropped = _uploadQueue.shift();
     _queueCapEvictCount++;
     console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped oldest ${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
+  }
+  // Attribute operator-level streams (chat / pvp / fun_event / historical_chat)
+  // to the operator's primary box. These aggregate across every watched log so
+  // they carry no per-box `character`, which made the admin board file them all
+  // under "(unknown)". Encounters already set their own per-box character and
+  // are left untouched.
+  if (payload && typeof payload === 'object' && !payload.character) {
+    const pc = _primaryCharacter();
+    if (pc) payload.character = pc;
   }
   // Decorate every payload with agent_state so the bot's admin tooling can
   // tell who/what is uploading without each call-site repeating the info.
@@ -2133,6 +2225,10 @@ function _onUploadSuccess(entry, responseText) {
 async function _drainUploadQueue() {
   if (_queueDraining) return;
   if (!_queueUploadOpts) return;
+  // Read-only instance: don't replay the persisted queue either (it may hold
+  // entries from a prior run, and the active uploader is covering live data).
+  // Draining resumes automatically if this instance takes over the lock.
+  if (!_isUploaderInstance) return;
   if (_uploadQueue.length === 0) return;
   _queueDraining = true;
   try {
@@ -2273,6 +2369,10 @@ const stats = {
   // populates from a single parser anywhere in the raid, no healer-side
   // adoption required. { [healerName]: { count, total, max, lastSeen } }
   sessionCritHeals: {},
+  // sessionCrits: per-box melee + spell critical totals (count / summed bonus /
+  // biggest single bonus). Powers the "My Crits" panel — only the box's OWN
+  // crits are tracked, split melee vs spell. { [name]: { melee:{count,total,max}, spell:{...} } }
+  sessionCrits: {},
   // sessionProcs: non-melee (spell/proc) abilities mobs used this session, per mob.
   // { mobName: { [abilityName]: { count, totalDmg } } }
   sessionProcs:    {},
@@ -2350,6 +2450,7 @@ function resetSessionStats() {
   stats.sessionDefenders   = {};
   stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
   stats.sessionCritHeals   = {};
+  stats.sessionCrits       = {};
   stats.sessionProcs       = {};
   stats.sessionDeeps       = {};
   stats.castCounts         = {};
@@ -2404,6 +2505,112 @@ function readActivePid() {
     catch { removePidFile(); return null; }
     return raw;
   } catch { return null; }
+}
+
+// ── Cross-instance uploader lock ───────────────────────────────────────────
+// The PID file above lives next to THIS index.js, so it's per-install. Mimic
+// bundles its own copy of the agent and Parser runs another — different
+// __dirname, different PID file — so they never see each other. Result: a
+// Parser + Mimic (or two Parsers) all tail the SAME logs and upload the SAME
+// chat/encounters → duplicate Discord posts + double-counted parses.
+//
+// This lock elects ONE uploader per machine. It lives in the OS temp dir, so
+// every install on the box shares it. The holder uploads; everyone else still
+// tails and shows its own local dashboard, but suppresses uploads. If the
+// holder exits or crashes, a non-uploader takes over (lock is "stale" when the
+// pid is dead OR the heartbeat is older than the TTL).
+const UPLOADER_LOCK_FILE    = path.join(os.tmpdir(), 'wolfpack-logsync-uploader.json');
+const UPLOADER_LOCK_TTL_MS  = 45_000;   // stale after this long without a heartbeat
+const UPLOADER_HEARTBEAT_MS = 15_000;   // holder refreshes; others re-check to take over
+let _isUploaderInstance   = true;       // assume yes until the election says otherwise
+let _uploaderLockHolder   = null;       // last-seen holder info (for the dashboard)
+let _uploaderLockTimer    = null;
+let _uploaderLockStartedAt = null;
+
+function _readUploaderLock() {
+  try {
+    if (!fs.existsSync(UPLOADER_LOCK_FILE)) return null;
+    const raw = JSON.parse(fs.readFileSync(UPLOADER_LOCK_FILE, 'utf8'));
+    return (raw && raw.pid) ? raw : null;
+  } catch { return null; }
+}
+
+function _uploaderLockIsLive(lock) {
+  if (!lock || !lock.pid) return false;
+  if (lock.pid === process.pid) return true;
+  try { process.kill(lock.pid, 0); } catch { return false; }   // dead pid
+  const hb = Date.parse(lock.heartbeatAt || lock.startedAt || 0) || 0;
+  return (Date.now() - hb) <= UPLOADER_LOCK_TTL_MS;            // stale heartbeat = not live
+}
+
+function _writeUploaderLock(webPort) {
+  if (!_uploaderLockStartedAt) _uploaderLockStartedAt = new Date().toISOString();
+  try {
+    fs.writeFileSync(UPLOADER_LOCK_FILE, JSON.stringify({
+      pid:          process.pid,
+      webPort:      webPort || null,
+      client:       process.env.WOLFPACK_CLIENT || 'parser',
+      startedAt:    _uploaderLockStartedAt,
+      heartbeatAt:  new Date().toISOString(),
+      agentVersion: AGENT_VERSION,
+    }));
+    return true;
+  } catch { return false; }
+}
+
+// Grab the lock if it's free or stale. Returns true if we now hold it.
+function _tryAcquireUploaderLock(webPort) {
+  const existing = _readUploaderLock();
+  if (existing && existing.pid !== process.pid && _uploaderLockIsLive(existing)) {
+    _uploaderLockHolder = existing;
+    return false;
+  }
+  const ok = _writeUploaderLock(webPort);
+  if (ok) _uploaderLockHolder = _readUploaderLock();
+  return ok;
+}
+
+function _releaseUploaderLock() {
+  const cur = _readUploaderLock();
+  if (cur && cur.pid === process.pid) {
+    try { fs.unlinkSync(UPLOADER_LOCK_FILE); } catch {}
+  }
+}
+
+// Elect once at startup, then maintain: the holder heartbeats; a non-holder
+// watches for a stale lock and takes over. Call after the web port is known.
+function startUploaderElection(webPort) {
+  _isUploaderInstance = _tryAcquireUploaderLock(webPort);
+  if (_isUploaderInstance) {
+    console.log(`${ANSI.green}[uploader] this instance is the active uploader.${ANSI.reset}`);
+  } else {
+    const h = _uploaderLockHolder || {};
+    const where = h.webPort ? ` — its dashboard: http://localhost:${h.webPort}` : '';
+    console.log(`${ANSI.yellow}[uploader] another agent is already uploading (${h.client || '?'}, pid ${h.pid})${where}. This instance runs read-only (no uploads) to avoid duplicates.${ANSI.reset}`);
+  }
+  if (_uploaderLockTimer) clearInterval(_uploaderLockTimer);
+  _uploaderLockTimer = setInterval(() => {
+    if (_isUploaderInstance) {
+      // Re-assert; step down only if another LIVE instance somehow took it.
+      const cur = _readUploaderLock();
+      if (cur && cur.pid !== process.pid && _uploaderLockIsLive(cur)) {
+        _isUploaderInstance = false;
+        _uploaderLockHolder = cur;
+        console.log('[uploader] another instance took the lock — stepping down to read-only.');
+      } else {
+        _writeUploaderLock(webPort);
+        _uploaderLockHolder = _readUploaderLock();
+      }
+    } else {
+      const cur = _readUploaderLock();
+      _uploaderLockHolder = cur;
+      if (!_uploaderLockIsLive(cur) && _tryAcquireUploaderLock(webPort)) {
+        _isUploaderInstance = true;
+        console.log(`${ANSI.green}[uploader] previous uploader is gone — taking over uploads.${ANSI.reset}`);
+      }
+    }
+  }, UPLOADER_HEARTBEAT_MS);
+  process.on('exit', _releaseUploaderLock);
 }
 
 // Cross-platform "open a URL in the default browser" — non-blocking, errors
@@ -2485,6 +2692,7 @@ function saveSessionState() {
       sessionDeaths:      stats.sessionDeaths,
       sessionMends:       stats.sessionMends,
       sessionCritHeals:   stats.sessionCritHeals,
+      sessionCrits:       stats.sessionCrits,
       sessionDeeps:       stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       castCounts:         stats.castCounts,
@@ -2519,6 +2727,7 @@ function loadSessionState() {
     if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
     if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
     if (raw.sessionCritHeals)   stats.sessionCritHeals   = raw.sessionCritHeals;
+    if (raw.sessionCrits)       stats.sessionCrits       = raw.sessionCrits;
     if (raw.sessionDeeps)       stats.sessionDeeps       = raw.sessionDeeps;
     if (raw.uploadCount)        stats.uploadCount        = raw.uploadCount;
     if (raw.uploadErrors)       stats.uploadErrors       = raw.uploadErrors;
@@ -2572,6 +2781,7 @@ function _serializeForDashboard() {
     sessionDefenders:   stats.sessionDefenders,
     sessionHealers:     healersOut,
     sessionCritHeals:   stats.sessionCritHeals || {},
+    sessionCrits:       stats.sessionCrits || {},
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
     sessionMends:       stats.sessionMends,
@@ -2583,6 +2793,15 @@ function _serializeForDashboard() {
     updateAvailable:    stats.updateAvailable,
     latestAgentVersion: stats.latestAgentVersion,
     currentEncounterThreat: stats.currentEncounterThreat,
+    // Cross-instance uploader status. active=true → this instance is the one
+    // sending data to the bot; false → another Parser/Mimic on this machine
+    // owns the upload lock and we're read-only (local dashboard still live).
+    uploader: {
+      active: _isUploaderInstance,
+      holder: (!_isUploaderInstance && _uploaderLockHolder)
+        ? { client: _uploaderLockHolder.client || null, webPort: _uploaderLockHolder.webPort || null }
+        : null,
+    },
     // Charm-pet tick tracker — array form so the dashboard can render
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
@@ -3627,7 +3846,7 @@ function renderOptin(o) {
       if (act === 'rescan')       { await postOptin('rescan');       refreshOptin(); return; }
       if (act === 'backfill') {
         const paths = [...root.querySelectorAll('input[type=checkbox][data-path]:checked')].map(x => x.dataset.path);
-        if (paths.length > 0 && confirm('Start chat-only backfill on ' + paths.length + ' file(s)?')) {
+        if (paths.length > 0 && confirm('Start backfill on ' + paths.length + ' file(s)?')) {
           await postOptin('backfill', { paths });
         }
         refreshOptin(); return;
@@ -4585,6 +4804,289 @@ async function dismissTopDamage(key) {
   refresh();
   setInterval(refresh, 3000);
 })();
+
+// ── 💸 Live Bidding panel ──────────────────────────────────────────────────
+// Pulls active OpenDKP auctions via /api/server/auctions (bot passthrough),
+// renders a list with bid input + Place Bid button per row, and shows the
+// caller's currently-placed bids underneath. Wishlisted items get a star.
+// The character dropdown is populated from watchedLogs (your uploader +
+// any alts whose logs you are tailing — those are the chars you can bid on
+// because OpenDKP needs their CharacterId).
+(function(){
+  var lastChar = null;        // last character used (sticks across refreshes)
+  function makeCard(){
+    var c = document.createElement("div");
+    c.id = "wpBiddingCard";
+    c.className = "card";
+    c.style.display = "none";
+    c.innerHTML = "<h2>💸 Live Bidding <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · OpenDKP auctions</span></h2><div class=card-body><div class=dim style=padding:6px>loading…</div></div>";
+    return c;
+  }
+  var card = makeCard();
+  function ensure(){
+    if (document.getElementById("wpBiddingCard")) return;
+    var dash = document.getElementById("dash"); if (!dash) return;
+    var grid = dash.querySelector(".grid"); var host = grid || dash;
+    host.insertBefore(card, host.firstChild);
+  }
+  function fmt(n){ n=Number(n); if(!isFinite(n)) return "—"; return n.toLocaleString(); }
+  function looksLikeCharacter(name){
+    if (!name) return false;
+    return /^[A-Z][a-z]+$/.test(String(name).trim());
+  }
+  function pickDefaultChar(wls){
+    if (lastChar) return lastChar;
+    for (var i = 0; i < (wls || []).length; i++){
+      var c = (wls[i] && wls[i].character) || "";
+      if (looksLikeCharacter(c)) return c;
+    }
+    return null;
+  }
+  function renderEmpty(label){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    body.innerHTML = "<div class=dim style=padding:6px>" + label + "</div>";
+  }
+  function endsInLabel(ts){
+    if (!ts) return "";
+    var t = Date.parse(ts);
+    if (!isFinite(t)) return "";
+    var ms = t - Date.now();
+    if (ms <= 0) return "<span style=color:var(--orange)>ended</span>";
+    var s = Math.round(ms / 1000);
+    if (s < 60) return "ends in " + s + "s";
+    var m = Math.floor(s / 60);
+    return "ends in " + m + "m " + (s % 60) + "s";
+  }
+  function placeBid(auctionId, character, value, btn){
+    var body = JSON.stringify({ character: character, auction_id: auctionId, value: value });
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+    fetch("/api/server/place-bid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body,
+    }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
+      .then(function(out){
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = out.ok ? "✓ bid" : "✗";
+          btn.title = out.ok ? "bid placed" : (out.body && out.body.error) || "failed";
+          setTimeout(function(){ if (btn) btn.textContent = "Bid"; btn.title = ""; }, 2500);
+        }
+        if (out.ok) fetchAll();
+      })
+      .catch(function(){ if (btn) { btn.disabled = false; btn.textContent = "✗"; } });
+  }
+  function render(state){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    var wls = (state && state.watchedLogs) || [];
+    var chars = [];
+    for (var i = 0; i < wls.length; i++){
+      var c = (wls[i] && wls[i].character) || "";
+      if (looksLikeCharacter(c)) chars.push(c);
+    }
+    if (chars.length === 0){
+      card.style.display = "none";
+      return;
+    }
+    var current = pickDefaultChar(wls);
+    if (!current) { card.style.display = "none"; return; }
+    var auctions = (window.__wpAuctions && window.__wpAuctions.auctions) || [];
+    var myBids   = (window.__wpMyBids   && window.__wpMyBids.bids)        || [];
+    if (auctions.length === 0 && myBids.length === 0){
+      // Hide entirely when nothing is up for bid AND no live bids — keeps
+      // the dashboard quiet outside of loot calls.
+      card.style.display = "none";
+      return;
+    }
+    card.style.display = "block";
+    var html = "";
+    html += "<div style='display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px'>";
+    html += "<span class=dim>bidding as</span>";
+    html += "<select id=wpBidChar style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit'>";
+    for (var j = 0; j < chars.length; j++){
+      var sel = (chars[j] === current) ? " selected" : "";
+      html += "<option value='" + chars[j] + "'" + sel + ">" + chars[j] + "</option>";
+    }
+    html += "</select>";
+    html += "</div>";
+    if (auctions.length === 0){
+      html += "<div class=dim style='padding:4px 0 8px'>no auctions open right now</div>";
+    } else {
+      html += "<table><tr><th>Item</th><th class=num>Top</th><th>Ends</th><th>Bid</th></tr>";
+      for (var k = 0; k < auctions.length; k++){
+        var a = auctions[k];
+        var star = a.wishlisted ? " <span title='on your wishlist' style=color:var(--gold)>★</span>" : "";
+        var top = a.top_bid != null ? fmt(a.top_bid) : "—";
+        var ends = endsInLabel(a.ends_at);
+        var aid = a.auction_id;
+        html += "<tr>";
+        html += "<td class=name>" + (a.item_name || "?") + star + "</td>";
+        html += "<td class=num>" + top + "</td>";
+        html += "<td style=font-size:11px>" + ends + "</td>";
+        html += "<td><input id=wpBidVal_" + aid + " type=number min=1 placeholder='dkp' style='width:60px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:inherit'>";
+        html += " <button id=wpBidBtn_" + aid + " data-aid='" + aid + "' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>Bid</button></td>";
+        html += "</tr>";
+      }
+      html += "</table>";
+    }
+    if (myBids.length > 0){
+      html += "<div class=wp-bid-block><div style='font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px'>your bids</div>";
+      html += "<table><tr><th>Item</th><th>Character</th><th class=num>Value</th><th class=num>Rank</th></tr>";
+      for (var m = 0; m < myBids.length; m++){
+        var b = myBids[m];
+        html += "<tr><td class=name>" + (b.item_name || "?") + "</td><td class=name>" + (b.character || "?") + "</td><td class=num>" + fmt(b.value) + "</td><td class=num>" + (b.rank || "—") + "</td></tr>";
+      }
+      html += "</table></div>";
+    }
+    body.innerHTML = html;
+    // Wire char dropdown
+    var charSel = document.getElementById("wpBidChar");
+    if (charSel){
+      charSel.addEventListener("change", function(){
+        lastChar = charSel.value;
+        fetchAll();
+      });
+    }
+    // Wire bid buttons
+    var btns = card.querySelectorAll("button[data-aid]");
+    for (var n = 0; n < btns.length; n++){
+      (function(btn){
+        btn.addEventListener("click", function(){
+          var aid = btn.getAttribute("data-aid");
+          var input = document.getElementById("wpBidVal_" + aid);
+          var val = input ? parseInt(input.value, 10) : 0;
+          if (!val || val <= 0){ btn.textContent = "?"; setTimeout(function(){ btn.textContent = "Bid"; }, 1500); return; }
+          var who = (document.getElementById("wpBidChar") || {}).value || lastChar;
+          if (!who) return;
+          placeBid(aid, who, val, btn);
+        });
+      })(btns[n]);
+    }
+  }
+  var lastState = null;
+  function fetchState(){
+    return fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      lastState = s; return s;
+    }).catch(function(){ return null; });
+  }
+  function fetchAll(){
+    ensure();
+    fetchState().then(function(s){
+      if (!s) return;
+      var wls = s.watchedLogs || [];
+      var who = pickDefaultChar(wls);
+      if (!who){ card.style.display = "none"; return; }
+      var qs = "?character=" + encodeURIComponent(who);
+      Promise.all([
+        fetch("/api/server/auctions" + qs).then(function(r){ return r.ok ? r.json() : { auctions: [] }; }).catch(function(){ return { auctions: [] }; }),
+        fetch("/api/server/my-bids" + qs).then(function(r){ return r.ok ? r.json() : { bids: [] }; }).catch(function(){ return { bids: [] }; }),
+      ]).then(function(both){
+        window.__wpAuctions = both[0];
+        window.__wpMyBids   = both[1];
+        render(s);
+      });
+    });
+  }
+  fetchAll();
+  setInterval(fetchAll, 5000);
+})();
+
+// ── Read-only uploader banner ──────────────────────────────────────────────
+// When another Parser/Mimic on this machine owns the upload lock, this
+// instance is read-only (it still tails + shows local stats, but does not
+// upload). Surface that clearly so it is obvious why nothing is posting.
+(function(){
+  function ensure(){
+    var b = document.getElementById("wpUploaderBanner");
+    if (b) return b;
+    b = document.createElement("div");
+    b.id = "wpUploaderBanner";
+    b.style.cssText = "display:none;position:sticky;top:0;z-index:60;background:#3a2a00;color:#f6c365;border-bottom:1px solid #6b5200;padding:6px 12px;font-size:12px;text-align:center";
+    document.body.insertBefore(b, document.body.firstChild);
+    return b;
+  }
+  function refresh(){
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      var u = s && s.uploader;
+      var b = ensure();
+      if (u && u.active === false){
+        var who  = (u.holder && u.holder.client) ? u.holder.client : "another agent";
+        var port = (u.holder && u.holder.webPort) ? (" (localhost:" + u.holder.webPort + ")") : "";
+        b.textContent = "Read-only mode: " + who + port + " is the active uploader on this machine, so this instance is not uploading (prevents duplicate posts). Local stats below are still live.";
+        b.style.display = "block";
+      } else {
+        b.style.display = "none";
+      }
+    }).catch(function(){});
+  }
+  refresh();
+  setInterval(refresh, 5000);
+})();
+
+// ── 💥 My Crits panel ───────────────────────────────────────────────────────
+// The operator's own melee + spell criticals this session, per box. Send-to-
+// overlay works via the panel auto-registration (h2 text = key). Spell crits
+// depend on the critical-blast parse, which still needs a real Quarm sample.
+(function(){
+  function makeCard(){
+    var c = document.createElement("div");
+    c.id = "wpCritsCard";
+    c.className = "card";
+    c.style.display = "none";
+    c.innerHTML = "<h2>💥 My Crits <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · this session</span></h2><div class=card-body></div>";
+    return c;
+  }
+  var card = makeCard();
+  function ensure(){
+    if (document.getElementById("wpCritsCard")) return;
+    var dash = document.getElementById("dash"); if (!dash) return;
+    var grid = dash.querySelector(".grid"); var host = grid || dash;
+    host.insertBefore(card, host.firstChild);
+  }
+  function fmt(n){ n = Number(n) || 0; return n.toLocaleString(); }
+  function render(crits){
+    var body = card.querySelector(".card-body");
+    if (!body) return;
+    var names = crits ? Object.keys(crits) : [];
+    names = names.filter(function(nm){
+      var c = crits[nm] || {};
+      var mc = (c.melee && c.melee.count) || 0;
+      var sc = (c.spell && c.spell.count) || 0;
+      return (mc + sc) > 0;
+    });
+    if (names.length === 0){ card.style.display = "none"; return; }
+    card.style.display = "block";
+    names.sort(function(a, b){
+      var ca = crits[a], cb = crits[b];
+      var ta = (ca.melee.count || 0) + (ca.spell.count || 0);
+      var tb = (cb.melee.count || 0) + (cb.spell.count || 0);
+      return tb - ta;
+    });
+    var html = "<table><tr><th>Character</th><th>Type</th><th class=num>Crits</th><th class=num>Biggest</th><th class=num>Bonus dmg</th></tr>";
+    names.forEach(function(nm){
+      var c = crits[nm];
+      var types = [["⚔️ melee", c.melee], ["✨ spell", c.spell]];
+      types.forEach(function(r){
+        var b = r[1] || { count: 0, total: 0, max: 0 };
+        if (!b.count) return;
+        html += "<tr><td class=name>" + nm + "</td><td>" + r[0] + "</td><td class=num>" + fmt(b.count) + "</td><td class=num>" + fmt(b.max) + "</td><td class=num>" + fmt(b.total) + "</td></tr>";
+      });
+    });
+    html += "</table>";
+    html += "<div class=dim style=font-size:10px;margin-top:4px>Amount shown is the crit bonus on top of the hit. Spell crits need a Quarm critical-blast line to confirm.</div>";
+    body.innerHTML = html;
+  }
+  function refresh(){
+    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
+      ensure();
+      render(s && s.sessionCrits);
+    }).catch(function(){});
+  }
+  refresh();
+  setInterval(refresh, 3000);
+})();
 </script></body></html>`;
 
 async function _readBody(req, max = 64 * 1024) {
@@ -4675,6 +5177,52 @@ function startWebDashboard(port) {
             res.end(JSON.stringify({ error: 'upstream failed', detail: err.message }));
           });
           upstream.end();
+          return;
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'proxy error', detail: err.message }));
+        }
+      }
+      // POST /api/server/<action> — mutation passthrough. Today this is just
+      // place-bid (live bidding overlay) but keeping the routing generic so
+      // future "do something on the bot" buttons reuse it.
+      if (req.method === 'POST' && req.url.startsWith('/api/server/')) {
+        const opts = _uploadOpts;
+        if (!opts || !opts.botUrl || !opts.token) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'not connected — set a token in Mimic Settings' }));
+        }
+        try {
+          const action = req.url.substring('/api/server/'.length);
+          const map = { 'place-bid': '/api/agent/place-bid' };
+          const remotePath = map[action];
+          if (!remotePath) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'unknown action', action }));
+          }
+          const body = await _readBody(req);
+          const base = opts.botUrl.replace(/\/api\/agent\/encounter(\?.*)?$/, '');
+          const target = base + remotePath;
+          const u = new URL(target);
+          const mod = u.protocol === 'https:' ? https : http;
+          const upstream = mod.request({
+            method: 'POST', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname,
+            headers: {
+              'Authorization': `Bearer ${opts.token}`,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body || ''),
+              'Accept': 'application/json',
+            },
+          }, (upRes) => {
+            res.writeHead(upRes.statusCode || 502, { 'Content-Type': 'application/json' });
+            upRes.pipe(res);
+          });
+          upstream.on('error', (err) => {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'upstream failed', detail: err.message }));
+          });
+          upstream.end(body || '');
           return;
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -6104,7 +6652,7 @@ function showOptIn() {
         runOptinBackfill(chosen, {
           log: (msg) => process.stdout.write(`  ${C.dim}${msg}${C.reset}\n`),
         });
-        process.stdout.write(`  ${C.dim}(Combat events SKIPPED — chat only. Resume saved every ~256KB.)${C.reset}\n`);
+        process.stdout.write(`  ${C.dim}(Captures guild/raid chat + boss-matched combat + /who. Resume saved every ~256KB.)${C.reset}\n`);
         return;
       }
       if (key === 'd' || key === 'D' || key === '\x03') {
@@ -7020,6 +7568,7 @@ const LOH_HEAL_RX = /\b(?:lay|laid)\s+hands?\b[^\d]*?(\d+)\s+points?/i;
 function parseHarmTouch(line, character) {
   const m = HARM_TOUCH_RX.exec(line);
   if (!m) return null;
+  inferClassFromAbility(character, 'harm touch');  // SK-exclusive
   const ts = parseEqTimestamp(line);
   return {
     type:        'harm_touch',
@@ -7032,6 +7581,7 @@ function parseHarmTouch(line, character) {
 
 function parseLayOnHands(line, character) {
   if (!LAY_ON_HANDS_RX.test(line)) return null;
+  inferClassFromAbility(character, 'lay on hands');  // Paladin-exclusive
   const heal = LOH_HEAL_RX.exec(line);
   const ts = parseEqTimestamp(line);
   return {
@@ -7870,6 +8420,14 @@ async function main() {
   // Make opts available to the chat relay flush (module-level so the interval can see them)
   _uploadOpts    = { botUrl, token, dryRun };
   _isServiceMode = !!args.flags.noServiceCheck;
+  // Operator's declared main (if the launcher passed --character) — used to
+  // attribute operator-level uploads instead of "(unknown)".
+  _primaryCharacterOverride = args.flags.character || null;
+
+  // Elect the single machine-wide uploader BEFORE the queue drain kicks, so a
+  // read-only instance (another Parser/Mimic already uploading) doesn't replay
+  // its queue or send live data. dry-run never uploads, so skip the election.
+  if (!dryRun) startUploaderElection(args.flags.webPort);
 
   // Start the durable upload queue drain. Loads any pending entries from
   // disk first and kicks an immediate replay attempt — so anything left
@@ -7944,7 +8502,17 @@ async function main() {
 
   // One encounter builder per log file (per character)
   const builders = args.logs.map(logPath => {
-    const character = args.flags.character || characterFromFilename(logPath) || 'unknown';
+    // Per-file character: the filename (eqlog_<Name>_pq.proj.txt) is
+    // authoritative. A single global --character override must NOT be smeared
+    // across every log when tailing multiple files — doing so mislabeled every
+    // watched log as the main (e.g. all "Hitya") AND made the chat parser treat
+    // each alt's own "You say to your guild" line as the main, double-posting
+    // guild chat under the wrong speaker. Use --character only as a fallback,
+    // and only when there's a single log for it to describe.
+    const fromName  = characterFromFilename(logPath);
+    const character = fromName
+      || (args.logs.length === 1 ? args.flags.character : null)
+      || 'unknown';
     // Register this log in the dashboard's watched list. Seed lastSeen from
     // file mtime so the dashboard shows useful "ago" times immediately —
     // without this seed, every log shows '?' until a fresh line arrives,
@@ -8053,8 +8621,40 @@ async function main() {
     startChatRelay();  // start the 5s guild/raid chat flush interval
     for (const b of builders) {
       const watched = stats.watchedLogs.find(w => w.logPath === b.logPath);
+      // In-log NPC-hail character inference. EQ NPCs always address the
+      // hailing player by name in their hail / greeting response:
+      //   "An old man says, 'Hail, Dant!'"
+      // That name is the authoritative character ID, regardless of what the
+      // log file is named. Catches renamed backup files (eqlog_Dant3 →
+      // Dant) without skipping anything. Only listens for the first hail per
+      // log; once captured, the builder's character is promoted and we never
+      // re-check on this log to avoid mis-attributing a /who response, a
+      // pet, etc.
+      const HAIL_RE = /\]\s+[A-Z][^\[\]]+?\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
+      let _hailFound = false;
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
+        if (!_hailFound) {
+          const m = HAIL_RE.exec(line);
+          if (m) {
+            _hailFound = true;
+            const inLogName = m[1];
+            if (inLogName && inLogName !== b.character) {
+              console.log(`[mimic] log "${path.basename(b.logPath)}" filename says ${b.character}, NPC hailed ${inLogName} — using ${inLogName}`);
+              const old = b.character;
+              b.character = inLogName;
+              b.builder.character = inLogName;
+              if (watched) watched.character = inLogName;
+              // Confirm as a real player on the inferred name too so chat /
+              // tank tracking doesn't trip the NPC filter on the corrected name.
+              try { confirmPlayer(inLogName); } catch {}
+              try {
+                stats.canonicalCharacter = stats.canonicalCharacter || {};
+                stats.canonicalCharacter[old] = inLogName;
+              } catch {}
+            }
+          }
+        }
 
         // ── Special relay lines: checked BEFORE the combat filter ──────────
         // These are NOT combat events and won't pass shouldKeep(), but we

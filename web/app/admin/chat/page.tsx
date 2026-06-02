@@ -40,7 +40,73 @@ type Params = {
   month?: string;
   day?: string;
   era?: string;
+  alldates?: string;  // "1" → flatten to every message across all dates (for infrequent speakers)
+  nospam?: string;    // "1" → hide mechanical raid callouts (DA up/down, CH/heal chains) from the log
+  raw?: string;       // "1" → show every captured perspective (skip clock-skew comingling)
 };
+
+// Comingle clock-skew duplicates. The same in-game line captured by several
+// uploaders lands as multiple rows with slightly different `ts` (each box logs
+// off its own system clock), so the dedup index — which keys on exact ts —
+// keeps them all. For READING, collapse repeats of the same channel+speaker+
+// text within a window down to the earliest one. People don't retype an
+// identical line within a minute, so this is safe; a genuine re-say after the
+// window still shows. Rows must be ts-ascending.
+function comingleLog(rows: ChatRow[]): { rows: ChatRow[]; merged: number } {
+  const WINDOW_MS = 60_000;
+  const firstSeen = new Map<string, number>();
+  const out: ChatRow[] = [];
+  let merged = 0;
+  for (const r of rows) {
+    const norm = r.text.toLowerCase().replace(/\s+/g, ' ').trim();
+    const key  = `${r.channel}|${r.speaker.toLowerCase()}|${norm}`;
+    const tms  = new Date(r.ts).getTime();
+    const prev = firstSeen.get(key);
+    if (prev !== undefined && tms - prev <= WINDOW_MS) { merged++; continue; }
+    firstSeen.set(key, tms);
+    out.push(r);
+  }
+  return { rows: out, merged };
+}
+
+// Heuristic classifier for mechanical raid callouts — defensive-disc timers
+// ("DA up" / ">>DA DOWN<<" / "6 SECONDS DA"), CH/heal chains, and mana
+// announcements — as opposed to actual conversation. Used by the opt-in
+// "hide callouts" toggle. It's deliberately conservative-ish but a false
+// positive only hides a line the user can re-reveal by toggling off.
+function isCombatCallout(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  if (/[<>]{2}/.test(t)) return true;                                  // >>...<< wrappers
+  if (/\bda\b/.test(lower) && /(\bup\b|\bdown\b|\bsec)/.test(lower)) return true; // DA up/down/seconds
+  if (/\bch\s*\d|\bch up\b|complete heal/.test(lower)) return true;   // CH chain / complete heal
+  if (/\bremedy on\b|celestial elixir|ethereal light/.test(lower)) return true;  // heal-target callouts
+  if (/\bmana[:\s]+\d{1,3}\s*%/.test(lower)) return true;             // "Mana: 96%" / "Mana 100%"
+  if (/^\s*(?:ch\s*)?\d{1,3}\s*$/.test(lower)) return true;           // bare CH-chain numbers
+  if (/\binc\b.*\bmana\b/.test(lower)) return true;                   // "Elixir INC ... Mana"
+  return false;
+}
+
+// RPC arg helpers — shared by the bucket-count + top-speaker helpers below.
+function rpcChannel(p: Params): string | null {
+  return p.channel && p.channel !== 'all' ? p.channel : null;
+}
+function rpcSpeakers(p: Params): string[] | null {
+  const s = parseSpeakers(p.speaker);
+  return s.length ? s : null;
+}
+// Intersect an optional [from,to) window with the active era's bounds. All
+// inputs are canonical `…T00:00:00Z` ISO strings, so lexicographic min/max is
+// correct. Returns nulls (= unbounded) when neither side constrains.
+function clampToEra(p: Params, from: string | null, to: string | null): { from: string | null; to: string | null } {
+  const era = eraByName(p.era);
+  if (!era) return { from, to };
+  return {
+    from: from && from > era.start ? from : era.start,
+    to:   to   && to   < era.end   ? to   : era.end,
+  };
+}
 
 const ROW_LIMIT = 1000;
 
@@ -107,52 +173,46 @@ function applyFilters<T extends { gte: Function; lt: Function; eq: Function; ili
   return r;
 }
 
-// Year buckets — counts grouped by extract(year from ts). Postgrest doesn't
-// support GROUP BY directly; we pull the raw rows for the filtered set and
-// bucket in JS. The select is just (ts) which is cheap.
-async function yearBuckets(p: Params) {
+// Bucket counts come from the chat_bucket_counts RPC (server-side GROUP BY).
+// The old approach fetched raw ts rows and counted in JS, but PostgREST's
+// 1000-row response cap silently truncated the fetch — so the counts were wrong
+// for any scope over ~1000 messages (the "Luclin shows 0" bug). The RPC returns
+// one small row per bucket, exact regardless of corpus size.
+type BucketRow = { bucket: number; n: number };
+
+async function bucketCounts(p: Params, group: 'year' | 'month' | 'day', from: string | null, to: string | null) {
   const sb = supabaseAdmin();
-  let q = sb.from('chat_messages').select('ts', { count: 'exact', head: false }).limit(50000);
-  q = applyFilters(q as any, p) as typeof q;
-  const { data } = await q;
-  const map = new Map<number, number>();
-  for (const r of (data ?? []) as { ts: string }[]) {
-    const y = new Date(r.ts).getUTCFullYear();
-    map.set(y, (map.get(y) ?? 0) + 1);
-  }
-  return [...map.entries()].sort((a, b) => b[0] - a[0]);
+  const { data } = await sb.rpc('chat_bucket_counts', {
+    p_channel:  rpcChannel(p),
+    p_speakers: rpcSpeakers(p),
+    p_search:   p.search || null,
+    p_from:     from,
+    p_to:       to,
+    p_group:    group,
+  });
+  return ((data ?? []) as BucketRow[]).map(r => [r.bucket, Number(r.n)] as [number, number]);
+}
+
+async function yearBuckets(p: Params) {
+  const era = eraByName(p.era);
+  const rows = await bucketCounts(p, 'year', era?.start ?? null, era?.end ?? null);
+  return rows.sort((a, b) => b[0] - a[0]);
 }
 
 async function monthBuckets(p: Params, year: number) {
-  const sb = supabaseAdmin();
-  const start = `${year}-01-01T00:00:00Z`;
-  const end   = `${year + 1}-01-01T00:00:00Z`;
-  let q = sb.from('chat_messages').select('ts').gte('ts', start).lt('ts', end).limit(50000);
-  q = applyFilters(q as any, p) as typeof q;
-  const { data } = await q;
-  const map = new Map<number, number>();
-  for (const r of (data ?? []) as { ts: string }[]) {
-    const m = new Date(r.ts).getUTCMonth() + 1;
-    map.set(m, (map.get(m) ?? 0) + 1);
-  }
-  return [...map.entries()].sort((a, b) => a[0] - b[0]);
+  const { from, to } = clampToEra(p, `${year}-01-01T00:00:00Z`, `${year + 1}-01-01T00:00:00Z`);
+  const rows = await bucketCounts(p, 'month', from, to);
+  return rows.sort((a, b) => a[0] - b[0]);
 }
 
 async function dayBuckets(p: Params, year: number, month: number) {
-  const sb = supabaseAdmin();
   const start = `${year}-${String(month).padStart(2,'0')}-01T00:00:00Z`;
   const nextYear  = month === 12 ? year + 1 : year;
   const nextMonth = month === 12 ? 1 : month + 1;
   const end = `${nextYear}-${String(nextMonth).padStart(2,'0')}-01T00:00:00Z`;
-  let q = sb.from('chat_messages').select('ts').gte('ts', start).lt('ts', end).limit(50000);
-  q = applyFilters(q as any, p) as typeof q;
-  const { data } = await q;
-  const map = new Map<number, number>();
-  for (const r of (data ?? []) as { ts: string }[]) {
-    const d = new Date(r.ts).getUTCDate();
-    map.set(d, (map.get(d) ?? 0) + 1);
-  }
-  return [...map.entries()].sort((a, b) => a[0] - b[0]);
+  const { from, to } = clampToEra(p, start, end);
+  const rows = await bucketCounts(p, 'day', from, to);
+  return rows.sort((a, b) => a[0] - b[0]);
 }
 
 async function loadDay(p: Params, year: number, month: number, day: number): Promise<ChatRow[]> {
@@ -171,43 +231,50 @@ async function loadDay(p: Params, year: number, month: number, day: number): Pro
   return (data ?? []) as ChatRow[];
 }
 
-// Per-era message counts, respecting the active speaker / channel / search
-// filter (but NOT the era filter itself — we want each chip to show its own
-// count). Single query pulls ts for the filtered set, JS buckets by era.
-async function eraCounts(p: Omit<Params, 'era' | 'year' | 'month' | 'day'>) {
+// All-dates view — every message matching the speaker/channel/search filter,
+// across the entire timeline (ignores year/month/day/era). Built for chasing
+// down the full history of someone who rarely talks. Still bounded by ROW_LIMIT
+// (and PostgREST's row cap), which is plenty for an infrequent speaker; a note
+// renders if it's hit.
+async function loadAllDates(p: Params): Promise<ChatRow[]> {
   const sb = supabaseAdmin();
-  let q: any = sb.from('chat_messages').select('ts').limit(50000);
-  q = applyFilters(q, { ...p, era: undefined });
+  let q = sb.from('chat_messages')
+    .select('id, ts, channel, speaker, text, who')
+    .order('ts', { ascending: true })
+    .limit(ROW_LIMIT);
+  q = applyFilters(q as any, { speaker: p.speaker, channel: p.channel, search: p.search }) as typeof q;
   const { data } = await q;
-  const counts = new Map<string, number>(ERAS.map(e => [e.name, 0]));
-  for (const r of (data ?? []) as { ts: string }[]) {
-    const t = r.ts;
-    for (const e of ERAS) {
-      if (t >= e.start && t < e.end) {
-        counts.set(e.name, (counts.get(e.name) ?? 0) + 1);
-        break;
-      }
-    }
-  }
-  return ERAS.map(e => ({ name: e.name, count: counts.get(e.name) ?? 0 }));
+  return (data ?? []) as ChatRow[];
 }
 
-// Top speakers under the current filter scope. EXCLUDES the speaker filter so
-// the sidebar always shows every voice in the time range — clicking
-// adds/removes that name from the multi-speaker list without losing scope.
+// Per-era message counts, respecting the active speaker / channel / search
+// filter (but NOT the era filter itself — each chip shows its own count).
+// One chat_bucket_counts RPC per era (server-side; cap-immune).
+async function eraCounts(p: Omit<Params, 'era' | 'year' | 'month' | 'day'>) {
+  const sb = supabaseAdmin();
+  const base = { p_channel: rpcChannel(p as Params), p_speakers: rpcSpeakers(p as Params), p_search: p.search || null };
+  const out = await Promise.all(ERAS.map(async (e) => {
+    const { data } = await sb.rpc('chat_bucket_counts', { ...base, p_from: e.start, p_to: e.end, p_group: 'total' });
+    const n = Array.isArray(data) && data[0] ? Number((data[0] as BucketRow).n) : 0;
+    return { name: e.name, count: n };
+  }));
+  return out;
+}
+
+// Top speakers in the current scope. EXCLUDES the speaker filter so the sidebar
+// shows every voice in range — clicking adds/removes a name without losing
+// scope. chat_top_speakers does the GROUP BY server-side (was capped before).
 async function topSpeakers(p: Omit<Params, 'speaker'>, scope: { start: string; end: string } | null) {
   const sb = supabaseAdmin();
-  let q: any = sb.from('chat_messages').select('speaker').limit(50000);
-  if (scope) q = q.gte('ts', scope.start).lt('ts', scope.end);
-  // Use applyFilters but force speaker undefined so the speaker scope itself
-  // doesn't constrain the sidebar.
-  q = applyFilters(q, { ...p, speaker: undefined });
-  const { data } = await q;
-  const counts = new Map<string, number>();
-  for (const r of (data ?? []) as { speaker: string }[]) {
-    counts.set(r.speaker, (counts.get(r.speaker) ?? 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
+  const { from, to } = clampToEra(p as Params, scope?.start ?? null, scope?.end ?? null);
+  const { data } = await sb.rpc('chat_top_speakers', {
+    p_channel: rpcChannel(p as Params),
+    p_search:  p.search || null,
+    p_from:    from,
+    p_to:      to,
+    p_limit:   30,
+  });
+  return ((data ?? []) as { speaker: string; n: number }[]).map(r => [r.speaker, Number(r.n)] as [string, number]);
 }
 
 // "Years that exist in the chat_messages table at all" — used to render the
@@ -239,6 +306,9 @@ function paramsToQuery(p: Params): string {
   if (p.month)   u.set('month',   p.month);
   if (p.day)     u.set('day',     p.day);
   if (p.era)     u.set('era',     p.era);
+  if (p.alldates) u.set('alldates', p.alldates);
+  if (p.nospam)  u.set('nospam',  p.nospam);
+  if (p.raw)     u.set('raw',     p.raw);
   const qs = u.toString();
   return qs ? `?${qs}` : '';
 }
@@ -246,6 +316,15 @@ function paramsToQuery(p: Params): string {
 function fmtTime(iso: string, tz: string) {
   return new Date(iso).toLocaleTimeString('en-US', {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    timeZone: tz,
+  });
+}
+
+// Date + time — used in the all-dates flat view where rows span many days.
+function fmtDateTime(iso: string, tz: string) {
+  return new Date(iso).toLocaleString('en-US', {
+    year: '2-digit', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
     timeZone: tz,
   });
 }
@@ -345,8 +424,9 @@ export default async function AdminChatPage({
     });
   }
 
-  // Mode: log if a full date is selected; browse otherwise.
-  const inLogMode = year && month && day;
+  // Mode: all-dates flat view > log (a full date) > browse buckets.
+  const inAllDates = p.alldates === '1';
+  const inLogMode  = !inAllDates && year && month && day;
 
   // For the swap-speaker sidebar — scope dates based on what's selected.
   let scope: { start: string; end: string } | null = null;
@@ -369,7 +449,10 @@ export default async function AdminChatPage({
   let days: [number, number][] = [];
   let log: ChatRow[] = [];
 
-  if (inLogMode) {
+  let hiddenCallouts = 0;
+  if (inAllDates) {
+    log = await loadAllDates(p);
+  } else if (inLogMode) {
     log = await loadDay(p, year!, month!, day!);
   } else if (year && month) {
     days = await dayBuckets(p, year, month);
@@ -380,6 +463,23 @@ export default async function AdminChatPage({
     // ones with 0 matches for the active filter. Otherwise narrowing the
     // filter would hide the rest of the timeline.
     [years, yearAxis] = await Promise.all([yearBuckets(p), allYearsAxis()]);
+  }
+
+  // Opt-in: strip mechanical raid callouts from the rendered log so actual
+  // conversation is readable. Applied after load (the filter is in JS), so the
+  // hidden count is informational.
+  if (p.nospam === '1' && (inLogMode || inAllDates)) {
+    const before = log.length;
+    log = log.filter(r => !isCombatCallout(r.text));
+    hiddenCallouts = before - log.length;
+  }
+
+  // Comingle clock-skew duplicates (on by default; ?raw=1 shows every capture).
+  let mergedDupes = 0;
+  if (p.raw !== '1' && (inLogMode || inAllDates)) {
+    const res = comingleLog(log);
+    log = res.rows;
+    mergedDupes = res.merged;
   }
 
   // Speaker swap menu — independent of the speaker filter so you can swap
@@ -485,6 +585,17 @@ export default async function AdminChatPage({
       <section className="bg-panel border border-border rounded-lg p-3">
         <div className="text-xs text-dim mb-2">Expansion era</div>
         <div className="flex flex-wrap gap-2">
+          {/* "All" clears the era filter — browse the entire corpus. */}
+          <Link
+            href={`/admin/chat${paramsToQuery({ speaker: p.speaker, channel: p.channel, search: p.search })}`}
+            className={[
+              'px-3 py-1 rounded border text-xs transition-colors no-underline',
+              !activeEra ? 'border-blue bg-[#1f6feb33] text-blue' : 'border-border bg-bg text-text hover:border-blue',
+            ].join(' ')}
+          >
+            <span>All</span>
+            <span className="text-dim ml-1.5 text-[10px]">{eras.reduce((s, e) => s + e.count, 0).toLocaleString()}</span>
+          </Link>
           {eras.map(e => {
             const isActive = activeEra?.name === e.name;
             // Clicking an era CLEARS year/month/day so the era constrains the
@@ -514,10 +625,32 @@ export default async function AdminChatPage({
         </div>
       </section>
 
+      {/* All-dates entry/exit — for pulling a rarely-heard speaker's entire
+          history without hunting through year/month/day buckets. */}
+      {(parseSpeakers(p.speaker).length > 0 || inAllDates) && (
+        <div className="text-xs">
+          {inAllDates ? (
+            <Link
+              href={`/admin/chat${paramsToQuery({ speaker: p.speaker, channel: p.channel, search: p.search })}`}
+              className="text-blue hover:underline"
+            >
+              ← Back to date browser
+            </Link>
+          ) : (
+            <Link
+              href={`/admin/chat${paramsToQuery({ speaker: p.speaker, channel: p.channel, search: p.search, alldates: '1' })}`}
+              className="px-3 py-1 rounded border border-border bg-bg text-text hover:border-blue no-underline"
+            >
+              📜 View all messages (all dates)
+            </Link>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-6">
         {/* Main content */}
         <div className="space-y-4">
-          {!inLogMode && years.length === 0 && months.length === 0 && days.length === 0 && (
+          {!inLogMode && !inAllDates && years.length === 0 && months.length === 0 && days.length === 0 && (
             <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
               No messages match the current filter. Try widening — drop the
               speaker filter or pop up a level via the breadcrumb.
@@ -610,11 +743,47 @@ export default async function AdminChatPage({
             </section>
           )}
 
-          {/* Chat log */}
-          {inLogMode && (
+          {/* Chat log — a single day (log mode) or the full flattened history
+              (all-dates mode). */}
+          {(inLogMode || inAllDates) && (
             <section className="bg-panel border border-border rounded-lg p-3 font-mono text-xs">
+              <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-border flex-wrap">
+                <span className="text-dim text-[11px]">
+                  {inAllDates ? '📜 All messages across every date (oldest first).' : 'Chat log.'}
+                  {p.nospam === '1' && hiddenCallouts > 0 && (
+                    <span className="ml-1 text-orange">{hiddenCallouts} callout{hiddenCallouts === 1 ? '' : 's'} hidden.</span>
+                  )}
+                  {p.raw !== '1' && mergedDupes > 0 && (
+                    <span className="ml-1 text-blue">{mergedDupes} skew-duplicate{mergedDupes === 1 ? '' : 's'} merged.</span>
+                  )}
+                </span>
+                <div className="flex items-center gap-1.5 shrink-0 font-sans">
+                  <Link
+                    href={`/admin/chat${paramsToQuery({ ...p, raw: p.raw === '1' ? undefined : '1' })}`}
+                    className={[
+                      'px-2 py-0.5 rounded border text-[11px] no-underline',
+                      p.raw === '1' ? 'border-blue bg-[#1f6feb33] text-blue' : 'border-border bg-bg text-dim hover:border-blue',
+                    ].join(' ')}
+                    title="Show every uploader's capture of each line (skip clock-skew merging)"
+                  >
+                    {p.raw === '1' ? '✓ Showing all captures' : 'Show all captures'}
+                  </Link>
+                  <Link
+                    href={`/admin/chat${paramsToQuery({ ...p, nospam: p.nospam === '1' ? undefined : '1' })}`}
+                    className={[
+                      'px-2 py-0.5 rounded border text-[11px] no-underline',
+                      p.nospam === '1' ? 'border-blue bg-[#1f6feb33] text-blue' : 'border-border bg-bg text-dim hover:border-blue',
+                    ].join(' ')}
+                    title="Hide defensive-disc timers, CH/heal chains, and mana callouts"
+                  >
+                    {p.nospam === '1' ? '✓ Callouts hidden' : 'Hide combat callouts'}
+                  </Link>
+                </div>
+              </div>
               {log.length === 0 && (
-                <div className="text-dim italic p-2">No messages on this day with the current filters.</div>
+                <div className="text-dim italic p-2">
+                  {inAllDates ? 'No messages anywhere for the current filter.' : 'No messages on this day with the current filters.'}
+                </div>
               )}
               {log.length > 0 && (
                 <ol className="space-y-0.5">
@@ -622,7 +791,7 @@ export default async function AdminChatPage({
                     const chip = channelChip(r.channel);
                     return (
                       <li key={r.id} className="flex gap-2 hover:bg-[#1a212c] -mx-1 px-1 rounded leading-5">
-                        <span className="text-dim shrink-0 w-16">{fmtTime(r.ts, tz)}</span>
+                        <span className={`text-dim shrink-0 ${inAllDates ? 'w-28' : 'w-16'}`}>{inAllDates ? fmtDateTime(r.ts, tz) : fmtTime(r.ts, tz)}</span>
                         <span className={`shrink-0 w-6 ${chip.color}`}>[{chip.label}]</span>
                         <span className="shrink-0">
                           <Link href={`/character/${encodeURIComponent(r.speaker)}`} className="text-text hover:text-blue">
@@ -638,7 +807,8 @@ export default async function AdminChatPage({
               )}
               {log.length === ROW_LIMIT && (
                 <div className="mt-2 text-dim text-[11px] italic">
-                  Showing the first {ROW_LIMIT} lines for this day. Narrow the filter to see more.
+                  Showing the first {ROW_LIMIT} lines{inAllDates ? ' across all dates' : ' for this day'}.
+                  {inAllDates ? ' Add a channel/text filter to narrow a chatty speaker.' : ' Narrow the filter to see more.'}
                 </div>
               )}
             </section>

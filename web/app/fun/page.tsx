@@ -209,6 +209,43 @@ async function loadCounters() {
     void err;
   }
 
+  // ── Lord of Ire vanquished — counts every Plane of Hate instance boss kill
+  // by a Wolf Pack member. Sub-text shows the top killer + their tally so the
+  // bragging rights are explicit. Source: fun_events emitted from the bot's
+  // PvP relay when a Wolf-Pack-attributed broadcast names "Lord of Ire" as the
+  // victim.
+  try {
+    const { data: loiRows, count: loiTotal } = await sb
+      .from('fun_events')
+      .select('caster', { count: 'exact' })
+      .eq('event_type', 'lord_of_ire_killed');
+    const tally = new Map<string, number>();
+    for (const r of (loiRows ?? []) as { caster: string | null }[]) {
+      const k = r.caster || 'unknown';
+      tally.set(k, (tally.get(k) ?? 0) + 1);
+    }
+    const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+    const total  = loiTotal ?? 0;
+    if (total > 0 && ranked.length > 0) {
+      const subParts = ranked.slice(0, 3).map(([name, n]) => `${name} ×${n}`);
+      counters.push({
+        label: 'Lord of Ire vanquished',
+        emoji: '😈',
+        value: total,
+        sub: subParts.join(' · '),
+      });
+    } else {
+      counters.push({
+        label: 'Lord of Ire vanquished',
+        emoji: '😈',
+        value: 0,
+        sub: 'no kills tracked yet — fires on the next Plane of Hate (Instanced) clear',
+      });
+    }
+  } catch (err) {
+    void err;
+  }
+
   return { counters, kyinen: { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone } };
 }
 

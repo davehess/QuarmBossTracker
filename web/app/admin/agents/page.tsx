@@ -86,8 +86,12 @@ async function loadMimicReleases(): Promise<MimicRelease[]> {
     );
     if (!res.ok) return [];
     const all = (await res.json()) as MimicRelease[];
+    // Detect Mimic releases by their unique mimic-beta.yml update-channel
+    // asset, not by tag prefix — tags are now plain semver (v0.1.0-mimic-beta.N)
+    // so electron-updater can parse the channel, and they share the v* namespace
+    // with bot/parser releases.
     return all
-      .filter(r => r.tag_name.startsWith('mimic-v'))
+      .filter(r => r.assets.some(a => a.name.toLowerCase() === 'mimic-beta.yml'))
       .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
   } catch {
     return [];
@@ -115,6 +119,15 @@ type CharSummary = {
   client: string | null;
   appVersion: string | null;
 };
+
+// Real EQ player names are letters only. The "(unknown)" sentinel (and the
+// agent's "unknown" fallback) aren't characters, so they shouldn't link to a
+// /character page.
+function isRealCharacter(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const n = name.trim();
+  return /^[A-Za-z]{2,}$/.test(n) && !['unknown', 'unattributed'].includes(n.toLowerCase());
+}
 
 function summarize(uploads: UploadRow[]): CharSummary[] {
   const now = Date.now();
@@ -354,7 +367,11 @@ export default async function AdminAgentsPage() {
               {active.map(s => (
                 <tr key={s.character} className="border-b border-border/40 hover:bg-[#1a212c]">
                   <td className="px-2 sm:px-3 py-2 text-text">
-                    <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
+                    {isRealCharacter(s.character) ? (
+                      <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
+                    ) : (
+                      <span className="text-dim" title="Operator-level streams (chat / pvp / fun events) with no single character">{s.character}</span>
+                    )}
                     <ClientChip client={s.client} appVersion={s.appVersion} agentVersion={s.agentVersion} />
                     <div className="text-dim text-[10px] md:hidden">{s.agentVersion || '—'} · {s.uploads24h}/24h</div>
                   </td>

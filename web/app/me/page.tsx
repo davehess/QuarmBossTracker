@@ -28,6 +28,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { userTz, fmtAbs, relTime, fmtDateOnly } from '@/lib/timezone';
 import ExclusionToggles from './ExclusionToggles';
+import ScrapShare from './ScrapShare';
 
 export const dynamic = 'force-dynamic';
 
@@ -351,6 +352,38 @@ async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, { la
   return out;
 }
 
+// ── "The Scrap" — friendly damage competition (last 30 days) ────────────────
+// Server-side leaderboard via the scrap_damage_leaderboard RPC (cap-immune).
+// We surface the viewer's best-ranked character, the rival directly above
+// them, and the current Top Dog — a personal nudge rather than another table.
+type ScrapRow = { character_name: string; total_damage: number; best_dps: number; encounters: number };
+type ScrapView = {
+  contenders: number;
+  top:   ScrapRow & { rank: number };
+  me:    (ScrapRow & { rank: number }) | null;
+  rival: (ScrapRow & { rank: number }) | null;
+};
+async function loadScrap(myNames: string[]): Promise<ScrapView | null> {
+  try {
+    const sb = supabaseAdmin();
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await sb.rpc('scrap_damage_leaderboard', { p_since: since });
+    const rows = (data ?? []) as ScrapRow[];
+    if (rows.length === 0) return null;
+    const ranked = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+    const mine = new Set(myNames.map(n => n.toLowerCase()));
+    const me = ranked.find(r => mine.has(r.character_name.toLowerCase())) || null;
+    const rival = me && me.rank > 1 ? ranked[me.rank - 2] : null;
+    return { contenders: ranked.length, top: ranked[0], me, rival };
+  } catch { return null; }
+}
+
+function fmtDmg(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000)     return (n / 1_000).toFixed(0) + 'k';
+  return String(n);
+}
+
 export default async function MePage() {
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
@@ -365,6 +398,8 @@ export default async function MePage() {
   // the flag, but they don't appear in the main per-char grid.
   const chars         = allChars.filter(c => !c.exclude_from_stats);
   const excludedChars = allChars.filter(c =>  c.exclude_from_stats);
+
+  const scrap = chars.length > 0 ? await loadScrap(chars.map(c => c.name)) : null;
 
   // Build per-character stats in parallel
   const stats = await Promise.all(chars.map(c => loadCharStats(c.name).then(s => [c.name, s] as const)));
@@ -525,6 +560,63 @@ export default async function MePage() {
           </div>
         )}
       </section>
+
+      {scrap && scrap.me && (() => {
+        const { me, rival, top, contenders } = scrap;
+        const isTopDog = me!.rank === 1;
+        const gap = rival ? rival.total_damage - me!.total_damage : 0;
+        const shareText =
+          `🐺 The Scrap (30d) — ${me!.character_name} is #${me!.rank} of ${contenders} in damage ` +
+          `(${fmtDmg(me!.total_damage)}, best parse ${me!.best_dps.toLocaleString()}/s). ` +
+          `Top Dog: ${top.character_name} (${fmtDmg(top.total_damage)}). wolfpack.quest`;
+        return (
+          <section className="bg-panel border border-gold/40 rounded-lg p-6">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h2 className="text-xl text-gold mb-1">🐺 The Scrap</h2>
+                <p className="text-sm text-dim">Friendly damage competition · last 30 days · {contenders} contenders</p>
+              </div>
+              <ScrapShare text={shareText} />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+              {/* Your standing */}
+              <div className="bg-bg border border-border rounded p-4 sm:col-span-1">
+                <div className="text-dim text-xs">Your best</div>
+                <div className="text-2xl text-text mt-0.5">#{me!.rank} <span className="text-dim text-sm">of {contenders}</span></div>
+                <div className="text-sm text-blue mt-1">{me!.character_name}</div>
+                <div className="text-dim text-xs mt-1">{fmtDmg(me!.total_damage)} dmg · best {me!.best_dps.toLocaleString()}/s · {me!.encounters} fights</div>
+              </div>
+
+              {/* Rival / Top Dog status */}
+              <div className="bg-bg border border-border rounded p-4 sm:col-span-2 flex flex-col justify-center">
+                {isTopDog ? (
+                  <div className="text-lg text-gold">🏆 You&apos;re the Top Dog — nobody&apos;s out-scrapped you this month.</div>
+                ) : rival ? (
+                  <>
+                    <div className="text-sm text-text">
+                      <span className="text-orange">{rival.character_name}</span> is one spot ahead at #{rival.rank}.
+                    </div>
+                    <div className="text-dim text-xs mt-1">
+                      Close <span className="text-text">{fmtDmg(gap)}</span> damage to take the spot.
+                    </div>
+                    <div className="text-dim text-xs mt-2">
+                      🥇 Top Dog: <span className="text-gold">{top.character_name}</span> ({fmtDmg(top.total_damage)})
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-sm text-dim">
+                    🥇 Top Dog: <span className="text-gold">{top.character_name}</span> ({fmtDmg(top.total_damage)})
+                  </div>
+                )}
+              </div>
+            </div>
+            <p className="text-dim text-[11px] mt-3">
+              Ranked by total damage parsed in the last 30 days. Tanking &amp; healing categories coming once we persist those stats.
+            </p>
+          </section>
+        );
+      })()}
 
       {excludedChars.length > 0 && (
         <section className="bg-panel border border-border/60 rounded-lg p-4 text-xs">

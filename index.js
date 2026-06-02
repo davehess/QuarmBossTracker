@@ -126,6 +126,19 @@ client.once(Events.ClientReady, async (readyClient) => {
   startRaidHelperSync();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 
+  // Safety-net board reconcile from Supabase encounters every 6h. Cheap when
+  // nothing drifted (it only writes/refreshes when it finds kills not yet
+  // reflected in state), so steady-state this is a no-op; it self-heals the
+  // board after a missed update or volume loss between deploys.
+  setInterval(() => {
+    try {
+      const { reconcileKillsFromSupabase } = require('./utils/reconcileKills');
+      reconcileKillsFromSupabase({ client: readyClient })
+        .then(r => { if (r.ok && r.recoverList.length) console.log(`[reconcile] recovered ${r.recoverList.length} timer(s) from ${r.scanned} encounter(s)`); })
+        .catch(err => console.warn('[reconcile] interval failed:', err?.message));
+    } catch (err) { console.warn('[reconcile] interval init failed:', err?.message); }
+  }, 6 * 60 * 60 * 1000);
+
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
   // kill triggers postKillUpdate).
@@ -391,6 +404,19 @@ async function runStartupSequence(readyClient) {
   await runAutoRestore(readyClient).catch(err => console.warn('[startup] runAutoRestore:', err?.message));
   await delay(60_000);
   await runBoard(readyClient).catch(err => console.warn('[startup] runBoard:', err?.message));
+
+  // Reconcile spawn timers from Supabase `encounters` — the authoritative kill
+  // record — so the board reflects real kills (parses/agent uploads) instead of
+  // showing everything "Available now" after a volume wipe. Upgrade-only: it
+  // never downgrades a fresher state row, so it complements the Discord-sourced
+  // runAutoRestore above. Runs after runBoard so the cards exist to update.
+  try {
+    const { reconcileKillsFromSupabase } = require('./utils/reconcileKills');
+    const r = await reconcileKillsFromSupabase({ client: readyClient });
+    if (r.ok) console.log(`[startup] reconcile: recovered ${r.recoverList.length} timer(s) from ${r.scanned} encounter(s) scanned`);
+    else      console.log(`[startup] reconcile skipped: ${r.reason}`);
+  } catch (err) { console.warn('[startup] reconcile failed:', err?.message); }
+
   await delay(60_000);
   await runCleanup(readyClient).catch(err => console.warn('[startup] runCleanup:', err?.message));
 }
@@ -2412,9 +2438,21 @@ const http = require('http');
 // aren't suppressed.
 const CHAT_DEDUP_WINDOW_MS = 60_000;
 const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
+// Relay-only dedup. The same in-game line captured by two different uploaders
+// can arrive with DIFFERENT speaker attribution (self "You say to your guild"
+// vs third-person "Canopy tells the guild", or a multi-log mis-attribution) —
+// so the speaker-keyed dedup above sees two distinct keys and double-posts to
+// Discord. This text-only window collapses the relay POST regardless of who it
+// was attributed to. It deliberately does NOT gate the Supabase mirror, which
+// keeps every per-speaker perspective for CH-chain / attribution analysis.
+// Agents flush chat ~every 5s, so 12s absorbs cross-agent arrival jitter while
+// still letting a genuinely distinct later repeat through.
+const CHAT_RELAY_DEDUP_WINDOW_MS = 12_000;
+const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
 setInterval(() => {
-  const cutoff = Date.now() - CHAT_DEDUP_WINDOW_MS;
-  for (const [k, v] of _chatDedup) if (v < cutoff) _chatDedup.delete(k);
+  const now = Date.now();
+  for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
+  for (const [k, v] of _chatRelayDedup) if (v < now - CHAT_RELAY_DEDUP_WINDOW_MS) _chatRelayDedup.delete(k);
 }, 10_000);
 
 // ── Era boundaries for chat thread routing ─────────────────────────────────
@@ -2617,6 +2655,14 @@ async function _handleAgentChat(req, res) {
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
 
+    // Relay-only dedup keyed on text alone (ignores speaker) — see the
+    // _chatRelayDedup comment. If another uploader already relayed this exact
+    // line within the window, still record the Supabase perspective below but
+    // skip the duplicate Discord post.
+    const relayKey      = `${channel}|${normText}`;
+    const alreadyRelayed = _chatRelayDedup.has(relayKey);
+    _chatRelayDedup.set(relayKey, Date.now());
+
     // Stage for chat_messages upsert. Same shape as historical_chat path so
     // the table has one canonical row format regardless of ingestion route.
     supabaseChatRows.push({
@@ -2637,6 +2683,10 @@ async function _handleAgentChat(req, res) {
     const whoEntry = getWhoEntry(speaker) || uploadedWho || null;
     const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
     const whoTag   = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
+
+    // Another uploader already relayed this exact line to Discord within the
+    // window — corpus row was recorded above; skip the duplicate post.
+    if (alreadyRelayed) continue;
 
     try {
       const ch = await client.channels.fetch(channelId).catch(() => null);
@@ -2774,6 +2824,10 @@ async function _handleAgentPvp(req, res) {
   // other-guild noise is not. Pet attribution: if the killer is a known pet
   // (state petOwners map), credit the owner and flag via_pet.
   const pvpKillRows = [];
+  // Fun-counter rows emitted alongside the kill ledger — currently just Lord
+  // of Ire kills by Wolf Pack members. Upserted to fun_events at the end so a
+  // failure here can never lose a PvP post or ledger row.
+  const funEventRows = [];
   const _petOwners = (() => { try { return getPetOwners() || {}; } catch { return {}; } })();
   // Roster harvest from the broadcast bodies. Every PvP kill names two
   // characters and their guilds; that's free who-data we wouldn't otherwise
@@ -2882,6 +2936,27 @@ async function _handleAgentPvp(req, res) {
         content = `☠️ ${text}`;
       }
 
+      // Lord of Ire fun counter — when a Wolf Pack member kills "Lord of Ire"
+      // (the Plane of Hate instance boss), emit a fun_events row so /fun and
+      // /me can show a per-killer scoreboard. Detected from the broadcast's
+      // victim+killer fields so it survives any text-format variation; we
+      // dedupe at the table via (guild_id, event_type, caster, event_ts).
+      if (
+        killerGuild === WP_GUILD_NAME
+        && killer
+        && typeof victim === 'string'
+        && /^\s*lord\s+of\s+ire\s*$/i.test(victim)
+      ) {
+        funEventRows.push({
+          guild_id:   process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          event_ts:   b?.ts || new Date().toISOString(),
+          event_type: 'lord_of_ire_killed',
+          caster:     killer,
+          target:     'Lord of Ire',
+          raw_text:   (text || '').slice(0, 300),
+        });
+      }
+
       const sent = await ch.send({ content });
 
       // Attach Howl button only when Wolf Pack is involved (either side).
@@ -2907,6 +2982,21 @@ async function _handleAgentPvp(req, res) {
       }
     } catch (err) {
       console.warn('[pvp-relay] pvp_kills persist wrap failed:', err?.message);
+    }
+  }
+
+  // Persist any fun-event counters (Lord of Ire kills, etc.). Dedup'd on
+  // (guild_id, event_type, caster, event_ts) so replays from multiple agents
+  // collapse to one row.
+  if (funEventRows.length > 0) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        await supabase.upsert('fun_events', funEventRows, 'guild_id,event_type,caster,event_ts')
+          .catch(err => console.warn('[pvp-relay] fun_events upsert failed:', err?.message));
+      }
+    } catch (err) {
+      console.warn('[pvp-relay] fun_events persist wrap failed:', err?.message);
     }
   }
 
@@ -3219,6 +3309,105 @@ async function _handleAgentServerPanel(req, res) {
         items: Array.from(byItem.entries()).map(([id, awards]) => ({ item_id: id, awards })),
       }));
     }
+    if (key === 'auctions') {
+      // Live OpenDKP auctions — what's currently up for bid. Used by the
+      // in-game Bidding overlay (Mimic) + the dashboard "💸 Live Bidding"
+      // panel. We also enrich with the caller's matching wishlist entries
+      // so the overlay can show "you wishlisted this for X DKP" inline.
+      const opendkp = require('./utils/opendkp');
+      try {
+        const auctions = await opendkp.getAuctions().catch(() => ({}));
+        const list = Array.isArray(auctions?.Items) ? auctions.Items
+                    : Array.isArray(auctions) ? auctions
+                    : [];
+        // Wishlist enrichment for the caller (optional ?character=).
+        let wishById = new Map();
+        if (character) {
+          // wishlists.bid_amount_enc is encrypted with WISHLIST_BID_KEY; we
+          // only return the item_id + priority so the OVERLAY can flag
+          // "you wishlisted this." Bid value stays private — only viewable
+          // on /me/wishlist.
+          const wlRows = await supabase.select(
+            'wishlists',
+            `select=item_id,priority` +
+            `&guild_id=eq.${encodeURIComponent(guildId)}` +
+            `&character_name=ilike.${encodeURIComponent(character)}`
+          );
+          for (const r of (wlRows || [])) wishById.set(r.item_id, { priority: r.priority });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          key, character,
+          updated_at: new Date().toISOString(),
+          auctions: list.map(a => ({
+            auction_id: a.AuctionId || a.SessionId || a.Id,
+            item_id:    a.ItemId || a.Item?.Id,
+            item_name:  a.ItemName || a.Item?.Name,
+            top_bid:    a.TopBid || a.HighestBid || null,
+            ends_at:    a.EndTime || a.EndsAt || null,
+            wishlisted: !!wishById.get(a.ItemId || a.Item?.Id),
+          })),
+        }));
+      } catch (err) {
+        console.warn('[server-panel:auctions] failed:', err?.message);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'opendkp fetch failed' }));
+      }
+    }
+    if (key === 'my-bids') {
+      // The caller's currently-active bids across all open auctions. OpenDKP
+      // doesn't expose a "list my bids" endpoint, so we walk the auctions
+      // list and pull each auction's Bids[] (getAuction returns them) and
+      // filter to entries whose CharacterId belongs to the caller's
+      // characters. Returns one row per (auction, item) the caller has bid on.
+      if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
+      const opendkp = require('./utils/opendkp');
+      try {
+        const chars = await opendkp.getCharacters().catch(() => []);
+        const myCharIds = new Set(
+          (Array.isArray(chars) ? chars : (chars?.Items || []))
+            .filter(c => (c.Name || '').toLowerCase() === character.toLowerCase() || (c.ParentName || '').toLowerCase() === character.toLowerCase())
+            .map(c => c.Id || c.CharacterId)
+        );
+        const auctions = await opendkp.getAuctions().catch(() => ({}));
+        const list = Array.isArray(auctions?.Items) ? auctions.Items
+                    : Array.isArray(auctions) ? auctions
+                    : [];
+        const mine = [];
+        for (const a of list) {
+          const aid = a.AuctionId || a.SessionId || a.Id;
+          if (!aid) continue;
+          // getAuction returns Bids[]; cap concurrent fetches to keep this cheap.
+          let full;
+          try { full = await opendkp.getAuction(aid); } catch { continue; }
+          const bids = (full && (full.Bids || full.bids)) || [];
+          for (const b of bids) {
+            if (myCharIds.has(b.CharacterId)) {
+              mine.push({
+                auction_id: aid,
+                item_id:    a.ItemId || a.Item?.Id,
+                item_name:  a.ItemName || a.Item?.Name,
+                bid_id:     b.Id || b.BidId,
+                value:      b.Value,
+                rank:       b.Rank,
+                priority:   b.Priority,
+                character:  b.CharacterName || character,
+              });
+            }
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          key, character, scope: 'currently-open auctions',
+          updated_at: new Date().toISOString(),
+          bids: mine,
+        }));
+      } catch (err) {
+        console.warn('[server-panel:my-bids] failed:', err?.message);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'opendkp fetch failed' }));
+      }
+    }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'unknown panel key', key }));
   } catch (err) {
@@ -3272,6 +3461,289 @@ async function _handleAgentThreatSnapshot(req, res) {
   _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, written: 1 }));
+}
+
+// POST /api/agent/place-bid
+// Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
+// ── UI Studio — encrypted snapshots of a player's EQ ini files ─────────────
+// Mimic POSTs a JSON bundle of UI / chat / hotkey / bandolier / socials
+// files. Bot encrypts with WISHLIST_BID_KEY before storing — even DB admins
+// can't read the raw .ini contents at rest. GET endpoints decrypt on the
+// way out for the same authenticated owner.
+//
+// Ownership: derived from the named character's discord_id. The character
+// MUST be linked to a Discord user (characters.discord_id is non-null);
+// otherwise the upload is rejected. Lists / downloads are scoped to that
+// discord_id so one user can't read another's snapshots.
+
+async function _handleAgentUiLayoutUpload(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => {
+      body += chunk;
+      // UI bundles can include hundreds of small ini files; 8MB is a comfortable
+      // ceiling. (Hitya's full set was ~600KB pre-encryption.)
+      if (body.length > 8 * 1024 * 1024) { req.destroy(); resolve(); }
+    });
+    req.on('end',   resolve);
+    req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+  const character     = String(payload?.character || '').trim();
+  const serverShort   = (payload?.server_short || null) && String(payload.server_short).trim();
+  const label         = (payload?.label || null) && String(payload.label).trim().slice(0, 80);
+  const sourceWidth   = Number.isFinite(payload?.source_width)  ? payload.source_width  : null;
+  const sourceHeight  = Number.isFinite(payload?.source_height) ? payload.source_height : null;
+  const files         = (payload?.files && typeof payload.files === 'object') ? payload.files : null;
+  const agentVersion  = (payload?.agent_version || null) && String(payload.agent_version).slice(0, 32);
+  if (!character || !files) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character + files required' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'supabase disabled' }));
+  }
+
+  // Resolve owner via character → discord_id. Family root counts too: an
+  // alt's UI snapshot belongs to the main's Discord owner.
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscord = charRow?.discord_id || null;
+  if (!ownerDiscord && charRow?.main_name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
+  }
+  if (!ownerDiscord) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character not linked to a discord account — ask an officer to link it before uploading layouts' }));
+  }
+
+  const { encryptBlob, isEncryptionEnabled } = require('./utils/bidCrypto');
+  if (!isEncryptionEnabled()) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'WISHLIST_BID_KEY not configured on the bot — UI Studio cannot encrypt' }));
+  }
+  const plaintext = JSON.stringify({ files });
+  const enc       = encryptBlob(plaintext);
+  if (!enc) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'encryption failed' }));
+  }
+  const row = {
+    owner_discord_id:    ownerDiscord,
+    character_name:      character,
+    server_short:        serverShort,
+    label,
+    source_width:        sourceWidth,
+    source_height:       sourceHeight,
+    payload_enc:         enc,
+    payload_bytes_plain: Buffer.byteLength(plaintext, 'utf8'),
+    file_count:          Object.keys(files).length,
+    agent_version:       agentVersion,
+  };
+  const written = await supabase.insert('ui_snapshots', [row]).catch(err => {
+    console.error('[ui_layout] insert failed:', err?.message || err);
+    return null;
+  });
+  if (!Array.isArray(written) || written.length === 0) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'insert failed' }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, id: written[0].id }));
+}
+
+async function _handleAgentUiLayoutList(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) { res.writeHead(503).end(); return; }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) { res.writeHead(401).end(); return; }
+
+  // ?character=<name>  required — we always scope listing to one character
+  // since that drives the picker UI. The character determines the owner.
+  const url = new URL(req.url, 'http://x');
+  const character = (url.searchParams.get('character') || '').trim();
+  if (!character) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character query required' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503).end(); return; }
+
+  // Resolve owner (same logic as upload).
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscord = charRow?.discord_id || null;
+  if (!ownerDiscord && charRow?.main_name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
+  }
+  if (!ownerDiscord) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ snapshots: [] }));
+  }
+  const rows = await supabase.select(
+    'ui_snapshots',
+    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,created_at&order=created_at.desc&limit=50`,
+  ).catch(() => []);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ snapshots: Array.isArray(rows) ? rows : [] }));
+}
+
+async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) { res.writeHead(503).end(); return; }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) { res.writeHead(401).end(); return; }
+
+  // The download URL is /api/agent/ui_layout/<id>?character=<name>. We
+  // re-verify ownership via the character — even with the snapshot id the
+  // request must come from someone who can prove they own the matching char.
+  const url = new URL(req.url, 'http://x');
+  const character = (url.searchParams.get('character') || '').trim();
+  if (!character || !/^[0-9a-f-]{36}$/i.test(snapshotId)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character query + valid id required' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503).end(); return; }
+
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscord = charRow?.discord_id || null;
+  if (!ownerDiscord && charRow?.main_name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
+  }
+  if (!ownerDiscord) { res.writeHead(403).end(); return; }
+
+  const rows = await supabase.select(
+    'ui_snapshots',
+    `id=eq.${snapshotId}&owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_enc,file_count&limit=1`,
+  ).catch(() => []);
+  const snap = Array.isArray(rows) ? rows[0] : null;
+  if (!snap) { res.writeHead(404).end(); return; }
+
+  const { decryptBlob } = require('./utils/bidCrypto');
+  const plaintext = decryptBlob(snap.payload_enc);
+  if (!plaintext) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'decryption failed' }));
+  }
+  let parsed;
+  try { parsed = JSON.parse(plaintext); }
+  catch {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'snapshot payload malformed' }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({
+    id: snap.id,
+    character_name: snap.character_name,
+    server_short: snap.server_short,
+    label: snap.label,
+    source_width: snap.source_width,
+    source_height: snap.source_height,
+    file_count: snap.file_count,
+    files: parsed.files || {},
+  }));
+}
+
+// Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
+// Returns the OpenDKP response (or a 4xx if the input is bad).
+async function _handleAgentPlaceBid(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'place-bid disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const character  = String(payload?.character || '').trim();
+  const auctionId  = payload?.auction_id;
+  const value      = Number(payload?.value);
+  const priority   = Number.isFinite(payload?.priority) ? Number(payload.priority) : 1;
+  if (!character || !auctionId || !Number.isFinite(value) || value <= 0) {
+    res.writeHead(400);
+    return res.end(JSON.stringify({ error: 'character, auction_id, and positive value are required' }));
+  }
+
+  const opendkp = require('./utils/opendkp');
+  try {
+    const chars = await opendkp.getCharacters().catch(() => []);
+    const list  = Array.isArray(chars) ? chars : (chars?.Items || []);
+    const me    = list.find(c => (c.Name || '').toLowerCase() === character.toLowerCase());
+    if (!me) {
+      res.writeHead(404);
+      return res.end(JSON.stringify({ error: `character not found in roster: ${character}` }));
+    }
+    const characterId = me.Id || me.CharacterId;
+    const rank        = me.Rank || me.RankName || 'Member';
+    const out = await opendkp.submitBid(auctionId, {
+      CharacterId: characterId,
+      SessionId:   auctionId,
+      Rank:        rank,
+      Priority:    priority,
+      Value:       value,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, bid: out }));
+  } catch (err) {
+    console.warn('[place-bid] failed:', err?.message);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'opendkp bid failed', detail: err?.message }));
+  }
 }
 
 async function _handleAgentFunEvent(req, res) {
@@ -4106,6 +4578,25 @@ async function _handleAgentUpload(req, res) {
   // playerTotals: name → { direct, pet }
   // direct = damage the player dealt themselves; pet = share of pet damage attributed to them.
   // Pet damage is divided equally across all /pet-leader owners of that pet name.
+  // Scope the encounter to the fight the UPLOADER was actually in. An agent's
+  // log shows every combat line in the uploader's vicinity — including other
+  // raiders meleeing DIFFERENT mobs nearby. Without scoping, those bleed into
+  // this encounter as phantom contributors (e.g. a solo Royal Scribe Kaavin
+  // kill showing 4 extra characters who were each fighting their own mob).
+  // validTargets = every NPC the uploader personally damaged, plus the boss.
+  // We then only count damage dealt to one of those targets.
+  const _bossLower = encounter.boss_name ? String(encounter.boss_name).toLowerCase() : null;
+  const validTargets = new Set();
+  if (_bossLower) validTargets.add(_bossLower);
+  for (const ev of encounter.events) {
+    if (ev.type !== 'damage' || !ev.defender) continue;
+    // The uploader's own outgoing damage is first-person (attacker === null).
+    // Its defender is the mob they're engaging — that's a target of this fight.
+    if (ev.attacker === null && !/^you$/i.test(ev.defender)) {
+      validTargets.add(String(ev.defender).toLowerCase());
+    }
+  }
+
   const playerTotals = new Map();
   const _addDmg = (name, amount, isPet) => {
     if (!playerTotals.has(name)) playerTotals.set(name, { direct: 0, pet: 0 });
@@ -4120,6 +4611,10 @@ async function _handleAgentUpload(req, res) {
     // Without this guard, every incoming hit would be attributed to the character as outgoing
     // DPS because rawAttacker=null gets rewritten to character below.
     if (rawAttacker === null && !ev.defender) continue;
+    // Fight-scope filter: only count damage dealt to a target the uploader
+    // engaged (computed above). Events with a defender outside the set are
+    // someone else's separate fight that merely showed up in this log.
+    if (ev.defender && validTargets.size > 0 && !validTargets.has(String(ev.defender).toLowerCase())) continue;
     // Re-attribute first-person (null) events to the uploading character
     const attacker = rawAttacker ?? character ?? null;
     if (!attacker) continue;
@@ -4932,6 +5427,45 @@ http.createServer(async (req, res) => {
       console.error('[threat-snap] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/place-bid') {
+    try { return await _handleAgentPlaceBid(req, res); }
+    catch (err) {
+      console.error('[place-bid] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // UI Studio — encrypted EQ ini-file snapshots for new-machine restore.
+  if (req.method === 'POST' && req.url === '/api/agent/ui_layout') {
+    try { return await _handleAgentUiLayoutUpload(req, res); }
+    catch (err) {
+      console.error('[ui_layout upload] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/ui_layout?')) {
+    try { return await _handleAgentUiLayoutList(req, res); }
+    catch (err) {
+      console.error('[ui_layout list] handler error:', err);
+      res.writeHead(500).end();
+      return;
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/ui_layout/')) {
+    // /api/agent/ui_layout/<uuid>?character=<name>
+    const m = req.url.match(/^\/api\/agent\/ui_layout\/([0-9a-f-]{36})(\?|$)/i);
+    if (m) {
+      try { return await _handleAgentUiLayoutDownload(req, res, m[1]); }
+      catch (err) {
+        console.error('[ui_layout download] handler error:', err);
+        res.writeHead(500).end();
+        return;
+      }
     }
   }
 

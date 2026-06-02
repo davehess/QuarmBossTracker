@@ -1,8 +1,12 @@
 // /mimic — stable redirect to whatever the latest Wolf Pack Mimic beta is.
 //
-// Queries GitHub's releases API for the most recent tag matching `mimic-v*`
-// and 302s to its release page. This means every internal link, banner, and
-// "share with a guinea pig" copy can point at wolfpack.quest/mimic forever
+// Queries GitHub's releases API and 302s to the most recent Mimic release.
+// Mimic releases are detected by their unique `mimic-beta.yml` update-channel
+// asset (NOT by tag prefix — the tag is now plain semver `v0.1.0-mimic-beta.N`
+// so electron-updater can parse its channel, and bot/parser releases like
+// v2.5.1 share the `v*` namespace). The yml asset is the reliable marker that
+// a given release belongs to Mimic. This means every internal link, banner,
+// and "share with a guinea pig" copy can point at wolfpack.quest/mimic forever
 // — no hardcoded version that goes stale at the next beta bump.
 //
 // Query params:
@@ -46,7 +50,7 @@ export async function GET(req: NextRequest) {
     if (res.ok) {
       const releases = (await res.json()) as Release[];
       const mimicReleases = releases
-        .filter(r => !r.draft && r.tag_name.startsWith('mimic-v'))
+        .filter(r => !r.draft && r.assets.some(a => a.name.toLowerCase() === 'mimic-beta.yml'))
         .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
 
       const latest = mimicReleases[0];

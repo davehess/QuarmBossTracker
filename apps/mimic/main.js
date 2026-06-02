@@ -67,7 +67,9 @@ let setupMode = false;
 // ── Config ────────────────────────────────────────────────────────────────
 function defaultConfig() {
   return {
-    eqPath: null,
+    eqPath: null,            // legacy single-folder (kept for back-compat read)
+    eqPaths: [],             // multi-folder picker — every EQ install to tail
+    eqPathsExcluded: [],     // auto-detected paths the user explicitly unchecked
     botUrl: 'https://wolfpackparse.up.railway.app/api/agent/encounter',
     token: null,
     showHud: true,           // DPS HUD overlay user pref
@@ -94,6 +96,15 @@ function loadConfig() {
     if (raw.tellsEnabled !== undefined && raw.tellsMode === undefined) {
       raw.tellsMode = raw.tellsEnabled ? 'local' : 'off';
       delete raw.tellsEnabled;
+    }
+    // Migration: legacy single-folder eqPath → eqPaths array. We keep eqPath
+    // populated alongside eqPaths for one release so anything still reading
+    // the old field gets at least the primary folder.
+    if (!Array.isArray(raw.eqPaths)) {
+      raw.eqPaths = raw.eqPath ? [raw.eqPath] : [];
+    }
+    if (!Array.isArray(raw.eqPathsExcluded)) {
+      raw.eqPathsExcluded = [];
     }
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
@@ -234,6 +245,210 @@ function detectCharacterFromLogs(dir) {
   } catch { return null; }
 }
 
+// ── EQ install discovery (eqgame.exe) ──────────────────────────────────────
+// Scans the common EQ default dirs (and the walk-up-from-Mimic path) for
+// eqgame.exe — the actual game binary, present from install regardless of
+// whether the user has combat-logged yet. Returns ALL candidates so the
+// settings/loading UIs can present a picker rather than guessing.
+//
+// `scanned` is the literal list of paths probed so we can show the user
+// exactly where we looked ("we scanned these common EQ directories").
+function findEqInstalls(hint) {
+  const scanned = [];
+  const found   = [];
+  const seen    = new Set();
+  const probe   = (dir, source) => {
+    if (!dir) return;
+    const norm = path.normalize(dir);
+    if (seen.has(norm.toLowerCase())) return;
+    seen.add(norm.toLowerCase());
+    scanned.push(norm);
+    try {
+      if (!fs.existsSync(norm)) return;
+      const entries = fs.readdirSync(norm);
+      const hasEqgame = entries.some(f => /^eqgame\.exe$/i.test(f));
+      const hasLogs   = entries.some(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f));
+      if (hasEqgame || hasLogs) {
+        const logCount = entries.filter(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f)).length;
+        found.push({ path: norm, hasEqgame, hasLogs, logCount, source });
+      }
+    } catch { /* unreadable dir — fine */ }
+  };
+
+  // 1. Explicit override always wins (still recorded so the UI can show it).
+  if (hint) probe(hint, 'override');
+
+  // 2. Walk UP from the Mimic exe — if Mimic was installed inside the EQ dir
+  //    (e.g. A:\EQ\Mimic\), eqgame.exe is one or two levels up.
+  try {
+    const exePath = app.getPath('exe');
+    let dir = path.dirname(exePath);
+    for (let i = 0; i < 5; i++) {
+      probe(dir, 'walk-up');
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {}
+
+  // 3. The 14 known common EQ install paths.
+  for (const dir of EQ_DEFAULT_DIRS) probe(dir, 'common');
+
+  // Rank: eqgame.exe present beats logs-only; more logs wins as a tiebreaker.
+  found.sort((a, b) => (Number(b.hasEqgame) - Number(a.hasEqgame)) || (b.logCount - a.logCount));
+  return { scanned, found };
+}
+
+// ── Manual window drag (replaces broken CSS -webkit-app-region) ────────────
+// Chromium's drag region implementation is buggy on transparent (WS_EX_LAYERED)
+// Windows: cursor deltas are wrong, the window jumps, lags, sometimes
+// teleports. Renderers signal start/end; main polls screen.getCursorScreenPoint
+// at ~60fps and applies setBounds. 1:1 cursor-to-window motion, no Chromium
+// hit-test path involved.
+let _dragSession = null;  // { win, offsetX, offsetY, width, height, interval }
+function _startWindowDrag(win) {
+  if (!win || win.isDestroyed()) return;
+  _stopWindowDrag();
+  try {
+    const c = screen.getCursorScreenPoint();
+    const b = win.getBounds();
+    _dragSession = {
+      win,
+      offsetX: c.x - b.x,
+      offsetY: c.y - b.y,
+      width:   b.width,
+      height:  b.height,
+      interval: null,
+    };
+    _dragSession.interval = setInterval(() => {
+      if (!_dragSession) return;
+      if (_dragSession.win.isDestroyed()) { _stopWindowDrag(); return; }
+      try {
+        const cur = screen.getCursorScreenPoint();
+        _dragSession.win.setBounds({
+          x: cur.x - _dragSession.offsetX,
+          y: cur.y - _dragSession.offsetY,
+          width:  _dragSession.width,
+          height: _dragSession.height,
+        });
+      } catch {}
+    }, 16);  // ~60fps
+  } catch {}
+}
+
+// ── UI Studio — capture & restore EQ ini files ──────────────────────────────
+// Bundles every relevant ini file for a character (plus the global
+// eqclient.ini) so a player switching to a new machine can re-import in one
+// click. The bot encrypts before storing; we send plaintext over HTTPS.
+const UI_STUDIO_GLOBAL = ['eqclient.ini'];
+function _uiStudioFilesFor(character) {
+  // Quarm log files are *_pq.proj.txt; the matching ini suffix is
+  // _pq.proj.ini for per-character files and bare for the globals.
+  const c = String(character).trim();
+  return [
+    `UI_${c}_pq.proj.ini`,
+    `${c}_pq.proj.ini`,
+    `Sock_${c}_pq.proj.ini`,
+    `Socials_${c}_pq.proj.ini`,
+  ];
+}
+function _readUiBundle(eqDir, character) {
+  const files = {};
+  if (!eqDir || !character) return files;
+  for (const name of [...UI_STUDIO_GLOBAL, ..._uiStudioFilesFor(character)]) {
+    try {
+      const fp = path.join(eqDir, name);
+      if (fs.existsSync(fp)) {
+        const stat = fs.statSync(fp);
+        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
+          files[name] = fs.readFileSync(fp, 'utf8');
+        }
+      }
+    } catch {}
+  }
+  return files;
+}
+async function _isEqRunning() {
+  // Windows: tasklist returns rows when match found; an "INFO:" line when
+  // no match. We just check whether the eqgame.exe substring is in the output.
+  if (process.platform !== 'win32') return false;  // dev / Linux harness
+  return new Promise((resolve) => {
+    try {
+      const { exec } = require('child_process');
+      exec('tasklist /FI "IMAGENAME eq eqgame.exe"', { timeout: 5000 }, (err, stdout) => {
+        if (err) { resolve(false); return; }
+        resolve(/eqgame\.exe/i.test(stdout || ''));
+      });
+    } catch { resolve(false); }
+  });
+}
+function _backupAndWriteFile(targetPath, contents) {
+  // Atomic-ish: backup existing first (so a partial write can be reverted),
+  // then write to <target>.tmp + rename. Renaming a same-filesystem path is
+  // atomic on Windows when the destination doesn't exist + via MoveFileEx
+  // otherwise (Node handles it).
+  const ts = Date.now();
+  if (fs.existsSync(targetPath)) {
+    fs.copyFileSync(targetPath, targetPath + `.bak-${ts}`);
+  }
+  const tmp = targetPath + `.tmp-${ts}`;
+  fs.writeFileSync(tmp, contents, 'utf8');
+  fs.renameSync(tmp, targetPath);
+  return targetPath + `.bak-${ts}`;
+}
+function _clampUiIni(contents, screenW, screenH) {
+  // Walk every line; when we see XPos/YPos = N, clamp to (0, screenW - minW)
+  // / (0, screenH - minH). minW/minH unknown without parsing XSize/YSize, so
+  // we use a conservative 80px so a window's caption bar remains grabbable.
+  if (!contents || !screenW || !screenH) return contents;
+  return contents.replace(/^([ \t]*)(XPos|YPos)=(-?\d+)/gmi, (_m, indent, key, val) => {
+    const n = parseInt(val, 10);
+    const limit = key.toLowerCase() === 'xpos' ? Math.max(0, screenW - 80)
+                                               : Math.max(0, screenH - 80);
+    const clamped = Math.max(0, Math.min(n, limit));
+    return `${indent}${key}=${clamped}`;
+  });
+}
+async function _httpsJson(url, opts = {}) {
+  const u = new URL(url);
+  const lib = u.protocol === 'http:' ? require('http') : require('https');
+  return new Promise((resolve, reject) => {
+    const req = lib.request(url, {
+      method: opts.method || 'GET',
+      headers: opts.headers || {},
+      timeout: 30000,
+    }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(body)); } catch { resolve(body); }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}: ${body.slice(0, 400)}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    if (opts.body) req.write(typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body));
+    req.end();
+  });
+}
+function _botBaseUrl(cfg) {
+  // cfg.botUrl points at /api/agent/encounter — strip to the origin.
+  try { return new URL(cfg.botUrl).origin; }
+  catch { return 'https://wolfpackparse.up.railway.app'; }
+}
+function _stopWindowDrag() {
+  if (_dragSession) {
+    clearInterval(_dragSession.interval);
+    // Final persist — the periodic setBounds calls fire 'moved' but the
+    // debounce may swallow the last one if the user lifts quickly.
+    try { _persistBounds(_dragSession.persistKey, _dragSession.win); } catch {}
+    _dragSession = null;
+  }
+}
+
 // ── Launch the agent under Electron's Node ──────────────────────────────────
 async function launchAgent() {
   if (quitting) return;
@@ -260,35 +475,59 @@ async function launchAgent() {
   // --character is given, which is exactly what we want for a multi-char
   // install. Single-character installs still resolve correctly from the
   // filename, so the flag is unnecessary.
-  const eqDir     = detectEqDir(cfg.eqPath);
-  const detection = detectCharacterFromLogs(eqDir);
-  if (detection && detection.candidates.length > 0) {
-    for (const c of detection.candidates) {
+  // Multi-folder EQ discovery. Build a deduplicated set of folders to tail:
+  //   1. Every cfg.eqPaths (the multi-folder picker UI saves these).
+  //   2. Legacy cfg.eqPath (single-folder, kept for back-compat).
+  //   3. Walk-up + 14-path autodetect (only if cfg.eqPaths is empty AND
+  //      not explicitly excluded by the user).
+  // Logs from all folders get appended as --log args; each self-identifies
+  // from its filename so multi-char + multi-install boxers parse correctly.
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  const excluded  = new Set((cfg.eqPathsExcluded || []).map(p => String(p || '').toLowerCase()));
+  const dirSet    = new Set();
+  for (const p of userPaths) {
+    if (!excluded.has(String(p).toLowerCase()) && _dirHasEqLogs(p)) dirSet.add(p);
+  }
+  // If the user hasn't configured anything explicitly, fall back to autodetect.
+  if (dirSet.size === 0) {
+    const auto = detectEqDir(null);
+    if (auto && !excluded.has(auto.toLowerCase())) dirSet.add(auto);
+  }
+  const eqDirs = [...dirSet];
+  const primaryEqDir = eqDirs[0] || null;
+
+  let totalLogs = 0;
+  let firstCharacter = null;
+  const allCandidates = [];
+  for (const dir of eqDirs) {
+    const det = detectCharacterFromLogs(dir);
+    if (!det || det.candidates.length === 0) continue;
+    if (!firstCharacter) firstCharacter = det.character;
+    for (const c of det.candidates) {
       args.push('--log', c.path);
+      allCandidates.push({ ...c, dir });
+      totalLogs++;
     }
-    appendAgentLog(`[mimic] tailing ${detection.candidates.length} log(s) from ${eqDir}; each self-identifies from filename. Primary: ${detection.character}\n`);
-    if (detection.candidates.length > 1) {
-      const alts = detection.candidates.slice(1, 5)
+  }
+  if (totalLogs > 0) {
+    appendAgentLog(`[mimic] tailing ${totalLogs} log(s) across ${eqDirs.length} folder(s); each self-identifies from filename. Primary: ${firstCharacter}\n`);
+    if (allCandidates.length > 1) {
+      const alts = allCandidates.slice(1, 5)
         .map(c => `${c.name} (${Math.round(c.size / 1024)}KB)`).join(', ');
       appendAgentLog(`[mimic] other characters: ${alts}\n`);
     }
   } else {
-    // No logs found anywhere — agent will fail with "At least one --log
-    // required" exactly the way it did before this fix landed. Loading
-    // screen surfaces the error inline. User likely needs to set their
-    // EQ path in Settings.
-    appendAgentLog(`[mimic] NO log files found (eqDir=${eqDir || 'unknown'}). Set your EQ path in Settings if Quarm isn't at C:\\Quarm.\n`);
+    appendAgentLog(`[mimic] NO log files found across ${eqDirs.length} configured folder(s). Open Settings → EverQuest folders to add or fix.\n`);
   }
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE:   '1',
-    // Identify uploads on the admin agent fleet board so Mimic installs
-    // are visibly distinct from Parser.bat installs (agent v2.5.2+ reads
-    // these and stamps every payload's agent_state with them).
     WOLFPACK_CLIENT:        'mimic',
     WOLFPACK_APP_VERSION:   app.getVersion(),
   };
-  if (cfg.eqPath || eqDir) env.WOLFPACK_EQ_DIR = cfg.eqPath || eqDir;
+  if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
 
   agentProc = spawn(process.execPath, args, {
     env,
@@ -322,9 +561,13 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
-    title: 'Wolf Pack Mimic (beta)',
+    title: 'Wolf Pack Mimic — Main window (Dashboard)',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
+  // Keep the OS/Task-Manager title stable instead of letting the loaded page
+  // (loading.html → the agent dashboard) overwrite it — so this process stays
+  // identifiable as the main window rather than "Mimic — getting ready" etc.
+  mainWindow.on('page-title-updated', (e) => e.preventDefault());
   mainWindow.loadFile('loading.html');
   mainWindow.on('close', (e) => {
     if (!quitting) { e.preventDefault(); mainWindow.hide(); } // close to tray
@@ -485,6 +728,10 @@ function createPanelOverlay(panelKey) {
   const sigKey    = 'panelBoundsSig_' + panelKey;
   const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 });
   const win = new BrowserWindow({
+    // Descriptive title so this process is identifiable in Task Manager /
+    // Alt-Tab (e.g. "Wolf Pack Mimic — DEEPS panel overlay") instead of a
+    // wall of identical "Wolf Pack Mimic" entries.
+    title: `Wolf Pack Mimic — ${panelKey} panel overlay`,
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -513,6 +760,7 @@ function createPanelOverlay(panelKey) {
 function createOverlayWindow() {
   const b = _resolveBounds('hudBounds', 'hudBoundsSig', { x: 40, y: 40, width: 320, height: 220 });
   overlayWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 180, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -537,6 +785,7 @@ function createOverlayWindow() {
 function createTriggerOverlay() {
   const b = _resolveBounds('triggerBounds', 'triggerBoundsSig', { x: 700, y: 200, width: 600, height: 200 });
   triggerWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Triggers overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -753,10 +1002,22 @@ function safeCheckForUpdates(verbose) {
 function wireAutoUpdater() {
   if (!autoUpdater) return;
   // Pin Mimic to its own update channel so this repo's other releases (bot
-  // v2.x.y, agent v2.x.y) never get mistaken for Mimic updates. The channel
-  // name matches the publish-config `channel` field in package.json, which
-  // makes electron-builder emit `mimic-beta.yml` instead of `latest.yml`.
-  // Releases without that file are invisible to the updater.
+  // v2.x.y, agent v2.x.y) never get mistaken for Mimic updates.
+  //
+  // CRITICAL — how electron-updater (v6) resolves a CUSTOM channel:
+  // it scans the GitHub releases atom feed and, for a custom channel name
+  // (anything other than "alpha"/"beta"), only accepts a release whose tag
+  // satisfies `semver.prerelease(tag)[0] === channel`. That means the
+  // release VERSION must carry the channel as its prerelease identifier —
+  // i.e. `0.1.0-mimic-beta.N` — and the TAG must be plain semver (`v<ver>`)
+  // so `semver.prerelease()` can parse it. A `mimic-v…` tag prefix is NOT
+  // valid semver, so it parses to null and NOTHING matches → the updater
+  // throws "No published versions on GitHub". (That was the beta.16 bug.)
+  //
+  // So the contract is, all in lockstep:
+  //   • package.json version  → `0.1.0-mimic-beta.N`  (prerelease = mimic-beta)
+  //   • git tag               → `v0.1.0-mimic-beta.N` (plain semver)
+  //   • publish channel below → `mimic-beta`          (emits mimic-beta.yml)
   autoUpdater.channel = 'mimic-beta';
   autoUpdater.allowPrerelease = true;
   autoUpdater.autoDownload = true;
@@ -796,6 +1057,196 @@ function wireAutoUpdater() {
 }
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
+// Manual overlay drag — the renderer signals start/end when its ✥ handle
+// button gets mousedown'd. We track cursor via screen.getCursorScreenPoint
+// at 60fps and apply setBounds; this bypasses Chromium's broken
+// app-region drag hit-test on transparent (WS_EX_LAYERED) windows.
+ipcMain.handle('overlay-drag-start', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    _startWindowDrag(win);
+  } catch {}
+  return true;
+});
+ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
+
+// EQ install discovery — surfaced to the multi-folder picker UI.
+ipcMain.handle('find-eq-installs', () => {
+  const cfg = loadConfig();
+  // Probe every user-configured path PLUS the autodetection passes. The
+  // picker UI uses `scanned` to show "we looked in these paths".
+  const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
+  const merged = { scanned: [], found: [] };
+  const seen = new Set();
+  for (const h of [...hints, null]) {
+    const r = findEqInstalls(h);
+    for (const p of r.scanned) {
+      const k = p.toLowerCase();
+      if (!seen.has(k)) { seen.add(k); merged.scanned.push(p); }
+    }
+    for (const f of r.found) {
+      const k = f.path.toLowerCase();
+      if (!merged.found.some(x => x.path.toLowerCase() === k)) merged.found.push(f);
+    }
+  }
+  return merged;
+});
+
+// UI Studio — list characters available for capture across configured EQ
+// folders. Returns [{ character, eqDir, ini_count, has_eqclient }, ...].
+ipcMain.handle('ui-studio-list-characters', () => {
+  const cfg = loadConfig();
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  const dirs = userPaths.filter(p => _dirHasEqLogs(p));
+  if (dirs.length === 0) {
+    const auto = detectEqDir(null);
+    if (auto) dirs.push(auto);
+  }
+  const out = [];
+  for (const dir of dirs) {
+    try {
+      const entries = fs.readdirSync(dir);
+      const chars = new Set();
+      // Characters known from log files
+      for (const f of entries) {
+        const m = f.match(/^eqlog_([^_]+)_pq\.proj\.txt$/i);
+        if (m) chars.add(m[1]);
+      }
+      // Characters known from any per-char ini file (so we surface a char
+      // even when there's no current log file but their UI settings exist).
+      for (const f of entries) {
+        const m = f.match(/^(?:UI_|Sock_|Socials_)?([A-Za-z]+)_pq\.proj\.ini$/i);
+        if (m) chars.add(m[1]);
+      }
+      const hasEqClient = entries.some(f => /^eqclient\.ini$/i.test(f));
+      for (const c of chars) {
+        const iniCount = _uiStudioFilesFor(c)
+          .filter(name => fs.existsSync(path.join(dir, name)))
+          .length;
+        out.push({ character: c, eqDir: dir, ini_count: iniCount, has_eqclient: hasEqClient });
+      }
+    } catch {}
+  }
+  return out;
+});
+
+// Capture: read every ini for the character, upload encrypted to the bot.
+ipcMain.handle('ui-studio-capture', async (_e, params) => {
+  const character = String(params?.character || '').trim();
+  const eqDir     = String(params?.eqDir || '').trim();
+  const label     = params?.label ? String(params.label).slice(0, 80) : null;
+  if (!character || !eqDir) return { ok: false, error: 'character + eqDir required' };
+  const cfg = loadConfig();
+  if (!cfg.token) return { ok: false, error: 'no token configured — set it in Settings' };
+
+  const files = _readUiBundle(eqDir, character);
+  const fileCount = Object.keys(files).length;
+  if (fileCount === 0) return { ok: false, error: 'no ini files found for this character' };
+  // Source resolution — we use the primary display as a best-guess. The
+  // user can override at restore time if their tuning resolution differs.
+  let srcW = null, srcH = null;
+  try {
+    const d = screen.getPrimaryDisplay();
+    srcW = d.workAreaSize.width; srcH = d.workAreaSize.height;
+  } catch {}
+
+  try {
+    const result = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.token}` },
+      body: { character, label, server_short: 'pq.proj', source_width: srcW, source_height: srcH, files, agent_version: app.getVersion() },
+    });
+    return { ok: true, id: result?.id, file_count: fileCount };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// List snapshots for a character.
+ipcMain.handle('ui-studio-list-snapshots', async (_e, character) => {
+  const c = String(character || '').trim();
+  const cfg = loadConfig();
+  if (!c) return { ok: false, error: 'character required' };
+  if (!cfg.token) return { ok: false, error: 'no token configured' };
+  try {
+    const r = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout?character=${encodeURIComponent(c)}`, {
+      headers: { 'Authorization': `Bearer ${cfg.token}` },
+    });
+    return { ok: true, snapshots: r?.snapshots || [] };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Restore: download a snapshot, refuse while EQ is running, backup +
+// rewrite each file. Optionally clamp positions to the current display.
+ipcMain.handle('ui-studio-restore', async (_e, params) => {
+  const character = String(params?.character || '').trim();
+  const snapId    = String(params?.id || '').trim();
+  const eqDir     = String(params?.eqDir || '').trim();
+  const clamp     = !!params?.clamp;
+  if (!character || !snapId || !eqDir) return { ok: false, error: 'character + id + eqDir required' };
+  const cfg = loadConfig();
+  if (!cfg.token) return { ok: false, error: 'no token configured' };
+
+  // Safety guard: never write while EQ is running. Refusal is permanent
+  // for this call — the user must close EQ and click Restore again.
+  if (await _isEqRunning()) {
+    return { ok: false, error: 'EQ is running. Close all EverQuest instances before restoring.' };
+  }
+
+  let snap;
+  try {
+    snap = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(snapId)}?character=${encodeURIComponent(character)}`, {
+      headers: { 'Authorization': `Bearer ${cfg.token}` },
+    });
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+  if (!snap || !snap.files) return { ok: false, error: 'snapshot empty' };
+
+  let targetW = null, targetH = null;
+  try { const d = screen.getPrimaryDisplay(); targetW = d.workAreaSize.width; targetH = d.workAreaSize.height; } catch {}
+  const written = [];
+  const errors  = [];
+  for (const [name, contents] of Object.entries(snap.files)) {
+    try {
+      const safeName = path.basename(name); // never let a path escape eqDir
+      const targetPath = path.join(eqDir, safeName);
+      const body = clamp ? _clampUiIni(contents, targetW, targetH) : contents;
+      const backupPath = _backupAndWriteFile(targetPath, body);
+      written.push({ name: safeName, backup: path.basename(backupPath) });
+    } catch (err) {
+      errors.push({ name, error: err && err.message ? err.message : String(err) });
+    }
+  }
+  return {
+    ok: errors.length === 0,
+    written, errors,
+    note: clamp
+      ? `Wrote ${written.length} file(s). Positions clamped to ${targetW}×${targetH}.`
+      : `Wrote ${written.length} file(s). Resolution unchanged.`,
+  };
+});
+
+// Browse-for-folder. Used by both the Settings page "+ Add folder…" button
+// and the loading.html first-run EQ-folder card.
+ipcMain.handle('pick-eq-dir', async (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showOpenDialog(win || null, {
+      title: 'Select your EverQuest folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) return null;
+    return result.filePaths[0];
+  } catch (err) {
+    return null;
+  }
+});
+
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.handle('save-config', (_e, cfg) => {
   saveConfig(Object.assign(loadConfig(), cfg));

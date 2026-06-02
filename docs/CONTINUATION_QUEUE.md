@@ -200,15 +200,12 @@ Parity shipped in the beta:
   stupid-simple installer criteria (EQ detect / Defender exclusion / logging
   auto-enable) folded into the Electron first-run.
 
-### Auto-MIC detection (Phase 2 of ARI guild-messaging — design, not built)
-User ask 2026-05-31: "when you form the raid or invite someone to the raid
-after they send you a MIC message, you are the autoraidinvite MIC officer.
-If someone sends something else via tell and immediately gets a raid invite,
-ask that officer if that thing sent was the password and update the ARI
-accordingly."
+### Auto-handoff detection (Phase 2 of ARI — design, not built)
+Goal: when an officer invites a member to the raid shortly after a tell,
+infer they're the active ARI officer and refresh `ari_state` accordingly.
 
 Mechanism: agent correlates `tell received` + `invite sent within 60s` → emits
-a `mic_correlation` event. Bot acts on it.
+a correlation event. Bot acts on it.
 
 **Agent side (next PR):**
 - New in-memory `_recentInboundTells` ring buffer (last 60s, last 20 entries).
@@ -220,31 +217,27 @@ a `mic_correlation` event. Bot acts on it.
   `You invite <Name> to your raid.` + the older `You invite <Name> to your
   party.` form for testing.
 - On invite-sent: scan recent tells for one from the same target in the last
-  60s. If found, emit fun_event-like `mic_correlation`:
-  `{ type: 'mic_correlation', officer_character, target, tell_text,
-    invited_at, password_match: tell_text === known_ari_password }`.
+  60s. If found, emit fun_event-like correlation event:
+  `{ type: 'ari_handoff', officer_character, target, tell_text, invited_at,
+    match: tell_text === known_ari_credential }`.
 
 **Bot side (next PR):**
-- Receive `mic_correlation` on `/api/agent/fun_event` (re-use existing) OR a
-  dedicated `/api/agent/mic_correlation`. Latter is cleaner.
-- **If `password_match=true`**: refresh `ari_state.set_by_*` to this officer
-  (they're now the active MIC) and bump `set_at`. No DM needed — silent
-  confirmation that they took over.
-- **If `password_match=false`** (or no current ARI): DM the officer with
-  two buttons:
+- Receive `ari_handoff` on `/api/agent/fun_event` (re-use existing) OR a
+  dedicated endpoint. Latter is cleaner.
+- **If `match=true`**: refresh `ari_state.set_by_*` to this officer (they're
+  now the active ARI) and bump `set_at`. No DM needed — silent confirmation.
+- **If `match=false`** (or no current ARI): DM the officer with two buttons:
     > 💬 We saw <target> tell you "<tell_text>" and you invited them to the
     > raid within X seconds.
-    > Was that the new MIC password? [✅ Yes, update] [🚫 No, ignore]
-- On [Yes]: setAri({ character: officer's character, password: tell_text,
+    > Update the ARI to this? [✅ Yes] [🚫 No, ignore]
+- On [Yes]: setAri({ character: officer's character, credential: tell_text,
   setBy: officer.id, setByName, setAt: now }).
 - On [No]: nothing happens; future events won't re-prompt for that same
   text (cache the rejection so we don't ask twice).
 
-**Foundation already shipped (Phase 1, bot v2.6.1 / web v0.5.6):**
+**Foundation already shipped (Phase 1, bot v2.6.1):**
 - `ari_state` Supabase table mirrored on every `setAri`/`clearAri`.
-- Front-page banner at `/` shows current MIC + password + Discord DM link
-  to the named character's owner + collapsible list of backup officers.
-- Empty-state banner when no ARI is set.
+  service_role-only — bot reads/writes; nothing external surfaces it.
 
 ### eqemu_spells sync is empty (queue blocker for spell-name verification)
 The `eqemu_spells` table exists with the right schema (20 cols) but **0 rows**

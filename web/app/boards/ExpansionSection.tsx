@@ -46,13 +46,19 @@ function fmtRemaining(ms: number): string {
 
 export default function ExpansionSection({ expansion, label, accentClass, zones }: Props) {
   // Persist collapse state per expansion across page loads.
+  // Default COLLAPSED: an expansion with no active cooldowns shows just its
+  // header; one with cooldowns shows the compact cooldown strip (below). The
+  // full per-zone grid (incl. "Available now" bosses) is one click away. A
+  // stored preference (the user manually expanded/collapsed) always wins.
   const storageKey = `wp.boards.collapsed.${expansion}`;
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [hydrated, setHydrated]   = useState(false);
   useEffect(() => {
     try {
       const v = window.localStorage.getItem(storageKey);
-      if (v === '1') setCollapsed(true);
+      if      (v === '0') setCollapsed(false);
+      else if (v === '1') setCollapsed(true);
+      // no stored pref → keep the collapsed default
     } catch {}
     setHydrated(true);
   }, [storageKey]);
@@ -126,8 +132,10 @@ export default function ExpansionSection({ expansion, label, accentClass, zones 
         </ul>
       )}
 
-      {/* Expanded grid — the full per-zone breakdown. */}
-      {(!hydrated || !collapsed) && (
+      {/* Expanded grid — the full per-zone breakdown. Gated on `hydrated` so
+          the pre-hydration render is header-only (matching the collapsed
+          default) instead of flashing the full grid then collapsing. */}
+      {hydrated && !collapsed && (
         <div className="space-y-3 mt-3">
           {zones.map(({ zone, bosses }) => (
             <div key={zone}>

@@ -34,6 +34,7 @@ type Character = {
   rank: string | null;
   active: boolean;
   discord_id: string | null;
+  link_ignored: boolean;
 };
 
 type Member = {
@@ -121,19 +122,37 @@ async function setLink(formData: FormData) {
   revalidatePath('/admin/links');
 }
 
+// Dismiss an erroneous character from the matching workflow (or restore it).
+// `ignored=1` parks it in the Ignored view and removes it from review +
+// auto-matching; `ignored=0` brings it back. Leaves discord_id untouched.
+async function setLinkIgnored(formData: FormData) {
+  'use server';
+  const ok = await actionAssertOfficer();
+  if (!ok) redirect('/?error=admin_required');
+  const name = String(formData.get('name') || '').trim();
+  const ignored = String(formData.get('ignored') || '') === '1';
+  if (!name) return;
+  await supabaseAdmin()
+    .from('characters')
+    .update({ link_ignored: ignored })
+    .eq('guild_id', 'wolfpack')
+    .eq('name', name);
+  revalidatePath('/admin/links');
+}
+
 async function applyAllAutoMatches() {
   'use server';
   const ok = await actionAssertOfficer();
   if (!ok) redirect('/?error=admin_required');
   const admin = supabaseAdmin();
   const [{ data: chars }, { data: members }] = await Promise.all([
-    admin.from('characters').select('guild_id, name, main_name, class, rank, active, discord_id').eq('guild_id', 'wolfpack'),
+    admin.from('characters').select('guild_id, name, main_name, class, rank, active, discord_id, link_ignored').eq('guild_id', 'wolfpack'),
     admin.from('wolfpack_members').select('discord_id, nickname, global_name').eq('is_member', true),
   ]);
   const ix = buildTokenIndex((members ?? []) as Member[]);
   const updates: { name: string; discord_id: string }[] = [];
   for (const c of (chars ?? []) as Character[]) {
-    if (c.discord_id) continue;
+    if (c.discord_id || c.link_ignored) continue;
     const s = suggestFor(c, ix);
     if (s.discord_id && (s.source === 'self' || s.source === 'main')) {
       updates.push({ name: c.name, discord_id: s.discord_id });
@@ -156,12 +175,13 @@ export default async function AdminLinksPage({
   const { show } = await searchParams;
   const showInactive = show === 'inactive' || show === 'all';
   const showLinked   = show === 'linked'   || show === 'all';
+  const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
   const [{ data: chars }, { data: members }] = await Promise.all([
     admin
       .from('characters')
-      .select('guild_id, name, main_name, class, rank, active, discord_id')
+      .select('guild_id, name, main_name, class, rank, active, discord_id, link_ignored')
       .eq('guild_id', 'wolfpack')
       .order('active', { ascending: false })
       .order('name'),
@@ -177,20 +197,25 @@ export default async function AdminLinksPage({
   const ix = buildTokenIndex(memberList);
   const memberById = new Map(memberList.map(m => [m.discord_id, m] as const));
 
-  const unlinkedActive   = allChars.filter(c =>  c.active && !c.discord_id);
-  const unlinkedInactive = allChars.filter(c => !c.active && !c.discord_id);
-  const linked           = allChars.filter(c =>  c.discord_id);
+  // Dismissed (link_ignored) characters are parked in their own view and
+  // excluded from every other list + the auto-match logic.
+  const ignoredChars     = allChars.filter(c =>  c.link_ignored);
+  const unlinkedActive   = allChars.filter(c =>  c.active && !c.discord_id && !c.link_ignored);
+  const unlinkedInactive = allChars.filter(c => !c.active && !c.discord_id && !c.link_ignored);
+  const linked           = allChars.filter(c =>  c.discord_id && !c.link_ignored);
 
   const rowsFor = (list: Character[]) =>
     list.map(c => ({ char: c, suggestion: suggestFor(c, ix) }));
   const activeRows   = rowsFor(unlinkedActive);
   const inactiveRows = rowsFor(unlinkedInactive);
+  const ignoredRows  = rowsFor(ignoredChars);
 
   const counts = {
     total: allChars.length,
     unlinkedActive: unlinkedActive.length,
     unlinkedInactive: unlinkedInactive.length,
     linked: linked.length,
+    ignored: ignoredChars.length,
     autoActive: activeRows.filter(r => r.suggestion.discord_id).length,
     autoInactive: inactiveRows.filter(r => r.suggestion.discord_id).length,
     manualActive: activeRows.filter(r => !r.suggestion.discord_id).length,
@@ -221,10 +246,11 @@ export default async function AdminLinksPage({
 
       {/* View toggles */}
       <nav className="text-xs flex items-center gap-2 flex-wrap">
-        <Toggle href="/admin/links" active={!showInactive && !showLinked} label="Active unlinked only" />
-        <Toggle href="/admin/links?show=inactive" active={showInactive && !showLinked} label={`+ inactive (${counts.unlinkedInactive})`} />
-        <Toggle href="/admin/links?show=linked"   active={!showInactive && showLinked}  label={`+ already linked (${counts.linked})`} />
-        <Toggle href="/admin/links?show=all"      active={showInactive && showLinked}   label="Show all" />
+        <Toggle href="/admin/links" active={!showInactive && !showLinked && !showIgnored} label="Active unlinked only" />
+        <Toggle href="/admin/links?show=inactive" active={showInactive && !showLinked && !showIgnored} label={`+ inactive (${counts.unlinkedInactive})`} />
+        <Toggle href="/admin/links?show=linked"   active={!showInactive && showLinked && !showIgnored}  label={`+ already linked (${counts.linked})`} />
+        <Toggle href="/admin/links?show=ignored"  active={!showInactive && !showLinked && showIgnored}  label={`dismissed (${counts.ignored})`} />
+        <Toggle href="/admin/links?show=all"      active={showInactive && showLinked && showIgnored}   label="Show all" />
       </nav>
 
       {/* Bulk apply */}
@@ -277,6 +303,22 @@ export default async function AdminLinksPage({
           alreadyLinked
         />
       )}
+
+      {showIgnored && (
+        ignoredRows.length > 0 ? (
+          <LinkTable
+            title={`Dismissed (${ignoredRows.length}) — erroneous matches, hidden from review + auto-matching`}
+            rows={ignoredRows}
+            memberById={memberById}
+            memberList={memberList}
+            ignored
+          />
+        ) : (
+          <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
+            Nothing dismissed. Use “Dismiss” on a row to park an erroneous character here.
+          </section>
+        )
+      )}
     </div>
   );
 }
@@ -305,13 +347,14 @@ function Toggle({ href, active, label }: { href: string; active: boolean; label:
 }
 
 function LinkTable({
-  title, rows, memberById, memberList, alreadyLinked = false,
+  title, rows, memberById, memberList, alreadyLinked = false, ignored = false,
 }: {
   title: string;
   rows: { char: Character; suggestion: Suggestion }[];
   memberById: Map<string, Member>;
   memberList: Member[];
   alreadyLinked?: boolean;
+  ignored?: boolean;
 }) {
   return (
     <section className="bg-panel border border-border rounded-lg">
@@ -322,7 +365,7 @@ function LinkTable({
             <th className="text-left px-2 sm:px-3 py-2 font-normal">Character</th>
             <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Main</th>
             <th className="text-left px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">Class</th>
-            <th className="text-left px-2 sm:px-3 py-2 font-normal">{alreadyLinked ? 'Linked to' : 'Suggested'}</th>
+            <th className="text-left px-2 sm:px-3 py-2 font-normal">{ignored ? 'Was' : alreadyLinked ? 'Linked to' : 'Suggested'}</th>
             <th className="text-left px-2 sm:px-3 py-2 font-normal">Action</th>
           </tr>
         </thead>
@@ -360,22 +403,45 @@ function LinkTable({
                   )}
                 </td>
                 <td className="px-2 sm:px-3 py-2">
-                  <form action={setLink} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
-                    <input type="hidden" name="name" value={char.name} />
-                    <select
-                      name="discord_id"
-                      defaultValue={char.discord_id ?? suggestion.discord_id ?? ''}
-                      className="bg-bg border border-border rounded px-2 py-1 text-xs sm:min-w-[200px]"
-                    >
-                      <option value="">— unlinked —</option>
-                      {memberList.map(m => (
-                        <option key={m.discord_id} value={m.discord_id}>{memberLabel(m)}</option>
-                      ))}
-                    </select>
-                    <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">
-                      Save
-                    </button>
-                  </form>
+                  {ignored ? (
+                    <form action={setLinkIgnored} className="flex items-center gap-1.5">
+                      <input type="hidden" name="name" value={char.name} />
+                      <input type="hidden" name="ignored" value="0" />
+                      <button type="submit" className="px-2 py-1 rounded border border-blue text-blue text-xs hover:bg-[#1f6feb22]">
+                        Restore
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
+                      <form action={setLink} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
+                        <input type="hidden" name="name" value={char.name} />
+                        <select
+                          name="discord_id"
+                          defaultValue={char.discord_id ?? suggestion.discord_id ?? ''}
+                          className="bg-bg border border-border rounded px-2 py-1 text-xs sm:min-w-[200px]"
+                        >
+                          <option value="">— unlinked —</option>
+                          {memberList.map(m => (
+                            <option key={m.discord_id} value={m.discord_id}>{memberLabel(m)}</option>
+                          ))}
+                        </select>
+                        <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">
+                          Save
+                        </button>
+                      </form>
+                      <form action={setLinkIgnored}>
+                        <input type="hidden" name="name" value={char.name} />
+                        <input type="hidden" name="ignored" value="1" />
+                        <button
+                          type="submit"
+                          title="Erroneous — hide from review + auto-matching"
+                          className="px-2 py-1 rounded border border-border text-dim text-xs hover:border-orange hover:text-orange"
+                        >
+                          Dismiss
+                        </button>
+                      </form>
+                    </div>
+                  )}
                 </td>
               </tr>
             );
