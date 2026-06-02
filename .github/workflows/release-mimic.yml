@@ -35,7 +35,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Need previous commit so we can diff the package.json version and
           # decide whether this is a real bump vs an unrelated change.
@@ -82,7 +82,7 @@ jobs:
           echo "name=$tag"  >> "$GITHUB_OUTPUT"
           echo "build=true" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: steps.tag.outputs.build == 'true'
         with:
           node-version: 20
