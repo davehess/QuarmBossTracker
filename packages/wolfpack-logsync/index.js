@@ -907,9 +907,11 @@ function recordWhoEvent(ev) {
   confirmPlayer(ev.name);
 }
 
-// Capture a /guildstatus result — guild + rank, even for /anon players. Merges
-// into whoData (preserving class/level if a prior /who saw them), so it rides
-// the normal who_data upload to the bot → who_observations.
+// Capture a /guildstatus result — guild + EQ IN-GAME rank, even for /anon
+// players. guildRank is the EverQuest engine's guild permission tier
+// (Member/Officer/Leader) — NOT a Wolf Pack operational rank. Merges into
+// whoData (preserving class/level from a prior /who), riding the normal
+// who_data upload to the bot → who_observations.guild_rank.
 function recordGuildStatus(name, guild, rank) {
   if (!name) return;
   const k   = name.toLowerCase();
