@@ -3465,6 +3465,228 @@ async function _handleAgentThreatSnapshot(req, res) {
 
 // POST /api/agent/place-bid
 // Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
+// ── UI Studio — encrypted snapshots of a player's EQ ini files ─────────────
+// Mimic POSTs a JSON bundle of UI / chat / hotkey / bandolier / socials
+// files. Bot encrypts with WISHLIST_BID_KEY before storing — even DB admins
+// can't read the raw .ini contents at rest. GET endpoints decrypt on the
+// way out for the same authenticated owner.
+//
+// Ownership: derived from the named character's discord_id. The character
+// MUST be linked to a Discord user (characters.discord_id is non-null);
+// otherwise the upload is rejected. Lists / downloads are scoped to that
+// discord_id so one user can't read another's snapshots.
+
+async function _handleAgentUiLayoutUpload(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => {
+      body += chunk;
+      // UI bundles can include hundreds of small ini files; 8MB is a comfortable
+      // ceiling. (Hitya's full set was ~600KB pre-encryption.)
+      if (body.length > 8 * 1024 * 1024) { req.destroy(); resolve(); }
+    });
+    req.on('end',   resolve);
+    req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+  const character     = String(payload?.character || '').trim();
+  const serverShort   = (payload?.server_short || null) && String(payload.server_short).trim();
+  const label         = (payload?.label || null) && String(payload.label).trim().slice(0, 80);
+  const sourceWidth   = Number.isFinite(payload?.source_width)  ? payload.source_width  : null;
+  const sourceHeight  = Number.isFinite(payload?.source_height) ? payload.source_height : null;
+  const files         = (payload?.files && typeof payload.files === 'object') ? payload.files : null;
+  const agentVersion  = (payload?.agent_version || null) && String(payload.agent_version).slice(0, 32);
+  if (!character || !files) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character + files required' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'supabase disabled' }));
+  }
+
+  // Resolve owner via character → discord_id. Family root counts too: an
+  // alt's UI snapshot belongs to the main's Discord owner.
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscord = charRow?.discord_id || null;
+  if (!ownerDiscord && charRow?.main_name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
+  }
+  if (!ownerDiscord) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character not linked to a discord account — ask an officer to link it before uploading layouts' }));
+  }
+
+  const { encryptBlob, isEncryptionEnabled } = require('./utils/bidCrypto');
+  if (!isEncryptionEnabled()) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'WISHLIST_BID_KEY not configured on the bot — UI Studio cannot encrypt' }));
+  }
+  const plaintext = JSON.stringify({ files });
+  const enc       = encryptBlob(plaintext);
+  if (!enc) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'encryption failed' }));
+  }
+  const row = {
+    owner_discord_id:    ownerDiscord,
+    character_name:      character,
+    server_short:        serverShort,
+    label,
+    source_width:        sourceWidth,
+    source_height:       sourceHeight,
+    payload_enc:         enc,
+    payload_bytes_plain: Buffer.byteLength(plaintext, 'utf8'),
+    file_count:          Object.keys(files).length,
+    agent_version:       agentVersion,
+  };
+  const written = await supabase.insert('ui_snapshots', [row]).catch(err => {
+    console.error('[ui_layout] insert failed:', err?.message || err);
+    return null;
+  });
+  if (!Array.isArray(written) || written.length === 0) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'insert failed' }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, id: written[0].id }));
+}
+
+async function _handleAgentUiLayoutList(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) { res.writeHead(503).end(); return; }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) { res.writeHead(401).end(); return; }
+
+  // ?character=<name>  required — we always scope listing to one character
+  // since that drives the picker UI. The character determines the owner.
+  const url = new URL(req.url, 'http://x');
+  const character = (url.searchParams.get('character') || '').trim();
+  if (!character) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character query required' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503).end(); return; }
+
+  // Resolve owner (same logic as upload).
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscord = charRow?.discord_id || null;
+  if (!ownerDiscord && charRow?.main_name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
+  }
+  if (!ownerDiscord) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ snapshots: [] }));
+  }
+  const rows = await supabase.select(
+    'ui_snapshots',
+    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,created_at&order=created_at.desc&limit=50`,
+  ).catch(() => []);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ snapshots: Array.isArray(rows) ? rows : [] }));
+}
+
+async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) { res.writeHead(503).end(); return; }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) { res.writeHead(401).end(); return; }
+
+  // The download URL is /api/agent/ui_layout/<id>?character=<name>. We
+  // re-verify ownership via the character — even with the snapshot id the
+  // request must come from someone who can prove they own the matching char.
+  const url = new URL(req.url, 'http://x');
+  const character = (url.searchParams.get('character') || '').trim();
+  if (!character || !/^[0-9a-f-]{36}$/i.test(snapshotId)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'character query + valid id required' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503).end(); return; }
+
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscord = charRow?.discord_id || null;
+  if (!ownerDiscord && charRow?.main_name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
+  }
+  if (!ownerDiscord) { res.writeHead(403).end(); return; }
+
+  const rows = await supabase.select(
+    'ui_snapshots',
+    `id=eq.${snapshotId}&owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_enc,file_count&limit=1`,
+  ).catch(() => []);
+  const snap = Array.isArray(rows) ? rows[0] : null;
+  if (!snap) { res.writeHead(404).end(); return; }
+
+  const { decryptBlob } = require('./utils/bidCrypto');
+  const plaintext = decryptBlob(snap.payload_enc);
+  if (!plaintext) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'decryption failed' }));
+  }
+  let parsed;
+  try { parsed = JSON.parse(plaintext); }
+  catch {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'snapshot payload malformed' }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({
+    id: snap.id,
+    character_name: snap.character_name,
+    server_short: snap.server_short,
+    label: snap.label,
+    source_width: snap.source_width,
+    source_height: snap.source_height,
+    file_count: snap.file_count,
+    files: parsed.files || {},
+  }));
+}
+
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
 async function _handleAgentPlaceBid(req, res) {
@@ -5214,6 +5436,36 @@ http.createServer(async (req, res) => {
       console.error('[place-bid] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // UI Studio — encrypted EQ ini-file snapshots for new-machine restore.
+  if (req.method === 'POST' && req.url === '/api/agent/ui_layout') {
+    try { return await _handleAgentUiLayoutUpload(req, res); }
+    catch (err) {
+      console.error('[ui_layout upload] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/ui_layout?')) {
+    try { return await _handleAgentUiLayoutList(req, res); }
+    catch (err) {
+      console.error('[ui_layout list] handler error:', err);
+      res.writeHead(500).end();
+      return;
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/ui_layout/')) {
+    // /api/agent/ui_layout/<uuid>?character=<name>
+    const m = req.url.match(/^\/api\/agent\/ui_layout\/([0-9a-f-]{36})(\?|$)/i);
+    if (m) {
+      try { return await _handleAgentUiLayoutDownload(req, res, m[1]); }
+      catch (err) {
+        console.error('[ui_layout download] handler error:', err);
+        res.writeHead(500).end();
+        return;
+      }
     }
   }
 

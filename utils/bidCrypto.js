@@ -122,4 +122,56 @@ function isEncryptionEnabled() {
   return !!_getKey();
 }
 
-module.exports = { encryptBid, decryptBid, isEncryptionEnabled };
+/**
+ * Encrypt an arbitrary string (any length) → opaque base64 storage string.
+ * Used by UI Studio for the encrypted .ini bundle. Same key as encryptBid
+ * to avoid a second env var; UI payloads can be large (~hundreds of KB),
+ * so we use base64 for the ciphertext segment to keep the storage column
+ * short and printable.
+ *
+ * Format: "<iv_b64>:<tag_b64>:<ciphertext_b64>"
+ *
+ * @param {string|null} plaintext
+ * @returns {string|null}
+ */
+function encryptBlob(plaintext) {
+  if (plaintext === null || plaintext === undefined) return null;
+  const key = _getKey();
+  if (!key) {
+    console.warn('[bidCrypto] WISHLIST_BID_KEY not set — cannot encrypt blob.');
+    return null;
+  }
+  const iv     = crypto.randomBytes(IV_BYTES);
+  const cipher = crypto.createCipheriv(ALGO, key, iv);
+  const ct     = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
+  const tag    = cipher.getAuthTag();
+  return `${iv.toString('base64')}:${tag.toString('base64')}:${ct.toString('base64')}`;
+}
+
+/**
+ * Decrypt a blob produced by encryptBlob. Returns null on any failure
+ * (missing key, tampered ciphertext, malformed input). Never throws.
+ *
+ * @param {string|null} enc
+ * @returns {string|null}
+ */
+function decryptBlob(enc) {
+  if (!enc) return null;
+  const key = _getKey();
+  if (!key) return null;
+  try {
+    const parts = enc.split(':');
+    if (parts.length !== 3) return null;
+    const [ivB64, tagB64, ctB64] = parts;
+    const iv       = Buffer.from(ivB64,  'base64');
+    const tag      = Buffer.from(tagB64, 'base64');
+    const ct       = Buffer.from(ctB64,  'base64');
+    const decipher = crypto.createDecipheriv(ALGO, key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { encryptBid, decryptBid, encryptBlob, decryptBlob, isEncryptionEnabled };
