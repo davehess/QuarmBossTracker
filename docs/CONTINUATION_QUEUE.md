@@ -127,21 +127,71 @@
 
 ## 🔜 Priority queue (next concrete steps)
 
-### 🩹 Dashboard refresh flicker (reported 2026-06-02, video)
-The agent dashboard polls `/api/state` every ~2s and rebuilds entire panels via
-`innerHTML = ...`, which causes a visible flash/jump on every poll (scroll
-position, hover state, and `<details>` open state all reset). The Spell Casts
-panel got a targeted fix (v2.5.28 — snapshot+restore open state), but the whole
-dashboard needs the same treatment. Options, cheapest first:
-1. **Throttle the rewrite** — only re-render a panel when its serialized data
-   actually changed (hash the slice of `/api/state` it consumes; skip if equal).
-   Kills 90% of the flicker since most polls are no-ops between fights.
-2. **Preserve scroll + open state globally** — wrap every `innerHTML` assignment
-   in a save/restore of `scrollTop` + `details[open]` (generalize the v2.5.28
-   pattern into a helper).
-3. **Diff-and-patch** — only touch changed table rows. Most work; best result.
-Recommend #1 + #2 together for the next agent bump. Escape-hazard applies
-(`WEB_HTML` template) — run `npm run check:dashboard` after.
+### ✅ DONE — Dashboard refresh flicker (reported 2026-06-02; fixed v2.5.28/31/32)
+The 2s poll rewrote every panel via `innerHTML = h`, flashing the page and
+destroying app-injected cards (My Crits etc.) that their own loops re-added —
+so those popped in/out every 2s. Fixed with in-place DOM morphing:
+- v2.5.28 — Spell Casts open-state snapshot (first targeted fix).
+- v2.5.31 — `setSectionHTML`/`morphInto`/`_morphEl` morph the live DOM; only
+  changed text/attrs touched, node identity kept; injected `wp*` cards
+  reconciled around (never destroyed); `wp-*` state classes (wp-hidden)
+  preserved; `_bindOnce` makes event binding idempotent under morph.
+- v2.5.32 — Opt-in tab + uploader links morphed too; checkbox `checked`
+  synced as a property (selects deliberately left alone so the bandolier
+  dropdown keeps its pick). Whole dashboard is now flicker-free.
+
+### 🎖 Faction tracker (asked 2026-06-02) — design, not built
+Track each faction's standing from what the agent already sees in the log:
+combat faction hits + `/consider` con messages. Goal: surface a per-faction
+status board and flag mobs that are **not** KOS so the guild knows which
+factions are in good/bad standing and which need work.
+
+**Two log signals (both first-person, the uploader sees them — PRIVATE scope,
+aggregate to GUILD/ANON later):**
+
+1. **Faction adjustments on kill.** EQ writes a line per affected faction when
+   you kill a mob. Classic/Quarm phrasings (qualitative — confirm exact text
+   against a real Quarm log before locking the regex):
+   - `Your faction standing with <Faction> has gotten better.`
+   - `Your faction standing with <Faction> has gotten worse.`
+   - `Your faction standing with <Faction> could not possibly get any better.`
+   - `… could not possibly get any worse.`
+   The faction NAME comes straight from the line — no DB needed. Track per
+   faction: cumulative +/- adjustment count + last-changed timestamp + trend.
+
+2. **Con (`/consider`) messages.** Reveal the player's current standing with a
+   mob's faction. Classify the con color → standing tier:
+   - `scowls at you, ready to attack` / `glares at you threateningly` → **KOS**
+   - `glowers at you dubiously` → dubious
+   - `looks your way apprehensively` → apprehensive
+   - `regards you indifferently` → indifferent
+   - `judges you amiably` / `kindly considers you` → amiable
+   - `regards you as an ally` / `looks upon you as an ally` → ally
+   A non-KOS con on a mob = that mob's faction is NOT kill-on-sight for us.
+
+**Mob → faction mapping.** `eqemu_npc_types.npc_faction_id` IS already synced.
+To name the faction a con reflects, also sync `npc_faction` (faction_id +
+hit table) and `faction_list` (faction_id → name) from eqmac — currently NOT
+synced (`scripts/sync-from-eqmac.js` only pulls `npc_faction_id` on npc_types).
+The adjustment-line path needs no mapping (name is in the line); only the
+con-attribution path benefits.
+
+**Build outline:**
+- Agent: parse the adjustment + con lines (new `parseEvent` rules); accumulate
+  `stats.factions = { <name>: { up, down, lastConTier, lastSeen, mobs:Set } }`.
+  Upload via a small new endpoint (or fold into an existing relay).
+- Bot: `faction_status` Supabase table (per character or per guild); RPC for a
+  status board. Honor `exclude_from_stats`.
+- Web: a `/factions` page — per-faction standing, trend arrows, and a
+  "non-KOS mobs seen" list so officers can spot factions worth grinding or
+  protecting. Dashboard panel optional.
+- Sync: extend `sync-from-eqmac.js` with `faction_list` + `npc_faction`.
+
+**Open question for the owner:** is this PRIVATE (each player's own faction on
+their `/me`) or a GUILD-wide rollup ("the pack is KOS to Kromzek")? Factions
+are per-character in EQ, so a guild rollup is really "what most mains have."
+Default plan: collect per-character, display per-character on `/me`, add a
+guild summary later.
 
 ### ⭐ Customizable local dashboard (owner's big vision — design ready, build with care)
 **Asked 2026-06-01 (overnight + morning).** The local agent dashboard (served by the
