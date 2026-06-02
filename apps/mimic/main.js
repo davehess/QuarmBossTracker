@@ -562,12 +562,18 @@ async function launchAgent() {
   try {
     if (up && mainWindow && !mainWindow.isDestroyed()) {
       const cur = mainWindow.webContents.getURL() || '';
-      if (/^http:\/\/127\.0\.0\.1:\d+\//.test(cur) &&
-          cur.indexOf('127.0.0.1:' + agentPort + '/') === -1) {
+      // ALWAYS reload after a restart when the dashboard is already showing the
+      // agent — a restart means a new port OR new dashboard code (hot-swap).
+      // The previous version only reloaded on a port CHANGE, so a same-port
+      // hot-swap left the window running the OLD (possibly broken) dashboard
+      // JS → blank, and a manual reload-to-same-URL couldn't fix it either.
+      // Re-navigating to the live port forces fresh code + a reconnect.
+      // (First launch shows loading.html on file://, so this is skipped there.)
+      if (/^https?:\/\/127\.0\.0\.1:\d+\//.test(cur)) {
         mainWindow.loadURL('http://127.0.0.1:' + agentPort + '/');
       }
     }
-  } catch (e) { /* non-fatal — window will still self-heal if port is unchanged */ }
+  } catch (e) { /* non-fatal */ }
   pushStatus();
   return up;
 }
