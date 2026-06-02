@@ -335,6 +335,110 @@ function _startWindowDrag(win) {
     }, 16);  // ~60fps
   } catch {}
 }
+
+// ── UI Studio — capture & restore EQ ini files ──────────────────────────────
+// Bundles every relevant ini file for a character (plus the global
+// eqclient.ini) so a player switching to a new machine can re-import in one
+// click. The bot encrypts before storing; we send plaintext over HTTPS.
+const UI_STUDIO_GLOBAL = ['eqclient.ini'];
+function _uiStudioFilesFor(character) {
+  // Quarm log files are *_pq.proj.txt; the matching ini suffix is
+  // _pq.proj.ini for per-character files and bare for the globals.
+  const c = String(character).trim();
+  return [
+    `UI_${c}_pq.proj.ini`,
+    `${c}_pq.proj.ini`,
+    `Sock_${c}_pq.proj.ini`,
+    `Socials_${c}_pq.proj.ini`,
+  ];
+}
+function _readUiBundle(eqDir, character) {
+  const files = {};
+  if (!eqDir || !character) return files;
+  for (const name of [...UI_STUDIO_GLOBAL, ..._uiStudioFilesFor(character)]) {
+    try {
+      const fp = path.join(eqDir, name);
+      if (fs.existsSync(fp)) {
+        const stat = fs.statSync(fp);
+        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
+          files[name] = fs.readFileSync(fp, 'utf8');
+        }
+      }
+    } catch {}
+  }
+  return files;
+}
+async function _isEqRunning() {
+  // Windows: tasklist returns rows when match found; an "INFO:" line when
+  // no match. We just check whether the eqgame.exe substring is in the output.
+  if (process.platform !== 'win32') return false;  // dev / Linux harness
+  return new Promise((resolve) => {
+    try {
+      const { exec } = require('child_process');
+      exec('tasklist /FI "IMAGENAME eq eqgame.exe"', { timeout: 5000 }, (err, stdout) => {
+        if (err) { resolve(false); return; }
+        resolve(/eqgame\.exe/i.test(stdout || ''));
+      });
+    } catch { resolve(false); }
+  });
+}
+function _backupAndWriteFile(targetPath, contents) {
+  // Atomic-ish: backup existing first (so a partial write can be reverted),
+  // then write to <target>.tmp + rename. Renaming a same-filesystem path is
+  // atomic on Windows when the destination doesn't exist + via MoveFileEx
+  // otherwise (Node handles it).
+  const ts = Date.now();
+  if (fs.existsSync(targetPath)) {
+    fs.copyFileSync(targetPath, targetPath + `.bak-${ts}`);
+  }
+  const tmp = targetPath + `.tmp-${ts}`;
+  fs.writeFileSync(tmp, contents, 'utf8');
+  fs.renameSync(tmp, targetPath);
+  return targetPath + `.bak-${ts}`;
+}
+function _clampUiIni(contents, screenW, screenH) {
+  // Walk every line; when we see XPos/YPos = N, clamp to (0, screenW - minW)
+  // / (0, screenH - minH). minW/minH unknown without parsing XSize/YSize, so
+  // we use a conservative 80px so a window's caption bar remains grabbable.
+  if (!contents || !screenW || !screenH) return contents;
+  return contents.replace(/^([ \t]*)(XPos|YPos)=(-?\d+)/gmi, (_m, indent, key, val) => {
+    const n = parseInt(val, 10);
+    const limit = key.toLowerCase() === 'xpos' ? Math.max(0, screenW - 80)
+                                               : Math.max(0, screenH - 80);
+    const clamped = Math.max(0, Math.min(n, limit));
+    return `${indent}${key}=${clamped}`;
+  });
+}
+async function _httpsJson(url, opts = {}) {
+  const u = new URL(url);
+  const lib = u.protocol === 'http:' ? require('http') : require('https');
+  return new Promise((resolve, reject) => {
+    const req = lib.request(url, {
+      method: opts.method || 'GET',
+      headers: opts.headers || {},
+      timeout: 30000,
+    }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(body)); } catch { resolve(body); }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}: ${body.slice(0, 400)}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    if (opts.body) req.write(typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body));
+    req.end();
+  });
+}
+function _botBaseUrl(cfg) {
+  // cfg.botUrl points at /api/agent/encounter — strip to the origin.
+  try { return new URL(cfg.botUrl).origin; }
+  catch { return 'https://wolfpackparse.up.railway.app'; }
+}
 function _stopWindowDrag() {
   if (_dragSession) {
     clearInterval(_dragSession.interval);
@@ -986,6 +1090,145 @@ ipcMain.handle('find-eq-installs', () => {
     }
   }
   return merged;
+});
+
+// UI Studio — list characters available for capture across configured EQ
+// folders. Returns [{ character, eqDir, ini_count, has_eqclient }, ...].
+ipcMain.handle('ui-studio-list-characters', () => {
+  const cfg = loadConfig();
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  const dirs = userPaths.filter(p => _dirHasEqLogs(p));
+  if (dirs.length === 0) {
+    const auto = detectEqDir(null);
+    if (auto) dirs.push(auto);
+  }
+  const out = [];
+  for (const dir of dirs) {
+    try {
+      const entries = fs.readdirSync(dir);
+      const chars = new Set();
+      // Characters known from log files
+      for (const f of entries) {
+        const m = f.match(/^eqlog_([^_]+)_pq\.proj\.txt$/i);
+        if (m) chars.add(m[1]);
+      }
+      // Characters known from any per-char ini file (so we surface a char
+      // even when there's no current log file but their UI settings exist).
+      for (const f of entries) {
+        const m = f.match(/^(?:UI_|Sock_|Socials_)?([A-Za-z]+)_pq\.proj\.ini$/i);
+        if (m) chars.add(m[1]);
+      }
+      const hasEqClient = entries.some(f => /^eqclient\.ini$/i.test(f));
+      for (const c of chars) {
+        const iniCount = _uiStudioFilesFor(c)
+          .filter(name => fs.existsSync(path.join(dir, name)))
+          .length;
+        out.push({ character: c, eqDir: dir, ini_count: iniCount, has_eqclient: hasEqClient });
+      }
+    } catch {}
+  }
+  return out;
+});
+
+// Capture: read every ini for the character, upload encrypted to the bot.
+ipcMain.handle('ui-studio-capture', async (_e, params) => {
+  const character = String(params?.character || '').trim();
+  const eqDir     = String(params?.eqDir || '').trim();
+  const label     = params?.label ? String(params.label).slice(0, 80) : null;
+  if (!character || !eqDir) return { ok: false, error: 'character + eqDir required' };
+  const cfg = loadConfig();
+  if (!cfg.token) return { ok: false, error: 'no token configured — set it in Settings' };
+
+  const files = _readUiBundle(eqDir, character);
+  const fileCount = Object.keys(files).length;
+  if (fileCount === 0) return { ok: false, error: 'no ini files found for this character' };
+  // Source resolution — we use the primary display as a best-guess. The
+  // user can override at restore time if their tuning resolution differs.
+  let srcW = null, srcH = null;
+  try {
+    const d = screen.getPrimaryDisplay();
+    srcW = d.workAreaSize.width; srcH = d.workAreaSize.height;
+  } catch {}
+
+  try {
+    const result = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.token}` },
+      body: { character, label, server_short: 'pq.proj', source_width: srcW, source_height: srcH, files, agent_version: app.getVersion() },
+    });
+    return { ok: true, id: result?.id, file_count: fileCount };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// List snapshots for a character.
+ipcMain.handle('ui-studio-list-snapshots', async (_e, character) => {
+  const c = String(character || '').trim();
+  const cfg = loadConfig();
+  if (!c) return { ok: false, error: 'character required' };
+  if (!cfg.token) return { ok: false, error: 'no token configured' };
+  try {
+    const r = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout?character=${encodeURIComponent(c)}`, {
+      headers: { 'Authorization': `Bearer ${cfg.token}` },
+    });
+    return { ok: true, snapshots: r?.snapshots || [] };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Restore: download a snapshot, refuse while EQ is running, backup +
+// rewrite each file. Optionally clamp positions to the current display.
+ipcMain.handle('ui-studio-restore', async (_e, params) => {
+  const character = String(params?.character || '').trim();
+  const snapId    = String(params?.id || '').trim();
+  const eqDir     = String(params?.eqDir || '').trim();
+  const clamp     = !!params?.clamp;
+  if (!character || !snapId || !eqDir) return { ok: false, error: 'character + id + eqDir required' };
+  const cfg = loadConfig();
+  if (!cfg.token) return { ok: false, error: 'no token configured' };
+
+  // Safety guard: never write while EQ is running. Refusal is permanent
+  // for this call — the user must close EQ and click Restore again.
+  if (await _isEqRunning()) {
+    return { ok: false, error: 'EQ is running. Close all EverQuest instances before restoring.' };
+  }
+
+  let snap;
+  try {
+    snap = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(snapId)}?character=${encodeURIComponent(character)}`, {
+      headers: { 'Authorization': `Bearer ${cfg.token}` },
+    });
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+  if (!snap || !snap.files) return { ok: false, error: 'snapshot empty' };
+
+  let targetW = null, targetH = null;
+  try { const d = screen.getPrimaryDisplay(); targetW = d.workAreaSize.width; targetH = d.workAreaSize.height; } catch {}
+  const written = [];
+  const errors  = [];
+  for (const [name, contents] of Object.entries(snap.files)) {
+    try {
+      const safeName = path.basename(name); // never let a path escape eqDir
+      const targetPath = path.join(eqDir, safeName);
+      const body = clamp ? _clampUiIni(contents, targetW, targetH) : contents;
+      const backupPath = _backupAndWriteFile(targetPath, body);
+      written.push({ name: safeName, backup: path.basename(backupPath) });
+    } catch (err) {
+      errors.push({ name, error: err && err.message ? err.message : String(err) });
+    }
+  }
+  return {
+    ok: errors.length === 0,
+    written, errors,
+    note: clamp
+      ? `Wrote ${written.length} file(s). Positions clamped to ${targetW}×${targetH}.`
+      : `Wrote ${written.length} file(s). Resolution unchanged.`,
+  };
 });
 
 // Browse-for-folder. Used by both the Settings page "+ Add folder…" button

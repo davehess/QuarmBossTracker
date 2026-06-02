@@ -69,6 +69,14 @@
     ⚠ No EQ folders configured. Mimic won't tail any log files until you add at least one.
   </div>
 
+  <h2>UI Studio <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
+  <div class="sub">Back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and <code>eqclient.ini</code> to wolfpack.quest. Restore on any computer so you don't have to drag every window again. Files are encrypted before they leave this machine.</div>
+
+  <div id="uiStudioPanel" style="margin-top:10px">
+    <div class="hint" id="uiStudioStatus">Scanning for characters…</div>
+    <div id="uiStudioCharList" style="margin-top:8px"></div>
+  </div>
+
   <h2>Local UI</h2>
   <div class="row">
     <input id="quietMode" type="checkbox" />
@@ -226,6 +234,122 @@
     return out;
   }
 
+  // ── UI Studio panel ────────────────────────────────────────────────────
+  // List discovered characters → per-character Capture + View backups.
+  async function _renderUiStudio() {
+    const status = document.getElementById('uiStudioStatus');
+    const list   = document.getElementById('uiStudioCharList');
+    let chars;
+    try { chars = await window.mimic.uiStudioListCharacters(); }
+    catch (e) { status.textContent = '✕ ' + (e && e.message ? e.message : String(e)); return; }
+    if (!chars || chars.length === 0) {
+      status.innerHTML = 'No characters found. Make sure you\'ve added an EQ folder above and logged in to at least one character.';
+      list.innerHTML = '';
+      return;
+    }
+    status.textContent = `Found ${chars.length} character${chars.length === 1 ? '' : 's'} across your EQ folder${chars.length === 1 ? '' : 's'}.`;
+    list.innerHTML = chars.map((c, i) =>
+      '<div data-charrow="' + i + '" style="border:1px solid #2a3140;border-radius:6px;padding:8px 10px;margin:6px 0;background:#161b22">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+          '<div><b style="color:#c9d1d9;font-size:13px">' + c.character.replace(/</g,'&lt;') + '</b>' +
+          '<span style="color:#6b7280;font-size:10px;margin-left:8px">' + c.ini_count + ' per-char ini file' + (c.ini_count === 1 ? '' : 's') +
+            (c.has_eqclient ? ' · eqclient.ini' : '') + ' · <code>' + c.eqDir.replace(/</g,'&lt;') + '</code></span></div>' +
+          '<div style="display:flex;gap:6px">' +
+            '<button type="button" class="ui-capture" data-idx="' + i + '" style="margin:0;background:#1f6feb;padding:5px 10px;font-size:11px">📦 Back up</button>' +
+            '<button type="button" class="ui-snapshots" data-idx="' + i + '" style="margin:0;background:#21262d;border:1px solid #2a3140;padding:5px 10px;font-size:11px;color:#c9d1d9">🔄 Backups</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="ui-snapshots-list" data-snaps="' + i + '"></div>' +
+        '<div class="ui-row-msg" data-msg="' + i + '" style="font-size:11px;margin-top:6px"></div>' +
+      '</div>'
+    ).join('');
+
+    // Bind buttons
+    list.querySelectorAll('.ui-capture').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const idx = parseInt(e.target.dataset.idx, 10);
+        const c   = chars[idx];
+        const msg = list.querySelector('[data-msg="' + idx + '"]');
+        btn.disabled = true; btn.textContent = 'Uploading…';
+        try {
+          const r = await window.mimic.uiStudioCapture({ character: c.character, eqDir: c.eqDir });
+          if (r && r.ok) {
+            msg.style.color = '#56d364';
+            msg.textContent = '✓ Backed up ' + r.file_count + ' file(s) to wolfpack.quest.';
+          } else {
+            msg.style.color = '#f87171';
+            msg.textContent = '✕ ' + (r && r.error ? r.error : 'upload failed');
+          }
+        } catch (err) {
+          msg.style.color = '#f87171';
+          msg.textContent = '✕ ' + (err && err.message ? err.message : String(err));
+        } finally {
+          btn.disabled = false; btn.textContent = '📦 Back up';
+        }
+      });
+    });
+    list.querySelectorAll('.ui-snapshots').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const idx  = parseInt(e.target.dataset.idx, 10);
+        const c    = chars[idx];
+        const slot = list.querySelector('[data-snaps="' + idx + '"]');
+        btn.disabled = true; btn.textContent = 'Loading…';
+        try {
+          const r = await window.mimic.uiStudioListSnapshots(c.character);
+          if (!r || !r.ok) {
+            slot.innerHTML = '<div style="color:#f87171;font-size:11px;margin-top:6px">✕ ' + (r && r.error ? r.error : 'failed to list backups') + '</div>';
+          } else if (!r.snapshots || r.snapshots.length === 0) {
+            slot.innerHTML = '<div style="color:#6b7280;font-size:11px;font-style:italic;margin-top:6px">No backups yet. Click 📦 Back up first.</div>';
+          } else {
+            slot.innerHTML = '<table style="width:100%;margin-top:8px;font-size:11px;border-collapse:collapse">' +
+              '<tr style="color:#8b949e"><th style="text-align:left;padding:2px 4px">When</th><th style="text-align:left;padding:2px 4px">Source res.</th><th style="text-align:left;padding:2px 4px">Files</th><th style="text-align:right;padding:2px 4px">Restore</th></tr>' +
+              r.snapshots.map(s =>
+                '<tr style="border-top:1px solid #2a3140">' +
+                  '<td style="padding:3px 4px;color:#c9d1d9">' + new Date(s.created_at).toLocaleString() + '</td>' +
+                  '<td style="padding:3px 4px;color:#8b949e">' + (s.source_width && s.source_height ? s.source_width + '×' + s.source_height : '—') + '</td>' +
+                  '<td style="padding:3px 4px;color:#8b949e">' + s.file_count + '</td>' +
+                  '<td style="padding:3px 4px;text-align:right">' +
+                    '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
+                  '</td>' +
+                '</tr>'
+              ).join('') +
+            '</table>';
+            slot.querySelectorAll('.ui-restore').forEach(b => {
+              b.addEventListener('click', async (ev) => {
+                const sid     = ev.target.dataset.id;
+                const charIdx = parseInt(ev.target.dataset.charidx, 10);
+                const ch      = chars[charIdx];
+                if (!confirm('Restore this backup to ' + ch.eqDir + '?\n\nExisting files will be backed up with a .bak-<timestamp> suffix. EQ must be closed.')) return;
+                const msg = list.querySelector('[data-msg="' + charIdx + '"]');
+                msg.style.color = '#8b949e'; msg.textContent = 'Restoring…';
+                ev.target.disabled = true;
+                try {
+                  const r2 = await window.mimic.uiStudioRestore({ character: ch.character, id: sid, eqDir: ch.eqDir, clamp: true });
+                  if (r2 && r2.ok) {
+                    msg.style.color = '#56d364';
+                    msg.textContent = '✓ ' + (r2.note || ('Restored ' + (r2.written ? r2.written.length : 0) + ' file(s).'));
+                  } else {
+                    msg.style.color = '#f87171';
+                    msg.textContent = '✕ ' + (r2 && r2.error ? r2.error : 'restore failed');
+                  }
+                } catch (err) {
+                  msg.style.color = '#f87171';
+                  msg.textContent = '✕ ' + (err && err.message ? err.message : String(err));
+                } finally {
+                  ev.target.disabled = false;
+                }
+              });
+            });
+          }
+        } catch (err) {
+          slot.innerHTML = '<div style="color:#f87171;font-size:11px">✕ ' + err.message + '</div>';
+        } finally {
+          btn.disabled = false; btn.textContent = '🔄 Backups';
+        }
+      });
+    });
+  }
+
   // "+ Add another folder…" — Browse for a directory, push to manual list.
   document.getElementById('eqAddFolder').addEventListener('click', async () => {
     try {
@@ -258,6 +382,9 @@
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: c.token || null };
+    // UI Studio runs in parallel — it scans for characters across the
+    // configured EQ folders, no token needed for the scan itself.
+    _renderUiStudio();
   }
 
   document.getElementById('save').onclick = async () => {

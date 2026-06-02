@@ -41,6 +41,14 @@ contextBridge.exposeInMainWorld('mimic', {
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),
   pickEqDir:      () => ipcRenderer.invoke('pick-eq-dir'),
 
+  // UI Studio — capture / restore EQ ini files (windows, hotkeys, chat
+  // tabs, bandolier, socials, eqclient.ini) so a user can set up an
+  // identical install on a different machine.
+  uiStudioListCharacters: ()        => ipcRenderer.invoke('ui-studio-list-characters'),
+  uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
+  uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
+  uiStudioRestore:        (params)  => ipcRenderer.invoke('ui-studio-restore', params),
+
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
 
