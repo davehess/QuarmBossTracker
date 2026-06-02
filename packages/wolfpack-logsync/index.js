@@ -8621,8 +8621,40 @@ async function main() {
     startChatRelay();  // start the 5s guild/raid chat flush interval
     for (const b of builders) {
       const watched = stats.watchedLogs.find(w => w.logPath === b.logPath);
+      // In-log NPC-hail character inference. EQ NPCs always address the
+      // hailing player by name in their hail / greeting response:
+      //   "An old man says, 'Hail, Dant!'"
+      // That name is the authoritative character ID, regardless of what the
+      // log file is named. Catches renamed backup files (eqlog_Dant3 →
+      // Dant) without skipping anything. Only listens for the first hail per
+      // log; once captured, the builder's character is promoted and we never
+      // re-check on this log to avoid mis-attributing a /who response, a
+      // pet, etc.
+      const HAIL_RE = /\]\s+[A-Z][^\[\]]+?\s+says,?\s*['"](?:Hail|Greetings|Welcome|Well met),?\s+([A-Z][a-z]+)[!,.\s]/i;
+      let _hailFound = false;
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
+        if (!_hailFound) {
+          const m = HAIL_RE.exec(line);
+          if (m) {
+            _hailFound = true;
+            const inLogName = m[1];
+            if (inLogName && inLogName !== b.character) {
+              console.log(`[mimic] log "${path.basename(b.logPath)}" filename says ${b.character}, NPC hailed ${inLogName} — using ${inLogName}`);
+              const old = b.character;
+              b.character = inLogName;
+              b.builder.character = inLogName;
+              if (watched) watched.character = inLogName;
+              // Confirm as a real player on the inferred name too so chat /
+              // tank tracking doesn't trip the NPC filter on the corrected name.
+              try { confirmPlayer(inLogName); } catch {}
+              try {
+                stats.canonicalCharacter = stats.canonicalCharacter || {};
+                stats.canonicalCharacter[old] = inLogName;
+              } catch {}
+            }
+          }
+        }
 
         // ── Special relay lines: checked BEFORE the combat filter ──────────
         // These are NOT combat events and won't pass shouldKeep(), but we
