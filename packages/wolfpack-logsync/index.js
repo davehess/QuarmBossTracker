@@ -376,6 +376,21 @@ function shouldKeep(line, drops = DEFAULT_DROP_PATTERNS, keeps = KEEP_PATTERNS, 
   return false;
 }
 
+// A spaceless, lowercase token ("to", "a", "the", "and", "of", "by"…) is never
+// a real combat attacker. Real player names + single-word NPC/boss names are
+// capitalized; multi-word NPCs ("a sentinel") legitimately start lowercase but
+// contain a space (and are filtered as NPCs downstream). A spaceless,
+// lowercase capture is a parse fragment — e.g. Zeal's /abc abbreviated-chat
+// mode can mangle a combat line so the verb regex's lazy (.+?) grabs a
+// connector word like "to", which then shows up as a phantom player named
+// "to" on the threat / DEEPS / top-damage panels.
+function isPlausibleAttacker(name) {
+  if (!name) return false;
+  if (/^you$/i.test(name)) return true;     // resolves to the uploader downstream
+  if (/\s/.test(name)) return true;          // multi-word → NPC filters handle it
+  return /^[A-Z]/.test(name);                // single token must be capitalized
+}
+
 // ── Event parser ────────────────────────────────────────────────────────────
 // Turn a kept line into a structured event. Returns null if we can't parse it.
 // This is intentionally conservative — unparseable lines are dropped silently
@@ -467,6 +482,9 @@ function parseEvent(line, ts) {
   //   attacker = "A grikbar kobold", verb = "hits", defender = "YOU"
   m = line.match(new RegExp(`\\]\\s+(.+?)\\s+${ATTACK_VERBS_RX}\\s+(.+?)\\s+for\\s+(\\d+)(?:\\s+\\((\\d+)\\))?\\s+points?\\s+of\\s+(?:non-melee\\s+)?damage`, 'i'));
   if (m) {
+    // Drop fragments where the lazy (.+?) grabbed a connector word as the
+    // attacker (e.g. "to") instead of a real name — see isPlausibleAttacker.
+    if (!isPlausibleAttacker(m[1])) return null;
     // Extract the verb that matched (it's between the two captures)
     const verbMatch = m[0].match(new RegExp(`\\s+(${ATTACK_VERBS_RX})\\s+`, 'i'));
     const verb = (verbMatch?.[1] || 'hit').toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, '');
@@ -476,6 +494,7 @@ function parseEvent(line, ts) {
   // "You hit X for N points of non-melee damage." (DoT/proc third-person past-tense)
   m = line.match(/\]\s+(.+?)\s+hit\s+(.+?)\s+for\s+(\d+)\s+points?\s+of\s+non-melee\s+damage/i);
   if (m) {
+    if (!isPlausibleAttacker(m[1])) return null;
     return { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: 'non-melee', amount: parseInt(m[3], 10) };
   }
 
@@ -564,7 +583,7 @@ function parseEvent(line, ts) {
 
   // "X Scores a critical hit!(N)" — melee crit; (N) is the BONUS on top of the hit.
   m = line.match(/\]\s+(.+?)\s+[Ss]cores?\s+a\s+critical\s+hit!\s*\((\d+)\)/);
-  if (m) {
+  if (m && isPlausibleAttacker(m[1])) {
     return { ts: tsIso, type: 'critical', kind: 'melee', attacker: m[1], amount: parseInt(m[2], 10) };
   }
 
@@ -573,7 +592,7 @@ function parseEvent(line, ts) {
   // EQEmu string but is unverified against a live Quarm log — confirm with a
   // real spell-crit line and adjust if Quarm words it differently.
   m = line.match(/\]\s+(.+?)\s+delivers?\s+a\s+critical\s+blast!\s*\((\d+)\)/i);
-  if (m) {
+  if (m && isPlausibleAttacker(m[1])) {
     return { ts: tsIso, type: 'critical', kind: 'spell', attacker: m[1], amount: parseInt(m[2], 10) };
   }
 
@@ -1390,6 +1409,7 @@ class EncounterBuilder {
       // is by definition an NPC, so reject them too.
       const attackerIsKnownNpc = attacker && this.targets.has(attacker);
       if (!pvpHit && attacker && !attackerIsKnownNpc
+          && (attacker === this.character || isPlausibleAttacker(attacker))
           && (!/\s/.test(attacker) || attacker === this.character)) {
         if (!this.threatBy.has(attacker)) {
           this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
@@ -5553,6 +5573,9 @@ function recordEventForDashboard(event, character) {
   const attacker = event.attacker || character || 'You';
   // Skip events that look like NPC-on-NPC (multi-word attacker with no pet leader)
   if (/\s/.test(attacker) && attacker !== character) return;
+  // Skip parse fragments: a spaceless lowercase token ("to", "a"…) is never a
+  // real attacker (see isPlausibleAttacker). Belt to the parser's suspenders.
+  if (attacker !== character && !isPlausibleAttacker(attacker)) return;
   // Skip self-hits: pet reclaim / cleric pet self-dismiss generates a log line
   // where the pet hits itself for exactly 20K. attacker === defender catches it.
   if (event.defender && attacker.toLowerCase() === event.defender.toLowerCase()) return;
