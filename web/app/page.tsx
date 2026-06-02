@@ -29,132 +29,19 @@ async function loadRecent() {
   } catch { return []; }
 }
 
-// Current MIC (auto-raid-invite) + the discord_id of the named character's
-// owner so the banner can deep-link a DM. When the named MIC's owner isn't
-// linked, fall back to the officer who SET the ARI (always has a discord_id).
-type AriRow = {
-  character: string | null; password: string | null;
-  set_by_id: string | null; set_by_name: string | null; set_at: string | null;
-};
-async function loadAri() {
-  try {
-    const sb = supabaseAdmin();
-    const { data: ari } = await sb
-      .from('ari_state')
-      .select('character, password, set_by_id, set_by_name, set_at')
-      .eq('guild_id', 'wolfpack')
-      .maybeSingle();
-    const a = ari as AriRow | null;
-    if (!a || !a.character) return { ari: null, micDiscordId: null, backups: [] as { name: string; discord_id: string }[] };
-    // Resolve the named MIC character → their owner's discord_id via OpenDKP
-    // family (matches /me's loadOwnedCharacters logic — main_name root).
-    const { data: charRow } = await sb
-      .from('characters')
-      .select('main_name, discord_id')
-      .ilike('name', a.character)
-      .eq('guild_id', 'wolfpack')
-      .maybeSingle();
-    let micDiscordId: string | null = charRow?.discord_id ?? null;
-    if (!micDiscordId && charRow?.main_name) {
-      // Try the family root
-      const { data: rootRow } = await sb
-        .from('characters')
-        .select('discord_id')
-        .ilike('name', charRow.main_name)
-        .eq('guild_id', 'wolfpack')
-        .maybeSingle();
-      micDiscordId = rootRow?.discord_id ?? null;
-    }
-    // Backup officers: any character ranked Officer / Pack Leader with a
-    // discord_id link, excluding the named MIC's owner. Banner lists these
-    // so a member can ping a different officer if the MIC isn't responding.
-    const { data: officers } = await sb
-      .from('characters')
-      .select('name, discord_id')
-      .eq('guild_id', 'wolfpack')
-      .in('rank', ['Officer', 'Pack Leader'])
-      .not('discord_id', 'is', null)
-      .limit(20);
-    const backups = ((officers ?? []) as { name: string; discord_id: string }[])
-      .filter(o => o.discord_id !== micDiscordId)
-      // Stable order; dedupe by discord_id (one person may have many officer chars)
-      .reduce<{ name: string; discord_id: string }[]>((acc, o) => {
-        if (!acc.find(x => x.discord_id === o.discord_id)) acc.push(o);
-        return acc;
-      }, [])
-      .slice(0, 5);
-    return { ari: a, micDiscordId, backups };
-  } catch { return { ari: null, micDiscordId: null, backups: [] as { name: string; discord_id: string }[] }; }
-}
+// MIC / auto-raid-invite banner was removed: the password was rendered in
+// plain text on this page (security leak), and the Discord deep-link
+// "DM officer" buttons triggered Android's app-launch permission prompt
+// for every signed-in member. Invites are coordinated in-game via /who,
+// so the website doesn't need to mirror the MIC state at all. Bot-side
+// ari_state mirror is kept (utils/state.js) since it's internal data.
 
 export default async function HomePage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
-  const [recent, ariInfo] = await Promise.all([
-    user ? loadRecent() : Promise.resolve([] as RecentRow[]),
-    user ? loadAri()    : Promise.resolve({ ari: null, micDiscordId: null, backups: [] as { name: string; discord_id: string }[] }),
-  ]);
-  const { ari, micDiscordId, backups } = ariInfo;
+  const recent = user ? await loadRecent() : [] as RecentRow[];
 
   return (
     <div className="space-y-6">
-      {user && ari && ari.character && (
-        <section className="bg-panel border border-blue/60 rounded-lg p-4">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="min-w-0">
-              <div className="text-xs text-blue uppercase tracking-wide font-semibold">🎟️ Active MIC</div>
-              <div className="text-lg text-text mt-1">
-                <code className="text-gold">/who {ari.character}</code>
-                <span className="text-dim mx-2">·</span>
-                send tell with password{' '}
-                <code className="text-gold">{ari.password}</code>
-              </div>
-              <div className="text-[11px] text-dim mt-1">
-                Set by <span className="text-text">{ari.set_by_name || 'an officer'}</span>
-                {ari.set_at && <> · <time dateTime={ari.set_at}>{new Date(ari.set_at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</time></>}
-              </div>
-            </div>
-            {micDiscordId && (
-              <a
-                href={`discord://-/users/${micDiscordId}`}
-                className="text-xs text-blue hover:underline whitespace-nowrap border border-blue/40 rounded px-2 py-1 bg-blue/10"
-                title="Open a Discord DM with the MIC officer"
-              >
-                💬 DM {ari.character}
-              </a>
-            )}
-          </div>
-          {backups.length > 0 && (
-            <details className="mt-3 text-xs">
-              <summary className="cursor-pointer text-dim hover:text-text">
-                MIC not responding? Ping another officer →
-              </summary>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {backups.map(o => (
-                  <a
-                    key={o.discord_id}
-                    href={`discord://-/users/${o.discord_id}`}
-                    className="text-[11px] border border-border rounded px-2 py-1 bg-bg text-text hover:border-blue hover:text-blue"
-                    title={`Open Discord DM with ${o.name}`}
-                  >
-                    💬 {o.name}
-                  </a>
-                ))}
-              </div>
-              <div className="text-[10px] text-dim/70 mt-2">
-                Officers with linked Discord. If none of them respond, ask in <code>#raid-mobs</code>.
-              </div>
-            </details>
-          )}
-        </section>
-      )}
-      {user && !ari && (
-        <section className="bg-panel border border-orange/40 rounded-lg p-4">
-          <div className="text-xs text-orange uppercase tracking-wide font-semibold">🎟️ No MIC set</div>
-          <div className="text-sm text-dim mt-1">
-            No auto-raid invite is active right now. Officers: set one with <code className="text-text">/ari &lt;character&gt;</code> in Discord. Members: ping any officer in <code>#raid-mobs</code> for a manual invite.
-          </div>
-        </section>
-      )}
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-3">Welcome to <span className="text-blue">wolfpack.quest</span></h2>
         <p className="text-sm leading-6">
