@@ -3027,6 +3027,23 @@ function fmtK(n) { n=Number(n||0); if (n<1000) return String(n); if (n<1e6) retu
 function fmtAgo(ms) { if(!ms) return '?'; const d=Date.now()-ms; if(d<60000)return Math.floor(d/1000)+'s ago'; if(d<3600000)return Math.floor(d/60000)+'m ago'; if(d<86400000)return Math.floor(d/3600000)+'h ago'; return Math.floor(d/86400000)+'d ago'; }
 function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]); }
 
+// Change-detection guard for panel renders. The dashboard polls /api/state
+// every 2s and each render function rebuilds its section's innerHTML. Writing
+// innerHTML unconditionally — even when the produced HTML is byte-identical to
+// what's already on screen — flashed the whole panel every 2s (scroll, hover,
+// and <details> open-state all reset). setSectionHTML only writes when the
+// HTML actually changed, and returns true in that case so callers can skip
+// re-binding event handlers on unchanged (still-live) DOM nodes. Between
+// fights, where the data doesn't move, this means zero rewrites = zero flicker.
+var _lastSectionHtml = {};
+function setSectionHTML(id, html) {
+  if (_lastSectionHtml[id] === html) return false;   // unchanged → no rewrite
+  _lastSectionHtml[id] = html;
+  var el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+  return true;
+}
+
 function renderHeader(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   const hasNewer = s.updateAvailable && s.latestAgentVersion
@@ -3071,7 +3088,7 @@ function renderHeader(s) {
     queueChip = ' · <span style="background:#3b0a0a;color:#ff9c9c;border:1px solid #f85149;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(dropTip) + '. Check the agent log for details.">✕ ' + total + ' dropped</span>';
   }
   h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + alwaysBtn + resetBtn + '</div>';
-  document.getElementById('header').innerHTML = h;
+  if (!setSectionHTML('header', h)) return;
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
   function _startRestartPoll(bannerId) {
@@ -3279,7 +3296,7 @@ function renderDash(s) {
   }
   h += '</div></div>';
   h += '</div>';
-  document.getElementById('dash').innerHTML = h;
+  if (!setSectionHTML('dash', h)) return;
   // Wire dismiss buttons after innerHTML replaces the DOM
   document.querySelectorAll('#dash .dismiss-td').forEach(b => b.addEventListener('click', () => {
     try { dismissTopDamage(JSON.parse(b.dataset.key)); } catch {}
@@ -3442,7 +3459,7 @@ function renderTanks(s) {
   else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
   h += '</div>';
   h += '</div>';
-  document.getElementById('tanks').innerHTML = h;
+  if (!setSectionHTML('tanks', h)) return;
   // Wire the hide/show character buttons in the Weapon Loadouts table
   document.querySelectorAll('[data-hide-char]').forEach(b => b.addEventListener('click', async () => {
     await fetch('/api/loadouts/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3521,7 +3538,7 @@ function renderHealers(s) {
     ch += '</table></div></div>';
     h += ch;
   }
-  document.getElementById('healers').innerHTML = h;
+  setSectionHTML('healers', h);
 }
 
 function renderDeeps(s) {
@@ -3588,7 +3605,7 @@ function renderDeeps(s) {
   }
 
   h += '</div>';
-  document.getElementById('deeps').innerHTML = h;
+  setSectionHTML('deeps', h);
 }
 
 function renderPets(s) {
@@ -3597,7 +3614,7 @@ function renderPets(s) {
   if (!pets.length) h += '<div class="dim">No pets observed yet.</div>';
   else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>'; for (const p of pets) h += '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; h += '</table>'; }
   h += '</div>';
-  document.getElementById('pets').innerHTML = h;
+  setSectionHTML('pets', h);
 }
 
 function renderInfo(s) {
@@ -3695,7 +3712,7 @@ function renderInfo(s) {
       'Casts attributed to NPCs or to bystanders whose spell name EQ does not reveal.');
   }
   h += '</div>';
-  document.getElementById('info').innerHTML = h;
+  setSectionHTML('info', h);
 }
 
 let _optinPane = 'active';   // 'active' | 'ignored' — UI-only, server uses its own
@@ -3938,7 +3955,12 @@ async function refreshOptin() {
 async function refresh() {
   try {
     const s = await (await fetch('/api/state')).json();
+    // Preserve scroll across the render batch. Change-detection means most
+    // polls rewrite nothing (no shift); when the ACTIVE section does rewrite
+    // with a different height, restoring scroll keeps the page from bouncing.
+    const _sx = window.scrollX, _sy = window.scrollY;
     renderHeader(s); renderDash(s); renderTanks(s); renderHealers(s); renderDeeps(s); renderPets(s); renderInfo(s);
+    if (window.scrollX !== _sx || window.scrollY !== _sy) window.scrollTo(_sx, _sy);
     // Surface pending backfill request count on the Opt-in tab so officers
     // notice without clicking through.
     const pending = (s.backfillRequests || []).filter(r => r.status === 'pending').length;
