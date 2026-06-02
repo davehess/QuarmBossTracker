@@ -3053,6 +3053,14 @@ function _serializeForDashboard() {
     // Trigger summary for the dashboard. Strip _regex (not JSON-safe).
     guildTriggerCount:   (stats.guildTriggers || []).length,
     guildTriggersCheckedAt: stats.guildTriggersCheckedAt,
+    // Full guild trigger list for the Triggers tab. Strip the compiled _regex
+    // (RegExp can't round-trip JSON) and _scope (an internal flag the dashboard
+    // doesn't need to see).
+    guildTriggers: (stats.guildTriggers || []).map(function(t) {
+      const { _regex, _scope, ...rest } = t;
+      void _regex; void _scope;
+      return rest;
+    }),
     personalTriggerCount: (_personalTriggers || []).length,
     activeOverlays:      _activeOverlays,
     lifetime:           stats.lifetime,
@@ -3222,6 +3230,8 @@ body.wp-overlay-mode .section .card.wp-overlay-target { display:block !important
   <button data-tab="healers">Healers</button>
   <button data-tab="deeps">DEEPS</button>
   <button data-tab="pets">Pets</button>
+  <button data-tab="triggers">⚡ Triggers</button>
+  <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="info">Info / Stats</button>
   <button data-tab="optin">Opt-in Logs</button>
   <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
@@ -3236,6 +3246,8 @@ body.wp-overlay-mode .section .card.wp-overlay-target { display:block !important
 <div id="healers" class="section"></div>
 <div id="deeps" class="section"></div>
 <div id="pets" class="section"></div>
+<div id="triggers" class="section"></div>
+<div id="overlays" class="section"></div>
 <div id="info" class="section"></div>
 <div id="optin" class="section"></div>
 <script>
@@ -3973,6 +3985,105 @@ function renderPets(s) {
   setSectionHTML('pets', h);
 }
 
+// ── Triggers tab ───────────────────────────────────────────────────────────
+// One section for both guild triggers (read-only, source='guild') and personal
+// triggers (CRUD via the inline form). The form lives inside a stable wrapper
+// (#trigEditorPanel) and is rendered ONCE — refresh() rewrites the read-only
+// "list" + "guild" blocks each poll without touching the editor, so the user
+// can be mid-typing a pattern and not lose state.
+function renderTriggers(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // Active overlays (recent matches) — top of the page so the user can see
+  // their triggers actually firing as they tune them.
+  const overlays = (s.activeOverlays || []).slice(0, 6);
+  h += '<div class="card wide"><h2>⚡ Recent fires</h2>';
+  if (overlays.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
+    for (const o of overlays) {
+      const ago = fmtAgo(o.shownAt || 0);
+      const sc  = o.scope === 'personal' ? 'personal' : 'guild';
+      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
+           '<td class="name">' + esc(o.trigger || '?') + '</td>' +
+           '<td class="dim">' + esc(sc) + '</td>' +
+           '<td>' + esc(o.text || '') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // Personal triggers list — server-rendered table the user can toggle / edit /
+  // delete via dedicated buttons. The form panel below owns the create flow.
+  h += '<div class="card wide"><h2>👤 Personal triggers <span class="dim" style="font-size:11px;font-weight:normal">(this machine only)</span></h2>';
+  h += '<div id="trigPersonalList" class="dim" style="font-size:12px">loading…</div>';
+  h += '<div id="trigEditorPanel"></div>';
+  h += '</div>';
+
+  // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers).
+  h += '<div class="card wide"><h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only; edit on wolfpack.quest/admin/triggers)</span></h2>';
+  const gt = s.guildTriggers || [];
+  if (gt.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th></tr>';
+    for (const t of gt.slice(0, 50)) {
+      h += '<tr><td class="name">' + esc(t.name || '?') + '</td>' +
+           '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
+           '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
+           '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td></tr>';
+    }
+    h += '</table>';
+    if (gt.length > 50) h += '<div class="dim" style="font-size:11px;margin-top:6px">+ ' + (gt.length - 50) + ' more</div>';
+  }
+  h += '</div>';
+
+  h += '</div>';
+  if (!setSectionHTML('triggers', h)) return;
+  // Mount the editor + render the personal list (idempotent — _wpTrigEditor
+  // installs itself once and rebinds list rows on every paint).
+  if (window._wpTrigEditor && window._wpTrigEditor.mount) {
+    window._wpTrigEditor.mount();
+  }
+}
+
+// ── Overlays tab ───────────────────────────────────────────────────────────
+// Inventory of every overlay window Mimic could show, with per-overlay
+// visibility + opacity slider. Acts on tray-menu config when Mimic is the
+// host; falls back to a hint when loaded from a non-Mimic browser. The HUD
+// + Trigger overlays are first-class; panel overlays are listed beneath.
+function renderOverlays(s) {
+  let h = '';
+  const mimic = !!(window.mimic && window.mimic.openDashboard);
+  h += '<div class="grid">';
+  h += '<div class="card wide"><h2>🪟 Overlays <span class="dim" style="font-size:11px;font-weight:normal">(transparent windows that float over EQ — DnDOverlay-style)</span></h2>';
+  if (!mimic) {
+    h += '<div class="dim" style="font-size:12px;padding:8px 0">Overlay controls require Mimic — open this dashboard from the desktop app to use them. (You are viewing it from a browser.)</div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Use the tray menu (right-click the wolf in the system tray) → <b>Overlays</b> to toggle individual overlays, lock/unlock placement, and enter <b>Setup mode</b> to position all overlays at once. Per-overlay opacity is also there.</div>';
+    h += '<div style="font-size:12px;padding:8px;background:#161b22;border:1px solid var(--border);border-radius:6px">';
+    h += '<b>Tip:</b> A panel from this dashboard can be sent to its own transparent overlay window. Each card on the <b>Dashboard</b> tab has an <code style="background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">overlay</code> button in its top-right — click it to launch that panel as an overlay. Use Setup mode in the tray to reposition.';
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Built-in overlays summary table (read from /api/state config snapshot)
+  const cfg = s.overlayConfig || {};
+  h += '<div class="card wide"><h2>Built-in overlays</h2>';
+  h += '<table style="font-size:12px">';
+  h += '<tr><th>Overlay</th><th>Default</th><th>Description</th></tr>';
+  h += '<tr><td class="name">DPS HUD</td><td class="dim">' + ((cfg.showHud !== false) ? 'on' : 'off') + '</td><td class="dim">Running session DPS, top damage seen, current encounter.</td></tr>';
+  h += '<tr><td class="name">Trigger alerts (TTS)</td><td class="dim">' + ((cfg.enableTriggerTts !== false) ? 'on' : 'off') + '</td><td class="dim">Centered big-text alert from triggers (guild + personal). Speaks the alert via Web Speech.</td></tr>';
+  h += '</table>';
+  h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock state: ' + (cfg.overlaysLocked === false ? '🔓 unlocked' : '🔒 locked') + ' · toggle from the tray menu.</div>';
+  h += '</div>';
+
+  h += '</div>';
+  setSectionHTML('overlays', h);
+}
+
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -4423,7 +4534,9 @@ async function refresh() {
     // failing section shows its own error card (visible on-screen, not just the
     // log) and the other sections still render.
     var _sections = [['header', renderHeader], ['dash', renderDash], ['tanks', renderTanks],
-                     ['healers', renderHealers], ['deeps', renderDeeps], ['pets', renderPets], ['info', renderInfo]];
+                     ['healers', renderHealers], ['deeps', renderDeeps], ['pets', renderPets],
+                     ['triggers', renderTriggers], ['overlays', renderOverlays],
+                     ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
       try { _sfn(s); }
@@ -5597,6 +5710,200 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 5000);
 })();
 
+// ── ⚡ Triggers editor (mounted once, owned by the Triggers tab) ────────────
+// renderTriggers() rewrites the section\\'s read-only blocks on every poll.
+// This IIFE owns the EDITOR + list area inside #trigEditorPanel — installed
+// the first time the Triggers tab paints, and from then on it controls its
+// own DOM (list re-renders triggered manually after add / delete / toggle).
+// That preserves form state while the user types a pattern even if the rest
+// of the section re-renders. Exposed as window._wpTrigEditor.mount() so
+// renderTriggers can call into it from outside the IIFE scope.
+(function(){
+  var mounted = false;
+  var listEl  = null;
+  var editorEl = null;
+  // Track an in-flight create row so polls don\\'t blow away the user\\'s typing
+  // (the form is uncontrolled — we read values on submit).
+  function buildEditorHtml() {
+    return ''
+      + '<div style="margin-top:12px;padding:12px;background:#161b22;border:1px solid var(--border);border-radius:8px">'
+      + '  <div style="font-weight:bold;margin-bottom:8px;color:var(--blue)">+ Add personal trigger</div>'
+      + '  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">'
+      + '    <label>Name<br><input id="trigNewName" type="text" placeholder="e.g. Rampage on me" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Cooldown (sec)<br><input id="trigNewCooldown" type="number" min="0" max="3600" value="0" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label style="grid-column:1/3">Pattern (regex; named groups like (?&lt;target&gt;\\\\w+) become {target} in the alert text)<br>'
+      + '      <input id="trigNewPattern" type="text" placeholder="e.g. (?&lt;target&gt;\\\\w+) begins to cast Mass Cancel Magic" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
+      + '    <label style="grid-column:1/3">Overlay text<br>'
+      + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
+      + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '  </div>'
+      + '  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+      + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
+      + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
+      + '    <span id="trigAddMsg" class="dim" style="font-size:11px"></span>'
+      + '  </div>'
+      + '  <div id="trigTestPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
+      + '    <div class="dim" style="font-size:11px;margin-bottom:6px">Paste a sample log line. The current pattern above will be tested against it.</div>'
+      + '    <input id="trigTestLine" type="text" placeholder="[Mon Apr 14 23:01:02 2025] Aten Ha Ra begins to cast Mass Cancel Magic." style="width:100%;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px">'
+      + '    <button id="trigTestRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Run test</button>'
+      + '    <div id="trigTestResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
+      + '  </div>'
+      + '</div>';
+  }
+  async function fetchAndRenderList() {
+    if (!listEl) return;
+    let payload;
+    try {
+      const r = await fetch('/api/personal-triggers');
+      payload = r.ok ? await r.json() : null;
+    } catch (e) { void e; }
+    const triggers = payload && payload.triggers ? payload.triggers : [];
+    if (triggers.length === 0) {
+      listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
+      return;
+    }
+    var html = '<table style="font-size:12px;width:100%"><tr><th></th><th>Name</th><th>Pattern</th><th>Cooldown</th><th>Text</th><th></th></tr>';
+    for (var i = 0; i < triggers.length; i++) {
+      var t = triggers[i];
+      var actionText = '';
+      var actionColor = '';
+      if (Array.isArray(t.actions) && t.actions[0]) {
+        actionText = String(t.actions[0].text || '').slice(0, 80);
+        actionColor = String(t.actions[0].color || 'red');
+      }
+      html += '<tr data-trig-id="' + esc(t.id || '') + '">'
+        + '<td><input type="checkbox" ' + (t.enabled !== false ? 'checked' : '') + ' data-trig-toggle="' + esc(t.id || '') + '"></td>'
+        + '<td class="name">' + esc(t.name || '?') + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
+        + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
+        + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
+        + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
+        + '<td><button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button></td>'
+        + '</tr>';
+    }
+    html += '</table>';
+    listEl.innerHTML = html;
+    // Wire row controls
+    listEl.querySelectorAll('[data-trig-delete]').forEach(function(b){
+      b.addEventListener('click', function(){ onDelete(b.getAttribute('data-trig-delete')); });
+    });
+    listEl.querySelectorAll('[data-trig-toggle]').forEach(function(c){
+      c.addEventListener('change', function(){ onToggle(c.getAttribute('data-trig-toggle'), c.checked); });
+    });
+  }
+  async function onDelete(id) {
+    if (!id) return;
+    if (!confirm('Delete this trigger?')) return;
+    const r = await fetch('/api/personal-triggers');
+    const j = r.ok ? await r.json() : { triggers: [] };
+    const remaining = (j.triggers || []).filter(function(t){ return t.id !== id; });
+    await fetch('/api/personal-triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triggers: remaining }),
+    });
+    fetchAndRenderList();
+  }
+  async function onToggle(id, enabled) {
+    if (!id) return;
+    const r = await fetch('/api/personal-triggers');
+    const j = r.ok ? await r.json() : { triggers: [] };
+    const next = (j.triggers || []).map(function(t){ return t.id === id ? Object.assign({}, t, { enabled: enabled }) : t; });
+    await fetch('/api/personal-triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triggers: next }),
+    });
+  }
+  async function onAdd() {
+    var name = (document.getElementById('trigNewName') || {}).value || '';
+    var pattern = (document.getElementById('trigNewPattern') || {}).value || '';
+    var cooldown = parseInt((document.getElementById('trigNewCooldown') || {}).value || '0', 10) || 0;
+    var overlayText = (document.getElementById('trigNewOverlay') || {}).value || '';
+    var color = (document.getElementById('trigNewColor') || {}).value || 'red';
+    var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
+    var msg = document.getElementById('trigAddMsg');
+    if (!name || !pattern || !overlayText) {
+      if (msg) { msg.textContent = 'Need a name, pattern, and overlay text.'; msg.style.color = 'var(--red)'; }
+      return;
+    }
+    const r = await fetch('/api/personal-triggers');
+    const j = r.ok ? await r.json() : { triggers: [] };
+    const next = (j.triggers || []).concat([{
+      name: name, pattern: pattern, use_regex: true, enabled: true,
+      cooldown_seconds: cooldown,
+      actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }],
+    }]);
+    const save = await fetch('/api/personal-triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triggers: next }),
+    });
+    if (save.ok) {
+      if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
+      // Clear the form
+      ['trigNewName','trigNewPattern','trigNewOverlay'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+      fetchAndRenderList();
+    } else {
+      if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
+    }
+  }
+  async function onTest() {
+    var panel = document.getElementById('trigTestPanel');
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  }
+  async function onTestRun() {
+    var pattern = (document.getElementById('trigNewPattern') || {}).value || '';
+    var line = (document.getElementById('trigTestLine') || {}).value || '';
+    var out = document.getElementById('trigTestResult');
+    if (!out) return;
+    if (!pattern || !line) { out.textContent = 'Need both a pattern and a sample line.'; return; }
+    const r = await fetch('/api/triggers/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pattern: pattern, use_regex: true, line: line, pattern_flags: 'i' }),
+    });
+    const j = await r.json().catch(function(){ return { matched: false }; });
+    if (j.error) { out.innerHTML = '<span style="color:var(--red)">Bad pattern: ' + esc(j.error) + '</span>'; return; }
+    if (!j.matched) { out.innerHTML = '<span style="color:var(--dim)">No match.</span>'; return; }
+    var grpHtml = '';
+    if (j.groups && Object.keys(j.groups).length > 0) {
+      grpHtml = ' · groups: ' + Object.entries(j.groups).map(function(kv){ return '<b>' + esc(kv[0]) + '</b>=' + esc(String(kv[1])); }).join(', ');
+    }
+    out.innerHTML = '<span style="color:var(--green)">Matched: <b>' + esc(j.match || '') + '</b></span>' + grpHtml;
+  }
+  function mount() {
+    if (mounted) return;
+    var section = document.getElementById('triggers');
+    if (!section) return;
+    listEl   = document.getElementById('trigPersonalList');
+    editorEl = document.getElementById('trigEditorPanel');
+    if (!listEl || !editorEl) return;
+    editorEl.innerHTML = buildEditorHtml();
+    var addBtn  = document.getElementById('trigAddBtn');
+    var testBtn = document.getElementById('trigTestBtn');
+    var runBtn  = document.getElementById('trigTestRun');
+    if (addBtn)  addBtn.addEventListener('click', onAdd);
+    if (testBtn) testBtn.addEventListener('click', onTest);
+    if (runBtn)  runBtn.addEventListener('click', onTestRun);
+    fetchAndRenderList();
+    mounted = true;
+  }
+  // Re-grab the references each time renderTriggers wipes #trigPersonalList
+  // / #trigEditorPanel via setSectionHTML (innerHTML replace). On those polls,
+  // re-mount cheaply by re-binding to the new nodes.
+  function remountIfNeeded() {
+    var listNew   = document.getElementById('trigPersonalList');
+    var editorNew = document.getElementById('trigEditorPanel');
+    if (!listNew || !editorNew) { mounted = false; return; }
+    if (listNew !== listEl || editorNew !== editorEl) {
+      mounted = false;
+      mount();
+    }
+  }
+  window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); } };
+})();
+
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
 // The operator's own melee + spell criticals this session, per box. Send-to-
 // overlay works via the panel auto-registration (h2 text = key). Spell crits
@@ -5919,6 +6226,84 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeOptinForWeb()));
       }
+
+      // ── Personal triggers CRUD ─────────────────────────────────────────────
+      // The agent already loads <state-dir>/personal_triggers.json on startup
+      // and merges into the evaluator. The Triggers tab on the dashboard now
+      // edits that list through these endpoints; we always replace the whole
+      // list (simpler than per-id PATCH/DELETE and the list is tiny).
+      if (req.url === '/api/personal-triggers' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ triggers: _serializePersonalTriggers() }));
+      }
+      if (req.url === '/api/personal-triggers' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        const incoming = Array.isArray(payload?.triggers) ? payload.triggers : [];
+        const compiled = [];
+        const errors = [];
+        for (const t of incoming) {
+          if (!t || typeof t.pattern !== 'string' || !t.pattern.trim()) continue;
+          // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
+          const row = {
+            id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
+            name:          String(t.name || '').slice(0, 100) || 'untitled',
+            pattern:       String(t.pattern || '').slice(0, 1000),
+            pattern_flags: String(t.pattern_flags || 'i').slice(0, 6),
+            use_regex:     t.use_regex !== false,
+            enabled:       t.enabled !== false,
+            cooldown_seconds: Math.max(0, Math.min(3600, parseInt(t.cooldown_seconds, 10) || 0)),
+            actions:       Array.isArray(t.actions) ? t.actions.slice(0, 5) : [{
+              type: 'text_overlay',
+              text: String(t.overlay_text || t.name || 'TRIGGER').slice(0, 200),
+              color: String(t.overlay_color || 'red').slice(0, 20),
+              duration_ms: Math.max(500, Math.min(60000, parseInt(t.overlay_ms, 10) || 5000)),
+            }],
+          };
+          try { compiled.push(_compilePersonalTrigger(row)); }
+          catch (err) { errors.push({ name: row.name, error: err.message }); }
+        }
+        _personalTriggers = compiled;
+        savePersonalTriggers();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, stored: compiled.length, errors }));
+      }
+
+      // Live regex tester — paste a sample log line, see which patterns match
+      // and what they capture. The dashboard uses this for the "Test" box on
+      // the Triggers tab so users can dial in a regex before saving.
+      if (req.url === '/api/triggers/test' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        const pattern = String(payload?.pattern || '');
+        const useRegex = payload?.use_regex !== false;
+        const flags = String(payload?.pattern_flags || 'i').slice(0, 6);
+        const line  = String(payload?.line || '');
+        if (!pattern || !line) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ matched: false, note: 'pattern + line required' }));
+        }
+        try {
+          const pat = useRegex ? _translateDotNetRegex(pattern) : _escapeForLiteralMatch(pattern);
+          const rx = new RegExp(pat, flags);
+          const m = rx.exec(line);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            matched: !!m,
+            match: m ? m[0] : null,
+            groups: m && m.groups ? m.groups : {},
+            indices: m ? [m.index, m.index + m[0].length] : null,
+          }));
+        } catch (err) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ matched: false, error: err.message }));
+        }
+      }
+
       if (req.url === '/api/optin' && req.method === 'POST') {
         const body = await _readBody(req);
         let payload;
@@ -8746,6 +9131,50 @@ function loadPersonalTriggers() {
   } catch (err) {
     console.warn('[personal-triggers] load failed:', err.message);
   }
+}
+
+// Persist personal triggers to disk. Stripping the compiled _regex (a RegExp
+// object) before serialize since it can't round-trip through JSON. Atomic
+// write via .tmp + rename so a crash mid-write doesn't corrupt the file.
+function savePersonalTriggers() {
+  try {
+    const dir = path.dirname(STATS_FILE || '');
+    if (!dir) return false;
+    const p = path.join(dir, 'personal_triggers.json');
+    const arr = _personalTriggers.map(t => {
+      const { _regex, _scope, ...rest } = t;
+      void _regex; void _scope;
+      return rest;
+    });
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ triggers: arr }, null, 2));
+    fs.renameSync(tmp, p);
+    return true;
+  } catch (err) {
+    console.warn('[personal-triggers] save failed:', err.message);
+    return false;
+  }
+}
+
+// Serialize for /api/personal-triggers — strip non-JSONable internals plus
+// the precompiled _regex object. Add a `valid` boolean so the dashboard can
+// flag rows whose pattern won't compile.
+function _serializePersonalTriggers() {
+  return _personalTriggers.map(t => {
+    const { _regex, _scope, ...rest } = t;
+    void _scope;
+    return { ...rest, valid: !!_regex };
+  });
+}
+
+// Compile a single trigger object (validate + attach _regex). Returns the
+// compiled trigger or throws — the caller decides whether to keep on failure.
+function _compilePersonalTrigger(t) {
+  const flags = t.pattern_flags || 'i';
+  const pat = t.use_regex === false
+    ? _escapeForLiteralMatch(t.pattern)
+    : _translateDotNetRegex(t.pattern);
+  return { ...t, _regex: new RegExp(pat, flags), _scope: 'personal' };
 }
 
 // Per-trigger last-fire timestamp for cooldown enforcement
