@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.6': [
+    '**PvP howl edits in place again** — second & later howlers were appending new "X and Y howl back!" lines instead of replacing the existing one (the filter only caught the singular "howls back!" form).',
+  ],
   '2.7.5': [
     '**PvP kills now ping `@PVP`** — Wolf Pack PvP kills are the rallying moment, not the scroll-past ones. Deaths still ping for backup; other-guild / NPC kills remain silent.',
   ],

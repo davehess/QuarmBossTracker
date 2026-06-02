@@ -1220,9 +1220,14 @@ async function handlePvpAlertHowl(interaction) {
     howlLine = `${mentions.slice(0, -1).join(', ')}, and ${mentions[mentions.length - 1]} howl back!`;
   }
 
-  // Replace/append howlers line without touching the original alert content
+  // Replace/append howlers line without touching the original alert content.
+  // Filter matches BOTH "X howls back!" (singular, 1 howler) and "X and Y howl
+  // back!" / "X, Y, and Z howl back!" (plural, 2+ howlers) — the previous
+  // .includes('howls back!') only caught the singular variant, so a second
+  // click switched to plural and the line stopped being replaceable, piling
+  // up one new line per click instead of editing in place.
   const origMsg     = interaction.message;
-  const baseContent = origMsg.content.split('\n').filter(l => !l.includes('howls back!')).join('\n');
+  const baseContent = origMsg.content.split('\n').filter(l => !/howls? back!/.test(l)).join('\n');
   try {
     await origMsg.edit({ content: `${baseContent}\n${howlLine}`, components: origMsg.components });
   } catch (err) { console.warn('pvpalert_howl: could not edit message:', err?.message); }
