@@ -72,7 +72,6 @@ const AGENT_LOG   = () => path.join(app.getPath('userData'), 'agent.log');
 const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 
 const WOLFPACK_URL    = 'https://wolfpack.quest';
-const WOLFPACK_ME_URL = 'https://wolfpack.quest/me';
 
 let mainWindow = null;
 let overlayWindow = null;
@@ -153,12 +152,30 @@ function ensureWritableAgent() {
   const src = bundledAgentDir();
   const dst = AGENT_DIR();
   fs.mkdirSync(dst, { recursive: true });
+  // Refresh decision by VERSION, not mtime. electron-builder / asar extraction
+  // does NOT preserve file mtimes, so the old `src.mtime > dst.mtime` check
+  // could SKIP the copy after a Mimic update whose bundled agent happens to
+  // carry an earlier mtime than the first-run userData copy. That pinned a
+  // STALE agent in userData forever — the dashboard never changed across Mimic
+  // updates because the OLD agent kept serving it (the blank-dashboard bug).
+  // Now: copy when the bundled agent is strictly newer than what's installed
+  // (or nothing is installed). We never downgrade a userData agent that the
+  // hot-swap already pulled to a newer version than the bundle.
+  const readVer = (dir) => {
+    try { return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version || null; }
+    catch { return null; }
+  };
+  const bundledVer   = readVer(src);
+  const installedVer = readVer(dst);
+  const refresh = !installedVer || _agentVersionNewer(bundledVer, installedVer);
   for (const f of ['index.js', 'supervisor.js', 'package.json']) {
     const s = path.join(src, f);
     if (!fs.existsSync(s)) continue;
     const d = path.join(dst, f);
-    const newer = !fs.existsSync(d) || fs.statSync(s).mtimeMs > fs.statSync(d).mtimeMs;
-    if (newer) fs.copyFileSync(s, d);
+    if (refresh || !fs.existsSync(d)) fs.copyFileSync(s, d);
+  }
+  if (refresh && bundledVer) {
+    try { appendAgentLog(`[mimic] refreshed userData agent ${installedVer || '(none)'} → bundled v${bundledVer}\n`); } catch {}
   }
   return path.join(dst, 'index.js');
 }
@@ -1023,26 +1040,17 @@ function buildTrayMenu() {
     ? `🐺 Wolf Pack Mimic ${v} — Local only · :${s.agentPort}`
     : `🐺 Wolf Pack Mimic ${v} — Connected · :${s.agentPort}`;
 
-  const liveAlertsSubmenu = [
-    { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
-        const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked; saveConfig(cfg);
-        if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
-        pushStatus();
-      } },
-    { label: 'My /tells  🔒 PRIVATE  (display ships v0.2)', submenu: [
-        { label: 'Off — ignore tells',
-          type: 'radio', checked: s.tellsMode === 'off',
-          click: () => { const c = loadConfig(); c.tellsMode = 'off';    saveConfig(c); pushStatus(); } },
-        { label: 'Local only — show on this machine',
-          type: 'radio', checked: s.tellsMode === 'local',
-          click: () => { const c = loadConfig(); c.tellsMode = 'local';  saveConfig(c); pushStatus(); } },
-        { label: 'Synced (encrypted) — read on wolfpack.quest',
-          type: 'radio', checked: s.tellsMode === 'synced',
-          click: () => { const c = loadConfig(); c.tellsMode = 'synced'; saveConfig(c); pushStatus(); } },
-      ] },
+  // Overlays — the actual on-screen overlays + their placement controls. Renamed
+  // from the old "Live alerts" (misleading: these are overlays, not alerts).
+  const overlaysSubmenu = [
     { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
         if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
+        pushStatus();
+      } },
+    { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked; saveConfig(cfg);
+        if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -1061,27 +1069,26 @@ function buildTrayMenu() {
       click: () => { applySetupMode(!setupMode); } },
   ];
 
-  const wolfpackSubmenu = [
-    { label: 'Open wolfpack.quest', click: () => shell.openExternal(WOLFPACK_URL) },
-    { label: 'Open /me  (your stats)', click: () => shell.openExternal(WOLFPACK_ME_URL) },
-    { type: 'separator' },
-    s.localOnly
-      ? { label: 'Connect to Wolf Pack…', click: openSettings }
-      : { label: 'Disconnect (revert to local only)', click: async () => {
-          const cfg = loadConfig(); cfg.token = null; saveConfig(cfg);
-          if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
-          pushStatus();
-        } },
+  // My /tells — its own section now (was buried inside the overlay submenu).
+  const tellsSubmenu = [
+    { label: 'Off — ignore tells',
+      type: 'radio', checked: s.tellsMode === 'off',
+      click: () => { const c = loadConfig(); c.tellsMode = 'off';    saveConfig(c); pushStatus(); } },
+    { label: 'Local only — show on this machine',
+      type: 'radio', checked: s.tellsMode === 'local',
+      click: () => { const c = loadConfig(); c.tellsMode = 'local';  saveConfig(c); pushStatus(); } },
+    { label: 'Synced (encrypted) — read on wolfpack.quest/me/tells',
+      type: 'radio', checked: s.tellsMode === 'synced',
+      click: () => { const c = loadConfig(); c.tellsMode = 'synced'; saveConfig(c); pushStatus(); } },
   ];
 
-  const serviceSubmenu = [
-    { label: s.agentRunning ? 'Status: running 🟢' : 'Status: restarting…', enabled: false },
-    { label: 'Restart agent', click: async () => {
+  const connectItem = s.localOnly
+    ? { label: 'Connect to Wolf Pack…', click: openSettings }
+    : { label: 'Disconnect (revert to local only)', click: async () => {
+        const cfg = loadConfig(); cfg.token = null; saveConfig(cfg);
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
-      } },
-    { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
-    { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
-  ];
+        pushStatus();
+      } };
 
   const updateItem = updatePending
     ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
@@ -1090,20 +1097,29 @@ function buildTrayMenu() {
   const menu = Menu.buildFromTemplate([
     { label: headerLabel, enabled: false },
     { type: 'separator' },
+    // Most-used actions up top: open the local dashboard, jump to the site.
     { label: 'Show dashboard', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { type: 'separator' },
     { label: 'I use EQLogParser / other parser (Quiet mode)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
         applyOverlayVisibility(); applyTriggerVisibility();
         pushStatus();
       } },
-    { label: 'Live alerts', submenu: liveAlertsSubmenu },
-    { label: 'Wolf Pack', submenu: wolfpackSubmenu },
-    { label: 'Service', submenu: serviceSubmenu },
+    { label: 'Overlays', submenu: overlaysSubmenu },
+    { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
     { label: 'Settings…', click: openSettings },
+    connectItem,
+    { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
+    { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     updateItem,
     { type: 'separator' },
+    // Restart agent sits directly above Quit — quick recovery without hunting
+    // through a submenu.
+    { label: 'Restart agent', click: async () => {
+        if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
+      } },
     { label: 'Quit Mimic', click: () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } app.quit(); } },
   ]);
   tray.setContextMenu(menu);

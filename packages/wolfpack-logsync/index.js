@@ -3181,7 +3181,7 @@ body.wp-overlay-mode .section { display:block !important; }
 body.wp-overlay-mode .section .card { display:none !important; }
 body.wp-overlay-mode .section .card.wp-overlay-target { display:block !important; margin:0 !important; box-shadow:0 0 0 1px rgba(31,111,235,.5); background:rgba(22,27,34,.92) !important; }
 </style></head><body>
-<h1>🐺 Wolf Pack EQ — Parser</h1>
+<h1>🐺 Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span></h1>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks">
   <span>Jump to wolfpack.quest:</span>
