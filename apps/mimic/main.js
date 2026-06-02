@@ -958,7 +958,7 @@ function buildTrayMenu() {
   ];
 
   const updateItem = updatePending
-    ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
+    ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
     : { label: 'Check for updates…', click: () => safeCheckForUpdates(true), enabled: !!autoUpdater };
 
   const menu = Menu.buildFromTemplate([
@@ -1139,6 +1139,12 @@ function wireAutoUpdater() {
   autoUpdater.channel = 'mimic-beta';
   autoUpdater.allowPrerelease = true;
   autoUpdater.autoDownload = true;
+  // Apply a downloaded shell update SILENTLY on the next normal quit (no NSIS
+  // wizard, no UAC since perMachine:false). Combined with quitAndInstall(true,
+  // true) on the explicit "Restart now" path, the user never sees the
+  // installer again after the first manual install. Frequent updates are the
+  // agent, which hot-swaps in place (no installer at all).
+  autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('update-available', (info) => {
     appendAgentLog(`[updater] update available: v${info && info.version}\n`);
   });
@@ -1162,7 +1168,7 @@ function wireAutoUpdater() {
         message: `Mimic v${updatePending.version} is ready to install.`,
         detail: 'Restart now to apply the update. Your settings and agent state are preserved.',
       }).then(({ response }) => {
-        if (response === 0) { try { autoUpdater.quitAndInstall(); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } }
+        if (response === 0) { try { autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } }
       });
     }
   });
