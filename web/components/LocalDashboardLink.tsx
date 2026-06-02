@@ -1,62 +1,37 @@
-'use client';
-
-// Smart link to the LOCAL agent dashboard. Two clients can serve it:
-//   - Parser.bat  → http://127.0.0.1:7777 (legacy default)
-//   - Mimic       → http://127.0.0.1:7779 (and up if 7779 is taken)
+// Link to the LOCAL agent dashboard. Two clients can serve it:
+//   - Parser.bat  → http://localhost:7777 (legacy default)
+//   - Mimic       → http://localhost:7779 (and up if 7779 is taken)
 //
-// A member running only Mimic would get nothing from a hardcoded :7777 link.
-// This probes the likely ports client-side and links to whichever is actually
-// answering, falling back to :7777 (the documented default) when none respond
-// — e.g. the agent isn't running yet.
-import { useEffect, useState } from 'react';
-
-const CANDIDATE_PORTS = [7777, 7778, 7779, 7780];
-
-async function probe(port: number, signal: AbortSignal): Promise<boolean> {
-  try {
-    // The agent serves /api/state on its dashboard port. no-cors keeps the
-    // browser from blocking the cross-origin localhost request; we can't read
-    // the body but a resolved fetch (opaque response) means something answered.
-    await fetch(`http://127.0.0.1:${port}/api/state`, { mode: 'no-cors', signal });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
+// We deliberately DON'T probe the ports anymore. A client-side fetch from a
+// public origin (wolfpack.quest) to a localhost address now trips Chrome's
+// "Local Network Access" permission gate — the "wolfpack.quest wants to access
+// other apps and services on this device" prompt — on every single page load.
+// A plain link NAVIGATION to localhost does not trip it, so we just render
+// static links to both documented ports and let the user click the one their
+// client uses. No prompt, no probe. (Server component — no client JS needed.)
 export default function LocalDashboardLink() {
-  const [port, setPort] = useState<number | null>(null);
-  const [checked, setChecked] = useState(false);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    (async () => {
-      for (const p of CANDIDATE_PORTS) {
-        if (await probe(p, ctrl.signal)) { setPort(p); break; }
-      }
-      setChecked(true);
-    })();
-    return () => ctrl.abort();
-  }, []);
-
-  // Until a probe lands, link to the documented default so the link is never
-  // dead; swap to the live port once found.
-  const target = port ?? 7777;
-  const label = port
-    ? `http://localhost:${port}`
-    : (checked ? 'http://localhost:7777' : 'http://localhost:7777');
-
   return (
-    <a
-      href={`http://localhost:${target}`}
-      target="_blank"
-      rel="noreferrer"
-      className="text-blue hover:underline"
-      title={port
-        ? `Live agent detected on port ${port}`
-        : 'Default Parser.bat port — opens only if your agent is running there'}
-    >
-      {label}
-    </a>
+    <span>
+      <a
+        href="http://localhost:7779"
+        target="_blank"
+        rel="noreferrer"
+        className="text-blue hover:underline"
+        title="Mimic dashboard (default port 7779)"
+      >
+        localhost:7779
+      </a>
+      <span className="text-dim"> (Mimic) · </span>
+      <a
+        href="http://localhost:7777"
+        target="_blank"
+        rel="noreferrer"
+        className="text-blue hover:underline"
+        title="Parser.bat dashboard (default port 7777)"
+      >
+        7777
+      </a>
+      <span className="text-dim"> (Parser.bat)</span>
+    </span>
   );
 }
