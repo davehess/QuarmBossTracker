@@ -1274,10 +1274,18 @@ ipcMain.handle('ui-studio-list-characters', () => {
         const iniCount = _uiStudioFilesFor(c)
           .filter(name => fs.existsSync(path.join(dir, name)))
           .length;
-        out.push({ character: c, eqDir: dir, ini_count: iniCount, has_eqclient: hasEqClient });
+        // Log-file size drives the default ordering (biggest = most-played).
+        let logSize = 0;
+        try {
+          const lp = path.join(dir, 'eqlog_' + c + '_pq.proj.txt');
+          if (fs.existsSync(lp)) logSize = fs.statSync(lp).size;
+        } catch {}
+        out.push({ character: c, eqDir: dir, ini_count: iniCount, has_eqclient: hasEqClient, log_size: logSize });
       }
     } catch {}
   }
+  // Biggest log first (most-played characters at the top of the picker).
+  out.sort((a, b) => (b.log_size || 0) - (a.log_size || 0));
   return out;
 });
 

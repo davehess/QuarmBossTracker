@@ -5,7 +5,7 @@
 | **Bot** | 2.7.1 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 2.5.36 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 0.5.30 | `web/package.json` |
-| **Mimic** (Electron desktop, PREVIEW) | 1.0.0-mimic-beta.25 | `apps/mimic/package.json` |
+| **Mimic** (Electron desktop, PREVIEW) | 1.0.0-mimic-beta.26 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)

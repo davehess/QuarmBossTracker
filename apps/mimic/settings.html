@@ -131,7 +131,14 @@
   let _manualFolders   = [];
   let _excludedFound   = new Set();
 
-  function _norm(p) { return String(p || '').replace(/\\\\/g, '\\').toLowerCase(); }
+  // Normalize a path for comparison: collapse any run of slashes (\\ or /) to
+  // a single backslash, strip trailing slashes, lowercase. Makes "D:\EQ",
+  // "D:\\EQ", "D:/EQ" and "D:\EQ\" all compare equal — without this, a
+  // configured folder that the scanner also found could show up under
+  // "Additional folders" because the strings differed only by slash style.
+  function _norm(p) {
+    return String(p || '').replace(/[\\/]+/g, '\\').replace(/\\+$/, '').toLowerCase();
+  }
 
   function _renderFolderPicker(){
     const list = document.getElementById('eqDetectedList');
@@ -236,19 +243,34 @@
 
   // ── UI Studio panel ────────────────────────────────────────────────────
   // List discovered characters → per-character Capture + View backups.
+  var _uiStudioChars = [];
+  var _uiVisible = 5;
   async function _renderUiStudio() {
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
-    let chars;
-    try { chars = await window.mimic.uiStudioListCharacters(); }
+    try { _uiStudioChars = await window.mimic.uiStudioListCharacters(); }
     catch (e) { status.textContent = '✕ ' + (e && e.message ? e.message : String(e)); return; }
-    if (!chars || chars.length === 0) {
+    if (!_uiStudioChars || _uiStudioChars.length === 0) {
       status.innerHTML = 'No characters found. Make sure you\'ve added an EQ folder above and logged in to at least one character.';
       list.innerHTML = '';
       return;
     }
-    status.textContent = `Found ${chars.length} character${chars.length === 1 ? '' : 's'} across your EQ folder${chars.length === 1 ? '' : 's'}.`;
-    list.innerHTML = chars.map((c, i) =>
+    _uiVisible = 5;
+    _paintUiStudio();
+  }
+  // Paged render — biggest logs first (the IPC sorts by log size), 5 at a
+  // time with a "Show more" button. idx in the rendered rows maps 1:1 to the
+  // full _uiStudioChars list (slice preserves order), so the existing
+  // capture/restore handlers keep working unchanged.
+  function _paintUiStudio() {
+    const status = document.getElementById('uiStudioStatus');
+    const list   = document.getElementById('uiStudioCharList');
+    const chars  = _uiStudioChars;
+    const shown  = chars.slice(0, _uiVisible);
+    const remaining = chars.length - shown.length;
+    status.textContent = 'Showing ' + shown.length + ' of ' + chars.length +
+      ' character' + (chars.length === 1 ? '' : 's') + ' — largest logs first.';
+    list.innerHTML = shown.map((c, i) =>
       '<div data-charrow="' + i + '" style="border:1px solid #2a3140;border-radius:6px;padding:8px 10px;margin:6px 0;background:#161b22">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
           '<div><b style="color:#c9d1d9;font-size:13px">' + c.character.replace(/</g,'&lt;') + '</b>' +
@@ -262,7 +284,14 @@
         '<div class="ui-snapshots-list" data-snaps="' + i + '"></div>' +
         '<div class="ui-row-msg" data-msg="' + i + '" style="font-size:11px;margin-top:6px"></div>' +
       '</div>'
-    ).join('');
+    ).join('')
+    + (remaining > 0
+        ? '<button type="button" id="uiShowMore" style="margin:8px 0 0;background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:6px 12px;font-size:11px;border-radius:6px;cursor:pointer">⬇ Show ' +
+          Math.min(5, remaining) + ' more (' + remaining + ' remaining)</button>'
+        : '');
+
+    var moreBtn = document.getElementById('uiShowMore');
+    if (moreBtn) moreBtn.addEventListener('click', function () { _uiVisible += 5; _paintUiStudio(); });
 
     // Bind buttons
     list.querySelectorAll('.ui-capture').forEach(btn => {
