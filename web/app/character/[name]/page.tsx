@@ -226,6 +226,14 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
 
   const showsMainBadge = isMain(family, displayName);
   const altFamily = family.filter(m => m.name.toLowerCase() !== displayName.toLowerCase());
+
+  // THIS character's own first appearance (not the family's). Prefer its first
+  // raid tick; fall back to its earliest recorded parse so alts that never tick
+  // still show something.
+  const charParseStarts = parses.map(p => p.encounters?.started_at).filter(Boolean) as string[];
+  const charFirstSeen: string | null =
+    attendance?.first_attended ||
+    (charParseStarts.length ? charParseStarts.reduce((a, b) => (a < b ? a : b)) : null);
   // Filter timeline to only eras the family was actually active. "No activity"
   // pre-Classic etc. just clutters the timeline.
   const visibleTimeline = timeline.filter(e => e.raidsAttended > 0 || e.dkpSpent > 0 || e.itemsWon > 0);
@@ -290,19 +298,21 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
         </div>
       </section>
 
-      {/* Family aggregate strip — only shown when the family has multiple members */}
+      {/* All-character aggregate strip — only shown when there's more than one
+          character. The first three stats are totals across every character;
+          "Char first seen" is THIS character's own first appearance. */}
       {family.length > 1 && (
         <section className="bg-panel border border-border rounded-lg p-4">
           <h3 className="text-sm text-blue mb-3 flex items-center gap-2">
             <span aria-hidden>👥</span>
-            <span>Family aggregate</span>
-            <span className="text-dim text-xs">· {family.length} characters under {familyRoot?.name || '?'}</span>
+            <span>All character aggregate</span>
+            <span className="text-dim text-xs">· totals across {family.length} characters</span>
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Stat label="Family DKP spent" value={fmtDkp(familyAgg.totalDkpSpent)} accent="text-gold" />
-            <Stat label="Family items won" value={String(familyAgg.totalItems)} />
-            <Stat label="Family raids"     value={String(familyAgg.totalRaids)} accent="text-orange" />
-            <Stat label="First appearance" value={familyAgg.firstAttended ? new Date(familyAgg.firstAttended).toLocaleDateString() : '—'} />
+            <Stat label="DKP spent · all chars"  value={fmtDkp(familyAgg.totalDkpSpent)} accent="text-gold" />
+            <Stat label="Items won · all chars"  value={String(familyAgg.totalItems)} />
+            <Stat label="Raids · all chars"      value={String(familyAgg.totalRaids)} accent="text-orange" />
+            <Stat label="Char first seen"        value={charFirstSeen ? new Date(charFirstSeen).toLocaleDateString() : '—'} />
           </div>
         </section>
       )}
