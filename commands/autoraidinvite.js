@@ -1,7 +1,9 @@
 // commands/autoraidinvite.js — Store and display the current auto-raid invite info.
 // Officers/pack leaders: /autoraidinvite <character> [password]  — set ARI
-//                        password defaults to ARI_DEFAULT_PASSWORD env var if omitted
-// Everyone:              /autoraidinvite (no args) — view current ARI (ephemeral)
+// Everyone:              /autoraidinvite (no args) — view current ARI character
+//                        only (ephemeral). The invite credential is officer-only
+//                        and never echoed back to members; ping an officer in
+//                        game if you need it.
 // To clear:              use /ariclear
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
@@ -26,6 +28,9 @@ module.exports = {
     const password  = interaction.options.getString('password')?.trim()  || null;
 
     // ── View mode (no args) ─────────────────────────────────────────────────
+    // Members see the character only. Officers also see the credential —
+    // they need it to coordinate, and the role gate already controls who
+    // can read it.
     if (!character && !password) {
       const ari = getAri();
       if (!ari) {
@@ -34,16 +39,21 @@ module.exports = {
           content: '📭 No auto-raid invite is currently set. Officers can set one with `/autoraidinvite <character>`.',
         });
       }
+      const isOfficer = hasOfficerRole(interaction.member);
       const embed = new EmbedBuilder()
         .setColor(0x5865F2)
         .setTitle('🎟️ Auto-Raid Invite')
         .addFields(
           { name: 'Character', value: `\`${ari.character}\``, inline: true },
-          { name: 'Password',  value: `\`${ari.password}\``,  inline: true },
         )
-        .setDescription(`/who **${ari.character}** and send a tell with the password to get an auto-invite.`)
+        .setDescription(isOfficer
+          ? `/who **${ari.character}** to find them in game.`
+          : `Ping an officer in game for an invite — they'll get you in.`)
         .setFooter({ text: `Set by ${ari.setByName || 'an officer'}` })
         .setTimestamp(ari.setAt || null);
+      if (isOfficer && ari.password) {
+        embed.addFields({ name: 'Credential', value: `\`${ari.password}\``, inline: true });
+      }
       return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
     }
 

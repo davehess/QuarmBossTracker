@@ -29,12 +29,10 @@ async function loadRecent() {
   } catch { return []; }
 }
 
-// MIC / auto-raid-invite banner was removed: the password was rendered in
-// plain text on this page (security leak), and the Discord deep-link
-// "DM officer" buttons triggered Android's app-launch permission prompt
-// for every signed-in member. Invites are coordinated in-game via /who,
-// so the website doesn't need to mirror the MIC state at all. Bot-side
-// ari_state mirror is kept (utils/state.js) since it's internal data.
+// Auto-raid-invite (ARI) banner was removed: invites are coordinated
+// in-game via /who, so the website doesn't need to mirror that state.
+// Bot-side ari_state mirror is kept (utils/state.js) since it's
+// internal data.
 
 export default async function HomePage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
