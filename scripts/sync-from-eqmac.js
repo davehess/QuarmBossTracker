@@ -571,6 +571,29 @@ if (require.main !== module) return;
 
   console.log(`Parsed ${totalRows} rows from ${Object.keys(buffers).length} destination tables`);
 
+  // ── Drop child rows with dangling FKs ──────────────────────────────────────
+  // The upstream Quarm dump occasionally ships *_entries rows whose parent
+  // *table* row is missing (e.g. loottable_entries.loottable_id = 87959 with
+  // no matching loottable row). The first such row aborts the WHOLE sync with
+  // a 409 FK violation, which is what kept eqemu_spells (and everything past
+  // it in ORDER) empty — even though the dump has spell rows. Filter the
+  // orphans out before upsert so a junk row in one table can't poison the run.
+  const _dropOrphans = (childKey, fkCol, parentKey, parentPk) => {
+    if (!buffers[childKey] || !buffers[parentKey]) return;
+    const parents = new Set(buffers[parentKey].map(r => r[parentPk]));
+    const before = buffers[childKey].length;
+    buffers[childKey] = buffers[childKey].filter(r => parents.has(r[fkCol]));
+    const dropped = before - buffers[childKey].length;
+    if (dropped > 0) console.log(`  ! dropped ${dropped} orphan ${childKey} rows with missing ${fkCol} (dump inconsistency)`);
+  };
+  _dropOrphans('eqemu_loottable_entries', 'loottable_id', 'eqemu_loottable',   'id');
+  _dropOrphans('eqemu_loottable_entries', 'lootdrop_id',  'eqemu_lootdrop',    'id');
+  _dropOrphans('eqemu_lootdrop_entries',  'lootdrop_id',  'eqemu_lootdrop',    'id');
+  _dropOrphans('eqemu_lootdrop_entries',  'item_id',      'eqemu_items',       'id');
+  _dropOrphans('eqemu_spawnentry',        'spawngroup_id','eqemu_spawngroup',  'id');
+  _dropOrphans('eqemu_spawnentry',        'npc_id',       'eqemu_npc_types',   'id');
+  _dropOrphans('eqemu_spawn2',            'spawngroup_id','eqemu_spawngroup',  'id');
+
   const counts = {};
   // Upsert in dependency order (parents before children)
   const ORDER = [
