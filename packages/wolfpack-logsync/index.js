@@ -3644,26 +3644,55 @@ function renderInfo(s) {
   const cc = s.castCounts || {};
   const casters = Object.keys(cc);
   if (casters.length > 0) {
-    h += '<div class="card wide"><h2>Spell Casts This Session</h2>';
-    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Reliable for the uploader. Other casters land under <code>(unknown)</code> because EQ does not log the spell name for bystanders.</div>';
-    // Sort characters by total cast count desc
-    const ordered = casters
-      .map(name => {
-        const spells = cc[name] || {};
-        const total = Object.values(spells).reduce((a, b) => a + b, 0);
-        return { name, spells, total };
-      })
-      .sort((a, b) => b.total - a.total);
-    for (const c of ordered.slice(0, 10)) {
-      const spellEntries = Object.entries(c.spells).sort((a, b) => b[1] - a[1]).slice(0, 8);
-      h += '<details><summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + c.total + ' cast' + (c.total === 1 ? '' : 's') + '</span></summary>';
-      h += '<table>';
-      for (const [spell, count] of spellEntries) {
-        h += '<tr><td>' + esc(spell) + '</td><td class="num">' + count + '</td></tr>';
+    // Snapshot which character rows are currently open so the 1-3s refresh
+    // doesn't collapse them. We re-apply the open set after innerHTML rewrite.
+    var _spOpen = new Set();
+    try {
+      var _ex = document.querySelectorAll('#info details[data-cc-name]');
+      for (var _i = 0; _i < _ex.length; _i++) {
+        if (_ex[_i].hasAttribute('open')) _spOpen.add(_ex[_i].getAttribute('data-cc-name'));
       }
-      h += '</table></details>';
+    } catch (e) {}
+    // Player vs NPC split — single-word Title-cased names that have been
+    // confirmed via /who, parses, or chat are likely real players. Everything
+    // else (multi-word, lowercased, "(unknown)", "a frog") falls into the
+    // NPC / other bucket. This stops a multi-word NPC like "a sentinel ward"
+    // from sitting in the same list as real player names.
+    function _ccIsPlayerName(n) {
+      if (!n) return false;
+      if (n === '(unknown)') return false;
+      if (/\s/.test(n)) return false;
+      return /^[A-Z][a-zA-Z]{2,}$/.test(n);
     }
-    h += '</div>';
+    function _ccRenderGroup(title, names, hint) {
+      if (names.length === 0) return '';
+      var html = '<div class="card wide"><h2>' + title + '</h2>';
+      if (hint) html += '<div class="subtle" style="font-size:11px;margin-bottom:6px">' + hint + '</div>';
+      var ordered = names.map(function(name) {
+        var spells = cc[name] || {};
+        var total = Object.values(spells).reduce(function(a, b){ return a + b; }, 0);
+        return { name: name, spells: spells, total: total };
+      }).sort(function(a, b){ return b.total - a.total; });
+      ordered.slice(0, 10).forEach(function(c) {
+        var spellEntries = Object.entries(c.spells).sort(function(a, b){ return b[1] - a[1]; }).slice(0, 8);
+        var openAttr = _spOpen.has(c.name) ? ' open' : '';
+        html += '<details data-cc-name="' + esc(c.name) + '"' + openAttr + '>';
+        html += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + c.total + ' cast' + (c.total === 1 ? '' : 's') + '</span></summary>';
+        html += '<table>';
+        for (var k = 0; k < spellEntries.length; k++) {
+          html += '<tr><td>' + esc(spellEntries[k][0]) + '</td><td class="num">' + spellEntries[k][1] + '</td></tr>';
+        }
+        html += '</table></details>';
+      });
+      html += '</div>';
+      return html;
+    }
+    var playerNames = casters.filter(_ccIsPlayerName);
+    var otherNames  = casters.filter(function(n){ return !_ccIsPlayerName(n); });
+    h += _ccRenderGroup('Spell Casts This Session — Players', playerNames,
+      'Reliable for the uploader. Other casters land under <code>(unknown)</code> because EQ does not log the spell name for bystanders.');
+    h += _ccRenderGroup('Spell Casts This Session — NPCs / Unknown', otherNames,
+      'Casts attributed to NPCs or to bystanders whose spell name EQ does not reveal.');
   }
   h += '</div>';
   document.getElementById('info').innerHTML = h;
