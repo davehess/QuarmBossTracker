@@ -4124,8 +4124,17 @@ function renderOptin(o) {
       refreshOptin();
     });
   });
-  const sel = root.querySelector('#sortMode');
-  _bindOnce(sel, 'change', async () => { await postOptin('sort', { mode: sel.value }); refreshOptin(); });
+  // Sort dropdown via DELEGATION on the stable #optin container. The <select>
+  // node is recreated on every innerHTML rebuild, so binding directly to it
+  // was unreliable (lost across change-detection skips / rebuilds). #optin
+  // itself never gets destroyed, so a single delegated 'change' listener on it
+  // catches the bubbling event from #sortMode reliably.
+  _bindOnce(root, 'change', async (e) => {
+    if (e.target && e.target.id === 'sortMode') {
+      await postOptin('sort', { mode: e.target.value });
+      refreshOptin();
+    }
+  });
 }
 
 async function refreshOptin() {
