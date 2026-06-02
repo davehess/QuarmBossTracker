@@ -3070,19 +3070,15 @@ function esc(s) { return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<'
 // their inner tables update without an innerHTML flash too.
 function morphInto(el, html) {
   if (!el) return false;
-  if (el._wpLastHtml === html) return false;
+  if (el._wpLastHtml === html) return false;   // change-detection: skip identical
   el._wpLastHtml = html;
-  try {
-    var scratch = document.createElement('div');
-    scratch.innerHTML = html;
-    // Reconcile el's CHILDREN against the scratch wrapper's children. We must
-    // NOT morph el's own attributes against the scratch <div> — that would
-    // strip el's id + class (e.g. #dash's "section active"), blanking the
-    // whole dashboard. Only the inner content is replaced.
-    _morphChildren(el, scratch);
-  } catch (e) {
-    el.innerHTML = html;   // safety net — never leave it blank
-  }
+  // NOTE: the DOM-morph approach (v2.5.31–33) was reverted — it kept breaking
+  // the dashboard in real browsers (couldn't be validated here, only via a DOM
+  // mock). Plain innerHTML with change-detection is the known-good path: most
+  // polls are byte-identical so they're skipped (no flicker when idle); only a
+  // genuinely-changed panel is rewritten. The _morph* helpers below are kept
+  // unused pending a real-browser test harness.
+  el.innerHTML = html;
   return true;
 }
 function setSectionHTML(id, html) {
