@@ -3828,6 +3828,14 @@ function renderHeader(s) {
 function renderDash(s) {
   let h = '';
 
+  // Per-character "buffs & zone" card — what each watched character is carrying
+  // and where they are right now, OR what they logged out with (the last Zeal
+  // snapshot persists after a client drops). Its own self-updating
+  // #wpZealClients element (filled by renderZealClients) so its ticking buff
+  // timers don't rewrite the whole dashboard section every 2s. Hidden until
+  // Zeal reports at least one character.
+  h += '<div id="wpZealClients" class="card wide" style="display:none"></div>';
+
   // Trigger overlays — fade out after their duration but keep a short
   // history so users can scroll back through the last few callouts.
   const now = Date.now();
@@ -4349,6 +4357,46 @@ function renderPets(s) {
 // counters + HP gauges don't force the whole Triggers section to rewrite every
 // poll. Same self-isolating pattern as the other wp* injected cards. Hidden
 // (display:none) until at least one Zeal event/client appears.
+// Per-character "buffs & zone" card on the Dashboard. Shows what each watched
+// character is carrying + where they are right now (green "live" dot), or what
+// they logged out with (dimmed, "last seen Nm ago") once their client drops.
+// Fed by s.zealClients (server resolves the EQ zone id → name). Self-updating
+// #wpZealClients element so its 6s buff-tick countdowns don't rewrite the whole
+// Dashboard section every poll.
+function renderZealClients(s) {
+  const el = document.getElementById('wpZealClients');
+  if (!el) return;   // Dashboard section not painted yet
+  const clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+  if (clients.length === 0) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  let h = '<h2>🧪 Buffs &amp; Zone <span class="dim" style="font-size:11px;font-weight:normal">· what each character is carrying + where (via Zeal)</span></h2>';
+  for (const c of clients) {
+    const dot   = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
+    const where = c.zone_name ? esc(c.zone_name) : (c.zone != null ? 'zone ' + esc(String(c.zone)) : 'unknown zone');
+    const meta  = [];
+    meta.push(where);
+    if (c.self_hp_pct != null) meta.push('self ' + Math.round(c.self_hp_pct) + '%');
+    if (!c.live && c.updatedAt) meta.push('last seen ' + fmtAgo(c.updatedAt));
+    else if (c.live)           meta.push('autoattack ' + (c.autoattack ? 'ON' : 'off'));
+    h += '<div style="margin-top:6px"><span class="name">' + dot + ' ' + esc(c.character) + '</span> '
+       + '<span class="dim" style="font-size:11px">· ' + meta.join(' · ') + '</span></div>';
+    const buffs = Array.isArray(c.buffs) ? c.buffs : [];
+    if (buffs.length) {
+      const bstr = buffs.slice(0, 16).map(function(b){
+        return esc(b.name) + (b.ticks != null ? ' <span class="dim">(' + b.ticks + 't)</span>' : '');
+      }).join(' · ');
+      h += '<div style="margin-left:14px;color:#a371f7;font-size:12px">🧪 ' + bstr + '</div>';
+    } else {
+      h += '<div style="margin-left:14px;font-size:12px" class="dim">no buffs reported</div>';
+    }
+    if (c.casting) h += '<div style="margin-left:14px;color:#58a6ff;font-size:12px">✦ casting ' + esc(c.casting) + '</div>';
+  }
+  morphInto(el, h);
+}
 function renderZealCard(s) {
   const el = document.getElementById('wpZealCard');
   if (!el) return;   // Triggers section not painted yet — nothing to fill
@@ -4368,34 +4416,8 @@ function renderZealCard(s) {
      + '<span style="font-size:11px;font-weight:normal;color:' + (live ? 'var(--green)' : 'var(--dim)') + '">'
      + (zPids.length ? '● ' + zPids.length + ' client' + (zPids.length === 1 ? '' : 's') + ' connected' : '○ no clients')
      + (ageSec !== null ? ' · last event ' + (ageSec < 1 ? 'now' : ageSec + 's ago') : '')
-     + '</span></h2>';
-  // Live state line per client — the values gauge-condition triggers watch.
-  const zState = s.zealState || {};
-  const zChars = Object.keys(zState);
-  if (zChars.length > 0) {
-    h += '<div style="font-size:11px;margin-bottom:6px">';
-    for (const ch of zChars) {
-      const st = zState[ch] || {};
-      const parts = [];
-      if (st.self_hp_pct != null)      parts.push('self ' + Math.round(st.self_hp_pct) + '%');
-      if (st.target_name)              parts.push('target ' + esc(st.target_name) + ' ' + Math.round(st.target_hp_pct) + '%');
-      if (st.group_min_hp_pct != null) parts.push('low grp ' + esc(st.group_min_name || '?') + ' ' + Math.round(st.group_min_hp_pct) + '%');
-      if (st.zone != null)             parts.push('zone ' + st.zone);
-      parts.push('autoattack ' + (st.autoattack ? 'ON' : 'off'));
-      h += '<div><span class="name">' + esc(ch) + '</span> <span class="dim">' + parts.join(' · ') + '</span></div>';
-      // Buff window line — name + remaining ticks (6s each) per buff. This
-      // is the caster's own buffs (Feral Avatar, haste, KEI, SoW…), the
-      // source for buff-expiry triggers + the Feral-Avatar-uptime metric.
-      if (Array.isArray(st.buffs) && st.buffs.length) {
-        const bstr = st.buffs.slice(0, 14).map(function(b){
-          return esc(b.name) + (b.ticks != null ? ' (' + b.ticks + 't)' : '');
-        }).join(' · ');
-        h += '<div style="margin-left:10px;color:#a371f7">🧪 ' + bstr + '</div>';
-      }
-      if (st.casting) h += '<div style="margin-left:10px;color:#58a6ff">✦ casting ' + esc(st.casting) + '</div>';
-    }
-    h += '</div>';
-  }
+     + '</span>'
+     + ' <span class="dim" style="font-size:11px;font-weight:normal">· protocol diagnostics; per-character buffs &amp; zone are on the Dashboard</span></h2>';
   if (zTotal === 0) {
     h += '<div class="dim" style="font-size:12px">Connected but no events yet. In-game, try <code>/pipedelay 250</code> to make Zeal stream labels + gauges.</div>';
   } else {
@@ -5030,9 +5052,9 @@ async function refresh() {
     // catch below — leaving the body blank with no error anywhere. Now a
     // failing section shows its own error card (visible on-screen, not just the
     // log) and the other sections still render.
-    var _sections = [['header', renderHeader], ['dash', renderDash], ['tanks', renderTanks],
-                     ['healers', renderHealers], ['deeps', renderDeeps], ['pets', renderPets],
-                     ['triggers', renderTriggers], ['zealcard', renderZealCard],
+    var _sections = [['header', renderHeader], ['dash', renderDash], ['zealclients', renderZealClients],
+                     ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
+                     ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['overlays', renderOverlays], ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
@@ -10297,6 +10319,19 @@ const _zealState = {};
 // sub-second; a relog (same eqgame PID, new `character`) or a disconnect simply
 // stops updating and ages out. Generous enough to never flap on a live client.
 const ZEAL_STALE_MS = 45_000;
+// EQ zone_id → long name. Zeal's `player` event reports the numeric EQ zone id
+// (e.g. 3, 161), not a name — so we resolve it here for human-readable display
+// ("zone 3" → "Surefall Glade"). Sourced from eqemu_zone (Quarm catalog,
+// Classic→PoP). Kept module-side (not in WEB_HTML) so the big literal never
+// trips the dashboard escape check.
+const ZONE_NAMES = {
+  1:'South Qeynos',2:'North Qeynos',3:'Surefall Glade',4:'Qeynos Hills',5:'Highpass Hold',6:'High Keep',8:'North Freeport',9:'West Freeport',10:'East Freeport',11:'Runnyeye',12:'Western Plains of Karana',13:'Northern Plains of Karana',14:'Southern Plains of Karana',15:'Eastern Plains of Karana',16:'Gorge of King Xorbb',17:'Blackburrow',18:'Lair of the Splitpaw',19:'Rivervale',20:'Kithicor Forest',21:'West Commonlands',22:'East Commonlands',23:'Erudin Palace',24:'Erudin',25:'Nektulos Forest',26:'Sunset Home',27:'Lavastorm Mountains',28:'Nektropos',29:'Halas',30:'Everfrost Peaks',31:"Solusek's Eye",32:"Nagafen's Lair",33:'Misty Thicket',34:'Northern Desert of Ro',35:'Southern Desert of Ro',36:'Befallen',37:'Oasis of Marr',38:'Toxxulia Forest',39:'The Hole',40:'Neriak - Foreign Quarter',41:'Neriak - Commons',42:'Neriak - 3rd Gate',43:'Neriak Palace',44:'Najena',45:'Qeynos Aqueduct System',46:'Innothule Swamp',47:'The Feerrott',48:'Accursed Temple of Cazic Thule',49:'Oggok',50:'Rathe Mountains',51:'Lake Rathetear',52:'Grobb',53:'Aviak Village',54:'Greater Faydark',55:"Ak'Anon",56:'Steamfont Mountains',57:'Lesser Faydark',58:'Crushbone',59:'Castle of Mistmoore',60:'South Kaladim',61:'Northern Felwithe',62:'Southern Felwithe',63:'The Estate of Unrest',64:'Kedge Keep',65:'Guk',66:'Ruins of Old Guk',67:'North Kaladim',68:'Butcherblock Mountains',69:'Ocean of Tears',70:"Dagnor's Cauldron",71:'Plane of Sky',72:'Plane of Fear',73:'Permafrost Caverns',74:'Kerra Isle',75:'Paineel',76:'Plane of Hate',77:'The Arena',78:'Field of Bone',79:'Warsliks Woods',80:'Temple of Solusek Ro',81:'Mines of Droga',82:'Cabilis West',83:'Swamp of No Hope',84:'Firiona Vie',85:'Lake of Ill Omen',86:'The Dreadlands',87:'The Burning Wood',88:'Kaesora',89:'Ruins of Sebilis',90:'The City of Mist',91:'Skyfire Mountains',92:'Frontier Mountains',93:'The Overthere',94:'The Emerald Jungle',95:"Trakanon's Teeth",96:'Timorous Deep',97:"Kurn's Tower",98:"Erud's Crossing",100:'Stonebrunt Mountains',101:'The Warrens',102:"Karnor's Castle",103:'Chardok',104:'The Crypt of Dalnir',105:'The Howling Stones',106:'Cabilis East',107:'Mines of Nurga',108:"Veeshan's Peak",109:'Veksar',110:'Iceclad Ocean',111:'Tower of Frozen Shadow',112:"Velketor's Labyrinth",113:'Kael Drakkel',114:'Skyshrine',115:'The City of Thurgadin',116:'Eastern Wastes',117:'Cobaltscar',118:'The Great Divide',119:'The Wakening Land',120:'Western Wastes',121:'Crystal Caverns',123:'Dragon Necropolis',124:'Temple of Veeshan',125:"Siren's Grotto",126:'Plane of Mischief',127:'Plane of Growth',128:"Sleeper's Tomb",129:'Icewell Keep',130:'Marauders Mire',150:'Shadow Haven',151:'The Bazaar',152:'Nexus',153:'Echo Caverns',154:'Acrylia Caverns',155:'The City of Shar Vahl',156:'The Paludal Caverns',157:'The Fungus Grove',158:'Vex Thal',159:'Sanctus Seru',160:'Katta Castellum',161:'Netherbian Lair',162:'Ssraeshza Temple',163:"Grieg's End",164:'The Deep',165:"Shadeweaver's Thicket",166:'Hollowshade Moor',167:'Grimling Forest',168:'Marus Seru',169:'Mons Letalis',170:'Twilight',171:'The Grey',172:'The Tenebrous Mountains',173:"The Maiden's Eye",174:'The Dawnshroud Peaks',175:'Scarlet Desert',176:'The Umbral Plains',179:'Akheva Ruins',180:'The Arena Two',181:'Jaggedpine Forest',183:'EverQuest Tutorial',200:'The Crypt of Decay',201:'Plane of Justice',202:'Plane of Knowledge',203:'Plane of Tranquility',204:'Plane of Nightmares',205:'Plane of Disease',206:'Plane of Innovation',207:'Torment, the Plane of Pain',208:'Plane of Valor',209:'Bastion of Thunder',210:'Plane of Storms',211:'Halls of Honor',212:'Tower of Solusek Ro',213:'Plane of War',214:'Drunder, the Fortress of Zek',215:'Plane of Air',216:'Plane of Water',217:'Plane of Fire',218:'Plane of Earth',219:'Plane of Time',220:'Temple of Marr',221:'The Lair of Terris Thule',1039:'The Hole (Instanced)',1048:'Lost Temple of CazicThule',1071:'Plane of Sky (Instanced)',1072:'Plane of Fear (Instanced)',1076:'Plane of Hate (Instanced)',1078:'Field of Bone (Alt)',1097:"Kurn's Tower (Alternate)",
+};
+function _zoneName(id) {
+  if (id == null) return null;
+  const n = Number(id);
+  return ZONE_NAMES[n] || null;
+}
 // Serialize the Zeal status + live state for the dashboard, pruning anything
 // attributable to a character who is no longer active. This is what fixes the
 // "group is still on the previous character" report: a relog keeps the same
@@ -10322,9 +10357,29 @@ function _serializeZealForWeb() {
     if (ch && !activeChars.has(String(ch).toLowerCase())) continue;
     samples[type] = sm;
   }
+  // Persistent "buffs & zone" view: every character we've seen, most-recent
+  // first, with the EQ zone resolved to a name and a `live` flag. Unlike the
+  // pruned diagnostic above, this deliberately KEEPS logged-out characters so
+  // you can see what each one logged out carrying + where they parked. Capped
+  // so a long multibox session can't bloat the payload.
+  const clients = Object.keys(_zealState).map(ch => {
+    const st = _zealState[ch] || {};
+    return {
+      character:   ch,
+      zone:        st.zone != null ? st.zone : null,
+      zone_name:   _zoneName(st.zone),
+      self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      autoattack:  !!st.autoattack,
+      buffs:       Array.isArray(st.buffs) ? st.buffs : [],
+      casting:     st.casting || null,
+      updatedAt:   st.updatedAt || 0,
+      live:        (now - (st.updatedAt || 0)) <= ZEAL_STALE_MS,
+    };
+  }).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 20);
   return {
-    zeal:      { ..._zeal, lastSamples: samples },
-    zealState: freshState,
+    zeal:        { ..._zeal, lastSamples: samples },
+    zealState:   freshState,
+    zealClients: clients,
   };
 }
 // Edge-detection memory for zeal-condition triggers: key = triggerId|character
