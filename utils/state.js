@@ -632,6 +632,10 @@ function mergeWhoData(rows) {
       anonymous:  !!r.anonymous,
       gm:         !!r.gm || !!old.gm,
       is_zek:     old.is_zek || autoZek,
+      // Guild rank (Member / Officer / Leader) from /guildstatus — survives
+      // /anon and persists once seen (a later plain /who row carries no rank).
+      // Lets /whois surface guild leaders ("X is the leader of <Guild>").
+      guildRank:  r.guildRank ?? old.guildRank ?? null,
       firstSeen:  old.firstSeen || r.observedAt || now,
       lastSeen:   r.observedAt || now,
     };

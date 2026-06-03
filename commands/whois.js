@@ -41,12 +41,19 @@ module.exports = {
     const level = char?.level || who?.level || null;
     const race  = who?.race   || null;
     const guild = char?.guild || who?.guild || null;
+    const rank  = who?.guildRank || null;   // Member / Officer / Leader (from /guildstatus)
     const isZek = !!who?.is_zek;
 
     const lines = [];
     if (cls)   lines.push(`**Class:** ${cls}${level ? ` (level ${level})` : ''}`);
     if (race)  lines.push(`**Race:** ${race}`);
-    if (guild) lines.push(`**Guild:** \`<${guild}>\``);
+    if (guild) {
+      // Surface the in-game guild rank when we've seen it. Leader gets a crown
+      // + emphasis — "X is the leader of <Guild>" is the line that feeds this.
+      if (rank === 'Leader')       lines.push(`👑 **Guild Leader** of \`<${guild}>\``);
+      else if (rank === 'Officer') lines.push(`**Guild Officer** of \`<${guild}>\``);
+      else                         lines.push(`**Guild:** \`<${guild}>\`${rank ? ` (${rank})` : ''}`);
+    }
     if (isZek) lines.push(`⚠️ **Zek member** — flagged as PVP guild affiliated`);
     if (who?.anonymous) lines.push(`*(anonymous in last /who)*`);
     if (who?.gm)        lines.push(`👑 **GM**`);
