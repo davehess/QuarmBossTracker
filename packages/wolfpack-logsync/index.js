@@ -4341,6 +4341,16 @@ function renderTriggers(s) {
         if (st.zone != null)             parts.push('zone ' + st.zone);
         parts.push('autoattack ' + (st.autoattack ? 'ON' : 'off'));
         h += '<div><span class="name">' + esc(ch) + '</span> <span class="dim">' + parts.join(' · ') + '</span></div>';
+        // Buff window line — name + remaining ticks (6s each) per buff. This
+        // is the caster's own buffs (Feral Avatar, haste, KEI, SoW…), the
+        // source for buff-expiry triggers + the Feral-Avatar-uptime metric.
+        if (Array.isArray(st.buffs) && st.buffs.length) {
+          const bstr = st.buffs.slice(0, 14).map(function(b){
+            return esc(b.name) + (b.ticks != null ? ' (' + b.ticks + 't)' : '');
+          }).join(' · ');
+          h += '<div style="margin-left:10px;color:#a371f7">🧪 ' + bstr + '</div>';
+        }
+        if (st.casting) h += '<div style="margin-left:10px;color:#58a6ff">✦ casting ' + esc(st.casting) + '</div>';
       }
       h += '</div>';
     }

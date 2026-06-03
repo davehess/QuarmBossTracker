@@ -571,6 +571,36 @@ function _zealAbsorb(obj) {
       s.autoattack = !!inner.autoattack;
       cur.dirty = true;
     }
+  } else if (type === 1) {                            // label — buff window + casting
+    const inner = _zealParseData(obj);
+    if (Array.isArray(inner)) {
+      // Buff slots: label IDs 45-59 (slots 0-14) and 135-140 (slots 15-20),
+      // each value=buff name, meta.ticks=remaining 6s ticks. Label 134 =
+      // the spell currently being cast. (Char info lives in IDs 1-13 — we
+      // ignore those here.) See CoastalRedwood/Zeal named_pipe.cpp.
+      const buffs = [];
+      let casting = null;
+      for (const it of inner) {
+        if (!it || it.type == null) continue;
+        const id = it.type;
+        if ((id >= 45 && id <= 59) || (id >= 135 && id <= 140)) {
+          const name = it.value;
+          if (name && name !== '' && String(name).toLowerCase() !== 'none') {
+            const ticks = it.meta && typeof it.meta.ticks === 'number' ? it.meta.ticks : null;
+            buffs.push({ name: String(name), ticks });
+          }
+        } else if (id === 134) {
+          if (it.value && it.value !== '') casting = String(it.value);
+        }
+      }
+      // Only update when we actually saw buff/casting labels — a char-info-only
+      // label message shouldn't wipe the buff list.
+      if (buffs.length > 0 || casting !== null) {
+        s.buffs = buffs;
+        s.casting = casting;
+        cur.dirty = true;
+      }
+    }
   }
 }
 function _flushZealStateToAgent() {
