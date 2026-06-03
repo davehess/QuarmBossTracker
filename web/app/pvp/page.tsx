@@ -23,7 +23,17 @@ type KillRow = {
   killed_at: string;
 };
 
-async function loadLeaderboard() {
+type LeaderboardRow = {
+  killer:   string;
+  total:    number;
+  unique:   number;
+  petKills: number;
+  assists:  number;
+  last:     string;
+};
+type SortKey = 'total' | 'unique' | 'assists' | 'last';
+
+async function loadLeaderboard(sortKey: SortKey) {
   const sb = supabaseAdmin();
   // Ownership = "is the killer currently a Wolf Pack character", NOT "was the
   // killer's pvp_kills.killer_guild equal to 'Wolf Pack' at the time of the
@@ -38,36 +48,60 @@ async function loadLeaderboard() {
     .select('name')
     .eq('guild_id', 'wolfpack');
   const rosterNames = (roster ?? []).map(r => (r as { name: string }).name);
-  if (rosterNames.length === 0) return { rows: [], error: null as string | null };
+  if (rosterNames.length === 0) return { rows: [] as LeaderboardRow[], error: null as string | null };
 
-  const { data, error } = await sb
-    .from('pvp_kills')
-    .select('killer, victim, via_pet, killed_at')
-    .eq('guild_id', 'wolfpack')
-    .in('killer', rosterNames)
-    .order('killed_at', { ascending: false })
-    .limit(20000);
-  if (error) return { rows: [], error: error.message };
+  // Two queries in parallel — kills (the existing source-of-truth ledger) and
+  // assists (the new pvp_assists table populated by the agent's correlation).
+  // Merge by killer name into one row per character.
+  const [killRes, assistRes] = await Promise.all([
+    sb.from('pvp_kills')
+      .select('killer, victim, via_pet, killed_at')
+      .eq('guild_id', 'wolfpack')
+      .in('killer', rosterNames)
+      .order('killed_at', { ascending: false })
+      .limit(20000),
+    sb.from('pvp_assists')
+      .select('assister')
+      .eq('guild_id', 'wolfpack')
+      .in('assister', rosterNames)
+      .limit(20000),
+  ]);
+  if (killRes.error) return { rows: [] as LeaderboardRow[], error: killRes.error.message };
 
   const byKiller = new Map<string, {
     killer: string;
     total: number;
     victims: Set<string>;
     petKills: number;
+    assists: number;
     last: string;
   }>();
-  for (const k of (data ?? []) as KillRow[]) {
+  for (const k of (killRes.data ?? []) as KillRow[]) {
     const key = k.killer.toLowerCase();
     let e = byKiller.get(key);
-    if (!e) { e = { killer: k.killer, total: 0, victims: new Set(), petKills: 0, last: k.killed_at }; byKiller.set(key, e); }
+    if (!e) { e = { killer: k.killer, total: 0, victims: new Set(), petKills: 0, assists: 0, last: k.killed_at }; byKiller.set(key, e); }
     e.total += 1;
     e.victims.add(k.victim.toLowerCase());
     if (k.via_pet) e.petKills += 1;
     if (k.killed_at > e.last) e.last = k.killed_at;
   }
-  const rows = [...byKiller.values()]
-    .map(e => ({ killer: e.killer, total: e.total, unique: e.victims.size, petKills: e.petKills, last: e.last }))
-    .sort((a, b) => b.total - a.total || b.unique - a.unique);
+  // Fold in assists. Assisters who have no kills still appear on the board
+  // (set total=0 etc.) so the assists-leaders aren't hidden under a kills gate.
+  for (const a of (assistRes.data ?? []) as { assister: string }[]) {
+    const key = a.assister.toLowerCase();
+    let e = byKiller.get(key);
+    if (!e) { e = { killer: a.assister, total: 0, victims: new Set(), petKills: 0, assists: 0, last: '' }; byKiller.set(key, e); }
+    e.assists += 1;
+  }
+  const rows: LeaderboardRow[] = [...byKiller.values()].map(e => ({
+    killer: e.killer, total: e.total, unique: e.victims.size, petKills: e.petKills, assists: e.assists, last: e.last,
+  }));
+  rows.sort((a, b) => {
+    if (sortKey === 'assists') return b.assists - a.assists || b.total - a.total;
+    if (sortKey === 'unique')  return b.unique  - a.unique  || b.total - a.total;
+    if (sortKey === 'last')    return (b.last || '').localeCompare(a.last || '');
+    return b.total - a.total || b.unique - a.unique;   // default
+  });
   return { rows, error: null as string | null };
 }
 
@@ -130,13 +164,24 @@ function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
   return (diff < 0 ? '-' : '') + parts.join(' ');
 }
 
-export default async function PvpPage() {
+export default async function PvpPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string }>;
+}) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp');
 
+  const sp = await searchParams;
+  const sortKey: SortKey = (
+    sp?.sort === 'assists' || sp?.sort === 'unique' || sp?.sort === 'last'
+      ? sp.sort
+      : 'total'
+  );
+
   const tz = await userTz();
   const [{ rows, error }, bossTimers] = await Promise.all([
-    loadLeaderboard(),
+    loadLeaderboard(sortKey),
     loadBossTimers(),
   ]);
   if (error) {
@@ -180,8 +225,28 @@ export default async function PvpPage() {
               <tr className="border-b border-border">
                 <th className="py-1 pr-2 w-8">#</th>
                 <th className="py-1 pr-2">Killer</th>
-                <th className="py-1 pr-2 text-right">Kills (unique)</th>
-                <th className="py-1 pr-2 text-right">Last kill</th>
+                <th className="py-1 pr-2 text-right">
+                  <Link href="/pvp?sort=total" className={`hover:text-blue ${sortKey === 'total' ? 'text-text' : ''}`}>
+                    Kills {sortKey === 'total' && '▾'}
+                  </Link>
+                  {' '}
+                  <Link href="/pvp?sort=unique" className={`hover:text-blue text-[10px] ${sortKey === 'unique' ? 'text-text' : ''}`} title="Sort by unique victims">
+                    (unique{sortKey === 'unique' && ' ▾'})
+                  </Link>
+                </th>
+                <th
+                  className="py-1 pr-2 text-right"
+                  title="Wayne Gretzky scored 894 goals, but he had 1,963 assists."
+                >
+                  <Link href="/pvp?sort=assists" className={`hover:text-blue ${sortKey === 'assists' ? 'text-text' : ''}`}>
+                    Assists {sortKey === 'assists' && '▾'}
+                  </Link>
+                </th>
+                <th className="py-1 pr-2 text-right">
+                  <Link href="/pvp?sort=last" className={`hover:text-blue ${sortKey === 'last' ? 'text-text' : ''}`}>
+                    Last kill {sortKey === 'last' && '▾'}
+                  </Link>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -200,8 +265,14 @@ export default async function PvpPage() {
                   <td className="py-1 pr-2 text-right text-text">
                     {r.total} <span className="text-dim">({r.unique})</span>
                   </td>
+                  <td
+                    className="py-1 pr-2 text-right text-text"
+                    title="Wayne Gretzky scored 894 goals, but he had 1,963 assists."
+                  >
+                    {r.assists > 0 ? r.assists : <span className="text-dim">—</span>}
+                  </td>
                   <td className="py-1 pr-2 text-right text-dim">
-                    {fmtDateOnly(r.last, tz)}
+                    {r.last ? fmtDateOnly(r.last, tz) : <span className="text-dim/60">—</span>}
                   </td>
                 </tr>
               ))}
