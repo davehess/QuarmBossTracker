@@ -17,7 +17,7 @@
 //      EQLogParser or GINA in parallel), in-place auto-update via
 //      electron-updater.
 //
-// BETA. Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
+// Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
 'use strict';
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen } = require('electron');
@@ -1707,26 +1707,19 @@ async function checkAgentUpdate() {
 
 function wireAutoUpdater() {
   if (!autoUpdater) return;
-  // Pin Mimic to its own update channel so this repo's other releases (bot
-  // v2.x.y, agent v2.x.y) never get mistaken for Mimic updates.
+  // Mimic 1.0.0+ uses the DEFAULT `latest` channel — released as a stable
+  // app, no longer a prerelease. electron-updater picks up plain-semver
+  // releases (e.g. v1.0.0, v1.1.0) via the auto-emitted latest.yml.
   //
-  // CRITICAL — how electron-updater (v6) resolves a CUSTOM channel:
-  // it scans the GitHub releases atom feed and, for a custom channel name
-  // (anything other than "alpha"/"beta"), only accepts a release whose tag
-  // satisfies `semver.prerelease(tag)[0] === channel`. That means the
-  // release VERSION must carry the channel as its prerelease identifier —
-  // i.e. `0.1.0-mimic-beta.N` — and the TAG must be plain semver (`v<ver>`)
-  // so `semver.prerelease()` can parse it. A `mimic-v…` tag prefix is NOT
-  // valid semver, so it parses to null and NOTHING matches → the updater
-  // throws "No published versions on GitHub". (That was the beta.16 bug.)
-  //
-  // So the contract is, all in lockstep:
-  //   • package.json version  → `0.1.0-mimic-beta.N`  (prerelease = mimic-beta)
-  //   • git tag               → `v0.1.0-mimic-beta.N` (plain semver)
-  //   • publish channel below → `mimic-beta`          (emits mimic-beta.yml)
-  autoUpdater.channel = 'mimic-beta';
-  autoUpdater.allowPrerelease = true;
-  autoUpdater.autoDownload = true;
+  // Pre-1.0.0 betas were pinned to a custom `mimic-beta` channel because
+  // every release tag carried a `-mimic-beta.N` prerelease suffix and the
+  // updater needed the suffix to match. Those installs DO NOT auto-update to
+  // 1.0.0 (the prerelease check fails) and have to be reinstalled once from
+  // wolfpack.quest/mimic. Going forward, every stable release auto-updates.
+  // Beta channels can come back later if needed by re-adding `channel = …`
+  // here AND a matching prerelease suffix in package.json's version field.
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.autoDownload    = true;
   // Apply a downloaded shell update SILENTLY on the next normal quit (no NSIS
   // wizard, no UAC since perMachine:false). Combined with quitAndInstall(true,
   // true) on the explicit "Restart now" path, the user never sees the

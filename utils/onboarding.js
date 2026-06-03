@@ -29,8 +29,11 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.0': [
+    '**Mimic is out of beta** — graduated to a stable 1.0.0 release. Bot and agent bumped to 3.0.0, web to 1.0.0, all in one across-the-board major. (Existing Mimic beta installs need a one-time manual reinstall from wolfpack.quest/mimic; the beta update channel was retired. From 1.0.0+ everything auto-updates again.)',
+  ],
   '2.7.14': [
-    '**Sign in to Wolf Pack from Mimic** — optional Discord login persists across upgrades (Settings → Wolf Pack account). Click the button, paste the 6-char code at wolfpack.quest/auth/mimic-link, and Mimic links itself to your Discord account. Surfaces a "Signed in as <name>" badge on the dashboard. Uploads still work via the agent token; this just establishes identity so cross-machine sync, edit-guild-triggers-in-place, and other officer affordances can roll out next.',
+    '**Sign in to Wolf Pack from Mimic** — optional Discord login persists across upgrades (Settings → Wolf Pack account). Click the button, paste the 6-char code at wolfpack.quest/auth/mimic-link, and Mimic links itself to your Discord account. Surfaces a "Signed in as <name>" badge on the dashboard. Uploads still work via the agent token; this establishes identity so cross-machine sync, edit-guild-triggers-in-place, and other officer affordances can roll out next.',
   ],
   '2.7.13': [
     '**Pause tell DMs from Mimic** — the tray now has a "Pause Discord DMs" submenu (15m · 1h · 4h · until tomorrow · resume) right where you play. Tells still write to `/me/tells` and the local dashboard while paused; only the Discord ping is muted. Per-machine, so it doesn\'t touch your `/me/tells` snooze.',

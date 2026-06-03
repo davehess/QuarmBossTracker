@@ -1,13 +1,14 @@
-// /mimic — stable redirect to whatever the latest Wolf Pack Mimic beta is.
+// /mimic — stable redirect to whatever the latest Wolf Pack Mimic release is.
 //
 // Queries GitHub's releases API and 302s to the most recent Mimic release.
-// Mimic releases are detected by their unique `mimic-beta.yml` update-channel
-// asset (NOT by tag prefix — the tag is now plain semver `v0.1.0-mimic-beta.N`
-// so electron-updater can parse its channel, and bot/parser releases like
-// v2.5.1 share the `v*` namespace). The yml asset is the reliable marker that
-// a given release belongs to Mimic. This means every internal link, banner,
-// and "share with a guinea pig" copy can point at wolfpack.quest/mimic forever
-// — no hardcoded version that goes stale at the next beta bump.
+// Mimic releases are identified channel-agnostically by their installer asset
+// name (Wolf-Pack-Mimic-Setup-*.exe). The previous filter looked at the update
+// channel manifest (mimic-beta.yml) but Mimic graduated to the stable `latest`
+// channel at 1.0.0, so the manifest is now `latest.yml`. The installer asset
+// pattern is the stable signal across both eras — every Mimic release ever cut
+// has a Setup .exe, and no other release type in this repo has one. So every
+// internal link, banner, and "share with a guinea pig" copy can point at
+// wolfpack.quest/mimic forever — no hardcoded version that goes stale.
 //
 // Query params:
 //   ?direct=1 — instead of the release page, redirect straight to the .exe
@@ -35,8 +36,8 @@ type Release  = {
 };
 
 // Fallback URL if the GitHub API call fails — points at the repo's releases
-// page filtered to Mimic tags so the user lands somewhere useful regardless.
-const FALLBACK = 'https://github.com/davehess/QuarmBossTracker/releases?q=mimic-&expanded=true';
+// page so the user can still find an installer to grab.
+const FALLBACK = 'https://github.com/davehess/QuarmBossTracker/releases';
 
 export async function GET(req: NextRequest) {
   const direct = req.nextUrl.searchParams.get('direct') === '1';
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
     if (res.ok) {
       const releases = (await res.json()) as Release[];
       const mimicReleases = releases
-        .filter(r => !r.draft && r.assets.some(a => a.name.toLowerCase() === 'mimic-beta.yml'))
+        .filter(r => !r.draft && r.assets.some(a => /^wolf-pack-mimic-setup-.*\.exe$/i.test(a.name)))
         .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
 
       const latest = mimicReleases[0];

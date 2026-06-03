@@ -86,12 +86,14 @@ async function loadMimicReleases(): Promise<MimicRelease[]> {
     );
     if (!res.ok) return [];
     const all = (await res.json()) as MimicRelease[];
-    // Detect Mimic releases by their unique mimic-beta.yml update-channel
-    // asset, not by tag prefix — tags are now plain semver (v0.1.0-mimic-beta.N)
-    // so electron-updater can parse the channel, and they share the v* namespace
-    // with bot/parser releases.
+    // Detect Mimic releases channel-agnostically by their installer asset
+    // name (Wolf-Pack-Mimic-Setup-*.exe). The pre-1.0.0 betas used a custom
+    // mimic-beta.yml channel manifest, but 1.0.0 graduated to the stable
+    // latest.yml channel. The Setup .exe asset is the stable signal across
+    // both eras — every Mimic release ever cut has one, no other release
+    // type in this repo does.
     return all
-      .filter(r => r.assets.some(a => a.name.toLowerCase() === 'mimic-beta.yml'))
+      .filter(r => r.assets.some(a => /^wolf-pack-mimic-setup-.*\.exe$/i.test(a.name)))
       .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
   } catch {
     return [];
@@ -271,13 +273,13 @@ export default async function AdminAgentsPage() {
           agent identifies itself as Mimic in agent_state; for now we pull
           beta-channel state from GitHub releases. */}
       <section className="bg-panel border border-border rounded-lg p-6">
-        <h2 className="text-xl text-gold mb-1">🐺 Mimic <span className="text-[10px] uppercase tracking-widest text-blue ml-1">beta</span></h2>
+        <h2 className="text-xl text-gold mb-1">🐺 Mimic</h2>
         <p className="text-sm text-dim leading-6">
           The Electron desktop client. Wraps the same <code>wolfpack-logsync</code> agent in a
           native shell with a DPS overlay + trigger TTS, bundles its own Node runtime, and
-          auto-updates via the <code className="text-blue">mimic-beta</code> channel. Downloads at{' '}
+          auto-updates via the standard <code className="text-blue">latest</code> channel. Downloads at{' '}
           <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">wolfpack.quest/mimic</a>{' '}
-          (stable redirect to the latest beta).
+          (stable redirect to the latest release).
         </p>
 
         {mimicReleases.length === 0 ? (
@@ -331,8 +333,8 @@ export default async function AdminAgentsPage() {
         <div className="mt-5 text-xs text-dim leading-6 border-t border-border/60 pt-4">
           <div className="text-text mb-1">Officer ops cheat-sheet</div>
           <ul className="list-disc list-inside space-y-1">
-            <li>Tester reports the engine won&apos;t start? On Mimic v0.1.0-beta.5+ the loading screen shows the agent log inline with a copy button — ask them to paste it.</li>
-            <li>Tester stuck on a pre-beta.3 version? Auto-update was broken before the <code className="text-blue">mimic-beta</code> channel landed. Have them grab a fresh installer from <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">/mimic</a>; settings + state preserved across install.</li>
+            <li>Tester reports the engine won&apos;t start? The loading screen shows the agent log inline with a copy button — ask them to paste it.</li>
+            <li>Tester stuck on a pre-1.0.0 beta? The old <code className="text-blue">mimic-beta</code> update channel was retired at 1.0.0, so beta installs won&apos;t auto-update across the switch. Have them grab a fresh installer from <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">/mimic</a>; settings + state preserved across install. Once on 1.0.0+ everything auto-updates again.</li>
             <li>Per-tester fleet visibility (Mimic vs Parser.bat) requires the agent to identify itself in <code>agent_state</code>; planned for a follow-up. Until then this section is informational and the Active table below mixes both clients.</li>
           </ul>
         </div>
