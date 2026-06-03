@@ -4536,7 +4536,7 @@ function renderTriggers(s) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
     h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + gt.length + ' trigger' + (gt.length === 1 ? '' : 's') + ' loaded</div>';
-    h += '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th></tr>';
+    h += '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th><th></th></tr>';
     // Render all of them — guild trigger sets are small enough (~100 rows max)
     // that pagination is overkill. NOTE: deliberately NOT using class="name"
     // on the trigger-name cells; the wolfpack.quest character-link click
@@ -4544,10 +4544,28 @@ function renderTriggers(s) {
     // opens /character/<first-token>. A trigger named "Aten Ha Ra Charm"
     // would clip to "Aten" → 404. Same trap as the DPS HUD label cell.
     for (const t of gt) {
+      // "Copy → personal": stash the guild trigger's editable fields as JSON in
+      // a data-attr (esc() escapes the quotes for the attribute, same pattern as
+      // the dismiss-td buttons) so the delegated handler can prefill the personal
+      // editor with them. No write to the guild set — it just clones into the
+      // local personal triggers so the user can tweak their own copy.
+      const _act = (Array.isArray(t.actions) ? t.actions : []).find(a => a && a.type === 'text_overlay') || {};
+      const _copy = {
+        name: (t.name || 'trigger') + ' (copy)',
+        pattern: t.pattern || '',
+        cooldown_seconds: t.cooldown_seconds || 0,
+        overlay: _act.text || (t.name || ''),
+        color: _act.color || 'red',
+        duration_ms: _act.duration_ms || 5000,
+        timer_duration_sec: t.timer_duration_sec || 0,
+        end_early_pattern: t.end_early_pattern || '',
+        zeal_condition: t.zeal_condition || null,
+      };
       h += '<tr><td style="color:var(--orange)">' + esc(t.name || '?') + '</td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
-           '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td></tr>';
+           '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
+           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger into your personal trigger editor so you can tweak your own version">⎘ Copy to personal</button></td></tr>';
     }
     h += '</table>';
   }
@@ -6488,6 +6506,33 @@ async function dismissTopDamage(key) {
     var panel = document.getElementById('trigTestPanel');
     if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
   }
+  // Fill the "Add personal trigger" form from a config object (used by the
+  // "Copy to personal" buttons on the guild-trigger rows). Sets every field the
+  // form exposes, scrolls the editor into view, and flags the message line so
+  // it's obvious the form was populated. Does NOT save — the user reviews +
+  // clicks Add.
+  function prefill(cfg) {
+    if (!cfg) return;
+    var set = function(id, val){ var el = document.getElementById(id); if (el) el.value = (val == null ? '' : String(val)); };
+    set('trigNewName',     cfg.name || '');
+    set('trigNewPattern',  cfg.pattern || '');
+    set('trigNewCooldown', cfg.cooldown_seconds || 0);
+    set('trigNewOverlay',  cfg.overlay || '');
+    set('trigNewColor',    cfg.color || 'red');
+    set('trigNewDuration', cfg.duration_ms || 5000);
+    set('trigNewTimerSec', cfg.timer_duration_sec || 0);
+    set('trigNewEndEarly', cfg.end_early_pattern || '');
+    var zc = cfg.zeal_condition || null;
+    set('trigNewZealField', zc && zc.field ? zc.field : '');
+    set('trigNewZealOp',    zc && zc.op    ? zc.op    : '<');
+    set('trigNewZealValue', zc && zc.value != null ? zc.value : '');
+    var msg = document.getElementById('trigAddMsg');
+    if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
+    var panel = document.getElementById('trigEditorPanel');
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var nameEl = document.getElementById('trigNewName');
+    if (nameEl && nameEl.focus) { try { nameEl.focus(); } catch (e) { void e; } }
+  }
   function onImportToggle() {
     var panel = document.getElementById('trigImportPanel');
     if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
@@ -6570,7 +6615,15 @@ async function dismissTopDamage(key) {
     if (!section._wpTrigClickBound) {
       section.addEventListener('click', function(e){
         var t = e.target;
-        if (!t || !t.id) return;
+        if (!t) return;
+        // "Copy to personal" on a guild-trigger row — the data-attr may live on
+        // the button or be reached via the clicked child, so walk up to it.
+        var cp = t.closest ? t.closest('[data-trig-copy]') : null;
+        if (cp) {
+          try { prefill(JSON.parse(cp.getAttribute('data-trig-copy'))); } catch (err) { void err; }
+          return;
+        }
+        if (!t.id) return;
         if (t.id === 'trigClearAllBtn')  onClearAll();
         else if (t.id === 'trigClearTestBtn') onClearTests();
       });
