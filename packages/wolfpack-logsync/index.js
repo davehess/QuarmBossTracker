@@ -6066,6 +6066,7 @@ async function dismissTopDamage(key) {
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
         + '<td style="white-space:nowrap">'
         + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Fire this trigger now (local only, no DB)">▶ Test</button>'
+        + '<button type="button" data-trig-promote="' + esc(t.id || '') + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Open wolfpack.quest/admin/triggers prefilled with this trigger so an officer can promote it to the guild set">↑ Promote</button>'
         + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
         + '</td>'
         + '</tr>';
@@ -6082,6 +6083,31 @@ async function dismissTopDamage(key) {
     listEl.querySelectorAll('[data-trig-fire]').forEach(function(b){
       b.addEventListener('click', function(){ onFire(b.getAttribute('data-trig-fire'), 'personal'); });
     });
+    listEl.querySelectorAll('[data-trig-promote]').forEach(function(b){
+      b.addEventListener('click', function(){ onPromote(b.getAttribute('data-trig-promote')); });
+    });
+  }
+  // Open wolfpack.quest/admin/triggers prefilled with this trigger's config
+  // so an officer can review + click Create. We deliberately DON'T post
+  // anything from here — the web form's existing officer-role gate is the
+  // right authorization point for adding to the guild set. The agent's
+  // localhost endpoint has no concept of who's currently signed in.
+  async function onPromote(id) {
+    if (!id) return;
+    const r = await fetch('/api/personal-triggers');
+    const j = r.ok ? await r.json() : { triggers: [] };
+    const t = (j.triggers || []).find(function(x){ return x.id === id; });
+    if (!t) { alert('Trigger not found.'); return; }
+    const action = (Array.isArray(t.actions) && t.actions[0]) || {};
+    var params = new URLSearchParams();
+    params.set('name',          t.name || '');
+    params.set('pattern',       t.pattern || '');
+    if (action.text)        params.set('overlay_text',  String(action.text));
+    if (action.color)       params.set('overlay_color', String(action.color));
+    if (action.duration_ms) params.set('overlay_ms',    String(action.duration_ms));
+    if (t.cooldown_seconds) params.set('cooldown',      String(t.cooldown_seconds));
+    params.set('notes', 'Promoted from ' + ((window && window.mimic) ? 'Mimic' : 'the local parser') + ' — review and adjust before saving.');
+    window.open('https://wolfpack.quest/admin/triggers?' + params.toString(), '_blank', 'noopener,noreferrer');
   }
   async function onFire(id, scope) {
     if (!id) return;

@@ -103,7 +103,22 @@ async function deleteTrigger(formData: FormData) {
 export default async function AdminTriggersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ edit?: string; category?: string }>;
+  searchParams: Promise<{
+    edit?:         string;
+    category?:     string;
+    // URL-prefill params — the Mimic dashboard's "↑ Promote" button on a
+    // personal trigger row links here with these query params filled in so
+    // the form arrives pre-populated. Officer still has to review + click
+    // Create, which is the right gate for promotion.
+    name?:         string;
+    pattern?:      string;
+    overlay_text?: string;
+    overlay_color?:string;
+    overlay_ms?:   string;
+    cooldown?:     string;
+    classes?:      string;
+    notes?:        string;
+  }>;
 }) {
   const p = await searchParams;
   const admin = supabaseAdmin();
@@ -159,39 +174,45 @@ export default async function AdminTriggersPage({
         ))}
       </nav>
 
-      {/* Create / edit form */}
+      {/* Create / edit form. Falls back to URL query params for prefill when
+          there's no editTarget — that's how the Mimic dashboard's Promote
+          button hands a personal trigger off to the officer. */}
       <section className="bg-panel border border-border rounded-lg p-4">
-        <h3 className="text-sm text-orange mb-3">{editTarget ? `✏️ Edit: ${editTarget.name}` : '➕ New trigger'}</h3>
+        <h3 className="text-sm text-orange mb-3">
+          {editTarget
+            ? `✏️ Edit: ${editTarget.name}`
+            : (p.name ? `➕ New trigger — promoted from Mimic: ${p.name}` : '➕ New trigger')}
+        </h3>
         <form action={createOrUpdate} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           {editTarget && <input type="hidden" name="id" value={editTarget.id} />}
           <label className="space-y-1">
             <span className="text-dim block">Name</span>
-            <input name="name" required defaultValue={editTarget?.name ?? ''}
+            <input name="name" required defaultValue={editTarget?.name ?? p.name ?? ''}
               placeholder="e.g. Naggy full heal"
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
           <label className="space-y-1">
             <span className="text-dim block">Category</span>
-            <select name="category" defaultValue={editTarget?.category ?? 'callout'}
+            <select name="category" defaultValue={editTarget?.category ?? (p.category && CATEGORIES.includes(p.category) ? p.category : 'callout')}
               className="w-full bg-bg border border-border rounded px-2 py-1.5">
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
           <label className="space-y-1 sm:col-span-2">
             <span className="text-dim block">Pattern (regex, case-insensitive). Use <code>{'(?<name>...)'}</code> for captures.</span>
-            <input name="pattern" required defaultValue={editTarget?.pattern ?? ''}
+            <input name="pattern" required defaultValue={editTarget?.pattern ?? p.pattern ?? ''}
               placeholder="^(?<npc>.+) goes on a RAMPAGE against (?<target>.+)!$"
               className="w-full bg-bg border border-border rounded px-2 py-1.5 font-mono" />
           </label>
           <label className="space-y-1 sm:col-span-2">
             <span className="text-dim block">Overlay text (templates: <code>{'{target}'}</code>, <code>{'{npc}'}</code>, any other named capture)</span>
-            <input name="overlay_text" required defaultValue={overlayDefault.text ?? ''}
+            <input name="overlay_text" required defaultValue={overlayDefault.text ?? p.overlay_text ?? ''}
               placeholder="RAMPAGE on {target}"
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
           <label className="space-y-1">
             <span className="text-dim block">Overlay color</span>
-            <select name="overlay_color" defaultValue={overlayDefault.color ?? 'red'}
+            <select name="overlay_color" defaultValue={overlayDefault.color ?? p.overlay_color ?? 'red'}
               className="w-full bg-bg border border-border rounded px-2 py-1.5">
               {['red','orange','yellow','green','blue','purple','white'].map(c => <option key={c} value={c}>{c}</option>)}
             </select>
@@ -199,24 +220,24 @@ export default async function AdminTriggersPage({
           <label className="space-y-1">
             <span className="text-dim block">Overlay duration (ms)</span>
             <input name="overlay_ms" type="number" min={500} max={60000} step={500}
-              defaultValue={overlayDefault.duration_ms ?? 5000}
+              defaultValue={overlayDefault.duration_ms ?? (p.overlay_ms ? parseInt(p.overlay_ms, 10) : 5000)}
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
           <label className="space-y-1">
             <span className="text-dim block">Cooldown (s) — refire suppression</span>
             <input name="cooldown" type="number" min={0} max={3600}
-              defaultValue={editTarget?.cooldown_seconds ?? 0}
+              defaultValue={editTarget?.cooldown_seconds ?? (p.cooldown ? parseInt(p.cooldown, 10) : 0)}
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
           <label className="space-y-1">
             <span className="text-dim block">Classes (comma-sep, blank = everyone)</span>
-            <input name="classes" defaultValue={(editTarget?.applies_to_classes ?? []).join(', ')}
+            <input name="classes" defaultValue={editTarget ? (editTarget.applies_to_classes ?? []).join(', ') : (p.classes ?? '')}
               placeholder="Warrior, Paladin, Shadow Knight"
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
           <label className="space-y-1 sm:col-span-2">
             <span className="text-dim block">Notes (officer-only context, optional)</span>
-            <textarea name="notes" rows={2} defaultValue={editTarget?.notes ?? ''}
+            <textarea name="notes" rows={2} defaultValue={editTarget?.notes ?? p.notes ?? ''}
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
           <div className="sm:col-span-2 flex items-center gap-2">
