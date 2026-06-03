@@ -42,6 +42,35 @@
   body.setup #setupbar{display:flex}
   body.setup #drag-controls{top:28px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
+
+  /* ─── Timer countdown stack ───────────────────────────────────────────
+     One vertical row per active timer in the agent's _activeTimers map.
+     Top-left corner so the centered alert flash stays unblocked. Each row
+     is name + remaining + a progress bar that shrinks as the timer ticks.
+     Soonest-to-expire is on top (the agent sorts that way).             */
+  #timers{position:fixed;top:34px;left:8px;display:flex;flex-direction:column;
+    gap:4px;z-index:40;min-width:180px;max-width:280px;pointer-events:none}
+  .timer-row{padding:4px 8px;background:rgba(0,0,0,0.55);border-radius:4px;
+    border-left:3px solid #f6c365;color:#fff;font-size:12px;line-height:1.2;
+    text-shadow:0 1px 2px #000}
+  .timer-row .timer-head{display:flex;justify-content:space-between;gap:8px;
+    margin-bottom:2px}
+  .timer-row .timer-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;flex:1}
+  .timer-row .timer-remain{color:#f6c365;font-variant-numeric:tabular-nums;
+    font-weight:600;flex-shrink:0}
+  .timer-row .timer-bar{height:3px;background:rgba(255,255,255,0.15);
+    border-radius:2px;overflow:hidden}
+  .timer-row .timer-bar > div{height:100%;background:#f6c365;
+    transition:width 100ms linear}
+  .timer-row.test{border-left-color:#d69922}
+  .timer-row.test .timer-name::after{content:' TEST';color:#d69922;
+    font-size:10px;margin-left:4px}
+  .timer-row.warn .timer-remain{color:#ff8a65}
+  .timer-row.warn .timer-bar > div{background:#ff8a65}
+  /* Setup mode pushes the timer stack down so the orange status bar at
+     top doesn't sit on top of it. */
+  body.setup #timers{top:58px}
 </style></head>
 <body>
   <div id="drag-controls">
@@ -56,6 +85,7 @@
   </div>
   <div id="placeholder">⚡ trigger alert box</div>
   <div id="alert"></div>
+  <div id="timers"></div>
 <script>
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
@@ -152,10 +182,70 @@
     playSound(t.sound);
   }
 
+  // Timer stack — keeps DOM nodes around between polls so the bar can
+  // tween smoothly. Map id → { row, bar, remain } so a 700ms poll cycle
+  // doesn't visibly stall the countdown; we also tick the on-screen text
+  // every 100ms locally between polls for a snappier feel.
+  const timersEl = document.getElementById('timers');
+  const timerNodes = new Map();   // id → { row, name, bar, remain, duration_sec, ends_at_local }
+  function fmtRemain(ms){
+    if (ms <= 0) return '0s';
+    const s = Math.ceil(ms / 1000);
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    const rem = s - m * 60;
+    return m + ':' + String(rem).padStart(2, '0');
+  }
+  function renderTimers(serverTimers){
+    const seen = new Set();
+    for (const t of (serverTimers || [])){
+      seen.add(t.id);
+      let n = timerNodes.get(t.id);
+      if (!n){
+        const row = document.createElement('div');
+        row.className = 'timer-row' + (t.test ? ' test' : '');
+        row.innerHTML =
+          '<div class="timer-head"><span class="timer-name"></span>'
+          + '<span class="timer-remain"></span></div>'
+          + '<div class="timer-bar"><div></div></div>';
+        timersEl.appendChild(row);
+        n = {
+          row,
+          name:    row.querySelector('.timer-name'),
+          remain:  row.querySelector('.timer-remain'),
+          bar:     row.querySelector('.timer-bar > div'),
+          duration_sec: t.duration_sec || 1,
+        };
+        n.name.textContent = t.name || 'timer';
+        timerNodes.set(t.id, n);
+      }
+      n.ends_at_local = Date.now() + t.remaining_ms;
+      n.duration_sec  = t.duration_sec || n.duration_sec;
+    }
+    // Drop any rows the server stopped reporting (ended early or cleared).
+    for (const [id, n] of timerNodes){
+      if (!seen.has(id)){ n.row.remove(); timerNodes.delete(id); }
+    }
+  }
+  function paintTimers(){
+    const now = Date.now();
+    for (const [id, n] of timerNodes){
+      const remMs = n.ends_at_local - now;
+      if (remMs <= 0){ n.row.remove(); timerNodes.delete(id); continue; }
+      n.remain.textContent = fmtRemain(remMs);
+      const pct = Math.max(0, Math.min(100, (remMs / (n.duration_sec * 1000)) * 100));
+      n.bar.style.width = pct + '%';
+      // Last 5s → switch the row's accent to amber so it visually pops.
+      if (remMs < 5000) n.row.classList.add('warn');
+      else              n.row.classList.remove('warn');
+    }
+  }
+
   async function tick(){
     try{
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
       const s = await r.json();
+      renderTimers(s.activeTimers);
       const fires = (s.recentTriggerFires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
       if (!primed){
         // On first poll, don't replay the existing backlog — just set the cursor.
@@ -169,5 +259,8 @@
     }catch(e){ /* agent not up yet */ }
   }
   tick(); setInterval(tick, 700);
+  // Independent paint loop @ 10Hz so the on-screen countdown text + bar
+  // tween between server polls. Cheap — only touches DOM nodes that exist.
+  setInterval(paintTimers, 100);
 </script>
 </body></html>

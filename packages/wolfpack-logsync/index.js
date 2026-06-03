@@ -3297,6 +3297,7 @@ function _serializeForDashboard() {
     }),
     personalTriggerCount: (_personalTriggers || []).length,
     activeOverlays:      _activeOverlays,
+    activeTimers:        _activeTimersSnapshot(),
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
     // after that the user knows, and a stale banner is just noise.
@@ -6740,23 +6741,35 @@ function startWebDashboard(port) {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
         try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
-        const before = _activeOverlays.length;
+        const beforeO = _activeOverlays.length;
+        const beforeT = _activeTimers.size;
         if (payload?.trigger) {
           const want = String(payload.trigger);
           for (let i = _activeOverlays.length - 1; i >= 0; i--) {
             if (_activeOverlays[i].trigger === want) _activeOverlays.splice(i, 1);
           }
+          // Cancel any timer whose name matches too — the user's intent
+          // when clearing a named trigger is "stop everything from that
+          // trigger", not just the overlay alert.
+          for (const [id, t] of _activeTimers) {
+            if (t.name === want) _activeTimers.delete(id);
+          }
         } else if (payload?.testOnly) {
           for (let i = _activeOverlays.length - 1; i >= 0; i--) {
             if (_activeOverlays[i].test) _activeOverlays.splice(i, 1);
           }
+          for (const [id, t] of _activeTimers) {
+            if (t.test) _activeTimers.delete(id);
+          }
         } else {
           _activeOverlays.length = 0;
+          _activeTimers.clear();
         }
-        const cleared = before - _activeOverlays.length;
+        const cleared        = beforeO - _activeOverlays.length;
+        const clearedTimers  = beforeT - _activeTimers.size;
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, cleared }));
+        return res.end(JSON.stringify({ ok: true, cleared, cleared_timers: clearedTimers }));
       }
 
       // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
@@ -9718,7 +9731,7 @@ function pollGuildTriggers({ botUrl, token }) {
                   const pat = t.use_regex === false
                     ? _escapeForLiteralMatch(t.pattern)
                     : _translateDotNetRegex(t.pattern);
-                  compiled.push({ ...t, _regex: new RegExp(pat, flags), _scope: 'guild' });
+                  compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'guild' });
                 } catch (err) {
                   console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
                 }
@@ -9765,7 +9778,7 @@ function loadPersonalTriggers() {
         const pat = t.use_regex === false
           ? _escapeForLiteralMatch(t.pattern)
           : _translateDotNetRegex(t.pattern);
-        compiled.push({ ...t, _regex: new RegExp(pat, flags), _scope: 'personal' });
+        compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' });
       } catch (err) {
         console.warn(`[personal-triggers] bad pattern "${t.name}":`, err.message);
       }
@@ -9818,7 +9831,27 @@ function _compilePersonalTrigger(t) {
   const pat = t.use_regex === false
     ? _escapeForLiteralMatch(t.pattern)
     : _translateDotNetRegex(t.pattern);
-  return { ...t, _regex: new RegExp(pat, flags), _scope: 'personal' };
+  return { ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
+}
+
+// Compile end_early_pattern on a trigger so the live evaluator can cancel
+// an active timer when the "end-early" line shows up before the timer
+// expires (e.g. "Rampage on you!" timer cancelled when the mob dies).
+// Returns null if the trigger has no end-early pattern OR the pattern is
+// invalid — a bad end-early shouldn't prevent the main trigger from
+// loading.
+function _compileEndEarlyRegex(t) {
+  if (!t || !t.end_early_pattern || !String(t.end_early_pattern).trim()) return null;
+  try {
+    const flags = t.pattern_flags || 'i';
+    const pat = t.end_use_regex === false
+      ? _escapeForLiteralMatch(t.end_early_pattern)
+      : _translateDotNetRegex(t.end_early_pattern);
+    return new RegExp(pat, flags);
+  } catch (err) {
+    console.warn('[triggers] bad end_early_pattern on "' + (t.name || '?') + '":', err.message);
+    return null;
+  }
 }
 
 // ── GINA / EQLogParser trigger XML import ─────────────────────────────────
@@ -9895,6 +9928,54 @@ function _pushOverlay(o) {
   if (_activeOverlays.length > 20) _activeOverlays.length = 20;
 }
 
+// Active timer countdowns driven by triggers with timer_duration_sec > 0.
+// One entry per trigger id; a re-fire of the same trigger restarts the
+// countdown rather than stacking another row (matches DnDOverlay-style
+// behavior). Pruned of expired entries on every state-snapshot read so
+// stale rows can't accumulate.
+const _activeTimers = new Map();    // triggerId → { id, name, started_at_ms, ends_at_ms, duration_sec, color, end_text, scope, test }
+function _startTimer(t, tsMs, isTest) {
+  if (!t || !(t.timer_duration_sec > 0)) return;
+  const id = String(t.id || t.name || ('t_' + Date.now()));
+  const startMs = tsMs || Date.now();
+  const action = (Array.isArray(t.actions) && t.actions[0]) || {};
+  _activeTimers.set(id, {
+    id,
+    name:           t.name || 'timer',
+    started_at_ms:  startMs,
+    ends_at_ms:     startMs + (t.timer_duration_sec * 1000),
+    duration_sec:   t.timer_duration_sec,
+    color:          action.color || 'red',
+    end_text:       t.end_text || null,
+    scope:          t._scope || 'unknown',
+    test:           !!isTest,
+  });
+}
+function _cancelTimer(id) {
+  if (!id) return false;
+  return _activeTimers.delete(String(id));
+}
+function _activeTimersSnapshot() {
+  const now = Date.now();
+  const out = [];
+  for (const [id, t] of _activeTimers) {
+    if (t.ends_at_ms <= now) { _activeTimers.delete(id); continue; }
+    out.push({
+      id:           t.id,
+      name:         t.name,
+      remaining_ms: t.ends_at_ms - now,
+      duration_sec: t.duration_sec,
+      color:        t.color,
+      end_text:     t.end_text,
+      scope:        t.scope,
+      test:         t.test,
+    });
+  }
+  // Soonest-to-expire first — that's the most useful default for a stack of bars.
+  out.sort((a, b) => a.remaining_ms - b.remaining_ms);
+  return out;
+}
+
 function _expandTemplate(template, captures) {
   if (!template) return '';
   return template.replace(/\{(\w+)\}/g, (_, k) => {
@@ -9908,6 +9989,14 @@ function evaluateTriggersAgainstLine(line, tsMs) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
   for (const t of all) {
+    // End-early check runs FIRST so a single log line containing the end
+    // phrase cancels the timer before the same line could (also) re-trigger
+    // the start pattern. Without this ordering, a pattern that includes its
+    // own end string would race itself.
+    if (t._endRegex && _activeTimers.has(String(t.id || t.name))) {
+      try { if (t._endRegex.test(line)) _cancelTimer(t.id || t.name); }
+      catch { /* bad end-early regex — already logged at compile time */ }
+    }
     if (!t._regex) continue;
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
@@ -9952,6 +10041,12 @@ function _fireTriggerActions(t, captures, tsMs, test) {
     }
     // tts / sound / discord / emit_event are intentionally no-ops in v1.
   }
+  // Trigger-level timer countdown (separate from per-action overlays).
+  // Starts when timer_duration_sec > 0 on the trigger itself; the existing
+  // _activeTimers Map auto-restarts if the same trigger fires again. End-
+  // early cancellation is handled in evaluateTriggersAgainstLine via
+  // t._endRegex matching the same log line stream.
+  if (t.timer_duration_sec > 0) _startTimer(t, tsMs, test);
 }
 
 // Transition a single backfill request via the bot's
