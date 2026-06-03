@@ -154,3 +154,29 @@ export async function bulkSetCharacterFlag(
   revalidatePath('/me/tells');
   return { ok: true, changed: targets.length, total };
 }
+
+// Snooze Discord DM relay for incoming tells. Per-user (wolfpack_members), so
+// a 50-character raider flips one switch and stops every alt's DMs at once.
+// The tells still write to the table while paused — only the DM is muted —
+// so /me/tells (and the local dashboard's Recent Tells) keep working. minutes
+// = null clears the snooze; otherwise the column is set to now + minutes.
+export async function setTellsDmPause(
+  minutes: number | null,
+): Promise<{ ok: boolean; until?: string | null; error?: string }> {
+  const supabase = supabaseServer();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'not signed in' };
+  const admin = supabaseAdmin();
+  let until: string | null = null;
+  if (minutes != null) {
+    const m = Math.max(1, Math.min(60 * 24 * 7, Math.round(minutes)));   // cap 1m..7d
+    until = new Date(Date.now() + m * 60 * 1000).toISOString();
+  }
+  const { error } = await admin
+    .from('wolfpack_members')
+    .update({ tells_dm_paused_until: until })
+    .eq('user_id', user.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/me/tells');
+  return { ok: true, until };
+}

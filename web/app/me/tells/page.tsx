@@ -14,6 +14,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import TellNotifications from './TellNotifications';
 import BulkTellsToggle from './BulkTellsToggle';
+import TellsSnoozeControl from './TellsSnoozeControl';
 import { userTz, fmtShort, relTime } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -32,16 +33,20 @@ async function loadOwnerCharacters(userId: string) {
   const admin = supabaseAdmin();
   const { data: pack } = await admin
     .from('wolfpack_members')
-    .select('discord_id')
+    .select('discord_id, tells_dm_paused_until')
     .eq('user_id', userId)
     .maybeSingle();
-  if (!pack?.discord_id) return { discordId: null, chars: [] as { name: string; tell_relay: boolean }[] };
+  if (!pack?.discord_id) return { discordId: null, pausedUntil: null as string | null, chars: [] as { name: string; tell_relay: boolean }[] };
   const { data: chars } = await admin
     .from('characters')
     .select('name, tell_relay')
     .eq('guild_id', 'wolfpack')
     .eq('discord_id', pack.discord_id);
-  return { discordId: pack.discord_id, chars: (chars ?? []) as { name: string; tell_relay: boolean }[] };
+  return {
+    discordId:   pack.discord_id,
+    pausedUntil: (pack as { tells_dm_paused_until: string | null }).tells_dm_paused_until ?? null,
+    chars:       (chars ?? []) as { name: string; tell_relay: boolean }[],
+  };
 }
 
 async function loadTells(discordId: string): Promise<TellRow[]> {
@@ -97,7 +102,7 @@ export default async function TellsPage() {
   if (!user) redirect('/auth/signin?next=/me/tells');
 
   const tz = await userTz();
-  const { discordId, chars } = await loadOwnerCharacters(user.id);
+  const { discordId, chars, pausedUntil } = await loadOwnerCharacters(user.id);
   const optedIn = chars.filter(c => c.tell_relay);
   const tells   = discordId ? await loadTells(discordId) : [];
   const conversations = buildConversations(tells);
@@ -126,6 +131,10 @@ export default async function TellsPage() {
           <div className="mt-4 pt-3 border-t border-border/40">
             <div className="text-[10px] text-dim mb-2">Notify me when a tell lands while I&apos;m away</div>
             <TellNotifications discordId={discordId} />
+            <div className="mt-3 pt-3 border-t border-border/40">
+              <div className="text-[10px] text-dim mb-2">Mute the Discord DM for a stretch — tells still record to this page while paused</div>
+              <TellsSnoozeControl pausedUntil={pausedUntil} />
+            </div>
           </div>
         )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">

@@ -4479,73 +4479,76 @@ async function _handleAgentTells(req, res) {
   // notification but silences the Discord ping. Browser notifications ride
   // Supabase Realtime on the row insert, independent of this DM path.
   // DM the whole batch (incoming + outgoing) but ONLY when at least one
-  // incoming arrived — outgoing-only is the user typing while afk, no DM is
-  // expected. Passing both directions lets _relayTellsToDM render the
-  // back-and-forth in chronological order, so the DM reads as a conversation
-  // ("you → them: ..., them → you: ...") instead of a one-line snippet.
+  // incoming arrived AND the user hasn't snoozed DM relay. Outgoing-only is
+  // the user typing while afk — no DM is expected. Snooze (per-user, stored
+  // on wolfpack_members.tells_dm_paused_until) suppresses the DM but the
+  // tells still write to the table, so /me/tells stays the source of truth.
   const incomingCount = rows.reduce((n, r) => n + (r.direction === 'incoming' ? 1 : 0), 0);
+  let snoozedUntil = null;
   if (incomingCount > 0 && charRow.tell_dm !== false) {
-    _relayTellsToDM(ownerDiscordId, charRow.name, rows).catch(err =>
-      console.warn('[tells] DM relay failed:', err?.message));
+    try {
+      const memberRows = await supabase.select(
+        'wolfpack_members',
+        `discord_id=eq.${encodeURIComponent(ownerDiscordId)}&select=tells_dm_paused_until&limit=1`,
+      ).catch(() => []);
+      const memberRow = Array.isArray(memberRows) ? memberRows[0] : null;
+      if (memberRow?.tells_dm_paused_until) {
+        const until = new Date(memberRow.tells_dm_paused_until);
+        if (!isNaN(until.getTime()) && until.getTime() > Date.now()) snoozedUntil = until;
+      }
+    } catch { /* non-fatal — fall through to DM */ }
+    if (!snoozedUntil) {
+      _relayTellsToDM(ownerDiscordId, charRow.name, rows).catch(err =>
+        console.warn('[tells] DM relay failed:', err?.message));
+    }
   }
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ ok: true, stored }));
+  return res.end(JSON.stringify({ ok: true, stored, dm_snoozed_until: snoozedUntil ? snoozedUntil.toISOString() : null }));
 }
 
 // DM the owner with the freshly-relayed tells. Batched into one message so a
-// rapid volley of tells doesn't fan out as a wall of pings.
+// rapid volley of tells doesn't fan out as a wall of pings. Format matches
+// the Mimic dashboard's "Recent Tells" panel — one chronological line per
+// tell, "**Other** ← You" for incoming, "You → **Other**" for outgoing.
+// No header preamble and no per-message mute footer; the bot's name + 📬
+// glyph are the only chrome, and snooze controls live on /me/tells.
 async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
   try {
     const user = await client.users.fetch(discordUserId).catch(() => null);
     if (!user) return;
 
-    // Group by counterparty so a back-and-forth shows up as one conversation
-    // block instead of an interleaved stream. Chronological within each group.
-    // Direction arrow: '→' = outgoing (you sent), '←' = incoming (they sent).
-    const byOther = new Map();   // key = other_name lowercased → { other, rows: [] }
-    for (const t of tellRows) {
-      const k = String(t.other_name || '').toLowerCase();
-      if (!k) continue;
-      let g = byOther.get(k);
-      if (!g) { g = { other: t.other_name, rows: [] }; byOther.set(k, g); }
-      g.rows.push(t);
-    }
-    const conversations = [...byOther.values()].map(g => {
-      g.rows.sort((a, b) => new Date(a.ts) - new Date(b.ts));
-      return g;
-    });
+    // Chronological flat list across all conversations — same as the dashboard.
+    // Sort up-front so a multi-counterparty batch reads in the order events
+    // actually happened.
+    const sorted = [...tellRows].sort(
+      (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
+    );
 
-    // Cap total rendered lines to keep the DM under Discord's 2000-char limit
-    // by a comfortable margin. 12 lines covers all real conversations we've
-    // observed; an overflow tail points to /me/tells for the rest.
+    // Cap at 12 lines to keep the DM under Discord's 2000-char limit by a
+    // comfortable margin. Overflow tail points to /me/tells.
     const MAX_LINES = 12;
     const lines = [];
     let omitted = 0;
-    for (const c of conversations) {
-      if (lines.length >= MAX_LINES) { omitted += c.rows.length; continue; }
-      // One blank-line spacer between conversations after the first.
-      if (lines.length > 0) lines.push('');
-      for (const r of c.rows) {
-        if (lines.length >= MAX_LINES) { omitted++; continue; }
-        const arrow = r.direction === 'outgoing' ? '→' : '←';
-        const who   = r.direction === 'outgoing'
-          ? `_${ownerCharacter}_ ${arrow} **${r.other_name}**`
-          : `**${r.other_name}** ${arrow} _${ownerCharacter}_`;
-        lines.push(`${who}: ${r.text}`);
-      }
+    for (let i = 0; i < sorted.length; i++) {
+      if (lines.length >= MAX_LINES) { omitted = sorted.length - i; break; }
+      const r = sorted[i];
+      const arrow = r.direction === 'outgoing' ? '→' : '←';
+      const who   = r.direction === 'outgoing'
+        ? `${ownerCharacter} ${arrow} **${r.other_name}**`
+        : `**${r.other_name}** ${arrow} ${ownerCharacter}`;
+      lines.push(`${who}: ${r.text}`);
     }
-    if (omitted > 0) lines.push(`_…and ${omitted} more — see /me/tells._`);
+    if (omitted > 0) lines.push(`_…and ${omitted} more — wolfpack.quest/me/tells_`);
+    if (lines.length === 0) return;
+    // Prefix the first line with 📬 — single glyph, no preamble.
+    lines[0] = `📬 ${lines[0]}`;
 
-    const incomingCount = tellRows.reduce((n, r) => n + (r.direction === 'incoming' ? 1 : 0), 0);
-    const header = incomingCount === 1
-      ? '📬 You got a tell while you were away:'
-      : `📬 You got ${incomingCount} tells while you were away:`;
     await user.send({
-      content: header + '\n' + lines.join('\n') +
-        '\n\nMute via the **Tells: ON** toggle on https://wolfpack.quest/me.',
+      content: lines.join('\n'),
       allowedMentions: { parse: [] },
     }).catch(() => {});
+
     // Best-effort: stamp dm_relayed_at on the rows we just DMed. Failures here
     // don't block — the tells are already stored.
     const supabase = require('./utils/supabase');
