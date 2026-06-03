@@ -4409,6 +4409,34 @@ function renderZealClients(s) {
       h += '<div style="margin-left:14px;font-size:12px" class="dim">no buffs reported</div>';
     }
     if (c.casting) h += '<div style="margin-left:14px;color:#58a6ff;font-size:12px">✦ casting ' + esc(c.casting) + '</div>';
+    // Pet line — present when we've identified the charm pet's gauge slot by
+    // matching its name against the live charm-tracker entry for this owner.
+    // Shows the pet's name + live HP%, with the slot id so a future protocol
+    // doc can confirm it. Only shown for live clients (a logged-out character
+    // can't have an active pet).
+    if (c.live && c.pet_name) {
+      h += '<div style="margin-left:14px;color:#f0883e;font-size:12px">🐾 pet: <b>' + esc(c.pet_name) + '</b> '
+         + (c.pet_hp_pct != null ? Math.round(c.pet_hp_pct) + '%' : '?')
+         + (c.pet_slot != null ? ' <span class="dim">(slot ' + esc(String(c.pet_slot)) + ')</span>' : '')
+         + '</div>';
+    }
+    // Diagnostic: full gauge slot dump. Hidden in a <details> so it's not
+    // noisy by default; expanding shows every populated slot exactly as Zeal
+    // sends them so we can identify the pet slot id from a live machine and
+    // wire it into the absorption directly (rather than via charm cross-ref).
+    // Live clients only — frozen logged-out gauges aren't useful.
+    if (c.live && Array.isArray(c.gauges) && c.gauges.length) {
+      h += '<details style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
+         + c.gauges.length + ' gauge slot' + (c.gauges.length === 1 ? '' : 's')
+         + ' <span class="dim" style="font-size:10px">(diagnostic — helps identify the pet slot)</span></summary>';
+      h += '<table style="font-size:11px;margin-top:4px"><tr><th>Slot</th><th>HP%</th><th>Text</th></tr>';
+      for (const g of c.gauges) {
+        h += '<tr><td class="dim">' + esc(String(g.slot)) + '</td>'
+           + '<td class="num">' + (g.hp_pct != null ? Math.round(g.hp_pct) + '%' : '?') + '</td>'
+           + '<td>' + esc(g.text || '') + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
   }
   morphInto(el, h);
 }
@@ -10550,8 +10578,32 @@ function _serializeZealForWeb() {
   // pruned diagnostic above, this deliberately KEEPS logged-out characters so
   // you can see what each one logged out carrying + where they parked. Capped
   // so a long multibox session can't bloat the payload.
+  //
+  // Pet identification (Zeal): Zeal's named_pipe.cpp labels only target (slot
+  // 6) and self (slot 1) explicitly — every other gauge slot is an opaque mix
+  // of group + pet. We DON'T yet know the pet slot id from the protocol docs,
+  // so identify the pet by cross-referencing the log-driven charm tracker:
+  // any gauge slot whose `text` matches the active charm pet for THIS uploader
+  // is the pet slot. That's reliable (charm pet names are unique per owner),
+  // promotes the gauge name to the canonical pet name on the charm overlay,
+  // and gives us a live HP%. When no charm pet is known we surface every slot
+  // verbatim in the diagnostic so the slot id can be confirmed by eye.
+  const petByOwner = new Map();   // lowercase owner → pet name (from charm tracker)
+  for (const info of _charmTickTracker.values()) {
+    if (info && info.is_active && info.owner && info.pet) {
+      petByOwner.set(String(info.owner).toLowerCase(), info.pet);
+    }
+  }
   const clients = Object.keys(_zealState).map(ch => {
     const st = _zealState[ch] || {};
+    const gauges = Array.isArray(st.gauges) ? st.gauges.slice(0, 20) : [];
+    let petName = null, petHp = null, petSlot = null;
+    const expected = petByOwner.get(String(ch).toLowerCase());
+    if (expected && gauges.length) {
+      const norm = String(expected).toLowerCase().trim();
+      const hit  = gauges.find(g => g && g.text && String(g.text).toLowerCase().trim() === norm);
+      if (hit) { petName = hit.text; petHp = hit.hp_pct; petSlot = hit.slot; }
+    }
     return {
       character:   ch,
       zone:        st.zone != null ? st.zone : null,
@@ -10560,6 +10612,10 @@ function _serializeZealForWeb() {
       autoattack:  !!st.autoattack,
       buffs:       Array.isArray(st.buffs) ? st.buffs : [],
       casting:     st.casting || null,
+      gauges,
+      pet_name:    petName,
+      pet_hp_pct:  petHp,
+      pet_slot:    petSlot,
       updatedAt:   st.updatedAt || 0,
       live:        (now - (st.updatedAt || 0)) <= ZEAL_STALE_MS,
     };

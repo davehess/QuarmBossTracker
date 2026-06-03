@@ -554,6 +554,19 @@ function _zealAbsorb(obj) {
     if (self) s.self_hp_pct = self.value / 10;
     if (tgt)  { s.target_name = tgt.text; s.target_hp_pct = tgt.value / 10; }
     else      { s.target_name = null; s.target_hp_pct = null; }
+    // Retain every populated gauge slot verbatim — pet HP lives in one of
+    // these slots and the slot id isn't yet known (Zeal's named_pipe.cpp
+    // labels target=6 / self=1; everything else is some mix of group + pet).
+    // Storing them lets the agent show every slot and let charm-tracker pet
+    // names cross-reference to find the actual pet slot at runtime.
+    const slots = [];
+    for (const g of inner) {
+      if (!g || g.type == null || g.value == null) continue;
+      // value=0 happens for empty slots; skip those so the array isn't noise.
+      if (g.value === 0 && !g.text) continue;
+      slots.push({ slot: g.type, hp_pct: g.value / 10, text: g.text || '' });
+    }
+    s.gauges = slots;
     // Group HP: gauge slots other than self(1)/target(6) that carry a name.
     let minPct = null, minName = null;
     for (const g of inner) {
