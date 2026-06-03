@@ -3185,6 +3185,48 @@ async function _handleAgentPvpAssists(req, res) {
     (Array.isArray(rosterRows) ? rosterRows : []).map(r => String(r.name || '').toLowerCase())
   );
 
+  // Catalog-aware killer_is_npc classifier. The agent's broadcast-format
+  // signal (killType='pvp' vs 'npc') is the first guess, but EQ's local
+  // "X has been slain by Y!" line — used by backfill mining — doesn't
+  // distinguish, so we fall back to the eqemu_npc_types catalog: if the
+  // killer name appears in the NPC catalog, mark NPC. Quarm name
+  // collisions where a player picks an NPC's name do exist; we accept that
+  // false-positive risk (rare in practice) for the much larger benefit of
+  // catching named NPCs like "Bizzznawa" the agent might otherwise emit
+  // as a player kill.
+  //
+  // eqemu_npc_types.zone_short is NULL across our sync today (weekly sync
+  // pulls npc_types but not spawn data), so the lookup is zone-agnostic
+  // for now. When spawn data lands we can tighten to (name, zone_short).
+  // Names use underscores for spaces in the catalog ("a_pyre_golem"); we
+  // normalize before lookup. Cache per request so a batch with the same
+  // killer doesn't hammer Supabase.
+  const npcCache = new Map();
+  async function _killerIsNpc(killerName, agentSaidNpc) {
+    if (!killerName) return false;
+    const k = killerName.trim();
+    if (!k) return false;
+    const cacheKey = k.toLowerCase();
+    if (npcCache.has(cacheKey)) {
+      const cached = npcCache.get(cacheKey);
+      return cached || agentSaidNpc;
+    }
+    const normalized = k.replace(/\s+/g, '_');
+    let found = false;
+    try {
+      const rows = await supabase.select(
+        'eqemu_npc_types',
+        `name=ilike.${encodeURIComponent(normalized)}&select=id&limit=1`,
+      );
+      found = Array.isArray(rows) && rows.length > 0;
+    } catch (e) { void e; }
+    npcCache.set(cacheKey, found);
+    // OR-logic: catalog match wins; otherwise trust the agent's broadcast
+    // format. Never flips a yes → no (a player who shares no NPC's name
+    // shouldn't be retagged as player when the broadcast clearly said NPC).
+    return found || agentSaidNpc;
+  }
+
   const rows = [];
   let dropped = 0;
   for (const a of assists) {
@@ -3195,14 +3237,16 @@ async function _handleAgentPvpAssists(req, res) {
     if (!rosterLower.has(assister.toLowerCase())) { dropped++; continue; }
     const killedAt = killedAtRaw.toISOString();
     const secondIso = killedAt.slice(0, 19);
+    const killerName = a?.killer ? String(a.killer).slice(0, 64) : null;
+    const killerIsNpc = await _killerIsNpc(killerName, !!a?.killer_is_npc);
     rows.push({
       guild_id:       guildId,
       assister,
       assister_guild: 'Wolf Pack',
       victim:         victim.slice(0, 64),
       victim_guild:   a?.victim_guild ? String(a.victim_guild).slice(0, 64) : null,
-      killer:         a?.killer ? String(a.killer).slice(0, 64) : null,
-      killer_is_npc:  !!a?.killer_is_npc,
+      killer:         killerName,
+      killer_is_npc:  killerIsNpc,
       zone:           a?.zone ? String(a.zone).slice(0, 128) : null,
       killed_at:      killedAt,
       source:         a?.source === 'log_backfill' ? 'log_backfill' : 'live_agent',
