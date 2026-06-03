@@ -3353,6 +3353,21 @@ function _serializeForDashboard() {
     }),
     personalTriggerCount: (_personalTriggers || []).length,
     activeOverlays:      _activeOverlays,
+    // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
+    // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
+    // into the shape it expects. WITHOUT this the overlay saw nothing and never
+    // spoke — the cause of "I've never heard a TTS trigger".
+    recentTriggerFires: _activeOverlays.map(function(o){
+      return {
+        ts:      o.firedAt || o.shownAt || 0,
+        text:    o.text,
+        tts:     o.tts || o.text,
+        trigger: o.trigger,
+        scope:   o.scope,
+        test:    !!o.test,
+        sound:   o.sound || null,
+      };
+    }),
     activeTimers:        _activeTimersSnapshot(),
     ..._serializeZealForWeb(),
 
@@ -10635,20 +10650,31 @@ function _fireTriggerActions(t, captures, tsMs, test) {
     if (!a || !a.type) continue;
     if (a.type === 'text_overlay') {
       const text = _expandTemplate(a.text || '', captures || {});
+      // Spoken text: an explicit per-action `tts` wins (lets a trigger say
+      // something different than it shows — e.g. EQLP TextToSpeak vs
+      // TextToDisplay). When absent, the overlay window falls back to the
+      // display text so every alert is audible by default.
+      const ttsText = a.tts ? _expandTemplate(a.tts, captures || {}) : '';
       const overlay = {
         text,
         color:       a.color || 'red',
         duration_ms: a.duration_ms || 5000,
         shownAt:     tsMs || Date.now(),
+        // firedAt is a real-time monotonic-ish stamp the trigger overlay window
+        // uses to detect NEW fires (log ts can collide within a second and get
+        // de-duped, swallowing rapid back-to-back alerts).
+        firedAt:     Date.now(),
         trigger:     t.name,
         scope:       t._scope || (test ? 'test' : 'personal'),
         test:        !!test,
       };
+      if (ttsText) overlay.tts = ttsText;
+      if (a.sound) overlay.sound = a.sound;
       _pushOverlay(overlay);
       console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
     }
-    // tts / sound / discord / emit_event are intentionally no-ops in v1.
+    // sound / discord / emit_event beyond the overlay's own audio are no-ops in v1.
   }
   // Trigger-level timer countdown (separate from per-action overlays).
   // Starts when timer_duration_sec > 0 on the trigger itself. Captures

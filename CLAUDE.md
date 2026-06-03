@@ -3,9 +3,9 @@
 | Component | Version | Source |
 |---|---|---|
 | **Bot** | 2.7.13 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 2.5.72 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 0.5.48 | `web/package.json` |
-| **Mimic** (Electron desktop, PREVIEW) | 1.0.0-mimic-beta.56 | `apps/mimic/package.json` |
+| **Agent** (`wolfpack-logsync`) | 2.5.73 | `packages/wolfpack-logsync/package.json` |
+| **Web** (`wolfpack.quest`) | 0.5.49 | `web/package.json` |
+| **Mimic** (Electron desktop, PREVIEW) | 1.0.0-mimic-beta.57 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)

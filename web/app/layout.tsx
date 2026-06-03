@@ -53,8 +53,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             {/* Download buttons — always visible at the top so newcomers can
                 grab the right one without hunting. Parser = classic CLI agent
                 (proven). Mimic = new Electron desktop app (BETA, 1-click).
-                Both link to GitHub releases; Parser to /latest, Mimic to its
-                specific prerelease page so users see the beta context first. */}
+                BOTH download the installer directly: Parser hits the static
+                /latest/download asset; Mimic uses /mimic?direct=1, which resolves
+                the newest Mimic beta and 302s straight to its .exe (falling back
+                to the release page only if the build asset isn't attached yet).
+                Previously Mimic linked to the release *page*, which read as a
+                dead-end "just opens beta NN" instead of installing. */}
             <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
               <a
                 href="https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip"
@@ -68,11 +72,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <span aria-hidden className="text-dim text-[10px]">↗</span>
               </a>
               <a
-                href="/mimic"
+                href="/mimic?direct=1"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-blue bg-[#1f6feb33] text-blue text-xs sm:text-sm hover:bg-[#1f6feb66] transition-colors whitespace-nowrap no-underline"
-                title="Wolf Pack Mimic — Electron desktop app (BETA). Always links to the latest beta. One installer, bundles its own Node, transparent DPS overlay + trigger TTS. Coexists with the Parser. SmartScreen will warn (not code-signed yet)."
+                title="Wolf Pack Mimic — Electron desktop app (BETA). Downloads the latest beta installer directly (always resolves the newest build). One installer, bundles its own Node, transparent DPS overlay + trigger TTS. Coexists with the Parser. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
               >
                 <span aria-hidden>🐺</span>
                 <span>Mimic <span className="text-[10px] opacity-70">BETA</span></span>
