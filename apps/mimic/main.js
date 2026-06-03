@@ -26,6 +26,7 @@ const fs    = require('fs');
 const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
+const { startZealWatch } = require('./zealPipe');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -492,6 +493,53 @@ function _stopWindowDrag() {
     // debounce may swallow the last one if the user lifts quickly.
     try { _persistBounds(_dragSession.persistKey, _dragSession.win); } catch {}
     _dragSession = null;
+  }
+}
+
+// ── Zeal pipe capture (spike) ───────────────────────────────────────────────
+// Connects to any running Zeal named pipe and logs a SAMPLE of the traffic to
+// the agent log so we can see the real message shapes before wiring Zeal into
+// the trigger evaluator. Sampling: first time we see each (pid,type) we log the
+// full object; thereafter we only log a per-type running count every 60s. This
+// keeps the agent log readable while still proving the stream is flowing and
+// capturing one concrete example of every message type for protocol design.
+// Opt-out via cfg.zealPipe === false.
+let zealWatch = null;
+let zealLastConnectedPids = [];
+function startZealCapture() {
+  try {
+    const cfg = loadConfig();
+    if (cfg.zealPipe === false) { appendAgentLog('[zeal] capture disabled (cfg.zealPipe=false)\n'); return; }
+    const seenTypes = new Set();          // "pid:type" we've already sampled
+    const counts = new Map();             // type → count since last flush
+    let lastFlush = Date.now();
+    zealWatch = startZealWatch({
+      log: appendAgentLog,
+      onStatus: (s) => { zealLastConnectedPids = s.connectedPids || []; },
+      onEvent: (pid, obj) => {
+        const type = (obj && (obj.type !== undefined ? String(obj.type) : 'noType'));
+        const key = pid + ':' + type;
+        if (!seenTypes.has(key)) {
+          seenTypes.add(key);
+          // One full sample per (pid,type) — truncated so a huge raid array
+          // doesn't flood the log.
+          let sample = '';
+          try { sample = JSON.stringify(obj).slice(0, 600); } catch {}
+          appendAgentLog(`[zeal] sample pid=${pid} type=${type}: ${sample}\n`);
+        }
+        counts.set(type, (counts.get(type) || 0) + 1);
+        const now = Date.now();
+        if (now - lastFlush > 60000) {
+          lastFlush = now;
+          const summary = [...counts.entries()].map(([t, n]) => t + '×' + n).join(' ');
+          if (summary) appendAgentLog(`[zeal] 60s counts: ${summary}\n`);
+          counts.clear();
+        }
+      },
+    });
+    appendAgentLog('[zeal] capture started — watching for eqgame.exe + Zeal pipes\n');
+  } catch (e) {
+    appendAgentLog(`[zeal] capture failed to start: ${e && e.message}\n`);
   }
 }
 
@@ -1637,6 +1685,7 @@ app.whenReady().then(async () => {
   createOverlayWindow();
   createTriggerOverlay();
   pushStatus();
+  startZealCapture();
 
   // Rescue overlays if the monitor layout changes while running (unplug a
   // second display, resolution switch, etc.). If an overlay ends up off the
