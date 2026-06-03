@@ -4340,8 +4340,14 @@ function renderOverlays(s) {
   h += '<div class="card wide"><h2>Built-in overlays</h2>';
   h += '<table style="font-size:12px">';
   h += '<tr><th>Overlay</th><th>Default</th><th>Description</th></tr>';
-  h += '<tr><td class="name">DPS HUD</td><td class="dim">' + ((cfg.showHud !== false) ? 'on' : 'off') + '</td><td class="dim">Running session DPS, top damage seen, current encounter.</td></tr>';
-  h += '<tr><td class="name">Trigger alerts (TTS)</td><td class="dim">' + ((cfg.enableTriggerTts !== false) ? 'on' : 'off') + '</td><td class="dim">Centered big-text alert from triggers (guild + personal). Speaks the alert via Web Speech.</td></tr>';
+  // NOTE: deliberately NOT using class="name" on these label cells — the
+  // delegated wolfpack.quest character-link handler (Increment 2a) walks any
+  // .name element, clips text to the first space, and opens
+  // wolfpack.quest/character/<first-token>. "DPS HUD" → "DPS" passes the
+  // looksLikeCharacter filter (3+ caps), opening /character/DPS → 404.
+  // Plain styled text avoids the trap.
+  h += '<tr><td style="color:var(--text)">DPS HUD</td><td class="dim">' + ((cfg.showHud !== false) ? 'on' : 'off') + '</td><td class="dim">Running session DPS, top damage seen, current encounter.</td></tr>';
+  h += '<tr><td style="color:var(--text)">Trigger alerts (TTS)</td><td class="dim">' + ((cfg.enableTriggerTts !== false) ? 'on' : 'off') + '</td><td class="dim">Centered big-text alert from triggers (guild + personal). Speaks the alert via Web Speech.</td></tr>';
   h += '</table>';
   h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock state: ' + (cfg.overlaysLocked === false ? '🔓 unlocked' : '🔒 locked') + ' · toggle from the tray menu.</div>';
   h += '</div>';
