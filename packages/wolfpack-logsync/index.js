@@ -1026,6 +1026,12 @@ class EncounterBuilder {
     this.lastEvent  = null;
     this.targets    = new Map(); // defender → total damage dealt to it
     this.bossName   = null;
+    // Mob → last player it landed a hit on, for DS correlation. On Quarm a
+    // damage-shield proc logs as the anonymous "<mob> was hit by non-melee
+    // for N" without naming the wearer, so we credit it to whoever the mob
+    // most recently connected with (within 1500ms). Per-encounter, cleared
+    // on reset since mob identities don't carry across encounters.
+    this._lastIncomingHit = new Map();   // mob.toLowerCase() → { tank, tsMs }
     // Defender stats: per-target tanking + accuracy data, scoped to this encounter.
     // Per-defender shape:
     //   { hits, damageTaken, misses, dodges, parries, ripostes, blocks, invulns,
@@ -1340,6 +1346,46 @@ class EncounterBuilder {
       } else if (evTs - this.lastDirgeCast.ts > window + 5000) {
         // stale — drop it so future hits aren't wrongly credited
         this.lastDirgeCast = null;
+      }
+    }
+
+    // ── Damage-shield correlation (Quarm format) ─────────────────────────────
+    // On Quarm the DS proc logs as "<Mob> was hit by non-melee for N" with NO
+    // wearer attribution. Correlate it with the most recent connecting swing
+    // FROM that same mob: whoever it just hit (within ~1500ms) is the DS
+    // wearer and gets the damage credit. The narrow window matches EQ's combat
+    // tick — DS lands on the same tick as the swing it procced from. Misses
+    // don't proc DS; they come through as type='miss' so they never enter
+    // _lastIncomingHit (only landed damage events do).
+    //
+    // Runs AFTER the dirge block so the more specific dirge attribution wins
+    // when both could match; falls through to DS if no dirge cast is pending.
+    if (event.type === 'damage' && event.amount > 0) {
+      const tsMs = Date.parse(event.ts) || Date.now();
+      const att = String(event.attacker || '');
+      const def = String(event.defender || '');
+
+      // 1) Mob → Player connect: remember who the mob just hit. Heuristic:
+      // attacker looks like a mob (multi-word, "a/an/the" prefix, or starts
+      // lowercase) AND defender looks like a player (single Capitalized word
+      // or "YOU"/"You" which the agent resolves to the uploader).
+      const _isMob = (n) => n && (n === 'YOU' || n === 'You' ? false
+        : /^(a|an|the)\s/i.test(n) || /\s/.test(n) || /^[a-z]/.test(n));
+      const _isPlayer = (n) => n && (n === 'YOU' || n === 'You' || /^[A-Z][a-zA-Z'`]{1,}$/.test(n));
+      if (_isMob(att) && _isPlayer(def)) {
+        const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
+        this._lastIncomingHit.set(att.toLowerCase(), { tank, tsMs });
+      }
+
+      // 2) DS attribution: anonymous non-melee hit on a mob — if that mob
+      // landed a connect on a player in the last 1500ms, credit the player.
+      // Marks event.ds so the stats.damageShield aggregate picks it up.
+      if (event.attacker === null && def && event.ability === 'non-melee') {
+        const recent = this._lastIncomingHit.get(def.toLowerCase());
+        if (recent && tsMs - recent.tsMs < 1500) {
+          event.attacker = recent.tank;
+          event.ds = true;
+        }
       }
     }
 
@@ -3607,12 +3653,16 @@ function renderDash(s) {
   }
 
   h += '<div class="grid">';
-  // Recent parses
+  // Recent parses — hide placeholder rows from older uploads (boss "?" with
+  // zero events / zero damage). The recordUploadForDashboard write path also
+  // skips creating these going forward, but in-memory stale ones live until a
+  // session reset; filtering here makes them disappear immediately.
+  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
   h += '<div class="card"><h2>Recent Parses</h2>';
-  if (!s.recentParses?.length) h += '<div class="dim">(no uploads yet)</div>';
+  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
   else {
     h += '<table>';
-    for (const p of s.recentParses.slice(0,5)) {
+    for (const p of _validParses.slice(0, 5)) {
       h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
            '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
     }
@@ -6806,6 +6856,14 @@ function recordUploadForDashboard(payload, character) {
     if (!ev.ability || !MELEE_ABILITIES.has(String(ev.ability).toLowerCase())) {
       spellDotDmg += ev.amount;
     }
+  }
+  // Don't record empty / boss-less encounters into recentParses — those are
+  // typically session boundary uploads where the agent had nothing meaningful
+  // to send (silent zone idle, post-fight flush with all events filtered out).
+  // They render as "?  0 ev  0  (0 spell)" placeholders that just clutter
+  // the Dashboard card.
+  if (!e.boss_name && e.events.length === 0 && totalDmg === 0) {
+    return;
   }
   stats.recentParses.unshift({
     bossName:        e.boss_name || '?',
