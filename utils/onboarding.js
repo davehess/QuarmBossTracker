@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.8': [
+    '**PvP boss timer board on wolfpack.quest/pvp** — every PvP-server boss kill (auto-detected from Druzzil broadcasts or recorded via `/pvpkill`) now mirrors into Supabase with a ±20% spawn window. The new "PvP Boss Timers" section sorts by soonest spawn first; rows whose window has already opened drop to the bottom as "camp now". Existing in-memory timers are backfilled on first deploy after this lands.',
+  ],
   '2.7.7': [
     '**Auto-`/pvpkill` from PvP server broadcasts** — when Druzzil announces "X of <Guild> has killed Boss in Zone!" and the victim matches a boss in `data/bosses.json`, the bot auto-starts the respawn timer (±20% window) and posts a kill card to `PVP_KILLS_THREAD_ID`. Fires regardless of which guild made the kill — server-wide respawns tick the same for everyone.',
   ],

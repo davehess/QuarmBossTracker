@@ -59,6 +59,21 @@ module.exports = {
 
     const key   = recordPvpKill(boss.name, boss.timerHours, interaction.user.id, bossId, timerUnknown);
     const entry = getAllPvpKills()[key];
+    // Mirror to Supabase for the wolfpack.quest/pvp boss timer board. Skipped
+    // on timer_unknown — no respawn window means no useful spawn_earliest /
+    // spawn_latest to compute. Non-fatal: failures only impact the web view.
+    if (!timerUnknown) {
+      require('../utils/supabase').mirrorPvpBossKill({
+        boss_id:     boss.id,
+        boss_name:   boss.name,
+        zone:        boss.zone || null,
+        timer_hours: boss.timerHours,
+        killed_at:   new Date(entry.killedAt).toISOString(),
+        recorded_by: interaction.user.id,
+        killed_by:   interaction.user.username || null,
+        source:      'slash_command',
+      }).catch(() => {});
+    }
 
     let embed, replyText;
     if (timerUnknown) {

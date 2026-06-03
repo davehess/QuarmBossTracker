@@ -71,12 +71,74 @@ async function loadLeaderboard() {
   return { rows, error: null as string | null };
 }
 
+// Latest kill per boss (dedup by boss_id, keep the most recent killed_at). The
+// bot mirrors every Druzzil-broadcast PvP-server boss kill into pvp_boss_kills
+// with the +/-20% spawn window baked into spawn_earliest / spawn_latest. We
+// pull a generous slice (last 90 days, sorted newest-first) and collapse in JS
+// so we always show the latest known timer per boss — no stale display when
+// the same boss was killed twice in the window.
+type BossKill = {
+  boss_id: string;
+  boss_name: string;
+  zone: string | null;
+  timer_hours: number;
+  killed_at: string;
+  killed_by: string | null;
+  killed_by_guild: string | null;
+  spawn_earliest: string;
+  spawn_latest: string;
+};
+async function loadBossTimers(): Promise<BossKill[]> {
+  const sb = supabaseAdmin();
+  const since = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+  const { data } = await sb
+    .from('pvp_boss_kills')
+    .select('boss_id, boss_name, zone, timer_hours, killed_at, killed_by, killed_by_guild, spawn_earliest, spawn_latest')
+    .eq('guild_id', 'wolfpack')
+    .gte('killed_at', since)
+    .order('killed_at', { ascending: false })
+    .limit(2000);
+  const seen = new Set<string>();
+  const out: BossKill[] = [];
+  for (const r of (data ?? []) as BossKill[]) {
+    if (seen.has(r.boss_id)) continue;
+    seen.add(r.boss_id);
+    out.push(r);
+  }
+  // Sort by spawn_earliest ascending → "soonest spawns first" up top, then
+  // "already-open" rows (spawn_latest passed) drop to the bottom.
+  const now = Date.now();
+  out.sort((a, b) => {
+    const aOpen = new Date(a.spawn_latest).getTime() < now;
+    const bOpen = new Date(b.spawn_latest).getTime() < now;
+    if (aOpen !== bOpen) return aOpen ? 1 : -1;
+    return new Date(a.spawn_earliest).getTime() - new Date(b.spawn_earliest).getTime();
+  });
+  return out;
+}
+
+function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
+  const diff = new Date(toIso).getTime() - fromMs;
+  const abs  = Math.abs(diff);
+  const d = Math.floor(abs / 86400000);
+  const h = Math.floor((abs % 86400000) / 3600000);
+  const m = Math.floor((abs % 3600000) / 60000);
+  const parts: string[] = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0 || d > 0) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return (diff < 0 ? '-' : '') + parts.join(' ');
+}
+
 export default async function PvpPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp');
 
   const tz = await userTz();
-  const { rows, error } = await loadLeaderboard();
+  const [{ rows, error }, bossTimers] = await Promise.all([
+    loadLeaderboard(),
+    loadBossTimers(),
+  ]);
   if (error) {
     return (
       <div className="bg-panel border border-red rounded-lg p-4 text-red text-sm font-mono">
@@ -146,6 +208,75 @@ export default async function PvpPage() {
           </table>
         )}
       </section>
+
+      {/* Boss timers — PvP-server spawn windows fed by the bot from Druzzil
+          broadcasts and manual /pvpkill. Sorted soonest-spawning first; rows
+          where the spawn window is already open drop to the bottom. */}
+      {bossTimers.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold flex items-center gap-3">
+            <span aria-hidden>⏰</span>
+            <span>PvP Boss Timers</span>
+          </h2>
+          <p className="text-sm text-dim mt-2">
+            Respawn windows for PvP-server bosses with a ±20% variance applied
+            to the base timer. Fed live by Druzzil broadcasts in <code className="text-text">#pvp</code> and by
+            manual <code className="text-text">/pvpkill</code>. Sorted by earliest spawn; rows whose window has
+            already opened drop to the bottom (mob is in <span className="text-green">camp now</span>).
+          </p>
+          <div className="text-xs text-dim mt-2">
+            {bossTimers.length} boss{bossTimers.length === 1 ? '' : 'es'} tracked · last kill {fmtDateOnly(bossTimers[0].killed_at, tz)}
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-dim text-left">
+                <tr className="border-b border-border">
+                  <th className="py-1 pr-2">Boss</th>
+                  <th className="py-1 pr-2">Zone</th>
+                  <th className="py-1 pr-2 text-right">Killed</th>
+                  <th className="py-1 pr-2 text-right">Earliest spawn</th>
+                  <th className="py-1 pr-2 text-right">Latest spawn</th>
+                  <th className="py-1 pr-2">Killed by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bossTimers.map(b => {
+                  const now = Date.now();
+                  const earliestMs = new Date(b.spawn_earliest).getTime();
+                  const latestMs   = new Date(b.spawn_latest).getTime();
+                  const isOpen    = latestMs   < now;          // window already passed → mob is up
+                  const inWindow  = earliestMs <= now && !isOpen; // spawning now-ish
+                  const colorEarliest = inWindow ? 'text-orange' : isOpen ? 'text-green' : 'text-text';
+                  return (
+                    <tr key={b.boss_id} className="border-b border-border/30 hover:bg-[#1a212c]">
+                      <td className="py-1 pr-2 text-text">{b.boss_name}</td>
+                      <td className="py-1 pr-2 text-dim">{b.zone ?? '—'}</td>
+                      <td className="py-1 pr-2 text-right text-dim">{fmtDateOnly(b.killed_at, tz)}</td>
+                      <td className={`py-1 pr-2 text-right ${colorEarliest}`}>
+                        {isOpen ? (
+                          <span title="Spawn window already opened — mob may be up">camp now</span>
+                        ) : inWindow ? (
+                          <span title={`window opened ${fmtCountdown(b.spawn_earliest)} ago`}>open · {fmtCountdown(b.spawn_earliest)}</span>
+                        ) : (
+                          <span title={new Date(b.spawn_earliest).toLocaleString()}>in {fmtCountdown(b.spawn_earliest)}</span>
+                        )}
+                      </td>
+                      <td className="py-1 pr-2 text-right text-dim" title={new Date(b.spawn_latest).toLocaleString()}>
+                        {isOpen ? 'opened' : `+${fmtCountdown(b.spawn_latest, earliestMs)}`}
+                      </td>
+                      <td className="py-1 pr-2 text-dim">
+                        {b.killed_by
+                          ? <>{b.killed_by}{b.killed_by_guild ? <span className="text-dim/70"> of &lt;{b.killed_by_guild}&gt;</span> : null}</>
+                          : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

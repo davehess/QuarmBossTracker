@@ -127,6 +127,39 @@ client.once(Events.ClientReady, async (readyClient) => {
   startRaidHelperSync();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 
+  // One-shot backfill: mirror every in-memory state.pvpKills entry into
+  // public.pvp_boss_kills so the web /pvp board reflects the bot's live
+  // timers on first deploy after this lands. Idempotent via dedup_key — the
+  // upsert collapses any duplicate run. Bosses with timer_unknown are
+  // skipped (no useful spawn window to publish).
+  try {
+    const { getAllPvpKills } = require('./utils/state');
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      const bosses = getBosses();
+      const byId = new Map(bosses.map(b => [b.id, b]));
+      const live = getAllPvpKills() || {};
+      let mirrored = 0;
+      for (const [key, entry] of Object.entries(live)) {
+        if (!entry || entry.timerUnknown || !entry.killedAt || !entry.timerHours) continue;
+        const meta = byId.get(entry.bossId || key);
+        await supabase.mirrorPvpBossKill({
+          boss_id:     entry.bossId || key,
+          boss_name:   entry.name,
+          zone:        meta?.zone || null,
+          timer_hours: entry.timerHours,
+          killed_at:   new Date(entry.killedAt).toISOString(),
+          recorded_by: typeof entry.killedBy === 'string' && /^\d{17,20}$/.test(entry.killedBy) ? entry.killedBy : null,
+          source:      'backfill',
+        }).catch(() => {});
+        mirrored++;
+      }
+      if (mirrored > 0) console.log(`[pvp-board] mirrored ${mirrored} live boss timers to Supabase`);
+    }
+  } catch (err) {
+    console.warn('[pvp-board] startup backfill failed:', err?.message);
+  }
+
   // Safety-net board reconcile from Supabase encounters every 6h. Cheap when
   // nothing drifted (it only writes/refreshes when it finds kills not yet
   // reflected in state), so steady-state this is a no-op; it self-heals the
@@ -2977,6 +3010,20 @@ async function _handleAgentPvp(req, res) {
               const killedAtMs = b?.ts ? new Date(b.ts).getTime() : Date.now();
               const killedByLabel = `auto:${killer || '?'}${killerGuild ? '/' + killerGuild : ''}`;
               recordPvpKill(boss.name, boss.timerHours, killedByLabel, boss.id, false, killedAtMs);
+              // Mirror to Supabase so wolfpack.quest/pvp can render the timer
+              // board. Failure here is non-fatal — state.json is the source of
+              // truth for the bot's own /timers, /pvphate, etc.
+              require('./utils/supabase').mirrorPvpBossKill({
+                boss_id:         boss.id,
+                boss_name:       boss.name,
+                zone:            boss.zone || null,
+                timer_hours:     boss.timerHours,
+                killed_at:       new Date(killedAtMs).toISOString(),
+                killed_by:       killer || null,
+                killed_by_guild: killerGuild || null,
+                source:          'auto_broadcast',
+                raw_text:        text,
+              }).catch(() => {});
               content += `\n_⏱️ Auto-tracked — respawns in ~${boss.timerHours}h (±20%) · see /timers_`;
 
               // Post a richer card to PVP_KILLS_THREAD_ID mirroring /pvpkill.

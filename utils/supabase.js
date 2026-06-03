@@ -311,6 +311,42 @@ async function getTonightEncounters(date = new Date()) {
   return Array.isArray(rows) ? rows : [];
 }
 
+// Mirror one PvP boss kill into Supabase. Called from utils/state.recordPvpKill
+// so the kill lands in BOTH state.json (live timers) AND the public.pvp_boss_kills
+// table (web /pvp board). Idempotent via the dedup_key column. Failure is non-
+// fatal — state.json remains the source of truth for the bot itself.
+async function mirrorPvpBossKill(row) {
+  if (!isEnabled()) return null;
+  if (!row || !row.boss_id || !row.killed_at) return null;
+  // Per-minute dedup so two agents broadcasting the same kill don't double up.
+  const minuteIso = new Date(row.killed_at).toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+  const guildId   = row.guild_id || _guildId();
+  const dedupKey  = row.dedup_key || `${guildId}|${row.boss_id}|${minuteIso}`;
+  const killedAt  = new Date(row.killed_at);
+  const baseMs    = Number(row.timer_hours) * 3600000;
+  const spawnEarly = new Date(killedAt.getTime() + baseMs * 0.8).toISOString();
+  const spawnLate  = new Date(killedAt.getTime() + baseMs * 1.2).toISOString();
+  return upsert('pvp_boss_kills', [{
+    guild_id:        guildId,
+    boss_id:         row.boss_id,
+    boss_name:       row.boss_name,
+    zone:            row.zone || null,
+    timer_hours:     Number(row.timer_hours),
+    killed_at:       killedAt.toISOString(),
+    killed_by:       row.killed_by       || null,
+    killed_by_guild: row.killed_by_guild || null,
+    recorded_by:     row.recorded_by     || null,
+    source:          row.source          || 'auto_broadcast',
+    raw_text:        row.raw_text        ? String(row.raw_text).slice(0, 500) : null,
+    spawn_earliest:  spawnEarly,
+    spawn_latest:    spawnLate,
+    dedup_key:       dedupKey,
+  }], 'dedup_key').catch(err => {
+    console.warn('[pvp_boss_kills] upsert failed:', err?.message);
+    return null;
+  });
+}
+
 module.exports = {
   isEnabled,
   select, insert, update, upsert, del, rpc,
@@ -323,4 +359,5 @@ module.exports = {
   getEncounterContributions,
   getEncounterPlayers,
   getTonightEncounters,
+  mirrorPvpBossKill,
 };
