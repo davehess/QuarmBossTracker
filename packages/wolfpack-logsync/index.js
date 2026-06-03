@@ -538,6 +538,21 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: 'non-melee', amount: parseInt(m[3], 10) };
   }
 
+  // ── Damage-shield FLAVOR line (Quarm two-line DS pattern) ────────────────
+  // Quarm logs DS as a PAIR of same-timestamp lines:
+  //   "Lord of Ire was hit by non-melee for 14 points of damage."   ← v2.5.54 catches via swing correlation
+  //   "Lord of Ire was pierced by thorns."                          ← THIS — names the DS spell
+  // The flavor verb varies per DS type (pierced/burned/tormented/frozen/
+  // shocked/stricken/scratched/impaled/bitten/stung/etc.). The SOURCE word
+  // after "by" is the spell or song name (thorns, brambles, halo of light,
+  // chant of battle, etc.). We emit type='ds_flavor' so EncounterBuilder can
+  // retag the most recent DS-attributed hit on this same mob with the
+  // real spell name. No number, no damage — pure attribution.
+  m = line.match(/\]\s+(.+?)\s+was\s+(?:pierced|burned|tormented|frozen|chilled|shocked|stricken|scratched|impaled|bitten|stung|electrocuted|seared|lacerated|paralyzed|cut)\s+by\s+(.+?)\.?\s*$/i);
+  if (m && !/for\s+\d/.test(m[0])) {
+    return { ts: tsIso, type: 'ds_flavor', defender: m[1], ability: m[2].trim() };
+  }
+
   // ── Rampage announcement ─────────────────────────────────────────────────
   // "[timestamp] Bossname goes on a RAMPAGE against Target!" — each rampage line
   // names both the attacker AND the target it's hitting, so it's both an
@@ -1032,6 +1047,13 @@ class EncounterBuilder {
     // most recently connected with (within 1500ms). Per-encounter, cleared
     // on reset since mob identities don't carry across encounters.
     this._lastIncomingHit = new Map();   // mob.toLowerCase() → { tank, tsMs }
+    // Pending DS commit — buffered between the damage line and the flavor
+    // line (e.g. "X was hit by non-melee for 14" then "X was pierced by
+    // thorns."). When the flavor lands within 2s, the buffered event's
+    // ability gets retagged from 'non-melee' to the real spell name. If no
+    // flavor arrives, we commit with 'non-melee' once the next add() call
+    // pushes us past the 2s window.
+    this._dsPending = null;              // { eventRef, attacker, mobLower, tsMs }
     // Defender stats: per-target tanking + accuracy data, scoped to this encounter.
     // Per-defender shape:
     //   { hits, damageTaken, misses, dodges, parries, ripostes, blocks, invulns,
@@ -1210,8 +1232,49 @@ class EncounterBuilder {
     s.ticks  += 1;
     if (target) s.targets.add(target);
   }
+  // Commit the buffered DS attribution to stats.damageShield. Called when
+  // the flavor line arrives (with the real spell name retagged onto the
+  // eventRef), when a new DS attribution opens (so the previous one isn't
+  // stranded), or when the next damage event's timestamp passes the 2s
+  // window without a flavor line landing. Idempotent — null-out after commit.
+  _commitDsPending() {
+    const p = this._dsPending;
+    if (!p || !p.eventRef || p.eventRef.amount <= 0) { this._dsPending = null; return; }
+    const spell = (p.eventRef.ability || 'non-melee').toLowerCase();
+    if (!stats.damageShield[p.attacker]) stats.damageShield[p.attacker] = {};
+    const byTank = stats.damageShield[p.attacker];
+    if (!byTank[spell]) byTank[spell] = { count: 0, total: 0 };
+    byTank[spell].count++;
+    byTank[spell].total += p.eventRef.amount;
+    this._dsPending = null;
+  }
+
   add(event) {
     if (!event) return;
+
+    // ── Damage-shield flavor line → retag pending attribution ─────────────
+    // "X was pierced by thorns." (no number, no points). The DS damage line
+    // landed milliseconds earlier and is buffered in _dsPending; we update
+    // its ability with the real spell name and commit. ds_flavor events are
+    // pure attribution — never added to this.events.
+    if (event.type === 'ds_flavor') {
+      const flavorTsMs = Date.parse(event.ts) || Date.now();
+      const p = this._dsPending;
+      if (p && p.mobLower === String(event.defender || '').toLowerCase()
+          && flavorTsMs - p.tsMs < 2000) {
+        p.eventRef.ability = String(event.ability || 'non-melee').trim();
+      }
+      // Commit regardless — flavor lines mark the end of the DS pair window.
+      this._commitDsPending();
+      return;
+    }
+
+    // Stale pending DS attribution? Commit before the new event so its
+    // damage doesn't leak into a later mob's flavor line.
+    if (this._dsPending) {
+      const evTsMs = Date.parse(event.ts) || Date.now();
+      if (evTsMs - this._dsPending.tsMs > 2000) this._commitDsPending();
+    }
 
     // Dire Charm cast → flag the next charm-land within ~10s as a DC
     // session, not a regular Charm cycle. Stored on the builder so it's
@@ -1379,12 +1442,25 @@ class EncounterBuilder {
 
       // 2) DS attribution: anonymous non-melee hit on a mob — if that mob
       // landed a connect on a player in the last 1500ms, credit the player.
-      // Marks event.ds so the stats.damageShield aggregate picks it up.
+      // Buffers into _dsPending instead of tallying immediately; the flavor
+      // line ("X was pierced by thorns.") that lands milliseconds later
+      // retags ability with the actual spell name. If no flavor arrives, the
+      // next add() with tsMs > pending.tsMs + 2000 commits 'non-melee' as-is.
       if (event.attacker === null && def && event.ability === 'non-melee') {
         const recent = this._lastIncomingHit.get(def.toLowerCase());
         if (recent && tsMs - recent.tsMs < 1500) {
+          // Commit any older pending before opening a new one (one mob's DS
+          // hit shouldn't be retagged by another mob's flavor line).
+          if (this._dsPending) this._commitDsPending();
           event.attacker = recent.tank;
           event.ds = true;
+          event._skipDsAggregate = true;   // suppress the immediate aggregate below
+          this._dsPending = {
+            eventRef: event,
+            attacker: recent.tank,
+            mobLower: def.toLowerCase(),
+            tsMs,
+          };
         }
       }
     }
@@ -1845,6 +1921,9 @@ class EncounterBuilder {
     }
   }
   flush() {
+    // Commit any buffered DS attribution so a fight that ends with a damage
+    // line but no flavor line still credits the tank (with ability='non-melee').
+    if (this._dsPending) this._commitDsPending();
     // Minimum event count — filters out "you took 7 hits and zoned" noise.
     // Real fights (even fast trash kills) typically produce 15+ events.
     if (this.events.length < 10) {
@@ -6775,12 +6854,11 @@ function recordEventForDashboard(event, character) {
   }
 
   // Damage-shield tally — separate from abilityStats so we can break it out
-  // per attacker per spell on the Tanks tab. Captures ALL DS damage we see in
-  // the log (uploader's own + any other tank's DS proc that we witness),
-  // since each agent only sees DS lines from procs that happened in zones it
-  // was in — the bot's parse merge dedups by encounter so cross-agent overlap
-  // is fine. The `attacker` variable is the already-resolved character name.
-  if (event.ds && event.amount > 0) {
+  // per attacker per spell on the Tanks tab. _skipDsAggregate is set on the
+  // event when DS attribution buffered it into _dsPending — the commit then
+  // tallies once the spell name is known (from the flavor line) or after the
+  // 2s window expires. Skipping here avoids double-counting under that path.
+  if (event.ds && event.amount > 0 && !event._skipDsAggregate) {
     const spell = event.ability || '(unknown)';
     if (!stats.damageShield[attacker]) stats.damageShield[attacker] = {};
     const byTank = stats.damageShield[attacker];
@@ -7684,6 +7762,14 @@ function runOptinBackfill(files, opts = {}) {
             if (lohEvt) funEventBuffer.push(lohEvt);
             const pkEvt = parsePvpFlag(line, f.character);
             if (pkEvt) funEventBuffer.push(pkEvt);
+            const dpEvt = parseDragonPunch(line, f.character);
+            if (dpEvt) funEventBuffer.push(dpEvt);
+            // Feral Avatar cast-begin (caster-side AND bystander-side).
+            // Complementary to parseFeralAvatarReceived below — that one fires
+            // on the buff land, this one on the cast begin. Both push so the
+            // bot's dedup collapses overlap across multiple agents in zone.
+            const faCastEvt = parseFeralAvatar(line, f.character);
+            if (faCastEvt) funEventBuffer.push(faCastEvt);
             // Beastlord buff receives — recipient-side. The bot correlates
             // these to specific encounters at display time via ts range, so
             // the agent only needs to emit the bare event.
@@ -8764,6 +8850,52 @@ function parsePeopleslayerLd(line) {
   return {
     type:     'peopleslayer_ld',
     caster:   'Peopleslayer',
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+// ── 🐉 Dragon Punch — monk Stunning Kick proc ─────────────────────────────────
+// Line:  "<target> is stricken by the force of a dragon."
+// Caster is the LOG OWNER (whoever's agent saw the line is the monk who threw
+// the kick — bystanders see the proc but EQ logs it to the kicker only).
+// Powers a per-monk counter on /fun: "Hitya has Dragon Punched X targets."
+const DRAGON_PUNCH_RX = /^\[(.+?)\]\s+(.+?)\s+is\s+stricken\s+by\s+the\s+force\s+of\s+a\s+dragon\.?\s*$/i;
+function parseDragonPunch(line, selfName) {
+  const m = DRAGON_PUNCH_RX.exec(line);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'dragon_punch',
+    caster:   selfName,
+    target:   m[2].trim(),
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+// ── 🐺 Feral Avatar cast — Beastlord epic 1.0 click ───────────────────────────
+// Two forms — caster-side ("You begin casting…") only fires on the BL's own
+// agent; bystander-side ("Fittir begins casting…") fires on any agent in
+// zone. Both push the same fun_event so the bot's dedup (guild, event_type,
+// caster, event_ts) collapses overlap. Collected silently — not yet surfaced
+// on /fun (per the owner's "doesn't need to be revealed yet" note). Future
+// metric: percentage of fights where the BL had this active during the kill.
+const FERAL_AVATAR_SELF_RX  = /^\[(.+?)\]\s+You\s+begin\s+casting\s+Feral\s+Avatar\.?\s*$/i;
+const FERAL_AVATAR_OTHER_RX = /^\[(.+?)\]\s+(\w[\w'`]*)\s+begins\s+casting\s+Feral\s+Avatar\.?\s*$/i;
+function parseFeralAvatar(line, selfName) {
+  let m = FERAL_AVATAR_SELF_RX.exec(line);
+  let caster = null;
+  if (m) caster = selfName;
+  else {
+    m = FERAL_AVATAR_OTHER_RX.exec(line);
+    if (m) caster = m[2];
+  }
+  if (!m || !caster) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'feral_avatar_cast',
+    caster:   caster,
     ts:       ts ? ts.toISOString() : new Date().toISOString(),
     raw_text: line.slice(0, 200),
   };
@@ -10260,6 +10392,13 @@ async function main() {
         if (lohEvt && !_sourceExcluded) funEventBuffer.push(lohEvt);
         const pkEvt = parsePvpFlag(line, b.character);
         if (pkEvt && !_sourceExcluded) funEventBuffer.push(pkEvt);
+        const dpEvt = parseDragonPunch(line, b.character);
+        if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
+        // Feral Avatar — caster-side fires only on the BL's own log; bystander
+        // form fires on anyone in zone. Both push so the bot's (guild_id,
+        // event_type, caster, event_ts) dedup collapses overlap.
+        const faEvt = parseFeralAvatar(line, b.character);
+        if (faEvt && !_sourceExcluded) funEventBuffer.push(faEvt);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
