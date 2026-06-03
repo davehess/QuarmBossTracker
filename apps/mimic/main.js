@@ -659,6 +659,148 @@ function _setTellsDmPause(until) {
   pushTellsDmPause(u);
   pushStatus();
 }
+// ── Mimic Discord login (device-code flow) ─────────────────────────────────
+// State lives in `cfg.session` so it persists across upgrades; electron-updater
+// swaps the .exe but userData (CONFIG_FILE) is untouched. Shape:
+//   cfg.session = { token, identity: { user_id, discord_id, display_name,
+//                   is_officer, role_names }, linked_at }
+// `_linkInFlight` tracks an active /start poll loop so a second Sign-In click
+// while one is pending doesn't fan out two browser tabs.
+let _linkInFlight = null;   // { device_code, user_code, expires_at, timer }
+function _httpsJsonPost(baseOrigin, path, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(baseOrigin + path); } catch (e) { reject(e); return; }
+    const mod = u.protocol === 'https:' ? require('https') : require('http');
+    const payload = JSON.stringify(body || {});
+    const req = mod.request({
+      method: 'POST',
+      hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...headers },
+      timeout: 8000,
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode || 0, body: data ? JSON.parse(data) : null }); }
+        catch { resolve({ status: res.statusCode || 0, body: null }); }
+      });
+    });
+    req.on('error',   reject);
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.write(payload); req.end();
+  });
+}
+// Push the current session to the local agent. The agent forwards the token
+// to the bot on every latest-version poll and surfaces the identity on
+// /api/state so the dashboard can render the "Signed in as <name>" badge.
+function pushMimicSession() {
+  if (!agentPort) return;
+  const cfg = loadConfig();
+  const sess = cfg.session || null;
+  const body = JSON.stringify({
+    token:    sess?.token    || '',
+    identity: sess?.identity || null,
+  });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/mimic-session', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+// Begin a fresh device-code link. Returns { user_code, verification_url,
+// expires_in } so the Settings window can show the code + nudge. Polling starts
+// immediately and continues in the background until linked/expired/cancelled.
+async function startMimicLink() {
+  if (_linkInFlight) {
+    // Re-use the in-flight code; opening a second tab would just confuse.
+    return { ok: true, ..._linkInFlight._pub };
+  }
+  const cfg = loadConfig();
+  const base = _botBaseUrl(cfg);
+  let resp;
+  try {
+    resp = await _httpsJsonPost(base, '/api/mimic-link/start', { agent_version: 'mimic ' + app.getVersion() });
+  } catch (e) {
+    return { ok: false, error: 'Could not reach the Wolf Pack server: ' + (e && e.message || e) };
+  }
+  if (resp.status !== 200 || !resp.body || !resp.body.device_code) {
+    return { ok: false, error: 'Server rejected the link request' + (resp.body?.error ? ': ' + resp.body.error : '') };
+  }
+  const { user_code, device_code, verification_url, verification_url_complete, expires_in, poll_interval } = resp.body;
+  const expiresAt = Date.now() + (expires_in * 1000);
+  const pub = { user_code, verification_url, verification_url_complete, expires_at: expiresAt };
+  _linkInFlight = { device_code, user_code, expires_at: expiresAt, _pub: pub, timer: null };
+  // Open the user's browser at the verification URL with the code prefilled.
+  try { shell.openExternal(verification_url_complete || verification_url); } catch (e) { void e; }
+  // Start the poll loop.
+  const intervalMs = Math.max(1500, Number(poll_interval || 2) * 1000);
+  const tick = async () => {
+    if (!_linkInFlight) return;
+    if (Date.now() > _linkInFlight.expires_at) {
+      _linkInFlight = null;
+      pushStatus();
+      return;
+    }
+    try {
+      const p = await _httpsJsonPost(_botBaseUrl(loadConfig()), '/api/mimic-link/poll', { device_code });
+      if (p.status === 200 && p.body) {
+        if (p.body.status === 'linked' && p.body.session_token) {
+          const c = loadConfig();
+          c.session = {
+            token:    p.body.session_token,
+            identity: {
+              user_id:      p.body.user_id,
+              discord_id:   p.body.discord_id,
+              display_name: p.body.display_name,
+              is_officer:   !!p.body.is_officer,
+              role_names:   Array.isArray(p.body.role_names) ? p.body.role_names : [],
+            },
+            linked_at: Date.now(),
+          };
+          saveConfig(c);
+          _linkInFlight = null;
+          pushMimicSession();
+          pushStatus();
+          return;
+        }
+        if (p.body.status === 'expired') {
+          _linkInFlight = null;
+          pushStatus();
+          return;
+        }
+      }
+    } catch (e) { void e; /* transient — keep polling */ }
+    _linkInFlight.timer = setTimeout(tick, intervalMs);
+  };
+  _linkInFlight.timer = setTimeout(tick, intervalMs);
+  pushStatus();
+  return { ok: true, ...pub };
+}
+// Cancel an in-flight link (e.g. user closed the Settings window without
+// finishing). Doesn't touch any saved session.
+function cancelMimicLink() {
+  if (_linkInFlight) {
+    if (_linkInFlight.timer) clearTimeout(_linkInFlight.timer);
+    _linkInFlight = null;
+    pushStatus();
+  }
+}
+// Sign out. Best-effort revoke on the bot; clear cfg.session locally regardless
+// so the user is signed out even if the network is down.
+async function signOutMimic() {
+  const cfg = loadConfig();
+  const token = cfg.session?.token || '';
+  delete cfg.session;
+  saveConfig(cfg);
+  pushMimicSession();
+  pushStatus();
+  if (token) {
+    try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
+  }
+}
 // Short "resumes at" clock for the tray label, e.g. "3:45 PM".
 function _fmtPauseClock(ms) {
   try {
@@ -840,6 +982,11 @@ async function launchAgent() {
     const paused = Number(loadConfig().tellsDmPausedUntil) || 0;
     if (paused > Date.now()) pushTellsDmPause(paused);
   } catch (e) { /* non-fatal */ }
+  // Re-assert the Mimic Discord-login session — same rationale: the agent
+  // keeps the token + identity in memory only, so a relaunch would otherwise
+  // de-identify the dashboard until the next latest-version poll. Re-pushing
+  // unconditionally lets a freshly-cleared session also propagate.
+  try { pushMimicSession(); } catch (e) { /* non-fatal */ }
   pushStatus();
   return up;
 }
@@ -1256,6 +1403,20 @@ function currentStatus() {
     onboarded: !!cfg.onboarded,
     updatePending: updatePending ? updatePending.version : null,
     botUrl: cfg.botUrl,
+    // Mimic Discord login (v1). `mimicSession` is the cached identity if
+    // we've completed the device-code dance; `mimicLinking` is the in-flight
+    // user code so the Settings window can show it while polling.
+    mimicSession: cfg.session ? {
+      discord_id:   cfg.session.identity?.discord_id   || null,
+      display_name: cfg.session.identity?.display_name || null,
+      is_officer:   !!cfg.session.identity?.is_officer,
+      linked_at:    cfg.session.linked_at || null,
+    } : null,
+    mimicLinking: _linkInFlight ? {
+      user_code:        _linkInFlight._pub.user_code,
+      verification_url: _linkInFlight._pub.verification_url,
+      expires_at:       _linkInFlight._pub.expires_at,
+    } : null,
   };
 }
 function pushStatus() {
@@ -1891,6 +2052,10 @@ ipcMain.handle('open-external', (_e, url) => {
   shell.openExternal(url);
   return true;
 });
+// Mimic Discord login (device-code flow).
+ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
+ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
+ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate(); return true; });
 ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   const n = Math.max(1, Math.min(500, lines || 80));

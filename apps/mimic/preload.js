@@ -49,6 +49,14 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
   uiStudioRestore:        (params)  => ipcRenderer.invoke('ui-studio-restore', params),
 
+  // Mimic Discord login (device-code flow). `mimicLinkStart` returns
+  // { ok, user_code, verification_url, verification_url_complete, expires_at }
+  // and opens the browser; the renderer polls via getStatus()/onStatus() to
+  // learn when the link completes (status.mimicSession is populated).
+  mimicLinkStart:   ()  => ipcRenderer.invoke('mimic-link-start'),
+  mimicLinkCancel:  ()  => ipcRenderer.invoke('mimic-link-cancel'),
+  mimicLinkSignOut: ()  => ipcRenderer.invoke('mimic-link-signout'),
+
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
 

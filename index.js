@@ -87,6 +87,7 @@ const {
   postKillUpdate, postOrUpdateExpansionBoard,
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('./utils/roles');
+const mimicLink = require('./utils/mimicLink');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked } = require('./utils/config');
 const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
@@ -5693,8 +5694,33 @@ http.createServer(async (req, res) => {
     // Now returns the full update manifest { latest_agent_version, url, sha256 }
     // for the self-updating supervisor. Older agents read only
     // latest_agent_version and ignore the extra fields, so this is additive.
+    //
+    // ADDITIVELY surface signed-in Mimic identity when the agent forwards the
+    // X-Wolfpack-Mimic-Session header. That lets the dashboard show "Signed in
+    // as <name>" + officer affordances without a separate round-trip. When the
+    // header is absent or unknown, the response is unchanged.
+    const manifest = _agentManifest();
+    let session = null;
+    try { session = await mimicLink.resolveMimicSession(req); } catch (e) { void e; }
+    if (session) manifest.mimic_session = session;
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify(_agentManifest()));
+    return res.end(JSON.stringify(manifest));
+  }
+
+  // Mimic Discord device-code login (v1: optional, no writes gated on it yet).
+  // Three public endpoints — no agent-token gate, the device_code IS the
+  // secret. See utils/mimicLink.js for the flow.
+  if (req.method === 'POST' && req.url === '/api/mimic-link/start') {
+    try { return await mimicLink.handleStart(req, res); }
+    catch (err) { console.error('[mimic-link/start]', err); res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'internal error' })); }
+  }
+  if (req.method === 'POST' && req.url === '/api/mimic-link/poll') {
+    try { return await mimicLink.handlePoll(req, res); }
+    catch (err) { console.error('[mimic-link/poll]', err); res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'internal error' })); }
+  }
+  if (req.method === 'POST' && req.url === '/api/mimic-link/revoke') {
+    try { return await mimicLink.handleRevoke(req, res); }
+    catch (err) { console.error('[mimic-link/revoke]', err); res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'internal error' })); }
   }
 
   // Officer-filed backfill requests — agent polls per character, picks up

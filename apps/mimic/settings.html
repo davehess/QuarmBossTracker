@@ -46,6 +46,33 @@
   <input id="botUrl" type="text" />
   <div class="hint">Leave the default unless an officer told you otherwise.</div>
 
+  <h2>Wolf Pack account <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">OPTIONAL</span></h2>
+  <div class="sub">Sign in with Discord to link this Mimic install to your account. Persists across upgrades. Optional for v1 — the token above keeps uploads working — but signing in unlocks cross-machine sync and officer tools as they roll out.</div>
+  <div id="acctSignedOut" style="margin-top:10px">
+    <button id="acctSignInBtn" type="button" style="background:#5865f2;border:none;color:#fff;padding:8px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;display:inline-flex;align-items:center;gap:8px">
+      <span style="font-size:14px">⛓</span> Sign in to Wolf Pack
+    </button>
+    <div class="hint" id="acctSignInHint">Opens your browser at wolfpack.quest. Sign in with the Discord account you use in the guild.</div>
+  </div>
+  <div id="acctLinking" style="display:none;margin-top:10px;padding:10px 12px;background:#161b22;border:1px dashed #58a6ff;border-radius:6px">
+    <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Code to paste at <span id="acctLinkUrl" style="color:#58a6ff">wolfpack.quest/auth/mimic-link</span></div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div id="acctLinkCode" style="font-family:ui-monospace,Consolas,monospace;font-size:26px;letter-spacing:0.3em;color:#f6c365;font-weight:bold;background:#0e1116;border:1px solid #2a3140;border-radius:4px;padding:6px 14px">------</div>
+      <button id="acctLinkCopyBtn" type="button" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:6px 10px;font-size:11px;margin:0">Copy</button>
+      <span id="acctLinkRemaining" style="font-size:11px;color:#8b949e"></span>
+      <button id="acctLinkCancelBtn" type="button" style="background:#2a1212;border:1px solid #a3260a;color:#f87171;padding:6px 10px;font-size:11px;margin:0">Cancel</button>
+    </div>
+    <div class="hint">Waiting for the browser… your dashboard will update as soon as the link is confirmed.</div>
+  </div>
+  <div id="acctSignedIn" style="display:none;margin-top:10px;padding:10px 12px;background:#0f2a1a;border:1px solid #1a7f37;border-radius:6px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:14px">✓</span>
+      <span style="font-size:13px">Signed in as <b id="acctName" style="color:#56d364">—</b><span id="acctOfficerBadge" style="display:none;background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">OFFICER</span></span>
+      <button id="acctSignOutBtn" type="button" style="background:#2a1212;border:1px solid #a3260a;color:#f87171;padding:6px 10px;font-size:11px;margin:0 0 0 auto">Sign out</button>
+    </div>
+    <div class="hint" id="acctLinkedAt"></div>
+  </div>
+
   <h2>EverQuest folders</h2>
   <div class="sub">Mimic tails every character log in every folder listed here. Auto-detected installs appear pre-checked; tick the ones you want included.</div>
 
@@ -458,6 +485,83 @@
       setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 6000);
     }
   };
+  // ── Wolf Pack account section (Discord login via device-code flow) ─────
+  // Three visual states driven entirely by status.mimicSession / .mimicLinking:
+  //   • SignedOut  — show the "Sign in to Wolf Pack" button
+  //   • Linking    — show the 6-char code + countdown + Cancel
+  //   • SignedIn   — show "Signed in as <name>" + officer badge + Sign out
+  // The state lives in main (cfg.session + _linkInFlight) so the renderer is
+  // pure presentation — it just reads getStatus() and reacts to onStatus().
+  function _fmtRemaining(ms){
+    if (!ms || ms < 0) return '';
+    const s = Math.ceil(ms / 1000);
+    if (s < 60) return s + 's left';
+    const m = Math.floor(s / 60), r = s - m * 60;
+    return m + ':' + String(r).padStart(2, '0') + ' left';
+  }
+  let _linkRemainingTimer = null;
+  function _renderAccount(status){
+    const linking = status && status.mimicLinking;
+    const session = status && status.mimicSession;
+    document.getElementById('acctSignedOut').style.display = (!linking && !session) ? '' : 'none';
+    document.getElementById('acctLinking').style.display   = linking ? '' : 'none';
+    document.getElementById('acctSignedIn').style.display  = session ? '' : 'none';
+
+    if (linking) {
+      document.getElementById('acctLinkCode').textContent = linking.user_code;
+      document.getElementById('acctLinkUrl').textContent  =
+        (linking.verification_url || 'wolfpack.quest/auth/mimic-link').replace(/^https?:\/\//, '');
+      if (_linkRemainingTimer) clearInterval(_linkRemainingTimer);
+      const paint = () => {
+        const rem = (linking.expires_at || 0) - Date.now();
+        document.getElementById('acctLinkRemaining').textContent = _fmtRemaining(rem);
+        if (rem <= 0 && _linkRemainingTimer) { clearInterval(_linkRemainingTimer); _linkRemainingTimer = null; }
+      };
+      paint();
+      _linkRemainingTimer = setInterval(paint, 1000);
+    } else if (_linkRemainingTimer) {
+      clearInterval(_linkRemainingTimer);
+      _linkRemainingTimer = null;
+    }
+
+    if (session) {
+      document.getElementById('acctName').textContent =
+        session.display_name || session.discord_id || 'your Discord account';
+      document.getElementById('acctOfficerBadge').style.display = session.is_officer ? '' : 'none';
+      document.getElementById('acctLinkedAt').textContent =
+        session.linked_at ? 'Linked ' + new Date(session.linked_at).toLocaleString() : '';
+    }
+  }
+  document.getElementById('acctSignInBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('acctSignInBtn');
+    btn.disabled = true; const orig = btn.innerHTML; btn.innerHTML = '<span style="font-size:14px">⛓</span> Opening browser…';
+    try {
+      const r = await window.mimic.mimicLinkStart();
+      if (!r || !r.ok) {
+        showToast('error', '✕ ' + (r && r.error ? r.error : 'Could not start sign-in'), 6000);
+      }
+      // The status push from main will flip the section into Linking state.
+    } finally {
+      btn.disabled = false; btn.innerHTML = orig;
+    }
+  });
+  document.getElementById('acctLinkCopyBtn').addEventListener('click', () => {
+    const code = document.getElementById('acctLinkCode').textContent;
+    try { navigator.clipboard.writeText(code); showToast('success', '✓ Code copied', 1500); }
+    catch (e) { showToast('error', '✕ Copy failed', 2000); }
+  });
+  document.getElementById('acctLinkCancelBtn').addEventListener('click', async () => {
+    try { await window.mimic.mimicLinkCancel(); } catch (e) {}
+  });
+  document.getElementById('acctSignOutBtn').addEventListener('click', async () => {
+    if (!confirm('Sign out of Wolf Pack on this machine? Uploads will keep working via the agent token.')) return;
+    try { await window.mimic.mimicLinkSignOut(); showToast('success', '✓ Signed out', 1500); }
+    catch (e) { showToast('error', '✕ ' + (e && e.message || e), 4000); }
+  });
+  // Live-update on every status push (linking completes, polling expires).
+  window.mimic.getStatus().then(_renderAccount).catch(() => {});
+  window.mimic.onStatus(_renderAccount);
+
   load();
 </script>
 </body></html>

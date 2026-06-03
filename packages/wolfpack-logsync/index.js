@@ -3286,6 +3286,13 @@ function _serializeForDashboard() {
     uploadErrors:       stats.uploadErrors,
     updateAvailable:    stats.updateAvailable,
     latestAgentVersion: stats.latestAgentVersion,
+    // Mimic Discord login: signed_in lets the dashboard show a "Signed in as
+    // <name>" badge in the header + a soft "sign in to unlock cross-machine
+    // sync + officer tools" nudge when absent. Identity is the bot's canonical
+    // reply (refreshed on latest-version polls); presence of the token alone
+    // doesn't prove the token is still valid, so the badge uses identity.
+    mimicSignedIn:      !!_mimicSessionToken,
+    mimicIdentity:      _mimicIdentity,
     currentEncounterThreat: stats.currentEncounterThreat,
     // Cross-instance uploader status. active=true → this instance is the one
     // sending data to the bot; false → another Parser/Mimic on this machine
@@ -3764,7 +3771,22 @@ function renderHeader(s) {
     const total = (q.permanentDropped || 0) + (q.capEvicted || 0);
     queueChip = ' · <span style="background:#3b0a0a;color:#ff9c9c;border:1px solid #f85149;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(dropTip) + '. Check the agent log for details.">✕ ' + total + ' dropped</span>';
   }
-  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + alwaysBtn + resetBtn + '</div>';
+  // Mimic Discord-login badge / nudge. Shows on the header line so identity
+  // status is visible at a glance.
+  //  • Signed in   → small green pill with display name + 👑 officer flag
+  //  • Linking     → blue pill with the 6-char code (cued by status flow)
+  //  • Signed out  → dim "Not signed in" pill (no action UI here; Settings owns
+  //                  the actual sign-in flow). Hidden in non-Mimic browsers
+  //                  where window.mimic isn't available.
+  let identityChip = '';
+  if (s.mimicIdentity) {
+    const display = s.mimicIdentity.display_name || s.mimicIdentity.discord_id || 'Discord account';
+    const officer = s.mimicIdentity.is_officer ? ' <span style="color:var(--gold)" title="Officer">👑</span>' : '';
+    identityChip = ' · <span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked Mimic install — Settings → Wolf Pack account to manage">⛓ ' + esc(display) + officer + '</span>';
+  } else if (s.mimicSignedIn) {
+    identityChip = ' · <span style="background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
+  }
+  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + alwaysBtn + resetBtn + '</div>';
   if (!setSectionHTML('header', h)) return;
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
@@ -7076,6 +7098,26 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, until: _tellsDmPauseUntil }));
       }
+      // Mimic Discord-login session relay. After Mimic completes the device-
+      // code dance with the bot, it POSTs the resulting session_token here so
+      // we can forward it on outbound bot requests (X-Wolfpack-Mimic-Session)
+      // and surface the identity on the dashboard. Body: { token, identity? }.
+      // Like the tells-pause endpoint, this is in-process only — Mimic re-pushes
+      // on every agent (re)launch so a restart doesn't silently lose identity.
+      if (req.url === '/api/mimic-session' && req.method === 'POST') {
+        const body = await _readBody(req, 8 * 1024);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        const token = String(payload?.token || '').trim();
+        _mimicSessionToken = token || '';
+        _mimicIdentity     = (token && payload?.identity && typeof payload.identity === 'object') ? payload.identity : null;
+        console.log(_mimicSessionToken
+          ? `[mimic-session] linked as ${_mimicIdentity?.display_name || _mimicIdentity?.discord_id || '(unknown)'}`
+          : '[mimic-session] cleared');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, signed_in: !!_mimicSessionToken }));
+      }
       if (req.url === '/api/loadouts/hide' && req.method === 'POST') {
         const body = await _readBody(req);
         let payload;
@@ -9892,12 +9934,18 @@ function pollLatestVersion({ botUrl }) {
     try {
       const u = new URL(url);
       const mod = u.protocol === 'https:' ? https : http;
+      const headers = { 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` };
+      // Forward the Mimic Discord-login session token when present so the bot
+      // can resolve it and reply with the user's identity (display name +
+      // officer flag) for the dashboard. The endpoint is unchanged for agents
+      // without a session — it just returns the bare version manifest.
+      if (_mimicSessionToken) headers['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
       const req = mod.request({
         method: 'GET',
         hostname: u.hostname,
         port:     u.port,
         path:     u.pathname + u.search,
-        headers:  { 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+        headers,
         timeout:  5000,
       }, (res) => {
         let data = '';
@@ -9910,6 +9958,13 @@ function pollLatestVersion({ botUrl }) {
               stats.latestVersionCheckedAt = Date.now();
               // Only flag when the server's version is strictly newer than ours.
               stats.updateAvailable = isNewerVersion(resp.latest_agent_version, AGENT_VERSION);
+              scheduleRender();
+            }
+            // Refresh the cached identity if the bot returned one. Bots without
+            // the mimic-link route built in (older deploys) simply don't include
+            // mimic_session, so the field stays as whatever Mimic last pushed.
+            if (resp.mimic_session && typeof resp.mimic_session === 'object') {
+              _mimicIdentity = resp.mimic_session;
               scheduleRender();
             }
             resolve();
@@ -10522,6 +10577,14 @@ const _zeal = {
 // tray via POST /api/tells-dm-pause. Stamped onto tell uploads so the bot
 // skips the Discord DM (but still stores the tell) while in the future.
 let _tellsDmPauseUntil = 0;
+// Mimic Discord-login session — Mimic POSTs the token to /api/mimic-session
+// after the device-code dance completes. We forward it to the bot on every
+// outbound request as X-Wolfpack-Mimic-Session so the bot can resolve it to
+// {user_id, discord_id, is_officer} for attribution + officer affordances.
+// `_mimicIdentity` is the bot's reply (cached on latest-version polls) so the
+// dashboard can render "Signed in as <name>" without a separate round-trip.
+let _mimicSessionToken = '';
+let _mimicIdentity     = null;     // { user_id, discord_id, display_name, is_officer, role_names }
 // Live Zeal state per running client (keyed by the pipe's `character`). Fed by
 // Mimic via POST /api/zeal-state at a throttled cadence — a small snapshot, not
 // the 225/sec raw event stream. Drives gauge-condition triggers (target HP %,
