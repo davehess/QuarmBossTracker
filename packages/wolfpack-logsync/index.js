@@ -5233,7 +5233,18 @@ async function dismissTopDamage(key) {
 (function(){
   function panelKeyForCard(card){
     var h = card.querySelector("h2");
-    var t = h ? (h.textContent || "") : "";
+    if (!h) return "";
+    // Read ONLY the h2's own TEXT nodes — skip injected chrome (drag handle
+    // ✥, 🪟 overlay button, 🛰/🌐 source toggle), which are ELEMENT children.
+    // Reading h2.textContent included that chrome ("damage done this session
+    // 🪟 overlay🛰local🌐server"), so the overlay matcher never matched the
+    // URL key and the panel overlay rendered blank. Same function feeds the
+    // button's data-panel-key, so both ends stay consistent.
+    var t = "";
+    for (var i = 0; i < h.childNodes.length; i++){
+      if (h.childNodes[i].nodeType === 3) t += h.childNodes[i].nodeValue;
+    }
+    if (!t) t = h.textContent || "";
     t = t.split("(")[0].split("—")[0].split("·")[0];
     return t.trim().toLowerCase();
   }
