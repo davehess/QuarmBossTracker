@@ -3299,6 +3299,7 @@ function _serializeForDashboard() {
     activeOverlays:      _activeOverlays,
     activeTimers:        _activeTimersSnapshot(),
     zeal:                _zeal,
+    zealState:           _zealState,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
     // after that the user knows, and a stale banner is just noise.
@@ -4278,6 +4279,23 @@ function renderTriggers(s) {
        + (zPids.length ? '● ' + zPids.length + ' client' + (zPids.length === 1 ? '' : 's') + ' connected' : '○ no clients')
        + (ageSec !== null ? ' · last event ' + (ageSec < 1 ? 'now' : ageSec + 's ago') : '')
        + '</span></h2>';
+    // Live state line per client — the values gauge-condition triggers watch.
+    const zState = s.zealState || {};
+    const zChars = Object.keys(zState);
+    if (zChars.length > 0) {
+      h += '<div style="font-size:11px;margin-bottom:6px">';
+      for (const ch of zChars) {
+        const st = zState[ch] || {};
+        const parts = [];
+        if (st.self_hp_pct != null)      parts.push('self ' + Math.round(st.self_hp_pct) + '%');
+        if (st.target_name)              parts.push('target ' + esc(st.target_name) + ' ' + Math.round(st.target_hp_pct) + '%');
+        if (st.group_min_hp_pct != null) parts.push('low grp ' + esc(st.group_min_name || '?') + ' ' + Math.round(st.group_min_hp_pct) + '%');
+        if (st.zone != null)             parts.push('zone ' + st.zone);
+        parts.push('autoattack ' + (st.autoattack ? 'ON' : 'off'));
+        h += '<div><span class="name">' + esc(ch) + '</span> <span class="dim">' + parts.join(' · ') + '</span></div>';
+      }
+      h += '</div>';
+    }
     if (zTotal === 0) {
       h += '<div class="dim" style="font-size:12px">Connected but no events yet. In-game, try <code>/pipedelay 250</code> to make Zeal stream labels + gauges.</div>';
     } else {
@@ -6099,6 +6117,12 @@ async function dismissTopDamage(key) {
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Cancel-early phrase (optional)<br><input id="trigNewEndEarly" type="text" placeholder="e.g. {target} has been slain" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
+      + '    <label style="grid-column:1/3">Zeal HP condition (optional — fires off live Zeal gauges, no log line needed; use {target} and {value} in the overlay text)<br>'
+      + '      <span style="display:flex;gap:6px;align-items:center">'
+      + '        <select id="trigNewZealField" style="flex:2;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="">— none —</option><option value="target_hp_pct">Target HP %</option><option value="self_hp_pct">Self HP %</option><option value="group_min_hp_pct">Lowest group HP %</option></select>'
+      + '        <select id="trigNewZealOp" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="&lt;">&lt;</option><option value="&lt;=">&lt;=</option><option value="&gt;">&gt;</option><option value="&gt;=">&gt;=</option></select>'
+      + '        <input id="trigNewZealValue" type="number" min="0" max="100" placeholder="%" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">'
+      + '      </span></label>'
       + '  </div>'
       + '  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
       + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
@@ -6270,9 +6294,16 @@ async function dismissTopDamage(key) {
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
     var timerSec = parseInt((document.getElementById('trigNewTimerSec') || {}).value || '0', 10) || 0;
     var endEarly = (document.getElementById('trigNewEndEarly') || {}).value || '';
+    var zField = (document.getElementById('trigNewZealField') || {}).value || '';
+    var zOp    = (document.getElementById('trigNewZealOp') || {}).value || '<';
+    var zVal   = (document.getElementById('trigNewZealValue') || {}).value || '';
+    var zealCond = null;
+    if (zField && zVal !== '') zealCond = { field: zField, op: zOp, value: Number(zVal) };
     var msg = document.getElementById('trigAddMsg');
-    if (!name || !pattern || !overlayText) {
-      if (msg) { msg.textContent = 'Need a name, pattern, and overlay text.'; msg.style.color = 'var(--red)'; }
+    // A trigger needs an overlay text plus EITHER a log pattern OR a Zeal
+    // condition. Pure-Zeal triggers (HP thresholds) carry no log pattern.
+    if (!name || !overlayText || (!pattern && !zealCond)) {
+      if (msg) { msg.textContent = 'Need a name, overlay text, and either a pattern or a Zeal condition.'; msg.style.color = 'var(--red)'; }
       return;
     }
     const r = await fetch('/api/personal-triggers');
@@ -6284,6 +6315,7 @@ async function dismissTopDamage(key) {
     };
     if (timerSec > 0) row.timer_duration_sec = timerSec;
     if (endEarly.trim()) { row.end_early_pattern = endEarly.trim(); row.end_use_regex = true; }
+    if (zealCond) row.zeal_condition = zealCond;
     const next = (j.triggers || []).concat([row]);
     const save = await fetch('/api/personal-triggers', {
       method: 'POST',
@@ -6292,8 +6324,9 @@ async function dismissTopDamage(key) {
     });
     if (save.ok) {
       if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
-      ['trigNewName','trigNewPattern','trigNewOverlay','trigNewEndEarly'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+      ['trigNewName','trigNewPattern','trigNewOverlay','trigNewEndEarly','trigNewZealValue'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
       var ts = document.getElementById('trigNewTimerSec'); if (ts) ts.value = '0';
+      var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
       fetchAndRenderList();
     } else {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
@@ -6724,6 +6757,24 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, total: _zeal.total }));
       }
+      // Throttled live-state snapshot from Mimic (≈3-4/sec, not the raw event
+      // stream). Drives gauge-condition triggers. Body:
+      // { character, state: { self_hp_pct, target_name, target_hp_pct, zone,
+      //   autoattack, group_min_hp_pct, group_min_name } }
+      if (req.url === '/api/zeal-state' && req.method === 'POST') {
+        const body = await _readBody(req, 64 * 1024);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        const character = String(payload?.character || '').trim();
+        const st = payload?.state;
+        if (character && st && typeof st === 'object') {
+          _zealState[character] = { ...st, updatedAt: Date.now() };
+          try { _evaluateZealConditions(character, Date.now()); } catch (e) { void e; }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
+      }
       if (req.url === '/api/loadouts/hide' && req.method === 'POST') {
         const body = await _readBody(req);
         let payload;
@@ -6774,27 +6825,38 @@ function startWebDashboard(port) {
         const incoming = Array.isArray(payload?.triggers) ? payload.triggers : [];
         const compiled = [];
         const errors = [];
+        const ZEAL_FIELDS = ['target_hp_pct', 'self_hp_pct', 'group_min_hp_pct'];
+        const ZEAL_OPS    = ['<', '<=', '>', '>=', '=='];
         for (const t of incoming) {
-          if (!t || typeof t.pattern !== 'string' || !t.pattern.trim()) continue;
+          // A trigger is valid if it has a log pattern OR a zeal_condition.
+          // Pure-Zeal triggers (HP thresholds) carry no text pattern.
+          const hasPattern = t && typeof t.pattern === 'string' && t.pattern.trim();
+          let zealCond = null;
+          if (t && t.zeal_condition && ZEAL_FIELDS.includes(t.zeal_condition.field)
+              && ZEAL_OPS.includes(t.zeal_condition.op)
+              && t.zeal_condition.value != null && !isNaN(Number(t.zeal_condition.value))) {
+            zealCond = {
+              field: t.zeal_condition.field,
+              op:    t.zeal_condition.op,
+              value: Math.max(0, Math.min(100, Number(t.zeal_condition.value))),
+            };
+          }
+          if (!hasPattern && !zealCond) continue;
           // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
           const row = {
             id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
             name:          String(t.name || '').slice(0, 100) || 'untitled',
-            pattern:       String(t.pattern || '').slice(0, 1000),
+            pattern:       hasPattern ? String(t.pattern).slice(0, 1000) : '',
             pattern_flags: String(t.pattern_flags || 'i').slice(0, 6),
             use_regex:     t.use_regex !== false,
             enabled:       t.enabled !== false,
             cooldown_seconds: Math.max(0, Math.min(3600, parseInt(t.cooldown_seconds, 10) || 0)),
-            // Optional countdown timer. > 0 starts a row in _activeTimers
-            // when the trigger fires; the value rides through to the
-            // dashboard editor + the live evaluator. Range matches the
-            // schema's int + admin/triggers form.
             timer_duration_sec: Math.max(0, Math.min(3600, parseInt(t.timer_duration_sec, 10) || 0)),
-            // Optional cancel-early phrase. _compilePersonalTrigger turns
-            // this into _endRegex; the evaluator tests every line against
-            // it and cancels the matching trigger's timer on hit.
             end_early_pattern: t.end_early_pattern ? String(t.end_early_pattern).slice(0, 1000) : null,
             end_use_regex:     t.end_use_regex !== false,
+            // Gauge-condition trigger (fires off live Zeal state, not a log
+            // line). Null for ordinary text triggers.
+            zeal_condition:    zealCond,
             actions:       Array.isArray(t.actions) ? t.actions.slice(0, 5) : [{
               type: 'text_overlay',
               text: String(t.overlay_text || t.name || 'TRIGGER').slice(0, 200),
@@ -9890,11 +9952,9 @@ function loadPersonalTriggers() {
     const compiled = [];
     for (const t of arr) {
       try {
-        const flags = t.pattern_flags || 'i';
-        const pat = t.use_regex === false
-          ? _escapeForLiteralMatch(t.pattern)
-          : _translateDotNetRegex(t.pattern);
-        compiled.push({ ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' });
+        // Reuse the shared compile path so pure-Zeal triggers (no pattern)
+        // load with _regex=null instead of a match-everything regex.
+        compiled.push(_compilePersonalTrigger(t));
       } catch (err) {
         console.warn(`[personal-triggers] bad pattern "${t.name}":`, err.message);
       }
@@ -9943,11 +10003,19 @@ function _serializePersonalTriggers() {
 // Compile a single trigger object (validate + attach _regex). Returns the
 // compiled trigger or throws — the caller decides whether to keep on failure.
 function _compilePersonalTrigger(t) {
-  const flags = t.pattern_flags || 'i';
-  const pat = t.use_regex === false
-    ? _escapeForLiteralMatch(t.pattern)
-    : _translateDotNetRegex(t.pattern);
-  return { ...t, _regex: new RegExp(pat, flags), _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
+  // Pure-Zeal triggers (gauge condition, no log pattern) get NO text _regex —
+  // an empty pattern would compile to a match-everything regex and fire on
+  // every log line. The text evaluator skips triggers without _regex; the
+  // zeal evaluator picks them up via zeal_condition.
+  let regex = null;
+  if (t.pattern && String(t.pattern).trim()) {
+    const flags = t.pattern_flags || 'i';
+    const pat = t.use_regex === false
+      ? _escapeForLiteralMatch(t.pattern)
+      : _translateDotNetRegex(t.pattern);
+    regex = new RegExp(pat, flags);
+  }
+  return { ...t, _regex: regex, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
 // Compile end_early_pattern on a trigger so the live evaluator can cancel
@@ -10064,6 +10132,74 @@ const _zeal = {
   lastEventAt:   0,
   updatedAt:     0,
 };
+// Live Zeal state per running client (keyed by the pipe's `character`). Fed by
+// Mimic via POST /api/zeal-state at a throttled cadence — a small snapshot, not
+// the 225/sec raw event stream. Drives gauge-condition triggers (target HP %,
+// self HP %, lowest group HP %). Shape per character:
+//   { self_hp_pct, target_name, target_hp_pct, zone, autoattack,
+//     group_min_hp_pct, group_min_name, updatedAt }
+const _zealState = {};
+// Edge-detection memory for zeal-condition triggers: key = triggerId|character
+// → last boolean result. We fire only on a false→true transition so a
+// condition that stays true (target sitting at 18% for 5s) doesn't re-fire
+// every snapshot; cooldown_seconds still applies on top.
+const _zealCondState = new Map();
+
+// Resolve a zeal_condition field to a numeric value from a live state object.
+// Returns { value, label } or null when the field isn't currently available
+// (no target, no group, etc) so the condition simply doesn't evaluate.
+function _zealFieldValue(state, field) {
+  if (!state) return null;
+  switch (field) {
+    case 'target_hp_pct':
+      if (state.target_hp_pct == null || !state.target_name) return null;
+      return { value: state.target_hp_pct, label: state.target_name };
+    case 'self_hp_pct':
+      if (state.self_hp_pct == null) return null;
+      return { value: state.self_hp_pct, label: 'you' };
+    case 'group_min_hp_pct':
+      if (state.group_min_hp_pct == null) return null;
+      return { value: state.group_min_hp_pct, label: state.group_min_name || 'group' };
+    default: return null;
+  }
+}
+function _zealCompare(a, op, b) {
+  switch (op) {
+    case '<':  return a <  b;
+    case '<=': return a <= b;
+    case '>':  return a >  b;
+    case '>=': return a >= b;
+    case '==': return a === b;
+    default:   return false;
+  }
+}
+
+// Evaluate every trigger carrying a zeal_condition against one character's
+// live state. Edge-triggered + cooldown-gated. Captures {target, value} are
+// passed to the overlay template so "{target} at {value}%" works.
+function _evaluateZealConditions(character, tsMs) {
+  const state = _zealState[character];
+  if (!state) return;
+  const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
+  for (const t of all) {
+    const cond = t.zeal_condition;
+    if (!cond || !cond.field || !cond.op || cond.value == null) continue;
+    const fv = _zealFieldValue(state, cond.field);
+    const key = (t.id || t.name) + '|' + character;
+    if (!fv) { _zealCondState.delete(key); continue; }      // field gone → re-arm
+    const now = _zealCompare(fv.value, cond.op, Number(cond.value));
+    const was = _zealCondState.get(key) || false;
+    _zealCondState.set(key, now);
+    if (now && !was) {                                       // false→true edge
+      if (t.cooldown_seconds && t.cooldown_seconds > 0) {
+        const last = _triggerLastFire.get(t.id || t.name) || 0;
+        if (tsMs - last < t.cooldown_seconds * 1000) continue;
+      }
+      _triggerLastFire.set(t.id || t.name, tsMs);
+      _fireTriggerActions(t, { target: fv.label, value: Math.round(fv.value), character }, tsMs, false);
+    }
+  }
+}
 function _startTimer(t, tsMs, isTest, captures) {
   if (!t || !(t.timer_duration_sec > 0)) return;
   // Per-CAPTURE keying — a trigger that fires twice on different mob names

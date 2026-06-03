@@ -526,6 +526,67 @@ function _flushZealToAgent() {
   req.on('error', () => {}); req.on('timeout', () => req.destroy());
   req.write(body); req.end();
 }
+
+// Live Zeal state per character, parsed from the gauge(2)/player(3) stream.
+// Drives gauge-condition triggers. We keep the running state here in Mimic
+// (cheap — updated per event) and push a condensed snapshot to the agent at a
+// throttled cadence rather than forwarding 225 raw events/sec.
+const _zealLiveByChar = new Map();   // character → { snapshot, dirty }
+function _zealParseData(obj) {
+  // Pipe payload wraps the real data in obj.data as a JSON string.
+  let inner = obj && obj.data;
+  if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch { return null; } }
+  return inner;
+}
+function _zealAbsorb(obj) {
+  const character = obj && obj.character;
+  if (!character) return;
+  const type = obj.type;
+  let cur = _zealLiveByChar.get(character);
+  if (!cur) { cur = { snapshot: {}, dirty: false }; _zealLiveByChar.set(character, cur); }
+  const s = cur.snapshot;
+  if (type === 2) {                                   // gauge — HP per-mille (0..1000)
+    const inner = _zealParseData(obj);
+    if (!Array.isArray(inner)) return;
+    const self = inner.find(g => g && g.type === 1);
+    const tgt  = inner.find(g => g && g.type === 6 && g.text);
+    if (self) s.self_hp_pct = self.value / 10;
+    if (tgt)  { s.target_name = tgt.text; s.target_hp_pct = tgt.value / 10; }
+    else      { s.target_name = null; s.target_hp_pct = null; }
+    // Group HP: gauge slots other than self(1)/target(6) that carry a name.
+    let minPct = null, minName = null;
+    for (const g of inner) {
+      if (!g || g.type === 1 || g.type === 6 || !g.text || g.value == null) continue;
+      const pct = g.value / 10;
+      if (pct > 0 && (minPct === null || pct < minPct)) { minPct = pct; minName = g.text; }
+    }
+    s.group_min_hp_pct = minPct;
+    s.group_min_name   = minName;
+    cur.dirty = true;
+  } else if (type === 3) {                            // player — zone / autoattack
+    const inner = _zealParseData(obj);
+    if (inner && typeof inner === 'object') {
+      s.zone = inner.zone;
+      s.autoattack = !!inner.autoattack;
+      cur.dirty = true;
+    }
+  }
+}
+function _flushZealStateToAgent() {
+  if (!agentPort) return;
+  for (const [character, cur] of _zealLiveByChar) {
+    if (!cur.dirty) continue;
+    cur.dirty = false;
+    const body = JSON.stringify({ character, state: cur.snapshot });
+    const req = http.request({
+      host: '127.0.0.1', port: agentPort, path: '/api/zeal-state', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 3000,
+    }, (res) => { res.resume(); });
+    req.on('error', () => {}); req.on('timeout', () => req.destroy());
+    req.write(body); req.end();
+  }
+}
 function startZealCapture() {
   try {
     const cfg = loadConfig();
@@ -558,9 +619,12 @@ function startZealCapture() {
         _zealPending.events.push(evt);
         // Cap pending so a runaway pipe can't grow the buffer unbounded.
         if (_zealPending.events.length > 2000) _zealPending.events.splice(0, 1000);
+        // Absorb gauge/player into live state for gauge-condition triggers.
+        try { _zealAbsorb(obj); } catch (e) { void e; }
       },
     });
     setInterval(_flushZealToAgent, 2000);
+    setInterval(_flushZealStateToAgent, 300);   // gauge-condition snapshots
     appendAgentLog('[zeal] capture started — watching for eqgame.exe + Zeal pipes\n');
   } catch (e) {
     appendAgentLog(`[zeal] capture failed to start: ${e && e.message}\n`);
