@@ -4287,13 +4287,45 @@ function renderTriggers(s) {
       const byType = z.byType || {};
       const samples = z.lastSamples || {};
       const keys = Object.keys(byType).sort(function(a, b){ return byType[b] - byType[a]; });
+      // Decode a Zeal sample into a readable one-liner. The pipe wraps the
+      // real payload in obj.data as a JSON STRING (double-encoded), so we
+      // parse that first, then summarize per type instead of dumping escaped
+      // soup. Falls back to truncated JSON if anything doesn't parse.
+      const _decodeZeal = (sm) => {
+        if (!sm || sm.obj === undefined) return '';
+        const o = sm.obj;
+        let inner = o && o.data;
+        if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch (e) { void e; } }
+        try {
+          const type = String(o && o.type);
+          const who = o && o.character ? o.character + ' · ' : '';
+          if (type === '0' && inner) {                  // log
+            return who + 'msgType ' + inner.type + ': "' + String(inner.text || '').slice(0, 60) + '"';
+          }
+          if (type === '3' && inner) {                  // player
+            return who + 'zone ' + inner.zone + ' · autoattack ' + (inner.autoattack ? 'ON' : 'off');
+          }
+          if (type === '2' && Array.isArray(inner)) {   // gauge — HP per-mille
+            const self = inner.find(g => g.type === 1);
+            const tgt  = inner.find(g => g.type === 6 && g.text);
+            const parts = [];
+            if (self) parts.push('self ' + (self.value / 10).toFixed(0) + '%');
+            if (tgt)  parts.push('target ' + tgt.text + ' ' + (tgt.value / 10).toFixed(0) + '%');
+            return who + (parts.join(' · ') || 'gauges');
+          }
+          if (type === '1' && Array.isArray(inner)) {   // label
+            const g = (n) => { const e = inner.find(x => x.type === n); return e ? e.value : ''; };
+            return who + g(3) + ' L' + g(2) + ' <' + g(4) + '>';
+          }
+          if (type === '6' && Array.isArray(inner)) {   // group
+            return who + inner.length + ' member(s): ' + inner.map(m => m.name).filter(Boolean).slice(0, 6).join(', ');
+          }
+        } catch (e) { void e; }
+        try { return JSON.stringify(inner !== undefined ? inner : o).slice(0, 100); } catch (e) { void e; return ''; }
+      };
       for (const k of keys) {
         const label = TYPE_NAMES[k] ? (k + ' (' + TYPE_NAMES[k] + ')') : k;
-        let sampleStr = '';
-        const sm = samples[k];
-        if (sm && sm.obj !== undefined) {
-          try { sampleStr = JSON.stringify(sm.obj).slice(0, 120); } catch (e) { void e; }
-        }
+        const sampleStr = _decodeZeal(samples[k]);
         h += '<tr><td class="dim">' + esc(label) + '</td>'
            + '<td class="num">' + byType[k] + '</td>'
            + '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(sampleStr) + '</code></td></tr>';
