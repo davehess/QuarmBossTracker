@@ -453,6 +453,44 @@ function parseEvent(line, ts) {
   // Also: the DoT-with-source patterns use [^.]+\. to terminate the spell name
   // at the next period (handles names with colons like "Ancient: Scourge of Nife").
 
+  // ── Damage-shield proc (must precede the generic "was hit by SPELL" form
+  // since both are passive-voice non-melee damage). DS lines uniquely use
+  // "is <verb> by <possessive> <SOURCE> for N points of non-melee damage"
+  // where SOURCE is a known DS spell/song/item, and the DAMAGE IS CREDITED TO
+  // THE DS WEARER (not a third-party caster). EQ uses the SAME passive form
+  // for direct nukes ("is hit by YOUR Whirlwind for 250"), so the spell name
+  // must match the DS allow-list — otherwise we'd over-tag every spell hit.
+  //
+  // Known DS sources (extend here as new ones are discovered in logs):
+  //   thorns / Thorns of the Whitewood   (Druid)
+  //   brambles / bramblecoat              (Druid)
+  //   spikes / spikecoat                  (Druid)
+  //   symbol of Naltron / Holy Armor      (Cleric)
+  //   sanity shield                       (Cleric, Necro)
+  //   reflect-style                       (Enchanter, Magician items)
+  //   mind wrack                          (Necro)
+  //   halo of light                       (item proc)
+  //   barbs                               (Beastlord, Druid epic line)
+  //   cassindra's chant                   (Bard)
+  //   Tooth of the Earth                  (item)
+  const DS_SOURCE_RX = /(?:thorns?\b|brambl|spike|sanity\s*shield|mind\s*wrack|reflect\b|symbol\s+of\s+naltron|cassindra|halo\s+of\s+light|tooth\s+of\s+the\s+earth|fangs?\b|barbs?\b|burn(?:ing)?\s+aura|chant\s+of\s+battle)/i;
+  m = line.match(/\]\s+(.+?)\s+is\s+\w+\s+by\s+(YOUR|.+?(?:'s|`s))\s+(.+?)\s+for\s+(\d+)\s+points?\s+of\s+non-melee\s+damage/i);
+  if (m && DS_SOURCE_RX.test(m[3])) {
+    const source = m[2];
+    const attacker = /^YOUR$/i.test(source)
+      ? null                                     // self — resolved to uploader by EncounterBuilder
+      : source.replace(/(?:'s|`s)$/, '');
+    return {
+      ts:        tsIso,
+      type:      'damage',
+      attacker:  attacker,
+      defender:  m[1],
+      ability:   m[3].trim().toLowerCase(),
+      amount:    parseInt(m[4], 10),
+      ds:        true,                            // tag for the damageShield aggregate
+    };
+  }
+
   // "X was hit by SPELL for N (points of) damage." (proc / unsourced spell hit)
   m = line.match(/\]\s+(You|.+?)\s+(?:was|were)\s+hit\s+by\s+(.+?)\s+for\s+(\d+)(?:\s+points?\s+of)?\s+(?:non-melee\s+)?damage/i);
   if (m) {
@@ -2527,6 +2565,11 @@ const stats = {
   sessionEvents:   0,             // cumulative events parsed this run
   sessionTotalDamage: 0,          // total damage across every parsed damage event
   sessionDamageBy: {},            // { attackerName: cumulativeDamage }
+  // Damage-shield aggregate — every line of the form "X is <verb> by Y's <DS spell>
+  // for N points of non-melee damage" tagged with ds:true at parse time accumulates
+  // here so the Tanks tab can show per-tank DS output and the spells/songs each
+  // tank is contributing. Resets between sessions like the rest of these counters.
+  damageShield: {},               // { attackerName: { spellName: { count, total } } }
   // abilityStats: per-ability totals for the UPLOADER ONLY — used by the info
   // screen to show song/dirge/melee breakdowns. Mainly useful for bards who
   // can otherwise only guess at how much each song is contributing.
@@ -2641,6 +2684,7 @@ function resetSessionStats() {
   stats.sessionEvents      = 0;
   stats.sessionTotalDamage = 0;
   stats.sessionDamageBy    = {};
+  stats.damageShield       = {};
   stats.abilityStats       = new Map();
   stats.sessionDeaths      = {};
   stats.sessionHealers     = {};
@@ -2980,6 +3024,7 @@ function _serializeForDashboard() {
     sessionDamageBy:    stats.sessionDamageBy,
     recentParses:       stats.recentParses,
     recentTells:        stats.recentTells,
+    damageShield:       stats.damageShield,
     topDamageSaw:       stats.topDamageSaw,
     topDamageDid:       stats.topDamageDid,
     sessionDefenders:   stats.sessionDefenders,
@@ -3816,9 +3861,36 @@ function renderTanks(s) {
     h += '</table>';
   }
   h += '</div>';
-  // Mob Procs / Special Abilities — removed pending a real design.
-  // The previous panel showed misclassified data (player names landing
-  // under "pet" entries) and wasn't useful as-is. Hide until reworked.
+  // 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
+  // Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
+  // by total damage descending so heavy DS wearers float to the top; expand a
+  // row to see the spell/song breakdown that's feeding it.
+  const ds = s.damageShield || {};
+  const dsTotals = Object.entries(ds).map(function(kv){
+    const name = kv[0];
+    const sources = kv[1] || {};
+    var total = 0, hits = 0;
+    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
+    return { name: name, total: total, hits: hits, sources: sources };
+  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
+  h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
+  if (dsTotals.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes thorns / brambles / spikes / sanity shield / symbol of naltron / cassindra / halo of light / reflect and similar. Open a new pattern? Let an officer know.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
+    for (const t of dsTotals.slice(0, 12)) {
+      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
+      const srcSummary = srcEntries.map(function(kv){
+        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
+      }).join(' · ');
+      h += '<tr><td class="name">' + esc(t.name) + '</td>' +
+           '<td class="num">' + fmtK(t.total) + '</td>' +
+           '<td class="num">' + t.hits + '</td>' +
+           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
   // Deaths
   const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
   h += '<div class="card"><h2>Deaths This Session</h2>';
@@ -6650,6 +6722,21 @@ function recordEventForDashboard(event, character) {
     cur.total += event.amount;
     cur.lastSeen = Date.now();
     stats.abilityStats.set(ability, cur);
+  }
+
+  // Damage-shield tally — separate from abilityStats so we can break it out
+  // per attacker per spell on the Tanks tab. Captures ALL DS damage we see in
+  // the log (uploader's own + any other tank's DS proc that we witness),
+  // since each agent only sees DS lines from procs that happened in zones it
+  // was in — the bot's parse merge dedups by encounter so cross-agent overlap
+  // is fine. The `attacker` variable is the already-resolved character name.
+  if (event.ds && event.amount > 0) {
+    const spell = event.ability || '(unknown)';
+    if (!stats.damageShield[attacker]) stats.damageShield[attacker] = {};
+    const byTank = stats.damageShield[attacker];
+    if (!byTank[spell]) byTank[spell] = { count: 0, total: 0 };
+    byTank[spell].count++;
+    byTank[spell].total += event.amount;
   }
 
   // Flat-amount execute abilities never reflect sustained DPS — they're
