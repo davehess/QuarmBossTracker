@@ -3996,19 +3996,27 @@ function renderTriggers(s) {
   h += '<div class="grid">';
 
   // Active overlays (recent matches) — top of the page so the user can see
-  // their triggers actually firing as they tune them.
+  // their triggers actually firing as they tune them. The "Clear" buttons
+  // remove overlays from the in-memory ring buffer; no DB writes either way
+  // so this is safe to mash without consequence.
   const overlays = (s.activeOverlays || []).slice(0, 6);
-  h += '<div class="card wide"><h2>⚡ Recent fires</h2>';
+  h += '<div class="card wide">';
+  h += '<h2>⚡ Recent fires';
+  h += '<span style="float:right;font-size:11px;font-weight:normal">';
+  h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
+  h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
+  h += '</span></h2>';
   if (overlays.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line.</div>';
+    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Test</b> on a row to preview without waiting for a real match.</div>';
   } else {
     h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
     for (const o of overlays) {
       const ago = fmtAgo(o.shownAt || 0);
-      const sc  = o.scope === 'personal' ? 'personal' : 'guild';
+      const sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
+      const scColor = o.test ? 'color:var(--gold)' : '';
       h += '<tr><td class="dim">' + esc(ago) + '</td>' +
            '<td class="name">' + esc(o.trigger || '?') + '</td>' +
-           '<td class="dim">' + esc(sc) + '</td>' +
+           '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
            '<td>' + esc(o.text || '') + '</td></tr>';
     }
     h += '</table>';
@@ -5740,6 +5748,7 @@ async function dismissTopDamage(key) {
       + '  </div>'
       + '  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
       + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
+      + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
       + '    <span id="trigAddMsg" class="dim" style="font-size:11px"></span>'
       + '  </div>'
@@ -5778,7 +5787,10 @@ async function dismissTopDamage(key) {
         + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
-        + '<td><button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button></td>'
+        + '<td style="white-space:nowrap">'
+        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Fire this trigger now (local only, no DB)">▶ Test</button>'
+        + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
+        + '</td>'
         + '</tr>';
     }
     html += '</table>';
@@ -5789,6 +5801,53 @@ async function dismissTopDamage(key) {
     });
     listEl.querySelectorAll('[data-trig-toggle]').forEach(function(c){
       c.addEventListener('change', function(){ onToggle(c.getAttribute('data-trig-toggle'), c.checked); });
+    });
+    listEl.querySelectorAll('[data-trig-fire]').forEach(function(b){
+      b.addEventListener('click', function(){ onFire(b.getAttribute('data-trig-fire'), 'personal'); });
+    });
+  }
+  async function onFire(id, scope) {
+    if (!id) return;
+    await fetch('/api/triggers/fire', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, scope: scope || 'personal' }),
+    });
+  }
+  async function onPreview() {
+    var name = (document.getElementById('trigNewName') || {}).value || 'preview';
+    var overlayText = (document.getElementById('trigNewOverlay') || {}).value || '';
+    var color = (document.getElementById('trigNewColor') || {}).value || 'red';
+    var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
+    var msg = document.getElementById('trigAddMsg');
+    if (!overlayText) {
+      if (msg) { msg.textContent = 'Need overlay text to preview.'; msg.style.color = 'var(--orange)'; }
+      return;
+    }
+    // Fire ad-hoc — no captures available since we did not match a real line.
+    // Named-group references in the text stay literal so the user sees the
+    // raw template (a good "this is what it will look like with placeholders"
+    // signal). To preview with substitution, run a Test below first.
+    await fetch('/api/triggers/fire', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        trigger: {
+          name: name,
+          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }],
+        },
+      }),
+    });
+    if (msg) { msg.textContent = 'Previewed.'; msg.style.color = 'var(--green)'; }
+  }
+  async function onClearAll() {
+    await fetch('/api/triggers/clear', { method: 'POST' });
+  }
+  async function onClearTests() {
+    await fetch('/api/triggers/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testOnly: true }),
     });
   }
   async function onDelete(id) {
@@ -5880,12 +5939,27 @@ async function dismissTopDamage(key) {
     editorEl = document.getElementById('trigEditorPanel');
     if (!listEl || !editorEl) return;
     editorEl.innerHTML = buildEditorHtml();
-    var addBtn  = document.getElementById('trigAddBtn');
-    var testBtn = document.getElementById('trigTestBtn');
-    var runBtn  = document.getElementById('trigTestRun');
-    if (addBtn)  addBtn.addEventListener('click', onAdd);
-    if (testBtn) testBtn.addEventListener('click', onTest);
-    if (runBtn)  runBtn.addEventListener('click', onTestRun);
+    var addBtn      = document.getElementById('trigAddBtn');
+    var previewBtn  = document.getElementById('trigPreviewBtn');
+    var testBtn     = document.getElementById('trigTestBtn');
+    var runBtn      = document.getElementById('trigTestRun');
+    if (addBtn)     addBtn.addEventListener('click', onAdd);
+    if (previewBtn) previewBtn.addEventListener('click', onPreview);
+    if (testBtn)    testBtn.addEventListener('click', onTest);
+    if (runBtn)     runBtn.addEventListener('click', onTestRun);
+    // Clear-overlay buttons get re-rendered by renderTriggers every 2s poll,
+    // so direct addEventListener would die on the first refresh. Use event
+    // delegation on the section root — it survives every inner morph and
+    // routes clicks by element id.
+    if (!section._wpTrigClickBound) {
+      section.addEventListener('click', function(e){
+        var t = e.target;
+        if (!t || !t.id) return;
+        if (t.id === 'trigClearAllBtn')  onClearAll();
+        else if (t.id === 'trigClearTestBtn') onClearTests();
+      });
+      section._wpTrigClickBound = true;
+    }
     fetchAndRenderList();
     mounted = true;
   }
@@ -6269,6 +6343,71 @@ function startWebDashboard(port) {
         savePersonalTriggers();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, stored: compiled.length, errors }));
+      }
+
+      // Test-fire a trigger WITHOUT a live-line match. Two body shapes:
+      //   { id: "...", scope: "personal" | "guild" }       — fire saved trigger
+      //   { trigger: { name, actions: [...] }, captures: { x: 'foo' } }
+      //                                                    — fire an ad-hoc one
+      // Captures are substituted into action text via {name}; for saved
+      // triggers without captures, named groups in the alert text just stay
+      // literal so the user sees what the template looks like. Returns the
+      // overlay that was pushed (or an error).
+      //
+      // SAFE BY CONSTRUCTION: _fireTriggerActions only pushes to the in-memory
+      // _activeOverlays ring buffer. No DB, no upload queue, no Discord.
+      if (req.url === '/api/triggers/fire' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        let trig = null;
+        if (payload?.trigger && Array.isArray(payload.trigger.actions)) {
+          trig = { name: String(payload.trigger.name || 'preview').slice(0, 100),
+                   actions: payload.trigger.actions, _scope: 'test' };
+        } else if (payload?.id) {
+          const scope = payload?.scope === 'guild' ? 'guild' : 'personal';
+          const list  = scope === 'guild' ? (stats.guildTriggers || []) : _personalTriggers;
+          trig = list.find(t => t.id === payload.id || t.name === payload.id) || null;
+          if (trig) trig = { ...trig, _scope: scope };
+        }
+        if (!trig) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'trigger not found (expected `id`+`scope` or `trigger`)' }));
+        }
+        const captures = (payload && payload.captures && typeof payload.captures === 'object') ? payload.captures : {};
+        const before = _activeOverlays.length;
+        _fireTriggerActions(trig, captures, Date.now(), true);
+        const fired = _activeOverlays.length - before;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, fired, overlay: _activeOverlays[0] || null }));
+      }
+
+      // Clear active overlays. Body { trigger: 'name' } removes only overlays
+      // from that trigger; empty body clears everything. Use this to dismiss
+      // a stuck overlay or wipe test fires before the next try. In-memory
+      // only; no persisted state to clean up.
+      if (req.url === '/api/triggers/clear' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+        const before = _activeOverlays.length;
+        if (payload?.trigger) {
+          const want = String(payload.trigger);
+          for (let i = _activeOverlays.length - 1; i >= 0; i--) {
+            if (_activeOverlays[i].trigger === want) _activeOverlays.splice(i, 1);
+          }
+        } else if (payload?.testOnly) {
+          for (let i = _activeOverlays.length - 1; i >= 0; i--) {
+            if (_activeOverlays[i].test) _activeOverlays.splice(i, 1);
+          }
+        } else {
+          _activeOverlays.length = 0;
+        }
+        const cleared = before - _activeOverlays.length;
+        scheduleRender();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, cleared }));
       }
 
       // Live regex tester — paste a sample log line, see which patterns match
@@ -9211,26 +9350,38 @@ function evaluateTriggersAgainstLine(line, tsMs) {
     }
     _triggerLastFire.set(t.id || t.name, tsMs);
     const captures = m.groups || {};
-    for (const a of (t.actions || [])) {
-      if (!a || !a.type) continue;
-      if (a.type === 'text_overlay') {
-        const text = _expandTemplate(a.text || '', captures);
-        const overlay = {
-          text,
-          color:       a.color || 'red',
-          duration_ms: a.duration_ms || 5000,
-          shownAt:     tsMs,
-          trigger:     t.name,
-          scope:       t._scope,
-        };
-        _pushOverlay(overlay);
-        // Also log to stdout so users running the CLI see it.
-        console.log(`[trigger:${t._scope}] ${t.name} → ${text}`);
-        scheduleRender();
-      }
-      // tts / sound / discord / emit_event are intentionally no-ops in v1;
-      // schema is there, evaluator wiring follows in the next agent rev.
+    _fireTriggerActions(t, captures, tsMs, false);
+  }
+}
+
+// Fire a trigger's actions WITHOUT requiring a live-line match. Used by both:
+//   • evaluateTriggersAgainstLine (the live evaluator)
+//   • POST /api/triggers/fire (the dashboard's "Test" / "Preview" buttons)
+//
+// All writes are in-memory only — _pushOverlay populates the ring buffer the
+// dashboard + overlay window read, console.log echoes to the CLI, and
+// scheduleRender pokes the dashboard. NO database, NO upload queue, NO Discord
+// — test fires are local-only by construction. The `test` flag on the
+// emitted overlay lets the UI label test fires distinctly.
+function _fireTriggerActions(t, captures, tsMs, test) {
+  for (const a of (t.actions || [])) {
+    if (!a || !a.type) continue;
+    if (a.type === 'text_overlay') {
+      const text = _expandTemplate(a.text || '', captures || {});
+      const overlay = {
+        text,
+        color:       a.color || 'red',
+        duration_ms: a.duration_ms || 5000,
+        shownAt:     tsMs || Date.now(),
+        trigger:     t.name,
+        scope:       t._scope || (test ? 'test' : 'personal'),
+        test:        !!test,
+      };
+      _pushOverlay(overlay);
+      console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
+      scheduleRender();
     }
+    // tts / sound / discord / emit_event are intentionally no-ops in v1.
   }
 }
 
