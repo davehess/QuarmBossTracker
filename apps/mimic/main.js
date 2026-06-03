@@ -861,10 +861,15 @@ function createPanelOverlay(panelKey) {
   // Normalize so caller can pass loose user input (e.g. an <h2> text);
   // matched against the dashboard's own panelKey() lowercasing.
   panelKey = panelKey.toLowerCase().trim();
-  // Focus existing
+  // TOGGLE — clicking the overlay button on a panel that already has its
+  // overlay open closes the overlay instead of focusing it. That matches
+  // the user expectation that the same control opens and closes the same
+  // thing (the previous focus behavior left no way to close from the
+  // dashboard — the user had to find the floating window and X it).
   const existing = panelOverlays.get(panelKey);
   if (existing && !existing.isDestroyed()) {
-    existing.showInactive();
+    existing.close();
+    panelOverlays.delete(panelKey);
     return true;
   }
   const boundsKey = 'panelBounds_' + panelKey;

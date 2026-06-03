@@ -2161,7 +2161,14 @@ class EncounterBuilder {
       const defender = _resolve(ev.defender);
       if (!attacker) continue;
       const amt = Number(ev.amount) || 0;
-      const skillKey = (ev.ability ? String(ev.ability) : 'unknown').slice(0, 64);
+      // Prefix DS-tagged damage with `ds:` so the rollup's by_skill JSONB
+      // distinguishes proc damage (a tank's thorns / halo of light /
+      // unnamed Quarm "non-melee") from melee + direct casts under the
+      // SAME base ability name. Readers walk by_skill keys and any
+      // `ds:*` entry is DS. Total_damage / total_hits stay unprefixed —
+      // they're still the character's full output, DS included.
+      let skillKey = (ev.ability ? String(ev.ability) : 'unknown').slice(0, 64);
+      if (ev.ds) skillKey = 'ds:' + skillKey;
 
       let bucket = _rollupByChar[attacker];
       if (!bucket) {

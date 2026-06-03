@@ -72,10 +72,20 @@ if (location.protocol === 'http:') {
     else fn();
   };
   ready(() => {
+    // Panel overlays load the dashboard with ?overlay=<key>. In that context
+    // the gear button means something different — there's no main-window
+    // Settings need from a tiny floating overlay, but there IS a real need
+    // to reposition / resize / unlock the overlay itself. Detect the mode
+    // once and branch the gear's behavior + title.
+    const isOverlayWindow = /[?&]overlay=/.test(location.search);
+    let setupOn = false;
+
     // Gear button
     const gear = document.createElement('button');
     gear.textContent = '⚙';
-    gear.title = 'Mimic Settings';
+    gear.title = isOverlayWindow
+      ? 'Place / move / resize this overlay (toggles Setup mode)'
+      : 'Mimic Settings';
     gear.setAttribute('style', [
       'position:fixed', 'top:10px', 'right:12px', 'z-index:99999',
       'width:34px', 'height:34px', 'border-radius:8px',
@@ -83,9 +93,35 @@ if (location.protocol === 'http:') {
       'font-size:17px', 'cursor:pointer', 'line-height:1',
     ].join(';'));
     gear.onmouseenter = () => { gear.style.borderColor = '#58a6ff'; gear.style.color = '#58a6ff'; };
-    gear.onmouseleave = () => { gear.style.borderColor = '#2a3140'; gear.style.color = '#c9d1d9'; };
-    gear.onclick = () => { try { ipcRenderer.invoke('open-settings'); } catch (e) {} };
+    gear.onmouseleave = () => {
+      gear.style.borderColor = setupOn && isOverlayWindow ? '#d69922' : '#2a3140';
+      gear.style.color       = setupOn && isOverlayWindow ? '#d69922' : '#c9d1d9';
+    };
+    gear.onclick = () => {
+      try {
+        if (isOverlayWindow) {
+          setupOn = !setupOn;
+          ipcRenderer.invoke('set-setup-mode', setupOn);
+          // Reflect state on the button so the user can see it's "armed"
+          // even when the cursor leaves.
+          gear.style.borderColor = setupOn ? '#d69922' : '#2a3140';
+          gear.style.color       = setupOn ? '#d69922' : '#c9d1d9';
+          gear.title = setupOn
+            ? 'Setup ON — drag ✥ to move, corners to resize. Click ⚙ again to lock.'
+            : 'Place / move / resize this overlay (toggles Setup mode)';
+        } else {
+          ipcRenderer.invoke('open-settings');
+        }
+      } catch (e) {}
+    };
     document.body.appendChild(gear);
+
+    // Skip the connection banner in overlay windows — the banner is a
+    // main-dashboard nudge ("paste your token to start sharing parses").
+    // It clutters tiny floating overlays and has no actionable affordance
+    // there since opening Settings from an overlay is also intentionally
+    // suppressed by the gear branch above.
+    if (isOverlayWindow) return;
 
     // Token / connection banner
     const banner = document.createElement('div');
