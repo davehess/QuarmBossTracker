@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>charm</title>
+<style>
+  /* Charm tracker overlay — transparent, always-on-top. Shows each active
+     charmed pet with: the 6s MOB-TICK countdown (each tick is a break-risk
+     moment), ticks survived, elapsed charm time, and — for timed (non-Dire)
+     charm — an optional user-set "recharm warn" countdown. Speaks "recharm
+     pet" the instant a charm BREAKS (reliable safety net) and at the user's
+     warn threshold (proactive). */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;}
+  .title{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    font-size:12px;color:#c9a0ff;text-shadow:0 1px 2px #000;margin-bottom:4px;}
+  .conn{font-size:11px}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .charm{padding:5px 8px;margin-bottom:5px;background:rgba(0,0,0,0.55);
+    border-radius:5px;border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
+  .charm.dire{border-left-color:#56d364}
+  .charm.warn{border-left-color:#f0883e;animation:pulse 0.8s ease-in-out infinite}
+  .charm.broke{border-left-color:#f85149;background:rgba(80,12,12,0.7)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
+  .charm .head{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+  .charm .pet{font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .charm .owner{color:#8b949e;font-size:10px}
+  .charm .meta{font-size:10px;color:#c9d1d9;margin-top:1px;font-variant-numeric:tabular-nums}
+  .charm .badge{font-size:9px;padding:0 4px;border-radius:3px;background:#2d2150;color:#c9a0ff;margin-left:4px}
+  .charm.dire .badge{background:#16361f;color:#56d364}
+  .tickbar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
+  .tickbar > div{height:100%;background:#a371f7;transition:width 100ms linear}
+  #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
+  /* drag/lock/setup — same pattern as overlay.html / triggers.html */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(163,113,247,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(163,113,247,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(163,113,247,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #setupbar input[type=number]{width:48px}
+</style></head>
+<body>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Charm</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <span>· recharm warn at</span><input id="warnAt" type="number" min="0" max="600" step="1" value="0" /><span>s (0=off)</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span>🔮 Charm tracker</span><span id="conn" class="conn bad">○</span></div>
+    <div id="list"></div>
+    <div id="empty">no active charm</div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  // Manual drag (same Chromium transparent-window workaround as the others).
+  var moveHandle = document.getElementById('move-handle'); var _dragging = false;
+  if (moveHandle) moveHandle.addEventListener('mousedown', function(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  });
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  // Setup mode + opacity slider.
+  var _overlayKey = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { window.mimic.setSetupMode(false); } catch (e) {} });
+
+  // Recharm-warn threshold — user-supplied seconds-since-charm to beep at. We
+  // deliberately DON'T guess the charm spell's max duration (that lives in
+  // Zeal's buff window, not yet wired); instead the user dials the number that
+  // matches their charm so the proactive warning is theirs to tune. Persisted.
+  var warnAtEl = document.getElementById('warnAt');
+  try { var saved = localStorage.getItem('wpCharmWarnAt'); if (saved != null && warnAtEl) warnAtEl.value = saved; } catch (e) {}
+  if (warnAtEl) warnAtEl.addEventListener('change', function(){ try { localStorage.setItem('wpCharmWarnAt', warnAtEl.value || '0'); } catch (e) {} });
+
+  function speak(text){
+    try { if (!window.speechSynthesis) return; var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05; u.volume = 1; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch (e) {}
+  }
+  function fmtElapsed(ms){ var s = Math.floor(ms/1000); var m = Math.floor(s/60); var r = s - m*60; return m + ':' + String(r).padStart(2,'0'); }
+
+  // Per-charm session memory: key → { started_at, warned }. Re-armed when a
+  // pet's started_at changes (re-charm = new session). Used to fire the warn
+  // once and to detect breaks (was active, now gone/broken).
+  var prevActive = new Map();
+  var listEl = document.getElementById('list');
+  var emptyEl = document.getElementById('empty');
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      const s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      const now = Date.now();
+      const warnAt = parseInt((warnAtEl && warnAtEl.value) || '0', 10) || 0;
+      const pets = (s.charmPets || []);
+      const active = pets.filter(function(p){ return p && p.is_active; });
+
+      // Break detection: any key that WAS active last poll but isn't now (or
+      // is now flagged broken) → recharm alarm.
+      var activeKeys = new Set(active.map(function(p){ return p.key; }));
+      for (const [key, mem] of prevActive) {
+        if (!activeKeys.has(key)) {
+          speak('recharm pet');
+          prevActive.delete(key);
+        }
+      }
+
+      var html = '';
+      for (const p of active) {
+        const startedAt = p.started_at || p.last_tick_at || now;
+        const elapsed = Math.max(0, now - startedAt);
+        const ticks = Math.floor(elapsed / 6000);
+        // Mob tick: 6s cycle anchored on the charm-land tick. Countdown to the
+        // next break-risk tick.
+        const intoTick = (now - (p.last_tick_at || startedAt)) % 6000;
+        const remTick = 6000 - (intoTick < 0 ? 0 : intoTick);
+        const tickPct = (remTick / 6000) * 100;
+
+        // Session memory + proactive warn.
+        var mem = prevActive.get(p.key);
+        if (!mem || mem.started_at !== startedAt) { mem = { started_at: startedAt, warned: false }; prevActive.set(p.key, mem); }
+        var warnHit = false;
+        if (warnAt > 0 && !p.is_dire_charm && !mem.warned && elapsed >= warnAt * 1000) {
+          mem.warned = true; warnHit = true; speak('recharm pet');
+        }
+
+        var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (warnHit ? ' warn' : '');
+        var badge = p.is_dire_charm ? '<span class="badge">DIRE</span>' : '<span class="badge">charm</span>';
+        var warnLine = (warnAt > 0 && !p.is_dire_charm)
+          ? ' · recharm in ' + Math.max(0, Math.ceil(warnAt - elapsed/1000)) + 's'
+          : (p.is_dire_charm ? ' · permanent (until break)' : '');
+        html += '<div class="' + cls + '">'
+          + '<div class="head"><span class="pet">' + esc(p.pet || '?') + badge + '</span>'
+          + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
+          + '<div class="meta">tick ' + ticks + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · up ' + fmtElapsed(elapsed) + warnLine + '</div>'
+          + '<div class="tickbar"><div style="width:' + tickPct.toFixed(0) + '%"></div></div>'
+          + '</div>';
+      }
+      listEl.innerHTML = html;
+      emptyEl.style.display = active.length ? 'none' : 'block';
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  tick(); setInterval(tick, 500);
+</script>
+</body></html>

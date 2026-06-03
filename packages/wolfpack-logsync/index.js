@@ -922,15 +922,27 @@ const knownPetOwners = new Map();
 //   petLower -> { pet, owner, last_tick_at, last_event ('land'|'break'),
 //                 is_active }
 const _charmTickTracker = new Map();
-function _bumpCharmTick(pet, owner, eventKind, atMs) {
+function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
   const k = String(pet).toLowerCase();
+  const ts = atMs || Date.now();
+  const prev = _charmTickTracker.get(k);
   _charmTickTracker.set(k, {
     pet,
     owner: owner || null,
-    last_tick_at: atMs || Date.now(),
+    last_tick_at: ts,
     last_event: eventKind,         // 'land' or 'break'
     is_active: eventKind === 'land',
+    // started_at anchors elapsed/duration in the charm overlay. Set on land;
+    // carried forward on break so the closed entry still reports how long the
+    // charm lasted.
+    started_at: eventKind === 'land' ? ts : (prev ? prev.started_at : ts),
+    // Dire Charm (AA) is permanent until a resist break — the overlay shows
+    // no duration countdown for it, only the break alarm. Regular charm is
+    // timed. Sticky across the session for this pet.
+    is_dire_charm: opts && opts.is_dire_charm != null
+      ? !!opts.is_dire_charm
+      : (prev ? !!prev.is_dire_charm : false),
   });
 }
 
@@ -1403,8 +1415,9 @@ class EncounterBuilder {
           duration_sec:  null,
         });
         // Charm landed → that moment is the mob's tick; start the 6s
-        // countdown on the global tracker.
-        _bumpCharmTick(event.pet, owner, 'land', startTs);
+        // countdown on the global tracker. Pass the dire-charm flag so the
+        // charm overlay knows whether to show a duration countdown.
+        _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: isDC });
       }
       return;
     }
@@ -3262,9 +3275,11 @@ function _serializeForDashboard() {
           key,
           pet: info.pet,
           owner: info.owner,
-          last_tick_at: info.last_tick_at,
-          last_event:   info.last_event,
-          is_active:    info.is_active,
+          last_tick_at:  info.last_tick_at,
+          last_event:    info.last_event,
+          is_active:     info.is_active,
+          started_at:    info.started_at,
+          is_dire_charm: info.is_dire_charm,
         });
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));

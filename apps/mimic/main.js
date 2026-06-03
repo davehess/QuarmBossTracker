@@ -77,6 +77,7 @@ const WOLFPACK_URL    = 'https://wolfpack.quest';
 let mainWindow = null;
 let overlayWindow = null;
 let triggerWindow = null;
+let charmWindow   = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
 // "damage-done-this-session"). One window per panel; calling
@@ -924,6 +925,7 @@ function _overlayEntries() {
   const out = [];
   if (overlayWindow && !overlayWindow.isDestroyed()) out.push(['hud',     overlayWindow]);
   if (triggerWindow && !triggerWindow.isDestroyed()) out.push(['trigger', triggerWindow]);
+  if (charmWindow   && !charmWindow.isDestroyed())   out.push(['charm',   charmWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -975,6 +977,7 @@ function applySetupMode(on) {
   if (setupMode) {
     if (!overlayWindow) createOverlayWindow();
     if (!triggerWindow) createTriggerOverlay();
+    if (!charmWindow)   createCharmOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -983,6 +986,7 @@ function applySetupMode(on) {
   applyOverlayInteractivity();
   applyOverlayVisibility();
   applyTriggerVisibility();
+  applyCharmVisibility();
   applyAllOverlayOpacities();
   pushStatus();
 }
@@ -1119,6 +1123,36 @@ function applyTriggerVisibility() {
   const shouldShow = unlocked || (cfg.enableTriggerTts && !cfg.quietMode);
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
+function createCharmOverlay() {
+  const b = _resolveBounds('charmBounds', 'charmBoundsSig', { x: 700, y: 420, width: 300, height: 180 });
+  charmWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Charm tracker overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 200, minHeight: 80,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  charmWindow.setAlwaysOnTop(true, 'screen-saver');
+  charmWindow.setVisibleOnAllWorkspaces(true);
+  charmWindow.loadFile('charm.html');
+  charmWindow.on('moved',  () => _persistBounds('charmBounds', charmWindow));
+  charmWindow.on('resize', () => _persistBounds('charmBounds', charmWindow));
+  charmWindow.once('ready-to-show', () => {
+    charmWindow.webContents.send('agent-port', agentPort);
+    applyCharmVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(charmWindow, 'charm');
+  });
+}
+function applyCharmVisibility() {
+  if (!charmWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Charm tracker is opt-in (default off) — it's only useful to charm classes.
+  const shouldShow = unlocked || (cfg.showCharm && !cfg.quietMode);
+  if (shouldShow) charmWindow.showInactive(); else charmWindow.hide();
+}
 
 // ── Status + Tray ──────────────────────────────────────────────────────────
 function currentStatus() {
@@ -1132,6 +1166,7 @@ function currentStatus() {
     tellsMode: cfg.tellsMode || 'off',
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
+    showCharm: !!cfg.showCharm,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -1194,6 +1229,11 @@ function buildTrayMenu() {
         if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
         pushStatus();
       } },
+    { label: 'Charm tracker', type: 'checkbox', checked: s.showCharm, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showCharm = mi.checked; saveConfig(cfg);
+        if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility();
+        pushStatus();
+      } },
     { type: 'separator' },
     // Lock toggle — unchecking makes the overlays grabbable so you can drag +
     // resize them; checking locks them click-through in place. Pure window
@@ -1244,7 +1284,7 @@ function buildTrayMenu() {
     { type: 'separator' },
     { label: 'I use EQLogParser / other parser (Quiet mode)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
-        applyOverlayVisibility(); applyTriggerVisibility();
+        applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility();
         pushStatus();
       } },
     { label: 'Overlays', submenu: overlaysSubmenu },
@@ -1674,7 +1714,7 @@ ipcMain.handle('pick-eq-dir', async (e) => {
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.handle('save-config', (_e, cfg) => {
   saveConfig(Object.assign(loadConfig(), cfg));
-  applyOverlayVisibility(); applyTriggerVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyOverlayInteractivity();
   pushStatus();
   return true;
 });
@@ -1690,7 +1730,7 @@ ipcMain.handle('relaunch-agent', async () => { if (agentProc) { try { agentProc.
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
-  applyOverlayVisibility(); applyTriggerVisibility();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility();
   pushStatus();
   return currentStatus();
 });
@@ -1772,6 +1812,7 @@ app.whenReady().then(async () => {
   await launchAgent();
   createOverlayWindow();
   createTriggerOverlay();
+  createCharmOverlay();
   pushStatus();
   startZealCapture();
 
@@ -1782,6 +1823,7 @@ app.whenReady().then(async () => {
     for (const [win, def] of [
       [overlayWindow, { x: 40, y: 40, width: 320, height: 220 }],
       [triggerWindow, { x: 700, y: 200, width: 600, height: 200 }],
+      [charmWindow,   { x: 700, y: 420, width: 300, height: 180 }],
     ]) {
       if (!win || win.isDestroyed()) continue;
       try {
