@@ -6023,6 +6023,8 @@ async function dismissTopDamage(key) {
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Cancel-early phrase (optional)<br><input id="trigNewEndEarly" type="text" placeholder="e.g. {target} has been slain" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
       + '  </div>'
       + '  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
       + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
@@ -6192,6 +6194,8 @@ async function dismissTopDamage(key) {
     var overlayText = (document.getElementById('trigNewOverlay') || {}).value || '';
     var color = (document.getElementById('trigNewColor') || {}).value || 'red';
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
+    var timerSec = parseInt((document.getElementById('trigNewTimerSec') || {}).value || '0', 10) || 0;
+    var endEarly = (document.getElementById('trigNewEndEarly') || {}).value || '';
     var msg = document.getElementById('trigAddMsg');
     if (!name || !pattern || !overlayText) {
       if (msg) { msg.textContent = 'Need a name, pattern, and overlay text.'; msg.style.color = 'var(--red)'; }
@@ -6199,11 +6203,14 @@ async function dismissTopDamage(key) {
     }
     const r = await fetch('/api/personal-triggers');
     const j = r.ok ? await r.json() : { triggers: [] };
-    const next = (j.triggers || []).concat([{
+    const row = {
       name: name, pattern: pattern, use_regex: true, enabled: true,
       cooldown_seconds: cooldown,
       actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }],
-    }]);
+    };
+    if (timerSec > 0) row.timer_duration_sec = timerSec;
+    if (endEarly.trim()) { row.end_early_pattern = endEarly.trim(); row.end_use_regex = true; }
+    const next = (j.triggers || []).concat([row]);
     const save = await fetch('/api/personal-triggers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -6211,8 +6218,8 @@ async function dismissTopDamage(key) {
     });
     if (save.ok) {
       if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
-      // Clear the form
-      ['trigNewName','trigNewPattern','trigNewOverlay'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+      ['trigNewName','trigNewPattern','trigNewOverlay','trigNewEndEarly'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+      var ts = document.getElementById('trigNewTimerSec'); if (ts) ts.value = '0';
       fetchAndRenderList();
     } else {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
@@ -6679,6 +6686,16 @@ function startWebDashboard(port) {
             use_regex:     t.use_regex !== false,
             enabled:       t.enabled !== false,
             cooldown_seconds: Math.max(0, Math.min(3600, parseInt(t.cooldown_seconds, 10) || 0)),
+            // Optional countdown timer. > 0 starts a row in _activeTimers
+            // when the trigger fires; the value rides through to the
+            // dashboard editor + the live evaluator. Range matches the
+            // schema's int + admin/triggers form.
+            timer_duration_sec: Math.max(0, Math.min(3600, parseInt(t.timer_duration_sec, 10) || 0)),
+            // Optional cancel-early phrase. _compilePersonalTrigger turns
+            // this into _endRegex; the evaluator tests every line against
+            // it and cancels the matching trigger's timer on hit.
+            end_early_pattern: t.end_early_pattern ? String(t.end_early_pattern).slice(0, 1000) : null,
+            end_use_regex:     t.end_use_regex !== false,
             actions:       Array.isArray(t.actions) ? t.actions.slice(0, 5) : [{
               type: 'text_overlay',
               text: String(t.overlay_text || t.name || 'TRIGGER').slice(0, 200),
@@ -9799,8 +9816,8 @@ function savePersonalTriggers() {
     if (!dir) return false;
     const p = path.join(dir, 'personal_triggers.json');
     const arr = _personalTriggers.map(t => {
-      const { _regex, _scope, ...rest } = t;
-      void _regex; void _scope;
+      const { _regex, _endRegex, _scope, ...rest } = t;
+      void _regex; void _endRegex; void _scope;
       return rest;
     });
     const tmp = p + '.tmp';
@@ -9934,19 +9951,38 @@ function _pushOverlay(o) {
 // behavior). Pruned of expired entries on every state-snapshot read so
 // stale rows can't accumulate.
 const _activeTimers = new Map();    // triggerId → { id, name, started_at_ms, ends_at_ms, duration_sec, color, end_text, scope, test }
-function _startTimer(t, tsMs, isTest) {
+function _startTimer(t, tsMs, isTest, captures) {
   if (!t || !(t.timer_duration_sec > 0)) return;
-  const id = String(t.id || t.name || ('t_' + Date.now()));
+  // Per-CAPTURE keying — a trigger that fires twice on different mob names
+  // ("Pacify on Lord Nagafen" then "Pacify on Vox") gets two independent
+  // timer rows, not one whose countdown restarts. Same trigger firing on
+  // the SAME captures restarts the existing row (DnDOverlay convention).
+  // Captures are sorted by key so insert-order can't cause cache misses.
+  const baseId = String(t.id || t.name || 'unknown');
+  let captureSuffix = '';
+  let captureLabel  = '';
+  if (captures && typeof captures === 'object') {
+    const keys = Object.keys(captures).sort();
+    if (keys.length > 0) {
+      captureSuffix = '|' + keys.map(k => k + '=' + String(captures[k])).join('|');
+      // Prefer "target" / "npc" / first capture for the display label.
+      const prefer = captures.target || captures.npc || captures.mob || captures[keys[0]];
+      if (prefer) captureLabel = ': ' + String(prefer);
+    }
+  }
+  const id = baseId + captureSuffix;
   const startMs = tsMs || Date.now();
   const action = (Array.isArray(t.actions) && t.actions[0]) || {};
   _activeTimers.set(id, {
     id,
-    name:           t.name || 'timer',
+    name:           (t.name || 'timer') + captureLabel,
     started_at_ms:  startMs,
     ends_at_ms:     startMs + (t.timer_duration_sec * 1000),
     duration_sec:   t.timer_duration_sec,
     color:          action.color || 'red',
     end_text:       t.end_text || null,
+    trigger_name:   t.name || null,   // used by end-early matching against the trigger group
+    captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
     test:           !!isTest,
   });
@@ -9991,11 +10027,39 @@ function evaluateTriggersAgainstLine(line, tsMs) {
   for (const t of all) {
     // End-early check runs FIRST so a single log line containing the end
     // phrase cancels the timer before the same line could (also) re-trigger
-    // the start pattern. Without this ordering, a pattern that includes its
-    // own end string would race itself.
-    if (t._endRegex && _activeTimers.has(String(t.id || t.name))) {
-      try { if (t._endRegex.test(line)) _cancelTimer(t.id || t.name); }
-      catch { /* bad end-early regex — already logged at compile time */ }
+    // the start pattern. Per-target: if the end pattern matches and there
+    // are multiple timers from this trigger (different captures), only the
+    // one whose captures match the end-line's captures cancels. Otherwise
+    // all timers under this trigger cancel — matches the simple case where
+    // a trigger has only one active timer.
+    if (t._endRegex) {
+      try {
+        const em = t._endRegex.exec(line);
+        if (em) {
+          const endCaps = em.groups || {};
+          const triggerName = t.name;
+          for (const [tid, row] of _activeTimers) {
+            if (row.trigger_name !== triggerName) continue;
+            const rowCaps = row.captures || {};
+            const captureKeys = Object.keys(rowCaps);
+            const hasCaps = captureKeys.length > 0 && Object.keys(endCaps).length > 0;
+            if (hasCaps) {
+              // Require every shared capture key to match (case-insensitive)
+              // before cancelling. If the end pattern names different
+              // captures than the start, we treat it as "trigger-wide"
+              // cancellation below.
+              const sharedKeys = captureKeys.filter(k => endCaps[k] != null);
+              if (sharedKeys.length > 0) {
+                const allMatch = sharedKeys.every(k =>
+                  String(rowCaps[k]).toLowerCase() === String(endCaps[k]).toLowerCase());
+                if (allMatch) _activeTimers.delete(tid);
+                continue;
+              }
+            }
+            _activeTimers.delete(tid);
+          }
+        }
+      } catch { /* bad end-early regex — already logged at compile time */ }
     }
     if (!t._regex) continue;
     let m;
@@ -10042,11 +10106,11 @@ function _fireTriggerActions(t, captures, tsMs, test) {
     // tts / sound / discord / emit_event are intentionally no-ops in v1.
   }
   // Trigger-level timer countdown (separate from per-action overlays).
-  // Starts when timer_duration_sec > 0 on the trigger itself; the existing
-  // _activeTimers Map auto-restarts if the same trigger fires again. End-
-  // early cancellation is handled in evaluateTriggersAgainstLine via
-  // t._endRegex matching the same log line stream.
-  if (t.timer_duration_sec > 0) _startTimer(t, tsMs, test);
+  // Starts when timer_duration_sec > 0 on the trigger itself. Captures
+  // are passed so per-mob keying works — "Pacify on Lord Nagafen" and
+  // "Pacify on Vox" become two independent countdowns rather than the
+  // second restarting the first.
+  if (t.timer_duration_sec > 0) _startTimer(t, tsMs, test, captures);
 }
 
 // Transition a single backfill request via the bot's
