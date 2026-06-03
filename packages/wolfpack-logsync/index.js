@@ -3298,6 +3298,7 @@ function _serializeForDashboard() {
     personalTriggerCount: (_personalTriggers || []).length,
     activeOverlays:      _activeOverlays,
     activeTimers:        _activeTimersSnapshot(),
+    zeal:                _zeal,
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
     // after that the user knows, and a stale banner is just noise.
@@ -4260,6 +4261,47 @@ function renderPets(s) {
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
+
+  // Zeal pipe status — answers "is Zeal flowing?" at a glance. Shows
+  // connected pids, total events this session, and per-type counts with the
+  // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
+  // bridge); hidden entirely until at least one event arrives so it's not
+  // dead space for non-Zeal users.
+  const z = s.zeal || {};
+  const zTotal = z.total || 0;
+  const zPids  = Array.isArray(z.connectedPids) ? z.connectedPids : [];
+  if (zTotal > 0 || zPids.length > 0) {
+    const ageSec = z.lastEventAt ? Math.round((Date.now() - z.lastEventAt) / 1000) : null;
+    const live = ageSec !== null && ageSec < 10;
+    h += '<div class="card wide"><h2>⚡ Zeal pipe '
+       + '<span style="font-size:11px;font-weight:normal;color:' + (live ? 'var(--green)' : 'var(--dim)') + '">'
+       + (zPids.length ? '● ' + zPids.length + ' client' + (zPids.length === 1 ? '' : 's') + ' connected' : '○ no clients')
+       + (ageSec !== null ? ' · last event ' + (ageSec < 1 ? 'now' : ageSec + 's ago') : '')
+       + '</span></h2>';
+    if (zTotal === 0) {
+      h += '<div class="dim" style="font-size:12px">Connected but no events yet. In-game, try <code>/pipedelay 250</code> to make Zeal stream labels + gauges.</div>';
+    } else {
+      h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + zTotal + ' events this session</div>';
+      h += '<table style="font-size:11px"><tr><th>Type</th><th>Count</th><th>Latest sample</th></tr>';
+      const TYPE_NAMES = { '0': 'log', '1': 'label', '2': 'gauge', '3': 'player', '4': 'custom', '5': 'raid', '6': 'group' };
+      const byType = z.byType || {};
+      const samples = z.lastSamples || {};
+      const keys = Object.keys(byType).sort(function(a, b){ return byType[b] - byType[a]; });
+      for (const k of keys) {
+        const label = TYPE_NAMES[k] ? (k + ' (' + TYPE_NAMES[k] + ')') : k;
+        let sampleStr = '';
+        const sm = samples[k];
+        if (sm && sm.obj !== undefined) {
+          try { sampleStr = JSON.stringify(sm.obj).slice(0, 120); } catch (e) { void e; }
+        }
+        h += '<tr><td class="dim">' + esc(label) + '</td>'
+           + '<td class="num">' + byType[k] + '</td>'
+           + '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(sampleStr) + '</code></td></tr>';
+      }
+      h += '</table>';
+    }
+    h += '</div>';
+  }
 
   // Active overlays (recent matches) — top of the page so the user can see
   // their triggers actually firing as they tune them. The "Clear" buttons
@@ -6624,6 +6666,31 @@ function startWebDashboard(port) {
         resetSessionStats();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
+      }
+      // Zeal pipe events forwarded by Mimic (same machine, localhost only —
+      // no auth, matches the other localhost dashboard endpoints). Body:
+      // { connectedPids: [..], events: [{ type, sample? }] }. We tally per
+      // type and keep the latest sample so the Triggers tab can render a
+      // "Zeal: connected · N events" status with example shapes.
+      if (req.url === '/api/zeal-event' && req.method === 'POST') {
+        const body = await _readBody(req, 512 * 1024);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        if (Array.isArray(payload?.connectedPids)) _zeal.connectedPids = payload.connectedPids;
+        const events = Array.isArray(payload?.events) ? payload.events : [];
+        for (const e of events) {
+          const type = e && e.type !== undefined ? String(e.type) : 'noType';
+          _zeal.byType[type] = (_zeal.byType[type] || 0) + 1;
+          _zeal.total += 1;
+          if (e && e.sample !== undefined) {
+            _zeal.lastSamples[type] = { at: Date.now(), obj: e.sample };
+          }
+        }
+        if (events.length) _zeal.lastEventAt = Date.now();
+        _zeal.updatedAt = Date.now();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, total: _zeal.total }));
       }
       if (req.url === '/api/loadouts/hide' && req.method === 'POST') {
         const body = await _readBody(req);
@@ -9951,6 +10018,20 @@ function _pushOverlay(o) {
 // behavior). Pruned of expired entries on every state-snapshot read so
 // stale rows can't accumulate.
 const _activeTimers = new Map();    // triggerId → { id, name, started_at_ms, ends_at_ms, duration_sec, color, end_text, scope, test }
+
+// Zeal pipe capture state — fed by Mimic via POST /api/zeal-event. Tracks
+// connection + a per-type tally + one sample object per type so the Triggers
+// tab can show "is Zeal flowing, and what shapes are we seeing" without the
+// user digging through the agent log. byType counts are cumulative for the
+// session; lastSamples keeps the most recent object per type (truncated).
+const _zeal = {
+  connectedPids: [],
+  total:         0,
+  byType:        {},          // type → count
+  lastSamples:   {},          // type → { at, obj }
+  lastEventAt:   0,
+  updatedAt:     0,
+};
 function _startTimer(t, tsMs, isTest, captures) {
   if (!t || !(t.timer_duration_sec > 0)) return;
   // Per-CAPTURE keying — a trigger that fires twice on different mob names

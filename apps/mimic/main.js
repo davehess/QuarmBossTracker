@@ -506,37 +506,61 @@ function _stopWindowDrag() {
 // Opt-out via cfg.zealPipe === false.
 let zealWatch = null;
 let zealLastConnectedPids = [];
+// Batched forward to the agent so the dashboard's Triggers tab can show Zeal
+// status. We coalesce events into a ~2s window: one sample per type per flush
+// (the agent keeps the latest), plus per-type counts, so a chatty pipe doesn't
+// hammer the localhost endpoint or balloon the payload.
+const _zealPending = { events: [], sampledTypes: new Set() };
+function _flushZealToAgent() {
+  if (!agentPort) return;
+  const conn = zealLastConnectedPids;
+  if (_zealPending.events.length === 0 && conn.length === 0) return;
+  const body = JSON.stringify({ connectedPids: conn, events: _zealPending.events });
+  _zealPending.events = [];
+  _zealPending.sampledTypes.clear();
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/zeal-event', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
 function startZealCapture() {
   try {
     const cfg = loadConfig();
     if (cfg.zealPipe === false) { appendAgentLog('[zeal] capture disabled (cfg.zealPipe=false)\n'); return; }
-    const seenTypes = new Set();          // "pid:type" we've already sampled
-    const counts = new Map();             // type → count since last flush
-    let lastFlush = Date.now();
+    const seenTypes = new Set();          // "pid:type" we've already log-sampled
     zealWatch = startZealWatch({
       log: appendAgentLog,
-      onStatus: (s) => { zealLastConnectedPids = s.connectedPids || []; },
+      onStatus: (s) => {
+        zealLastConnectedPids = s.connectedPids || [];
+        _flushZealToAgent();              // push connection change immediately
+      },
       onEvent: (pid, obj) => {
         const type = (obj && (obj.type !== undefined ? String(obj.type) : 'noType'));
         const key = pid + ':' + type;
+        // Log one full sample per (pid,type) the first time — keeps the agent
+        // log as the durable protocol record.
         if (!seenTypes.has(key)) {
           seenTypes.add(key);
-          // One full sample per (pid,type) — truncated so a huge raid array
-          // doesn't flood the log.
           let sample = '';
           try { sample = JSON.stringify(obj).slice(0, 600); } catch {}
           appendAgentLog(`[zeal] sample pid=${pid} type=${type}: ${sample}\n`);
         }
-        counts.set(type, (counts.get(type) || 0) + 1);
-        const now = Date.now();
-        if (now - lastFlush > 60000) {
-          lastFlush = now;
-          const summary = [...counts.entries()].map(([t, n]) => t + '×' + n).join(' ');
-          if (summary) appendAgentLog(`[zeal] 60s counts: ${summary}\n`);
-          counts.clear();
+        // Forward to the agent: count always, attach a sample once per type
+        // per flush (agent keeps the newest).
+        const evt = { type };
+        if (!_zealPending.sampledTypes.has(type)) {
+          _zealPending.sampledTypes.add(type);
+          evt.sample = obj;
         }
+        _zealPending.events.push(evt);
+        // Cap pending so a runaway pipe can't grow the buffer unbounded.
+        if (_zealPending.events.length > 2000) _zealPending.events.splice(0, 1000);
       },
     });
+    setInterval(_flushZealToAgent, 2000);
     appendAgentLog('[zeal] capture started — watching for eqgame.exe + Zeal pipes\n');
   } catch (e) {
     appendAgentLog(`[zeal] capture failed to start: ${e && e.message}\n`);
