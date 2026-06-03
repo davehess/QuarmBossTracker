@@ -228,12 +228,17 @@
           remain:  row.querySelector('.timer-remain'),
           bar:     row.querySelector('.timer-bar > div'),
           duration_sec: t.duration_sec || 1,
+          warned: false,
         };
         n.name.textContent = t.name || 'timer';
         timerNodes.set(t.id, n);
       }
       n.ends_at_local = Date.now() + t.remaining_ms;
       n.duration_sec  = t.duration_sec || n.duration_sec;
+      // Warning callout config (EQLP "N seconds before the timer ends"). Fired
+      // once by paintTimers when the countdown crosses the threshold.
+      n.warn_ms   = t.warning_ms || 0;
+      n.warn_text = t.warn_text || null;
     }
     // Drop any rows the server stopped reporting (ended early or cleared).
     for (const [id, n] of timerNodes){
@@ -248,6 +253,13 @@
       n.remain.textContent = fmtRemain(remMs);
       const pct = Math.max(0, Math.min(100, (remMs / (n.duration_sec * 1000)) * 100));
       n.bar.style.width = pct + '%';
+      // Pre-end warning callout: fire once when the countdown crosses into the
+      // warning window. Reset the latch if the timer restarts (remaining climbs
+      // back above the threshold) so a re-pulled timer warns again.
+      if (n.warn_ms > 0 && n.warn_text){
+        if (remMs > n.warn_ms){ n.warned = false; }
+        else if (!n.warned){ n.warned = true; fire({ text: n.warn_text, tts: n.warn_text }); }
+      }
       // Last 5s → switch the row's accent to amber so it visually pops.
       if (remMs < 5000) n.row.classList.add('warn');
       else              n.row.classList.remove('warn');

@@ -6323,9 +6323,10 @@ async function dismissTopDamage(key) {
       + '    <div id="trigTestResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
       + '  <div id="trigImportPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
-+ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Paste GINA (.gtp) or EQLogParser exported XML — both use the same SharedTriggers shape. Each &lt;Trigger&gt; element becomes a personal trigger. Duplicates by name are skipped; existing triggers are preserved.</div>'
-      + '    <textarea id="trigImportXml" placeholder="&lt;SharedTriggers&gt; ... &lt;/SharedTriggers&gt;" style="width:100%;height:140px;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
-      + '    <button id="trigImportRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import</button>'
++ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
+      + '    <input id="trigImportFile" type="file" accept=".tgf,.gz,.gtp,.xml,.json,application/gzip,application/json,text/xml" style="display:block;margin-bottom:6px;font-size:11px;color:var(--text)">'
+      + '    <textarea id="trigImportXml" placeholder="…or paste the .tgf JSON / SharedTriggers XML here" style="width:100%;height:120px;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
+      + '    <button id="trigImportRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import pasted text</button>'
       + '    <div id="trigImportResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
       + '</div>';
@@ -6552,17 +6553,18 @@ async function dismissTopDamage(key) {
     var panel = document.getElementById('trigImportPanel');
     if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
   }
-  async function onImportRun() {
-    var xml = (document.getElementById('trigImportXml') || {}).value || '';
+  // Shared import: POST the raw text (EQLP .tgf JSON or GINA/EQLP XML — the
+  // server sniffs which) and render the result summary.
+  async function runImport(text) {
     var out = document.getElementById('trigImportResult');
     if (!out) return;
-    if (!xml.trim()) { out.textContent = 'Paste an XML body first.'; return; }
-    out.textContent = 'Importing…';
+    if (!text || !text.trim()) { out.textContent = 'Nothing to import.'; out.style.color = 'var(--dim)'; return; }
+    out.textContent = 'Importing…'; out.style.color = 'var(--dim)';
     try {
       const r = await fetch('/api/personal-triggers/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ xml: xml }),
+        body: JSON.stringify({ data: text }),
       });
       const j = await r.json().catch(function(){ return {}; });
       if (!r.ok || !j.ok) {
@@ -6581,6 +6583,37 @@ async function dismissTopDamage(key) {
       }
     } catch (err) {
       out.innerHTML = '<span style="color:var(--red)">Import error: ' + esc(err && err.message || err) + '</span>';
+    }
+  }
+  async function onImportRun() {
+    var xml = (document.getElementById('trigImportXml') || {}).value || '';
+    if (!xml.trim()) { var out = document.getElementById('trigImportResult'); if (out) { out.textContent = 'Paste a trigger file body first, or choose a file above.'; out.style.color = 'var(--dim)'; } return; }
+    await runImport(xml);
+  }
+  // File import — reads .tgf / .tgf.gz / .gtp / .xml. Gzipped files (EQLP's
+  // default .tgf.gz export) are decompressed in-browser via DecompressionStream
+  // before sending, so the user does NOT have to unzip first.
+  async function onImportFile(ev) {
+    var input = ev && ev.target;
+    var file  = input && input.files && input.files[0];
+    var out   = document.getElementById('trigImportResult');
+    if (!file) return;
+    if (out) { out.textContent = 'Reading ' + file.name + '…'; out.style.color = 'var(--dim)'; }
+    try {
+      var buf   = await file.arrayBuffer();
+      var bytes = new Uint8Array(buf);
+      var text;
+      if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+        var stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
+        text = await new Response(stream).text();
+      } else {
+        text = new TextDecoder('utf-8').decode(buf);
+      }
+      await runImport(text);
+    } catch (err) {
+      if (out) { out.innerHTML = '<span style="color:var(--red)">Could not read file: ' + esc(err && err.message || err) + '</span>'; }
+    } finally {
+      if (input) input.value = '';
     }
   }
   async function onTestRun() {
@@ -6618,6 +6651,8 @@ async function dismissTopDamage(key) {
     var importRun   = document.getElementById('trigImportRun');
     if (importBtn) importBtn.addEventListener('click', onImportToggle);
     if (importRun) importRun.addEventListener('click', onImportRun);
+    var importFile  = document.getElementById('trigImportFile');
+    if (importFile) importFile.addEventListener('change', onImportFile);
     var runBtn      = document.getElementById('trigTestRun');
     if (addBtn)     addBtn.addEventListener('click', onAdd);
     if (previewBtn) previewBtn.addEventListener('click', onPreview);
@@ -7199,11 +7234,15 @@ function startWebDashboard(port) {
         let payload;
         try { payload = JSON.parse(body); }
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
-        const xml = String(payload?.xml || '');
-        if (!xml.trim()) {
-          res.writeHead(400); return res.end(JSON.stringify({ error: 'xml body required' }));
+        // Accept the body under `xml` (legacy key) OR `data`; the content can be
+        // GINA/EQLP SharedTriggers XML *or* EQLogParser's native JSON .tgf tree
+        // (the client gunzips .tgf.gz before sending). Detect by first char.
+        const raw = String(payload?.xml || payload?.data || '');
+        if (!raw.trim()) {
+          res.writeHead(400); return res.end(JSON.stringify({ error: 'import body required' }));
         }
-        const parsed = _parseTriggerXml(xml);
+        const isJson = /^\s*[\[{]/.test(raw);
+        const parsed = isJson ? (_parseTriggerTgfJson(raw) || []) : _parseTriggerXml(raw);
         const existingNames = new Set(_personalTriggers.map(t => String(t.name || '').toLowerCase()));
         const compiled = [];
         const errors = [];
@@ -7211,21 +7250,42 @@ function startWebDashboard(port) {
         for (const t of parsed) {
           if (!t.name || !t.pattern) { skipped++; continue; }
           if (existingNames.has(t.name.toLowerCase())) { skipped++; continue; }
+          const ttsText = String(t.tts_text || '').slice(0, 200);
+          // Only create an on-match alert when EQLP actually had display OR speak
+          // text. A timer-only trigger (e.g. the "tank BUSTER" example: no
+          // display/speak, just a 60s timer that warns 12s before it ends)
+          // should NOT flash/say its own name on every match — only the timer +
+          // its warning callout fire. text falls back display→speak; tts speaks
+          // the dedicated speak text, else the overlay speaks the shown text.
+          const actions = [];
+          if (t.display_text || t.tts_text) {
+            actions.push({
+              type: 'text_overlay',
+              text:  String(t.display_text || t.tts_text).slice(0, 200),
+              color: 'red',
+              duration_ms: 5000,
+              ...(ttsText ? { tts: ttsText } : {}),
+            });
+          }
           const row = {
             id:            'p_' + Math.random().toString(36).slice(2, 10),
             name:          t.name.slice(0, 100),
-            pattern:       t.pattern.slice(0, 1000),
+            pattern:       _translateGinaPlaceholders(t.pattern).slice(0, 1000),
             pattern_flags: 'i',
             use_regex:     t.use_regex !== false,
             enabled:       true,
             cooldown_seconds: Math.max(0, Math.min(3600, t.cooldown_seconds || 0)),
-            actions:       [{
-              type: 'text_overlay',
-              text: (t.display_text || t.tts_text || t.name).slice(0, 200),
-              color: 'red',
-              duration_ms: 5000,
-            }],
+            actions,
           };
+          if (t.timer_duration_sec > 0) row.timer_duration_sec = Math.max(1, Math.min(3600, t.timer_duration_sec));
+          // Nothing to do (no alert, no timer) → skip rather than store a no-op.
+          if (actions.length === 0 && !(row.timer_duration_sec > 0)) { skipped++; continue; }
+          if (t.warning_seconds > 0 && t.warning_text) {
+            row.warning_seconds = Math.max(1, Math.min(3600, t.warning_seconds));
+            row.warning_text    = String(t.warning_text).slice(0, 200);
+          }
+          if (t.end_text)          row.end_text = String(t.end_text).slice(0, 200);
+          if (t.end_early_pattern) { row.end_early_pattern = _translateGinaPlaceholders(t.end_early_pattern).slice(0, 1000); row.end_use_regex = true; }
           try {
             compiled.push(_compilePersonalTrigger(row));
             existingNames.add(row.name.toLowerCase());
@@ -10340,6 +10400,66 @@ function _parseTriggerXml(xml) {
   return triggers;
 }
 
+// EQLogParser's NATIVE export is NOT the SharedTriggers XML — it's a JSON tree
+// (.tgf, often gzipped to .tgf.gz). Shape: an array of folder nodes, each with
+// a `Nodes` child array and an optional `TriggerData` object on leaf nodes.
+// The trigger NAME lives on the node (`node.Name`); `TriggerData` carries the
+// pattern + display/speak/timer fields. Walk the whole tree and flatten every
+// leaf that has a TriggerData + pattern into the same shape _parseTriggerXml
+// returns, so the import endpoint can treat XML and JSON identically.
+function _parseTriggerTgfJson(text) {
+  let root;
+  try { root = JSON.parse(text); } catch { return null; }   // null = "not JSON, try XML"
+  const out = [];
+  const visit = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { for (const n of node) visit(n); return; }
+    const td = node.TriggerData;
+    if (td && typeof td === 'object') {
+      const name    = String(node.Name || '').trim();
+      const pattern = String(td.Pattern || '').trim();
+      if (name && pattern) {
+        const dur = Number(td.DurationSeconds) || 0;
+        // EQLP separates "is there a timer" (TimerType > 0 / EnableTimer) from
+        // the duration. Treat any positive TimerType OR EnableTimer with a
+        // duration as a countdown timer — the warning callout depends on it.
+        const hasTimer = dur > 0 && (Number(td.TimerType) > 0 || td.EnableTimer === true);
+        out.push({
+          name,
+          pattern,
+          use_regex:          td.UseRegex !== false,
+          display_text:       String(td.TextToDisplay || '').trim(),
+          tts_text:           String(td.TextToSpeak || '').trim(),
+          cooldown_seconds:   Math.max(0, parseInt(td.LockoutTime, 10) || 0),
+          timer_duration_sec: hasTimer ? Math.round(dur) : 0,
+          warning_seconds:    Math.max(0, parseInt(td.WarningSeconds, 10) || 0),
+          warning_text:       String(td.WarningTextToSpeak || td.WarningTextToDisplay || '').trim(),
+          end_text:           String(td.EndTextToSpeak || td.EndTextToDisplay || '').trim(),
+          end_early_pattern:  String(td.EndEarlyPattern || '').trim(),
+        });
+      }
+    }
+    if (Array.isArray(node.Nodes)) for (const n of node.Nodes) visit(n);
+  };
+  visit(root);
+  return out;
+}
+
+// GINA / EQLogParser capture placeholders → regex. Both tools write {S}/{s}
+// (match-any text) and {N}/{n} (a number) into the pattern, with a trailing
+// digit for a *named* capture you can reference in the alert text ({s1}, {n1}).
+// We turn the numbered forms into .NET-style named groups (?<s1>…) — which our
+// alert templates already reference as {s1} — and the bare forms into plain
+// captures. Applied before _translateDotNetRegex compiles to JS.
+function _translateGinaPlaceholders(pattern) {
+  if (!pattern) return pattern;
+  return String(pattern)
+    .replace(/\{[sS](\d+)\}/g, '(?<s$1>.+?)')
+    .replace(/\{[nN](\d+)\}/g, '(?<n$1>\\d+)')
+    .replace(/\{[sS]\}/g,      '(.+?)')
+    .replace(/\{[nN]\}/g,      '(\\d+)');
+}
+
 // Per-trigger last-fire timestamp for cooldown enforcement
 const _triggerLastFire = new Map();
 // Recent overlay queue — surfaced on /api/state for the dashboard to render.
@@ -10541,6 +10661,10 @@ function _startTimer(t, tsMs, isTest, captures) {
     duration_sec:   t.timer_duration_sec,
     color:          action.color || 'red',
     end_text:       t.end_text || null,
+    // Warning callout fired by the overlay N seconds before the timer ends
+    // (EQLP WarningSeconds + WarningTextToSpeak — e.g. "RAGE SOON" 12s out).
+    warn_ms:        (t.warning_seconds > 0 && t.warning_text) ? t.warning_seconds * 1000 : 0,
+    warn_text:      t.warning_text || null,
     trigger_name:   t.name || null,   // used by end-early matching against the trigger group
     captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
@@ -10563,6 +10687,8 @@ function _activeTimersSnapshot() {
       duration_sec: t.duration_sec,
       color:        t.color,
       end_text:     t.end_text,
+      warning_ms:   t.warn_ms || 0,
+      warn_text:    t.warn_text || null,
       scope:        t.scope,
       test:         t.test,
     });
