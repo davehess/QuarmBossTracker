@@ -1047,6 +1047,12 @@ class EncounterBuilder {
     // most recently connected with (within 1500ms). Per-encounter, cleared
     // on reset since mob identities don't carry across encounters.
     this._lastIncomingHit = new Map();   // mob.toLowerCase() → { tank, tsMs }
+    // PvP assist correlation — uploader's outbound damage to player names,
+    // rolling 30s window. When a PvP death broadcast names one of these
+    // victims and the killing blow wasn't ours, we emit an assist event.
+    // Per-builder (per-encounter); cross-fight assists are intentionally
+    // missed since 30s comfortably covers any real engagement → death pair.
+    this._pvpDamageWindow = new Map();   // victim.toLowerCase() → { tsMs, lineSample }
     // Pending DS commit — buffered between the damage line and the flavor
     // line (e.g. "X was hit by non-melee for 14" then "X was pierced by
     // thorns."). When the flavor lands within 2s, the buffered event's
@@ -1249,6 +1255,40 @@ class EncounterBuilder {
     this._dsPending = null;
   }
 
+  // Given a PvP broadcast (from parsePvpBroadcast), check whether the
+  // uploader had recently damaged the named victim AND someone else landed
+  // the killing blow. Returns an assist event object suitable for the
+  // pvp_assists table, or null. Consumes the damage-window entry on a match
+  // so a single damage burst doesn't generate multiple assists from one
+  // back-to-back kill chain. The window is 30s, matching the offline audit.
+  _checkPvpAssist(pvpBcast, opts) {
+    if (!pvpBcast || !pvpBcast.victim) return null;
+    if (pvpBcast.killType !== 'pvp' && pvpBcast.killType !== 'npc') return null;
+    const victimLower = String(pvpBcast.victim).toLowerCase();
+    const wd = this._pvpDamageWindow.get(victimLower);
+    if (!wd) return null;
+    const evTsMs = Date.parse(pvpBcast.ts) || Date.now();
+    const gapMs = evTsMs - wd.tsMs;
+    if (gapMs < 0 || gapMs > 30_000) return null;
+    // Don't credit ourselves an "assist" on our own kill — that's a kill.
+    const killerLower = pvpBcast.killer ? String(pvpBcast.killer).toLowerCase() : '';
+    const meLower = String(this.character || '').toLowerCase();
+    if (meLower && killerLower === meLower) return null;
+    this._pvpDamageWindow.delete(victimLower);   // consume — one assist per damage burst
+    return {
+      assister:      this.character,
+      victim:        pvpBcast.victim,
+      victim_guild:  pvpBcast.victimGuild || null,
+      killer:        pvpBcast.killer || null,
+      killer_is_npc: pvpBcast.killType === 'npc',
+      zone:          pvpBcast.zone || null,
+      killed_at:     pvpBcast.ts,
+      gap_seconds:   Math.round(gapMs / 1000),
+      raw_text:      (pvpBcast.text || '').slice(0, 500),
+      source:        (opts && opts.source) || 'live_agent',
+    };
+  }
+
   add(event) {
     if (!event) return;
 
@@ -1438,6 +1478,22 @@ class EncounterBuilder {
       if (_isMob(att) && _isPlayer(def)) {
         const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
         this._lastIncomingHit.set(att.toLowerCase(), { tank, tsMs });
+      }
+
+      // 3) PvP assist window: uploader's outbound damage to a plausible
+      // player name (single Capitalized word, not "YOU"). Stamps a sliding
+      // window keyed by victim.toLowerCase() so the next PvP death broadcast
+      // naming the same victim within 30s can correlate (handled outside the
+      // builder, in the tail/backfill driver). Self-damage to mobs / heals
+      // are skipped automatically — _isMob/_isPlayer already excluded them.
+      const isMineOutbound = (event.attacker === null) || (event.attacker === this.character);
+      if (isMineOutbound && _isPlayer(def)
+          && def !== 'YOU' && def !== 'You'
+          && def !== this.character) {
+        this._pvpDamageWindow.set(def.toLowerCase(), {
+          tsMs,
+          line: event._line || (event.ability ? `${event.ability} for ${event.amount}` : ''),
+        });
       }
 
       // 2) DS attribution: anonymous non-melee hit on a mob — if that mob
@@ -2415,6 +2471,7 @@ function _endpointForKind(kind, botUrl) {
     case 'encounter':       return botUrl;             // already /api/agent/encounter
     case 'chat':            return base + '/chat';
     case 'pvp':             return base + '/pvp';
+    case 'pvp_assists':     return base + '/pvp_assists';
     case 'bosskill':        return base + '/bosskill';
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
@@ -7784,6 +7841,17 @@ function runOptinBackfill(files, opts = {}) {
             if (pvpBcast) {
               pvpBatch.push({ ...pvpBcast, backfill: true });
               if (pvpBatch.length >= 200) flushPvp(true).catch(() => {});
+              // Assist correlation — same builder.add() that runs below also
+              // stamps the damage window, so by the time a kill broadcast
+              // lands here the recent self-damage to that victim is already
+              // recorded. Tag source 'log_backfill' so the bot can distinguish
+              // historical assists from live ones.
+              try {
+                const assist = builder && builder._checkPvpAssist
+                  ? builder._checkPvpAssist(pvpBcast, { source: 'log_backfill' })
+                  : null;
+                if (assist) pvpAssistBuffer.push(assist);
+              } catch (e) { void e; }
             }
 
             // Chat comes first — chat lines don't survive shouldKeep().
@@ -8735,6 +8803,7 @@ function parseSllLine(line) {
 
 const chatBuffer        = [];   // pending guild/raid chat lines
 const pvpBuffer         = [];   // pending PVP broadcast lines
+const pvpAssistBuffer   = [];   // pending PvP assist correlations (us → player damage + their death by someone else)
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
 const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
@@ -8777,6 +8846,8 @@ function startChatRelay() {
       uploadChat(chatBuffer.splice(0), _uploadOpts).catch(() => {});
     if (pvpBuffer.length > 0)
       uploadPvp(pvpBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (pvpAssistBuffer.length > 0)
+      uploadPvpAssists(pvpAssistBuffer.splice(0), _uploadOpts).catch(() => {});
     if (druzzilKillBuffer.length > 0)
       uploadDruzzilKills(druzzilKillBuffer.splice(0), _uploadOpts).catch(() => {});
     if (_lockoutBuffer.length > 0)
@@ -9123,6 +9194,18 @@ function uploadPvp(broadcasts, { botUrl, token, dryRun }) {
     return Promise.resolve();
   }
   enqueueUpload('pvp', { agent_version: AGENT_VERSION, broadcasts });
+  return Promise.resolve();
+}
+
+function uploadPvpAssists(assists, { botUrl, token, dryRun }) {
+  void botUrl; void token;
+  if (!Array.isArray(assists) || assists.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const a of assists)
+      console.log(`[pvp-assist] ${a.assister} → ${a.victim} (killed by ${a.killer || '?'}${a.killer_is_npc ? ' [npc]' : ''}, ${a.gap_seconds}s gap)`);
+    return Promise.resolve();
+  }
+  enqueueUpload('pvp_assists', { agent_version: AGENT_VERSION, assists });
   return Promise.resolve();
 }
 
@@ -10368,7 +10451,23 @@ async function main() {
         const pvpBcast = parsePvpBroadcast(line);
         if (pvpBcast) {
           const _pvpFp = 'pvp|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
-          if (!_sourceExcluded && !_crossLogDupe(_pvpFp)) pvpBuffer.push(pvpBcast);
+          if (!_sourceExcluded && !_crossLogDupe(_pvpFp)) {
+            pvpBuffer.push(pvpBcast);
+            // Assist correlation: if the uploader was damaging this victim in
+            // the last 30s AND the killing blow was someone else (or an NPC),
+            // emit an assist row. cross-log dedup also applies — the same
+            // assist won't post twice when multiple of our logs witness the
+            // same death of someone we'd been swinging at.
+            try {
+              const assist = b.builder && b.builder._checkPvpAssist
+                ? b.builder._checkPvpAssist(pvpBcast, { source: 'live_agent' })
+                : null;
+              if (assist) {
+                const _aFp = 'assist|' + (assist.assister || '').toLowerCase() + '|' + _pvpFp;
+                if (!_crossLogDupe(_aFp)) pvpAssistBuffer.push(assist);
+              }
+            } catch (e) { void e; }
+          }
           return;
         }
 

@@ -3133,6 +3133,93 @@ async function _handleAgentPvp(req, res) {
   res.end(JSON.stringify({ ok: true, posted, deduped, kills_recorded: pvpKillRows.length }));
 }
 
+// POST /api/agent/pvp_assists — receive correlated assist events from the
+// agent. Agent has already computed the (assister, victim, killer, gap)
+// tuple from its own outbound damage window vs. a PvP death broadcast. Bot
+// validates the assister is on the WP roster, builds a dedup_key, and
+// upserts to public.pvp_assists. No Discord post — assists are a stat-only
+// signal (no rally moment to celebrate, no @PVP ping).
+async function _handleAgentPvpAssists(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'pvp_assists relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const assists = Array.isArray(payload?.assists) ? payload.assists : [];
+  if (assists.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  // Pull the roster once to validate assisters. An unrecognised assister
+  // means we received an assist event for a non-WP character — silently
+  // drop it. (Defense-in-depth: the bot's auth token already gates upload
+  // access, but the upload could plausibly carry junk if the agent is
+  // misconfigured or a test rig pointed at production.)
+  const rosterRows = await supabase.select(
+    'characters',
+    `select=name&guild_id=eq.${encodeURIComponent(guildId)}&limit=10000`,
+  ).catch(() => []);
+  const rosterLower = new Set(
+    (Array.isArray(rosterRows) ? rosterRows : []).map(r => String(r.name || '').toLowerCase())
+  );
+
+  const rows = [];
+  let dropped = 0;
+  for (const a of assists) {
+    const assister = String(a?.assister || '').trim();
+    const victim   = String(a?.victim   || '').trim();
+    const killedAtRaw = a?.killed_at ? new Date(a.killed_at) : null;
+    if (!assister || !victim || !killedAtRaw || isNaN(killedAtRaw.getTime())) { dropped++; continue; }
+    if (!rosterLower.has(assister.toLowerCase())) { dropped++; continue; }
+    const killedAt = killedAtRaw.toISOString();
+    const secondIso = killedAt.slice(0, 19);
+    rows.push({
+      guild_id:       guildId,
+      assister,
+      assister_guild: 'Wolf Pack',
+      victim:         victim.slice(0, 64),
+      victim_guild:   a?.victim_guild ? String(a.victim_guild).slice(0, 64) : null,
+      killer:         a?.killer ? String(a.killer).slice(0, 64) : null,
+      killer_is_npc:  !!a?.killer_is_npc,
+      zone:           a?.zone ? String(a.zone).slice(0, 128) : null,
+      killed_at:      killedAt,
+      source:         a?.source === 'log_backfill' ? 'log_backfill' : 'live_agent',
+      raw_text:       a?.raw_text ? String(a.raw_text).slice(0, 500) : null,
+      dedup_key:      `${guildId}|${assister.toLowerCase()}|${victim.toLowerCase()}|${secondIso}`,
+    });
+  }
+  if (rows.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0, dropped }));
+  }
+  const written = await supabase.upsert('pvp_assists', rows, 'dedup_key')
+    .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
+  const stored = Array.isArray(written) ? written.length : 0;
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, stored, dropped }));
+}
+
 // ── Druzzil Ro boss-kill auto-timer ───────────────────────────────────────
 // Receives instance kill announcements from the agent.  For each:
 //   1. Match boss name against bosses.json (by name or nickname)
@@ -5652,6 +5739,13 @@ http.createServer(async (req, res) => {
   }
 
   // PVP broadcast relay — posts PvP kills/deaths to PVP_CHANNEL_ID
+  if (req.method === 'POST' && req.url === '/api/agent/pvp_assists') {
+    try { return await _handleAgentPvpAssists(req, res); }
+    catch (err) {
+      console.error('[pvp-assists] handler error:', err);
+      res.writeHead(500); return res.end();
+    }
+  }
   if (req.method === 'POST' && req.url === '/api/agent/pvp') {
     try { return await _handleAgentPvp(req, res); }
     catch (err) {
