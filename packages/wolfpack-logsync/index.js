@@ -268,6 +268,16 @@ const PRIORITY_KEEP_PATTERNS = [
   // pet → owner mapping for charm pets. parseEvent below resolves owner
   // to the uploading character (this.character) when it sees this form.
   /\btells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i,
+  // Charm-LAND via ANY pet command ack on an indefinite-article (charmed) mob:
+  //   "A Fungoid Sporeling says 'Following you, Master.'"
+  //   "A Fungoid Sporeling says 'Guarding here Master.'"
+  //   "A Fungoid Sporeling tells you, 'Attacking a bat Master.'"
+  // Quarm has no "regards X as an ally" charm-land line, so a pet command is
+  // what tells us a mob is now charmed. These acks otherwise die to the
+  // /says,/ + /tells you,/ drop filters. The leading "a "/"an " keeps player
+  // chat out — no character name starts with an indefinite article — so this
+  // can't leak a player's tell/say even though it overrides those drops.
+  /^\[.+?\]\s+an?\s+.+?\s+(?:tells you|says)\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i,
   // Charm-LAND attribution (bystander-visible). "<Mob> regards <Charmer>
   // as an ally." Required so the line survives any future broad drop
   // filter — used to attribute charmed mobs to their enchanter for
@@ -778,11 +788,32 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
   }
 
-  // Charm-pet attribution. Form:
+  // Charm-LAND via pet command acknowledgement (the reliable Quarm signal).
+  // A charmed mob keeps its spawn name ("A Fungoid Sporeling") and, when given
+  // ANY command, acknowledges to its owner with a line ending in "Master":
+  //   "A Fungoid Sporeling tells you, 'Attacking a bat Master.'"
+  //   "A Fungoid Sporeling says 'Following you, Master.'"
+  //   "A Fungoid Sporeling says 'Guarding here Master.'"
+  // These acks are shown ONLY to the pet's owner, so the owner is implicitly
+  // the agent's character (__SELF__). The leading indefinite article ("a "/
+  // "an ") marks it as a CHARMED creature rather than a proper-named summoned
+  // pet — and rules out a player-chat false positive, since no character name
+  // starts with "a ". Quarm does NOT emit the classic "regards X as an ally"
+  // charm-land line, so a pet command is what actually opens the enchanter/bard
+  // charm overlay (source:'charm_land' starts the tracked session). MUST come
+  // before the proper-named summoned-pet matcher below so a charmed mob's
+  // "Attacking … Master" opens a session instead of being treated as a summon.
+  m = line.match(/\]\s+(an?\s+.+?)\s+(?:tells you|says)\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i);
+  if (m) {
+    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__', source: 'charm_land' };
+  }
+
+  // Summoned-pet attribution. Form:
   //   "A Soriz Skeleton tells you, 'Attacking A Shissar Taskmaster Master.'"
-  // This line is ONLY visible to the player who charmed the pet, so the
+  // This line is ONLY visible to the player who controls the pet, so the
   // owner is implicitly the agent's character. Emit a sentinel owner of
-  // "__SELF__" — EncounterBuilder.add() resolves it to this.character.
+  // "__SELF__" — EncounterBuilder.add() resolves it to this.character. No
+  // charm session: proper-named pets are summons, not charm cycles.
   m = line.match(/\]\s+(.+?)\s+tells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i);
   if (m) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__' };
@@ -3323,8 +3354,8 @@ function _serializeForDashboard() {
     personalTriggerCount: (_personalTriggers || []).length,
     activeOverlays:      _activeOverlays,
     activeTimers:        _activeTimersSnapshot(),
-    zeal:                _zeal,
-    zealState:           _zealState,
+    ..._serializeZealForWeb(),
+
     lifetime:           stats.lifetime,
     // Only surface the resume banner for the first 2 minutes after restore —
     // after that the user knows, and a stale banner is just noise.
@@ -3909,9 +3940,15 @@ function renderDash(s) {
     for (const t of _rtVisible) {
       const outgoing = t.direction === 'outgoing';
       const arrow = outgoing ? '→' : '←';
+      // The tell counterparty is usually NOT one of our roster characters
+      // (it's whoever messaged us), so it must NOT use class="name" — the
+      // delegated wolfpack.quest handler would open /character/<name> and 404.
+      // Link it to the message-history page instead. Our own character keeps
+      // its dim, non-linked styling.
+      const otherLink = '<a href="https://wolfpack.quest/me/tells" target="_blank" rel="noreferrer" class="tell-other" style="color:var(--blue);text-decoration:none">' + esc(t.other) + '</a>';
       const who = outgoing
-        ? '<span class="dim">' + esc(t.character) + '</span> ' + arrow + ' <span class="name">' + esc(t.other) + '</span>'
-        : '<span class="name">' + esc(t.other) + '</span> ' + arrow + ' <span class="dim">' + esc(t.character) + '</span>';
+        ? '<span class="dim">' + esc(t.character) + '</span> ' + arrow + ' ' + otherLink
+        : otherLink + ' ' + arrow + ' <span class="dim">' + esc(t.character) + '</span>';
       const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
       h += '<tr><td style="white-space:nowrap">' + who + '</td>' +
            '<td>' + esc(t.text) + '</td>' +
@@ -4307,6 +4344,114 @@ function renderPets(s) {
 // (#trigEditorPanel) and is rendered ONCE — refresh() rewrites the read-only
 // "list" + "guild" blocks each poll without touching the editor, so the user
 // can be mid-typing a pattern and not lose state.
+// Zeal pipe status card — rendered into its own #wpZealCard element (a stable
+// placeholder inside the Triggers section) so its live, ever-incrementing event
+// counters + HP gauges don't force the whole Triggers section to rewrite every
+// poll. Same self-isolating pattern as the other wp* injected cards. Hidden
+// (display:none) until at least one Zeal event/client appears.
+function renderZealCard(s) {
+  const el = document.getElementById('wpZealCard');
+  if (!el) return;   // Triggers section not painted yet — nothing to fill
+  const z = s.zeal || {};
+  const zTotal = z.total || 0;
+  const zPids  = Array.isArray(z.connectedPids) ? z.connectedPids : [];
+  if (!(zTotal > 0 || zPids.length > 0)) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  let h = '';
+  const ageSec = z.lastEventAt ? Math.round((Date.now() - z.lastEventAt) / 1000) : null;
+  const live = ageSec !== null && ageSec < 10;
+  h += '<h2>⚡ Zeal pipe '
+     + '<span style="font-size:11px;font-weight:normal;color:' + (live ? 'var(--green)' : 'var(--dim)') + '">'
+     + (zPids.length ? '● ' + zPids.length + ' client' + (zPids.length === 1 ? '' : 's') + ' connected' : '○ no clients')
+     + (ageSec !== null ? ' · last event ' + (ageSec < 1 ? 'now' : ageSec + 's ago') : '')
+     + '</span></h2>';
+  // Live state line per client — the values gauge-condition triggers watch.
+  const zState = s.zealState || {};
+  const zChars = Object.keys(zState);
+  if (zChars.length > 0) {
+    h += '<div style="font-size:11px;margin-bottom:6px">';
+    for (const ch of zChars) {
+      const st = zState[ch] || {};
+      const parts = [];
+      if (st.self_hp_pct != null)      parts.push('self ' + Math.round(st.self_hp_pct) + '%');
+      if (st.target_name)              parts.push('target ' + esc(st.target_name) + ' ' + Math.round(st.target_hp_pct) + '%');
+      if (st.group_min_hp_pct != null) parts.push('low grp ' + esc(st.group_min_name || '?') + ' ' + Math.round(st.group_min_hp_pct) + '%');
+      if (st.zone != null)             parts.push('zone ' + st.zone);
+      parts.push('autoattack ' + (st.autoattack ? 'ON' : 'off'));
+      h += '<div><span class="name">' + esc(ch) + '</span> <span class="dim">' + parts.join(' · ') + '</span></div>';
+      // Buff window line — name + remaining ticks (6s each) per buff. This
+      // is the caster's own buffs (Feral Avatar, haste, KEI, SoW…), the
+      // source for buff-expiry triggers + the Feral-Avatar-uptime metric.
+      if (Array.isArray(st.buffs) && st.buffs.length) {
+        const bstr = st.buffs.slice(0, 14).map(function(b){
+          return esc(b.name) + (b.ticks != null ? ' (' + b.ticks + 't)' : '');
+        }).join(' · ');
+        h += '<div style="margin-left:10px;color:#a371f7">🧪 ' + bstr + '</div>';
+      }
+      if (st.casting) h += '<div style="margin-left:10px;color:#58a6ff">✦ casting ' + esc(st.casting) + '</div>';
+    }
+    h += '</div>';
+  }
+  if (zTotal === 0) {
+    h += '<div class="dim" style="font-size:12px">Connected but no events yet. In-game, try <code>/pipedelay 250</code> to make Zeal stream labels + gauges.</div>';
+  } else {
+    h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + zTotal + ' events this session</div>';
+    h += '<table style="font-size:11px"><tr><th>Type</th><th>Count</th><th>Latest sample</th></tr>';
+    const TYPE_NAMES = { '0': 'log', '1': 'label', '2': 'gauge', '3': 'player', '4': 'custom', '5': 'raid', '6': 'group' };
+    const byType = z.byType || {};
+    const samples = z.lastSamples || {};
+    const keys = Object.keys(byType).sort(function(a, b){ return byType[b] - byType[a]; });
+    // Decode a Zeal sample into a readable one-liner. The pipe wraps the
+    // real payload in obj.data as a JSON STRING (double-encoded), so we
+    // parse that first, then summarize per type instead of dumping escaped
+    // soup. Falls back to truncated JSON if anything doesn't parse.
+    const _decodeZeal = (sm) => {
+      if (!sm || sm.obj === undefined) return '';
+      const o = sm.obj;
+      let inner = o && o.data;
+      if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch (e) { void e; } }
+      try {
+        const type = String(o && o.type);
+        const who = o && o.character ? o.character + ' · ' : '';
+        if (type === '0' && inner) {                  // log
+          return who + 'msgType ' + inner.type + ': "' + String(inner.text || '').slice(0, 60) + '"';
+        }
+        if (type === '3' && inner) {                  // player
+          return who + 'zone ' + inner.zone + ' · autoattack ' + (inner.autoattack ? 'ON' : 'off');
+        }
+        if (type === '2' && Array.isArray(inner)) {   // gauge — HP per-mille
+          const self = inner.find(g => g.type === 1);
+          const tgt  = inner.find(g => g.type === 6 && g.text);
+          const parts = [];
+          if (self) parts.push('self ' + (self.value / 10).toFixed(0) + '%');
+          if (tgt)  parts.push('target ' + tgt.text + ' ' + (tgt.value / 10).toFixed(0) + '%');
+          return who + (parts.join(' · ') || 'gauges');
+        }
+        if (type === '1' && Array.isArray(inner)) {   // label
+          const g = (n) => { const e = inner.find(x => x.type === n); return e ? e.value : ''; };
+          return who + g(3) + ' L' + g(2) + ' <' + g(4) + '>';
+        }
+        if (type === '6' && Array.isArray(inner)) {   // group
+          return who + inner.length + ' member(s): ' + inner.map(m => m.name).filter(Boolean).slice(0, 6).join(', ');
+        }
+      } catch (e) { void e; }
+      try { return JSON.stringify(inner !== undefined ? inner : o).slice(0, 100); } catch (e) { void e; return ''; }
+    };
+    for (const k of keys) {
+      const label = TYPE_NAMES[k] ? (k + ' (' + TYPE_NAMES[k] + ')') : k;
+      const sampleStr = _decodeZeal(samples[k]);
+      h += '<tr><td class="dim">' + esc(label) + '</td>'
+         + '<td class="num">' + byType[k] + '</td>'
+         + '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(sampleStr) + '</code></td></tr>';
+    }
+    h += '</table>';
+  }
+  morphInto(el, h);
+}
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
@@ -4316,100 +4461,16 @@ function renderTriggers(s) {
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
   // bridge); hidden entirely until at least one event arrives so it's not
   // dead space for non-Zeal users.
-  const z = s.zeal || {};
-  const zTotal = z.total || 0;
-  const zPids  = Array.isArray(z.connectedPids) ? z.connectedPids : [];
-  if (zTotal > 0 || zPids.length > 0) {
-    const ageSec = z.lastEventAt ? Math.round((Date.now() - z.lastEventAt) / 1000) : null;
-    const live = ageSec !== null && ageSec < 10;
-    h += '<div class="card wide"><h2>⚡ Zeal pipe '
-       + '<span style="font-size:11px;font-weight:normal;color:' + (live ? 'var(--green)' : 'var(--dim)') + '">'
-       + (zPids.length ? '● ' + zPids.length + ' client' + (zPids.length === 1 ? '' : 's') + ' connected' : '○ no clients')
-       + (ageSec !== null ? ' · last event ' + (ageSec < 1 ? 'now' : ageSec + 's ago') : '')
-       + '</span></h2>';
-    // Live state line per client — the values gauge-condition triggers watch.
-    const zState = s.zealState || {};
-    const zChars = Object.keys(zState);
-    if (zChars.length > 0) {
-      h += '<div style="font-size:11px;margin-bottom:6px">';
-      for (const ch of zChars) {
-        const st = zState[ch] || {};
-        const parts = [];
-        if (st.self_hp_pct != null)      parts.push('self ' + Math.round(st.self_hp_pct) + '%');
-        if (st.target_name)              parts.push('target ' + esc(st.target_name) + ' ' + Math.round(st.target_hp_pct) + '%');
-        if (st.group_min_hp_pct != null) parts.push('low grp ' + esc(st.group_min_name || '?') + ' ' + Math.round(st.group_min_hp_pct) + '%');
-        if (st.zone != null)             parts.push('zone ' + st.zone);
-        parts.push('autoattack ' + (st.autoattack ? 'ON' : 'off'));
-        h += '<div><span class="name">' + esc(ch) + '</span> <span class="dim">' + parts.join(' · ') + '</span></div>';
-        // Buff window line — name + remaining ticks (6s each) per buff. This
-        // is the caster's own buffs (Feral Avatar, haste, KEI, SoW…), the
-        // source for buff-expiry triggers + the Feral-Avatar-uptime metric.
-        if (Array.isArray(st.buffs) && st.buffs.length) {
-          const bstr = st.buffs.slice(0, 14).map(function(b){
-            return esc(b.name) + (b.ticks != null ? ' (' + b.ticks + 't)' : '');
-          }).join(' · ');
-          h += '<div style="margin-left:10px;color:#a371f7">🧪 ' + bstr + '</div>';
-        }
-        if (st.casting) h += '<div style="margin-left:10px;color:#58a6ff">✦ casting ' + esc(st.casting) + '</div>';
-      }
-      h += '</div>';
-    }
-    if (zTotal === 0) {
-      h += '<div class="dim" style="font-size:12px">Connected but no events yet. In-game, try <code>/pipedelay 250</code> to make Zeal stream labels + gauges.</div>';
-    } else {
-      h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + zTotal + ' events this session</div>';
-      h += '<table style="font-size:11px"><tr><th>Type</th><th>Count</th><th>Latest sample</th></tr>';
-      const TYPE_NAMES = { '0': 'log', '1': 'label', '2': 'gauge', '3': 'player', '4': 'custom', '5': 'raid', '6': 'group' };
-      const byType = z.byType || {};
-      const samples = z.lastSamples || {};
-      const keys = Object.keys(byType).sort(function(a, b){ return byType[b] - byType[a]; });
-      // Decode a Zeal sample into a readable one-liner. The pipe wraps the
-      // real payload in obj.data as a JSON STRING (double-encoded), so we
-      // parse that first, then summarize per type instead of dumping escaped
-      // soup. Falls back to truncated JSON if anything doesn't parse.
-      const _decodeZeal = (sm) => {
-        if (!sm || sm.obj === undefined) return '';
-        const o = sm.obj;
-        let inner = o && o.data;
-        if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch (e) { void e; } }
-        try {
-          const type = String(o && o.type);
-          const who = o && o.character ? o.character + ' · ' : '';
-          if (type === '0' && inner) {                  // log
-            return who + 'msgType ' + inner.type + ': "' + String(inner.text || '').slice(0, 60) + '"';
-          }
-          if (type === '3' && inner) {                  // player
-            return who + 'zone ' + inner.zone + ' · autoattack ' + (inner.autoattack ? 'ON' : 'off');
-          }
-          if (type === '2' && Array.isArray(inner)) {   // gauge — HP per-mille
-            const self = inner.find(g => g.type === 1);
-            const tgt  = inner.find(g => g.type === 6 && g.text);
-            const parts = [];
-            if (self) parts.push('self ' + (self.value / 10).toFixed(0) + '%');
-            if (tgt)  parts.push('target ' + tgt.text + ' ' + (tgt.value / 10).toFixed(0) + '%');
-            return who + (parts.join(' · ') || 'gauges');
-          }
-          if (type === '1' && Array.isArray(inner)) {   // label
-            const g = (n) => { const e = inner.find(x => x.type === n); return e ? e.value : ''; };
-            return who + g(3) + ' L' + g(2) + ' <' + g(4) + '>';
-          }
-          if (type === '6' && Array.isArray(inner)) {   // group
-            return who + inner.length + ' member(s): ' + inner.map(m => m.name).filter(Boolean).slice(0, 6).join(', ');
-          }
-        } catch (e) { void e; }
-        try { return JSON.stringify(inner !== undefined ? inner : o).slice(0, 100); } catch (e) { void e; return ''; }
-      };
-      for (const k of keys) {
-        const label = TYPE_NAMES[k] ? (k + ' (' + TYPE_NAMES[k] + ')') : k;
-        const sampleStr = _decodeZeal(samples[k]);
-        h += '<tr><td class="dim">' + esc(label) + '</td>'
-           + '<td class="num">' + byType[k] + '</td>'
-           + '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(sampleStr) + '</code></td></tr>';
-      }
-      h += '</table>';
-    }
-    h += '</div>';
-  }
+  // Zeal pipe status card lives in its OWN #wpZealCard element, filled by
+  // renderZealCard() on each poll. Its event counters + live HP gauges change
+  // every poll, so keeping it inline would make this whole section's HTML
+  // differ every 2s — forcing a full innerHTML rewrite of the (large) guild-
+  // triggers table + a remount of the trigger editor every 2 seconds. That
+  // synchronous churn reset the editor form, flashed the page, and janked the
+  // window hard enough to trip Windows' Aero Shake while dragging. Isolating
+  // the volatile card means the HTML below stays byte-stable when triggers
+  // don't change, so setSectionHTML short-circuits and only the card repaints.
+  h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
 
   // Active overlays (recent matches) — top of the page so the user can see
   // their triggers actually firing as they tune them. The "Clear" buttons
@@ -4971,8 +5032,8 @@ async function refresh() {
     // log) and the other sections still render.
     var _sections = [['header', renderHeader], ['dash', renderDash], ['tanks', renderTanks],
                      ['healers', renderHealers], ['deeps', renderDeeps], ['pets', renderPets],
-                     ['triggers', renderTriggers], ['overlays', renderOverlays],
-                     ['info', renderInfo]];
+                     ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['overlays', renderOverlays], ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
       try { _sfn(s); }
@@ -6843,6 +6904,24 @@ function startWebDashboard(port) {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
+      }
+      // Per-machine "pause Discord tells" toggle, driven by the Mimic tray.
+      // Body: { until: <ms epoch> }  (0 / past = resume now). We stamp this
+      // onto subsequent tell uploads (dm_pause_until) so the bot skips the
+      // Discord DM but still stores the tell. Pause lives only as long as the
+      // agent process — a restart resumes DMs, and Mimic re-pushes on relaunch.
+      if (req.url === '/api/tells-dm-pause' && req.method === 'POST') {
+        const body = await _readBody(req, 4 * 1024);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        const until = Number(payload?.until) || 0;
+        _tellsDmPauseUntil = (until > Date.now()) ? until : 0;
+        console.log(_tellsDmPauseUntil
+          ? `[tells] Discord DMs paused until ${new Date(_tellsDmPauseUntil).toISOString()}`
+          : '[tells] Discord DMs resumed');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, until: _tellsDmPauseUntil }));
       }
       if (req.url === '/api/loadouts/hide' && req.method === 'POST') {
         const body = await _readBody(req);
@@ -10201,6 +10280,10 @@ const _zeal = {
   lastEventAt:   0,
   updatedAt:     0,
 };
+// Per-machine "pause Discord tells" deadline (ms epoch), set from the Mimic
+// tray via POST /api/tells-dm-pause. Stamped onto tell uploads so the bot
+// skips the Discord DM (but still stores the tell) while in the future.
+let _tellsDmPauseUntil = 0;
 // Live Zeal state per running client (keyed by the pipe's `character`). Fed by
 // Mimic via POST /api/zeal-state at a throttled cadence — a small snapshot, not
 // the 225/sec raw event stream. Drives gauge-condition triggers (target HP %,
@@ -10208,6 +10291,42 @@ const _zeal = {
 //   { self_hp_pct, target_name, target_hp_pct, zone, autoattack,
 //     group_min_hp_pct, group_min_name, updatedAt }
 const _zealState = {};
+// How long a character's live Zeal state may go without an update before we
+// treat it as gone. A connected client streams gauge events continuously (HP
+// bars tick out the pipe regardless of combat), so an active character refreshes
+// sub-second; a relog (same eqgame PID, new `character`) or a disconnect simply
+// stops updating and ages out. Generous enough to never flap on a live client.
+const ZEAL_STALE_MS = 45_000;
+// Serialize the Zeal status + live state for the dashboard, pruning anything
+// attributable to a character who is no longer active. This is what fixes the
+// "group is still on the previous character" report: a relog keeps the same
+// pid, so the old character's frozen state + its leftover "latest sample" rows
+// (especially the slow-firing group/member-list event) would otherwise linger
+// forever. We keep only fresh per-character state, and drop sample rows whose
+// owning character isn't currently active.
+function _serializeZealForWeb() {
+  const now = Date.now();
+  const freshState = {};
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (st && (now - (st.updatedAt || 0)) <= ZEAL_STALE_MS) freshState[ch] = st;
+  }
+  const activeChars = new Set(Object.keys(freshState).map(c => String(c).toLowerCase()));
+  const samples = {};
+  for (const type of Object.keys(_zeal.lastSamples || {})) {
+    const sm = _zeal.lastSamples[type];
+    if (!sm) continue;
+    const ch = sm.obj && sm.obj.character;
+    // A sample tagged with a character who's no longer active is a leftover from
+    // a previous login — hide it so the card reflects who's actually playing.
+    if (ch && !activeChars.has(String(ch).toLowerCase())) continue;
+    samples[type] = sm;
+  }
+  return {
+    zeal:      { ..._zeal, lastSamples: samples },
+    zealState: freshState,
+  };
+}
 // Edge-detection memory for zeal-condition triggers: key = triggerId|character
 // → last boolean result. We fire only on a false→true transition so a
 // condition that stays true (target sitting at 18% for 5s) doesn't re-fire
@@ -10516,7 +10635,11 @@ function uploadTells({ character, tells }, { dryRun } = {}) {
     for (const t of tells) console.log(`[tell:${t.direction}] ${character} ${t.direction === 'outgoing' ? '→' : '←'} ${t.other}: ${t.text}`);
     return Promise.resolve();
   }
-  enqueueUpload('tells', { agent_version: AGENT_VERSION, character, tells });
+  // dm_pause_until: a per-machine "pause Discord tells" set from the Mimic
+  // tray. The bot still STORES the tells (so /me/tells + the local card stay
+  // current) but skips the Discord DM while the pause is in the future.
+  const dmPauseUntil = (_tellsDmPauseUntil && _tellsDmPauseUntil > Date.now()) ? _tellsDmPauseUntil : undefined;
+  enqueueUpload('tells', { agent_version: AGENT_VERSION, character, tells, dm_pause_until: dmPauseUntil });
   return Promise.resolve();
 }
 

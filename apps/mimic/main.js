@@ -618,6 +618,40 @@ function _flushZealStateToAgent() {
     req.write(body); req.end();
   }
 }
+// Push the "pause Discord tells" deadline to the local agent. The agent stamps
+// it onto subsequent tell uploads (dm_pause_until) so the bot stores the tell
+// but skips the Discord DM. The deadline lives only in the agent process, so we
+// re-push after every (re)launch — see launchAgent(). `until` is a ms epoch; 0
+// (or past) resumes immediately.
+function pushTellsDmPause(until) {
+  if (!agentPort) return;
+  const u = (Number(until) || 0) > Date.now() ? Number(until) : 0;
+  const body = JSON.stringify({ until: u });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/tells-dm-pause', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+// Persist + apply a "pause Discord tells" deadline. `until` is a ms epoch; 0
+// (or past) resumes now. Saves to cfg so it survives a Mimic restart, pushes to
+// the live agent, and refreshes the tray so the label/enabled state update.
+function _setTellsDmPause(until) {
+  const u = (Number(until) || 0) > Date.now() ? Number(until) : 0;
+  const cfg = loadConfig();
+  cfg.tellsDmPausedUntil = u;
+  saveConfig(cfg);
+  pushTellsDmPause(u);
+  pushStatus();
+}
+// Short "resumes at" clock for the tray label, e.g. "3:45 PM".
+function _fmtPauseClock(ms) {
+  try {
+    return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch { return 'soon'; }
+}
 function startZealCapture() {
   try {
     const cfg = loadConfig();
@@ -786,6 +820,12 @@ async function launchAgent() {
         navigateToDashboard('agent-restart');
       }
     }
+  } catch (e) { /* non-fatal */ }
+  // Re-assert the per-machine "pause Discord tells" deadline — the agent keeps
+  // it in-process only, so a (re)launch would otherwise resume DMs silently.
+  try {
+    const paused = Number(loadConfig().tellsDmPausedUntil) || 0;
+    if (paused > Date.now()) pushTellsDmPause(paused);
   } catch (e) { /* non-fatal */ }
   pushStatus();
   return up;
@@ -1194,6 +1234,7 @@ function currentStatus() {
     localOnly,
     quietMode: !!cfg.quietMode,
     tellsMode: cfg.tellsMode || 'off',
+    tellsDmPausedUntil: (Number(cfg.tellsDmPausedUntil) || 0) > Date.now() ? Number(cfg.tellsDmPausedUntil) : 0,
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
     showCharm: !!cfg.showCharm,
@@ -1291,6 +1332,26 @@ function buildTrayMenu() {
     { label: 'Synced (encrypted) — read on wolfpack.quest/me/tells',
       type: 'radio', checked: s.tellsMode === 'synced',
       click: () => { const c = loadConfig(); c.tellsMode = 'synced'; saveConfig(c); pushStatus(); } },
+    { type: 'separator' },
+    // Pause Discord DMs — temporary, per-machine. Tells still write to the
+    // table (so /me/tells stays current); only the Discord DM ping is muted
+    // until the deadline. setPause(0) resumes now. Only meaningful in synced
+    // mode (that's the mode that DMs), so we disable it otherwise.
+    { label: s.tellsDmPausedUntil
+        ? `Discord DMs paused — resumes ${_fmtPauseClock(s.tellsDmPausedUntil)}`
+        : 'Discord DMs: active',
+      enabled: false },
+    { label: 'Pause Discord DMs',
+      enabled: s.tellsMode === 'synced',
+      submenu: [
+        { label: 'For 15 minutes', click: () => _setTellsDmPause(Date.now() + 15 * 60 * 1000) },
+        { label: 'For 1 hour',     click: () => _setTellsDmPause(Date.now() + 60 * 60 * 1000) },
+        { label: 'For 4 hours',    click: () => _setTellsDmPause(Date.now() + 4 * 60 * 60 * 1000) },
+        { label: 'Until tomorrow', click: () => _setTellsDmPause(Date.now() + 24 * 60 * 60 * 1000) },
+      ] },
+    { label: 'Resume Discord DMs now',
+      enabled: !!s.tellsDmPausedUntil,
+      click: () => _setTellsDmPause(0) },
   ];
 
   const connectItem = s.localOnly

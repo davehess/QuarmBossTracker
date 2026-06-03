@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '2.7.13': [
+    '**Pause tell DMs from Mimic** — the tray now has a "Pause Discord DMs" submenu (15m · 1h · 4h · until tomorrow · resume) right where you play. Tells still write to `/me/tells` and the local dashboard while paused; only the Discord ping is muted. Per-machine, so it doesn\'t touch your `/me/tells` snooze.',
+  ],
   '2.7.9': [
     '**Tells DM is compact now** — dropped the "you got a tell while you were away" preamble and the per-message mute footer; format matches the local dashboard ("**Other** ← You: text" / "You → **Other**: text"). Outbound tells in the same batch render alongside incoming so the conversation reads end-to-end.',
     '**Snooze Discord DMs** — `/me/tells` has a new pause row (15m · 1h · 4h · 8h · 24h) that mutes the DM relay without losing data; tells still write to the page and the local dashboard while paused. Stored per-user on `wolfpack_members.tells_dm_paused_until` so a 50-character raider flips one switch.',

@@ -4516,6 +4516,11 @@ async function _handleAgentTells(req, res) {
   }
   const character = String(payload?.character || '').trim();
   const tells     = Array.isArray(payload?.tells) ? payload.tells : [];
+  // Per-machine DM pause set from the Mimic tray. When in the future, we still
+  // STORE the tells (so /me/tells + the local card stay current) but skip the
+  // Discord DM relay — same effect as the per-user snooze, but driven from the
+  // desktop client and scoped to this agent process.
+  const dmPauseUntil = Number(payload?.dm_pause_until) || 0;
   if (!character || tells.length === 0) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
@@ -4617,17 +4622,23 @@ async function _handleAgentTells(req, res) {
   const incomingCount = rows.reduce((n, r) => n + (r.direction === 'incoming' ? 1 : 0), 0);
   let snoozedUntil = null;
   if (incomingCount > 0 && charRow.tell_dm !== false) {
-    try {
-      const memberRows = await supabase.select(
-        'wolfpack_members',
-        `discord_id=eq.${encodeURIComponent(ownerDiscordId)}&select=tells_dm_paused_until&limit=1`,
-      ).catch(() => []);
-      const memberRow = Array.isArray(memberRows) ? memberRows[0] : null;
-      if (memberRow?.tells_dm_paused_until) {
-        const until = new Date(memberRow.tells_dm_paused_until);
-        if (!isNaN(until.getTime()) && until.getTime() > Date.now()) snoozedUntil = until;
-      }
-    } catch { /* non-fatal — fall through to DM */ }
+    // The per-machine tray pause is checked first — no DB round-trip, and it's
+    // the user actively saying "not now" on the box they're playing on.
+    if (dmPauseUntil > Date.now()) {
+      snoozedUntil = new Date(dmPauseUntil);
+    } else {
+      try {
+        const memberRows = await supabase.select(
+          'wolfpack_members',
+          `discord_id=eq.${encodeURIComponent(ownerDiscordId)}&select=tells_dm_paused_until&limit=1`,
+        ).catch(() => []);
+        const memberRow = Array.isArray(memberRows) ? memberRows[0] : null;
+        if (memberRow?.tells_dm_paused_until) {
+          const until = new Date(memberRow.tells_dm_paused_until);
+          if (!isNaN(until.getTime()) && until.getTime() > Date.now()) snoozedUntil = until;
+        }
+      } catch { /* non-fatal — fall through to DM */ }
+    }
     if (!snoozedUntil) {
       _relayTellsToDM(ownerDiscordId, charRow.name, rows).catch(err =>
         console.warn('[tells] DM relay failed:', err?.message));
