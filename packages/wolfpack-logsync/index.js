@@ -4294,15 +4294,21 @@ function renderTriggers(s) {
   if (gt.length === 0) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
+    h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + gt.length + ' trigger' + (gt.length === 1 ? '' : 's') + ' loaded</div>';
     h += '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th></tr>';
-    for (const t of gt.slice(0, 50)) {
-      h += '<tr><td class="name">' + esc(t.name || '?') + '</td>' +
+    // Render all of them — guild trigger sets are small enough (~100 rows max)
+    // that pagination is overkill. NOTE: deliberately NOT using class="name"
+    // on the trigger-name cells; the wolfpack.quest character-link click
+    // delegation walks .name elements, slices text to the first space, and
+    // opens /character/<first-token>. A trigger named "Aten Ha Ra Charm"
+    // would clip to "Aten" → 404. Same trap as the DPS HUD label cell.
+    for (const t of gt) {
+      h += '<tr><td style="color:var(--orange)">' + esc(t.name || '?') + '</td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td></tr>';
     }
     h += '</table>';
-    if (gt.length > 50) h += '<div class="dim" style="font-size:11px;margin-top:6px">+ ' + (gt.length - 50) + ' more</div>';
   }
   h += '</div>';
 
@@ -6014,6 +6020,7 @@ async function dismissTopDamage(key) {
       + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
       + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
+      + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Paste a GINA or EQLogParser trigger XML to bulk-import">⬇ Import GINA / EQLP</button>'
       + '    <span id="trigAddMsg" class="dim" style="font-size:11px"></span>'
       + '  </div>'
       + '  <div id="trigTestPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
@@ -6021,6 +6028,12 @@ async function dismissTopDamage(key) {
       + '    <input id="trigTestLine" type="text" placeholder="[Mon Apr 14 23:01:02 2025] Aten Ha Ra begins to cast Mass Cancel Magic." style="width:100%;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px">'
       + '    <button id="trigTestRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Run test</button>'
       + '    <div id="trigTestResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
+      + '  </div>'
+      + '  <div id="trigImportPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
++ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Paste GINA (.gtp) or EQLogParser exported XML — both use the same SharedTriggers shape. Each &lt;Trigger&gt; element becomes a personal trigger. Duplicates by name are skipped; existing triggers are preserved.</div>'
+      + '    <textarea id="trigImportXml" placeholder="&lt;SharedTriggers&gt; ... &lt;/SharedTriggers&gt;" style="width:100%;height:140px;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
+      + '    <button id="trigImportRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import</button>'
+      + '    <div id="trigImportResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
       + '</div>';
   }
@@ -6175,6 +6188,41 @@ async function dismissTopDamage(key) {
     var panel = document.getElementById('trigTestPanel');
     if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
   }
+  function onImportToggle() {
+    var panel = document.getElementById('trigImportPanel');
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  }
+  async function onImportRun() {
+    var xml = (document.getElementById('trigImportXml') || {}).value || '';
+    var out = document.getElementById('trigImportResult');
+    if (!out) return;
+    if (!xml.trim()) { out.textContent = 'Paste an XML body first.'; return; }
+    out.textContent = 'Importing…';
+    try {
+      const r = await fetch('/api/personal-triggers/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ xml: xml }),
+      });
+      const j = await r.json().catch(function(){ return {}; });
+      if (!r.ok || !j.ok) {
+        out.innerHTML = '<span style="color:var(--red)">Import failed: ' + esc(j.error || ('HTTP ' + r.status)) + '</span>';
+        return;
+      }
+      var summary = '<span style="color:var(--green)">Imported ' + j.imported + ' of ' + j.total_in_xml + ' trigger' + (j.total_in_xml === 1 ? '' : 's') + '.</span>';
+      if (j.skipped > 0) summary += ' <span class="dim">' + j.skipped + ' skipped (duplicate name or missing fields).</span>';
+      if (Array.isArray(j.errors) && j.errors.length > 0) {
+        summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';
+      }
+      out.innerHTML = summary;
+      if (j.imported > 0) {
+        var ta = document.getElementById('trigImportXml'); if (ta) ta.value = '';
+        fetchAndRenderList();
+      }
+    } catch (err) {
+      out.innerHTML = '<span style="color:var(--red)">Import error: ' + esc(err && err.message || err) + '</span>';
+    }
+  }
   async function onTestRun() {
     var pattern = (document.getElementById('trigNewPattern') || {}).value || '';
     var line = (document.getElementById('trigTestLine') || {}).value || '';
@@ -6206,6 +6254,10 @@ async function dismissTopDamage(key) {
     var addBtn      = document.getElementById('trigAddBtn');
     var previewBtn  = document.getElementById('trigPreviewBtn');
     var testBtn     = document.getElementById('trigTestBtn');
+    var importBtn   = document.getElementById('trigImportBtn');
+    var importRun   = document.getElementById('trigImportRun');
+    if (importBtn) importBtn.addEventListener('click', onImportToggle);
+    if (importRun) importRun.addEventListener('click', onImportRun);
     var runBtn      = document.getElementById('trigTestRun');
     if (addBtn)     addBtn.addEventListener('click', onAdd);
     if (previewBtn) previewBtn.addEventListener('click', onPreview);
@@ -6672,6 +6724,60 @@ function startWebDashboard(port) {
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, cleared }));
+      }
+
+      // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
+      // XML blob (both export the same SharedTriggers shape) and APPENDS
+      // parsed entries to the personal triggers list. Existing personal
+      // triggers are preserved; duplicates by name are skipped (caller can
+      // delete + re-import to overwrite). Returns { imported, skipped,
+      // errors[] } so the UI can show a summary.
+      if (req.url === '/api/personal-triggers/import' && req.method === 'POST') {
+        const body = await _readBody(req, 2 * 1024 * 1024);   // 2MB cap — trigger packs can be big
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        const xml = String(payload?.xml || '');
+        if (!xml.trim()) {
+          res.writeHead(400); return res.end(JSON.stringify({ error: 'xml body required' }));
+        }
+        const parsed = _parseTriggerXml(xml);
+        const existingNames = new Set(_personalTriggers.map(t => String(t.name || '').toLowerCase()));
+        const compiled = [];
+        const errors = [];
+        let imported = 0, skipped = 0;
+        for (const t of parsed) {
+          if (!t.name || !t.pattern) { skipped++; continue; }
+          if (existingNames.has(t.name.toLowerCase())) { skipped++; continue; }
+          const row = {
+            id:            'p_' + Math.random().toString(36).slice(2, 10),
+            name:          t.name.slice(0, 100),
+            pattern:       t.pattern.slice(0, 1000),
+            pattern_flags: 'i',
+            use_regex:     t.use_regex !== false,
+            enabled:       true,
+            cooldown_seconds: Math.max(0, Math.min(3600, t.cooldown_seconds || 0)),
+            actions:       [{
+              type: 'text_overlay',
+              text: (t.display_text || t.tts_text || t.name).slice(0, 200),
+              color: 'red',
+              duration_ms: 5000,
+            }],
+          };
+          try {
+            compiled.push(_compilePersonalTrigger(row));
+            existingNames.add(row.name.toLowerCase());
+            imported++;
+          } catch (err) {
+            errors.push({ name: row.name, error: err.message });
+          }
+        }
+        if (compiled.length > 0) {
+          _personalTriggers = _personalTriggers.concat(compiled);
+          savePersonalTriggers();
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, imported, skipped, total_in_xml: parsed.length, errors }));
       }
 
       // Live regex tester — paste a sample log line, see which patterns match
@@ -9680,6 +9786,70 @@ function _compilePersonalTrigger(t) {
     ? _escapeForLiteralMatch(t.pattern)
     : _translateDotNetRegex(t.pattern);
   return { ...t, _regex: new RegExp(pat, flags), _scope: 'personal' };
+}
+
+// ── GINA / EQLogParser trigger XML import ─────────────────────────────────
+// Both tools share the SharedTriggers XML shape — GINA's <Trigger> nodes
+// carry the same field names EQLogParser writes when exporting to .gtp
+// (GINA Trigger Package). We extract a flat list of {name, pattern, ...}
+// objects via regex; the agent compiles each via _compilePersonalTrigger
+// and appends to _personalTriggers.
+//
+// Field mapping (GINA → ours):
+//   <Name>             → name
+//   <TriggerText>      → pattern
+//   <EnableRegex>      → use_regex
+//   <DisplayText>      → action.text (preferred)
+//   <TextToVoiceText>  → action.text (fallback when DisplayText empty)
+//
+// HTML-entity decoding is intentionally minimal — only the five XML
+// predefined entities. Triggers rarely contain anything else, and a heavier
+// decoder would pull in unnecessary surface area for a localhost endpoint.
+function _decodeXmlEntities(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&amp;/g,  '&')
+    .replace(/&lt;/g,   '<')
+    .replace(/&gt;/g,   '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, '\'');
+}
+function _parseTriggerXml(xml) {
+  const triggers = [];
+  // Match each <Trigger>...</Trigger> block. GINA top-level is
+  // <SharedTriggers><Triggers><Trigger>...; EQLogParser shares the inner
+  // <Trigger> envelope. NB: there's ALSO a top-level <TriggerNode> shape
+  // EQLP uses for folder trees; we ignore the folders and target the leaf
+  // <Trigger> elements either way.
+  const triggerRx = /<Trigger>([\s\S]*?)<\/Trigger>/gi;
+  let m;
+  while ((m = triggerRx.exec(xml)) !== null) {
+    const body = m[1];
+    const get = (tag) => {
+      const r = new RegExp('<' + tag + '\\b[^>]*>([\\s\\S]*?)</' + tag + '>', 'i');
+      const mm = r.exec(body);
+      return mm ? _decodeXmlEntities(mm[1].trim()) : '';
+    };
+    const name        = get('Name');
+    const pattern     = get('TriggerText');
+    const enableRegex = get('EnableRegex').toLowerCase() === 'true';
+    const displayText = get('DisplayText');
+    const ttsText     = get('TextToVoiceText');
+    // GINA's TimerDuration is in seconds; we don't yet wire timer triggers,
+    // but parse the cooldown if present so we don't lose the field.
+    const cooldownRaw = get('TimerDuration');
+    const cooldown    = parseInt(cooldownRaw, 10) || 0;
+    if (!name || !pattern) continue;
+    triggers.push({
+      name,
+      pattern,
+      use_regex:        enableRegex,
+      display_text:     displayText,
+      tts_text:         ttsText,
+      cooldown_seconds: cooldown,
+    });
+  }
+  return triggers;
 }
 
 // Per-trigger last-fire timestamp for cooldown enforcement
