@@ -1208,6 +1208,10 @@ class EncounterBuilder {
         spell:      Math.round(t.spell),
         heal:       Math.round(t.heal),
         total:      Math.round(t.swing + t.proc + t.spell + t.heal),
+        // RAW (un-weighted) damage + healing for the per-fight DPS/HPS overlay,
+        // distinct from the threat-weighted numbers above.
+        dmg:        Math.round(t.dmg || 0),
+        healRaw:    Math.round(t.healRaw || 0),
         procDetail: t.procDetail || {},
       };
     }
@@ -1729,9 +1733,13 @@ class EncounterBuilder {
           && (attacker === this.character || isPlausibleAttacker(attacker))
           && (!/\s/.test(attacker) || attacker === this.character)) {
         if (!this.threatBy.has(attacker)) {
-          this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, procDetail: {} });
+          this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
         }
         const t = this.threatBy.get(attacker);
+        // RAW damage to current-encounter mobs (un-weighted) — feeds the
+        // per-fight damage overlay. Threat (swing/proc/spell) stays weighted
+        // for the Tanks threat meter; this is the honest damage number.
+        t.dmg = (t.dmg || 0) + event.amount;
         const a = (event.ability || '').toLowerCase();
         // Categorize for DEEPS tracking — same buckets the threat code uses
         let deepsCategory;
@@ -1903,9 +1911,11 @@ class EncounterBuilder {
       // Live threat: heals generate hate roughly 0.5 per heal point in Luclin-era
       if (healer && event.amount > 0 && (!/\s/.test(healer) || healer === this.character)) {
         if (!this.threatBy.has(healer)) {
-          this.threatBy.set(healer, { swing: 0, proc: 0, spell: 0, heal: 0 });
+          this.threatBy.set(healer, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
         }
-        this.threatBy.get(healer).heal += event.amount * 0.5;
+        const ht = this.threatBy.get(healer);
+        ht.heal += event.amount * 0.5;             // threat-weighted (Tanks meter)
+        ht.healRaw = (ht.healRaw || 0) + event.amount;   // raw healing (per-fight overlay)
       }
       // ── Boss self-heal (Lady Vox, Naggy, Vyrkma etc. Complete Heal themselves) ──
       // If the same name appears on both sides of a heal AND it's a name we've
@@ -3825,6 +3835,29 @@ function renderDash(s) {
     h += '</table>';
   }
   h += '</div>';
+
+  // ── 💚 Healing — this fight (its own card → its own overlay) ─────────────
+  // Per-player RAW healing for the active encounter, scoped to the mob in the
+  // title. Separate from Damage (DPS HUD) and Threat (Tanks tab) so each can
+  // be sent to an independent overlay window via the 🪟 button. Hidden when
+  // no fight is active or nobody has healed.
+  const _et = s.currentEncounterThreat;
+  if (_et && _et.perPlayer) {
+    const healers = Object.entries(_et.perPlayer)
+      .map(([n, t]) => [n, (t && t.healRaw) || 0])
+      .filter(x => x[1] > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+    if (healers.length) {
+      const staleH = _et.flushedAt ? ' <span class="dim" style="font-size:11px;font-weight:normal">(ended)</span>' : '';
+      h += '<div class="card"><h2>💚 Healing — ' + esc(_et.bossName || 'this fight') + staleH + '</h2><table>';
+      for (const [n, hp] of healers) {
+        h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--green)">' + fmtK(hp) + '</td></tr>';
+      }
+      h += '</table></div>';
+    }
+  }
+
   // Watched logs — collapse to one row per character (most-recent lastSeen
   // wins) so an install that tails many log files for the same char
   // doesn't render as 51 duplicate Hitya rows. The full file count still
