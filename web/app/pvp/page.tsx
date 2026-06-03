@@ -192,9 +192,10 @@ export default async function PvpPage() {
                     <Link href={`/pvp/${encodeURIComponent(r.killer)}`} className="text-text hover:text-blue hover:underline">
                       {r.killer}
                     </Link>
-                    {r.petKills > 0 && (
-                      <span className="text-orange ml-1" title={`${r.petKills} kill${r.petKills === 1 ? '' : 's'} by pet`}>*</span>
-                    )}
+                    {/* No per-row pet asterisk on the leaderboard — the
+                        breakdown lives on the per-character page (each kill
+                        row carries its own * with the pet's name in the
+                        tooltip). The aggregate flag here was just noise. */}
                   </td>
                   <td className="py-1 pr-2 text-right text-text">
                     {r.total} <span className="text-dim">({r.unique})</span>
