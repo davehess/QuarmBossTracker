@@ -123,6 +123,12 @@ function defaultConfig() {
     showHud: false,          // DPS HUD overlay user pref
     enableTriggerTts: false, // Trigger TTS overlay user pref
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
+    // Quiet updates (default ON): a downloaded update applies silently on the
+    // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just
+    // nagging — especially when releases come in bursts. When true we skip the
+    // dialog and surface the ready update as a dashboard banner + the tray
+    // "Restart to install" item instead. Toggle in the tray.
+    quietUpdates: true,
     tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
     onboarded: false,        // false until user dismisses or completes loading
     // Overlay positioning. Locked = click-through, lives in place. Unlocked =
@@ -1737,6 +1743,15 @@ function buildTrayMenu() {
   const updateItem = updatePending
     ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
     : { label: 'Check for updates…', click: () => safeCheckForUpdates(true), enabled: !!autoUpdater };
+  // When unchecked (default), a ready update shows only as a dashboard banner +
+  // the tray item above and applies on next quit — no pop-up. Check it to get
+  // the "Restart now?" dialog back.
+  const updatePopupItem = {
+    label: 'Pop up when an update is ready',
+    type: 'checkbox',
+    checked: loadConfig().quietUpdates === false,
+    click: (mi) => { const cfg = loadConfig(); cfg.quietUpdates = !mi.checked; saveConfig(cfg); pushStatus(); },
+  };
 
   const menu = Menu.buildFromTemplate([
     { label: headerLabel, enabled: false },
@@ -1757,6 +1772,7 @@ function buildTrayMenu() {
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     updateItem,
+    updatePopupItem,
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
     // The tray menu opens upward with the cursor resting at the BOTTOM, so a
     // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
@@ -1940,8 +1956,14 @@ function wireAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     updatePending = info || { version: '?' };
     appendAgentLog(`[updater] downloaded v${updatePending.version} — ready to install\n`);
+    // pushStatus() refreshes the tray "Restart to install vX" item AND the
+    // dashboard banner (preload reads status.updatePending). The update also
+    // applies on its own at the next normal quit (autoInstallOnAppQuit), so a
+    // pop-up is optional. Only nag with the modal dialog when the user has
+    // explicitly opted out of quiet updates.
     pushStatus();
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    const quiet = loadConfig().quietUpdates !== false;
+    if (!quiet && mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
         type: 'info',
         buttons: ['Restart now', 'Later'],
@@ -2304,6 +2326,11 @@ ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate(); return true; });
+// Dashboard "update ready" banner button → apply the downloaded update now.
+ipcMain.handle('restart-to-update', () => {
+  try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
+  return true;
+});
 ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   const n = Math.max(1, Math.min(500, lines || 80));
   return logTail.slice(-n).join('');

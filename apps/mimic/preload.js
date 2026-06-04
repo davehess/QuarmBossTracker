@@ -189,10 +189,56 @@ if (location.protocol === 'http:') {
     banner.appendChild(connectBtn);
     document.body.appendChild(banner);
 
+    // "Update ready" banner — replaces the naggy OS pop-up. Shows when a Mimic
+    // update has downloaded (status.updatePending); restarts to apply on click.
+    // The update also applies on its own at the next quit, so this is purely a
+    // convenience nudge, not a demand.
+    const upd = document.createElement('div');
+    upd.id = 'mimic-update-banner';
+    upd.setAttribute('style', [
+      'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99998',
+      'display:none', 'align-items:center', 'justify-content:center', 'gap:10px',
+      'padding:8px 14px', 'background:#0f2a1a', 'color:#56d364',
+      'border-bottom:1px solid #1a7f37', 'font-size:13px', 'font-family:ui-monospace,Consolas,monospace',
+    ].join(';'));
+    const updMsg = document.createElement('span');
+    const updBtn = document.createElement('button');
+    updBtn.textContent = 'Restart to update';
+    updBtn.setAttribute('style', [
+      'background:#1a7f37', 'color:#fff', 'border:none', 'border-radius:5px',
+      'padding:4px 12px', 'cursor:pointer', 'font-size:12px',
+    ].join(';'));
+    updBtn.onclick = () => { try { ipcRenderer.invoke('restart-to-update'); } catch (e) {} };
+    const updDismiss = document.createElement('button');
+    updDismiss.textContent = '✕';
+    updDismiss.title = 'Dismiss (the update still applies next time you close Mimic)';
+    updDismiss.setAttribute('style', [
+      'background:transparent', 'color:#56d364', 'border:none', 'cursor:pointer', 'font-size:13px',
+    ].join(';'));
+    let _updDismissed = false;
+    updDismiss.onclick = () => { _updDismissed = true; upd.style.display = 'none'; place(); };
+    upd.appendChild(updMsg);
+    upd.appendChild(updBtn);
+    upd.appendChild(updDismiss);
+    document.body.appendChild(upd);
+
+    // Stack the two banners (update on top) and slide the gear below whichever
+    // is showing.
+    const place = () => {
+      const updOn  = upd.style.display !== 'none';
+      const connOn = banner.style.display !== 'none';
+      banner.style.top = updOn ? '34px' : '0';
+      gear.style.top = (updOn && connOn) ? '74px' : (updOn || connOn) ? '50px' : '10px';
+    };
     const refreshBanner = (s) => {
-      const localOnly = s && s.localOnly;
-      banner.style.display = localOnly ? 'flex' : 'none';
-      gear.style.top = localOnly ? '50px' : '10px'; // nudge gear below banner
+      banner.style.display = (s && s.localOnly) ? 'flex' : 'none';
+      if (s && s.updatePending && !_updDismissed) {
+        updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Restart to update — or it applies next time you close Mimic.';
+        upd.style.display = 'flex';
+      } else {
+        upd.style.display = 'none';
+      }
+      place();
     };
     // Initial + live updates.
     ipcRenderer.invoke('get-status').then(refreshBanner).catch(() => {});
