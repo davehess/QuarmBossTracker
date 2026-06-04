@@ -39,8 +39,15 @@
 with colleagues will follow this exact order.)
 
 ### Quick wins
-- **A. Pet slot 16 → charm overlay** — Mimic `_zealAbsorb` reads gauge slot 16
-  (pet HP% + name); feed into charm overlay + Buffs & Zone pet line. (agent/mimic)
+- **A. Pet slot 16 → charm overlay — ✅ SHIPPED (agent 3.0.4 · Mimic 1.0.7).**
+  - Mimic `_zealAbsorb`: gauge type 16 (require a name) → `s.pet_name` /
+    `s.pet_hp_pct`. Agent `_serializeZealForWeb`: slot 16 is now the PRIMARY pet
+    signal (charm-tracker name cross-ref kept as fallback) → Buffs & Zone pet
+    line lights up live. New `_livePetHpByOwner()` helper feeds `pet_hp_pct`
+    onto the `/api/state` `charmPets` array; charm overlay (`charm.html`) renders
+    a colored HP% + bar (green/amber/red). Only the local uploader's own pet has
+    gauge data (Zeal streams only the local client), which is the pet that
+    matters. Dashboard escape check passes.
 - **B. Resisted-spells dropdown** — `info` tab "Spells Resisted (incoming)" rows
   should expand to show which mobs cast each spell + counts. Needs the agent to
   track per-caster breakdown for resisted spells (currently only spell→count;

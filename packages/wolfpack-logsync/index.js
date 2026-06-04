@@ -3307,8 +3307,14 @@ function _serializeForDashboard() {
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
     charmPets: (() => {
+      // Live pet HP from Zeal gauge slot 16, keyed by the owner's character.
+      // Only the local uploader's own pet has gauge data (Zeal reports only the
+      // local client's bars), which is exactly the pet the charm overlay cares
+      // about. Bystanders' pets simply have no HP and render as before.
+      const livePet = _livePetHpByOwner();
       const arr = [];
       for (const [key, info] of _charmTickTracker.entries()) {
+        const lp = info.owner ? livePet.get(String(info.owner).toLowerCase()) : null;
         arr.push({
           key,
           pet: info.pet,
@@ -3318,6 +3324,7 @@ function _serializeForDashboard() {
           is_active:     info.is_active,
           started_at:    info.started_at,
           is_dire_charm: info.is_dire_charm,
+          pet_hp_pct:    lp && lp.hp_pct != null ? lp.hp_pct : null,
         });
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
@@ -10687,6 +10694,21 @@ function _zoneName(id) {
   const n = Number(id);
   return ZONE_NAMES[n] || null;
 }
+// Live pet (Zeal gauge slot 16) keyed by lowercase character = the pet's owner.
+// Only the local uploader's own character streams gauges, so this resolves the
+// uploader's pet HP/name — used by both _serializeZealForWeb (Buffs & Zone pet
+// line) and the /api/state charmPets array (charm overlay). Read at call time,
+// so it's safe to invoke from the request handler defined earlier in the file.
+function _livePetHpByOwner() {
+  const out = new Map();
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || !Array.isArray(st.gauges)) continue;
+    const pet = st.gauges.find(g => g && g.slot === 16 && g.text);
+    if (pet) out.set(String(ch).toLowerCase(), { name: pet.text, hp_pct: pet.hp_pct });
+  }
+  return out;
+}
 // Serialize the Zeal status + live state for the dashboard, pruning anything
 // attributable to a character who is no longer active. This is what fixes the
 // "group is still on the previous character" report: a relog keeps the same
@@ -10718,15 +10740,13 @@ function _serializeZealForWeb() {
   // you can see what each one logged out carrying + where they parked. Capped
   // so a long multibox session can't bloat the payload.
   //
-  // Pet identification (Zeal): Zeal's named_pipe.cpp labels only target (slot
-  // 6) and self (slot 1) explicitly — every other gauge slot is an opaque mix
-  // of group + pet. We DON'T yet know the pet slot id from the protocol docs,
-  // so identify the pet by cross-referencing the log-driven charm tracker:
-  // any gauge slot whose `text` matches the active charm pet for THIS uploader
-  // is the pet slot. That's reliable (charm pet names are unique per owner),
-  // promotes the gauge name to the canonical pet name on the charm overlay,
-  // and gives us a live HP%. When no charm pet is known we surface every slot
-  // verbatim in the diagnostic so the slot id can be confirmed by eye.
+  // Pet identification (Zeal): confirmed from a live charmed-pet gauge dump —
+  // slot 1 = self, slot 6 = target, and **slot 16 = the pet** (charm or
+  // summoned). We read slot 16 directly as the primary signal, so pet HP shows
+  // up the instant the pet exists, for any pet, independent of the log-based
+  // charm tracker. The charm-tracker cross-reference (match a gauge `text` to
+  // the active charm pet name for this owner) stays as a fallback for any Zeal
+  // build that happens to label the pet elsewhere.
   const petByOwner = new Map();   // lowercase owner → pet name (from charm tracker)
   for (const info of _charmTickTracker.values()) {
     if (info && info.is_active && info.owner && info.pet) {
@@ -10737,11 +10757,18 @@ function _serializeZealForWeb() {
     const st = _zealState[ch] || {};
     const gauges = Array.isArray(st.gauges) ? st.gauges.slice(0, 20) : [];
     let petName = null, petHp = null, petSlot = null;
-    const expected = petByOwner.get(String(ch).toLowerCase());
-    if (expected && gauges.length) {
-      const norm = String(expected).toLowerCase().trim();
-      const hit  = gauges.find(g => g && g.text && String(g.text).toLowerCase().trim() === norm);
-      if (hit) { petName = hit.text; petHp = hit.hp_pct; petSlot = hit.slot; }
+    // Primary: gauge slot 16 (require a name so an empty/fixed UI gauge never
+    // masquerades as a pet).
+    const petGauge = gauges.find(g => g && g.slot === 16 && g.text);
+    if (petGauge) { petName = petGauge.text; petHp = petGauge.hp_pct; petSlot = 16; }
+    // Fallback: cross-reference the charm tracker's known pet name.
+    if (petHp == null) {
+      const expected = petByOwner.get(String(ch).toLowerCase());
+      if (expected && gauges.length) {
+        const norm = String(expected).toLowerCase().trim();
+        const hit  = gauges.find(g => g && g.text && String(g.text).toLowerCase().trim() === norm);
+        if (hit) { petName = hit.text; petHp = hit.hp_pct; petSlot = hit.slot; }
+      }
     }
     return {
       character:   ch,

@@ -28,6 +28,9 @@
   .charm.dire .badge{background:#16361f;color:#56d364}
   .tickbar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .tickbar > div{height:100%;background:#a371f7;transition:width 100ms linear}
+  .charm .meta .hp{color:#56d364;font-weight:bold}
+  .hpbar{height:5px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
+  .hpbar > div{height:100%;transition:width 200ms linear,background 200ms linear}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
   /* drag/lock/setup — same pattern as overlay.html / triggers.html */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -176,10 +179,19 @@
         var warnLine = (warnAt > 0 && !p.is_dire_charm)
           ? ' · recharm in ' + Math.max(0, Math.ceil(warnAt - elapsed/1000)) + 's'
           : (p.is_dire_charm ? ' · permanent (until break)' : '');
+        // Live pet HP — Zeal gauge slot 16, present only for the local
+        // uploader's own pet. Color the bar green→amber→red as it drops.
+        var hp = (p.pet_hp_pct != null) ? Math.max(0, Math.min(100, p.pet_hp_pct)) : null;
+        var hpStr = hp != null ? ' · <span class="hp">' + Math.round(hp) + '%</span>' : '';
+        var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
+        var hpBar = hp != null
+          ? '<div class="hpbar"><div style="width:' + hp.toFixed(0) + '%;background:' + hpColor + '"></div></div>'
+          : '';
         html += '<div class="' + cls + '">'
           + '<div class="head"><span class="pet">' + esc(p.pet || '?') + badge + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
-          + '<div class="meta">tick ' + ticks + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · up ' + fmtElapsed(elapsed) + warnLine + '</div>'
+          + '<div class="meta">tick ' + ticks + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · up ' + fmtElapsed(elapsed) + hpStr + warnLine + '</div>'
+          + hpBar
           + '<div class="tickbar"><div style="width:' + tickPct.toFixed(0) + '%"></div></div>'
           + '</div>';
       }

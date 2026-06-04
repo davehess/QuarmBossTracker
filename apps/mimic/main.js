@@ -639,11 +639,16 @@ function _zealAbsorb(obj) {
     if (self) s.self_hp_pct = self.value / 10;
     if (tgt)  { s.target_name = tgt.text; s.target_hp_pct = tgt.value / 10; }
     else      { s.target_name = null; s.target_hp_pct = null; }
-    // Retain every populated gauge slot verbatim — pet HP lives in one of
-    // these slots and the slot id isn't yet known (Zeal's named_pipe.cpp
-    // labels target=6 / self=1; everything else is some mix of group + pet).
-    // Storing them lets the agent show every slot and let charm-tracker pet
-    // names cross-reference to find the actual pet slot at runtime.
+    // Pet — Zeal gauge slot 16 (confirmed from a live charmed-pet dump:
+    // 1=self, 6=target, 16=pet). Require a name so an empty/fixed UI gauge
+    // never reads as a pet. Surfaced so gauge-condition triggers + the charm
+    // overlay can use live pet HP directly.
+    const pet = inner.find(g => g && g.type === 16 && g.text);
+    if (pet) { s.pet_name = pet.text; s.pet_hp_pct = pet.value / 10; }
+    else     { s.pet_name = null; s.pet_hp_pct = null; }
+    // Retain every populated gauge slot verbatim — the agent reads slot 16 for
+    // the pet and keeps the full list for the diagnostic gauge dump + the
+    // charm-tracker name cross-reference fallback.
     const slots = [];
     for (const g of inner) {
       if (!g || g.type == null || g.value == null) continue;
