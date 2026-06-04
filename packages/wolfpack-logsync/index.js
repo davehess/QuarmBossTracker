@@ -3493,6 +3493,8 @@ tr:hover td { background:#1f242c }
    when running under Mimic (window.mimic.createPanelOverlay exists). */
 .wp-overlay-btn { float:right; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:4px; padding:0 8px; font-size:11px; cursor:pointer; line-height:1.6; margin-left:8px; font-family:inherit; text-transform:none; letter-spacing:0; }
 .wp-overlay-btn:hover { color:var(--blue); border-color:var(--blue); }
+.wp-hide-btn { padding:0 7px; font-weight:bold; }
+.wp-hide-btn:hover { color:var(--red); border-color:var(--red); }
 .wp-source-toggle { float:right; display:inline-flex; gap:0; margin-left:8px; }
 .wp-source-toggle button { background:#21262d; color:var(--dim); border:1px solid var(--border); padding:0 8px; font-size:11px; cursor:pointer; line-height:1.6; font-family:inherit; text-transform:none; letter-spacing:0; }
 .wp-source-toggle button.active { background:#1f6feb; border-color:#1f6feb; color:#fff; }
@@ -3881,6 +3883,11 @@ function renderDash(s) {
   // timers don't rewrite the whole dashboard section every 2s. Hidden until
   // Zeal reports at least one character.
   h += '<div id="wpZealClients" class="card wide" style="display:none"></div>';
+  // My Crits — own self-updating element rendered in the section loop (see
+  // renderCritsCard), NOT injected by a separate 3s loop. The old inject-into-
+  // grid approach got wiped every time renderDash rewrote #dash and re-added on
+  // the next tick → the "keeps refreshing and falling away" flicker.
+  h += '<div id="wpCritsCard" class="card" style="display:none"></div>';
 
   // Trigger overlays — fade out after their duration but keep a short
   // history so users can scroll back through the last few callouts.
@@ -4409,9 +4416,31 @@ function renderPets(s) {
 // Fed by s.zealClients (server resolves the EQ zone id → name). Self-updating
 // #wpZealClients element so its 6s buff-tick countdowns don't rewrite the whole
 // Dashboard section every poll.
+// Buff remaining: Zeal reports it in 6-second EQ ticks. Show it as time
+// ("2h12m" / "12m" / "24s") instead of raw ticks — readable at a glance.
+function _fmtBuffTicks(t) {
+  if (t == null) return '';
+  var secs = Number(t) * 6;
+  if (secs < 60)   return Math.round(secs) + 's';
+  var h = Math.floor(secs / 3600);
+  var m = Math.round((secs % 3600) / 60);
+  if (h > 0) return h + 'h' + m + 'm';
+  return m + 'm';
+}
 function renderZealClients(s) {
   const el = document.getElementById('wpZealClients');
   if (!el) return;   // Dashboard section not painted yet
+  // Preserve which per-character gauge <details> are open ACROSS this poll's
+  // rewrite. morphInto replaces innerHTML, which would otherwise snap an
+  // expanded gauge dump shut every 2s (the bug: "opening gauge slots
+  // immediately refreshes/collapses"). Re-stamp the open attribute on the ones
+  // the user had expanded.
+  const _openGauges = {};
+  try {
+    el.querySelectorAll('details[data-gauge]').forEach(function(d){
+      if (d.open) _openGauges[d.getAttribute('data-gauge')] = 1;
+    });
+  } catch (e) { void e; }
   const clients = Array.isArray(s.zealClients) ? s.zealClients : [];
   if (clients.length === 0) {
     if (el.style.display !== 'none') el.style.display = 'none';
@@ -4433,7 +4462,7 @@ function renderZealClients(s) {
     const buffs = Array.isArray(c.buffs) ? c.buffs : [];
     if (buffs.length) {
       const bstr = buffs.slice(0, 16).map(function(b){
-        return esc(b.name) + (b.ticks != null ? ' <span class="dim">(' + b.ticks + 't)</span>' : '');
+        return esc(b.name) + (b.ticks != null ? ' <span class="dim">(' + _fmtBuffTicks(b.ticks) + ')</span>' : '');
       }).join(' · ');
       h += '<div style="margin-left:14px;color:#a371f7;font-size:12px">🧪 ' + bstr + '</div>';
     } else {
@@ -4457,7 +4486,8 @@ function renderZealClients(s) {
     // wire it into the absorption directly (rather than via charm cross-ref).
     // Live clients only — frozen logged-out gauges aren't useful.
     if (c.live && Array.isArray(c.gauges) && c.gauges.length) {
-      h += '<details style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
+      h += '<details data-gauge="' + esc(c.character) + '"' + (_openGauges[c.character] ? ' open' : '')
+         + ' style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
          + c.gauges.length + ' gauge slot' + (c.gauges.length === 1 ? '' : 's')
          + ' <span class="dim" style="font-size:10px">(diagnostic — helps identify the pet slot)</span></summary>';
       h += '<table style="font-size:11px;margin-top:4px"><tr><th>Slot</th><th>HP%</th><th>Text</th></tr>';
@@ -5145,6 +5175,7 @@ async function refresh() {
     // failing section shows its own error card (visible on-screen, not just the
     // log) and the other sections still render.
     var _sections = [['header', renderHeader], ['dash', renderDash], ['zealclients', renderZealClients],
+                     ['critscard', renderCritsCard],
                      ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
                      ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['overlays', renderOverlays], ['info', renderInfo]];
@@ -5253,7 +5284,15 @@ async function dismissTopDamage(key) {
   }
   function panelKey(card){
     var h = card.querySelector("h2");
-    var t = h ? (h.textContent || "") : "";
+    if (!h) return "";
+    // Read ONLY the h2's own TEXT nodes — skip injected chrome (drag handle,
+    // 🪟 overlay button, ✕ hide button, source toggle). textContent pulled that
+    // chrome into the key, which made the panel-key consumers disagree.
+    var t = "";
+    for (var i = 0; i < h.childNodes.length; i++){
+      if (h.childNodes[i].nodeType === 3) t += h.childNodes[i].nodeValue;
+    }
+    if (!t) t = h.textContent || "";
     t = t.split("(")[0].split("—")[0].split("·")[0];
     return t.trim().toLowerCase();
   }
@@ -5429,6 +5468,17 @@ async function dismissTopDamage(key) {
   function mimicHosts(){
     return !!(window.mimic && typeof window.mimic.createPanelOverlay === "function");
   }
+  // Persisted hidden-panel set — SAME localStorage key the panel popover uses
+  // ("wpHiddenPanels"), so the direct ✕ button and the popover checkboxes stay
+  // in sync. Both key off the clean text-node panel key.
+  var HIDE_LS_KEY = "wpHiddenPanels";
+  function _loadHiddenSet(){
+    try { return new Set(JSON.parse(localStorage.getItem(HIDE_LS_KEY) || "[]")); }
+    catch (e) { return new Set(); }
+  }
+  function _saveHiddenSet(set){
+    try { localStorage.setItem(HIDE_LS_KEY, JSON.stringify(Array.prototype.slice.call(set))); } catch (e) {}
+  }
   function decorateButtons(){
     if (!mimicHosts()) return;
     var cards = document.querySelectorAll(".section .card");
@@ -5439,6 +5489,15 @@ async function dismissTopDamage(key) {
       if (h.querySelector(".wp-overlay-btn")) continue; // already decorated
       var key = panelKeyForCard(card);
       if (!key) continue;
+      // ✕ hide button — sits to the LEFT of the overlay button (both float
+      // right, so append the hide first → it ends up on the far right next to
+      // overlay). One click hides the card; un-hide from ⚙ Panels → Show all.
+      var hideBtn = document.createElement("button");
+      hideBtn.className = "wp-overlay-btn wp-hide-btn";
+      hideBtn.setAttribute("data-panel-key", key);
+      hideBtn.title = "Hide this panel (re-show from the ⚙ Panels menu)";
+      hideBtn.textContent = "✕";
+      h.appendChild(hideBtn);
       var btn = document.createElement("button");
       btn.className = "wp-overlay-btn";
       btn.setAttribute("data-panel-key", key);
@@ -5449,7 +5508,19 @@ async function dismissTopDamage(key) {
   }
   document.addEventListener("click", function(e){
     var t = e.target;
-    if (!t || !t.classList || !t.classList.contains("wp-overlay-btn")) return;
+    if (!t || !t.classList) return;
+    // ✕ hide button — check FIRST since it shares the wp-overlay-btn class.
+    if (t.classList.contains("wp-hide-btn")){
+      e.preventDefault(); e.stopPropagation();
+      var hk = t.getAttribute("data-panel-key");
+      var set = _loadHiddenSet();
+      set.add(hk);
+      _saveHiddenSet(set);
+      var card = t.closest ? t.closest(".card") : null;
+      if (card) card.classList.add("wp-hidden");
+      return;
+    }
+    if (!t.classList.contains("wp-overlay-btn")) return;
     e.preventDefault();
     e.stopPropagation();
     var pk = t.getAttribute("data-panel-key");
@@ -5524,7 +5595,15 @@ async function dismissTopDamage(key) {
   }
   function panelKey(card){
     var h = card.querySelector("h2");
-    var t = h ? (h.textContent || "") : "";
+    if (!h) return "";
+    // Read ONLY the h2's own TEXT nodes — skip injected chrome (drag handle,
+    // 🪟 overlay button, ✕ hide button, source toggle). textContent pulled that
+    // chrome into the key, which made the panel-key consumers disagree.
+    var t = "";
+    for (var i = 0; i < h.childNodes.length; i++){
+      if (h.childNodes[i].nodeType === 3) t += h.childNodes[i].nodeValue;
+    }
+    if (!t) t = h.textContent || "";
     t = t.split("(")[0].split("—")[0].split("·")[0];
     return t.trim().toLowerCase();
   }
@@ -5809,7 +5888,15 @@ async function dismissTopDamage(key) {
   }
   function panelKey(card){
     var h = card.querySelector("h2");
-    var t = h ? (h.textContent || "") : "";
+    if (!h) return "";
+    // Read ONLY the h2's own TEXT nodes — skip injected chrome (drag handle,
+    // 🪟 overlay button, ✕ hide button, source toggle). textContent pulled that
+    // chrome into the key, which made the panel-key consumers disagree.
+    var t = "";
+    for (var i = 0; i < h.childNodes.length; i++){
+      if (h.childNodes[i].nodeType === 3) t += h.childNodes[i].nodeValue;
+    }
+    if (!t) t = h.textContent || "";
     t = t.split("(")[0].split("—")[0].split("·")[0];
     return t.trim().toLowerCase();
   }
@@ -6757,67 +6844,47 @@ async function dismissTopDamage(key) {
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
-// The operator's own melee + spell criticals this session, per box. Send-to-
-// overlay works via the panel auto-registration (h2 text = key). Spell crits
-// depend on the critical-blast parse, which still needs a real Quarm sample.
-(function(){
-  function makeCard(){
-    var c = document.createElement("div");
-    c.id = "wpCritsCard";
-    c.className = "card";
-    c.style.display = "none";
-    c.innerHTML = "<h2>💥 My Crits <span class=dim style=font-size:11px;text-transform:none;letter-spacing:0> · this session</span></h2><div class=card-body></div>";
-    return c;
-  }
-  var card = makeCard();
-  function ensure(){
-    if (document.getElementById("wpCritsCard")) return;
-    var dash = document.getElementById("dash"); if (!dash) return;
-    var grid = dash.querySelector(".grid"); var host = grid || dash;
-    host.insertBefore(card, host.firstChild);
-  }
-  function fmt(n){ n = Number(n) || 0; return n.toLocaleString(); }
-  function render(crits){
-    var body = card.querySelector(".card-body");
-    if (!body) return;
-    var names = crits ? Object.keys(crits) : [];
-    names = names.filter(function(nm){
-      var c = crits[nm] || {};
-      var mc = (c.melee && c.melee.count) || 0;
-      var sc = (c.spell && c.spell.count) || 0;
-      return (mc + sc) > 0;
+// The operator's own melee + spell criticals this session, per box. Rendered in
+// the main section loop into the stable #wpCritsCard placeholder (in renderDash)
+// — NOT injected by a separate 3s loop. The old approach inserted the card into
+// #dash's grid, which renderDash wiped on every rewrite, so the card flickered
+// in and out ("keeps refreshing and falling away"). Self-isolated like the Zeal
+// cards: only this element repaints, and it survives section rewrites.
+function renderCritsCard(s) {
+  var el = document.getElementById('wpCritsCard');
+  if (!el) return;
+  var crits = s && s.sessionCrits;
+  var fmt = function(n){ n = Number(n) || 0; return n.toLocaleString(); };
+  var names = crits ? Object.keys(crits) : [];
+  names = names.filter(function(nm){
+    var c = crits[nm] || {};
+    var mc = (c.melee && c.melee.count) || 0;
+    var sc = (c.spell && c.spell.count) || 0;
+    return (mc + sc) > 0;
+  });
+  if (names.length === 0){ if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  if (el.style.display === 'none') el.style.display = 'block';
+  names.sort(function(a, b){
+    var ca = crits[a], cb = crits[b];
+    var ta = (ca.melee.count || 0) + (ca.spell.count || 0);
+    var tb = (cb.melee.count || 0) + (cb.spell.count || 0);
+    return tb - ta;
+  });
+  var html = '<h2>💥 My Crits <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0"> · this session</span></h2>';
+  html += '<table><tr><th>Character</th><th>Type</th><th class="num">Crits</th><th class="num">Biggest</th><th class="num">Bonus dmg</th></tr>';
+  names.forEach(function(nm){
+    var c = crits[nm];
+    var types = [['⚔️ melee', c.melee], ['✨ spell', c.spell]];
+    types.forEach(function(r){
+      var b = r[1] || { count: 0, total: 0, max: 0 };
+      if (!b.count) return;
+      html += '<tr><td class="name">' + esc(nm) + '</td><td>' + r[0] + '</td><td class="num">' + fmt(b.count) + '</td><td class="num">' + fmt(b.max) + '</td><td class="num">' + fmt(b.total) + '</td></tr>';
     });
-    if (names.length === 0){ card.style.display = "none"; return; }
-    card.style.display = "block";
-    names.sort(function(a, b){
-      var ca = crits[a], cb = crits[b];
-      var ta = (ca.melee.count || 0) + (ca.spell.count || 0);
-      var tb = (cb.melee.count || 0) + (cb.spell.count || 0);
-      return tb - ta;
-    });
-    var html = "<table><tr><th>Character</th><th>Type</th><th class=num>Crits</th><th class=num>Biggest</th><th class=num>Bonus dmg</th></tr>";
-    names.forEach(function(nm){
-      var c = crits[nm];
-      var types = [["⚔️ melee", c.melee], ["✨ spell", c.spell]];
-      types.forEach(function(r){
-        var b = r[1] || { count: 0, total: 0, max: 0 };
-        if (!b.count) return;
-        html += "<tr><td class=name>" + nm + "</td><td>" + r[0] + "</td><td class=num>" + fmt(b.count) + "</td><td class=num>" + fmt(b.max) + "</td><td class=num>" + fmt(b.total) + "</td></tr>";
-      });
-    });
-    html += "</table>";
-    html += "<div class=dim style=font-size:10px;margin-top:4px>Amount shown is the crit bonus on top of the hit. Spell crits need a Quarm critical-blast line to confirm.</div>";
-    morphInto(body, html);
-  }
-  function refresh(){
-    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
-      ensure();
-      render(s && s.sessionCrits);
-    }).catch(function(){});
-  }
-  refresh();
-  setInterval(refresh, 3000);
-})();
+  });
+  html += '</table>';
+  html += '<div class="dim" style="font-size:10px;margin-top:4px">Amount shown is the crit bonus on top of the hit. Spell crits need a Quarm critical-blast line to confirm.</div>';
+  morphInto(el, html);
+}
 </script></body></html>`;
 
 async function _readBody(req, max = 64 * 1024) {
