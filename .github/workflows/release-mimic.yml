@@ -101,6 +101,61 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # ── Code signing (SignPath Foundation) — PRE-STAGED, OFF by default ─────
+      # Stays completely inert until SignPath approves the cert. To turn ON,
+      # set these in repo → Settings → Secrets and variables → Actions:
+      #   Variables:
+      #     SIGNPATH_ENABLED  = true
+      #     SIGNPATH_ORG_ID   = <SignPath organization id>
+      #     SIGNPATH_PROJECT  = <project slug, e.g. quarm-boss-tracker>
+      #     SIGNPATH_POLICY   = <signing-policy slug, e.g. release-signing>
+      #   Secret:
+      #     SIGNPATH_API_TOKEN = <SignPath CI user API token>
+      # Then the next Mimic version bump builds signed. Full runbook + the
+      # latest.yml gotcha: docs/code-signing.md. (Consider pinning the SignPath
+      # action to a commit SHA instead of @v1 when you enable it.)
+      - name: Upload unsigned installer to GitHub Actions (for SignPath)
+        if: steps.tag.outputs.build == 'true' && vars.SIGNPATH_ENABLED == 'true'
+        id: unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimic-unsigned
+          path: apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Submit installer to SignPath for signing
+        if: steps.tag.outputs.build == 'true' && vars.SIGNPATH_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token:                 ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id:           ${{ vars.SIGNPATH_ORG_ID }}
+          project-slug:              ${{ vars.SIGNPATH_PROJECT }}
+          signing-policy-slug:       ${{ vars.SIGNPATH_POLICY }}
+          github-artifact-id:        ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion:       true
+          # The signed installer is written back here, overwriting the unsigned
+          # exe in dist/ so the publish step picks up the signed file. VERIFY on
+          # the first real run that the filename is preserved (Wolf-Pack-Mimic-
+          # Setup-*.exe) — adjust the path if SignPath nests it in a subfolder.
+          output-artifact-directory: apps/mimic/dist
+
+      - name: Repair latest.yml for the signed installer
+        if: steps.tag.outputs.build == 'true' && vars.SIGNPATH_ENABLED == 'true'
+        working-directory: apps/mimic
+        run: node scripts/patch-latest-yml.js
+        # Signing changed the exe bytes → recompute its sha512+size in latest.yml
+        # or electron-updater rejects the auto-update. See the script header.
+
+      - name: Verify Authenticode signature
+        if: steps.tag.outputs.build == 'true' && vars.SIGNPATH_ENABLED == 'true'
+        shell: pwsh
+        working-directory: apps/mimic
+        run: |
+          $exe = Get-ChildItem dist/Wolf-Pack-Mimic-Setup-*.exe | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          Write-Host "Signature: $($sig.Status) — $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { Write-Error "Installer is NOT validly signed ($($sig.Status))"; exit 1 }
+
       - name: Publish release with installer
         if: steps.tag.outputs.build == 'true'
         uses: softprops/action-gh-release@v2
@@ -119,7 +174,7 @@ jobs:
           body: |
             Wolf Pack Mimic — Electron desktop client.
             Bundles its own Node runtime; no separate Node.js install needed.
-            Not code-signed yet — Windows SmartScreen will warn: More info → Run anyway.
+            ${{ vars.SIGNPATH_ENABLED == 'true' && 'Code-signed for Windows — certificate by SignPath Foundation, signing by SignPath.io.' || 'Not code-signed yet — Windows SmartScreen will warn: More info → Run anyway.' }}
 
             Auto-updates: once installed, future Mimic releases land in place via electron-updater. No re-download.
 

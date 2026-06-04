@@ -33,6 +33,14 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## In-flight findings (not yet acted on)
+- **Windows code signing — pre-staged, awaiting SignPath Foundation approval.**
+  Applied to SignPath.io Foundation (free OSS code signing) 2026-06. Signing
+  pipeline is wired but OFF in `.github/workflows/release-mimic.yml` (gated on
+  `vars.SIGNPATH_ENABLED`); footer credit live; `patch-latest-yml.js` handles the
+  post-sign auto-update hash repair. **Full runbook + flip-on checklist:
+  `docs/code-signing.md`.** When SignPath approves → set the repo vars/secret per
+  the doc, bump Mimic, done. (No version bump on the pre-stage so it doesn't
+  trigger a build.)
 - **Spell-cast attribution / "a spell" problem (testing 2026-06-04).** The Info
   tab's "Spell Casts This Session — Players / NPCs" lists everyone's casts as
   "a spell" because **EQ does not log spell names for bystanders** — only the
