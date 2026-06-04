@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.11': [
+    '**New Mimic Parser install + `/parsehelp`** — the desktop app now signs you in with Discord on first run (no token to copy/paste — it links your account and starts uploading for you), auto-detects your EQ folder, and installs with no admin prompt. Run `/parsehelp` for the full walkthrough, or grab it at wolfpack.quest/mimic. Officers can broadcast the steps to a channel with `/postparsehelp`.',
+  ],
   '3.0.9': [
     '**Per-user Parser tokens** — the shared `WOLFPACK_AGENT_TOKEN` is gone. Every uploader (Mimic install or standalone agent) now uses their OWN token tied to their Discord account, so we can trace every row back to a specific person and revoke individuals without breaking everyone. Run `/token` in Discord to see your active sessions, mint a fresh token, or revoke one that\'s no longer yours. New Mimic versions will mint a token automatically the first time you sign in; until you update, paste your `/token` value into Mimic\'s settings (or `--token` on the standalone agent). Old shared-secret uploads are now rejected — if your agent stopped working, that\'s why.',
   ],
