@@ -2,7 +2,7 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.1 | `package.json` |
+| **Bot** | 3.0.2 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 3.0.7 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 1.0.4 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.9 | `apps/mimic/package.json` |
@@ -303,6 +303,8 @@ Hate state is **dual-persisted** to survive volume loss: `state.json` + hidden J
 | `/markzek <character> <true\|false>` | Officer: sticky `is_zek` flag overrides auto-detection from `/who` |
 
 Stale-alert suppression (post-redeploy): "opens soon" suppressed if earliest spawn > 10 min ago; "definitely spawned" if latest > 15 min ago.
+
+**PvP quiet hours:** automated `@PVP` role pings (the two `checkPvpSpawns` spawn alerts + the `/api/agent/pvp` WP kill/death broadcasts) drop the role mention during an overnight window (`isPvpQuietHours()` in `utils/timezone.js`, default 1am–8am in `DEFAULT_TIMEZONE`, env-tunable via `PVP_QUIET_START`/`PVP_QUIET_END`, wraps midnight). The message still posts; only the ping is muted. Manual `/pvpalert` / `/pvpspawn` rallies are intentionally NOT gated (deliberate human action).
 
 ### Announcements
 | Command | Notes |

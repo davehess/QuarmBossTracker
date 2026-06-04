@@ -212,8 +212,29 @@ function isInRaidWindow(tsMs, tz) {
   return mins >= RAID_WINDOW_START && mins < RAID_WINDOW_END;
 }
 
+// ── PvP quiet hours ─────────────────────────────────────────────────────────
+// Overnight window during which automated @PVP role pings are suppressed so
+// timer alerts + kill/death broadcasts don't wake the pack. The informational
+// message still posts (history + anyone actively watching) — only the role
+// mention is dropped. Window is configurable via PVP_QUIET_START / PVP_QUIET_END
+// (whole hours 0–23, in the default timezone). Defaults to 1am–8am. Set both to
+// the same value to disable. Handles a window that wraps midnight (e.g. 22→6).
+function _clampHour(v, dflt) {
+  const n = parseInt(v, 10);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : dflt;
+}
+function isPvpQuietHours(tz) {
+  const start = _clampHour(process.env.PVP_QUIET_START, 1);
+  const end   = _clampHour(process.env.PVP_QUIET_END,   8);
+  if (start === end) return false;                       // disabled
+  const { hour } = nowPartsInTz(tz || getDefaultTz());
+  return start < end ? (hour >= start && hour < end)     // same-day window
+                     : (hour >= start || hour < end);     // wraps midnight
+}
+
 module.exports = {
   getDefaultTz, msUntilMidnightInTz, nowPartsInTz, parseUserTime,
   formatInDefaultTz, shortTimestampInTz, localToUTC,
   isInRaidWindow, RAID_DAYS, RAID_WINDOW_START, RAID_WINDOW_END,
+  isPvpQuietHours,
 };

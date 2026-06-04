@@ -78,7 +78,7 @@ const {
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getHateBoardMessageId, setHateBoardMessageId,
 } = require('./utils/state');
-const { getDefaultTz, msUntilMidnightInTz } = require('./utils/timezone');
+const { getDefaultTz, msUntilMidnightInTz, isPvpQuietHours } = require('./utils/timezone');
 const {
   buildZoneKillCard, buildSpawnAlertEmbed, buildSpawnedEmbed,
   buildDailySummaryEmbed,
@@ -1942,7 +1942,9 @@ async function checkPvpSpawns(readyClient, now) {
           const pvpRoleName = process.env.PVP_ROLE || 'PVP';
           const guild       = readyClient.guilds.cache.first();
           const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
-          const mention     = pvpRole ? `<@&${pvpRole.id}>` : '';
+          // Quiet hours (default 1am–8am): post the alert but drop the @PVP
+          // ping so the timer doesn't wake the pack overnight.
+          const mention     = (pvpRole && !isPvpQuietHours()) ? `<@&${pvpRole.id}>` : '';
           const ch          = await readyClient.channels.fetch(pvpAlertId);
           const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
           const sent = await ch.send({
@@ -2020,7 +2022,8 @@ async function checkPvpSpawns(readyClient, now) {
         const pvpRoleName = process.env.PVP_ROLE || 'PVP';
         const guild       = readyClient.guilds.cache.first();
         const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const mention     = pvpRole ? `<@&${pvpRole.id}>` : '';
+        // Quiet hours: post the "mob is up" notice without the @PVP ping.
+        const mention     = (pvpRole && !isPvpQuietHours()) ? `<@&${pvpRole.id}>` : '';
         const ch          = await readyClient.channels.fetch(pvpAlertId);
         const { EmbedBuilder: EB } = require('discord.js');
         await ch.send({
@@ -2957,6 +2960,9 @@ async function _handleAgentPvp(req, res) {
         });
       }
 
+      // Quiet hours (default 1am–8am): keep posting the kill/death cards but
+      // drop the @PVP ping so live-server skirmishes don't wake the pack.
+      const pvpQuiet = isPvpQuietHours();
       let content;
       if (isWpKill) {
         // Celebrate — Wolf Pack got a PvP kill. Ping @PVP so the pack joins the
@@ -2965,12 +2971,12 @@ async function _handleAgentPvp(req, res) {
         // afk-able ones. Deaths still ping for backup; other-guild / NPC kills
         // remain informational with no mention.
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const mention = pvpRole ? `<@&${pvpRole.id}> ` : '';
+        const mention = (pvpRole && !pvpQuiet) ? `<@&${pvpRole.id}> ` : '';
         content = `${mention}⚔️ **${killer}** of <${killerGuild}> killed **${victim}** of <${victimGuild}> in ${zone}! AWROOOO!`;
       } else if (isWpDeath) {
         // Request backup — Wolf Pack member was killed
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const mention = pvpRole ? `<@&${pvpRole.id}> ` : '';
+        const mention = (pvpRole && !pvpQuiet) ? `<@&${pvpRole.id}> ` : '';
         content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
       } else {
         // NPC kill or other-guild kill — informational only, NO @PVP

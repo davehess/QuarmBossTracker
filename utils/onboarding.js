@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.2': [
+    '**PvP quiet hours** — automated `@PVP` pings (timer spawn alerts + live kill/death broadcasts) are now muted overnight (default **1am–8am Eastern**) so nobody gets woken at 3am. The cards still post for history; only the role ping is dropped. Manual `/pvpalert` and `/pvpspawn` rallies are unaffected. Window is configurable via `PVP_QUIET_START` / `PVP_QUIET_END`.',
+  ],
   '3.0.1': [
     '**Your buffs + last-seen zone now show on wolfpack.quest/me** — Mimic syncs what each of your characters is carrying (buffs/songs) and the zone they were last seen in, straight from the Zeal pipe. Each character on /me gets a new "Buffs & Zone" panel; open localhost:7777 for live, second-by-second timers. A snapshot that updates when things change — nothing to turn on beyond running the parser with Zeal.',
     '**Mimic overlays got friendlier** — overlays now start OFF on a fresh install (turn on the DPS HUD / triggers / charm from first-run setup or the tray), each overlay has an ✕ in its corner to dismiss it, and the tray\'s Overlays menu gained named panel toggles (Healing, Tanking, Threat, Top Damage, DEEPS). Plus a live pet HP bar on the charm tracker. Update Mimic from wolfpack.quest/mimic.',
