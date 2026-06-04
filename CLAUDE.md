@@ -2,9 +2,9 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.3 | `package.json` |
+| **Bot** | 3.0.4 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 3.0.7 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 1.0.4 | `web/package.json` |
+| **Web** (`wolfpack.quest`) | 1.0.5 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.9 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
@@ -550,6 +550,7 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
 | `/auth/signin`, `/auth/callback`, `/auth/signout` | OAuth flow |
 | `/loadouts` | Tank bandolier sets joined with `item_with_proc` view |
 | `/parses` | Recent parse browser (encounter + encounter_players) |
+| `/buffs` | Guild buff-coverage grid from `character_live_state` (Zeal). Categories via `web/lib/buffs.ts` (`categorizeBuff` + per-role `ROLE_TARGETS`); class filter + gaps view. Accurate only for members running the agent — caveat banner says so. Uncategorized buffs surface in an "Other" column to tune the map |
 | `/planner` | Placeholder — TPS calc |
 
 **Subdomains:** `parser.wolfpack.quest` → GitHub release download; `discord.wolfpack.quest` → guild invite.

@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.4': [
+    '**New: the Buffs page** (wolfpack.quest/buffs) — a guild-wide buff-coverage grid so buffers can see at a glance who\'s missing HP / haste / mana / regen / DS / resists, with a class filter and per-role "what good looks like" targets that flag gaps in red. Powered by the Zeal feed, so it\'s only accurate for people running Mimic / the agent (the page says so up top). Buffs we don\'t recognize land in an "Other" column — send those names so we can map them.',
+    '**Overnight PvP board is now a howl** — the `/pvpnightpings` opt-in board got the wolf treatment ("howling through the night"); the wolves on the list are shown right on it.',
+  ],
   '3.0.3': [
     '**Overnight PvP pings are now opt-in** — between **1am–8am Eastern** the automated `@PVP` pings no longer hit the whole role; they go only to people who clocked in. Run `/pvpnightpings` to drop the opt-in board in the PvP channel: 🌙 *ping me tonight* (auto-clears at 8am), 📌 *always ping me overnight*, or 🔕 *stop*. Manual `/pvpalert` & `/pvpspawn` rallies still ping everyone.',
   ],

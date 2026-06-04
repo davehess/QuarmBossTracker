@@ -52,19 +52,21 @@ function buildNightEmbed() {
   const permList  = n.permanent.length ? n.permanent.map(u => `<@${u}>`).join(' ') : '_nobody yet_';
   const tonyList  = tonightIds.length  ? tonightIds.map(u => `<@${u}>`).join(' ')  : '_nobody yet_';
 
+  const howlerCount = n.permanent.length + tonightIds.length;
   return new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle('🌙 Overnight PvP Pings')
+    .setTitle('🐺🌙 Howl Through the Night')
     .setDescription(
-      `Between **${quietWindowLabel()} Eastern**, automated \`@PVP\` pings (spawn-window alerts + live kill/death broadcasts) are **muted** so nobody gets woken up.\n\n` +
-      'Want to stay on the hook overnight? Opt in below — during quiet hours the pings go **only** to the people on these lists. ' +
-      'Manual `/pvpalert` and `/pvpspawn` rallies always ping regardless.'
+      `Between **${quietWindowLabel()} Eastern**, automated \`@PVP\` pings (spawn-window alerts + live kill/death broadcasts) are **muted** so the pack can sleep.\n\n` +
+      'Still want to hunt? Howl with us — during quiet hours the pings go **only** to the wolves below. ' +
+      'Manual `/pvpalert` and `/pvpspawn` rallies always ping regardless.' +
+      (howlerCount > 0 ? `\n\n**${howlerCount}** ${howlerCount === 1 ? 'wolf is' : 'wolves are'} howling through the night. AWROOOO! 🐺` : '')
     )
     .addFields(
-      { name: '📌 Always on', value: permList },
-      { name: '🌙 Tonight (until 8am)', value: tonyList },
+      { name: '🐺 Always howling', value: permList },
+      { name: '🌙 Howling tonight (until 8am)', value: tonyList },
     )
-    .setFooter({ text: 'Use the buttons to add or remove yourself.' })
+    .setFooter({ text: 'Use the buttons to join or leave the night hunt.' })
     .setTimestamp();
 }
 

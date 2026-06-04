@@ -6,6 +6,7 @@ const links = [
   { href: '/',              label: 'Home' },
   { href: '/boards',        label: 'Boards' },
   { href: '/parses',        label: 'Parses' },
+  { href: '/buffs',         label: 'Buffs' },
   { href: '/pvp',           label: 'PvP' },
   { href: '/leaderboards',  label: 'Ranks' },
   { href: '/fun',           label: '🎉 Fun' },

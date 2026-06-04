@@ -16,6 +16,22 @@
   backtick / `${` / unescaped char inside that template breaks the localhost
   dashboard. (Hit twice this session — both were backticks in comments.)
 
+## New feature — Buffs page (✅ v1 SHIPPED, web 1.0.5 · bot 3.0.4)
+Guild buff-coverage grid at `/buffs`, built on E's `character_live_state` (Zeal
+buffs already sync there — no new agent/Zeal work needed for v1). Categorizes
+each character's live buffs (HP/regen/mana/manaRegen/haste/attack/DS/resists via
+`web/lib/buffs.ts`), compares against per-role target profiles, flags gaps red,
+class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
+**Follow-ups:**
+- **Tune categorization** — `lib/buffs.ts` KEYWORDS map is seeded from era spell
+  knowledge; needs the raid's real Zeal buff-name strings (the page's "Other"
+  column surfaces uncategorized names for exactly this). Highest-value next step.
+- **Tune `ROLE_TARGETS`** with officers ("what good looks like" per role; add
+  DI/CHA/AC tracking for tanks once those buffs are categorized).
+- **Phase 2 (mimic):** a live buff-coverage overlay for in-raid use (reuse the G
+  overlay chrome). Site v1 first.
+- The PvP overnight board got "howl through the night" theming + lists the wolves.
+
 ## In-flight findings (not yet acted on)
 - **Zeal pet gauge slot = 16.** Confirmed from Hopeya's gauge dump: slot 1=self,
   slot 6=target, slot 16=the charm pet (a 2nd "A Netherbian Drone" at 100% vs
