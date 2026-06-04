@@ -19,6 +19,42 @@ export type BuffRow = {
 
 const STALE_MS = 30 * 60 * 1000;
 
+// Copy "/target <name>" so a raider can paste straight into EQ. Zeal's pipe is
+// read-only (data flows OUT of EQ; there's no documented inbound slash-command
+// surface), so clipboard is the right primitive. Brief ✓ feedback on success.
+function CopyTargetButton({ name }: { name: string }) {
+  const [copied, setCopied] = useState(false);
+  const onClick = async () => {
+    const text = '/target ' + name;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Older browsers / iframes without clipboard perms — fall back to a
+      // hidden textarea + execCommand so the button never silently fails.
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopied(true); setTimeout(() => setCopied(false), 1200);
+      } catch { /* nothing more we can do */ }
+    }
+  };
+  return (
+    <button
+      onClick={onClick}
+      title={'Copy "/target ' + name + '" to clipboard'}
+      aria-label={'Copy /target ' + name}
+      className="ml-1 inline-flex items-center justify-center w-5 h-5 text-[11px] rounded border border-border/60 text-dim hover:text-blue hover:border-blue align-middle"
+    >
+      {copied ? <span className="text-green">✓</span> : <span>📋</span>}
+    </button>
+  );
+}
+
 function ago(iso: string | null): string {
   if (!iso) return '—';
   const ms = Date.now() - new Date(iso).getTime();
@@ -154,7 +190,10 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                 return (
                   <tr key={r.name} className={['border-b border-border/40', stale ? 'opacity-50' : ''].join(' ')}>
                     <td className="p-2 sticky left-0 bg-panel">
-                      <div className="text-text">{r.name}</div>
+                      <div className="text-text flex items-center">
+                        <span>{r.name}</span>
+                        <CopyTargetButton name={r.name} />
+                      </div>
                       <div className="text-dim text-[10px]">
                         {[r.className || 'Unknown', ROLE_LABELS[r.role]].join(' · ')}
                         {r.zone && <> · {r.zone}</>}
@@ -191,7 +230,9 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
         <span className="text-green">✓</span> has a buff in that category ·
         <span className="text-red-400 font-bold"> ✗</span> expected for the role but missing ·
         <span className="text-dim"> ·</span> not expected ·
-        hover a cell for the buff names. The <b>Other</b> column counts buffs we couldn&apos;t categorize yet —
+        hover a cell for the buff names ·
+        click 📋 next to a name to copy <code>/target &lt;name&gt;</code> for pasting in EQ.
+        The <b>Other</b> column counts buffs we couldn&apos;t categorize yet —
         hover it and send the names to an officer so we can map them. Target profiles per role are a
         starting point (<code>lib/buffs.ts</code>) and easy to tune.
       </p>

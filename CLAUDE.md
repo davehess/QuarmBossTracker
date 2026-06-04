@@ -4,7 +4,7 @@
 |---|---|---|
 | **Bot** | 3.0.4 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 3.0.7 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 1.0.6 | `web/package.json` |
+| **Web** (`wolfpack.quest`) | 1.0.7 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.9 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
