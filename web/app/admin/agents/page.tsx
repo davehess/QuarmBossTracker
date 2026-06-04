@@ -52,9 +52,14 @@ type BackfillRow = {
   error_message: string | null;
 };
 
+// Roster slice used to fold each uploading character into its main's family.
+// main_name is the character's main (null/self when it IS the main);
+// discord_id links the family to a Discord account when the member opted in.
+type RosterRow = { name: string; main_name: string | null; discord_id: string | null };
+
 async function loadData() {
   const admin = supabaseAdmin();
-  const [{ data: stats }, { data: backfills }] = await Promise.all([
+  const [{ data: stats }, { data: backfills }, { data: roster }] = await Promise.all([
     admin
       .from('agent_upload_stats')
       .select('character, endpoint, upload_count, error_count, first_uploaded_at, last_uploaded_at, agent_version, last_ok, last_status_code, last_error, last_agent_state')
@@ -65,10 +70,16 @@ async function loadData() {
       .select('id, character, requested_at, requested_by_name, reason, scope, status, acked_at, dismissed_at, dismissed_reason, completed_at, error_message')
       .order('requested_at', { ascending: false })
       .limit(200),
+    admin
+      .from('characters')
+      .select('name, main_name, discord_id')
+      .eq('guild_id', 'wolfpack')
+      .limit(5000),
   ]);
   return {
     stats:     (stats ?? []) as StatRow[],
     backfills: (backfills ?? []) as BackfillRow[],
+    roster:    (roster ?? []) as RosterRow[],
   };
 }
 
@@ -180,6 +191,56 @@ function summarize(stats: StatRow[]): CharSummary[] {
   return [...byChar.values()].sort((a, b) => b.lastUploadMs - a.lastUploadMs);
 }
 
+// A family = one main + every character that uploads under it. Built by
+// resolving each uploading character to its main via the roster (characters
+// not in the roster group under their own name). Aggregates the per-character
+// summaries up to the family for the collapsed top-line view; the expanded
+// dropdown shows each character's own detail.
+type Family = {
+  mainName: string;
+  discordId: string | null;
+  members: CharSummary[];
+  latestMs: number;
+  latestUpload: string;
+  totalUploads: number;
+  totalErrors: number;
+  versions: string[];
+  queueMax: number;
+  anyFight: boolean;
+};
+
+function groupByMain(summaries: CharSummary[], roster: RosterRow[]): Family[] {
+  const charMap = new Map<string, { main: string; discordId: string | null }>();
+  for (const r of roster) {
+    const main = (r.main_name && r.main_name.trim()) || r.name;
+    charMap.set(r.name.toLowerCase(), { main, discordId: r.discord_id ?? null });
+  }
+  const fams = new Map<string, Family>();
+  for (const s of summaries) {
+    const lookup   = charMap.get((s.character || '').toLowerCase());
+    const mainName = lookup?.main ?? s.character;
+    const key      = mainName.toLowerCase();
+    let f = fams.get(key);
+    if (!f) {
+      f = { mainName, discordId: lookup?.discordId ?? null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false };
+      fams.set(key, f);
+    }
+    f.members.push(s);
+    f.totalUploads += s.totalUploads;
+    f.totalErrors  += s.totalErrors;
+    if (s.lastUploadMs > f.latestMs) { f.latestMs = s.lastUploadMs; f.latestUpload = s.lastUpload; }
+    if (s.agentVersion && !f.versions.includes(s.agentVersion)) f.versions.push(s.agentVersion);
+    if ((s.queuePending ?? 0) > f.queueMax) f.queueMax = s.queuePending ?? 0;
+    if (s.fightActive) f.anyFight = true;
+    if (!f.discordId && lookup?.discordId) f.discordId = lookup.discordId;
+  }
+  for (const f of fams.values()) {
+    f.members.sort((a, b) => b.lastUploadMs - a.lastUploadMs);
+    f.versions.sort().reverse();
+  }
+  return [...fams.values()].sort((a, b) => b.latestMs - a.latestMs);
+}
+
 function rel(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 60_000)    return 'just now';
@@ -197,7 +258,7 @@ function fmtTs(iso: string | null): string {
 }
 
 export default async function AdminAgentsPage() {
-  const [{ stats, backfills }, mimicReleases] = await Promise.all([
+  const [{ stats, backfills, roster }, mimicReleases] = await Promise.all([
     loadData(),
     loadMimicReleases(),
   ]);
@@ -207,6 +268,12 @@ export default async function AdminAgentsPage() {
 
   const active = summaries.filter(s => now - s.lastUploadMs <= day);
   const stale  = summaries.filter(s => now - s.lastUploadMs > day);
+
+  // Family view: fold characters into their main, split active/stale by the
+  // family's most-recent upload across all its characters.
+  const families       = groupByMain(summaries, roster);
+  const activeFamilies = families.filter(f => now - f.latestMs <= day);
+  const staleFamilies  = families.filter(f => now - f.latestMs > day);
   const totalUploads = stats.reduce((a, r) => a + (Number(r.upload_count) || 0), 0);
   const totalErrors  = stats.reduce((a, r) => a + (Number(r.error_count)  || 0), 0);
   // "Recent errors" is now the current last-error per character (one row each),
@@ -348,87 +415,32 @@ export default async function AdminAgentsPage() {
         </div>
       </section>
 
-      {/* Active uploaders */}
+      {/* Active uploaders — grouped by main, expand to see each character */}
       <section className="bg-panel border border-border rounded-lg">
         <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-          Active (uploaded in last 24h) — {active.length}
+          Active mains (uploaded in last 24h) — {activeFamilies.length}
+          <span className="text-dim font-normal"> · {active.length} character{active.length === 1 ? '' : 's'}</span>
         </h3>
-        {active.length === 0 ? (
+        {activeFamilies.length === 0 ? (
           <EmptyHint>
-            No agent uploads in the last 24 hours. Either the bot hasn't
-            picked up v2.5.35 yet (Railway redeploy in progress), or no
-            agents are currently running. Once an upload lands, it shows here
-            with the uploader's character, version, and endpoint mix.
+            No agent uploads in the last 24 hours. Either the bot hasn&apos;t
+            redeployed yet, or no agents are currently running. Once an upload
+            lands it shows here, grouped under the uploader&apos;s main —
+            expand a row to see each character, version, and endpoint mix.
           </EmptyHint>
         ) : (
-          <table className="w-full text-xs">
-            <thead className="text-dim hidden sm:table-header-group">
-              <tr className="border-b border-border">
-                <th className="text-left px-2 sm:px-3 py-2 font-normal">Character</th>
-                <th className="text-left px-2 sm:px-3 py-2 font-normal">Last upload</th>
-                <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Agent</th>
-                <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Total</th>
-                <th className="text-left px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">Endpoint mix</th>
-                <th className="text-left px-2 sm:px-3 py-2 font-normal">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.map(s => (
-                <tr key={s.character} className="border-b border-border/40 hover:bg-[#1a212c]">
-                  <td className="px-2 sm:px-3 py-2 text-text">
-                    {isRealCharacter(s.character) ? (
-                      <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
-                    ) : (
-                      <span className="text-dim" title="Operator-level streams (chat / pvp / fun events) with no single character">{s.character}</span>
-                    )}
-                    <ClientChip client={s.client} appVersion={s.appVersion} agentVersion={s.agentVersion} />
-                    <div className="text-dim text-[10px] md:hidden">{s.agentVersion || '—'} · {s.totalUploads.toLocaleString()} uploads</div>
-                  </td>
-                  <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap">{rel(s.lastUpload)}</td>
-                  <td className="px-2 sm:px-3 py-2 text-text hidden md:table-cell">{s.agentVersion || '—'}</td>
-                  <td className="px-2 sm:px-3 py-2 text-right text-text hidden md:table-cell">{s.totalUploads.toLocaleString()}</td>
-                  <td className="px-2 sm:px-3 py-2 text-dim text-[10px] hidden lg:table-cell">
-                    {[...s.byEndpoint.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}×${n}`).join(' · ')}
-                  </td>
-                  <td className="px-2 sm:px-3 py-2 text-[10px]">
-                    {s.totalErrors > 0 && <span className="text-red-400">{s.totalErrors} err</span>}
-                    {s.queuePending != null && s.queuePending > 0 && <span className="text-orange ml-1">Q={s.queuePending}</span>}
-                    {s.fightActive && <span className="text-blue ml-1">in-fight</span>}
-                    {s.totalErrors === 0 && (s.queuePending ?? 0) === 0 && !s.fightActive && <span className="text-green">healthy</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div>{activeFamilies.map(f => <FamilyRow key={f.mainName} fam={f} />)}</div>
         )}
       </section>
 
-      {/* Stale uploaders */}
-      {stale.length > 0 && (
+      {/* Stale uploaders — same family grouping */}
+      {staleFamilies.length > 0 && (
         <section className="bg-panel border border-border rounded-lg">
           <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-            Stale (active in last 30d, nothing in last 24h) — {stale.length}
+            Stale mains (active in last 30d, nothing in last 24h) — {staleFamilies.length}
+            <span className="text-dim font-normal"> · {stale.length} character{stale.length === 1 ? '' : 's'}</span>
           </h3>
-          <table className="w-full text-xs">
-            <thead className="text-dim">
-              <tr className="border-b border-border">
-                <th className="text-left px-3 py-2 font-normal">Character</th>
-                <th className="text-left px-3 py-2 font-normal">Last upload</th>
-                <th className="text-left px-3 py-2 font-normal">Agent</th>
-                <th className="text-right px-3 py-2 font-normal">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stale.map(s => (
-                <tr key={s.character} className="border-b border-border/40 hover:bg-[#1a212c]">
-                  <td className="px-3 py-2 text-text">{s.character}</td>
-                  <td className="px-3 py-2 text-dim">{rel(s.lastUpload)} <span className="text-[10px]">· {fmtTs(s.lastUpload)}</span></td>
-                  <td className="px-3 py-2 text-dim">{s.agentVersion || '—'}</td>
-                  <td className="px-3 py-2 text-right text-dim">{s.totalUploads.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div>{staleFamilies.map(f => <FamilyRow key={f.mainName} fam={f} stale />)}</div>
         </section>
       )}
 
@@ -526,6 +538,87 @@ export default async function AdminAgentsPage() {
         )}
       </section>
     </div>
+  );
+}
+
+// One collapsible family: a <summary> top-line (the main, aggregated) plus an
+// expandable per-character detail table. Native <details>/<summary> so it
+// works in a server component with zero client JS.
+function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
+  const familyStatus =
+    fam.totalErrors > 0 ? <span className="text-red-400">{fam.totalErrors} err</span> :
+    fam.queueMax > 0     ? <span className="text-orange">Q={fam.queueMax}</span> :
+    fam.anyFight         ? <span className="text-blue">in-fight</span> :
+                           <span className="text-green">healthy</span>;
+  // A family that's just one character IS its own main — no point expanding to
+  // a single identical row, but we still render the dropdown for consistency.
+  const multi = fam.members.length > 1;
+  return (
+    <details className="group border-b border-border/40 [&_summary::-webkit-details-marker]:hidden">
+      <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-[#1a212c] select-none">
+        <span className="text-dim text-[10px] w-3 shrink-0 transition-transform group-[[open]]:rotate-90">▶</span>
+        <span className="text-text font-medium min-w-0 truncate">
+          {isRealCharacter(fam.mainName) ? (
+            <Link href={`/character/${encodeURIComponent(fam.mainName)}`} className="text-blue hover:underline">{fam.mainName}</Link>
+          ) : (
+            <span className="text-dim" title="Operator-level streams (chat / pvp / fun events) with no single character">{fam.mainName}</span>
+          )}
+        </span>
+        <span className="text-[10px] text-dim border border-border rounded px-1.5 py-0.5 shrink-0">
+          {fam.members.length} char{fam.members.length === 1 ? '' : 's'}
+        </span>
+        <span className="text-dim text-xs ml-auto whitespace-nowrap">{rel(fam.latestUpload)}</span>
+        <span className="text-dim text-[10px] hidden md:inline max-w-[14rem] truncate" title={fam.versions.join(', ')}>{fam.versions.join(', ') || '—'}</span>
+        <span className="text-text text-xs hidden sm:inline tabular-nums w-16 text-right">{fam.totalUploads.toLocaleString()}</span>
+        <span className="text-[10px] w-16 text-right shrink-0">{familyStatus}</span>
+      </summary>
+
+      <div className="bg-[#0e131a] border-t border-border/40">
+        <table className="w-full text-xs">
+          <thead className="text-dim">
+            <tr className="border-b border-border/40">
+              <th className="text-left pl-8 pr-3 py-1.5 font-normal">Character</th>
+              <th className="text-left px-3 py-1.5 font-normal">Last upload</th>
+              <th className="text-left px-3 py-1.5 font-normal hidden md:table-cell">Agent</th>
+              <th className="text-right px-3 py-1.5 font-normal hidden sm:table-cell">Total</th>
+              <th className="text-left px-3 py-1.5 font-normal hidden lg:table-cell">Endpoint mix</th>
+              <th className="text-left px-3 py-1.5 font-normal">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fam.members.map(s => {
+              const isMain = s.character.toLowerCase() === fam.mainName.toLowerCase();
+              return (
+                <tr key={s.character} className="border-b border-border/20 last:border-0 hover:bg-[#141b24]">
+                  <td className="pl-8 pr-3 py-1.5 text-text">
+                    {isRealCharacter(s.character) ? (
+                      <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
+                    ) : (
+                      <span className="text-dim">{s.character}</span>
+                    )}
+                    {multi && isMain && <span className="ml-1.5 text-[9px] uppercase tracking-widest text-gold border border-gold/40 rounded px-1 py-0.5 align-middle">main</span>}
+                    <ClientChip client={s.client} appVersion={s.appVersion} agentVersion={s.agentVersion} />
+                    <div className="text-dim text-[10px] sm:hidden">{s.agentVersion || '—'} · {s.totalUploads.toLocaleString()} uploads</div>
+                  </td>
+                  <td className="px-3 py-1.5 text-dim whitespace-nowrap">{rel(s.lastUpload)}{stale && <span className="text-[10px]"> · {fmtTs(s.lastUpload)}</span>}</td>
+                  <td className="px-3 py-1.5 text-text hidden md:table-cell">{s.agentVersion || '—'}</td>
+                  <td className="px-3 py-1.5 text-right text-text hidden sm:table-cell tabular-nums">{s.totalUploads.toLocaleString()}</td>
+                  <td className="px-3 py-1.5 text-dim text-[10px] hidden lg:table-cell">
+                    {[...s.byEndpoint.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}×${n}`).join(' · ')}
+                  </td>
+                  <td className="px-3 py-1.5 text-[10px]">
+                    {s.totalErrors > 0 && <span className="text-red-400">{s.totalErrors} err</span>}
+                    {s.queuePending != null && s.queuePending > 0 && <span className="text-orange ml-1">Q={s.queuePending}</span>}
+                    {s.fightActive && <span className="text-blue ml-1">in-fight</span>}
+                    {s.totalErrors === 0 && (s.queuePending ?? 0) === 0 && !s.fightActive && <span className="text-green">healthy</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
 
