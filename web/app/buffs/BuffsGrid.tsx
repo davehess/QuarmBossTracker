@@ -75,11 +75,22 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
         </p>
       </div>
 
-      {/* Accuracy caveat — load-bearing. */}
-      <div className="bg-[#3a2a0a] border border-[#6b5320] text-[#f6c365] rounded-lg p-3 text-sm">
-        ⚠️ <b>Only characters running Mimic / the local agent with Zeal appear here</b>, and only as
-        of their last sync. Anyone not running it is <b>invisible</b> — a blank cell means
-        &quot;we don&apos;t know,&quot; not necessarily &quot;missing.&quot; Open <code>localhost:7777</code> for your own live view.
+      {/* Accuracy caveat — load-bearing. There is NO way to read another
+          player's buffs from their own client; the only data we have is what
+          each agent uploads about its OWN character via Zeal. So this page is
+          accurate exactly to the extent that each raider runs Mimic / the
+          agent — for everyone else we're inferring from indirect signals
+          (their last /who, their last appearance) and that's it. */}
+      <div className="bg-[#3a1010] border-2 border-[#a3260a] text-[#fca5a5] rounded-lg p-3 text-sm">
+        <div className="font-bold text-red-300 mb-1">⚠️ Read this before trusting any of these rows</div>
+        We <b>cannot read another player&apos;s buffs from your log</b> — there is no way to.
+        Every row here is sourced from the <b>character&apos;s own</b> Mimic / agent upload (via Zeal).
+        For raiders <b>not running the agent</b>, we can only infer so much from indirect signals,
+        and a blank cell means &quot;we don&apos;t know,&quot; <i>not</i> &quot;definitely missing.&quot;
+        <br /><br />
+        <b>Want an accurate accounting for your own characters?</b> Install Mimic
+        (<a href="https://wolfpack.quest/mimic" className="text-blue underline">wolfpack.quest/mimic</a>) or
+        run the local agent — their buffs + zone will sync within seconds. Open <code>localhost:7777</code> for your live view.
       </div>
 
       {/* Filters */}
