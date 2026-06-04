@@ -51,6 +51,20 @@
   !endif
 !macroend
 
+; Skip the "Choose Installation Options / Who should this be installed for?"
+; page entirely. perMachine=false + allowElevation=false already prevent the
+; all-users path + UAC, but electron-builder's assisted template STILL renders
+; that selection page (with the all-users option greyed out and the current
+; user's real name shown, e.g. "Only for me (Dave)"). Forcing
+; $isForceCurrentInstall in customInstallMode — the documented electron-builder
+; hook, invoked before the install-mode page is decided — makes the installer
+; commit to a per-user install and drop the page, so the first thing the user
+; sees is the install-location page (where "just click Install" is the fast
+; path). Also removes the personal-name label from the flow.
+!macro customInstallMode
+  StrCpy $isForceCurrentInstall "1"
+!macroend
+
 ; A discoverable Start Menu uninstaller. electron-builder registers the
 ; Add/Remove Programs entry, but testers expected to FIND an uninstaller — so
 ; drop a shortcut next to the app's Start Menu entry. ${UNINSTALL_FILENAME} is
