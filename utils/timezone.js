@@ -232,9 +232,22 @@ function isPvpQuietHours(tz) {
                      : (hour >= start || hour < end);     // wraps midnight
 }
 
+/** Unix-ms of the NEXT quiet-window END (default 8am) in the default tz. Used
+ *  for "ping me tonight" opt-ins so they auto-expire when pings resume. */
+function nextPvpQuietEnd(tz) {
+  tz = tz || getDefaultTz();
+  const end = _clampHour(process.env.PVP_QUIET_END, 8);
+  const { year, month, day, hour } = nowPartsInTz(tz);
+  if (hour < end) {
+    return localToUTC(year, month, day, end, 0, tz).getTime();
+  }
+  const d = new Date(Date.UTC(year, month - 1, day + 1));   // tomorrow at END:00
+  return localToUTC(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), end, 0, tz).getTime();
+}
+
 module.exports = {
   getDefaultTz, msUntilMidnightInTz, nowPartsInTz, parseUserTime,
   formatInDefaultTz, shortTimestampInTz, localToUTC,
   isInRaidWindow, RAID_DAYS, RAID_WINDOW_START, RAID_WINDOW_END,
-  isPvpQuietHours,
+  isPvpQuietHours, nextPvpQuietEnd,
 };

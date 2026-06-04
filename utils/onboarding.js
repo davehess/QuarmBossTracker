@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.3': [
+    '**Overnight PvP pings are now opt-in** — between **1am–8am Eastern** the automated `@PVP` pings no longer hit the whole role; they go only to people who clocked in. Run `/pvpnightpings` to drop the opt-in board in the PvP channel: 🌙 *ping me tonight* (auto-clears at 8am), 📌 *always ping me overnight*, or 🔕 *stop*. Manual `/pvpalert` & `/pvpspawn` rallies still ping everyone.',
+  ],
   '3.0.2': [
     '**PvP quiet hours** — automated `@PVP` pings (timer spawn alerts + live kill/death broadcasts) are now muted overnight (default **1am–8am Eastern**) so nobody gets woken at 3am. The cards still post for history; only the role ping is dropped. Manual `/pvpalert` and `/pvpspawn` rallies are unaffected. Window is configurable via `PVP_QUIET_START` / `PVP_QUIET_END`.',
   ],

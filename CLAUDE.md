@@ -2,7 +2,7 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.2 | `package.json` |
+| **Bot** | 3.0.3 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 3.0.7 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 1.0.4 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.9 | `apps/mimic/package.json` |
@@ -101,7 +101,7 @@ zone on insert — `find_or_create_encounter` currently leaves it NULL.
 ├── RUN-FIRST-for-Node.js.bat Node 20 installer for end users
 ├── start-logsync.ps1         PowerShell wrapper that copies the agent into the user's EQ dir
 │
-├── commands/                 64 slash commands (see Commands section)
+├── commands/                 65 slash commands (see Commands section)
 ├── utils/                    20 utility modules
 ├── data/
 │   ├── bosses.json           133 bosses — hot-reloaded
@@ -157,6 +157,7 @@ zone on insert — `find_or_create_encounter` currently leaves it NULL.
 | `add_zone_bosses:` | `handleAddZoneBosses` | Bulk-add zone bosses to target list |
 | `loot_rm:` / `loot_post` / `loot_cancel` | `handleLoot*` | Loot remove / post auctions / cancel |
 | `pvprole_toggle` / `pvprole_toggle_silent` | `handlePvpRoleToggle` | Toggle @PVP role |
+| `pvpnight_tonight` / `pvpnight_always` / `pvpnight_remove` | `handleNight*` (pvpnightpings.js) | Overnight PvP-ping opt-in (tonight / always / off) |
 | `pvpalert_howl:` | `handlePvpAlertHowl` | 🐺 Howl! rally count |
 | `pvp_spawn_alert:` | `handlePvpSpawnAlert` | Officer rally from `/pvpspawn` ephemeral |
 | `mark_avail:` | `handleMarkAvail` | Mark member available for PvP |
@@ -239,7 +240,7 @@ Each thread contains: cooldown card at top → zone kill cards (mid) → board p
 
 ---
 
-## Commands (64 total)
+## Commands (65 total)
 
 ### Kill tracking
 | Command | Notes |
@@ -299,12 +300,13 @@ Hate state is **dual-persisted** to survive volume loss: `state.json` + hidden J
 | `/pvphatekill <position> [timer_unknown] [killed_ago]` | 72h ±20% |
 | `/pvpalert <zone>` | Ping `@PVP_ROLE`. 1-hour suppression: re-alerting within 1h edits existing message, appends zones |
 | `/pvprole [silent]` | Toggle `@PVP` role membership |
+| `/pvpnightpings` | Officer: post the overnight-ping opt-in board (🌙 tonight / 📌 always / 🔕 off). During quiet hours, automated pings go only to opt-ins |
 | `/quake [time]` | Officer: reset all PvP mob timers. `"now"` or natural language (`"Friday 9pm"`). Creates Discord event for future times |
 | `/markzek <character> <true\|false>` | Officer: sticky `is_zek` flag overrides auto-detection from `/who` |
 
 Stale-alert suppression (post-redeploy): "opens soon" suppressed if earliest spawn > 10 min ago; "definitely spawned" if latest > 15 min ago.
 
-**PvP quiet hours:** automated `@PVP` role pings (the two `checkPvpSpawns` spawn alerts + the `/api/agent/pvp` WP kill/death broadcasts) drop the role mention during an overnight window (`isPvpQuietHours()` in `utils/timezone.js`, default 1am–8am in `DEFAULT_TIMEZONE`, env-tunable via `PVP_QUIET_START`/`PVP_QUIET_END`, wraps midnight). The message still posts; only the ping is muted. Manual `/pvpalert` / `/pvpspawn` rallies are intentionally NOT gated (deliberate human action).
+**PvP quiet hours + overnight opt-in:** during an overnight window (`isPvpQuietHours()` in `utils/timezone.js`, default 1am–8am in `DEFAULT_TIMEZONE`, env-tunable via `PVP_QUIET_START`/`PVP_QUIET_END`, wraps midnight) the automated `@PVP` role pings (the two `checkPvpSpawns` spawn alerts + the `/api/agent/pvp` WP kill/death broadcasts) do NOT ping the whole role. Instead they ping only the **overnight opt-in list** (`state.pvpNight`: `permanent[]` + `tonight{userId:expiresAt}`), or nobody if the list is empty. The card still posts either way. `/pvpnightpings` (officer) posts the opt-in board in the PVP channel; its three buttons (`pvpnight_tonight` → until next 8am via `nextPvpQuietEnd()`, `pvpnight_always`, `pvpnight_remove`) let anyone add/remove themselves. Manual `/pvpalert` / `/pvpspawn` rallies are intentionally NOT gated (deliberate human action).
 
 ### Announcements
 | Command | Notes |

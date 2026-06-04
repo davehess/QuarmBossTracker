@@ -11,6 +11,7 @@ function _empty() {
     bosses: {}, expansionBoards: {}, channelSlots: {},
     zoneCards: {}, dailyKills: [], announceMessageIds: [],
     announces: {}, pvpKills: {}, liveKills: {}, quake: null, pvpAlerts: {},
+    pvpNight: { permanent: [], tonight: {}, boardMsg: null },
     seenWelcome: [], raidSession: null, raidNight: null, hateBoards: {}, ari: null, quarmyLinks: {},
     auditEntries: [],
     agentTestCards: {}, agentSessionCardId: null,
@@ -69,6 +70,7 @@ function loadState() {
   if (raw.liveKills)          s.liveKills          = raw.liveKills;
   if (raw.quake !== undefined) s.quake             = raw.quake;
   if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
+  if (raw.pvpNight)           s.pvpNight           = raw.pvpNight;
   if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
   if (raw.raidSession)        s.raidSession        = raw.raidSession;
   if (raw.raidNight)          s.raidNight          = raw.raidNight;
@@ -309,6 +311,58 @@ function clearPvpAlert(messageId) {
   if (s.pvpAlerts) delete s.pvpAlerts[messageId];
   saveState(s);
 }
+
+// ── PVP overnight-ping opt-in list ──────────────────────────────────────────
+// During PvP quiet hours, automated @PVP pings are muted for the role at large
+// and instead go ONLY to users who opted in here. Two tiers:
+//   permanent: [userId]            — always pinged overnight
+//   tonight:   { userId: expiresAt } — pinged until expiresAt (next 8am)
+// boardMsg holds the anchor message id of the opt-in board (so /pvpnightpings
+// refreshes in place instead of duplicating).
+function _pvpNight(s) {
+  if (!s.pvpNight || typeof s.pvpNight !== 'object') s.pvpNight = { permanent: [], tonight: {}, boardMsg: null };
+  if (!Array.isArray(s.pvpNight.permanent)) s.pvpNight.permanent = [];
+  if (!s.pvpNight.tonight || typeof s.pvpNight.tonight !== 'object') s.pvpNight.tonight = {};
+  return s.pvpNight;
+}
+function getPvpNight() { return _pvpNight(loadState()); }
+// Active overnight-ping users right now: permanent ∪ (tonight not yet expired).
+// Prunes expired "tonight" entries as a side effect so the list stays tidy.
+function getActivePvpNightUserIds(now = Date.now()) {
+  const s = loadState();
+  const n = _pvpNight(s);
+  let changed = false;
+  for (const [uid, exp] of Object.entries(n.tonight)) {
+    if (!exp || exp <= now) { delete n.tonight[uid]; changed = true; }
+  }
+  if (changed) saveState(s);
+  const set = new Set(n.permanent);
+  for (const uid of Object.keys(n.tonight)) set.add(uid);
+  return [...set];
+}
+function addPvpNightTonight(userId, expiresAt) {
+  const s = loadState(); const n = _pvpNight(s);
+  n.tonight[userId] = expiresAt;
+  // Opting in "tonight" while already permanent is a no-op on permanent.
+  saveState(s);
+  return n;
+}
+function addPvpNightPermanent(userId) {
+  const s = loadState(); const n = _pvpNight(s);
+  if (!n.permanent.includes(userId)) n.permanent.push(userId);
+  delete n.tonight[userId];   // permanent supersedes a tonight entry
+  saveState(s);
+  return n;
+}
+function removePvpNight(userId) {
+  const s = loadState(); const n = _pvpNight(s);
+  n.permanent = n.permanent.filter(u => u !== userId);
+  delete n.tonight[userId];
+  saveState(s);
+  return n;
+}
+function getPvpNightBoardMsg()        { return _pvpNight(loadState()).boardMsg || null; }
+function setPvpNightBoardMsg(msgId)   { const s = loadState(); _pvpNight(s).boardMsg = msgId || null; saveState(s); }
 
 // ── Quake state ────────────────────────────────────────────────────────────────────────────────
 function getQuake()              { return loadState().quake || null; }
@@ -833,6 +887,8 @@ module.exports = {
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getQuake, saveQuake, clearQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
+  getPvpNight, getActivePvpNightUserIds, addPvpNightTonight, addPvpNightPermanent,
+  removePvpNight, getPvpNightBoardMsg, setPvpNightBoardMsg,
   getRaidSession, saveRaidSession, clearRaidSession, accumulateSessionDamage, clearSessionDamage,
   getRaidSessionTargets, addRaidSessionTarget, removeRaidSessionTarget,
   getRaidNight, saveRaidNight, clearRaidNight,

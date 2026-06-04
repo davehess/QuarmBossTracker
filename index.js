@@ -61,6 +61,7 @@ const {
   getAnnounce, removeAnnounce, getAnnounceByThreadId,
   updateAnnounceTargets, updateAnnounceEasterEgg, getAllAnnounces,
   getAllPvpKills, clearPvpKill, getQuake, saveQuake, clearQuake,
+  getActivePvpNightUserIds,
   recordPvpKill, setPvpKillThreadMessageId,
   addPvpAlertHowler,
   hasSeenWelcome, markWelcomeSeen,
@@ -79,6 +80,16 @@ const {
   getHateBoardMessageId, setHateBoardMessageId,
 } = require('./utils/state');
 const { getDefaultTz, msUntilMidnightInTz, isPvpQuietHours } = require('./utils/timezone');
+
+// During PvP quiet hours, automated @PVP pings go to the opt-in list only
+// (see commands/pvpnightpings.js). Returns the user-mention string for everyone
+// currently entitled to overnight pings, or '' if nobody opted in (full mute).
+function pvpQuietMention() {
+  try {
+    const ids = getActivePvpNightUserIds();
+    return ids.length ? ids.map(id => `<@${id}>`).join(' ') : '';
+  } catch { return ''; }
+}
 const {
   buildZoneKillCard, buildSpawnAlertEmbed, buildSpawnedEmbed,
   buildDailySummaryEmbed,
@@ -492,6 +503,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId.startsWith('add_zone_bosses:'))    { await handleAddZoneBosses(interaction); return; }
     if (interaction.customId === 'pvprole_toggle')              { await handlePvpRoleToggle(interaction, false); return; }
     if (interaction.customId === 'pvprole_toggle_silent')       { await handlePvpRoleToggle(interaction, true); return; }
+    if (interaction.customId === 'pvpnight_tonight')            { const { handleNightTonight } = require('./commands/pvpnightpings'); await handleNightTonight(interaction); return; }
+    if (interaction.customId === 'pvpnight_always')             { const { handleNightAlways }  = require('./commands/pvpnightpings'); await handleNightAlways(interaction);  return; }
+    if (interaction.customId === 'pvpnight_remove')             { const { handleNightRemove }  = require('./commands/pvpnightpings'); await handleNightRemove(interaction);  return; }
     if (interaction.customId.startsWith('pvpalert_howl:'))      { await handlePvpAlertHowl(interaction); return; }
     if (interaction.customId.startsWith('pvp_spawn_alert:'))    { await handlePvpSpawnAlert(interaction); return; }
     if (interaction.customId === 'fb_recv')                      { await handleFeedbackRecv(interaction); return; }
@@ -1942,9 +1956,12 @@ async function checkPvpSpawns(readyClient, now) {
           const pvpRoleName = process.env.PVP_ROLE || 'PVP';
           const guild       = readyClient.guilds.cache.first();
           const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
-          // Quiet hours (default 1am–8am): post the alert but drop the @PVP
-          // ping so the timer doesn't wake the pack overnight.
-          const mention     = (pvpRole && !isPvpQuietHours()) ? `<@&${pvpRole.id}>` : '';
+          // Quiet hours (default 1am–8am): instead of pinging the whole role,
+          // ping only the overnight opt-in list (empty = silent). Manual rallies
+          // are unaffected. See commands/pvpnightpings.js.
+          const mention     = isPvpQuietHours()
+            ? pvpQuietMention()
+            : (pvpRole ? `<@&${pvpRole.id}>` : '');
           const ch          = await readyClient.channels.fetch(pvpAlertId);
           const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
           const sent = await ch.send({
@@ -2022,8 +2039,10 @@ async function checkPvpSpawns(readyClient, now) {
         const pvpRoleName = process.env.PVP_ROLE || 'PVP';
         const guild       = readyClient.guilds.cache.first();
         const pvpRole     = guild?.roles.cache.find(r => r.name === pvpRoleName);
-        // Quiet hours: post the "mob is up" notice without the @PVP ping.
-        const mention     = (pvpRole && !isPvpQuietHours()) ? `<@&${pvpRole.id}>` : '';
+        // Quiet hours: ping only the overnight opt-in list (empty = silent).
+        const mention     = isPvpQuietHours()
+          ? pvpQuietMention()
+          : (pvpRole ? `<@&${pvpRole.id}>` : '');
         const ch          = await readyClient.channels.fetch(pvpAlertId);
         const { EmbedBuilder: EB } = require('discord.js');
         await ch.send({
@@ -2960,9 +2979,13 @@ async function _handleAgentPvp(req, res) {
         });
       }
 
-      // Quiet hours (default 1am–8am): keep posting the kill/death cards but
-      // drop the @PVP ping so live-server skirmishes don't wake the pack.
+      // Quiet hours (default 1am–8am): keep posting the kill/death cards, but
+      // ping only the overnight opt-in list instead of the whole @PVP role so
+      // live-server skirmishes don't wake the pack. Resolves to the opt-in
+      // mentions (trailing space) or '' when nobody opted in.
       const pvpQuiet = isPvpQuietHours();
+      const _qm = pvpQuiet ? pvpQuietMention() : '';
+      const _pvpQuietPing = _qm ? _qm + ' ' : '';
       let content;
       if (isWpKill) {
         // Celebrate — Wolf Pack got a PvP kill. Ping @PVP so the pack joins the
@@ -2971,12 +2994,12 @@ async function _handleAgentPvp(req, res) {
         // afk-able ones. Deaths still ping for backup; other-guild / NPC kills
         // remain informational with no mention.
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const mention = (pvpRole && !pvpQuiet) ? `<@&${pvpRole.id}> ` : '';
+        const mention = pvpQuiet ? _pvpQuietPing : (pvpRole ? `<@&${pvpRole.id}> ` : '');
         content = `${mention}⚔️ **${killer}** of <${killerGuild}> killed **${victim}** of <${victimGuild}> in ${zone}! AWROOOO!`;
       } else if (isWpDeath) {
         // Request backup — Wolf Pack member was killed
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
-        const mention = (pvpRole && !pvpQuiet) ? `<@&${pvpRole.id}> ` : '';
+        const mention = pvpQuiet ? _pvpQuietPing : (pvpRole ? `<@&${pvpRole.id}> ` : '');
         content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
       } else {
         // NPC kill or other-guild kill — informational only, NO @PVP
