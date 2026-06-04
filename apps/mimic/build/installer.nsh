@@ -20,7 +20,16 @@
 ; app.getPath('userData') resolves (%APPDATA%\<productName>) — matching
 ; CONFIG_FILE()/AGENT_DIR()/AGENT_LOG() in main.js. The literal product name is
 ; used (not a macro) so the path can't drift if build metadata changes.
+; A discoverable Start Menu uninstaller. electron-builder registers the
+; Add/Remove Programs entry, but testers expected to FIND an uninstaller — so
+; drop a shortcut next to the app's Start Menu entry. ${UNINSTALL_FILENAME} is
+; the electron-builder-provided uninstaller exe name in $INSTDIR.
+!macro customInstall
+  CreateShortCut "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk" "$INSTDIR\${UNINSTALL_FILENAME}"
+!macroend
+
 !macro customUnInstall
+  Delete "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk"
   ${ifNot} ${isUpdated}
     RMDir /r "$APPDATA\Wolf Pack Mimic"
   ${endIf}

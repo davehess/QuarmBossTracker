@@ -1435,6 +1435,56 @@ function tooltipFor(s) {
   return `Wolf Pack Mimic ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
 }
 
+// ── Self-uninstall ──────────────────────────────────────────────────────────
+// electron-builder always generates an uninstaller (Add/Remove Programs entry +
+// Uninstall <App>.exe in the install dir) — but a tray app gives no obvious way
+// to FIND it, which testers hit. Surface it directly from the tray. The exe
+// lives next to our own (process.execPath = <INSTDIR>\Wolf Pack Mimic.exe), so
+// the uninstaller is <INSTDIR>\Uninstall Wolf Pack Mimic.exe. Returns null in
+// dev mode / non-Windows / if the file isn't there, so the tray item hides
+// rather than offering a dead action.
+function _uninstallerPath() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const p = path.join(path.dirname(process.execPath), 'Uninstall Wolf Pack Mimic.exe');
+    return fs.existsSync(p) ? p : null;
+  } catch { return null; }
+}
+async function runUninstaller() {
+  const exe = _uninstallerPath();
+  if (!exe) {
+    try {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Uninstall Wolf Pack Mimic',
+        message: 'Uninstall from Windows Settings',
+        detail: 'Open Windows Settings → Apps → Installed apps → Wolf Pack Mimic → Uninstall. (The in-app uninstaller is only available on packaged installs.)',
+      });
+    } catch (e) { void e; }
+    return;
+  }
+  const res = await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Uninstall', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Uninstall Wolf Pack Mimic',
+    message: 'Uninstall Wolf Pack Mimic?',
+    detail: 'This closes Mimic and launches the uninstaller. Your saved Wolf Pack login, agent token, and settings on this machine will be removed.',
+  });
+  if (res.response !== 0) return;
+  // Quit ourselves first so the running .exe isn't locked, then launch the
+  // detached uninstaller. unref() lets it outlive us.
+  quitting = true;
+  try { if (agentProc) agentProc.kill(); } catch (e) { void e; }
+  try {
+    spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+  } catch (e) {
+    try { appendAgentLog(`[mimic] failed to launch uninstaller: ${e && e.message}\n`); } catch (_) {}
+  }
+  setTimeout(() => app.quit(), 400);
+}
+
 function makeTrayIcon() {
   // Load the real wolf-in-mimic icon from assets/. Electron picks up the
   // @2x sibling automatically on high-DPI displays. Falls back to a plain
@@ -1566,6 +1616,7 @@ function buildTrayMenu() {
     { label: 'Restart agent', click: async () => {
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
       } },
+    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
     { label: 'Quit Mimic', click: () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } app.quit(); } },
   ]);
   tray.setContextMenu(menu);
