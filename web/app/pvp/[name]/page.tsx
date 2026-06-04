@@ -56,6 +56,15 @@ type Death = {
   zone: string | null;
   killed_at: string;
 };
+type Assist = {
+  pvp_kill_id: number | null;
+  killer: string;
+  killer_is_npc: boolean | null;
+  victim: string;
+  victim_guild: string | null;
+  zone: string | null;
+  killed_at: string;
+};
 
 // Resolve the set of character names (lowercased) the signed-in viewer owns,
 // so we can decide whether to reveal the private deaths section.
@@ -121,7 +130,7 @@ async function load(name: string) {
   const sb = supabaseAdmin();
   const decoded = decodeURIComponent(name);
 
-  const [{ data: kills }, { data: deaths }] = await Promise.all([
+  const [{ data: kills }, { data: deaths }, { data: assistData }] = await Promise.all([
     sb.from('pvp_kills')
       .select('id, killer, victim, victim_guild, zone, via_pet, pet_name, killed_at')
       .eq('guild_id', 'wolfpack')
@@ -134,14 +143,43 @@ async function load(name: string) {
       .ilike('victim', decoded)
       .order('killed_at', { ascending: false })
       .limit(10000),
+    // Kills THIS character assisted on (someone else landed the killing blow,
+    // this character was on the damage). Co-assisters are resolved below.
+    sb.from('pvp_assists')
+      .select('pvp_kill_id, killer, killer_is_npc, victim, victim_guild, zone, killed_at')
+      .eq('guild_id', 'wolfpack')
+      .ilike('assister', decoded)
+      .order('killed_at', { ascending: false })
+      .limit(5000),
   ]);
+
+  const assists = (assistData ?? []) as Assist[];
+  // Pull every assister on the same kills so we can show "who else was on it".
+  const killIds = [...new Set(assists.map(a => a.pvp_kill_id).filter((x): x is number => x != null))];
+  const coByKill = new Map<number, string[]>();
+  if (killIds.length > 0) {
+    const { data: co } = await sb
+      .from('pvp_assists')
+      .select('pvp_kill_id, assister')
+      .eq('guild_id', 'wolfpack')
+      .in('pvp_kill_id', killIds)
+      .limit(20000);
+    for (const r of (co ?? []) as { pvp_kill_id: number | null; assister: string }[]) {
+      if (r.pvp_kill_id == null) continue;
+      const arr = coByKill.get(r.pvp_kill_id) ?? [];
+      arr.push(r.assister);
+      coByKill.set(r.pvp_kill_id, arr);
+    }
+  }
 
   return {
     kills: (kills ?? []) as Kill[],
     deaths: (deaths ?? []) as Death[],
+    assists,
+    coByKill,
     displayName: ((kills ?? [])[0] as Kill | undefined)?.killer
       ?? ((deaths ?? [])[0] as Death | undefined)?.victim
-      ?? decoded,
+      ?? decoded,   // assist-only chars: the URL name is the only cased source
   };
 }
 
@@ -150,7 +188,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/pvp/${encodeURIComponent(name)}`);
 
-  const { kills, deaths, displayName } = await load(name);
+  const { kills, deaths, assists, coByKill, displayName } = await load(name);
   const owned = await ownedNames();
   const viewerOwns = owned.has(displayName.toLowerCase());
   const officer = await isOfficer(user.id);
@@ -194,6 +232,16 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   }
   const killerRows = [...byKiller.values()].sort((a, b) => b.count - a.count);
 
+  // Assists made by this character — each with who LANDED the kill and the
+  // other assisters who were on it (this character filtered out of the co list).
+  const assistRows = assists.map(a => {
+    const co = [...new Set(
+      (a.pvp_kill_id != null ? (coByKill.get(a.pvp_kill_id) ?? []) : [])
+        .filter(n => n.toLowerCase() !== displayName.toLowerCase())
+    )];
+    return { ...a, co };
+  });
+
   return (
     <div className="space-y-6">
       <div className="text-sm">
@@ -202,7 +250,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-2xl text-gold">{displayName}</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           <Stat label="Total kills" value={String(kills.length)} accent="text-text" />
           <Stat label="Unique victims" value={String(uniqueVictims)} accent="text-blue" />
           <Stat
@@ -210,6 +258,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
             value={String(kills.filter(k => k.via_pet).length)}
             accent="text-orange"
           />
+          <Stat label="Assists" value={String(assists.length)} accent="text-green" />
         </div>
       </section>
 
@@ -315,6 +364,59 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
             <div className="text-[10px] text-dim mt-2">Officer: removing a kill deletes it from the ledger and recomputes the leaderboard. There is no undo — re-running the killer&apos;s log backfill restores any real kill.</div>
           )}
           </>
+        )}
+      </section>
+
+      {/* Assists — kills this character helped land (someone else got the
+          killing blow); shows who landed it + who else was on the assist. */}
+      <section className="bg-panel border border-border rounded-lg p-4">
+        <h3 className="text-sm text-green mb-3 flex items-center gap-2">
+          <span aria-hidden>🤝</span>
+          <span>Assists</span>
+          <span className="text-dim text-xs">· kills {displayName} was on — who landed it &amp; who else assisted · {assistRows.length} total</span>
+        </h3>
+        {assistRows.length === 0 ? (
+          <div className="text-sm text-dim italic">No assists recorded.</div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="text-dim text-left">
+              <tr className="border-b border-border">
+                <th className="py-1 pr-2">When</th>
+                <th className="py-1 pr-2">Got the kill</th>
+                <th className="py-1 pr-2">Victim</th>
+                <th className="py-1 pr-2">Assisted with</th>
+                <th className="py-1 pr-2">Zone</th>
+              </tr>
+            </thead>
+            <tbody>
+              {assistRows.slice(0, 200).map((a, i) => (
+                <tr key={`${a.pvp_kill_id ?? 'x'}-${i}`} className="border-b border-border/30 hover:bg-[#1a212c]">
+                  <td className="py-1 pr-2 text-dim whitespace-nowrap">
+                    {dayLabel(dayKey(a.killed_at))} · {fmtTime(a.killed_at)}
+                  </td>
+                  <td className="py-1 pr-2 text-text">
+                    {a.killer_is_npc
+                      ? <span className="text-dim italic">{a.killer} (NPC)</span>
+                      : <Link href={`/pvp/${encodeURIComponent(a.killer)}`} className="text-text hover:text-blue hover:underline">{a.killer}</Link>}
+                  </td>
+                  <td className="py-1 pr-2 text-text">
+                    {a.victim}{a.victim_guild ? <span className="text-dim"> {'<'}{a.victim_guild}{'>'}</span> : null}
+                  </td>
+                  <td className="py-1 pr-2 text-dim">
+                    {a.co.length === 0
+                      ? <span className="text-dim/60">— solo assist</span>
+                      : a.co.map((n, j) => (
+                          <span key={n}>
+                            {j > 0 ? ', ' : ''}
+                            <Link href={`/pvp/${encodeURIComponent(n)}`} className="text-dim hover:text-blue hover:underline">{n}</Link>
+                          </span>
+                        ))}
+                  </td>
+                  <td className="py-1 pr-2 text-dim">{a.zone || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
 
