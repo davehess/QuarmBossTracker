@@ -476,18 +476,29 @@ const PARSER_DOWNLOAD_URL =
   'https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip';
 
 // ── Onboarding action rows ────────────────────────────────────────────────────
+// Surfaced when a member clicks "Set up the parser" in the welcome flow. Two
+// recommended paths: Mimic (new default — Electron desktop, v1.0.0+, includes
+// overlay/triggers/charm/tells) and Parser.bat (classic CLI agent, minimal).
+const MIMIC_URL = 'https://wolfpack.quest/mimic';
 function buildParseOverviewEmbed() {
   return new EmbedBuilder()
-    .setColor(0x2ecc71)
-    .setTitle('🐺 Wolf Pack Parser — Setup')
-    .setDescription('The Wolf Pack Parser runs in the background and keeps your timers in sync.')
+    .setColor(0x1f6feb)
+    .setTitle('🐺 Set up parsing — pick one')
+    .setDescription('Both share your combat data with the bot so guild stats stay current. Mimic is the all-in-one desktop app (recommended); Parser.bat is the minimal CLI agent.')
     .addFields(
       {
-        name: '📥 Download',
+        name: '⭐ Recommended: Wolf Pack Mimic v1.0.0',
         value:
-          `[**Download WolfPackParser.zip**](${PARSER_DOWNLOAD_URL}) — unzip anywhere on your drive.\n` +
-          'Double-click **`RUN-FIRST-for-Node.js.bat`** once, then **`Parser.bat`** each session.\n' +
-          'Full setup walkthrough: `/parsehelp`',
+          `[**${MIMIC_URL}**](${MIMIC_URL}) — one-click installer, bundles its own Node, no extras to install.\n` +
+          '**Includes:** DPS overlay · trigger TTS · charm tracker · /tells history · Buffs & Zone card · UI layout backup · optional Discord sign-in.\n' +
+          'After install, paste your `/token` value into Settings → Agent token.',
+        inline: false,
+      },
+      {
+        name: '🧱 Minimal: Parser.bat (CLI)',
+        value:
+          `[**WolfPackParser.zip**](${PARSER_DOWNLOAD_URL}) — unzip, double-click \`RUN-FIRST-for-Node.js.bat\` once, then \`Parser.bat\` each session.\n` +
+          'Full walkthrough: `/parsehelp`',
         inline: false,
       },
     )

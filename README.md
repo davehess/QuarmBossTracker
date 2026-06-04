@@ -7,13 +7,25 @@ Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
 ---
 
-## Local Installation (Windows)
+## End-user install (raid members)
 
-### 1 — Install Node.js
+Two paths — pick one. Both upload the same combat data to the bot.
 
-Double-click **`RUN-FIRST-for-Node.js.bat`** in the repo root. Approve the UAC prompt.
-The script checks whether Node.js 20+ is already present and installs it automatically if not.
-You only need to do this once per machine.
+### ⭐ Wolf Pack Mimic (recommended)
+
+**One-click installer:** [**wolfpack.quest/mimic**](https://wolfpack.quest/mimic)
+
+Electron desktop app, **v1.0.0 stable**. Bundles its own Node runtime — nothing else to install. SmartScreen will warn (not code-signed yet) → *More info → Run anyway*. Auto-updates in place from here on.
+
+**What you get on top of uploads:** always-on-top DPS HUD overlay · trigger alerts with TTS + countdown timers · charm tracker (6s tick + recharm alarm) · `/tells` history synced privately to wolfpack.quest/me/tells · Buffs & Zone card (what every character is carrying + where they parked) · UI Studio (back up your EQ window layout, hotkeys, chat tabs, `eqclient.ini` → restore on any machine) · optional Discord sign-in that persists across upgrades.
+
+After install: run it once, paste your `/token` value into Settings → Agent token.
+
+### 🧱 Parser.bat (CLI agent)
+
+Original log-tail agent. Smaller footprint, no GUI. Good if you already have Node.js set up or want the minimal install.
+
+Double-click **`RUN-FIRST-for-Node.js.bat`** in the repo root (one time per machine, UAC approves Node.js 20), then double-click **`Parser.bat`**.
 
 **First run — Node.js not installed:**
 
@@ -22,6 +34,14 @@ You only need to do this once per machine.
 **Node.js already installed:**
 
 ![Node.js already present](docs/screenshot-already-installed.png)
+
+---
+
+## Bot install (officers / self-host)
+
+### 1 — Install Node.js
+
+Same `RUN-FIRST-for-Node.js.bat` flow as above, one time per machine.
 
 ### 2 — Configure and start
 
