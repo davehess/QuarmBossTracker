@@ -84,7 +84,7 @@
   <div style="margin-top:14px">
     <div class="hint">Additional folders</div>
     <div id="eqManualList"></div>
-    <button id="eqAddFolder" type="button" style="margin-top:6px;background:#21262d;border:1px solid #2a3140">📁 Add another folder…</button>
+    <button id="eqAddFolder" type="button" style="margin-top:6px;background:#21262d;border:1px solid #2a3140">📁 Browse for an EverQuest folder…</button>
   </div>
 
   <details id="eqScannedDisclosure" style="margin-top:10px;font-size:11px;color:#6b7280">
@@ -171,7 +171,7 @@
     const list = document.getElementById('eqDetectedList');
     const hint = document.getElementById('eqDetectedHint');
     if (_foundCandidates.length === 0) {
-      hint.textContent = 'No EQ installs auto-detected. Use “Add another folder…” below.';
+      hint.textContent = 'No EQ installs auto-detected. Use “Browse for an EverQuest folder…” below.';
       list.innerHTML = '';
     } else {
       hint.textContent = 'Auto-detected installs:';

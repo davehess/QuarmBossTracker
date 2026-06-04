@@ -172,12 +172,12 @@
       <span class="title">Step 2 · Your EverQuest folder</span>
       <span class="badge" id="eqBadge">Scanning…</span>
     </div>
-    <p>Mimic parses your fights by reading EverQuest's <b>log files</b>, so it needs your <b>EQ install folder</b>. We scan for it automatically — confirm it below, or add it if your EQ lives somewhere unusual. <span style="color:#6b7280">(This is your EverQuest folder, <i>not</i> where Mimic itself installed.)</span></p>
+    <p>Mimic parses your fights by reading EverQuest's <b>log files</b>, so it needs your <b>EQ install folder</b>. We scan for it automatically — confirm it below, or <b>browse</b> to it if your EQ lives somewhere unusual. <span style="color:#6b7280">(This is your EverQuest folder, <i>not</i> where Mimic itself installed.)</span></p>
     <div id="eqDetectedHint" class="saved" style="color:#8b949e;display:block;margin-bottom:6px">Scanning for eqgame.exe…</div>
     <div id="eqDetectedList"></div>
     <div id="eqManualList" style="margin-top:4px"></div>
     <div class="row" style="margin-top:8px">
-      <button id="eqAddFolder" class="ghost">📁 Add another folder…</button>
+      <button id="eqAddFolder">📁 Browse for your EverQuest folder…</button>
       <button id="eqSave">Save folder</button>
       <span class="saved" id="eqSaved"></span>
     </div>
@@ -442,7 +442,7 @@
     const list = $('eqDetectedList');
     const hint = $('eqDetectedHint');
     if (_foundCandidates.length === 0) {
-      hint.textContent = 'No EQ install auto-detected. Use “Add another folder…” to point Mimic at your EverQuest folder.';
+      hint.textContent = 'No EQ install auto-detected. Click “📁 Browse for your EverQuest folder…” below to point Mimic at it.';
       list.innerHTML = '';
     } else {
       hint.textContent = 'Auto-detected — tick the folder(s) Mimic should read:';
