@@ -32,7 +32,25 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   overlay chrome). Site v1 first.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
+## Quick requested features (buildable, queued)
+- **/me named-mob kill counts.** Show per-named-mob totals of how many of each
+  the member has killed / been part of the kill on. Buildable from
+  `encounter_players` ⋈ `encounters.npc_id` ⋈ `eqemu_npc_types.name`: count
+  distinct encounters per npc where one of the member's characters appears.
+  Group by npc, sort desc. A new card on `/me` (per-character or family-wide).
+- **Pet buffs (`/pet health`).** Parse the `/pet health` burst (HP + bare
+  buff-name lines sharing one timestamp) → pet HP + buff list; track each buff's
+  first-seen across the macro-spammed snapshots for a recast anchor. v2: durations
+  from `eqemu_spells` + AA extensions. (Started planning; no edits yet.)
+- **Supabase retention/prune job** (see sizing note below) — prune `agent_uploads`
+  (heartbeat log, ~60MB/177k rows) to ~30–60 days; later `who_observations`. Keeps
+  us comfortably on the free tier.
+
 ## In-flight findings (not yet acted on)
+- **Supabase size (checked 2026-06-04): 280 MB / 500 MB free tier = 56%.** Growers:
+  `chat_messages` 79MB, `agent_uploads` 60MB, `who_observations` 44MB. Fixed:
+  eqemu_* catalog ~50MB. Cheapest cap = prune `agent_uploads` (pure heartbeat
+  log). Pro tier is $25/mo (8GB) if we'd rather not prune.
 - **Windows code signing — pre-staged, awaiting SignPath Foundation approval.**
   Applied to SignPath.io Foundation (free OSS code signing) 2026-06. Signing
   pipeline is wired but OFF in `.github/workflows/release-mimic.yml` (gated on
