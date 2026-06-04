@@ -48,10 +48,14 @@ with colleagues will follow this exact order.)
     a colored HP% + bar (green/amber/red). Only the local uploader's own pet has
     gauge data (Zeal streams only the local client), which is the pet that
     matters. Dashboard escape check passes.
-- **B. Resisted-spells dropdown** — `info` tab "Spells Resisted (incoming)" rows
-  should expand to show which mobs cast each spell + counts. Needs the agent to
-  track per-caster breakdown for resisted spells (currently only spell→count;
-  "Last seen from" is always —). (agent)
+- **B. Resisted-spells dropdown — ✅ SHIPPED (agent 3.0.7).** The `info` tab
+  "Spells Resisted (incoming)" card now renders each spell as an expandable
+  `<details>` (open-state preserved across re-render) listing which mobs cast it
+  + counts, from the `byMob` map the parser already collected. The map is
+  populated from `this.bossName` (the mob being damaged) at resist time, so
+  attribution lands during any fight; "—" only happens for resists outside a
+  tracked fight, which the card now explains. Render-only change — the data was
+  already there. Dashboard escape check clean.
 - **C. Overlays submenu expansion — ✅ SHIPPED (agent 3.0.5 · Mimic 1.0.8).**
   Tray Overlays submenu now has a "Panel overlays" group with named toggles:
   💥 DEEPS, 💚 Healing, 🛡 Incoming damage (tanking), ⚔️ Threat detail, 📊 Top

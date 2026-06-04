@@ -4865,17 +4865,41 @@ function renderInfo(s) {
   var _rs = s.resistedSpells || {};
   var _rsNames = Object.keys(_rs);
   if (_rsNames.length > 0) {
+    // Preserve which spell rows are expanded across the 1s re-render (same
+    // pattern as the inbound-spell-damage card below).
+    var _rsOpen = new Set();
+    try {
+      var _re = document.querySelectorAll('#info details[data-rs-name]');
+      for (var _rk = 0; _rk < _re.length; _rk++) {
+        if (_re[_rk].hasAttribute('open')) _rsOpen.add(_re[_rk].getAttribute('data-rs-name'));
+      }
+    } catch (e) {}
     h += '<div class="card wide"><h2>🛡 Spells Resisted (incoming)</h2>';
-    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spells mobs cast at you that you resisted — this names what their "a spell" casts actually were.</div>';
-    h += '<table><tr><th>Spell</th><th class="num">Resisted</th><th>Last seen from</th></tr>';
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spells mobs cast at you that you resisted — this names what their "a spell" casts actually were. Expand a row to see which mobs cast it + how many times.</div>';
     _rsNames.map(function (n) { return [n, _rs[n]]; })
       .sort(function (a, b) { return (b[1].count || 0) - (a[1].count || 0); })
       .forEach(function (e) {
-        h += '<tr><td class="name">' + spellLink(e[0]) + '</td>' +
-             '<td class="num">' + (e[1].count || 0) + '</td>' +
-             '<td class="dim">' + (e[1].lastMob ? esc(e[1].lastMob) : '—') + '</td></tr>';
+        var rec = e[1] || {};
+        var byMob = rec.byMob || {};
+        var mobs = Object.keys(byMob).map(function (m) { return [m, byMob[m]]; })
+          .sort(function (a, b) { return (b[1] || 0) - (a[1] || 0); }).slice(0, 20);
+        var openAttr = _rsOpen.has(e[0]) ? ' open' : '';
+        h += '<details data-rs-name="' + esc(e[0]) + '"' + openAttr + '>';
+        h += '<summary><span class="name">' + spellLink(e[0]) + '</span> '
+           + '<span class="dim">— ' + (rec.count || 0) + ' resisted'
+           + (rec.lastMob ? ', last from ' + esc(rec.lastMob) : '') + '</span></summary>';
+        if (mobs.length > 0) {
+          h += '<table><tr><th>Cast by</th><th class="num">Resisted</th></tr>';
+          for (var mi = 0; mi < mobs.length; mi++) {
+            h += '<tr><td>' + esc(mobs[mi][0]) + '</td><td class="num">' + (mobs[mi][1] || 0) + '</td></tr>';
+          }
+          h += '</table>';
+        } else {
+          h += '<div class="dim" style="font-size:11px;padding:2px 0">No mob attribution yet — resisted outside a tracked fight.</div>';
+        }
+        h += '</details>';
       });
-    h += '</table></div>';
+    h += '</div>';
   }
 
   // Inbound spell damage on YOU, grouped by caster → spell. Counterpart to the
