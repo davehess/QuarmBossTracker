@@ -1,6 +1,6 @@
 {
   "name": "wolfpack-mimic",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Wolf Pack Mimic — Electron desktop client. Wraps the wolfpack-logsync agent in a native shell with a real window + always-on-top overlay. Bundles its own Node runtime, so no separate Node install.",
   "author": "Wolf Pack EQ",
@@ -53,12 +53,14 @@
       "artifactName": "Wolf-Pack-Mimic-${version}.${ext}"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
+      "include": "build/installer.nsh",
       "artifactName": "Wolf-Pack-Mimic-Setup-${version}.${ext}"
     }
   }
