@@ -21,7 +21,7 @@ const PARSER_DOWNLOAD_URL =
 
 const DISCORD_INVITE_URL =
   process.env.DISCORD_INVITE_URL ||
-  'https://discord.gg/ubQ42TBmEN';
+  'https://discord.gg/VBCs6hCcau';
 
 module.exports = {
   reactStrictMode: true,

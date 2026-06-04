@@ -35,6 +35,7 @@ type StatRow = {
   last_status_code: number | null;
   last_error: string | null;
   last_agent_state: any;
+  uploaded_by_discord_id: string | null;
 };
 
 type BackfillRow = {
@@ -56,13 +57,14 @@ type BackfillRow = {
 // main_name is the character's main (null/self when it IS the main);
 // discord_id links the family to a Discord account when the member opted in.
 type RosterRow = { name: string; main_name: string | null; discord_id: string | null };
+type MemberRow = { discord_id: string; nickname: string | null; global_name: string | null };
 
 async function loadData() {
   const admin = supabaseAdmin();
-  const [{ data: stats }, { data: backfills }, { data: roster }] = await Promise.all([
+  const [{ data: stats }, { data: backfills }, { data: roster }, { data: members }] = await Promise.all([
     admin
       .from('agent_upload_stats')
-      .select('character, endpoint, upload_count, error_count, first_uploaded_at, last_uploaded_at, agent_version, last_ok, last_status_code, last_error, last_agent_state')
+      .select('character, endpoint, upload_count, error_count, first_uploaded_at, last_uploaded_at, agent_version, last_ok, last_status_code, last_error, last_agent_state, uploaded_by_discord_id')
       .order('last_uploaded_at', { ascending: false })
       .limit(2000),
     admin
@@ -75,11 +77,16 @@ async function loadData() {
       .select('name, main_name, discord_id')
       .eq('guild_id', 'wolfpack')
       .limit(5000),
+    admin
+      .from('wolfpack_members')
+      .select('discord_id, nickname, global_name')
+      .limit(5000),
   ]);
   return {
     stats:     (stats ?? []) as StatRow[],
     backfills: (backfills ?? []) as BackfillRow[],
     roster:    (roster ?? []) as RosterRow[],
+    members:   (members ?? []) as MemberRow[],
   };
 }
 
@@ -134,6 +141,13 @@ type CharSummary = {
   // client='mimic').
   client: string | null;
   appVersion: string | null;
+  // Discord ID of whoever most-recently uploaded this character's stream (from
+  // their per-user session token). Compared to the character's owner to flag
+  // cross-account uploads (someone running a spouse's / friend's toon).
+  uploadedBy: string | null;
+  // Set when uploadedBy is NOT the character's owner — the display name of the
+  // person actually driving the uploads, so the row can show an asterisk.
+  foreignUploaderName: string | null;
 };
 
 // Real EQ player names are letters only. The "(unknown)" sentinel (and the
@@ -167,12 +181,15 @@ function summarize(stats: StatRow[]): CharSummary[] {
         appVersion: null,
         queuePending: null,
         fightActive: null,
+        uploadedBy: null,
+        foreignUploaderName: null,
       };
       byChar.set(name, s);
     }
     const ts = new Date(r.last_uploaded_at).getTime();
     if (ts >= s.lastUploadMs) {
       s.lastUploadMs = ts; s.lastUpload = r.last_uploaded_at; s.agentVersion = r.agent_version;
+      if (r.uploaded_by_discord_id) s.uploadedBy = r.uploaded_by_discord_id;
       // Latest agent_state for live "queue depth" view (from the most-recent endpoint).
       if (r.last_agent_state && typeof r.last_agent_state === 'object') {
         s.queuePending = (r.last_agent_state.queue_pending ?? null) as number | null;
@@ -207,22 +224,39 @@ type Family = {
   versions: string[];
   queueMax: number;
   anyFight: boolean;
+  anyForeign: boolean;
 };
 
-function groupByMain(summaries: CharSummary[], roster: RosterRow[]): Family[] {
+function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: Map<string, string>): Family[] {
   const charMap = new Map<string, { main: string; discordId: string | null }>();
   for (const r of roster) {
     const main = (r.main_name && r.main_name.trim()) || r.name;
     charMap.set(r.name.toLowerCase(), { main, discordId: r.discord_id ?? null });
   }
+  // The Discord ID that OWNS a character: its own discord_id, else its main's.
+  const ownerOf = (charLower: string): string | null => {
+    const e = charMap.get(charLower);
+    if (!e) return null;
+    if (e.discordId) return e.discordId;
+    const mainE = charMap.get(e.main.toLowerCase());
+    return mainE?.discordId ?? null;
+  };
   const fams = new Map<string, Family>();
   for (const s of summaries) {
     const lookup   = charMap.get((s.character || '').toLowerCase());
     const mainName = lookup?.main ?? s.character;
     const key      = mainName.toLowerCase();
+
+    // Cross-account flag: the most-recent uploader isn't this character's
+    // owner (e.g. running a spouse's / friend's toon to fill a class). Valid
+    // upload — just annotate it.
+    const owner = ownerOf((s.character || '').toLowerCase());
+    if (s.uploadedBy && owner && s.uploadedBy !== owner) {
+      s.foreignUploaderName = memberName.get(s.uploadedBy) || 'another member';
+    }
     let f = fams.get(key);
     if (!f) {
-      f = { mainName, discordId: lookup?.discordId ?? null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false };
+      f = { mainName, discordId: lookup?.discordId ?? null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false, anyForeign: false };
       fams.set(key, f);
     }
     f.members.push(s);
@@ -232,6 +266,7 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[]): Family[] {
     if (s.agentVersion && !f.versions.includes(s.agentVersion)) f.versions.push(s.agentVersion);
     if ((s.queuePending ?? 0) > f.queueMax) f.queueMax = s.queuePending ?? 0;
     if (s.fightActive) f.anyFight = true;
+    if (s.foreignUploaderName) f.anyForeign = true;
     if (!f.discordId && lookup?.discordId) f.discordId = lookup.discordId;
   }
   for (const f of fams.values()) {
@@ -258,10 +293,14 @@ function fmtTs(iso: string | null): string {
 }
 
 export default async function AdminAgentsPage() {
-  const [{ stats, backfills, roster }, mimicReleases] = await Promise.all([
+  const [{ stats, backfills, roster, members }, mimicReleases] = await Promise.all([
     loadData(),
     loadMimicReleases(),
   ]);
+  // discord_id → display name, for naming a cross-account uploader.
+  const memberName = new Map<string, string>(
+    members.map(m => [m.discord_id, (m.nickname || m.global_name || m.discord_id)] as const),
+  );
   const summaries = summarize(stats);
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
@@ -271,7 +310,7 @@ export default async function AdminAgentsPage() {
 
   // Family view: fold characters into their main, split active/stale by the
   // family's most-recent upload across all its characters.
-  const families       = groupByMain(summaries, roster);
+  const families       = groupByMain(summaries, roster, memberName);
   const activeFamilies = families.filter(f => now - f.latestMs <= day);
   const staleFamilies  = families.filter(f => now - f.latestMs > day);
   const totalUploads = stats.reduce((a, r) => a + (Number(r.upload_count) || 0), 0);
@@ -567,6 +606,9 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
         <span className="text-[10px] text-dim border border-border rounded px-1.5 py-0.5 shrink-0">
           {fam.members.length} char{fam.members.length === 1 ? '' : 's'}
         </span>
+        {fam.anyForeign && (
+          <span className="text-gold text-sm shrink-0" title="Includes a toon being run by someone other than its owner — expand for details">*</span>
+        )}
         <span className="text-dim text-xs ml-auto whitespace-nowrap">{rel(fam.latestUpload)}</span>
         <span className="text-dim text-[10px] hidden md:inline max-w-[14rem] truncate" title={fam.versions.join(', ')}>{fam.versions.join(', ') || '—'}</span>
         <span className="text-text text-xs hidden sm:inline tabular-nums w-16 text-right">{fam.totalUploads.toLocaleString()}</span>
@@ -597,6 +639,11 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
                       <span className="text-dim">{s.character}</span>
                     )}
                     {multi && isMain && <span className="ml-1.5 text-[9px] uppercase tracking-widest text-gold border border-gold/40 rounded px-1 py-0.5 align-middle">main</span>}
+                    {s.foreignUploaderName && (
+                      <span className="ml-1.5 text-gold" title={`Uploaded by ${s.foreignUploaderName} (not the owner)`}>
+                        *<span className="text-[10px] text-dim ml-0.5">by {s.foreignUploaderName}</span>
+                      </span>
+                    )}
                     <ClientChip client={s.client} appVersion={s.appVersion} agentVersion={s.agentVersion} />
                     <div className="text-dim text-[10px] sm:hidden">{s.agentVersion || '—'} · {s.totalUploads.toLocaleString()} uploads</div>
                   </td>
