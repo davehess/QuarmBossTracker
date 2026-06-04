@@ -7,7 +7,7 @@
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
-const { buildParseHelpEmbed } = require('./parsehelp');
+const { buildParseHelpEmbed, buildParseHelpComponents } = require('./parsehelp');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -21,8 +21,13 @@ module.exports = {
         content: `❌ Officers only. Required roles: ${officerRolesList()}`,
       });
     }
-    // Post publicly in the channel the command was run in.
-    await interaction.channel.send({ embeds: [buildParseHelpEmbed()] });
+    // Post publicly in the channel the command was run in — same simple embed
+    // + the "Step-by-step guide" / Download buttons. Anyone who taps the guide
+    // gets their own ephemeral walkthrough.
+    await interaction.channel.send({
+      embeds: [buildParseHelpEmbed()],
+      components: buildParseHelpComponents(),
+    });
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: '✅ Posted the setup instructions here.' });
   },
 };

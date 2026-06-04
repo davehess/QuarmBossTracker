@@ -543,6 +543,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId.startsWith('audit_undo:'))         { await handleAuditUndo(interaction); return; }
     if (interaction.customId === 'token_mint')                  { const { handleTokenMint }   = require('./commands/token'); await handleTokenMint(interaction);   return; }
     if (interaction.customId.startsWith('token_revoke:'))        { const { handleTokenRevoke } = require('./commands/token'); await handleTokenRevoke(interaction); return; }
+    if (interaction.customId === 'parsehelp_guide')             { const { handleParseHelpGuide } = require('./commands/parsehelp'); await handleParseHelpGuide(interaction); return; }
+    if (interaction.customId.startsWith('parsehelp_step:'))      { const { handleParseHelpStep }  = require('./commands/parsehelp'); await handleParseHelpStep(interaction);  return; }
     if (interaction.customId.startsWith('sll_confirm:'))        { const { handleSllConfirm } = require('./commands/sll'); await handleSllConfirm(interaction); return; }
     if (interaction.customId === 'sll_cancel')                  { const { handleSllCancel }  = require('./commands/sll'); await handleSllCancel(interaction);  return; }
     return;
