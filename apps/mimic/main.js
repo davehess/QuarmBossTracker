@@ -333,12 +333,57 @@ const EQ_DEFAULT_DIRS = [
   'F:\\Quarm', 'F:\\Project Quarm', 'F:\\EQ',
 ];
 
+// ── EQ log-file detection ───────────────────────────────────────────────────
+// Canonical EQ log: eqlog_<Name>_pq.proj.txt exactly.
+const EQ_LOG_CANONICAL_RX = /^eqlog_.+_pq\.proj\.txt$/i;
+// Rotated / backup variants keep the "eqlog_<Name>_pq.proj" stem but carry an
+// extra suffix the strict .txt pattern misses: .txt2 / .txt3 (players manually
+// rotate the live log to keep it small — EQ slows down on multi-GB logs),
+// " BACKUP.txt", ".txt.old", etc. We still want these so a rotated history
+// isn't silently dropped. Lazy capture stops at "_pq.proj".
+const EQ_LOG_STEM_RX = /^eqlog_(.+?)_pq\.proj/i;
+// Every EQ log opens with "[<timestamp>] Welcome to EverQuest!". We use that
+// signature to confirm a NON-canonical filename really is an EQ log (vs some
+// unrelated eqlog_-ish file) before we tail it.
+const EQ_WELCOME_RX = /^\[[^\]]+\]\s+Welcome to EverQuest!/;
+
+// Character name from an EQ log filename, tolerant of rotation/backup suffixes.
+function _characterFromLogName(filename) {
+  const m = filename.match(EQ_LOG_STEM_RX);
+  return m ? m[1] : null;
+}
+
+// Read just the first 256 bytes and test the EQ welcome signature on line 1.
+function _firstLineIsEqWelcome(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(256);
+    const n = fs.readSync(fd, buf, 0, 256, 0);
+    const line = buf.toString('utf8', 0, n).split(/\r?\n/, 1)[0];
+    return EQ_WELCOME_RX.test(line);
+  } catch { return false; }
+  finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch {} } }
+}
+
+// Should Mimic treat this directory entry as an EQ log to tail? Canonical .txt
+// files pass on the filename alone (cheap, and a freshly-created log may not
+// have written the welcome line yet). Non-canonical files that still carry the
+// eqlog_*_pq.proj stem (rotation / backup) pass only when line 1 is the EQ
+// welcome signature — so renamed logs are caught without tailing arbitrary
+// eqlog_-prefixed junk.
+function _isEqLogFile(dir, filename) {
+  if (EQ_LOG_CANONICAL_RX.test(filename)) return true;
+  if (!EQ_LOG_STEM_RX.test(filename)) return false;
+  return _firstLineIsEqWelcome(path.join(dir, filename));
+}
+
 // True if `dir` contains at least one EQ log file. Cheap probe — used by
 // both the default-dirs scan and the walk-up-from-Mimic-exe scan below.
 function _dirHasEqLogs(dir) {
   try {
     if (!dir || !fs.existsSync(dir)) return false;
-    return fs.readdirSync(dir).some(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f));
+    return fs.readdirSync(dir).some(f => _isEqLogFile(dir, f));
   } catch { return false; }
 }
 
@@ -372,12 +417,13 @@ function detectCharacterFromLogs(dir) {
   try {
     const logs = fs.readdirSync(dir)
       .map(f => {
-        const m = f.match(/^eqlog_(.+)_pq\.proj\.txt$/i);
-        if (!m) return null;
+        if (!_isEqLogFile(dir, f)) return null;
+        const name = _characterFromLogName(f);
+        if (!name) return null;
         try {
           const fullPath = path.join(dir, f);
           const stat = fs.statSync(fullPath);
-          return { name: m[1], path: fullPath, size: stat.size, mtime: stat.mtimeMs };
+          return { name, path: fullPath, size: stat.size, mtime: stat.mtimeMs };
         } catch { return null; }
       })
       .filter(Boolean);
@@ -489,10 +535,12 @@ function findEqInstalls(hint) {
       if (!fs.existsSync(norm)) return;
       const entries = fs.readdirSync(norm);
       const hasEqgame = entries.some(f => /^eqgame\.exe$/i.test(f));
-      const hasLogs   = entries.some(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f));
+      // Compute the log set once (the non-canonical check reads a few bytes
+      // per candidate, so we don't want to run it twice).
+      const logFiles  = entries.filter(f => _isEqLogFile(norm, f));
+      const hasLogs   = logFiles.length > 0;
       if (hasEqgame || hasLogs) {
-        const logCount = entries.filter(f => /^eqlog_.+_pq\.proj\.txt$/i.test(f)).length;
-        found.push({ path: norm, hasEqgame, hasLogs, logCount, source });
+        found.push({ path: norm, hasEqgame, hasLogs, logCount: logFiles.length, source });
       }
     } catch { /* unreadable dir — fine */ }
   };
@@ -2189,10 +2237,11 @@ ipcMain.handle('ui-studio-list-characters', () => {
     try {
       const entries = fs.readdirSync(dir);
       const chars = new Set();
-      // Characters known from log files
+      // Characters known from log files (incl. rotated/backup variants).
       for (const f of entries) {
-        const m = f.match(/^eqlog_([^_]+)_pq\.proj\.txt$/i);
-        if (m) chars.add(m[1]);
+        if (!_isEqLogFile(dir, f)) continue;
+        const name = _characterFromLogName(f);
+        if (name) chars.add(name);
       }
       // Characters known from any per-char ini file (so we surface a char
       // even when there's no current log file but their UI settings exist).
