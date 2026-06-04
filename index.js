@@ -2571,25 +2571,29 @@ function getCurrentEra() {
   return getEraForTimestamp(Date.now());
 }
 
-// Fire-and-forget — log every agent upload to Supabase agent_uploads so the
-// /admin/agents board (and /me upload panel) can show who is uploading what,
-// when, on what version. Best-effort: failures are warned and swallowed so
-// the upload response is never blocked on the metadata insert.
+// Fire-and-forget — bump a per-(character, endpoint) COUNTER in
+// agent_upload_stats so the /admin/agents board (and /me upload panel) can show
+// who is uploading what, when, on what version, and error counts. This replaced
+// the old row-per-upload `agent_uploads` log, which grew ~30k rows/day and was
+// the fastest path to the Supabase free-tier cap. The RPC upserts + increments
+// in one call. Best-effort: failures are warned and swallowed so the upload
+// response is never blocked on the metadata write. (payloadBytes is no longer
+// stored — the counter doesn't track per-upload bytes.)
 function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null }) {
+  void payloadBytes;
   try {
     const supabase = require('./utils/supabase');
     if (!supabase.isEnabled()) return;
-    supabase.insert('agent_uploads', [{
-      guild_id:      process.env.SUPABASE_GUILD_ID || 'wolfpack',
-      character:     character || null,
-      agent_version: agentVersion || null,
-      endpoint,
-      payload_bytes: payloadBytes,
-      ok,
-      status_code:   statusCode,
-      error_message: errorMessage,
-      agent_state:   agentState,
-    }]).catch(err => console.warn('[agent-uploads] insert failed:', err?.message));
+    supabase.rpc('bump_agent_upload_stat', {
+      p_guild:       process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      p_character:   character || null,
+      p_endpoint:    endpoint,
+      p_version:     agentVersion || null,
+      p_ok:          !!ok,
+      p_status:      statusCode,
+      p_error:       errorMessage,
+      p_agent_state: agentState,
+    }).catch(err => console.warn('[agent-uploads] stat bump failed:', err?.message));
   } catch (err) {
     console.warn('[agent-uploads] track failed:', err?.message);
   }

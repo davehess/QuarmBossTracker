@@ -17,17 +17,24 @@ import { supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
-type UploadRow = {
-  id: string;
+// One row per (character, endpoint) — a running counter, not a per-upload log.
+// agent_uploads (a row per upload) was retired: at ~30k rows/day it was the
+// fastest path to the Supabase free-tier cap. We keep the SAME signals (total
+// uploads, last-seen, version, errors, agent_state) in a few hundred rows that
+// never grow. Trade-off: no per-window (24h/7d) activity — just all-time totals
+// + recency.
+type StatRow = {
   character: string | null;
-  agent_version: string | null;
   endpoint: string;
-  uploaded_at: string;
-  payload_bytes: number | null;
-  ok: boolean;
-  status_code: number | null;
-  error_message: string | null;
-  agent_state: any;
+  upload_count: number;
+  error_count: number;
+  first_uploaded_at: string;
+  last_uploaded_at: string;
+  agent_version: string | null;
+  last_ok: boolean | null;
+  last_status_code: number | null;
+  last_error: string | null;
+  last_agent_state: any;
 };
 
 type BackfillRow = {
@@ -47,14 +54,12 @@ type BackfillRow = {
 
 async function loadData() {
   const admin = supabaseAdmin();
-  const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [{ data: uploads }, { data: backfills }] = await Promise.all([
+  const [{ data: stats }, { data: backfills }] = await Promise.all([
     admin
-      .from('agent_uploads')
-      .select('id, character, agent_version, endpoint, uploaded_at, payload_bytes, ok, status_code, error_message, agent_state')
-      .gte('uploaded_at', since30d)
-      .order('uploaded_at', { ascending: false })
-      .limit(5000),
+      .from('agent_upload_stats')
+      .select('character, endpoint, upload_count, error_count, first_uploaded_at, last_uploaded_at, agent_version, last_ok, last_status_code, last_error, last_agent_state')
+      .order('last_uploaded_at', { ascending: false })
+      .limit(2000),
     admin
       .from('agent_backfill_requests')
       .select('id, character, requested_at, requested_by_name, reason, scope, status, acked_at, dismissed_at, dismissed_reason, completed_at, error_message')
@@ -62,7 +67,7 @@ async function loadData() {
       .limit(200),
   ]);
   return {
-    uploads:   (uploads ?? []) as UploadRow[],
+    stats:     (stats ?? []) as StatRow[],
     backfills: (backfills ?? []) as BackfillRow[],
   };
 }
@@ -105,12 +110,10 @@ type CharSummary = {
   lastUpload: string;
   lastUploadMs: number;
   agentVersion: string | null;
-  uploads24h: number;
-  uploads7d: number;
-  uploads30d: number;
+  totalUploads: number;
   byEndpoint: Map<string, number>;
-  errors30d: number;
-  lastError: { ts: string; endpoint: string; message: string | null } | null;
+  totalErrors: number;
+  lastError: { ts: string; endpoint: string; message: string | null; statusCode: number | null } | null;
   queuePending: number | null;
   fightActive: boolean | null;
   // Most-recent client identification from agent_state.client. 'mimic' when
@@ -131,22 +134,23 @@ function isRealCharacter(name: string | null | undefined): boolean {
   return /^[A-Za-z]{2,}$/.test(n) && !['unknown', 'unattributed'].includes(n.toLowerCase());
 }
 
-function summarize(uploads: UploadRow[]): CharSummary[] {
-  const now = Date.now();
-  const day = 24 * 60 * 60 * 1000;
+// Roll the per-(character, endpoint) counter rows up to one summary per
+// character: sum the counts, take the most-recent endpoint's last-seen /
+// version / agent_state, and the most-recent error.
+function summarize(stats: StatRow[]): CharSummary[] {
   const byChar = new Map<string, CharSummary>();
-  for (const u of uploads) {
-    const name = u.character || '(unknown)';
+  for (const r of stats) {
+    const name = r.character || '(unknown)';
     let s = byChar.get(name);
     if (!s) {
       s = {
         character: name,
-        lastUpload: u.uploaded_at,
-        lastUploadMs: new Date(u.uploaded_at).getTime(),
-        agentVersion: u.agent_version,
-        uploads24h: 0, uploads7d: 0, uploads30d: 0,
+        lastUpload: r.last_uploaded_at,
+        lastUploadMs: new Date(r.last_uploaded_at).getTime(),
+        agentVersion: r.agent_version,
+        totalUploads: 0,
         byEndpoint: new Map(),
-        errors30d: 0,
+        totalErrors: 0,
         lastError: null,
         client: null,
         appVersion: null,
@@ -155,26 +159,22 @@ function summarize(uploads: UploadRow[]): CharSummary[] {
       };
       byChar.set(name, s);
     }
-    const ts = new Date(u.uploaded_at).getTime();
-    if (ts > s.lastUploadMs) {
-      s.lastUploadMs = ts; s.lastUpload = u.uploaded_at; s.agentVersion = u.agent_version;
-      // Latest agent_state for live "queue depth" view
-      if (u.agent_state && typeof u.agent_state === 'object') {
-        s.queuePending = (u.agent_state.queue_pending ?? null) as number | null;
-        s.fightActive  = (u.agent_state.fight_active ?? null) as boolean | null;
-        s.client       = (u.agent_state.client ?? null) as string | null;
-        s.appVersion   = (u.agent_state.app_version ?? null) as string | null;
+    const ts = new Date(r.last_uploaded_at).getTime();
+    if (ts >= s.lastUploadMs) {
+      s.lastUploadMs = ts; s.lastUpload = r.last_uploaded_at; s.agentVersion = r.agent_version;
+      // Latest agent_state for live "queue depth" view (from the most-recent endpoint).
+      if (r.last_agent_state && typeof r.last_agent_state === 'object') {
+        s.queuePending = (r.last_agent_state.queue_pending ?? null) as number | null;
+        s.fightActive  = (r.last_agent_state.fight_active ?? null) as boolean | null;
+        s.client       = (r.last_agent_state.client ?? null) as string | null;
+        s.appVersion   = (r.last_agent_state.app_version ?? null) as string | null;
       }
     }
-    s.uploads30d++;
-    if (now - ts <= 7 * day) s.uploads7d++;
-    if (now - ts <= day)     s.uploads24h++;
-    s.byEndpoint.set(u.endpoint, (s.byEndpoint.get(u.endpoint) ?? 0) + 1);
-    if (!u.ok) {
-      s.errors30d++;
-      if (!s.lastError || ts > new Date(s.lastError.ts).getTime()) {
-        s.lastError = { ts: u.uploaded_at, endpoint: u.endpoint, message: u.error_message };
-      }
+    s.totalUploads += Number(r.upload_count) || 0;
+    s.totalErrors  += Number(r.error_count) || 0;
+    s.byEndpoint.set(r.endpoint, (s.byEndpoint.get(r.endpoint) ?? 0) + (Number(r.upload_count) || 0));
+    if (r.last_ok === false && r.last_error && (!s.lastError || ts > new Date(s.lastError.ts).getTime())) {
+      s.lastError = { ts: r.last_uploaded_at, endpoint: r.endpoint, message: r.last_error, statusCode: r.last_status_code };
     }
   }
   return [...byChar.values()].sort((a, b) => b.lastUploadMs - a.lastUploadMs);
@@ -197,17 +197,25 @@ function fmtTs(iso: string | null): string {
 }
 
 export default async function AdminAgentsPage() {
-  const [{ uploads, backfills }, mimicReleases] = await Promise.all([
+  const [{ stats, backfills }, mimicReleases] = await Promise.all([
     loadData(),
     loadMimicReleases(),
   ]);
-  const summaries = summarize(uploads);
+  const summaries = summarize(stats);
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
 
   const active = summaries.filter(s => now - s.lastUploadMs <= day);
   const stale  = summaries.filter(s => now - s.lastUploadMs > day);
-  const recentErrors = uploads.filter(u => !u.ok).slice(0, 40);
+  const totalUploads = stats.reduce((a, r) => a + (Number(r.upload_count) || 0), 0);
+  const totalErrors  = stats.reduce((a, r) => a + (Number(r.error_count)  || 0), 0);
+  // "Recent errors" is now the current last-error per character (one row each),
+  // newest first — we no longer keep a per-upload error log.
+  const recentErrors = summaries
+    .filter(s => s.lastError)
+    .map(s => ({ character: s.character, ...s.lastError! }))
+    .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+    .slice(0, 40);
 
   // Version histogram
   const byVersion = new Map<string, number>();
@@ -242,16 +250,16 @@ export default async function AdminAgentsPage() {
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">🛰️ Agent fleet</h2>
         <p className="text-sm text-dim leading-6">
-          Every successful upload to <code>/api/agent/*</code> writes one row
-          to <code>agent_uploads</code> with character + agent version. This
-          page summarizes the last 30 days. The table is empty for runs
-          uploaded before bot v2.5.35 went out.
+          Every upload to <code>/api/agent/*</code> bumps a per-character counter
+          in <code>agent_upload_stats</code> (a few hundred rows total — the old
+          row-per-upload <code>agent_uploads</code> log was retired to stay on the
+          Supabase free tier). Totals are all-time; activity is shown by last-seen.
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 text-xs">
           <Stat label="Active 24h"    value={active.length} color="text-green" />
           <Stat label="Stale (24h+)"  value={stale.length}  color="text-orange" />
-          <Stat label="Uploads 30d"   value={uploads.length} />
-          <Stat label="Errors 30d"    value={uploads.filter(u => !u.ok).length} color="text-red-400" />
+          <Stat label="Total uploads" value={totalUploads} />
+          <Stat label="Total errors"  value={totalErrors} color="text-red-400" />
           <Stat label="Backfill open" value={bfCounts.pending + bfCounts.acked + bfCounts.running} color="text-blue" />
         </div>
         {versions.length > 0 && (
@@ -359,8 +367,7 @@ export default async function AdminAgentsPage() {
                 <th className="text-left px-2 sm:px-3 py-2 font-normal">Character</th>
                 <th className="text-left px-2 sm:px-3 py-2 font-normal">Last upload</th>
                 <th className="text-left px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Agent</th>
-                <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">24h</th>
-                <th className="text-right px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">7d</th>
+                <th className="text-right px-2 sm:px-3 py-2 font-normal hidden md:table-cell">Total</th>
                 <th className="text-left px-2 sm:px-3 py-2 font-normal hidden lg:table-cell">Endpoint mix</th>
                 <th className="text-left px-2 sm:px-3 py-2 font-normal">Status</th>
               </tr>
@@ -375,20 +382,19 @@ export default async function AdminAgentsPage() {
                       <span className="text-dim" title="Operator-level streams (chat / pvp / fun events) with no single character">{s.character}</span>
                     )}
                     <ClientChip client={s.client} appVersion={s.appVersion} agentVersion={s.agentVersion} />
-                    <div className="text-dim text-[10px] md:hidden">{s.agentVersion || '—'} · {s.uploads24h}/24h</div>
+                    <div className="text-dim text-[10px] md:hidden">{s.agentVersion || '—'} · {s.totalUploads.toLocaleString()} uploads</div>
                   </td>
                   <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap">{rel(s.lastUpload)}</td>
                   <td className="px-2 sm:px-3 py-2 text-text hidden md:table-cell">{s.agentVersion || '—'}</td>
-                  <td className="px-2 sm:px-3 py-2 text-right text-text hidden md:table-cell">{s.uploads24h}</td>
-                  <td className="px-2 sm:px-3 py-2 text-right text-dim hidden lg:table-cell">{s.uploads7d}</td>
+                  <td className="px-2 sm:px-3 py-2 text-right text-text hidden md:table-cell">{s.totalUploads.toLocaleString()}</td>
                   <td className="px-2 sm:px-3 py-2 text-dim text-[10px] hidden lg:table-cell">
                     {[...s.byEndpoint.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}×${n}`).join(' · ')}
                   </td>
                   <td className="px-2 sm:px-3 py-2 text-[10px]">
-                    {s.errors30d > 0 && <span className="text-red-400">{s.errors30d} err</span>}
+                    {s.totalErrors > 0 && <span className="text-red-400">{s.totalErrors} err</span>}
                     {s.queuePending != null && s.queuePending > 0 && <span className="text-orange ml-1">Q={s.queuePending}</span>}
                     {s.fightActive && <span className="text-blue ml-1">in-fight</span>}
-                    {s.errors30d === 0 && (s.queuePending ?? 0) === 0 && !s.fightActive && <span className="text-green">healthy</span>}
+                    {s.totalErrors === 0 && (s.queuePending ?? 0) === 0 && !s.fightActive && <span className="text-green">healthy</span>}
                   </td>
                 </tr>
               ))}
@@ -409,7 +415,7 @@ export default async function AdminAgentsPage() {
                 <th className="text-left px-3 py-2 font-normal">Character</th>
                 <th className="text-left px-3 py-2 font-normal">Last upload</th>
                 <th className="text-left px-3 py-2 font-normal">Agent</th>
-                <th className="text-right px-3 py-2 font-normal">30d total</th>
+                <th className="text-right px-3 py-2 font-normal">Total</th>
               </tr>
             </thead>
             <tbody>
@@ -418,7 +424,7 @@ export default async function AdminAgentsPage() {
                   <td className="px-3 py-2 text-text">{s.character}</td>
                   <td className="px-3 py-2 text-dim">{rel(s.lastUpload)} <span className="text-[10px]">· {fmtTs(s.lastUpload)}</span></td>
                   <td className="px-3 py-2 text-dim">{s.agentVersion || '—'}</td>
-                  <td className="px-3 py-2 text-right text-dim">{s.uploads30d}</td>
+                  <td className="px-3 py-2 text-right text-dim">{s.totalUploads.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -426,11 +432,11 @@ export default async function AdminAgentsPage() {
         </section>
       )}
 
-      {/* Recent errors */}
+      {/* Last error per character (we no longer keep a per-upload error log) */}
       {recentErrors.length > 0 && (
         <section className="bg-panel border border-border rounded-lg">
           <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-            Recent errors — {uploads.filter(u => !u.ok).length} total in last 30d
+            Last error per character — {recentErrors.length} character{recentErrors.length === 1 ? '' : 's'} with a recent failure
           </h3>
           <table className="w-full text-xs">
             <thead className="text-dim">
@@ -443,13 +449,13 @@ export default async function AdminAgentsPage() {
               </tr>
             </thead>
             <tbody>
-              {recentErrors.map(u => (
-                <tr key={u.id} className="border-b border-border/40 hover:bg-[#1a212c]">
-                  <td className="px-3 py-2 text-dim">{fmtTs(u.uploaded_at)}</td>
-                  <td className="px-3 py-2 text-text">{u.character || '—'}</td>
-                  <td className="px-3 py-2 text-text">{u.endpoint}</td>
-                  <td className="px-3 py-2 text-right text-red-400">{u.status_code ?? '—'}</td>
-                  <td className="px-3 py-2 text-dim text-[11px]">{u.error_message || '—'}</td>
+              {recentErrors.map(e => (
+                <tr key={e.character + e.endpoint} className="border-b border-border/40 hover:bg-[#1a212c]">
+                  <td className="px-3 py-2 text-dim">{fmtTs(e.ts)}</td>
+                  <td className="px-3 py-2 text-text">{e.character || '—'}</td>
+                  <td className="px-3 py-2 text-text">{e.endpoint}</td>
+                  <td className="px-3 py-2 text-right text-red-400">{e.statusCode ?? '—'}</td>
+                  <td className="px-3 py-2 text-dim text-[11px]">{e.message || '—'}</td>
                 </tr>
               ))}
             </tbody>

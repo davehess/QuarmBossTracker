@@ -370,26 +370,24 @@ async function loadCharStats(name: string): Promise<CharStats> {
 // user's chosen zone (default Eastern). MePage threads `tz` through to every
 // site that prints an absolute time.
 
-// Per-character sync heartbeat from agent_uploads. The encounter endpoint is
-// the freshest signal: it fires per-encounter (live raids) and per-backfill,
-// and the `character` column is populated there (chat/pvp/fun_event upload as
-// null character today — separate follow-up). Returns one row per character
-// the signed-in user owns, regardless of activity, so the banner can still
-// say "no recent uploads" instead of going dark.
+// Per-character sync heartbeat from agent_upload_stats (the per-character upload
+// counter that replaced the row-per-upload agent_uploads log). The encounter
+// endpoint is the freshest signal — it fires per-encounter (live raids) and
+// per-backfill. One counter row per (character, endpoint), so a single lookup
+// gives the last-seen + version. Returns nothing for a character that's never
+// uploaded, so the banner can still say "no recent uploads".
 async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, { lastUpload: string; agentVersion: string | null }>> {
   if (charNames.length === 0) return new Map();
   const admin = supabaseAdmin();
   const out = new Map<string, { lastUpload: string; agentVersion: string | null }>();
   await Promise.all(charNames.map(async (name) => {
     const { data } = await admin
-      .from('agent_uploads')
-      .select('uploaded_at, agent_version')
+      .from('agent_upload_stats')
+      .select('last_uploaded_at, agent_version')
       .ilike('character', name)
       .eq('endpoint', 'encounter')
-      .order('uploaded_at', { ascending: false })
-      .limit(1)
       .maybeSingle();
-    if (data?.uploaded_at) out.set(name, { lastUpload: data.uploaded_at, agentVersion: data.agent_version });
+    if (data?.last_uploaded_at) out.set(name, { lastUpload: data.last_uploaded_at, agentVersion: data.agent_version });
   }));
   return out;
 }
