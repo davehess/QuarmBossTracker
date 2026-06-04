@@ -272,6 +272,11 @@
   // List discovered characters → per-character Capture + View backups.
   var _uiStudioChars = [];
   var _uiVisible = 5;
+  // Per-character backup result, keyed by character name, so a "✓ Backed up"
+  // (or error) confirmation survives a repaint. Without this, clicking "Show
+  // more" re-rendered the whole list and wiped the just-completed upload text,
+  // making people think it failed → they'd back up again (duplicate uploads).
+  var _uiRowMsg = {};
   async function _renderUiStudio() {
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
@@ -283,6 +288,7 @@
       return;
     }
     _uiVisible = 5;
+    _uiRowMsg = {};   // fresh list = fresh results
     _paintUiStudio();
   }
   // Paged render — biggest logs first (the IPC sorts by log size), 5 at a
@@ -320,6 +326,15 @@
     var moreBtn = document.getElementById('uiShowMore');
     if (moreBtn) moreBtn.addEventListener('click', function () { _uiVisible += 5; _paintUiStudio(); });
 
+    // Re-apply any backup confirmations from earlier this session so a repaint
+    // (e.g. "Show more") never hides a completed upload.
+    shown.forEach((c, i) => {
+      const saved = _uiRowMsg[c.character];
+      if (!saved) return;
+      const msg = list.querySelector('[data-msg="' + i + '"]');
+      if (msg) { msg.style.color = saved.color; msg.textContent = saved.text; }
+    });
+
     // Bind buttons
     list.querySelectorAll('.ui-capture').forEach(btn => {
       btn.addEventListener('click', async (e) => {
@@ -340,6 +355,8 @@
           msg.style.color = '#f87171';
           msg.textContent = '✕ ' + (err && err.message ? err.message : String(err));
         } finally {
+          // Persist this row's result so a later repaint re-applies it.
+          _uiRowMsg[c.character] = { text: msg.textContent, color: msg.style.color };
           btn.disabled = false; btn.textContent = '📦 Back up';
         }
       });
