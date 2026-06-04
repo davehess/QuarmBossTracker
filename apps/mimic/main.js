@@ -1718,18 +1718,21 @@ function buildTrayMenu() {
     { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
-    { label: 'Settings…', click: openSettings },
     connectItem,
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     updateItem,
+    // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
+    // The tray menu opens upward with the cursor resting at the BOTTOM, so a
+    // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
+    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
     { type: 'separator' },
-    // Restart agent sits directly above Quit — quick recovery without hunting
-    // through a submenu.
+    // Restart agent → Settings → Quit. Settings sits directly above Quit per
+    // request (the two safe, common bottom actions nearest the cursor).
     { label: 'Restart agent', click: async () => {
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
       } },
-    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
+    { label: 'Settings…', click: openSettings },
     { label: 'Quit Mimic', click: () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } app.quit(); } },
   ]);
   tray.setContextMenu(menu);
