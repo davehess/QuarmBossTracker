@@ -13,10 +13,10 @@
 // conservative: first matching category wins, in CATEGORY_ORDER priority.
 
 export type BuffCategory =
-  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'attack' | 'ds' | 'resists';
+  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds' | 'resists';
 
 export const CATEGORY_ORDER: BuffCategory[] = [
-  'hp', 'regen', 'mana', 'manaRegen', 'haste', 'attack', 'ds', 'resists',
+  'hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'resists',
 ];
 
 export const CATEGORY_LABELS: Record<BuffCategory, string> = {
@@ -25,6 +25,7 @@ export const CATEGORY_LABELS: Record<BuffCategory, string> = {
   mana:      'Mana',
   manaRegen: 'Mana Regen',
   haste:     'Haste',
+  runSpeed:  'Run Speed',
   attack:    'Attack',
   ds:        'Dmg Shield',
   resists:   'Resists',
@@ -50,10 +51,16 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'clarity', 'koadic', 'endless intellect', 'breeze', 'clairvoyance',
     'gift of insight', 'gift of pure thought', 'auspice',
   ],
-  // Attack-speed haste.
+  // Attack-speed haste. ("Speed of the Shissar"/"Swift like the Wind" are
+  // haste — they don't collide with SoW, which matches "spirit of wolf".)
   haste: [
     'haste', 'celerity', 'quickness', 'swift', 'speed of', 'augmentation',
     'alacrity', 'aanya', 'battle cry', 'warsong', 'verses of victory',
+  ],
+  // Movement / run speed (SoW family + bard travel songs).
+  runSpeed: [
+    'spirit of wolf', 'spirit of the wolf', 'flight of eagle', 'pack spirit',
+    'selo', 'journeyman', 'run speed', 'spirit of the shrew',
   ],
   // ATK / STR / offense.
   attack: [

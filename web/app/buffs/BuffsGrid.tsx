@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS,
   type BuffCategory, type Role,
@@ -102,6 +102,28 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
     });
   }, [rows, selectedClasses, onlyGaps, hideStale, now]);
 
+  // Group by zone. In a raid the zone with the most of our people IS the raid —
+  // so the busiest zone sorts to the top (that's who you care about), then the
+  // rest by headcount, with "unknown zone" last. (Zeal reports each client's own
+  // zone; we don't get true raid/group structure, so shared zone is the proxy
+  // for "grouped up together".)
+  const groups = useMemo(() => {
+    const m = new Map<string, BuffRow[]>();
+    for (const r of filtered) {
+      const z = r.zone || 'Unknown zone';
+      const arr = m.get(z);
+      if (arr) arr.push(r); else m.set(z, [r]);
+    }
+    return [...m.entries()].sort((a, b) => {
+      const au = a[0] === 'Unknown zone', bu = b[0] === 'Unknown zone';
+      if (au !== bu) return au ? 1 : -1;
+      if (b[1].length !== a[1].length) return b[1].length - a[1].length;
+      return a[0].localeCompare(b[0]);
+    });
+  }, [filtered]);
+
+  const colSpan = categories.length + 3;
+
   return (
     <div className="space-y-4">
       <div>
@@ -184,53 +206,70 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
               </tr>
             </thead>
             <tbody>
-              {filtered.map(r => {
-                const target = ROLE_TARGETS[r.role] || [];
-                const stale = r.updatedAt ? (now - new Date(r.updatedAt).getTime()) > STALE_MS : true;
-                return (
-                  <tr key={r.name} className={['border-b border-border/40', stale ? 'opacity-50' : ''].join(' ')}>
-                    <td className="p-2 sticky left-0 bg-panel">
-                      <div className="text-text flex items-center">
-                        <span>{r.name}</span>
-                        <CopyTargetButton name={r.name} />
-                      </div>
-                      <div className="text-dim text-[10px]">
-                        {[r.className || 'Unknown', ROLE_LABELS[r.role]].join(' · ')}
-                        {r.zone && <> · {r.zone}</>}
-                      </div>
+              {groups.map(([zone, zoneRows], gi) => (
+                <Fragment key={zone}>
+                  <tr className="bg-bg/60">
+                    <td colSpan={colSpan} className="px-2 py-1.5 text-[11px]">
+                      <span className="text-gold">📍 {zone}</span>
+                      <span className="text-dim"> · {zoneRows.length} {zoneRows.length === 1 ? 'character' : 'characters'}</span>
+                      {gi === 0 && groups.length > 1 && <span className="text-dim/70"> · most of the pack is here</span>}
                     </td>
-                    {categories.map(cat => {
-                      const present = (r.byCategory[cat]?.length || 0) > 0;
-                      const expected = target.includes(cat);
-                      if (present) {
-                        return (
-                          <td key={cat} className="p-2 text-center" title={r.byCategory[cat].join(', ')}>
-                            <span className="text-green">✓</span>
-                          </td>
-                        );
-                      }
-                      if (expected) {
-                        return <td key={cat} className="p-2 text-center text-red-400 font-bold" title="Expected for this role — missing">✗</td>;
-                      }
-                      return <td key={cat} className="p-2 text-center text-dim/40">·</td>;
-                    })}
-                    <td className="p-2 text-center" title={r.other.join(', ')}>
-                      {r.other.length > 0 ? <span className="text-dim">{r.other.length}</span> : <span className="text-dim/40">·</span>}
-                    </td>
-                    <td className="p-2 text-right text-dim whitespace-nowrap">{ago(r.updatedAt)}</td>
                   </tr>
-                );
-              })}
+                  {zoneRows.map(r => {
+                    const target = ROLE_TARGETS[r.role] || [];
+                    const stale = r.updatedAt ? (now - new Date(r.updatedAt).getTime()) > STALE_MS : true;
+                    return (
+                      <tr key={r.name} className={['border-b border-border/40', stale ? 'opacity-50' : ''].join(' ')}>
+                        <td className="p-2 sticky left-0 bg-panel">
+                          <div className="text-text flex items-center">
+                            <span>{r.name}</span>
+                            <CopyTargetButton name={r.name} />
+                          </div>
+                          <div className="text-dim text-[10px]">
+                            {[r.className || 'Unknown', ROLE_LABELS[r.role]].join(' · ')}
+                          </div>
+                        </td>
+                        {categories.map(cat => {
+                          const names = r.byCategory[cat];
+                          const present = (names?.length || 0) > 0;
+                          const expected = target.includes(cat);
+                          return (
+                            <td key={cat} className="p-2 text-center">
+                              {present ? (
+                                <span
+                                  className="text-green inline-block max-w-[110px] truncate align-bottom"
+                                  title={names!.join(', ')}
+                                >
+                                  {names![0]}{names!.length > 1 ? ' +' + (names!.length - 1) : ''}
+                                </span>
+                              ) : expected ? (
+                                <span className="text-red-400" title="Expected for this role — missing">— missing</span>
+                              ) : (
+                                <span className="text-dim/40">·</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 text-center" title={r.other.join(', ')}>
+                          {r.other.length > 0 ? <span className="text-dim">{r.other.length}</span> : <span className="text-dim/40">·</span>}
+                        </td>
+                        <td className="p-2 text-right text-dim whitespace-nowrap">{ago(r.updatedAt)}</td>
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
       <p className="text-[11px] text-dim">
-        <span className="text-green">✓</span> has a buff in that category ·
-        <span className="text-red-400 font-bold"> ✗</span> expected for the role but missing ·
-        <span className="text-dim"> ·</span> not expected ·
-        hover a cell for the buff names ·
+        Cells show the actual <span className="text-green">buff/song name</span> in that category
+        (hover for the full list when there&apos;s more than one) ·
+        <span className="text-red-400"> — missing</span> = expected for the role but absent ·
+        <span className="text-dim"> ·</span> not expected for the role ·
+        grouped by zone (busiest zone = the raid, on top) ·
         click 📋 next to a name to copy <code>/target &lt;name&gt;</code> for pasting in EQ.
         The <b>Other</b> column counts buffs we couldn&apos;t categorize yet —
         hover it and send the names to an officer so we can map them. Target profiles per role are a

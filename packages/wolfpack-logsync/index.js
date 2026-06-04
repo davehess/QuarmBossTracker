@@ -7709,9 +7709,19 @@ function recordEventForDashboard(event, character) {
   if (event.defender && attacker.toLowerCase() === event.defender.toLowerCase()) return;
 
   // Track session-wide damage totals across ALL hit sizes (not just big crits).
-  // Powers the "Damage done this session" right column.
-  stats.sessionTotalDamage += event.amount;
-  stats.sessionDamageBy[attacker] = (stats.sessionDamageBy[attacker] || 0) + event.amount;
+  // Powers the "Damage done this session" right column — which is PLAYER damage.
+  // Only count PLAYERS (and their declared pets): a boss hitting the raid would
+  // otherwise rank as a top "contributor" (the Doomshade / Rumblecrush bug). The
+  // uploader's own char always counts; other players count once confirmed (via
+  // /who, a heal, or a watched log); declared pets count. NPC attackers (bosses)
+  // never confirm, so their incoming hits are excluded.
+  const _atkIsPlayer = attacker === character
+    || isConfirmedPlayer(attacker)
+    || knownPetOwners.has(attacker.toLowerCase());
+  if (_atkIsPlayer) {
+    stats.sessionTotalDamage += event.amount;
+    stats.sessionDamageBy[attacker] = (stats.sessionDamageBy[attacker] || 0) + event.amount;
+  }
 
   // Per-ability totals for the info screen — UPLOADER ONLY.
   // First-person events arrive with event.attacker===null (re-attributed to character).
