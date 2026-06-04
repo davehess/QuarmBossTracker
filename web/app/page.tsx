@@ -78,19 +78,19 @@ export default async function HomePage() {
           href="/parses"
         />
         <Card
-          title="🏆 Boards"
+          title="🗺️ Boards"
+          body="Live raid-boss spawn timers across every expansion — what's up now and what's coming in the next 24 hours."
+          href="/boards"
+        />
+        <Card
+          title="⚔️ PvP"
+          body="Wolf Pack PvP kill leaderboard, per-character records + assists, and PvP-server boss spawn windows."
+          href="/pvp"
+        />
+        <Card
+          title="🏆 Ranks"
           body="Top damage parses, raid attendance, and DKP spenders over the last 30 days."
           href="/leaderboards"
-        />
-        <Card
-          title="🗡️ Loadouts"
-          body="Every tank's bandolier sets. See who's running what weapons + procs, click through to PQDI."
-          href="/loadouts"
-        />
-        <Card
-          title="🧮 Planner"
-          body="Build a theoretical loadout from the item database. Estimate hate-per-minute from procs + swings."
-          href="/planner"
         />
       </section>
 

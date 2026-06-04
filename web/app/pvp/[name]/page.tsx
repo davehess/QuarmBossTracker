@@ -154,29 +154,45 @@ async function load(name: string) {
   ]);
 
   const assists = (assistData ?? []) as Assist[];
-  // Pull every assister on the same kills so we can show "who else was on it".
-  const killIds = [...new Set(assists.map(a => a.pvp_kill_id).filter((x): x is number => x != null))];
-  const coByKill = new Map<number, string[]>();
-  if (killIds.length > 0) {
-    const { data: co } = await sb
+  // Co-assisters: assists frequently aren't linked to a pvp_kill_id — each
+  // agent correlates its OWN assist independently with no shared FK, and clocks
+  // skew a second or two between machines (Wabumkin's row stamped :48, Hitya's
+  // :47 on the same Bardtholemu→Rylex kill). So match on killer+victim within a
+  // time window rather than relying on the id; pvp_kill_id is still honored when
+  // both rows happen to carry it.
+  const killers = [...new Set(assists.map(a => a.killer).filter(Boolean))];
+  const victims = [...new Set(assists.map(a => a.victim).filter(Boolean))];
+  type Related = { assister: string; killer: string; victim: string; killed_at: string; pvp_kill_id: number | null };
+  let related: Related[] = [];
+  if (killers.length > 0 && victims.length > 0) {
+    const { data } = await sb
       .from('pvp_assists')
-      .select('pvp_kill_id, assister')
+      .select('assister, killer, victim, killed_at, pvp_kill_id')
       .eq('guild_id', 'wolfpack')
-      .in('pvp_kill_id', killIds)
+      .in('killer', killers)
+      .in('victim', victims)
       .limit(20000);
-    for (const r of (co ?? []) as { pvp_kill_id: number | null; assister: string }[]) {
-      if (r.pvp_kill_id == null) continue;
-      const arr = coByKill.get(r.pvp_kill_id) ?? [];
-      arr.push(r.assister);
-      coByKill.set(r.pvp_kill_id, arr);
-    }
+    related = (data ?? []) as Related[];
   }
+  const CO_WINDOW_MS = 2 * 60 * 1000;   // same kill ⇔ killer+victim within 2 min
+  const lc = (s: string) => (s || '').toLowerCase();
+  const enrichedAssists = assists.map(a => {
+    const t = new Date(a.killed_at).getTime();
+    const co = new Set<string>();
+    for (const r of related) {
+      if (lc(r.killer) !== lc(a.killer) || lc(r.victim) !== lc(a.victim)) continue;
+      const sameId   = a.pvp_kill_id != null && r.pvp_kill_id != null && a.pvp_kill_id === r.pvp_kill_id;
+      const sameTime = Math.abs(new Date(r.killed_at).getTime() - t) <= CO_WINDOW_MS;
+      if (!sameId && !sameTime) continue;
+      if (lc(r.assister) !== lc(decoded)) co.add(r.assister);
+    }
+    return { ...a, co: [...co] };
+  });
 
   return {
     kills: (kills ?? []) as Kill[],
     deaths: (deaths ?? []) as Death[],
-    assists,
-    coByKill,
+    assists: enrichedAssists,
     displayName: ((kills ?? [])[0] as Kill | undefined)?.killer
       ?? ((deaths ?? [])[0] as Death | undefined)?.victim
       ?? decoded,   // assist-only chars: the URL name is the only cased source
@@ -188,7 +204,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/pvp/${encodeURIComponent(name)}`);
 
-  const { kills, deaths, assists, coByKill, displayName } = await load(name);
+  const { kills, deaths, assists, displayName } = await load(name);
   const owned = await ownedNames();
   const viewerOwns = owned.has(displayName.toLowerCase());
   const officer = await isOfficer(user.id);
@@ -232,15 +248,9 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   }
   const killerRows = [...byKiller.values()].sort((a, b) => b.count - a.count);
 
-  // Assists made by this character — each with who LANDED the kill and the
-  // other assisters who were on it (this character filtered out of the co list).
-  const assistRows = assists.map(a => {
-    const co = [...new Set(
-      (a.pvp_kill_id != null ? (coByKill.get(a.pvp_kill_id) ?? []) : [])
-        .filter(n => n.toLowerCase() !== displayName.toLowerCase())
-    )];
-    return { ...a, co };
-  });
+  // Assists made by this character — co-assisters precomputed in load() by
+  // killer+victim+time matching (assist rows aren't reliably linked by id).
+  const assistRows = assists;
 
   return (
     <div className="space-y-6">

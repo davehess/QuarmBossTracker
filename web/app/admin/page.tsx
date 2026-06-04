@@ -69,6 +69,16 @@ export default function AdminPage() {
           body="Officer-tuned callouts (rampage, AE, phase changes, breath) that fire as text overlays on each member's agent during the raid. Centralizes what every raider used to maintain in their own GINA pack."
           href="/admin/triggers"
         />
+        <Card
+          title="🗡️ Loadouts"
+          body="Every tank's bandolier sets — who's running what weapons + procs, click through to PQDI. Parked here while not in active use."
+          href="/loadouts"
+        />
+        <Card
+          title="🧮 Planner"
+          body="Build a theoretical loadout from the item database; estimate hate-per-minute from procs + swings. Parked here while not in active use."
+          href="/planner"
+        />
       </section>
     </div>
   );

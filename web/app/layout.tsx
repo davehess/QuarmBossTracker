@@ -2,7 +2,6 @@ import './globals.css';
 import type { Metadata } from 'next';
 import Nav from '@/components/Nav';
 import AuthBadge from '@/components/AuthBadge';
-import DemoToggle from '@/components/DemoToggle';
 import TimezonePicker from '@/components/TimezonePicker';
 import LocalDashboardLink from '@/components/LocalDashboardLink';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -50,40 +49,37 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {/* AuthBadge sits next to title on mobile so the nav row gets the full width */}
               <div className="sm:hidden"><AuthBadge /></div>
             </div>
-            {/* Download buttons — always visible at the top so newcomers can
-                grab the right one without hunting. Parser = classic CLI agent
-                (proven). Mimic = Electron desktop app, 1-click installer.
-                BOTH download the installer directly: Parser hits the static
-                /latest/download asset; Mimic uses /mimic?direct=1, which resolves
-                the newest Mimic release and 302s straight to its .exe (falling back
-                to the release page only if the build asset isn't attached yet). */}
-            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-              <a
-                href="https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-green bg-[#1a7f3733] text-green text-xs sm:text-sm hover:bg-[#1a7f3766] transition-colors whitespace-nowrap no-underline"
-                title="Download the wolfpack-logsync parser — the local agent that streams encounter data to the bot"
-              >
-                <span aria-hidden>📦</span>
-                <span>Download Parser</span>
-                <span aria-hidden className="text-dim text-[10px]">↗</span>
-              </a>
+            {/* Download buttons, stacked — Mimic (the recommended all-in-one
+                desktop client that bundles the logsync agent) on top, the
+                standalone CLI parser below. Both download the installer
+                directly: Mimic via /mimic?direct=1 (resolves the newest build),
+                the parser via the static /latest/download asset. */}
+            <div className="flex flex-col items-stretch gap-2 self-start sm:self-auto">
               <a
                 href="/mimic?direct=1"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-blue bg-[#1f6feb33] text-blue text-xs sm:text-sm hover:bg-[#1f6feb66] transition-colors whitespace-nowrap no-underline"
-                title="Wolf Pack Mimic — Electron desktop app. Downloads the latest installer directly (always resolves the newest build). One installer, bundles its own Node, transparent DPS overlay + trigger TTS. Coexists with the Parser. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
+                title="Wolf Pack Mimic — the all-in-one desktop client. Bundles the wolfpack-logsync agent + a DPS overlay, trigger TTS, charm tracker, and /tells. Downloads the latest installer directly. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
               >
                 <span aria-hidden>🐺</span>
-                <span>Mimic</span>
+                <span>Download Mimic Logsync</span>
+                <span aria-hidden className="text-dim text-[10px]">↗</span>
+              </a>
+              <a
+                href="https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-green bg-[#1a7f3733] text-green text-xs sm:text-sm hover:bg-[#1a7f3766] transition-colors whitespace-nowrap no-underline"
+                title="The standalone wolfpack-logsync parser — the classic CLI agent (no desktop UI). Streams encounter data to the bot. Use this if you prefer the minimal install."
+              >
+                <span aria-hidden>📦</span>
+                <span>Download standalone parser</span>
                 <span aria-hidden className="text-dim text-[10px]">↗</span>
               </a>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <Nav showAdmin={showAdmin} showMe={showMe} />
-              <DemoToggle />
               <TimezonePicker />
               <div className="hidden sm:block"><AuthBadge /></div>
             </div>

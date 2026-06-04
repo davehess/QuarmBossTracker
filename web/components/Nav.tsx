@@ -8,8 +8,6 @@ const links = [
   { href: '/parses',        label: 'Parses' },
   { href: '/pvp',           label: 'PvP' },
   { href: '/leaderboards',  label: 'Ranks' },
-  { href: '/loadouts',      label: 'Loadouts' },
-  { href: '/planner',       label: 'Planner' },
   { href: '/fun',           label: '🎉 Fun' },
 ];
 
