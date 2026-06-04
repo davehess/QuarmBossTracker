@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.8': [
+    '**Kill timers now require a confirmed death line** — the agent used to flag a parse as a kill whenever combat ended (death event OR 120s of silence, then "guess the boss = top-damaged target"). Pull-and-flee fights, wipes, and short pulls were getting registered as kills and moving the boards. Now timers only advance when the agent literally saw "<Boss> has been slain by ..." in the log. Parses still record for stats; only the timer side is gated. Update Mimic (or the standalone agent) to pick up the change. If you see leftover false timers from before this patch, `/unkill <boss>` clears them.',
+  ],
   '3.0.6': [
     '**Feedback form on the website** — wolfpack.quest/feedback lets anyone drop a bug, idea, or kudos right from the browser (no Discord needed). Each one auto-posts into the #feedback thread just like `/feedback`, and shows up in the officer triage inbox with everything else. We read every one. 🐺',
   ],

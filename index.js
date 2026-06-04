@@ -5758,12 +5758,19 @@ async function _handleAgentUpload(req, res) {
           console.warn('[agent] raid-thread append wrapper failed:', err?.message);
         }
 
-        // Auto-record kill if boss isn't already on cooldown
+        // Auto-record kill if (1) the agent confirmed the boss's death line
+        // was observed AND (2) the boss isn't already on cooldown.
+        // confirmed_kill=false uploads (idle-timeout flushes — pulls and
+        // wipes where the boss survived) only record the parse; they must
+        // not move timers. Old agents (no flag) treated as unconfirmed:
+        // safer to require an explicit /kill than fire a wrong timer.
         const { getBossState, recordKill } = require('./utils/state');
         const { postKillUpdate } = require('./utils/killops');
         const bossState = getBossState(matchedBoss.id);
         const now = Date.now();
-        if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
+        if (encounter.confirmed_kill !== true) {
+          console.log(`[agent] ${matchedBoss.name} parse recorded but kill NOT confirmed (no death line observed) — timer unchanged`);
+        } else if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
           recordKill(matchedBoss.id, matchedBoss.timerHours, null);
           postKillUpdate(client, process.env.TIMER_CHANNEL_ID, matchedBoss.id).catch(console.warn);
           console.log(`[agent] auto-killed ${matchedBoss.name} from ${character || '?'} agent upload`);

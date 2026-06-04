@@ -1084,6 +1084,12 @@ class EncounterBuilder {
     this.lastEvent  = null;
     this.targets    = new Map(); // defender → total damage dealt to it
     this.bossName   = null;
+    // True only when the boss's "X has been slain by Y!" line was observed
+    // for the named target. False when bossName was guessed from the
+    // top-damaged target after an idle-timeout flush. The bot uses this to
+    // decide whether to auto-set a respawn timer — engaged-but-survived
+    // fights (pull-and-flee, wipes) must not move boards.
+    this.bossKillConfirmed = false;
     // Mob → last player it landed a hit on, for DS correlation. On Quarm a
     // damage-shield proc logs as the anonymous "<mob> was hit by non-melee
     // for N" without naming the wearer, so we credit it to whoever the mob
@@ -2019,6 +2025,7 @@ class EncounterBuilder {
       }
       if (top && (event.defender.toLowerCase() === top.toLowerCase() || topDmg > 1000)) {
         this.bossName = event.defender;
+        this.bossKillConfirmed = true;
         this.flush();
       }
     }
@@ -2252,6 +2259,12 @@ class EncounterBuilder {
         started_at:    this.startedAt,
         ended_at:      this.lastEvent,
         boss_name:     this.bossName,
+        // True only when the boss's death log line was observed for
+        // bossName. False when bossName was guessed from top-damaged target
+        // after a 120s idle flush (= "engaged but didn't die"). The bot
+        // gates auto-kill on this so wipes and brief pulls don't move
+        // boards.
+        confirmed_kill: this.bossKillConfirmed,
         // active_duration_s: gap-trimmed combat seconds that excludes charm-phase
         // inactivity. Use this in preference to (ended_at - started_at) to avoid
         // inflated DPS denominators on fights where a pet was charmed and DoT ticks
