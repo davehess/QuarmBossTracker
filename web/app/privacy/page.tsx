@@ -36,6 +36,59 @@ export default function PrivacyPage() {
         </p>
       </section>
 
+      <section className="space-y-3 bg-panel border border-green/40 rounded-lg p-5">
+        <h2 className="text-lg text-green">Is it a keylogger? Is it a virus?</h2>
+        <p>
+          Short answer: <strong className="text-text">no — and you don't have to take our
+          word for it.</strong> The cautious instinct is healthy, so here's exactly what it
+          is and how to prove it to yourself.
+        </p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>
+            <strong className="text-text">It reads EverQuest's log file — not your keyboard.</strong>{' '}
+            When you turn on logging (<code>/log on</code>), EverQuest writes everything to a
+            text file. Mimic just <em>reads that file</em>. It does{' '}
+            <strong className="text-text">not</strong> record keystrokes, watch your screen,
+            or see your browser, passwords, or anything outside EverQuest. A keylogger hooks
+            your whole keyboard — Mimic literally only opens EQ's own log.
+          </li>
+          <li>
+            <strong className="text-text">It's an ordinary app, not a virus.</strong> No admin
+            rights, no drivers, no Windows services, no changes to system files or startup. It
+            installs to your own user folder and uninstalls cleanly. It can't touch other
+            programs or your operating system.
+          </li>
+          <li>
+            <strong className="text-text">It's 100% open source.</strong> Every line is public —{' '}
+            <a href="https://github.com/davehess/QuarmBossTracker" target="_blank" rel="noreferrer" className="text-blue hover:underline">read it on GitHub</a>.
+            People who write keyloggers don't publish their code. Have any techy friend look;
+            what you see is what it does.
+          </li>
+        </ul>
+        <p className="text-sm">Don't trust us — <strong className="text-text">verify</strong>:</p>
+        <ul className="list-disc pl-6 space-y-2 text-sm">
+          <li>
+            Scan the installer on <a href="https://www.virustotal.com" target="_blank" rel="noreferrer" className="text-blue hover:underline">VirusTotal</a>.
+            (Heads up: an unsigned installer can trip one or two over-cautious heuristics —
+            that's the "not code-signed yet" thing below, not a real virus.)
+          </li>
+          <li>
+            Open Task Manager / Resource Monitor — it's one app, talking to one server (our
+            guild's bot) plus GitHub for updates. Nothing else.
+          </li>
+          <li>
+            The local dashboard shows you <strong className="text-text">exactly</strong> what
+            it uploads, live. The pending-upload file on your disk is plain readable text.
+          </li>
+        </ul>
+        <p className="text-sm text-dim">
+          And that scary <strong className="text-text">"unknown publisher"</strong> popup?
+          That's paperwork, not danger — Windows warns about any app that hasn't paid for a
+          code-signing certificate yet. It says nothing about safety, and we're sorting the
+          signing out.
+        </p>
+      </section>
+
       <section className="space-y-3">
         <h2 className="text-lg text-orange">Your data stays yours</h2>
         <ul className="list-disc pl-6 space-y-1.5">
