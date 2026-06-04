@@ -20,7 +20,7 @@
 // Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage } = require('electron');
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
@@ -166,6 +166,78 @@ function loadConfig() {
 function saveConfig(cfg) {
   fs.mkdirSync(path.dirname(CONFIG_FILE()), { recursive: true });
   fs.writeFileSync(CONFIG_FILE(), JSON.stringify(cfg, null, 2));
+}
+
+// ── Secret-at-rest (safeStorage / OS keychain) ──────────────────────────────
+// The per-user upload token is a bearer credential — anyone who can read it
+// can upload as this user (exactly the "copied log file uploaded as someone
+// else" class of abuse we're closing). We encrypt it at rest with Electron
+// safeStorage (DPAPI on Windows, Keychain on macOS) so a leaked
+// mimic.config.json — or a cloud-synced EQ folder that drags the config along
+// — can't be replayed on another machine. Falls back to plaintext ONLY when
+// the OS has no encryption backend (bare Linux without a keyring); Windows,
+// our shipping target, always has DPAPI.
+function _encryptSecret(plain) {
+  if (!plain) return null;
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      return { enc: safeStorage.encryptString(String(plain)).toString('base64') };
+    }
+  } catch (e) { void e; }
+  return { plain: String(plain) };   // last-resort, keyring unavailable
+}
+function _decryptSecret(box) {
+  if (!box) return null;
+  if (box.enc) {
+    try { return safeStorage.decryptString(Buffer.from(box.enc, 'base64')); }
+    catch (e) { void e; return null; }
+  }
+  return box.plain || null;
+}
+
+// The canonical upload token. Reads, in priority order:
+//   1. cfg.session.tokenBox  — encrypted per-user token (current model)
+//   2. cfg.session.token     — legacy plaintext session token (pre-safeStorage)
+//   3. cfg.token             — legacy top-level pasted token (pre-per-user)
+// Returns the decrypted plaintext (or null for local-only mode).
+function resolveUploadToken(cfg) {
+  const s = cfg.session || {};
+  if (s.tokenBox) { const t = _decryptSecret(s.tokenBox); if (t) return t; }
+  if (s.token)    return s.token;
+  if (cfg.token)  return cfg.token;
+  return null;
+}
+
+// Persist a freshly-obtained upload token (from the Discord device-link OR a
+// manual /token paste) encrypted at rest, alongside the resolved identity.
+// Drops every legacy plaintext field so the secret only lives in tokenBox.
+// Mutates + returns cfg; caller is responsible for saveConfig.
+function storeUploadToken(cfg, plain, identity) {
+  cfg.session = cfg.session || {};
+  cfg.session.tokenBox = _encryptSecret(plain);
+  delete cfg.session.token;     // retire legacy plaintext session token
+  if (identity) cfg.session.identity = identity;
+  cfg.session.linked_at = cfg.session.linked_at || Date.now();
+  delete cfg.token;             // retire legacy top-level pasted token
+  return cfg;
+}
+
+// Strip secrets before handing config to a renderer. get-config feeds the
+// onboarding + settings UIs, which never need the raw token — they render
+// "connected as <name>" from status.mimicSession instead. Keeps the bearer
+// out of the renderer process entirely.
+function configForRenderer(cfg) {
+  const safe = Object.assign({}, cfg);
+  if (safe.session) {
+    safe.session = Object.assign({}, safe.session);
+    delete safe.session.tokenBox;
+    delete safe.session.token;
+  }
+  delete safe.token;
+  // Derived booleans the UI actually wants.
+  safe.connected   = !!resolveUploadToken(cfg);
+  safe.connectedAs = cfg.session?.identity?.display_name || null;
+  return safe;
 }
 
 // ── Agent staging (read-only resources → writable userData) ─────────────────
@@ -806,7 +878,7 @@ function pushMimicSession() {
   const cfg = loadConfig();
   const sess = cfg.session || null;
   const body = JSON.stringify({
-    token:    sess?.token    || '',
+    token:    resolveUploadToken(cfg) || '',
     identity: sess?.identity || null,
   });
   const req = http.request({
@@ -856,21 +928,26 @@ async function startMimicLink() {
       if (p.status === 200 && p.body) {
         if (p.body.status === 'linked' && p.body.session_token) {
           const c = loadConfig();
-          c.session = {
-            token:    p.body.session_token,
-            identity: {
-              user_id:      p.body.user_id,
-              discord_id:   p.body.discord_id,
-              display_name: p.body.display_name,
-              is_officer:   !!p.body.is_officer,
-              role_names:   Array.isArray(p.body.role_names) ? p.body.role_names : [],
-            },
-            linked_at: Date.now(),
-          };
+          // The session token IS the per-user upload token now — store it
+          // encrypted at rest and retire any legacy plaintext.
+          storeUploadToken(c, p.body.session_token, {
+            user_id:      p.body.user_id,
+            discord_id:   p.body.discord_id,
+            display_name: p.body.display_name,
+            is_officer:   !!p.body.is_officer,
+            role_names:   Array.isArray(p.body.role_names) ? p.body.role_names : [],
+          });
+          c.session.linked_at = Date.now();
           saveConfig(c);
           _linkInFlight = null;
           pushMimicSession();
           pushStatus();
+          // Relaunch the agent so it picks up the new token (passed via env at
+          // spawn time). Kill → the exit handler auto-relaunches; if it's not
+          // running, start it directly. This is what makes the just-completed
+          // sign-in actually start uploading without a manual restart.
+          if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
+          else { launchAgent(); }
           return;
         }
         if (p.body.status === 'expired') {
@@ -899,11 +976,14 @@ function cancelMimicLink() {
 // so the user is signed out even if the network is down.
 async function signOutMimic() {
   const cfg = loadConfig();
-  const token = cfg.session?.token || '';
+  const token = resolveUploadToken(cfg) || '';
   delete cfg.session;
+  delete cfg.token;     // also clear any legacy top-level token
   saveConfig(cfg);
   pushMimicSession();
   pushStatus();
+  // Drop the agent back to local-only by relaunching without a token.
+  if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
   if (token) {
     try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
   }
@@ -966,11 +1046,16 @@ async function launchAgent() {
   agentPort = await findFreePort(BASE_PORT);
 
   const args = [agentPath, '--watch', '--web-port', String(agentPort)];
-  // Local-only: no token → don't pass --bot-url or --token, so the agent runs
-  // dashboard + tail only and never attempts uploads (no 4xx-spam in the queue).
-  if (cfg.token && cfg.botUrl) {
+  // Local-only: no token → don't pass --bot-url, so the agent runs dashboard +
+  // tail only and never attempts uploads (no 4xx-spam in the queue).
+  //
+  // The token is passed via the WOLFPACK_TOKEN ENV VAR (set below), NOT a
+  // --token argv flag. argv is visible to any process that can list the
+  // process table (Task Manager → Details, wmic) — for a bearer credential
+  // that's needless exposure. The agent reads --token OR env WOLFPACK_TOKEN.
+  const uploadToken = resolveUploadToken(cfg);
+  if (uploadToken && cfg.botUrl) {
     args.push('--bot-url', cfg.botUrl);
-    args.push('--token', cfg.token);
   }
   // Auto-detect the EQ install dir + every eqlog_*_pq.proj.txt file in it.
   // The agent REQUIRES --log <path> (one per log) or it exits with
@@ -1036,6 +1121,10 @@ async function launchAgent() {
     WOLFPACK_APP_VERSION:   app.getVersion(),
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
+  // Hand the bearer token to the agent out-of-band (env, not argv). Only set
+  // when we have a token + upload URL — local-only installs leave it unset so
+  // the agent never tries to upload.
+  if (uploadToken && cfg.botUrl) env.WOLFPACK_TOKEN = uploadToken;
 
   agentProc = spawn(process.execPath, args, {
     env,
@@ -1520,7 +1609,7 @@ function applyCharmVisibility() {
 // ── Status + Tray ──────────────────────────────────────────────────────────
 function currentStatus() {
   const cfg = loadConfig();
-  const localOnly = !cfg.token;
+  const localOnly = !resolveUploadToken(cfg);
   return {
     agentPort,
     agentRunning: !!agentProc,
@@ -1735,9 +1824,9 @@ function buildTrayMenu() {
   const connectItem = s.localOnly
     ? { label: 'Connect to Wolf Pack…', click: openSettings }
     : { label: 'Disconnect (revert to local only)', click: async () => {
-        const cfg = loadConfig(); cfg.token = null; saveConfig(cfg);
-        if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
-        pushStatus();
+        // Full sign-out: clears the encrypted session token + legacy token,
+        // best-effort revokes server-side, and relaunches local-only.
+        await signOutMimic();
       } };
 
   const updateItem = updatePending
@@ -1858,9 +1947,10 @@ async function checkAgentUpdate() {
     const cfg = loadConfig();
     const base = _botBaseUrl(cfg);
     let manifest;
+    const _authToken = resolveUploadToken(cfg);
     try {
       manifest = await _httpsJson(`${base}/api/agent/latest-version`,
-        cfg.token ? { headers: { 'Authorization': 'Bearer ' + cfg.token } } : {});
+        _authToken ? { headers: { 'Authorization': 'Bearer ' + _authToken } } : {});
     } catch (e) { return; }  // bot unreachable — try again next cycle
     const latest = manifest && manifest.latest_agent_version;
     const url    = manifest && manifest.url;
@@ -2137,7 +2227,8 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
   const label     = params?.label ? String(params.label).slice(0, 80) : null;
   if (!character || !eqDir) return { ok: false, error: 'character + eqDir required' };
   const cfg = loadConfig();
-  if (!cfg.token) return { ok: false, error: 'no token configured — set it in Settings' };
+  const _uiToken = resolveUploadToken(cfg);
+  if (!_uiToken) return { ok: false, error: 'no token configured — set it in Settings' };
 
   const files = _readUiBundle(eqDir, character);
   const fileCount = Object.keys(files).length;
@@ -2153,7 +2244,7 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
   try {
     const result = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.token}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_uiToken}` },
       body: { character, label, server_short: 'pq.proj', source_width: srcW, source_height: srcH, files, agent_version: app.getVersion() },
     });
     return { ok: true, id: result?.id, file_count: fileCount };
@@ -2166,11 +2257,12 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
 ipcMain.handle('ui-studio-list-snapshots', async (_e, character) => {
   const c = String(character || '').trim();
   const cfg = loadConfig();
+  const _uiToken = resolveUploadToken(cfg);
   if (!c) return { ok: false, error: 'character required' };
-  if (!cfg.token) return { ok: false, error: 'no token configured' };
+  if (!_uiToken) return { ok: false, error: 'no token configured' };
   try {
     const r = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout?character=${encodeURIComponent(c)}`, {
-      headers: { 'Authorization': `Bearer ${cfg.token}` },
+      headers: { 'Authorization': `Bearer ${_uiToken}` },
     });
     return { ok: true, snapshots: r?.snapshots || [] };
   } catch (err) {
@@ -2187,7 +2279,8 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
   const clamp     = !!params?.clamp;
   if (!character || !snapId || !eqDir) return { ok: false, error: 'character + id + eqDir required' };
   const cfg = loadConfig();
-  if (!cfg.token) return { ok: false, error: 'no token configured' };
+  const _uiToken = resolveUploadToken(cfg);
+  if (!_uiToken) return { ok: false, error: 'no token configured' };
 
   // Safety guard: never write while EQ is running. Refusal is permanent
   // for this call — the user must close EQ and click Restore again.
@@ -2198,7 +2291,7 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
   let snap;
   try {
     snap = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(snapId)}?character=${encodeURIComponent(character)}`, {
-      headers: { 'Authorization': `Bearer ${cfg.token}` },
+      headers: { 'Authorization': `Bearer ${_uiToken}` },
     });
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
@@ -2245,11 +2338,31 @@ ipcMain.handle('pick-eq-dir', async (e) => {
   }
 });
 
-ipcMain.handle('get-config', () => loadConfig());
-ipcMain.handle('save-config', (_e, cfg) => {
-  saveConfig(Object.assign(loadConfig(), cfg));
+ipcMain.handle('get-config', () => configForRenderer(loadConfig()));
+ipcMain.handle('save-config', async (_e, incoming) => {
+  const merged = Object.assign(loadConfig(), incoming || {});
+  // Manual /token paste comes in as { token: "wpms_..." }. Route it through
+  // the encrypted-at-rest path instead of persisting plaintext, then relaunch
+  // the agent so the new token takes effect. A blank/cleared token signs out.
+  let tokenChanged = false;
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'token')) {
+    const pasted = String(incoming.token || '').trim();
+    if (pasted) {
+      storeUploadToken(merged, pasted, merged.session?.identity || null);
+    } else {
+      delete merged.session;
+    }
+    delete merged.token;
+    tokenChanged = true;
+  }
+  saveConfig(merged);
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyOverlayInteractivity();
   pushStatus();
+  if (tokenChanged) {
+    pushMimicSession();
+    if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
+    else { await launchAgent(); }
+  }
   return true;
 });
 // Lock / unlock overlays — pure window op, NEVER restarts the agent.

@@ -103,7 +103,7 @@ async function load(name: string) {
       `)
       .eq('character_name', displayName)
       .order('total_damage', { ascending: false })
-      .limit(200);
+      .limit(10000);
     const parses = (parseRowsRaw as unknown as ParseRow[]) ?? [];
 
     // 3. Loot — every opendkp_loot row this character has won, joined to

@@ -188,8 +188,12 @@ function _hasOfficerRole(roleNames) {
   const set = new Set(allow);
   return Array.isArray(roleNames) && roleNames.some(n => set.has(n));
 }
-async function resolveMimicSession(req) {
-  const token = String(req.headers?.['x-wolfpack-mimic-session'] || '').trim();
+
+// Core lookup: token string → identity (or null). Shared by both the
+// X-Wolfpack-Mimic-Session resolver (UI flows) and requireAgentAuth (agent
+// uploads). Single cache means a session token used by both surfaces only
+// hits Supabase once per 5 min.
+async function _resolveSessionToken(token) {
   if (!token) return null;
   const cached = _sessionCache.get(token);
   if (cached && (Date.now() - cached.resolvedAt) < SESSION_CACHE_TTL_MS) return cached.value;
@@ -226,9 +230,118 @@ async function resolveMimicSession(req) {
   return value;
 }
 
+async function resolveMimicSession(req) {
+  const token = String(req.headers?.['x-wolfpack-mimic-session'] || '').trim();
+  return _resolveSessionToken(token);
+}
+
+// requireAgentAuth(req, res) — gate for every /api/agent/* endpoint after the
+// 2026-06-04 cutover. The agent sends its session token in the standard
+// Authorization: Bearer header (one shared secret WOLFPACK_AGENT_TOKEN is no
+// longer accepted — see /token in Discord to mint a per-user token via the
+// mimic_sessions flow). Returns the identity {user_id, discord_id,
+// display_name, role_names, is_officer} on success; sends a 401 and returns
+// null on failure so the caller can `if (!identity) return;`.
+async function requireAgentAuth(req, res) {
+  const auth   = String(req.headers?.['authorization'] || '');
+  const bearer = auth.replace(/^Bearer\s+/i, '').trim();
+
+  // Cheap pre-check: real session tokens are prefixed wpms_ (see
+  // _generateSessionToken). Anything else — empty, shared-secret, scanner
+  // probes — gets rejected without a Supabase round-trip.
+  if (!bearer || !bearer.startsWith('wpms_')) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'unauthorized',
+      hint:  'Per-user session token required. Run /token in Discord to mint one (or sign in via Mimic).',
+    }));
+    return null;
+  }
+
+  if (!supabase.isEnabled()) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'service unavailable' }));
+    return null;
+  }
+
+  const identity = await _resolveSessionToken(bearer);
+  if (!identity) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'session token invalid or revoked',
+      hint:  'Run /token in Discord to mint a new one.',
+    }));
+    return null;
+  }
+
+  return identity;
+}
+
+// Invalidate a session token from the in-process cache. Called when /token
+// revokes a session so the next upload sees the revocation without waiting
+// for the 5-min TTL.
+function invalidateSessionCache(token) {
+  if (token) _sessionCache.delete(token);
+}
+
+// Mint a new mimic_session for a Discord user — bypasses the OAuth device
+// flow. Used by /token in Discord so users (especially standalone-agent
+// users without Mimic) can get a per-user token without a web round-trip.
+// Returns { sessionToken, sessionId } or null on failure.
+async function mintSessionForUser({ userId, discordId, agentVersion = null, machineLabel = null }) {
+  if (!supabase.isEnabled() || !userId || !discordId) return null;
+  const sessionToken = _generateSessionToken();
+  const inserted = await supabase.insert('mimic_sessions', [{
+    session_token: sessionToken,
+    user_id:       userId,
+    discord_id:    discordId,
+    agent_version: agentVersion,
+    machine_label: machineLabel,
+  }]).catch(() => null);
+  const row = Array.isArray(inserted) ? inserted[0] : null;
+  if (!row) return null;
+  return { sessionToken, sessionId: row.id };
+}
+
+// Revoke a single session by id, scoped to a discord_id so users can only
+// revoke their own. Also clears the in-process cache for the session_token.
+async function revokeSessionForUser({ sessionId, discordId }) {
+  if (!supabase.isEnabled() || !sessionId || !discordId) return false;
+  // Look up the token so we can clear the cache after the update.
+  const rows = await supabase.select(
+    'mimic_sessions',
+    `id=eq.${encodeURIComponent(sessionId)}&discord_id=eq.${encodeURIComponent(discordId)}&select=session_token&limit=1`,
+  ).catch(() => null);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return false;
+  await supabase.update(
+    'mimic_sessions',
+    `id=eq.${encodeURIComponent(sessionId)}&discord_id=eq.${encodeURIComponent(discordId)}`,
+    { revoked_at: new Date().toISOString() },
+  ).catch(() => null);
+  if (row.session_token) _sessionCache.delete(row.session_token);
+  return true;
+}
+
+// List all of a user's active sessions for the /token UI. Returns rows
+// sorted by last_used_at desc; revoked sessions excluded.
+async function listSessionsForUser(discordId) {
+  if (!supabase.isEnabled() || !discordId) return [];
+  const rows = await supabase.select(
+    'mimic_sessions',
+    `discord_id=eq.${encodeURIComponent(discordId)}&revoked_at=is.null&select=id,agent_version,machine_label,created_at,last_used_at&order=last_used_at.desc&limit=20`,
+  ).catch(() => null);
+  return Array.isArray(rows) ? rows : [];
+}
+
 module.exports = {
   handleStart,
   handlePoll,
   handleRevoke,
   resolveMimicSession,
+  requireAgentAuth,
+  invalidateSessionCache,
+  mintSessionForUser,
+  revokeSessionForUser,
+  listSessionsForUser,
 };

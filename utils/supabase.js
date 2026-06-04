@@ -135,6 +135,11 @@ async function recordContribution({
   rawParse,
   agentVersion = null,
   hasAbilityDetail = false,
+  // Discord ID of the mimic_session that submitted this upload — distinct
+  // from contributorDiscordId, which is the /quarmy-linked owner of the
+  // CHARACTER on the parse. uploadedByDiscordId is the agent identity that
+  // actually pushed the bytes; it's the forensic trace.
+  uploadedByDiscordId = null,
 }) {
   if (!isEnabled() || !encounterId) return null;
 
@@ -149,6 +154,7 @@ async function recordContribution({
     raw_parse:                rawParse,
     agent_version:            agentVersion,
     has_ability_detail:       !!hasAbilityDetail,
+    uploaded_by_discord_id:   uploadedByDiscordId || null,
   };
 
   const written = contributorCharacter
@@ -186,6 +192,10 @@ async function recordParse({
   // totals for the same fight, the highest wins (matches our
   // max-damage-per-player merge convention).
   npcHealedTotal = 0,
+  // Discord ID of the mimic_session that submitted this upload — forensic
+  // trace. Stamps both contributions.uploaded_by_discord_id and (on first
+  // creation only) encounters.uploaded_by_discord_id.
+  uploadedByDiscordId = null,
 }) {
   if (!isEnabled()) return null;
 
@@ -220,7 +230,24 @@ async function recordParse({
     rawParse: parsed,
     agentVersion,
     hasAbilityDetail,
+    uploadedByDiscordId,
   });
+
+  // Stamp encounters.uploaded_by_discord_id only on FIRST creation — once a
+  // legitimate contribution lands, subsequent uploads from anyone else can't
+  // rewrite the original uploader. WHERE uploaded_by_discord_id IS NULL
+  // enforces that.
+  if (uploadedByDiscordId) {
+    try {
+      await update(
+        'encounters',
+        `id=eq.${encounterId}&uploaded_by_discord_id=is.null`,
+        { uploaded_by_discord_id: uploadedByDiscordId },
+      );
+    } catch (err) {
+      console.warn('[supabase] encounters uploaded_by stamp failed:', err?.message);
+    }
+  }
 
   // Persist the per-character verb rollup for this encounter. Idempotent via
   // (encounter_id, character_name) — a resubmit overwrites in place. Failures

@@ -23,20 +23,31 @@
 ; the boot log "userData=...\AppData\Roaming\wolfpack-mimic". We also sweep the
 ; productName-cased path in case a future build flips that mapping; RMDir on a
 ; missing path is a harmless no-op.
-; Directory-page guidance. Testers (incl. the guild leader) had a hard time
-; choosing an install location because it wasn't clear what the choice means —
-; and one tester dropped the setup .exe into his EverQuest folder expecting it
-; to install there / be his EQ folder. Clarify on the "choose location" page
-; that this is just where the small Mimic APP lives, that the default is fine
-; for almost everyone, and that the EverQuest folder is picked INSIDE the app
-; on first run (not here). customHeader is inserted before the MUI pages, so the
-; define lands in time. Guard with !ifndef so we never collide with an
-; electron-builder define (a redefine would error; a no-op never breaks the
-; build). If the assisted template doesn't consume this constant, it's simply
-; ignored — harmless either way.
+; Directory-page guidance + install-mode framing.
+;
+; Install mode: this installer is per-user (build.nsis.perMachine=false) with
+; elevation disabled (allowElevation=false), so it NEVER triggers a UAC prompt
+; and NEVER asks "install for all users / just me" — it always installs only
+; for the current logged-in user, into %LOCALAPPDATA%\Programs. That default IS
+; the "Express / Fast" path: the user can simply click Install without touching
+; anything. The directory page is still shown (allowToChangeInstallationDirectory
+; =true) so anyone who wants a "Custom" location can change it — but it's
+; optional, and the default needs no decision.
+;
+; Testers (incl. the guild leader) had a hard time choosing an install location
+; because it wasn't clear what the choice means — and one tester dropped the
+; setup .exe into his EverQuest folder expecting it to install there / be his EQ
+; folder. So the copy below makes explicit: the default is recommended (just
+; click Install), this is only where the small Mimic APP lives (NOT your
+; EverQuest folder), and the EQ folder is picked INSIDE the app on first run.
+; customHeader is inserted before the MUI pages, so the define lands in time.
+; Guard with !ifndef so we never collide with an electron-builder define (a
+; redefine would error; a no-op never breaks the build). If the assisted
+; template doesn't consume this constant, it's simply ignored — harmless either
+; way.
 !macro customHeader
   !ifndef MUI_DIRECTORYPAGE_TEXT_TOP
-    !define MUI_DIRECTORYPAGE_TEXT_TOP "Choose where to install the Wolf Pack Mimic app. The default is fine for almost everyone — this is only where the small app lives, NOT your EverQuest folder. Mimic finds your EQ logs for you on first run. (Advanced: pick your Quarm folder if you like keeping everything in one place.)"
+    !define MUI_DIRECTORYPAGE_TEXT_TOP "Fast install: just click Install — the default location below is recommended for almost everyone (it installs only for you, no admin needed). This is only where the small Mimic app lives, NOT your EverQuest folder — Mimic finds your EQ logs for you on first run. Custom: change the folder below if you'd rather keep everything in one place."
   !endif
 !macroend
 

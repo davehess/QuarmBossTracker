@@ -102,46 +102,32 @@
   </header>
 
   <div class="status">
-    <div id="step1" class="step done">
-      <span class="icon">✓</span><span class="label">Mimic loaded</span>
+    <div id="step1" class="step active">
+      <span class="icon">⏳</span><span class="label">1 · Sign in with Discord</span>
     </div>
-    <div id="step2" class="step active">
-      <span class="icon">⏳</span><span class="label">Starting parser engine</span>
+    <div id="step2" class="step">
+      <span class="icon">○</span><span class="label">2 · Pick your EverQuest folder</span>
     </div>
     <div id="step3" class="step">
-      <span class="icon">○</span><span class="label">Engine connected</span>
+      <span class="icon">○</span><span class="label">3 · Preferences</span>
     </div>
     <div id="step4" class="step">
-      <span class="icon">○</span><span class="label">Dashboard ready</span>
+      <span class="icon">○</span><span class="label">Launch</span>
     </div>
   </div>
 
-  <h2>Quick setup <span style="color:#6b7280;text-transform:none;font-weight:normal">— change any of these later from the tray menu</span></h2>
-  <p class="section-hint">Everything below is optional. Skip to launch in local-only mode and edit settings whenever.</p>
+  <h2>Set up Mimic</h2>
+  <p class="section-hint">Three quick steps. Sign in and pick your EverQuest folder, then launch — you can change any preference later from the tray menu.</p>
 
-  <!-- CONNECT (token OR Discord) -->
+  <!-- STEP 1 — Sign in with Discord (primary connect method) -->
   <div class="card" id="cardToken">
     <div class="card-h">
-      <span class="ico">🔑</span>
-      <span class="title">Connect to Wolf Pack</span>
-      <span class="badge" id="tokenBadge">Optional</span>
+      <span class="ico">⛓</span>
+      <span class="title">Step 1 · Sign in with Discord</span>
+      <span class="badge" id="tokenBadge">Action needed</span>
     </div>
-    <p>Share your parses with the guild and unlock your stats on wolfpack.quest. Connect <b>either</b> way below — or leave both blank to run Mimic locally only (no uploads).</p>
+    <p>This links Mimic to <b>your</b> Wolf Pack account so your parses upload under your name — and only yours. It opens Discord once to grab your personal token, then comes right back. (Your token is stored encrypted on this machine and never shown again.)</p>
 
-    <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin:2px 0 6px">Option A — paste a token</div>
-    <div class="row">
-      <input id="token" type="text" placeholder="Run /token in Discord and paste here…" />
-      <button id="saveToken">Save token</button>
-      <span class="saved" id="tokenSaved"></span>
-    </div>
-
-    <div style="display:flex;align-items:center;gap:8px;margin:12px 0 8px">
-      <div style="flex:1;height:1px;background:#2a3140"></div>
-      <span style="font-size:10px;color:#6b7280">OR</span>
-      <div style="flex:1;height:1px;background:#2a3140"></div>
-    </div>
-
-    <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin:2px 0 6px">Option B — sign in with Discord</div>
     <div id="acctSignedOut" class="row">
       <button id="acctSignInBtn" style="background:#5865f2">⛓ Sign in with Discord</button>
       <span class="saved" style="color:#6b7280">Persists across upgrades · unlocks cross-machine sync</span>
@@ -161,21 +147,37 @@
         <button id="acctSignOutBtn" class="ghost" style="margin-left:auto">Sign out</button>
       </div>
     </div>
+
+    <!-- Advanced: paste a token (for the standalone agent / no-Mimic users) -->
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;font-size:11px;color:#6b7280">Advanced — paste a token instead (standalone agent)</summary>
+      <p style="margin:8px 0 6px;font-size:11px;color:#8b949e">Already minted a token with <code>/token</code> in Discord? Paste it here. Most people should just use the button above.</p>
+      <div class="row">
+        <input id="token" type="text" placeholder="wpms_…" />
+        <button id="saveToken">Save token</button>
+        <span class="saved" id="tokenSaved"></span>
+      </div>
+    </details>
+
+    <div style="margin-top:10px;font-size:11px">
+      <a href="#" id="localOnlyLink" style="color:#6b7280;text-decoration:underline">Skip — run Mimic local-only for now (no uploads)</a>
+      <span id="localOnlyNote" style="display:none;color:#8b949e;margin-left:6px">✓ Local-only — you can sign in later from the tray.</span>
+    </div>
   </div>
 
-  <!-- EQ FOLDERS (2nd item — Mimic reads your EQ logs to parse) -->
+  <!-- STEP 2 — EQ FOLDERS (Mimic reads your EQ logs to parse) -->
   <div class="card" id="cardEq">
     <div class="card-h">
       <span class="ico">📁</span>
-      <span class="title">EverQuest folder</span>
+      <span class="title">Step 2 · Your EverQuest folder</span>
       <span class="badge" id="eqBadge">Scanning…</span>
     </div>
-    <p>Mimic parses your fights by reading EverQuest's <b>log files</b>, so it needs your <b>EQ install folder</b>. We scan for it automatically — confirm it below, or add it if your EQ lives somewhere unusual. <span style="color:#6b7280">(This is your EverQuest folder, <i>not</i> where Mimic itself installed.)</span></p>
+    <p>Mimic parses your fights by reading EverQuest's <b>log files</b>, so it needs your <b>EQ install folder</b>. We scan for it automatically — confirm it below, or <b>browse</b> to it if your EQ lives somewhere unusual. <span style="color:#6b7280">(This is your EverQuest folder, <i>not</i> where Mimic itself installed.)</span></p>
     <div id="eqDetectedHint" class="saved" style="color:#8b949e;display:block;margin-bottom:6px">Scanning for eqgame.exe…</div>
     <div id="eqDetectedList"></div>
     <div id="eqManualList" style="margin-top:4px"></div>
     <div class="row" style="margin-top:8px">
-      <button id="eqAddFolder" class="ghost">📁 Add another folder…</button>
+      <button id="eqAddFolder">📁 Browse for your EverQuest folder…</button>
       <button id="eqSave">Save folder</button>
       <span class="saved" id="eqSaved"></span>
     </div>
@@ -192,7 +194,7 @@
   <div class="card" id="cardTells">
     <div class="card-h">
       <span class="ico">💬</span>
-      <span class="title">Your /tells</span>
+      <span class="title">Step 3 · Your /tells</span>
       <span class="badge priv">🔒 PRIVATE</span>
     </div>
     <p>EverQuest writes your <i>tells</i> to your log file. Mimic can surface them so you don't miss one mid-raid. Tells never leave your machine unencrypted — even "Synced" stores them encrypted with a key only you hold.</p>
@@ -230,10 +232,9 @@
     <label class="radio"><input type="checkbox" id="ovCharm"><span>🔮 Charm tracker<span class="desc">Recharm countdown — handy for charm classes (enchanters, etc.).</span></span></label>
   </div>
 
-  <div class="actions">
-    <button id="openDashboard" class="primary" disabled>Waiting for engine…</button>
-    <span class="countdown" id="countdown"></span>
-    <button id="skipNow" class="skip" title="Open dashboard immediately">Skip & open now</button>
+  <div class="actions" style="flex-direction:column;align-items:stretch;gap:6px">
+    <button id="openDashboard" class="primary" disabled>Finish setup to continue</button>
+    <span class="countdown" id="gateHint" style="text-align:center"></span>
   </div>
 
   <div id="diag" class="diag">
@@ -259,11 +260,13 @@
   // ── State ────────────────────────────────────────────────────────────────
   let agentPort       = 7779;
   let agentReady      = false;
-  let userInteracting = false;       // pauses auto-redirect when they're typing
-  let autoTimer       = null;
-  let countdownTimer  = null;
-  let countdownLeft   = 0;
-  const AUTO_DELAY    = 10000;       // ms after ready w/ no interaction
+  // Onboarding gate — the dashboard does NOT open until the user has finished
+  // the sequence: (1) signed in OR explicitly chose local-only, (2) an EQ
+  // folder is configured, (3) the engine is up. No auto-redirect; the user
+  // clicks Open dashboard when the gate clears.
+  let signedIn        = false;
+  let localOnlyChosen = false;
+  let eqConfigured    = false;
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function $(id){ return document.getElementById(id); }
@@ -275,72 +278,63 @@
       state === 'active' ? '⏳' :
       state === 'error'  ? '✕' : '○';
   }
-  // First-run gate: if the user has NEVER onboarded AND has no token, the
-  // auto-redirect countdown would blow past the setup cards before they can
-  // even read them. Require an explicit "Save token" or "Skip & open now"
-  // click on the very first launch. After that, normal countdown resumes.
-  let _firstRun = false;
-  async function _checkFirstRun(){
-    try {
-      const cfg = await window.mimic.getConfig();
-      _firstRun = !cfg.onboarded && !cfg.token;
-    } catch { _firstRun = false; }
-  }
+  // pingUserInteraction is a no-op now (the auto-redirect it used to pause is
+  // gone) but it's still called from many card handlers — keep it as a stub so
+  // those call sites don't need touching.
+  function pingUserInteraction(){}
+  function stopCountdown(){}  // legacy no-op; old callers still reference it
+
   function markEngineUp(){
-    setStep(2, 'done');
-    setStep(3, 'done');
-    setStep(4, 'done');
     agentReady = true;
-    const btn = $('openDashboard');
-    btn.disabled = false;
-    btn.textContent = 'Open dashboard →';
-    if (_firstRun) {
-      // Don't auto-open on the first launch — let the user decide on the
-      // setup cards explicitly. The Skip button is always available.
-      $('countdown').innerHTML =
-        '🔑 Paste a token above (or click <b>Skip &amp; open now</b>) when ready.';
+    refreshGate();
+  }
+
+  // Single source of truth for onboarding progress. Recomputes the step chips,
+  // the gate hint, and whether Open dashboard is enabled. Called on every
+  // state change (sign-in, EQ save, engine ready, local-only choice).
+  function refreshGate(){
+    const connectDone = signedIn || localOnlyChosen;
+    // Step chips.
+    setStep(1, connectDone ? 'done' : 'active');
+    setStep(2, !connectDone ? '' : (eqConfigured ? 'done' : 'active'));
+    setStep(3, (connectDone && eqConfigured) ? 'done' : '');
+    const ready = agentReady && connectDone && eqConfigured;
+    setStep(4, ready ? 'done' : (engineFailed ? 'error' : ''));
+
+    const btn  = $('openDashboard');
+    const hint = $('gateHint');
+    if (!connectDone) {
+      btn.disabled = true; btn.textContent = 'Finish setup to continue';
+      hint.innerHTML = '👆 <b>Step 1:</b> sign in with Discord above — or choose local-only.';
+    } else if (!eqConfigured) {
+      btn.disabled = true; btn.textContent = 'Finish setup to continue';
+      hint.innerHTML = '👆 <b>Step 2:</b> pick your EverQuest folder above and click <b>Save folder</b>.';
+    } else if (!agentReady) {
+      btn.disabled = true; btn.textContent = 'Starting parser engine…';
+      hint.textContent = engineFailed ? '' : 'Almost there — waiting for the parser engine to come up…';
     } else {
-      startCountdown();
+      btn.disabled = false; btn.textContent = 'Open dashboard →';
+      hint.textContent = '';
     }
   }
-  function pingUserInteraction(){
-    userInteracting = true;
-    stopCountdown();
-    // Auto-redirect resumes if they go quiet for 6s — but NOT on first run.
-    clearTimeout(autoTimer);
-    autoTimer = setTimeout(() => {
-      userInteracting = false;
-      if (agentReady && !_firstRun) startCountdown();
-    }, 6000);
-  }
-  function startCountdown(){
-    stopCountdown();
-    countdownLeft = Math.round(AUTO_DELAY / 1000);
-    $('countdown').innerHTML = `Auto-opening in <b>${countdownLeft}s</b>… <a href="#" id="cancelAuto" style="color:#8b949e;text-decoration:underline;font-size:11px;margin-left:4px">cancel</a>`;
-    $('cancelAuto').onclick = (e) => { e.preventDefault(); stopCountdown(); $('countdown').textContent = 'Auto-open cancelled. Use the button above when ready.'; };
-    countdownTimer = setInterval(() => {
-      countdownLeft -= 1;
-      if (countdownLeft <= 0) { stopCountdown(); openDashboard(); return; }
-      const cd = $('countdown'); if (cd) cd.innerHTML = `Auto-opening in <b>${countdownLeft}s</b>… <a href="#" id="cancelAuto" style="color:#8b949e;text-decoration:underline;font-size:11px;margin-left:4px">cancel</a>`;
-      const ca = $('cancelAuto'); if (ca) ca.onclick = (e) => { e.preventDefault(); stopCountdown(); $('countdown').textContent = 'Auto-open cancelled. Use the button above when ready.'; };
-    }, 1000);
-  }
-  function stopCountdown(){
-    clearInterval(countdownTimer); countdownTimer = null;
-    $('countdown').textContent = '';
-  }
+  let engineFailed = false;
+
   async function openDashboard(){
     try { await window.mimic.markOnboarded(); } catch (_) {}
     try { await window.mimic.openDashboard(); } catch (_) {}
   }
 
   // ── Engine readiness poll ────────────────────────────────────────────────
+  // Runs in the background while the user works through the onboarding cards.
+  // Feeds `agentReady` into the gate; on failure it flags engineFailed and
+  // surfaces the diagnostics panel. The engine coming up does NOT auto-open
+  // the dashboard — the user still has to finish the steps and click.
   async function pollEngine(){
     try {
       const port = await window.mimic.getAgentPort();
       if (port) agentPort = port;
     } catch (_) {}
-    if (!agentReady) setStep(3, 'active');
+    engineFailed = false;
     let tries = 0;
     const id = setInterval(async () => {
       tries += 1;
@@ -350,12 +344,9 @@
       } catch (_) { /* not up yet */ }
       if (tries > 80) {  // ~40s
         clearInterval(id);
-        setStep(2, 'error');
-        setStep(3, 'error');
-        const btn = $('openDashboard');
-        btn.textContent = 'Engine failed to start';
-        btn.disabled = true;
-        $('countdown').textContent = '';
+        engineFailed = true;
+        agentReady = false;
+        refreshGate();
         showDiagnostics();
       }
     }, 500);
@@ -398,17 +389,23 @@
   async function hydrate(){
     let cfg = {};
     try { cfg = await window.mimic.getConfig(); } catch (_) {}
-    if (cfg.token) {
-      $('token').value = cfg.token;
+    // configForRenderer exposes `connected` + `connectedAs` instead of the raw
+    // token (the secret never reaches the renderer).
+    if (cfg.connected) {
+      signedIn = true;
       $('tokenBadge').textContent = 'Connected';
       $('tokenBadge').className = 'badge ok';
     }
+    // Seed step 2 from saved folders so a returning user isn't re-gated.
+    const savedPaths = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
+    if (savedPaths.length > 0) eqConfigured = true;
     const mode = cfg.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === mode); });
     $('quietMode').checked = !!cfg.quietMode;
     $('ovHud').checked     = !!cfg.showHud;
     $('ovTrigger').checked = !!cfg.enableTriggerTts;
     $('ovCharm').checked   = !!cfg.showCharm;
+    refreshGate();
   }
 
   // ── Overlay opt-in checkboxes ────────────────────────────────────────────
@@ -445,7 +442,7 @@
     const list = $('eqDetectedList');
     const hint = $('eqDetectedHint');
     if (_foundCandidates.length === 0) {
-      hint.textContent = 'No EQ install auto-detected. Use “Add another folder…” to point Mimic at your EverQuest folder.';
+      hint.textContent = 'No EQ install auto-detected. Click “📁 Browse for your EverQuest folder…” below to point Mimic at it.';
       list.innerHTML = '';
     } else {
       hint.textContent = 'Auto-detected — tick the folder(s) Mimic should read:';
@@ -515,19 +512,20 @@
   });
   $('eqSave').addEventListener('click', async () => {
     const btn = $('eqSave');
+    const paths = _collectEqPaths();
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
       await window.mimic.saveConfig({
-        eqPaths: _collectEqPaths(),
+        eqPaths: paths,
         eqPathsExcluded: [..._excludedFound],
         eqPath: null,
       });
       await window.mimic.relaunchAgent();
       $('eqSaved').textContent = '✓ saved · engine restarting';
+      eqConfigured = paths.length > 0;
       // Re-poll readiness since the agent just restarted with new folders.
-      agentReady = false; _firstRun = false;
-      setStep(2, 'active'); setStep(3, ''); setStep(4, '');
-      stopCountdown();
+      agentReady = false;
+      refreshGate();
       setTimeout(() => { $('eqSaved').textContent = ''; }, 4000);
       pollEngine();
     } catch (e) {
@@ -565,9 +563,16 @@
     } else if (_linkRemainingTimer) { clearInterval(_linkRemainingTimer); _linkRemainingTimer = null; }
     if (session) {
       $('acctName').textContent = session.display_name || session.discord_id || 'your Discord account';
-      // A completed sign-in is a deliberate decision — release the first-run gate.
-      _firstRun = false;
     }
+    // `localOnly === false` means a token is resolved server-side — covers BOTH
+    // a Discord sign-in and a manual token paste. Drive the gate off that so
+    // either connect path clears Step 1.
+    if (status && status.localOnly === false) {
+      signedIn = true;
+      $('tokenBadge').textContent = 'Connected';
+      $('tokenBadge').className = 'badge ok';
+    }
+    refreshGate();
   }
   function _initAccount(){
     $('acctSignInBtn').addEventListener('click', async () => {
@@ -586,20 +591,18 @@
   }
 
   // ── Card actions ─────────────────────────────────────────────────────────
+  // Advanced token paste (standalone-agent users). On success the status push
+  // flips localOnly=false → _renderAccount sets signedIn + refreshes the gate.
   $('saveToken').onclick = async () => {
     const btn = $('saveToken');
     const val = $('token').value.trim() || null;
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
       await window.mimic.saveConfig({ token: val });
-      await window.mimic.relaunchAgent();
       $('tokenSaved').textContent = '✓ saved · engine restarting';
-      $('tokenBadge').textContent = val ? 'Connected' : 'Local only';
-      $('tokenBadge').className = 'badge ' + (val ? 'ok' : '');
-      // Re-poll readiness since we just restarted the agent.
+      if (val) { signedIn = true; localOnlyChosen = false; $('localOnlyNote').style.display = 'none'; }
       agentReady = false;
-      setStep(2, 'active'); setStep(3, ''); setStep(4, '');
-      stopCountdown();
+      refreshGate();
       setTimeout(() => { $('tokenSaved').textContent = ''; }, 4000);
       pollEngine();
     } catch (e) {
@@ -609,49 +612,34 @@
     }
   };
 
+  // Explicit local-only choice — the only way to clear Step 1 without
+  // connecting. Makes "run without uploading" a deliberate decision instead of
+  // an auto-timeout default.
+  $('localOnlyLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    localOnlyChosen = true;
+    $('localOnlyNote').style.display = '';
+    $('tokenBadge').textContent = 'Local only';
+    $('tokenBadge').className = 'badge';
+    refreshGate();
+  });
+
   document.querySelectorAll('input[name=tells]').forEach(r => {
     r.addEventListener('change', async () => {
-      pingUserInteraction();
       try { await window.mimic.setTellsMode(r.value); } catch (_) {}
     });
   });
 
   $('quietMode').addEventListener('change', async (e) => {
-    pingUserInteraction();
     try { await window.mimic.setQuietMode(e.target.checked); } catch (_) {}
   });
 
-  // Any focus/typing on a setup card pauses auto-redirect.
-  document.querySelectorAll('.card input, .card button').forEach(el => {
-    el.addEventListener('focus', pingUserInteraction);
-    el.addEventListener('input', pingUserInteraction);
-  });
-
-  $('openDashboard').onclick = () => { stopCountdown(); openDashboard(); };
-  $('skipNow').onclick        = () => { stopCountdown(); openDashboard(); };
+  $('openDashboard').onclick = () => { openDashboard(); };
 
   // ── Boot ─────────────────────────────────────────────────────────────────
-  // First-run check runs before pollEngine so _firstRun is known by the
-  // time markEngineUp fires; small race is fine because pollEngine's first
-  // request takes ~500ms minimum.
-  _checkFirstRun();
   hydrate();
   _loadEqFolders();
   _initAccount();
   pollEngine();
-
-  // Once the user clicks Save token (in the existing handler) OR Skip,
-  // we want to behave like a "post-first-run" session for the rest of
-  // this load. The Save token handler already calls saveConfig + relaunches;
-  // we clear the gate here. The Skip handler is the openDashboard call,
-  // which markOnboarded()s before navigating.
-  var origSave = $('saveToken') && $('saveToken').onclick;
-  // Saving any token (even null/local-only) counts as a deliberate decision.
-  if (origSave) {
-    $('saveToken').addEventListener('click', function() {
-      _firstRun = false;  // future markEngineUp calls auto-redirect again
-      $('countdown').textContent = '';
-    });
-  }
 </script>
 </body></html>
