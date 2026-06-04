@@ -4467,8 +4467,18 @@ function renderZealClients(s) {
       if (d.open) _openGauges[d.getAttribute('data-gauge')] = 1;
     });
   } catch (e) { void e; }
-  const clients = Array.isArray(s.zealClients) ? s.zealClients : [];
-  if (clients.length === 0) {
+  // Per-machine "don't care" filter — hide boxes/alts you aren't tracking.
+  // Persisted in localStorage (same idea as the panel ✕). The ✕ on each row
+  // adds the name; "show all" clears the set.
+  var _zHidden = {};
+  try { (JSON.parse(localStorage.getItem('wpZealHidden') || '[]') || []).forEach(function (n) { _zHidden[String(n).toLowerCase()] = 1; }); } catch (e) { void e; }
+  const allClients = Array.isArray(s.zealClients) ? s.zealClients : [];
+  let _hiddenCount = 0;
+  const clients = allClients.filter(function (c) {
+    if (c && _zHidden[String(c.character).toLowerCase()]) { _hiddenCount++; return false; }
+    return true;
+  });
+  if (clients.length === 0 && _hiddenCount === 0) {
     if (el.style.display !== 'none') el.style.display = 'none';
     morphInto(el, '');
     return;
@@ -4483,8 +4493,11 @@ function renderZealClients(s) {
     if (c.self_hp_pct != null) meta.push('self ' + Math.round(c.self_hp_pct) + '%');
     if (!c.live && c.updatedAt) meta.push('last seen ' + fmtAgo(c.updatedAt));
     else if (c.live)           meta.push('autoattack ' + (c.autoattack ? 'ON' : 'off'));
+    h += '<div class="wp-zeal-row" data-zeal-char="' + esc(c.character) + '">';
     h += '<div style="margin-top:6px"><span class="name">' + dot + ' ' + esc(c.character) + '</span> '
-       + '<span class="dim" style="font-size:11px">· ' + meta.join(' · ') + '</span></div>';
+       + '<span class="dim" style="font-size:11px">· ' + meta.join(' · ') + '</span>'
+       + ' <button class="wp-zeal-hide" data-zeal-hide="' + esc(c.character) + '" title="Hide this character from Buffs and Zone (use Show all to bring it back)" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:11px;padding:0 3px;line-height:1">✕</button>'
+       + '</div>';
     const buffs = Array.isArray(c.buffs) ? c.buffs : [];
     if (buffs.length) {
       const bstr = buffs.slice(0, 16).map(function(b){
@@ -4524,6 +4537,12 @@ function renderZealClients(s) {
       }
       h += '</table></details>';
     }
+    h += '</div>';   // .wp-zeal-row
+  }
+  if (_hiddenCount > 0) {
+    h += '<div style="margin-top:8px;font-size:11px" class="dim">' + _hiddenCount + ' character'
+       + (_hiddenCount === 1 ? '' : 's') + ' hidden · '
+       + '<a href="#" class="wp-zeal-show-all" style="color:var(--blue)">show all</a></div>';
   }
   morphInto(el, h);
 }
@@ -5301,6 +5320,34 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
 refresh(); setInterval(refresh, 2000);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
+
+// Buffs & Zone per-character hide (✕) + "show all". Stored in localStorage so a
+// machine's "don't care" choices persist; renderZealClients reads the set each
+// poll. Delegated so it survives the card's re-render. Removing the row's DOM
+// node makes the hide feel instant; the next poll keeps it filtered.
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (!t || !t.classList) return;
+  if (t.classList.contains('wp-zeal-hide')) {
+    e.preventDefault();
+    var name = t.getAttribute('data-zeal-hide');
+    if (!name) return;
+    try {
+      var set = JSON.parse(localStorage.getItem('wpZealHidden') || '[]') || [];
+      if (set.map(function (x) { return String(x).toLowerCase(); }).indexOf(name.toLowerCase()) === -1) set.push(name);
+      localStorage.setItem('wpZealHidden', JSON.stringify(set));
+    } catch (err) { void err; }
+    var row = t.closest ? t.closest('.wp-zeal-row') : null;
+    if (row && row.parentNode) row.parentNode.removeChild(row);
+    var el = document.getElementById('wpZealClients');
+    if (el) el._wpLastHtml = null;   // force a clean re-render next poll
+  } else if (t.classList.contains('wp-zeal-show-all')) {
+    e.preventDefault();
+    try { localStorage.removeItem('wpZealHidden'); } catch (err) { void err; }
+    var el2 = document.getElementById('wpZealClients');
+    if (el2) el2._wpLastHtml = null;
+  }
+});
 
 // W (lowercase or uppercase) opens wolfpack.quest in a new tab. Ignored when
 // the user is typing into an input/textarea so it doesn't hijack normal typing.
