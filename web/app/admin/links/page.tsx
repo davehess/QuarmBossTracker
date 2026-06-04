@@ -165,6 +165,101 @@ async function applyAllAutoMatches() {
   revalidatePath('/admin/links');
 }
 
+// ── Family-link requests (from Mimic UI-Studio uploads of unlinked toons) ───
+
+type LinkRequest = {
+  id: string;
+  character_name: string;
+  requester_discord_id: string;
+  requester_name: string | null;
+  source: string;
+  created_at: string;
+};
+
+// Resolve the Discord user's main: a character they own (discord_id = them)
+// that is its own main (main_name null or == name). Null if they have no
+// linked characters yet — the toon then becomes its own main.
+async function resolveMainName(admin: ReturnType<typeof supabaseAdmin>, discordId: string): Promise<string | null> {
+  const { data } = await admin
+    .from('characters')
+    .select('name, main_name')
+    .eq('guild_id', 'wolfpack')
+    .eq('discord_id', discordId);
+  const rows = (data ?? []) as { name: string; main_name: string | null }[];
+  const main = rows.find(c => !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase());
+  return main ? main.name : null;
+}
+
+// Approve: link the toon into the requester's family (discord_id + main_name),
+// merge in the held UI backups (clear pending_link), and resolve the request.
+async function approveLinkRequest(formData: FormData) {
+  'use server';
+  const ok = await actionAssertOfficer();
+  if (!ok) redirect('/?error=admin_required');
+  const id = String(formData.get('id') || '').trim();
+  if (!id) return;
+  const admin = supabaseAdmin();
+
+  const { data: reqRows } = await admin
+    .from('character_link_requests')
+    .select('id, character_name, requester_discord_id, status')
+    .eq('id', id).limit(1);
+  const req = (reqRows ?? [])[0] as { character_name: string; requester_discord_id: string; status: string } | undefined;
+  if (!req || req.status !== 'pending') { revalidatePath('/admin/links'); return; }
+
+  const mainName = await resolveMainName(admin, req.requester_discord_id);
+
+  // Link the toon. Update if a characters row exists; insert otherwise — so we
+  // never clobber an existing row's class/rank by upserting a partial object.
+  const { data: existing } = await admin
+    .from('characters')
+    .select('name')
+    .eq('guild_id', 'wolfpack')
+    .ilike('name', req.character_name)
+    .limit(1);
+  if (Array.isArray(existing) && existing.length > 0) {
+    await admin.from('characters')
+      .update({ discord_id: req.requester_discord_id, main_name: mainName, active: true })
+      .eq('guild_id', 'wolfpack')
+      .ilike('name', req.character_name);
+  } else {
+    await admin.from('characters').insert({
+      guild_id: 'wolfpack',
+      name: req.character_name,
+      discord_id: req.requester_discord_id,
+      main_name: mainName,
+      active: true,
+    });
+  }
+
+  // Merge in the held backups — clear the pending flag so they're restorable.
+  await admin.from('ui_snapshots')
+    .update({ pending_link: false })
+    .eq('owner_discord_id', req.requester_discord_id)
+    .ilike('character_name', req.character_name);
+
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  await admin.from('character_link_requests')
+    .update({ status: 'approved', resolved_by_discord_id: user?.id ?? null, resolved_at: new Date().toISOString() })
+    .eq('id', id);
+  revalidatePath('/admin/links');
+}
+
+async function dismissLinkRequest(formData: FormData) {
+  'use server';
+  const ok = await actionAssertOfficer();
+  if (!ok) redirect('/?error=admin_required');
+  const id = String(formData.get('id') || '').trim();
+  if (!id) return;
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  await supabaseAdmin()
+    .from('character_link_requests')
+    .update({ status: 'dismissed', resolved_by_discord_id: user?.id ?? null, resolved_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'pending');
+  revalidatePath('/admin/links');
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default async function AdminLinksPage({
@@ -178,7 +273,7 @@ export default async function AdminLinksPage({
   const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
-  const [{ data: chars }, { data: members }] = await Promise.all([
+  const [{ data: chars }, { data: members }, { data: reqs }] = await Promise.all([
     admin
       .from('characters')
       .select('guild_id, name, main_name, class, rank, active, discord_id, link_ignored')
@@ -190,7 +285,14 @@ export default async function AdminLinksPage({
       .select('discord_id, nickname, global_name')
       .eq('is_member', true)
       .order('nickname'),
+    admin
+      .from('character_link_requests')
+      .select('id, character_name, requester_discord_id, requester_name, source, created_at')
+      .eq('guild_id', 'wolfpack')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true }),
   ]);
+  const pendingRequests = (reqs ?? []) as LinkRequest[];
 
   const allChars = (chars ?? []) as Character[];
   const memberList = (members ?? []) as Member[];
@@ -242,6 +344,63 @@ export default async function AdminLinksPage({
           <Stat label="Unlinked (active)"   value={counts.unlinkedActive}   color="text-orange" />
           <Stat label="Auto-matchable" value={counts.autoActive} color="text-blue" />
         </div>
+      </section>
+
+      {/* Family-link requests from Mimic UI-Studio uploads of unlinked toons */}
+      <section className="bg-panel border border-border rounded-lg">
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
+          🧩 Family-link requests {pendingRequests.length > 0 && <span className="text-gold">({pendingRequests.length})</span>}
+        </h3>
+        {pendingRequests.length === 0 ? (
+          <div className="p-4 text-xs text-dim leading-6">
+            None pending. When a member backs up a toon in Mimic (UI Studio) that
+            isn&apos;t linked to anyone, the backup is held and a request lands here.
+            Approving adds the toon to that member&apos;s family and releases the
+            held backup.
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="text-dim hidden sm:table-header-group">
+              <tr className="border-b border-border">
+                <th className="text-left px-3 py-2 font-normal">Toon</th>
+                <th className="text-left px-3 py-2 font-normal">Requested by</th>
+                <th className="text-left px-3 py-2 font-normal hidden md:table-cell">When</th>
+                <th className="text-left px-3 py-2 font-normal">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendingRequests.map(r => {
+                const m = memberById.get(r.requester_discord_id);
+                return (
+                  <tr key={r.id} className="border-b border-border/40 hover:bg-[#1a212c]">
+                    <td className="px-3 py-2 text-text font-medium">{r.character_name}</td>
+                    <td className="px-3 py-2 text-dim">
+                      {m ? memberLabel(m) : (r.requester_name || r.requester_discord_id)}
+                      <span className="text-[10px] text-dim ml-2">· {r.source}</span>
+                    </td>
+                    <td className="px-3 py-2 text-dim hidden md:table-cell">{new Date(r.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <form action={approveLinkRequest}>
+                          <input type="hidden" name="id" value={r.id} />
+                          <button type="submit" title="Add this toon to the member's family and release the held backup" className="px-2.5 py-1 rounded border border-green bg-[#1a7f3733] text-green text-xs hover:bg-[#1a7f3766]">
+                            ✓ Approve
+                          </button>
+                        </form>
+                        <form action={dismissLinkRequest}>
+                          <input type="hidden" name="id" value={r.id} />
+                          <button type="submit" title="Reject — the held backup stays unlinked" className="px-2.5 py-1 rounded border border-border text-dim text-xs hover:border-red hover:text-red">
+                            Dismiss
+                          </button>
+                        </form>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </section>
 
       {/* View toggles */}

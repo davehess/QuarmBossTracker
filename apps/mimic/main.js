@@ -2296,7 +2296,7 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_uiToken}` },
       body: { character, label, server_short: 'pq.proj', source_width: srcW, source_height: srcH, files, agent_version: app.getVersion() },
     });
-    return { ok: true, id: result?.id, file_count: fileCount };
+    return { ok: true, id: result?.id, file_count: fileCount, pending_link: !!result?.pending_link };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }

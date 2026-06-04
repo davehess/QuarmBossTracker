@@ -344,7 +344,10 @@
         btn.disabled = true; btn.textContent = 'Uploading…';
         try {
           const r = await window.mimic.uiStudioCapture({ character: c.character, eqDir: c.eqDir });
-          if (r && r.ok) {
+          if (r && r.ok && r.pending_link) {
+            msg.style.color = '#f6c365';
+            msg.textContent = '✓ Backed up ' + r.file_count + ' file(s) — held pending officer approval to add ' + c.character + ' to your account. It’ll be restorable once an officer approves.';
+          } else if (r && r.ok) {
             msg.style.color = '#56d364';
             msg.textContent = '✓ Backed up ' + r.file_count + ' file(s) to wolfpack.quest.';
           } else {

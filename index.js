@@ -3786,9 +3786,37 @@ async function _handleAgentUiLayoutUpload(req, res) {
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
+
+  // Unlinked toon: instead of rejecting (which loses the backup), attribute it
+  // to the UPLOADER (we know who they are from their per-user session token),
+  // hold the snapshot as pending_link, and file an officer approval request to
+  // add this toon to the uploader's family. The held snapshot merges in (flag
+  // cleared) on approval.
+  let pendingLink = false;
   if (!ownerDiscord) {
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'character not linked to a discord account — ask an officer to link it before uploading layouts' }));
+    ownerDiscord = identity.discord_id;
+    pendingLink  = true;
+    // File / refresh the link request (idempotent via the partial-unique
+    // pending index). Best-effort — the snapshot still stores either way.
+    try {
+      const existing = await supabase.select(
+        'character_link_requests',
+        `requester_discord_id=eq.${encodeURIComponent(identity.discord_id)}` +
+        `&character_name=ilike.${encodeURIComponent(character)}` +
+        `&status=eq.pending&select=id&limit=1`,
+      ).catch(() => []);
+      if (!Array.isArray(existing) || existing.length === 0) {
+        await supabase.insert('character_link_requests', [{
+          guild_id:             process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          character_name:       character,
+          requester_discord_id: identity.discord_id,
+          requester_name:       identity.display_name || null,
+          source:               'ui_layout',
+        }]).catch(err => console.warn('[ui_layout] link-request insert failed:', err?.message));
+      }
+    } catch (err) {
+      console.warn('[ui_layout] link-request check failed:', err?.message);
+    }
   }
 
   const { encryptBlob, isEncryptionEnabled } = require('./utils/bidCrypto');
@@ -3813,6 +3841,7 @@ async function _handleAgentUiLayoutUpload(req, res) {
     payload_bytes_plain: Buffer.byteLength(plaintext, 'utf8'),
     file_count:          Object.keys(files).length,
     agent_version:       agentVersion,
+    pending_link:        pendingLink,
   };
   const written = await supabase.insert('ui_snapshots', [row]).catch(err => {
     console.error('[ui_layout] insert failed:', err?.message || err);
@@ -3823,7 +3852,7 @@ async function _handleAgentUiLayoutUpload(req, res) {
     return res.end(JSON.stringify({ error: 'insert failed' }));
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ ok: true, id: written[0].id }));
+  return res.end(JSON.stringify({ ok: true, id: written[0].id, pending_link: pendingLink }));
 }
 
 async function _handleAgentUiLayoutList(req, res) {
