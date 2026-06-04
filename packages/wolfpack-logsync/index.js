@@ -3896,23 +3896,10 @@ function renderDash(s) {
   // the next tick → the "keeps refreshing and falling away" flicker.
   h += '<div id="wpCritsCard" class="card" style="display:none"></div>';
 
-  // Trigger overlays — fade out after their duration but keep a short
-  // history so users can scroll back through the last few callouts.
-  const now = Date.now();
-  const overlays = (s.activeOverlays || []).filter(o => o && o.text);
-  const live = overlays.filter(o => (now - (o.shownAt || 0)) < (o.duration_ms || 5000));
-  if (live.length > 0) {
-    h += '<div class="card" style="border-color:#a06628">' +
-         '<h2 style="margin-bottom:6px">⚡ Trigger</h2>';
-    for (const o of live.slice(0, 5)) {
-      const cls = o.scope === 'personal' ? 'personal' : 'guild';
-      const remaining = Math.max(0, (o.duration_ms || 5000) - (now - o.shownAt));
-      const alpha = Math.min(1, remaining / (o.duration_ms || 5000));
-      h += '<div style="font-size:22px;font-weight:bold;line-height:1.4;color:' + esc(o.color || 'red') + ';opacity:' + alpha.toFixed(2) + '">' + esc(o.text) + '</div>' +
-           '<div class="dim" style="font-size:10px;margin-top:2px">' + esc(cls) + ' · ' + esc(o.trigger || '') + '</div>';
-    }
-    h += '</div>';
-  }
+  // Trigger alert flash — isolated into #wpTriggerAlerts (its opacity fades
+  // every poll, which would otherwise force the whole #dash section to rewrite).
+  // Filled by renderTriggerAlertsCard.
+  h += '<div id="wpTriggerAlerts" class="card" style="display:none;border-color:#a06628"></div>';
   // Trigger summary chip
   if ((s.guildTriggerCount || 0) > 0 || (s.personalTriggerCount || 0) > 0) {
     h += '<div class="card"><h2>Triggers</h2>' +
@@ -3939,43 +3926,81 @@ function renderDash(s) {
     h += '</table>';
   }
   h += '</div>';
-  // Session damage
-  h += '<div class="card"><h2>Damage Done This Session</h2>';
+  // Session damage — isolated (live numbers change every poll). renderDamageDoneCard.
+  h += '<div id="wpDamageDone" class="card" style="display:none"></div>';
+
+  // 💚 Healing — this fight. Isolated (live during combat). renderHealingCard.
+  h += '<div id="wpHealingCard" class="card" style="display:none"></div>';
+
+  // Watched Logs — isolated ("ago" times change every poll → the main idle
+  // stutter source). renderWatchedLogsCard.
+  h += '<div id="wpWatchedLogs" class="card" style="display:none"></div>';
+
+  // Recent Tells — isolated (its "When" column ticks every poll). renderRecentTellsCard.
+  h += '<div id="wpRecentTells" class="card wide" style="display:none"></div>';
+
+  // Live Threat moved OFF the Dashboard → it lives on the Tanks tab
+  // (renderTanks → "Threat Detail"). The summary here was a Phase-1 proxy
+  // (observable damage + heals only); it did NOT account for tank threat procs,
+  // hate spells, stuns, or taunts, so it was misleading on the primary page.
+
+  // Top Damage — isolated (live during combat; owns its dismiss-button wiring). renderTopDamageCard.
+  h += '<div id="wpTopDamage" class="card wide" style="display:none"></div>';
+  h += '</div>';  // grid
+  // #dash now contains only STATIC content (Recent Parses + the trigger chip)
+  // plus the wp* placeholders, so its HTML is byte-identical between polls and
+  // setSectionHTML short-circuits → no whole-section repaint (the stutter). The
+  // volatile cards fill their own placeholders via the render fns below.
+  setSectionHTML('dash', h);
+}
+
+// ── Dashboard volatile cards, isolated into self-updating wp* placeholders ───
+// Each fills its own small element so only IT repaints when its live values
+// change; renderDash emits stable placeholders so the big #dash section stops
+// rewriting (kills the per-poll "stutter"). Same pattern as renderZealClients /
+// renderCritsCard. A card hidden via the ✕ panel button carries wp-hidden on
+// its element — we never force it back visible (respect _isPanelHidden()).
+function _isPanelHidden(el) {
+  return !!(el && el.classList && el.classList.contains('wp-hidden'));
+}
+function renderDamageDoneCard(s) {
+  const el = document.getElementById('wpDamageDone');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  let h = '<h2>Damage Done This Session</h2>';
   h += '<div style="font-size:16px;margin-bottom:8px">Total: <span class="num">' + fmtK(s.sessionTotalDamage) + '</span></div>';
-  const contribs = Object.entries(s.sessionDamageBy||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const contribs = Object.entries(s.sessionDamageBy || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
   if (contribs.length) {
     h += '<table>';
-    for (const [n,d] of contribs) h += '<tr><td class="name">' + esc(n) + '</td><td class="num">' + fmtK(d) + '</td></tr>';
+    for (const [n, d] of contribs) h += '<tr><td class="name">' + esc(n) + '</td><td class="num">' + fmtK(d) + '</td></tr>';
     h += '</table>';
   }
-  h += '</div>';
-
-  // ── 💚 Healing — this fight (its own card → its own overlay) ─────────────
-  // Per-player RAW healing for the active encounter, scoped to the mob in the
-  // title. Separate from Damage (DPS HUD) and Threat (Tanks tab) so each can
-  // be sent to an independent overlay window via the 🪟 button. Hidden when
-  // no fight is active or nobody has healed.
+  morphInto(el, h);
+}
+function renderHealingCard(s) {
+  const el = document.getElementById('wpHealingCard');
+  if (!el) return;
   const _et = s.currentEncounterThreat;
+  let healers = [];
   if (_et && _et.perPlayer) {
-    const healers = Object.entries(_et.perPlayer)
+    healers = Object.entries(_et.perPlayer)
       .map(([n, t]) => [n, (t && t.healRaw) || 0])
       .filter(x => x[1] > 0)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10);
-    if (healers.length) {
-      const staleH = _et.flushedAt ? ' <span class="dim" style="font-size:11px;font-weight:normal">(ended)</span>' : '';
-      h += '<div class="card"><h2>💚 Healing — ' + esc(_et.bossName || 'this fight') + staleH + '</h2><table>';
-      for (const [n, hp] of healers) {
-        h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--green)">' + fmtK(hp) + '</td></tr>';
-      }
-      h += '</table></div>';
-    }
   }
-
-  // Watched logs — collapse to one row per character (most-recent lastSeen
-  // wins) so an install that tails many log files for the same char
-  // doesn't render as 51 duplicate Hitya rows. The full file count still
-  // shows in the header for context.
+  if (!healers.length) { if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  const staleH = _et.flushedAt ? ' <span class="dim" style="font-size:11px;font-weight:normal">(ended)</span>' : '';
+  let h = '<h2>💚 Healing — ' + esc(_et.bossName || 'this fight') + staleH + '</h2><table>';
+  for (const [n, hp] of healers) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--green)">' + fmtK(hp) + '</td></tr>';
+  h += '</table>';
+  morphInto(el, h);
+}
+function renderWatchedLogsCard(s) {
+  const el = document.getElementById('wpWatchedLogs');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
   const _wls = s.watchedLogs || [];
   const _byChar = new Map();
   for (const w of _wls) {
@@ -3984,84 +4009,78 @@ function renderDash(s) {
     if (!cur || (w.lastSeen || 0) > (cur.lastSeen || 0)) _byChar.set(k, w);
   }
   const _uniqueChars = _byChar.size;
-  h += '<div class="card"><h2>Watched Logs (' + _uniqueChars +
-       (_wls.length > _uniqueChars ? ' chars · ' + _wls.length + ' files' : '') +
-       ')</h2><table>';
-  const recent = [..._byChar.values()].sort((a,b)=>(b.lastSeen||0)-(a.lastSeen||0)).slice(0,15);
+  let h = '<h2>Watched Logs (' + _uniqueChars + (_wls.length > _uniqueChars ? ' chars · ' + _wls.length + ' files' : '') + ')</h2><table>';
+  const recent = [..._byChar.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 15);
   for (const w of recent) {
-    const hot = w.lastSeen && (Date.now()-w.lastSeen) < 3600000;
-    h += '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') +
-         '<span class="name">' + esc(w.character) + '</span></td>' +
-         '<td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
+    const hot = w.lastSeen && (Date.now() - w.lastSeen) < 3600000;
+    h += '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') + '<span class="name">' + esc(w.character) + '</span></td><td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
   }
-  h += '</table></div>';
-
-  // Recent Tells — local-only view fed by stats.recentTells. Hidden when the
-  // ring buffer is empty so the panel doesn't sit there as dead space on a
-  // fresh boot. Direction arrows: → outgoing, ← incoming. Always renders
-  // newest-first; cap at 15 rows visible (buffer holds 50 internally).
+  h += '</table>';
+  morphInto(el, h);
+}
+function renderRecentTellsCard(s) {
+  const el = document.getElementById('wpRecentTells');
+  if (!el) return;
   const _rt = s.recentTells || [];
-  if (_rt.length > 0) {
-    h += '<div class="card wide"><h2>📬 Recent Tells <span class="dim" style="font-size:11px;font-weight:normal">(local, this machine only)</span></h2>';
-    h += '<table style="font-size:11px"><tr><th>Who</th><th>Message</th><th>When</th></tr>';
-    const _rtVisible = _rt.slice(-15).reverse();
-    for (const t of _rtVisible) {
-      const outgoing = t.direction === 'outgoing';
-      const arrow = outgoing ? '→' : '←';
-      // The tell counterparty is usually NOT one of our roster characters
-      // (it's whoever messaged us), so it must NOT use class="name" — the
-      // delegated wolfpack.quest handler would open /character/<name> and 404.
-      // Link it to the message-history page instead. Our own character keeps
-      // its dim, non-linked styling.
-      const otherLink = '<a href="https://wolfpack.quest/me/tells" target="_blank" rel="noreferrer" class="tell-other" style="color:var(--blue);text-decoration:none">' + esc(t.other) + '</a>';
-      const who = outgoing
-        ? '<span class="dim">' + esc(t.character) + '</span> ' + arrow + ' ' + otherLink
-        : otherLink + ' ' + arrow + ' <span class="dim">' + esc(t.character) + '</span>';
-      const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
-      h += '<tr><td style="white-space:nowrap">' + who + '</td>' +
-           '<td>' + esc(t.text) + '</td>' +
-           '<td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
-    }
-    h += '</table></div>';
+  if (_rt.length === 0) { if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  let h = '<h2>📬 Recent Tells <span class="dim" style="font-size:11px;font-weight:normal">(local, this machine only)</span></h2>';
+  h += '<table style="font-size:11px"><tr><th>Who</th><th>Message</th><th>When</th></tr>';
+  const _rtVisible = _rt.slice(-15).reverse();
+  for (const t of _rtVisible) {
+    const outgoing = t.direction === 'outgoing';
+    const arrow = outgoing ? '→' : '←';
+    const otherLink = '<a href="https://wolfpack.quest/me/tells" target="_blank" rel="noreferrer" class="tell-other" style="color:var(--blue);text-decoration:none">' + esc(t.other) + '</a>';
+    const who = outgoing
+      ? '<span class="dim">' + esc(t.character) + '</span> ' + arrow + ' ' + otherLink
+      : otherLink + ' ' + arrow + ' <span class="dim">' + esc(t.character) + '</span>';
+    const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
+    h += '<tr><td style="white-space:nowrap">' + who + '</td><td>' + esc(t.text) + '</td><td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
   }
-
-  // Live Threat moved OFF the Dashboard → it lives on the Tanks tab
-  // (renderTanks → "Threat Detail"). The summary here was a Phase-1 proxy
-  // (observable damage + heals only); it did NOT account for tank threat procs,
-  // hate spells, stuns, or taunts, so it was misleading on the primary page.
-  // It stays on the Tanks tab — in context with the other tank tooling — until
-  // the real hate model (proc/spell hate, stun-to-top, taunt = top+1 onto the
-  // taunter) is built.
-
-  // Top damage
-  h += '<div class="card wide"><h2>Top Damage This Session</h2>' +
-       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">';
+  h += '</table>';
+  morphInto(el, h);
+}
+function renderTriggerAlertsCard(s) {
+  const el = document.getElementById('wpTriggerAlerts');
+  if (!el) return;
+  const now = Date.now();
+  const liveO = (s.activeOverlays || []).filter(o => o && o.text && (now - (o.shownAt || 0)) < (o.duration_ms || 5000));
+  if (liveO.length === 0) { if (el.style.display !== 'none') el.style.display = 'none'; morphInto(el, ''); return; }
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  let h = '<h2 style="margin-bottom:6px">⚡ Trigger</h2>';
+  for (const o of liveO.slice(0, 5)) {
+    const cls = o.scope === 'personal' ? 'personal' : 'guild';
+    const remaining = Math.max(0, (o.duration_ms || 5000) - (now - o.shownAt));
+    const alpha = Math.min(1, remaining / (o.duration_ms || 5000));
+    h += '<div style="font-size:22px;font-weight:bold;line-height:1.4;color:' + esc(o.color || 'red') + ';opacity:' + alpha.toFixed(2) + '">' + esc(o.text) + '</div>' +
+         '<div class="dim" style="font-size:10px;margin-top:2px">' + esc(cls) + ' · ' + esc(o.trigger || '') + '</div>';
+  }
+  morphInto(el, h);
+}
+function renderTopDamageCard(s) {
+  const el = document.getElementById('wpTopDamage');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  let h = '<h2>Top Damage This Session</h2><div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">';
   for (const [list, listKey, title] of [[s.topDamageSaw, 'saw', 'I saw'], [s.topDamageDid, 'did', 'I did']]) {
     h += '<div><h3>' + title + '</h3>';
     if (!list?.length) h += '<div class="dim">(none yet)</div>';
     else for (const e of list) {
-      // Stash the dismiss key in a data-attribute (HTML-escape it via esc()
-      // so single quotes / brackets don't break the attribute). The click
-      // handler at the bottom of renderDash binds this up and calls
-      // dismissTopDamage(). Inline onclick='...' would have to thread JSON
-      // through TWO escape layers (template literal + HTML attribute) — too
-      // many ways to break.
       const dKey = JSON.stringify({ list: listKey, attacker: e.attacker, amount: e.amount });
       h += '<div style="display:flex;align-items:baseline;gap:6px">' +
            '<button class="dismiss-td" data-key="' + esc(dKey) + '" style="background:none;border:none;color:var(--dim);cursor:pointer;padding:0;font-size:11px;line-height:1;flex-shrink:0" title="Remove">✕</button>' +
            '<span class="name">' + esc(e.attacker) + '</span> ' +
            '<span class="num">' + fmtK(e.amount) + '</span> ' +
-           '<span class="dim">' + esc(e.label||'') + (e.ability ? ' — ' + esc(e.ability) : '') + '</span></div>';
+           '<span class="dim">' + esc(e.label || '') + (e.ability ? ' — ' + esc(e.ability) : '') + '</span></div>';
     }
     h += '</div>';
   }
-  h += '</div></div>';
   h += '</div>';
-  if (!setSectionHTML('dash', h)) return;
-  // Wire dismiss buttons. Idempotent under morph (nodes persist across polls).
-  document.querySelectorAll('#dash .dismiss-td').forEach(b => _bindOnce(b, 'click', () => {
-    try { dismissTopDamage(JSON.parse(b.dataset.key)); } catch {}
-  }));
+  if (morphInto(el, h)) {
+    el.querySelectorAll('.dismiss-td').forEach(b => _bindOnce(b, 'click', () => {
+      try { dismissTopDamage(JSON.parse(b.dataset.key)); } catch {}
+    }));
+  }
 }
 
 function renderTanks(s) {
@@ -5207,6 +5226,11 @@ async function refresh() {
     // log) and the other sections still render.
     var _sections = [['header', renderHeader], ['dash', renderDash], ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],
+                     // Isolated dashboard volatile cards (fill their own wp* placeholders
+                     // so #dash stops repainting every poll — the stutter fix).
+                     ['triggeralerts', renderTriggerAlertsCard], ['damagedone', renderDamageDoneCard],
+                     ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
+                     ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
                      ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['overlays', renderOverlays], ['info', renderInfo]];

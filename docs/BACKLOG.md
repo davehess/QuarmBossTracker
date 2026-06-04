@@ -33,6 +33,26 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## In-flight findings (not yet acted on)
+- **Spell-cast attribution / "a spell" problem (testing 2026-06-04).** The Info
+  tab's "Spell Casts This Session — Players / NPCs" lists everyone's casts as
+  "a spell" because **EQ does not log spell names for bystanders** — only the
+  uploader's own casts are named. Two asks:
+  1. Guild mates (Elyas, Atlasius, …) land in the **NPC/Unknown** bucket because
+     `isConfirmedPlayer` hadn't confirmed them yet (not /who'd / no heal seen).
+     Fix idea: also treat names present in the roster (`characters` table, synced
+     down) or in `who_observations` as players, and/or relabel the section so
+     "Unknown" ≠ "NPC".
+  2. **Resisted-spell caster attribution for PvP class inference.** We DO name the
+     resisted spell ("You resist the Tangling Weeds spell!") but not the caster.
+     During PvP this is gold for inferring enemy class + intent. EQ doesn't name
+     the caster on the resist line, so the approach is to **correlate** a resist
+     with a recent "X begins to cast a spell" line (EQ logs that for others,
+     without the spell name) within a short window → infer X cast the resisted
+     spell. Heuristic, needs real Quarm PvP log samples to tune the window +
+     line formats. Ties into backlog D (PvP detrimental-spell assists) and the
+     non-guild character page (class inference). (agent)
+
+
 - **Zeal pet gauge slot = 16.** Confirmed from Hopeya's gauge dump: slot 1=self,
   slot 6=target, slot 16=the charm pet (a 2nd "A Netherbian Drone" at 100% vs
   the target drone in slot 6). Slot 24 ("4", ~53%) is a fixed UI gauge, not the
