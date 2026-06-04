@@ -168,6 +168,22 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   const victimRows = [...byVictim.values()].sort((a, b) => b.count - a.count);
   const uniqueVictims = byVictim.size;
 
+  // Most-killed-guilds breakdown (public) — same kills, grouped by the
+  // victim's guild instead of the individual victim. Answers "which enemy
+  // guilds does this player farm the most." Kills on unguilded / unknown
+  // victims fold into one bucket so the named guilds aren't diluted.
+  const byGuild = new Map<string, { guild: string; count: number; victims: Set<string>; pet: number }>();
+  for (const k of kills) {
+    const g = (k.victim_guild && k.victim_guild.trim()) ? k.victim_guild.trim() : null;
+    const key = g ? g.toLowerCase() : '__none__';
+    let e = byGuild.get(key);
+    if (!e) { e = { guild: g ?? 'Unguilded / unknown', count: 0, victims: new Set(), pet: 0 }; byGuild.set(key, e); }
+    e.count += 1;
+    e.victims.add(k.victim.toLowerCase());
+    if (k.via_pet) e.pet += 1;
+  }
+  const guildRows = [...byGuild.values()].sort((a, b) => b.count - a.count);
+
   // Deaths breakdown (private)
   const byKiller = new Map<string, { killer: string; count: number }>();
   for (const d of deaths) {
@@ -215,6 +231,32 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
                   {v.pet > 0 && <span className="text-orange ml-1" title={`${v.pet} by pet`}>*</span>}
                 </span>
                 <span className="text-dim whitespace-nowrap">{v.count}×</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Most killed guilds (public) — victims grouped by their guild */}
+      <section className="bg-panel border border-border rounded-lg p-4">
+        <h3 className="text-sm text-orange mb-3 flex items-center gap-2">
+          <span aria-hidden>🏰</span>
+          <span>Most killed guilds</span>
+          <span className="text-dim text-xs">· enemy guilds {displayName} has killed the most</span>
+        </h3>
+        {guildRows.length === 0 ? (
+          <div className="text-sm text-dim italic">No kills recorded.</div>
+        ) : (
+          <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+            {guildRows.map(g => (
+              <li key={g.guild} className="flex justify-between gap-2 border-b border-border/40 py-0.5">
+                <span className="text-text truncate">
+                  {g.guild === 'Unguilded / unknown'
+                    ? <span className="text-dim italic">{g.guild}</span>
+                    : <>{'<'}{g.guild}{'>'}</>}
+                  {g.pet > 0 && <span className="text-orange ml-1" title={`${g.pet} by pet`}>*</span>}
+                </span>
+                <span className="text-dim whitespace-nowrap">{g.count}× <span className="text-dim/60">({g.victims.size} {g.victims.size === 1 ? 'foe' : 'foes'})</span></span>
               </li>
             ))}
           </ul>
