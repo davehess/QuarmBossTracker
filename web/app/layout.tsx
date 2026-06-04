@@ -1,5 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import Nav from '@/components/Nav';
 import AuthBadge from '@/components/AuthBadge';
 import TimezonePicker from '@/components/TimezonePicker';
@@ -40,9 +41,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="font-mono">
         <div className="max-w-7xl mx-auto p-3 sm:p-4">
           <header className="mb-6">
-            {/* Row 1 — brand (left) + timezone/account (right). Always fits;
-                wraps cleanly on narrow screens. Mimic logo replaces the emoji. */}
-            <div className="flex items-center justify-between gap-3 flex-wrap">
+            {/* Row 1 — brand (left) + account block (right). The signed-in
+                user sits top-right; Admin (officers only) sits directly beside
+                the avatar so it doesn't bloat the nav row; the timezone picker
+                stacks underneath the user. */}
+            <div className="flex items-start justify-between gap-3 flex-wrap">
               <a href="/" className="flex items-center gap-2.5 no-underline">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/mimic-logo.png" alt="Wolf Pack Mimic" width={38} height={38} className="rounded-md shrink-0" />
@@ -51,17 +54,28 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   <span className="sm:hidden">Wolf Pack EQ</span>
                 </span>
               </a>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <div className="flex items-center gap-2">
+                  {showAdmin && (
+                    <Link
+                      href="/admin"
+                      className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
+                    >
+                      🛡️ Admin
+                    </Link>
+                  )}
+                  <AuthBadge />
+                </div>
                 <TimezonePicker />
-                <AuthBadge />
               </div>
             </div>
 
             {/* Row 2 — primary nav (left) + compact download CTAs (right), on
                 their own line below the brand so the layout reads the same at
-                every width. */}
+                every width. Admin lives up in the account block, not here, so
+                this row never wraps onto a second line. */}
             <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
-              <Nav showAdmin={showAdmin} showMe={showMe} />
+              <Nav showMe={showMe} />
               <div className="flex flex-wrap gap-2 shrink-0">
                 <a
                   href="/mimic?direct=1"
