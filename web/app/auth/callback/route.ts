@@ -12,10 +12,25 @@ import { createClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fetchGuildMember, memberAvatarUrl, memberDisplayName } from '@/lib/discord';
 
+// Sanitize the post-login redirect target. Must be a same-origin relative
+// path: starts with a single "/" (not "//", which is protocol-relative and an
+// open-redirect vector) and contains no scheme. Anything else — an absolute
+// URL, a localhost dashboard path that leaked in from the Mimic in-window
+// browser, a malformed value — falls back to home so we never bounce the user
+// to a 404 (or off-site) after a successful sign-in.
+function safeNext(raw: string | null): string {
+  if (!raw) return '/';
+  let v = raw.trim();
+  try { v = decodeURIComponent(v); } catch { /* keep as-is */ }
+  if (!v.startsWith('/') || v.startsWith('//') || v.startsWith('/\\')) return '/';
+  if (/[\r\n]/.test(v) || /^\/?[a-z][a-z0-9+.-]*:/i.test(v)) return '/';
+  return v;
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
-  const next = url.searchParams.get('next') || '/';
+  const next = safeNext(url.searchParams.get('next'));
 
   if (!code) {
     return NextResponse.redirect(`${url.origin}/auth/signin?error=missing_code`);
