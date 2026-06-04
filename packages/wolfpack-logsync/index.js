@@ -9535,6 +9535,21 @@ function parseChatLine(line, selfName) {
 const TELL_INCOMING_RX = /^\[(?<ts>[^\]]+)\]\s+(?<other>[A-Za-z][A-Za-z' ]+?)\s+tells you,\s*['"](?<text>.+?)['"]\s*$/;
 const TELL_OUTGOING_RX = /^\[(?<ts>[^\]]+)\]\s+You told\s+(?<other>[A-Za-z][A-Za-z' ]+?),\s*['"](?<text>.+?)['"]\s*$/;
 
+// True when a "tells you" line is NPC/system chatter (pet command acks, Bazaar
+// merchant transaction quotes) rather than a real player tell. Shared shape
+// with the bot's defense-in-depth filter in _handleAgentTells.
+function _isNpcTellText(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  // Pet acks: pets address the owner as "Master" — "Attacking <mob> Master.",
+  // "Following you Master.", "Guarding here Master.", etc.
+  if (/\bMaster\b[.!,]?\s*$/i.test(t)) return true;
+  if (/^attacking\b.+\bmaster\b/i.test(t)) return true;
+  // Bazaar / merchant: "That'll be N platinum for/per X", "I'll give you N gold…"
+  // (apostrophe optional/curly-tolerant in case the client uses a typographic ').
+  if (/^(that['’]?ll be|i['’]?ll give you)\b.*\b(platinum|gold|silver|copper)\b/i.test(t)) return true;
+  return false;
+}
 function parseTellLine(line, selfName) {
   let m = line.match(TELL_OUTGOING_RX);
   let direction = null;
@@ -9555,6 +9570,17 @@ function parseTellLine(line, selfName) {
     if (!/^[A-Z]/.test(other)) return null;
   }
   const text = transformEqItemLinks(m.groups.text);
+  // Drop NPC/system chatter that rides the tell channel even when the SENDER
+  // looks like a player — the sender-name heuristic above misses single-word
+  // pet names ("Genarn") and Bazaar traders (real player names like "Emilyy").
+  // Discriminate on the TEXT instead:
+  //   • Pet command acks — "Attacking <mob> Master.", "Following you Master.",
+  //     "Guarding here Master." … pets address the owner as "Master".
+  //   • Bazaar / merchant transaction lines — "That'll be N platinum for the X",
+  //     "That'll be N platinum per X", "I'll give you N gold for the X".
+  // Always incoming; never a real player tell. Dropped from BOTH the local
+  // Recent Tells card and the DM relay (parseTellLine returning null).
+  if (direction === 'incoming' && _isNpcTellText(text)) return null;
   // Stable dedup: sha1 over the tuple. ts in here so two identical messages
   // sent later get fresh rows (which is correct — they ARE separate tells).
   const key = crypto.createHash('sha1')

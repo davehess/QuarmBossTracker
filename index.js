@@ -4631,7 +4631,21 @@ async function _handleAgentTells(req, res) {
     return res.end(JSON.stringify({ error: 'invalid json' }));
   }
   const character = String(payload?.character || '').trim();
-  const tells     = Array.isArray(payload?.tells) ? payload.tells : [];
+  const tellsRaw  = Array.isArray(payload?.tells) ? payload.tells : [];
+  // Defense-in-depth: drop NPC/system chatter that rides the tell channel — pet
+  // command acks ("Attacking <mob> Master.") and Bazaar merchant quotes
+  // ("That'll be N platinum for the X"). The current agent already filters these
+  // at the source (parseTellLine), but older agents (and the retired beta line)
+  // don't, so we re-filter here so no one gets DM-spammed regardless of version.
+  const _isNpcTellText = (text) => {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    if (/\bMaster\b[.!,]?\s*$/i.test(t)) return true;
+    if (/^attacking\b.+\bmaster\b/i.test(t)) return true;
+    if (/^(that['’]?ll be|i['’]?ll give you)\b.*\b(platinum|gold|silver|copper)\b/i.test(t)) return true;
+    return false;
+  };
+  const tells = tellsRaw.filter(t => !(t && t.direction === 'incoming' && _isNpcTellText(t.text)));
   // Per-machine DM pause set from the Mimic tray. When in the future, we still
   // STORE the tells (so /me/tells + the local card stay current) but skip the
   // Discord DM relay — same effect as the per-user snooze, but driven from the
