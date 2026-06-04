@@ -430,14 +430,21 @@
     const c = await window.mimic.getConfig();
     await _loadEqFolders(c);
     document.getElementById('botUrl').value = c.botUrl || 'https://wolfpackparse.up.railway.app/api/agent/encounter';
-    document.getElementById('token').value  = c.token || '';
+    // The raw token is never exposed to the renderer. When connected, the
+    // field stays blank with a masked placeholder; pasting a new value
+    // replaces the token, leaving it blank keeps the current connection.
+    const tokenInput = document.getElementById('token');
+    tokenInput.value = '';
+    tokenInput.placeholder = c.connected
+      ? '•••••••• connected — paste a new token to replace, or leave blank'
+      : 'paste from /token in Discord, or leave blank for local-only';
     document.getElementById('quietMode').checked         = !!c.quietMode;
     document.getElementById('showHud').checked           = !!c.showHud;
     document.getElementById('enableTriggerTts').checked  = !!c.enableTriggerTts;
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
-    _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: c.token || null };
+    _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };
     // UI Studio runs in parallel — it scans for characters across the
     // configured EQ folders, no token needed for the scan itself.
     _renderUiStudio();
@@ -454,29 +461,40 @@
       const eqPaths = _collectEqPaths();
       const eqPathsExcluded = [..._excludedFound];
       const botUrl = document.getElementById('botUrl').value.trim();
-      const token  = document.getElementById('token').value.trim() || null;
+      // Only send `token` when the user actually typed a new one. A blank field
+      // means "keep the current connection" — NOT "sign out" — so an unrelated
+      // settings save can't wipe the encrypted session. Disconnect is the
+      // explicit Sign-out button below.
+      const tokenInput = document.getElementById('token').value.trim();
       const tellsMode = (document.querySelector('input[name=tells]:checked') || {}).value || 'off';
-      await window.mimic.saveConfig({
+      const payload = {
         eqPaths, eqPathsExcluded,
         eqPath: null,    // clear the legacy single-folder field
-        botUrl, token, tellsMode,
+        botUrl, tellsMode,
         quietMode:        document.getElementById('quietMode').checked,
         showHud:          document.getElementById('showHud').checked,
         enableTriggerTts: document.getElementById('enableTriggerTts').checked,
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
-      });
+      };
+      if (tokenInput) payload.token = tokenInput;
+      await window.mimic.saveConfig(payload);
       const pathsChanged = JSON.stringify(_loaded.eqPaths.slice().sort()) !==
                            JSON.stringify(eqPaths.slice().sort());
-      const connChanged  = pathsChanged || (botUrl !== _loaded.botUrl) || (token !== _loaded.token);
+      const botUrlChanged = botUrl !== _loaded.botUrl;
+      // A token change relaunches the agent inside the save-config handler
+      // (main process), so we only relaunch here for path / bot-url changes —
+      // avoids a double bounce when someone pastes a token in Settings.
+      if (pathsChanged || botUrlChanged) await window.mimic.relaunchAgent();
+      const connChanged = pathsChanged || botUrlChanged || !!tokenInput;
       if (connChanged) {
-        await window.mimic.relaunchAgent();
         showToast('success', '✓ Saved · engine restarting (connection changed)', 3500);
       } else {
         showToast('success', '✓ Saved · applied live', 2500);
       }
       btn.textContent = '✓ Saved';
       btn.className = 'success';
-      _loaded = { eqPaths: eqPaths.slice(), botUrl, token };
+      document.getElementById('token').value = '';
+      _loaded = { eqPaths: eqPaths.slice(), botUrl, token: null };
       setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 3000);
     } catch (e) {
       btn.textContent = '✕ Save failed';
