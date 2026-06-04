@@ -10716,6 +10716,70 @@ function _livePetHpByOwner() {
   }
   return out;
 }
+
+// ── Live character state → bot → Supabase (wolfpack.quest/me) ───────────────
+// A SNAPSHOT sync, not a heartbeat: what each watched character is currently
+// carrying (buffs) + their last-seen zone. Pushed only when something
+// meaningful changes (zone, the set of buff names, or first sight of a live
+// character) so it costs almost nothing at idle. Deliberately NOT routed
+// through the durable upload queue — live state is replaceable (latest wins via
+// the bot's upsert), so queuing stale snapshots during an outage would just
+// waste calls and could evict real encounter uploads. Fire-and-forget; the next
+// interval re-sends fresh if a send is dropped. The LOCAL dashboard stays the
+// source of truth for second-by-second data; this is the "what did they log out
+// with / where are they" view for the web.
+const _liveStateLastSig = new Map();   // character → last-sent signature
+function _postLiveState(targetUrl, token, payload) {
+  let url;
+  try { url = new URL(targetUrl); } catch { return; }
+  const mod = url.protocol === 'https:' ? https : http;
+  const body = JSON.stringify(payload);
+  const req = mod.request({
+    method: 'POST', hostname: url.hostname, port: url.port,
+    path: url.pathname + url.search,
+    headers: {
+      'Content-Type':   'application/json',
+      'Content-Length': Buffer.byteLength(body),
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      'User-Agent':     `wolfpack-logsync/${AGENT_VERSION}`,
+    },
+    timeout: 8000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {});                 // fire-and-forget
+  req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+function flushLiveStateToBot(opts) {
+  if (!_isUploaderInstance) return;          // only the elected uploader sends
+  if (!opts || !opts.botUrl) return;
+  const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+  const url  = base + '/live-state';
+  const now  = Date.now();
+  const uploader = _primaryCharacter();
+  const states = [];
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || (now - (st.updatedAt || 0)) > ZEAL_STALE_MS) continue;  // live chars only
+    const buffs = Array.isArray(st.buffs) ? st.buffs : [];
+    const rec = {
+      character:   ch,
+      zone_id:     st.zone != null ? st.zone : null,
+      zone_name:   _zoneName(st.zone),
+      self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      buffs,
+      buff_count:  buffs.length,
+    };
+    // Signature excludes HP% + buff ticks (which churn constantly) — we only
+    // re-send on a zone change, a change to the SET of buff names, or first
+    // sight of this character.
+    const sig = JSON.stringify([rec.zone_id, buffs.map(b => b && b.name)]);
+    if (_liveStateLastSig.get(ch) === sig) continue;
+    _liveStateLastSig.set(ch, sig);
+    states.push(rec);
+  }
+  if (states.length === 0) return;
+  _postLiveState(url, opts.token, { agent_version: AGENT_VERSION, uploaded_by: uploader || null, states });
+}
 // Serialize the Zeal status + live state for the dashboard, pruning anything
 // attributable to a character who is no longer active. This is what fixes the
 // "group is still on the previous character" report: a relog keeps the same
@@ -11502,6 +11566,10 @@ async function main() {
     // machine they run the agent on — no agent restart required.
     setTimeout(() => pollCharacterPrefs({ botUrl, token }), 10_000);
     setInterval(() => pollCharacterPrefs({ botUrl, token }), 10 * 60_000);
+    // Live character state (buffs + last-seen zone) → bot → Supabase so
+    // wolfpack.quest/me can show what each character is carrying + where. Only
+    // sends on change (see flushLiveStateToBot), so the 20s cadence is cheap.
+    setInterval(() => { try { flushLiveStateToBot({ botUrl, token }); } catch {} }, 20_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.

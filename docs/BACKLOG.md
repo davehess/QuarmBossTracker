@@ -73,9 +73,18 @@ with colleagues will follow this exact order.)
   Signal ideas: "X resisted your <spell>" names victim; spell land "cast on
   other" messages. Needs real Quarm log samples to do reliably. (agent
   `_checkPvpAssist` / pvp assist buffer)
-- **E. Char live-state sync** — see in-flight note above. Migration done;
-  build agent push + bot endpoint + web display. Update on login (push when
-  `_zealState` changes, debounced). (agent+bot+web)
+- **E. Char live-state sync — ✅ SHIPPED (bot 3.0.1 · agent 3.0.6 · web 1.0.4).**
+  Agent `flushLiveStateToBot()` pushes each watched character's buffs +
+  last-seen zone to `POST /api/agent/live-state` (bearer) on change only (zone /
+  buff-set / first sight; 20s interval; fire-and-forget, NOT queued since it's
+  replaceable). Bot upserts into `character_live_state` by (guild_id,character).
+  Web `/me` gained a per-character "Buffs & Zone" panel (GUILD scope) with a
+  "live on localhost:7777 ↗" pointer + nHmM buff-time format. Added repo
+  migration `20260604000000_character_live_state.sql` (idempotent — the table
+  was first created via MCP). web tsc clean; bot/agent node --check clean;
+  dashboard escape check clean.
+  Follow-up (not blocking): honor `exclude_from_stats` in the agent push (skip
+  excluded chars) — same follow-up noted in CLAUDE.md for other upload paths.
 
 ### Large
 - **G. Mimic overlay/setup overhaul — ✅ SHIPPED (Mimic 1.0.6).**

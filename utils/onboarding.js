@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.1': [
+    '**Your buffs + last-seen zone now show on wolfpack.quest/me** — Mimic syncs what each of your characters is carrying (buffs/songs) and the zone they were last seen in, straight from the Zeal pipe. Each character on /me gets a new "Buffs & Zone" panel; open localhost:7777 for live, second-by-second timers. A snapshot that updates when things change — nothing to turn on beyond running the parser with Zeal.',
+    '**Mimic overlays got friendlier** — overlays now start OFF on a fresh install (turn on the DPS HUD / triggers / charm from first-run setup or the tray), each overlay has an ✕ in its corner to dismiss it, and the tray\'s Overlays menu gained named panel toggles (Healing, Tanking, Threat, Top Damage, DEEPS). Plus a live pet HP bar on the charm tracker. Update Mimic from wolfpack.quest/mimic.',
+  ],
   '3.0.0': [
     '**Mimic is out of beta** — graduated to a stable 1.0.0 release. Bot and agent bumped to 3.0.0, web to 1.0.0, all in one across-the-board major. (Existing Mimic beta installs need a one-time manual reinstall from wolfpack.quest/mimic; the beta update channel was retired. From 1.0.0+ everything auto-updates again.)',
   ],

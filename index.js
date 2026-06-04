@@ -4471,6 +4471,92 @@ async function _handleAgentCharacterPrefs(req, res) {
   return res.end(JSON.stringify({ prefs }));
 }
 
+// POST /api/agent/live-state
+//
+// Snapshot of what each watched character is currently carrying + where, from
+// the Mimic/agent Zeal stream. Powers wolfpack.quest/me's "current buffs + last
+// seen zone" view. The agent only sends on change (zone / buff-set / first
+// sight), so this is low-traffic. Upsert by (guild_id, character) — latest
+// wins. Body:
+//   { agent_version, uploaded_by, states: [
+//       { character, zone_id, zone_name, self_hp_pct, buffs:[{name,ticks}],
+//         buff_count }, ... ] }
+async function _handleAgentLiveState(req, res) {
+  const expected = process.env.WOLFPACK_AGENT_TOKEN;
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
+  }
+  const auth = req.headers['authorization'] || '';
+  if (auth !== `Bearer ${expected}`) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'unauthorized' }));
+  }
+
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 256 * 1024) { req.destroy(); resolve(); }
+    });
+    req.on('end',   resolve);
+    req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId    = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const uploadedBy  = payload?.uploaded_by ? String(payload.uploaded_by).slice(0, 64) : null;
+  const states      = Array.isArray(payload?.states) ? payload.states : [];
+  const nowIso      = new Date().toISOString();
+  const rows = [];
+  for (const st of states) {
+    const character = String(st?.character || '').trim();
+    if (!character || character.length > 64) continue;
+    // Sanitize buffs → compact [{name, ticks}] and cap so a misbehaving agent
+    // can't store a huge blob. EQ tops out ~30 buff/song slots.
+    let buffs = Array.isArray(st?.buffs) ? st.buffs : [];
+    buffs = buffs.slice(0, 60).map(b => ({
+      name:  String(b?.name || '').slice(0, 80),
+      ticks: (b && typeof b.ticks === 'number') ? b.ticks : null,
+    })).filter(b => b.name);
+    const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
+    const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
+    rows.push({
+      guild_id:    guildId,
+      character,
+      zone_id:     zoneId,
+      zone_name:   st?.zone_name ? String(st.zone_name).slice(0, 80) : null,
+      self_hp_pct: selfHp,
+      buffs,
+      buff_count:  Number.isFinite(Number(st?.buff_count)) ? Math.trunc(Number(st.buff_count)) : buffs.length,
+      uploaded_by: uploadedBy,
+      updated_at:  nowIso,
+    });
+  }
+  if (rows.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+  try {
+    await supabase.upsert('character_live_state', rows, 'guild_id,character');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
+  }
+}
+
 // POST /api/agent/tells
 //
 // Inbound /tell relay (opt-in). Body:
@@ -5795,6 +5881,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentTells(req, res); }
     catch (err) {
       console.error('[tells] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/live-state') {
+    try { return await _handleAgentLiveState(req, res); }
+    catch (err) {
+      console.error('[live-state] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

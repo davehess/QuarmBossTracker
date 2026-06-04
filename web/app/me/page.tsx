@@ -88,6 +88,45 @@ type CharStats = {
   floorSource: 'guild_chat' | 'tick' | 'raid_chat' | null;
 };
 
+// Live character state (current buffs + last-seen zone), synced from the
+// Mimic/agent Zeal stream into character_live_state. This is a SNAPSHOT — the
+// agent pushes on change — so the /me view shows "what each character is
+// carrying + where they were last seen", with a pointer to the local dashboard
+// (localhost:7777) for true second-by-second data. GUILD scope.
+type LiveBuff = { name: string; ticks: number | null };
+type LiveState = {
+  zoneName: string | null;
+  buffCount: number;
+  buffs: LiveBuff[];
+  selfHpPct: number | null;
+  updatedAt: string | null;
+};
+async function loadLiveState(charNames: string[]): Promise<Map<string, LiveState>> {
+  const out = new Map<string, LiveState>();
+  if (charNames.length === 0) return out;
+  const admin = supabaseAdmin();
+  // The table holds one row per active character (small) — fetch the guild's
+  // rows and match case-insensitively, since the PK stores the name as the
+  // agent reported it.
+  const { data } = await admin
+    .from('character_live_state')
+    .select('character, zone_name, buff_count, buffs, self_hp_pct, updated_at')
+    .eq('guild_id', 'wolfpack');
+  const wanted = new Set(charNames.map(n => n.toLowerCase()));
+  for (const r of (data ?? []) as any[]) {
+    const key = String(r.character || '').toLowerCase();
+    if (!wanted.has(key)) continue;
+    out.set(key, {
+      zoneName:  r.zone_name ?? null,
+      buffCount: r.buff_count ?? (Array.isArray(r.buffs) ? r.buffs.length : 0),
+      buffs:     Array.isArray(r.buffs) ? r.buffs : [],
+      selfHpPct: r.self_hp_pct ?? null,
+      updatedAt: r.updated_at ?? null,
+    });
+  }
+  return out;
+}
+
 async function loadOwnedCharacters(userId: string): Promise<{ discordId: string | null; nickname: string | null; chars: CharRow[] }> {
   const admin = supabaseAdmin();
   const { data: pack } = await admin
@@ -387,6 +426,18 @@ function fmtDmg(n: number): string {
   return String(n);
 }
 
+// Buff remaining → nHmM (each Zeal tick = 6s). Point-in-time at the last sync,
+// so it's labeled as a snapshot, not a live countdown.
+function fmtBuffTime(ticks: number | null): string | null {
+  if (ticks == null || !Number.isFinite(ticks) || ticks <= 0) return null;
+  const secs = ticks * 6;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (h > 0) return m > 0 ? `${h}h${m}m` : `${h}h`;
+  if (m > 0) return `${m}m`;
+  return `${secs}s`;
+}
+
 export default async function MePage() {
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
@@ -419,6 +470,9 @@ export default async function MePage() {
     if (aDkp !== bDkp) return bDkp - aDkp;
     return a.name.localeCompare(b.name);
   });
+
+  // Live state (buffs + last-seen zone) per owned character.
+  const liveState = await loadLiveState(chars.map(c => c.name));
 
   // Sync heartbeat: most recent agent upload per owned character. Drives the
   // top-of-page "syncing now / stale / no upload" banner.
@@ -659,6 +713,7 @@ export default async function MePage() {
 
       {chars.map(c => {
         const s = byName.get(c.name)!;
+        const live = liveState.get(c.name.toLowerCase()) || null;
         return (
           <section key={c.name} className="bg-panel border border-border rounded-lg">
             <header className="px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
@@ -812,6 +867,51 @@ export default async function MePage() {
                       </li>
                     ))}
                   </ul>
+                )}
+              </Panel>
+
+              {/* Buffs & Zone — snapshot from the Zeal stream (synced on change
+                  by the local agent). GUILD scope. Live countdowns live on the
+                  local dashboard; this is the "what + where, last seen" view. */}
+              <Panel
+                title="Buffs & Zone"
+                badge="GUILD"
+                tooltip="What this character is currently carrying (buffs/songs) and the zone they were last seen in, synced from your local parser's Zeal feed. A snapshot updated when things change — open localhost:7777 for live, second-by-second buff timers."
+              >
+                {!live ? (
+                  <div className="text-dim text-xs italic">
+                    No live state yet. Run the local parser with the Zeal pipe enabled to sync
+                    current buffs + zone.
+                  </div>
+                ) : (
+                  <>
+                    <Row label="Last-seen zone">
+                      {live.zoneName ? <span className="text-text">{live.zoneName}</span> : <span className="text-dim">—</span>}
+                    </Row>
+                    <Row label="Buffs">
+                      {live.buffCount > 0
+                        ? <span className="text-text">{live.buffCount}</span>
+                        : <span className="text-dim">none</span>}
+                    </Row>
+                    {live.buffs.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {live.buffs.map((b, i) => {
+                          const t = fmtBuffTime(b.ticks);
+                          return (
+                            <span key={`${b.name}-${i}`} className="bg-bg border border-border/60 rounded px-1.5 py-0.5 text-[10px] text-text">
+                              {b.name}{t && <span className="text-dim/70"> · {t}</span>}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim flex items-center justify-between gap-2 flex-wrap">
+                      <span>{live.updatedAt ? <>synced {relTime(live.updatedAt)}</> : 'snapshot'}</span>
+                      <a href="http://localhost:7777" target="_blank" rel="noreferrer" className="text-blue hover:underline whitespace-nowrap">
+                        live on localhost:7777 ↗
+                      </a>
+                    </div>
+                  </>
                 )}
               </Panel>
             </div>

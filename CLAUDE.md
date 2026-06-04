@@ -2,9 +2,9 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.0 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 3.0.5 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 1.0.3 | `web/package.json` |
+| **Bot** | 3.0.1 | `package.json` |
+| **Agent** (`wolfpack-logsync`) | 3.0.6 | `packages/wolfpack-logsync/package.json` |
+| **Web** (`wolfpack.quest`) | 1.0.4 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.8 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
@@ -183,6 +183,7 @@ zone on insert — `find_or_create_encounter` currently leaves it NULL.
 | `POST` | `/api/agent/bosskill` | Druzzil Ro instance kill broadcasts → auto-sets timers |
 | `POST` | `/api/agent/lockout` | `/sll`-style lockout relay; never clears on "Available" |
 | `POST` | `/api/agent/historical_chat` | Historical `/gu` + `/rs` backfill from older logs → `chat_messages` table. Not displayed on Discord. |
+| `POST` | `/api/agent/live-state` | Snapshot of each watched character's current buffs + last-seen zone (Zeal stream). Upsert into `character_live_state` by `(guild_id, character)`. Powers `/me` Buffs & Zone. Agent sends on change only. |
 | `GET/POST` | `/` | Health check (`200 OK`) |
 
 Payload limits: chat 256KB, encounter upload 10MB. Returns `503` if `WOLFPACK_AGENT_TOKEN` unset.
@@ -454,6 +455,7 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
 | `wolfpack_roles` | Discord role catalog (role_id, name, color, position) |
 | `chat_messages` | All `/gu` + `/rs` chat — live (`/api/agent/chat`) and historical (`/api/agent/historical_chat`) routes both write here, dedup'd by `(guild_id, ts, channel, speaker, text)` |
 | `who_observations` | Every `/who` line the agent reports. Mirrors `state.whoData` but durable + queryable. Dedup'd per minute per uploader |
+| `character_live_state` | Current buffs + last-seen zone per character (Zeal snapshot). Upserted by `(guild_id, character)` via `POST /api/agent/live-state`. Read-open RLS; shown on `/me` Buffs & Zone. Migration `20260604000000_character_live_state.sql` |
 | `patch_notes`, `officer_notes`, `travel_paths` | Various |
 
 ### RPC / views
