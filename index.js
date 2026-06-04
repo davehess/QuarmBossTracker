@@ -541,6 +541,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (interaction.customId.startsWith('who_family:'))         { await handleWhoFamily(interaction); return; }
     if (interaction.customId.startsWith('audit_undo:'))         { await handleAuditUndo(interaction); return; }
+    if (interaction.customId === 'token_mint')                  { const { handleTokenMint }   = require('./commands/token'); await handleTokenMint(interaction);   return; }
+    if (interaction.customId.startsWith('token_revoke:'))        { const { handleTokenRevoke } = require('./commands/token'); await handleTokenRevoke(interaction); return; }
     if (interaction.customId.startsWith('sll_confirm:'))        { const { handleSllConfirm } = require('./commands/sll'); await handleSllConfirm(interaction); return; }
     if (interaction.customId === 'sll_cancel')                  { const { handleSllCancel }  = require('./commands/sll'); await handleSllCancel(interaction);  return; }
     return;
@@ -2600,16 +2602,8 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
 }
 
 async function _handleAgentChat(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'chat relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const chunks = [];
   let total = 0;
@@ -2745,7 +2739,7 @@ async function _handleAgentChat(req, res) {
       speaker,
       text:        String(text).slice(0, 2000),
       who:         uploadedWho || null,
-      uploaded_by: payload?.uploaded_by || null,
+      uploaded_by: identity.discord_id,
     });
 
     // Class/level tag: try server-side whoData first, fall back to what the agent sent.
@@ -2856,16 +2850,8 @@ function _isPvpDupe(b) {
 // + Wolf Pack deaths only.
 
 async function _handleAgentPvp(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'pvp relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const chunks = []; let total = 0;
   for await (const chunk of req) {
@@ -2987,6 +2973,7 @@ async function _handleAgentPvp(req, res) {
           source:       b?.backfill ? 'log_backfill' : 'pvp_channel',
           raw_text:     (text || '').slice(0, 300),
           dedup_key:    `${guildId}|${String(creditedKiller).toLowerCase()}|${String(victim).toLowerCase()}|${secondIso}`,
+          uploaded_by_discord_id: identity.discord_id,
         });
       }
 
@@ -3123,6 +3110,7 @@ async function _handleAgentPvp(req, res) {
           caster:     killer,
           target:     'Lord of Ire',
           raw_text:   (text || '').slice(0, 300),
+          uploaded_by_discord_id: identity.discord_id,
         });
       }
 
@@ -3181,16 +3169,8 @@ async function _handleAgentPvp(req, res) {
 // upserts to public.pvp_assists. No Discord post — assists are a stat-only
 // signal (no rally moment to celebrate, no @PVP ping).
 async function _handleAgentPvpAssists(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'pvp_assists relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const chunks = []; let total = 0;
   for await (const chunk of req) {
@@ -3293,6 +3273,7 @@ async function _handleAgentPvpAssists(req, res) {
       source:         a?.source === 'log_backfill' ? 'log_backfill' : 'live_agent',
       raw_text:       a?.raw_text ? String(a.raw_text).slice(0, 500) : null,
       dedup_key:      `${guildId}|${assister.toLowerCase()}|${victim.toLowerCase()}|${secondIso}`,
+      uploaded_by_discord_id: identity.discord_id,
     });
   }
   if (rows.length === 0) {
@@ -3311,16 +3292,8 @@ async function _handleAgentPvpAssists(req, res) {
 //   2. Record kill + trigger full postKillUpdate refresh
 //   3. Post human-readable confirmation to RAID_CHAT_CHANNEL_ID with next-spawn time
 async function _handleAgentBossKill(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'boss-kill relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const chunks = []; let total = 0;
   for await (const chunk of req) {
@@ -3430,16 +3403,8 @@ const HISTORICAL_CHAT_PATH = require('path').join(__dirname, 'data', 'historical
 // Threat is intentionally NOT here — it's a live-only stat with no server
 // counterpart (see CONTINUATION_QUEUE: increment 2f notes).
 async function _handleAgentServerPanel(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'server-panel disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
   const url = new URL(req.url, 'http://localhost');
   const parts = url.pathname.split('/'); // ['', 'api', 'agent', 'server-panel', '<key>']
   const key = (parts[4] || '').toLowerCase();
@@ -3721,16 +3686,8 @@ async function _handleAgentServerPanel(req, res) {
 // currentEncounterThreat.perPlayer map). One row per (guild, uploader,
 // boss, snapshot_at); the unique constraint dedups re-uploads.
 async function _handleAgentThreatSnapshot(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'threat-snapshot disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
   const chunks = []; let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
@@ -3777,16 +3734,8 @@ async function _handleAgentThreatSnapshot(req, res) {
 // discord_id so one user can't read another's snapshots.
 
 async function _handleAgentUiLayoutUpload(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'agent endpoints disabled' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   let body = '';
   await new Promise((resolve) => {
@@ -3878,10 +3827,8 @@ async function _handleAgentUiLayoutUpload(req, res) {
 }
 
 async function _handleAgentUiLayoutList(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) { res.writeHead(503).end(); return; }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) { res.writeHead(401).end(); return; }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   // ?character=<name>  required — we always scope listing to one character
   // since that drives the picker UI. The character determines the owner.
@@ -3922,10 +3869,8 @@ async function _handleAgentUiLayoutList(req, res) {
 }
 
 async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) { res.writeHead(503).end(); return; }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) { res.writeHead(401).end(); return; }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   // The download URL is /api/agent/ui_layout/<id>?character=<name>. We
   // re-verify ownership via the character — even with the snapshot id the
@@ -3990,16 +3935,8 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
 async function _handleAgentPlaceBid(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'place-bid disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
   const chunks = []; let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
@@ -4047,16 +3984,8 @@ async function _handleAgentPlaceBid(req, res) {
 }
 
 async function _handleAgentFunEvent(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'fun-events disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const chunks = []; let total = 0;
   for await (const chunk of req) {
@@ -4089,6 +4018,7 @@ async function _handleAgentFunEvent(req, res) {
       target:      e.target || null,
       reagent_qty: Number.isFinite(e.reagent_qty) ? e.reagent_qty : 1,
       raw_text:    e.raw_text || null,
+      uploaded_by_discord_id: identity.discord_id,
     }));
   if (rows.length === 0) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
@@ -4101,16 +4031,8 @@ async function _handleAgentFunEvent(req, res) {
 }
 
 async function _handleAgentHistoricalChat(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'historical chat disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const chunks = []; let total = 0;
   for await (const chunk of req) {
@@ -4137,7 +4059,7 @@ async function _handleAgentHistoricalChat(req, res) {
       speaker:  m.speaker,
       text:     m.text,
       who:      m.who || null,
-      uploaded_by: m.uploadedBy || null,
+      uploaded_by: identity.discord_id,
     }));
 
   if (lines.length === 0) {
@@ -4162,7 +4084,7 @@ async function _handleAgentHistoricalChat(req, res) {
           speaker:     m.speaker,
           text:        m.text.slice(0, 2000),
           who:         m.who || null,
-          uploaded_by: m.uploadedBy || null,
+          uploaded_by: identity.discord_id,
           guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
         };
       });
@@ -4181,16 +4103,8 @@ async function _handleAgentHistoricalChat(req, res) {
 }
 
 async function _handleAgentLockout(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'lockout relay disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const chunks = []; let total = 0;
   for await (const chunk of req) {
@@ -4273,16 +4187,8 @@ const _liveCards = new Map();
 // account running multiple toons) gets all relevant encounters in one round
 // trip. Case-insensitive match.
 async function _handleAgentIncomplete(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const url   = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const raw   = url.searchParams.get('characters') || url.searchParams.get('character') || '';
@@ -4377,16 +4283,8 @@ async function _handleAgentIncomplete(req, res) {
 let _spellCatalogCache = null;       // { fetchedAt: ms, body: string, etag: string }
 const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
 async function _handleAgentSpellCatalog(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'spell-catalog disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const fresh = _spellCatalogCache && (Date.now() - _spellCatalogCache.fetchedAt) < _SPELL_CATALOG_TTL_MS;
   if (!fresh) {
@@ -4462,16 +4360,8 @@ async function _handleAgentSpellCatalog(req, res) {
 // path exists yet — slated for the Mimic timeline); surfacing it now lets the
 // agent display the setting and refuse to send when the path lands.
 async function _handleAgentCharacterPrefs(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const raw = url.searchParams.get('characters') || url.searchParams.get('character') || '';
@@ -4522,16 +4412,8 @@ async function _handleAgentCharacterPrefs(req, res) {
 //       { character, zone_id, zone_name, self_hp_pct, buffs:[{name,ticks}],
 //         buff_count }, ... ] }
 async function _handleAgentLiveState(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   let body = '';
   await new Promise((resolve) => {
@@ -4666,16 +4548,8 @@ async function relayWebFeedback(readyClient) {
 // user). Outgoing tells are stored but NOT DMed (the user is already at their
 // keyboard, that would be noise). DM failures are non-fatal.
 async function _handleAgentTells(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'agent endpoints disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   let body = '';
   await new Promise((resolve) => {
@@ -4903,16 +4777,8 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
 // POST /api/agent/backfill-requests/:id/:action      — ack | dismiss | complete | error
 //   POST body: { reason?, summary?, error_message? } (optional, by action)
 async function _handleAgentBackfillRequests(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'backfill-requests disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) {
@@ -4989,16 +4855,8 @@ async function _handleAgentBackfillRequests(req, res) {
 // version hash so agents can short-circuit on no-change (HTTP 304 would
 // be cleaner but the agent isn't set up to handle ETag yet).
 async function _handleAgentGuildTriggers(req, res) {
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'guild-triggers disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) {
@@ -5040,16 +4898,8 @@ async function _handleAgentGuildTriggers(req, res) {
 
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
-  const expected = process.env.WOLFPACK_AGENT_TOKEN;
-  if (!expected) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'agent uploads disabled (WOLFPACK_AGENT_TOKEN unset)' }));
-  }
-  const auth = req.headers['authorization'] || '';
-  if (auth !== `Bearer ${expected}`) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'unauthorized' }));
-  }
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
 
   // Read body (cap at 10MB for safety; encounters are typically <1MB)
   const chunks = [];
@@ -5820,6 +5670,7 @@ async function _handleAgentUpload(req, res) {
           agentVersion: payload?.agent_version || null,
           rollupByChar: encounter.rollup?.by_char || null,
           npcHealedTotal: encounter.npc_healed_total || 0,
+          uploadedByDiscordId: identity.discord_id,
         }).catch(err => { console.warn('[agent] recordParse failed:', err?.message); return null; });
 
         // Persist charm sessions for this encounter. Upsert dedup'd by

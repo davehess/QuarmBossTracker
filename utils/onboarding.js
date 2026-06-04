@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.9': [
+    '**Per-user Parser tokens** — the shared `WOLFPACK_AGENT_TOKEN` is gone. Every uploader (Mimic install or standalone agent) now uses their OWN token tied to their Discord account, so we can trace every row back to a specific person and revoke individuals without breaking everyone. Run `/token` in Discord to see your active sessions, mint a fresh token, or revoke one that\'s no longer yours. New Mimic versions will mint a token automatically the first time you sign in; until you update, paste your `/token` value into Mimic\'s settings (or `--token` on the standalone agent). Old shared-secret uploads are now rejected — if your agent stopped working, that\'s why.',
+  ],
   '3.0.8': [
     '**Kill timers now require a confirmed death line** — the agent used to flag a parse as a kill whenever combat ended (death event OR 120s of silence, then "guess the boss = top-damaged target"). Pull-and-flee fights, wipes, and short pulls were getting registered as kills and moving the boards. Now timers only advance when the agent literally saw "<Boss> has been slain by ..." in the log. Parses still record for stats; only the timer side is gated. Update Mimic (or the standalone agent) to pick up the change. If you see leftover false timers from before this patch, `/unkill <boss>` clears them.',
   ],
