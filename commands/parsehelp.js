@@ -1,81 +1,128 @@
-// commands/parsehelp.js — How to set up parsing for the Wolf Pack bot.
+// commands/parsehelp.js — How to set up the Wolf Pack Mimic Parser.
 //
-// Mimic-first: the recommended path is the Wolf Pack Mimic desktop app, which
-// now does Discord sign-in on first run (mints the member's per-user upload
-// token automatically — no /token paste needed). Parser.bat remains as a
-// minimal/advanced fallback.
+// Mimic-only (the classic CLI agent is intentionally left out here — it muddied
+// the message for new members). The reply is deliberately simple: the download
+// link + a 3-step summary, plus a "Step-by-step guide" button that opens an
+// ephemeral, paged walkthrough (Next/Back) with the detailed directions for
+// anyone who wants them. Per-step screenshots slot into STEP_IMAGES when ready.
 //
-// The embed builder is shared with /postparsehelp (officer command that posts
-// the same content as a non-ephemeral message for broadcasting).
+// Shared with /postparsehelp (officer command that posts the same simple
+// message + buttons publicly so anyone can tap through their own walkthrough).
 'use strict';
 
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
-const { PARSER_DOWNLOAD_URL } = require('../utils/onboarding');
+const {
+  SlashCommandBuilder, EmbedBuilder, MessageFlags,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+} = require('discord.js');
 
-const PARSER_DOWNLOAD = PARSER_DOWNLOAD_URL;
-const MIMIC_URL       = 'https://wolfpack.quest/mimic';
+const MIMIC_URL = 'https://wolfpack.quest/mimic';
 
-// Shared embed — used ephemerally by /parsehelp and publicly by /postparsehelp.
+// ── Simple top-level message ────────────────────────────────────────────────
 function buildParseHelpEmbed() {
   return new EmbedBuilder()
     .setColor(0x1f6feb)
     .setTitle('🐺 Set up the Wolf Pack Mimic Parser')
-    .setDescription(
-      'Mimic uploads your combat data so the guild boards, parses, and stats stay current — ' +
-      'and gives you a DPS overlay, trigger TTS, charm tracker, and more on top. One installer, ' +
-      'bundles its own Node runtime, **installs just for you with no admin prompt**.'
-    )
-    .addFields(
-      {
-        name: '1️⃣  Download + install',
-        value: [
-          `Download: [**${MIMIC_URL}**](${MIMIC_URL}) — grabs the latest installer directly.`,
-          '• Windows SmartScreen will warn (not code-signed yet) → **More info → Run anyway**.',
-          '• It installs **only for you** (no UAC / admin) — just click **Install**. (Advanced: change the folder if you like.)',
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: '2️⃣  First run — three quick steps',
-        value: [
-          '**Step 1 · Sign in with Discord.** Opens Discord once, you click **Authorize**, and it comes right back — this links Mimic to *your* account and sets up your personal upload automatically. **No token to copy/paste.**',
-          '**Step 2 · Pick your EverQuest folder.** Mimic auto-detects it — tick the folder (or **Browse** to it) and **Save folder**.',
-          '**Step 3 · Preferences** (optional) — tells display, overlays. Then **Open dashboard**.',
-          '',
-          '⚠️ Make sure in-game logging is on: type **`/log on`** in EverQuest (or set `Logging=on` in `eqclient.ini`).',
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: '✨  What you get',
-        value: [
-          '• Always-on-top **DPS HUD** · **Trigger alerts (TTS)** with countdown timers · **Charm tracker**',
-          '• **Buffs & Zone** card · private **/tells** on wolfpack.quest/me/tells (encrypted)',
-          '• **UI Studio** — back up your EQ window layout / hotkeys / chat tabs / ini and restore on any machine',
-          '• Auto-updates from here on — no re-downloading.',
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: '🧱  Advanced: Parser.bat (minimal CLI agent)',
-        value: [
-          `Prefer the classic CLI? [**WolfPackParser.zip**](${PARSER_DOWNLOAD}) — unzip anywhere.`,
-          '1️⃣ Run **`RUN-FIRST-for-Node.js.bat`** once (installs Node 20). 2️⃣ Run **`Parser.bat`**.',
-          'Bot URL → press Enter for default. Agent token → mint one with **`/token`** in Discord and paste it.',
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: '⏱️  Recover timers from lockouts  →  /sll',
-        value: [
-          'If the bot lost state, restore all timers from your lockout list.',
-          'In EQ: type `#showlootlockouts` → copy the output → paste into `/sll`.',
-          'The lockout remaining time = the boss respawn remaining time exactly.',
-        ].join('\n'),
-        inline: false,
-      },
-    )
-    .setFooter({ text: 'Wolf Pack EQ (Quarm) • https://wolfpack.quest • Mimic auto-updates once installed.' });
+    .setDescription([
+      'Mimic uploads your parses to the guild boards and gives you a DPS overlay, trigger TTS, charm tracker, and more. It bundles everything — **no separate Node install, no admin prompt.**',
+      '',
+      '**1.**  Download below and run it (SmartScreen → *More info → Run anyway*).',
+      '**2.**  First run: **Sign in with Discord** — no token to paste.',
+      '**3.**  Pick your **EverQuest folder**, then **`/log on`** in‑game.',
+      '',
+      'Want the detailed walkthrough? Tap **📖 Step‑by‑step guide** below.',
+    ].join('\n'))
+    .setFooter({ text: 'Wolf Pack EQ (Quarm) • auto-updates once installed' });
+}
+
+// Buttons under the top message: open the guide + a direct download link.
+function buildParseHelpComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('parsehelp_guide').setLabel('📖 Step-by-step guide').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setURL(MIMIC_URL).setLabel('📥 Download Mimic Parser').setStyle(ButtonStyle.Link),
+    ),
+  ];
+}
+
+// ── Paged walkthrough ───────────────────────────────────────────────────────
+// Each step is one ephemeral page. Detailed directions live here so the top
+// message stays simple. STEP_IMAGES[i] (a hosted PNG URL) renders as the page
+// image once we have the obfuscated screenshots.
+const STEP_IMAGES = {};   // { 0: 'https://…/step1.png', … } — filled in later
+
+const STEPS = [
+  {
+    title: 'Step 1 of 4 · Download & install',
+    body: [
+      'Tap **📥 Download Mimic Parser** (or go to wolfpack.quest/mimic) to grab the installer.',
+      '',
+      '• Windows SmartScreen will warn (not code-signed yet) → **More info → Run anyway**.',
+      '• It installs **only for you** — no admin / UAC. Just click **Install** (or change the folder if you like).',
+      '• Leave **Run Wolf Pack Mimic** ticked at the end and click **Finish**.',
+    ].join('\n'),
+  },
+  {
+    title: 'Step 2 of 4 · Sign in with Discord',
+    body: [
+      'On first launch you’ll see **Step 1 · Sign in with Discord** — click it.',
+      '',
+      '• Your browser opens Discord → click **Authorize**.',
+      '• This links Mimic to **your** account and sets up your upload automatically — **no token to copy or paste**.',
+      '• If a 6-character code is shown, paste it on the page it opens; if you’re already signed in to wolfpack.quest it fills in for you.',
+    ].join('\n'),
+  },
+  {
+    title: 'Step 3 of 4 · Your EverQuest folder',
+    body: [
+      '**Step 2 · Your EverQuest folder** — Mimic scans for it automatically.',
+      '',
+      '• Tick the detected folder, or click **📁 Browse for your EverQuest folder…** if it lives somewhere unusual.',
+      '• Click **Save folder**.',
+      '',
+      '_(This is your **EverQuest** folder — not where Mimic itself installed.)_',
+    ].join('\n'),
+  },
+  {
+    title: 'Step 4 of 4 · Turn on logging & launch',
+    body: [
+      'Two last things and you’re done:',
+      '',
+      '• In EverQuest, type **`/log on`** (or set `Logging=on` in `eqclient.ini`) so Mimic can read your fights.',
+      '• Click **Open dashboard**. You’re now uploading. ✅',
+      '',
+      'You also get: DPS HUD · trigger alerts (TTS) + timers · charm tracker · Buffs & Zone · private /tells · UI Studio (back up your EQ layout). Turn overlays on any time from the tray.',
+    ].join('\n'),
+  },
+];
+
+function buildStepReply(idx) {
+  const i = Math.max(0, Math.min(idx, STEPS.length - 1));
+  const step = STEPS[i];
+  const embed = new EmbedBuilder()
+    .setColor(0x1f6feb)
+    .setTitle('🐺 ' + step.title)
+    .setDescription(step.body)
+    .setFooter({ text: `Wolf Pack EQ (Quarm) • step ${i + 1} of ${STEPS.length}` });
+  if (STEP_IMAGES[i]) embed.setImage(STEP_IMAGES[i]);
+
+  const nav = new ActionRowBuilder();
+  if (i > 0) nav.addComponents(new ButtonBuilder().setCustomId(`parsehelp_step:${i - 1}`).setLabel('◀ Back').setStyle(ButtonStyle.Secondary));
+  if (i < STEPS.length - 1) nav.addComponents(new ButtonBuilder().setCustomId(`parsehelp_step:${i + 1}`).setLabel('Next ▶').setStyle(ButtonStyle.Primary));
+  nav.addComponents(new ButtonBuilder().setURL(MIMIC_URL).setLabel('📥 Download').setStyle(ButtonStyle.Link));
+
+  return { embeds: [embed], components: [nav] };
+}
+
+// ── Button handlers (wired from index.js) ───────────────────────────────────
+// Opening the guide replies with a fresh ephemeral page so it works from both
+// the ephemeral /parsehelp and the public /postparsehelp message. Navigation
+// edits that ephemeral page in place.
+async function handleParseHelpGuide(interaction) {
+  return interaction.reply({ flags: MessageFlags.Ephemeral, ...buildStepReply(0) });
+}
+async function handleParseHelpStep(interaction) {
+  const idx = parseInt(interaction.customId.split(':')[1], 10) || 0;
+  return interaction.update(buildStepReply(idx));
 }
 
 module.exports = {
@@ -84,8 +131,15 @@ module.exports = {
     .setDescription('How to set up the Wolf Pack Mimic Parser (ephemeral)'),
 
   async execute(interaction) {
-    return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [buildParseHelpEmbed()] });
+    return interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      embeds: [buildParseHelpEmbed()],
+      components: buildParseHelpComponents(),
+    });
   },
 
   buildParseHelpEmbed,
+  buildParseHelpComponents,
+  handleParseHelpGuide,
+  handleParseHelpStep,
 };
