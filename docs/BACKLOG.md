@@ -35,8 +35,13 @@
   assist work should keep that in mind (or fix the agent to link the FK).
 
 ## BACKLOG — agreed priority order: G → A → C → E → B → H → I → D
-(Set 2026-06-04. Driving toward the next raid: Sun/Wed/Thu 8:30pm ET. Testing
-with colleagues will follow this exact order.)
+(Set 2026-06-04. Driving toward the next raid: Sun/Wed/Thu 8:30pm ET.)
+
+**Progress (overnight 2026-06-04):** ✅ G, A, C, E, B all SHIPPED to main
+(Mimic 1.0.8 · agent 3.0.7 · bot 3.0.1 · web 1.0.4). H + I are 📐 designed and
+awaiting sign-off (`docs/DESIGN-buff-debuff-queue.md`, `docs/DESIGN-ch-chain.md`).
+D is ⛔ blocked on real Quarm PvP-debuff log samples. The five shipped items are
+the "get them hooked" set and are ready to test in order tomorrow.
 
 ### Quick wins
 - **A. Pet slot 16 → charm overlay — ✅ SHIPPED (agent 3.0.4 · Mimic 1.0.7).**
@@ -71,12 +76,16 @@ with colleagues will follow this exact order.)
   agent dashboard <h2> titles.
 
 ### Medium
-- **D. Detrimental-spell assist credit** — a debuff cast on the PvP victim
-  should count as an assist (currently assist correlation keys off recent
-  *damage* to the victim, so non-damaging debuffs/snares/etc. don't credit).
-  Signal ideas: "X resisted your <spell>" names victim; spell land "cast on
-  other" messages. Needs real Quarm log samples to do reliably. (agent
-  `_checkPvpAssist` / pvp assist buffer)
+- **D. Detrimental-spell assist credit — ⛔ BLOCKED on log samples.** A debuff
+  cast on the PvP victim should count as an assist (assist correlation currently
+  keys off recent *damage* to the victim, so non-damaging debuffs/snares/roots
+  don't credit). To do this without guessing, I need real Quarm log lines for a
+  detrimental spell you land on an ENEMY player — i.e. what your log prints when
+  you snare/root/tash/malo/nuke-resist another player. Likely candidates:
+  `Your <Spell> spell has worn off of <Victim>.` / a resist line that names the
+  victim / a "<Victim>'s <stat> drops" line. **Paste ~10 such lines from a PvP
+  fight and I'll wire `_checkPvpAssist` to credit the caster.** Building it
+  against guessed regex would silently miss or mis-credit — not worth it blind.
 - **E. Char live-state sync — ✅ SHIPPED (bot 3.0.1 · agent 3.0.6 · web 1.0.4).**
   Agent `flushLiveStateToBot()` pushes each watched character's buffs +
   last-seen zone to `POST /api/agent/live-state` (bearer) on change only (zone /
@@ -131,14 +140,16 @@ with colleagues will follow this exact order.)
     panel overlays via preload).
   - **Panel overlays** (e.g. "Known Pets This Session") pop up full-window with
     no way to resize/close — add ✕ close + make the gear→setup resize obvious.
-- **H. Buff/Debuff coordination queue** — shared raid queue of "needs": boss
-  debuff X needs recast, person Y needs rez, person Z cursed→needs cure. Anyone
-  can push an item to the top when their buff drops / they get dispelled. Make
-  it a FIFO-ish queue with priority bumps. Used to keep a boss debuffed without
-  gaps. (agent overlay + bot relay + maybe web view) — design first.
-- **I. CH-chain DDR minigame** — complete-heal rotation tool, "DDR style", per
-  https://github.com/peetar/rotatonator . Ties into the CLAUDE.md roadmap "CH
-  chain chatter analysis". Big; design first.
+- **H. Buff/Debuff coordination queue — 📐 DESIGNED, awaiting sign-off.** Full
+  implementation-ready proposal in `docs/DESIGN-buff-debuff-queue.md` (phased:
+  local detection first, then shared relay reusing the E live-state pattern).
+  Blocked on 5 sign-off questions + ~10 real Quarm log lines (worn-off / dispel /
+  curse / death) to lock the detectors. ~1 day once approved.
+- **I. CH-chain DDR minigame — 📐 DESIGNED, awaiting sign-off.** Proposal in
+  `docs/DESIGN-ch-chain.md` (timer-driven v1, rotatonator-style, reuses the G
+  overlay chrome). Blocked on: driver choice, who configures the rotation, and
+  the actual Quarm CH chain cadence (N seconds). Real build; confirm it's wanted
+  for the raid push vs. later (most specialized — clerics only).
 
 ## Done this session (for reference)
 - Pause Discord tells (tray + agent + bot), dashboard stutter fix, stale Zeal
