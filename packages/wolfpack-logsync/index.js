@@ -9373,12 +9373,14 @@ function parsePvpBroadcast(line) {
       zone:   ppkA[5],
     };
 
-    // Victim-first NPC death: "X has died to Mob"
+    // Victim-first NPC death: "X has died to <Mob>". Group 3 is the NPC that
+    // landed the kill — keep it (it was being thrown away), so assists on the
+    // victim can show "killed by <Mob>" instead of a blank.
     const npck = PVP_NPC_KILL_RX.exec(text);
     if (npck) return {
       ts: tsOf(), text, killType: 'npc',
       victim: npck[1], victimGuild: npck[2],
-      killer: null,    killerGuild: null,
+      killer: npck[3], killerGuild: null,
       zone:   npck[4],
     };
 

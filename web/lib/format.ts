@@ -54,7 +54,7 @@ export function dayLabel(key: string) {
   // don't have to wrestle with DST math on the server.
   const yesterday = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
   const yesterdayKey = yesterday.toLocaleDateString('en-CA', { timeZone: RAID_TZ });
-  if (key === todayKey)     return 'Tonight';
+  if (key === todayKey)     return 'Today';
   if (key === yesterdayKey) return 'Yesterday';
   // Parse the key as a noon-Eastern timestamp to avoid the DST seam on
   // midnight boundaries flipping the displayed weekday.

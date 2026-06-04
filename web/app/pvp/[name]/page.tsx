@@ -405,9 +405,11 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
                     {dayLabel(dayKey(a.killed_at))} · {fmtTime(a.killed_at)}
                   </td>
                   <td className="py-1 pr-2 text-text">
-                    {a.killer_is_npc
-                      ? <span className="text-dim italic">{a.killer} (NPC)</span>
-                      : <Link href={`/pvp/${encodeURIComponent(a.killer)}`} className="text-text hover:text-blue hover:underline">{a.killer}</Link>}
+                    {a.killer
+                      ? (a.killer_is_npc
+                          ? <span className="text-dim italic">{a.killer} (NPC)</span>
+                          : <Link href={`/pvp/${encodeURIComponent(a.killer)}`} className="text-text hover:text-blue hover:underline">{a.killer}</Link>)
+                      : <span className="text-dim italic">an NPC</span>}
                   </td>
                   <td className="py-1 pr-2 text-text">
                     {a.victim}{a.victim_guild ? <span className="text-dim"> {'<'}{a.victim_guild}{'>'}</span> : null}
