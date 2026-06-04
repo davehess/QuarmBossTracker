@@ -89,6 +89,8 @@ let agentPort = BASE_PORT;
 let restartBackoff = 1000;
 let quitting = false;
 let updatePending = null; // { version } once an update is downloaded and ready
+let _agentZeroLogs = false;     // agent launched with no logs (waiting for some)
+let _zeroLogsRecheckTimer = null;
 // Setup mode — when true, every overlay is shown + unlocked and gets an
 // inline control strip with opacity / hide / lock-here. Lets a user place
 // every overlay at once instead of toggling them on individually.
@@ -291,6 +293,84 @@ function detectCharacterFromLogs(dir) {
     logs.sort((a, b) => (b.size - a.size) || (b.mtime - a.mtime));
     return { character: logs[0].name, path: logs[0].path, candidates: logs };
   } catch { return null; }
+}
+
+// Resolve the EQ install folder(s) from the RUNNING eqgame.exe process(es).
+// The static scan (detectEqDir) only knows a handful of common paths, so a
+// non-standard install is invisible to it — but if the game is running we can
+// ask Windows for the exe's full path and take its parent dir. This is what
+// rescues users whose Zeal pipe connects (proving EQ is up) yet "0 folders"
+// were found. Returns absolute dir paths (may or may not contain logs). Empty
+// on non-Windows / when EQ isn't running / on any failure.
+function getRunningEqDirs() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve([]);
+    try {
+      const { execFile } = require('child_process');
+      // Get-CimInstance ships on every supported Windows (PowerShell 5.1+) and
+      // — unlike the deprecated wmic — survives Windows 11 24H2. One line per
+      // running eqgame.exe with its full ExecutablePath.
+      const psCmd = "Get-CimInstance Win32_Process -Filter \"Name='eqgame.exe'\" | ForEach-Object { $_.ExecutablePath }";
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+        { timeout: 8000, windowsHide: true },
+        (err, stdout) => {
+          if (err || !stdout) return resolve([]);
+          const dirs = new Set();
+          for (const line of String(stdout).split(/\r?\n/)) {
+            const p = line.trim();
+            if (p && /eqgame\.exe$/i.test(p)) {
+              try { dirs.add(path.dirname(p)); } catch (e) { void e; }
+            }
+          }
+          resolve([...dirs]);
+        });
+    } catch { resolve([]); }
+  });
+}
+
+// Single source of truth for "which EQ folders should we tail." Layers, in
+// priority order: user-configured (cfg.eqPaths) → static autodetect → the
+// running eqgame.exe's own folder. Only returns folders that actually contain
+// eqlog_*_pq.proj.txt right now. Excluded folders are honored throughout.
+async function resolveEqDirsWithLogs() {
+  const cfg = loadConfig();
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  const excluded = new Set((cfg.eqPathsExcluded || []).map(p => String(p || '').toLowerCase()));
+  const withLogs = new Set();
+  for (const p of userPaths) {
+    if (!excluded.has(String(p).toLowerCase()) && _dirHasEqLogs(p)) withLogs.add(p);
+  }
+  if (withLogs.size === 0) {
+    const auto = detectEqDir(null);
+    if (auto && !excluded.has(auto.toLowerCase())) withLogs.add(auto);
+  }
+  // Last resort: ask the running game. This is the path that fixes a fresh
+  // install whose EQ folder is somewhere the static scan never looks.
+  let runningDirs = [];
+  if (withLogs.size === 0) {
+    runningDirs = await getRunningEqDirs();
+    for (const d of runningDirs) {
+      if (!excluded.has(d.toLowerCase()) && _dirHasEqLogs(d)) withLogs.add(d);
+    }
+    // Persist a freshly-discovered folder so the next launch is instant and the
+    // Settings UI shows it ticked.
+    const found = [...withLogs];
+    if (found.length > 0) {
+      try {
+        const c = loadConfig();
+        const existing = Array.isArray(c.eqPaths) ? c.eqPaths : [];
+        const merged = [...new Set([...existing, ...found])];
+        if (merged.length !== existing.length) {
+          c.eqPaths = merged;
+          saveConfig(c);
+          appendAgentLog(`[mimic] auto-detected EQ folder from the running game: ${found.join(', ')}\n`);
+        }
+      } catch (e) { void e; }
+    }
+  }
+  return { dirs: [...withLogs], runningDirs };
 }
 
 // ── EQ install discovery (eqgame.exe) ──────────────────────────────────────
@@ -884,20 +964,7 @@ async function launchAgent() {
   //      not explicitly excluded by the user).
   // Logs from all folders get appended as --log args; each self-identifies
   // from its filename so multi-char + multi-install boxers parse correctly.
-  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
-                  ? cfg.eqPaths
-                  : (cfg.eqPath ? [cfg.eqPath] : []);
-  const excluded  = new Set((cfg.eqPathsExcluded || []).map(p => String(p || '').toLowerCase()));
-  const dirSet    = new Set();
-  for (const p of userPaths) {
-    if (!excluded.has(String(p).toLowerCase()) && _dirHasEqLogs(p)) dirSet.add(p);
-  }
-  // If the user hasn't configured anything explicitly, fall back to autodetect.
-  if (dirSet.size === 0) {
-    const auto = detectEqDir(null);
-    if (auto && !excluded.has(auto.toLowerCase())) dirSet.add(auto);
-  }
-  const eqDirs = [...dirSet];
+  const { dirs: eqDirs, runningDirs } = await resolveEqDirsWithLogs();
   const primaryEqDir = eqDirs[0] || null;
 
   let totalLogs = 0;
@@ -920,9 +987,21 @@ async function launchAgent() {
         .map(c => `${c.name} (${Math.round(c.size / 1024)}KB)`).join(', ');
       appendAgentLog(`[mimic] other characters: ${alts}\n`);
     }
+  } else if (runningDirs && runningDirs.length > 0) {
+    // We FOUND a running EQ (its folder), but it has no eqlog_* files — in-game
+    // logging is almost certainly off. This is the common "Zeal works but no
+    // parses" case. Tell the user exactly how to fix it; the agent runs the
+    // dashboard meanwhile and we re-check so it starts tailing the moment a log
+    // file appears.
+    appendAgentLog(`[mimic] Found EQ at ${runningDirs.join(', ')} but NO log files — in-game logging is off. In EQ, type /log on (and set Logging=on in eqclient.ini). Logs are picked up automatically once they appear.\n`);
   } else {
-    appendAgentLog(`[mimic] NO log files found across ${eqDirs.length} configured folder(s). Open Settings → EverQuest folders to add or fix.\n`);
+    appendAgentLog(`[mimic] NO EQ logs found and EQ doesn't appear to be running. Launch EverQuest, or open Settings → EverQuest folders to point Mimic at your install.\n`);
   }
+  // Remember whether we launched with zero logs so the re-check loop knows to
+  // watch for logs appearing (newly-enabled logging, EQ launched after Mimic,
+  // a folder configured in Settings) and restart the agent to tail them.
+  _agentZeroLogs = (totalLogs === 0);
+  if (_agentZeroLogs) _scheduleZeroLogsRecheck();
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE:   '1',
@@ -989,6 +1068,33 @@ async function launchAgent() {
   try { pushMimicSession(); } catch (e) { /* non-fatal */ }
   pushStatus();
   return up;
+}
+
+// When the agent is running with ZERO logs (no EQ folder yet, or logging is
+// off), poll every 20s for logs becoming available — the user enables /log on,
+// launches EQ, or configures a folder in Settings. The moment a tail-able log
+// appears, restart the agent so it picks it up. Auto-stops once logs are found
+// or the flag clears (e.g. a Settings save already relaunched with logs).
+function _scheduleZeroLogsRecheck() {
+  if (_zeroLogsRecheckTimer) return;
+  _zeroLogsRecheckTimer = setInterval(async () => {
+    if (quitting || !_agentZeroLogs) {
+      clearInterval(_zeroLogsRecheckTimer); _zeroLogsRecheckTimer = null;
+      return;
+    }
+    let dirs = [];
+    try { ({ dirs } = await resolveEqDirsWithLogs()); } catch (e) { void e; }
+    if (dirs.length > 0) {
+      appendAgentLog('[mimic] EQ logs are now available — restarting the agent to tail them.\n');
+      _agentZeroLogs = false;
+      clearInterval(_zeroLogsRecheckTimer); _zeroLogsRecheckTimer = null;
+      // Kill the running (log-less) agent; its exit handler relaunches, and the
+      // fresh launch resolves the now-available logs.
+      restartBackoff = 1000;
+      if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
+      else { launchAgent(); }
+    }
+  }, 20000);
 }
 
 // ── Windows ─────────────────────────────────────────────────────────────────
@@ -1446,8 +1552,15 @@ function tooltipFor(s) {
 function _uninstallerPath() {
   if (process.platform !== 'win32') return null;
   try {
-    const p = path.join(path.dirname(process.execPath), 'Uninstall Wolf Pack Mimic.exe');
-    return fs.existsSync(p) ? p : null;
+    const dir = path.dirname(process.execPath);
+    // electron-builder names the uninstaller "Uninstall <ProductName>.exe", but
+    // the exact casing/name has drifted (install dir is "wolfpack-mimic" but the
+    // exe may be productName-cased), so glob rather than hardcode. Take the
+    // first "Uninstall*.exe" sitting next to our own exe.
+    const exact = path.join(dir, 'Uninstall Wolf Pack Mimic.exe');
+    if (fs.existsSync(exact)) return exact;
+    const hit = fs.readdirSync(dir).find(f => /^uninstall.*\.exe$/i.test(f));
+    return hit ? path.join(dir, hit) : null;
   } catch { return null; }
 }
 async function runUninstaller() {

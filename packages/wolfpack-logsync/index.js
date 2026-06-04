@@ -3736,6 +3736,15 @@ function renderHeader(s) {
   let h = '';
   if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
+  // No EQ logs to tail — the #1 "why is nothing happening" cause. Either EQ
+  // logging is off or the folder isn't configured. Loud, actionable banner.
+  if ((s.watchedLogs || []).length === 0) {
+    h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
+       + '⚠ No EQ logs are being read. Turn on in-game logging — type <b>/log on</b> in EverQuest '
+       + '(and set <b>Logging=on</b> in eqclient.ini), or set your EQ folder in Mimic Settings → EverQuest folders. '
+       + 'Parsing starts automatically the moment a log file appears.'
+       + '</div>';
+  }
   // Version line — always renders an update-now button on the right so users
   // can trigger a restart-and-pull-latest at any time, even when the bot
   // hasn't (yet) advertised a newer version via polling.
@@ -11113,9 +11122,19 @@ async function readWindow(logPath, since, until, onLine) {
 // ── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   const args = parseArgs(process.argv);
-  if (args.logs.length === 0) {
+  // Watch mode tolerates ZERO logs: run the dashboard + Zeal/state endpoints and
+  // simply tail nothing until logs appear. Hard-failing here is what made Mimic
+  // crash-loop for users whose EQ folder wasn't found OR who haven't enabled
+  // in-game logging yet (Zeal can be flowing while there are no eqlog_* files).
+  // The host (Mimic) restarts the agent once logs become available. --once /
+  // --since still require logs — there's nothing to backfill without them.
+  const _wantsWatch = args.flags.watch || (!args.flags.once && !args.flags.since);
+  if (args.logs.length === 0 && !_wantsWatch) {
     console.error('❌ At least one --log is required. Use --help for usage.');
     process.exit(1);
+  }
+  if (args.logs.length === 0) {
+    console.warn('⚠ No EQ log files to tail yet — running the dashboard only. Turn on in-game logging (/log on, and Logging=on in eqclient.ini) and/or set your EQ folder; logs are picked up automatically once they appear.');
   }
 
   // ── Single-instance check ─────────────────────────────────────────────────

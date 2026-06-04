@@ -16,10 +16,13 @@
 ; the data dir there would wipe every user's saved login + token + settings on
 ; every single update. The guard below restricts deletion to real uninstalls.
 ;
-; NOTE: $APPDATA in NSIS is the Roaming AppData root, which is where Electron's
-; app.getPath('userData') resolves (%APPDATA%\<productName>) — matching
-; CONFIG_FILE()/AGENT_DIR()/AGENT_LOG() in main.js. The literal product name is
-; used (not a macro) so the path can't drift if build metadata changes.
+; NOTE: $APPDATA in NSIS is the Roaming AppData root, where Electron's
+; app.getPath('userData') resolves. Electron uses the package `name` (NOT the
+; build productName, which only lives in the electron-builder config) for
+; app.getName(), so the real folder is %APPDATA%\wolfpack-mimic — confirmed by
+; the boot log "userData=...\AppData\Roaming\wolfpack-mimic". We also sweep the
+; productName-cased path in case a future build flips that mapping; RMDir on a
+; missing path is a harmless no-op.
 ; A discoverable Start Menu uninstaller. electron-builder registers the
 ; Add/Remove Programs entry, but testers expected to FIND an uninstaller — so
 ; drop a shortcut next to the app's Start Menu entry. ${UNINSTALL_FILENAME} is
@@ -31,6 +34,7 @@
 !macro customUnInstall
   Delete "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk"
   ${ifNot} ${isUpdated}
+    RMDir /r "$APPDATA\wolfpack-mimic"
     RMDir /r "$APPDATA\Wolf Pack Mimic"
   ${endIf}
 !macroend
