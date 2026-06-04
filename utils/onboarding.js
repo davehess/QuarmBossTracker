@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.6': [
+    '**Feedback form on the website** — wolfpack.quest/feedback lets anyone drop a bug, idea, or kudos right from the browser (no Discord needed). Each one auto-posts into the #feedback thread just like `/feedback`, and shows up in the officer triage inbox with everything else. We read every one. 🐺',
+  ],
   '3.0.5': [
     '**No more pet/vendor spam in your tell DMs** — pet command acks ("Attacking <mob> Master.") and Bazaar merchant quotes ("That\'ll be N platinum for the X") are no longer relayed as `/tell` DMs (they ride the tell channel but aren\'t real tells). Filtered both at the source and on the bot, so it takes effect immediately even on older agents.',
   ],

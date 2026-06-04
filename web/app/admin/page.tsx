@@ -51,7 +51,7 @@ export default function AdminPage() {
         />
         <Card
           title="📬 Feedback inbox"
-          body="Mirror of /feedback submissions with status tracking. Acknowledge / mark addressed / add officer notes without scrolling the Discord thread."
+          body="Every submission — Discord /feedback AND the wolfpack.quest/feedback form — with status tracking. Acknowledge / mark addressed / add officer notes without scrolling the Discord thread."
           href="/admin/feedback"
         />
         <Card

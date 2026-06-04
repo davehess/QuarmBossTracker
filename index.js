@@ -185,6 +185,13 @@ client.once(Events.ClientReady, async (readyClient) => {
     } catch (err) { console.warn('[reconcile] interval init failed:', err?.message); }
   }, 6 * 60 * 60 * 1000);
 
+  // Web-feedback relay: submissions from wolfpack.quest/feedback land in the
+  // `feedback` table with discord_msg_id NULL. Post each into the #feedback
+  // thread (same as the /feedback command) and stamp the id/link so it isn't
+  // re-posted. Initial run after a short delay, then every 45s.
+  setTimeout(() => relayWebFeedback(readyClient).catch(() => {}), 12_000);
+  setInterval(() => relayWebFeedback(readyClient).catch(() => {}), 45_000);
+
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
   // kill triggers postKillUpdate).
@@ -4583,6 +4590,57 @@ async function _handleAgentLiveState(req, res) {
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
+  }
+}
+
+// Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
+// thread, mirroring the /feedback command's embed + buttons, then stamp the
+// row's discord_msg_id/link so it's posted exactly once. Called on an interval
+// from ClientReady. Best-effort; transient failures retry next cycle.
+async function relayWebFeedback(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  if (!threadId) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+
+  let rows;
+  try {
+    rows = await supabase.select(
+      'feedback',
+      'discord_msg_id=is.null&order=submitted_at.asc&limit=10&select=id,submitter_name,submitter_discord_id,category,message,submitted_at',
+    );
+  } catch { return; }
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  let thread;
+  try { thread = await readyClient.channels.fetch(threadId); } catch { return; }
+  const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+
+  for (const r of rows) {
+    try {
+      const cat = r.category || 'general';
+      const embed = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle(`📬 Feedback — ${cat}`)
+        .setDescription(String(r.message || '(no message)').slice(0, 4000))
+        .addFields({ name: 'Submitted by', value: r.submitter_name || 'web (anonymous)', inline: true })
+        .setFooter({ text: r.submitter_discord_id ? `uid:${r.submitter_discord_id} · via web` : 'via wolfpack.quest' })
+        .setTimestamp(r.submitted_at ? new Date(r.submitted_at) : new Date());
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(ButtonStyle.Danger),
+      );
+      const sent    = await thread.send({ embeds: [embed], components: [row] });
+      const guildId = sent?.guildId;
+      const msgLink = guildId ? `https://discord.com/channels/${guildId}/${threadId}/${sent.id}` : null;
+      // Stamp id/link so this row won't be picked up again. If this update
+      // fails, the row re-posts next cycle (rare; acceptable for feedback).
+      await supabase.update('feedback', `id=eq.${encodeURIComponent(r.id)}`, {
+        discord_msg_id: sent.id, discord_msg_link: msgLink,
+      });
+    } catch (err) {
+      console.warn('[feedback-relay] failed for', r.id, err?.message);
+    }
   }
 }
 
