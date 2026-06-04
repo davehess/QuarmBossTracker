@@ -2,9 +2,9 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.12 | `package.json` |
+| **Bot** | 3.0.13 | `package.json` |
 | **Agent** (`wolfpack-logsync`) | 3.0.13 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 1.0.18 | `web/package.json` |
+| **Web** (`wolfpack.quest`) | 1.0.19 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.15 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14

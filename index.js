@@ -2583,7 +2583,7 @@ function getCurrentEra() {
 // in one call. Best-effort: failures are warned and swallowed so the upload
 // response is never blocked on the metadata write. (payloadBytes is no longer
 // stored — the counter doesn't track per-upload bytes.)
-function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null }) {
+function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null, uploadedBy = null }) {
   void payloadBytes;
   try {
     const supabase = require('./utils/supabase');
@@ -2597,6 +2597,7 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
       p_status:      statusCode,
       p_error:       errorMessage,
       p_agent_state: agentState,
+      p_uploaded_by: uploadedBy || null,
     }).catch(err => console.warn('[agent-uploads] stat bump failed:', err?.message));
   } catch (err) {
     console.warn('[agent-uploads] track failed:', err?.message);
@@ -2788,7 +2789,7 @@ async function _handleAgentChat(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
+  _trackUpload({ endpoint: 'chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, posted }));
 }
@@ -3159,7 +3160,7 @@ async function _handleAgentPvp(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'pvp', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
+  _trackUpload({ endpoint: 'pvp', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, posted, deduped, kills_recorded: pvpKillRows.length }));
 }
@@ -3370,7 +3371,7 @@ async function _handleAgentBossKill(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'bosskill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
+  _trackUpload({ endpoint: 'bosskill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
 }
@@ -3717,7 +3718,7 @@ async function _handleAgentThreatSnapshot(req, res) {
   }
   await supabase.upsert('encounter_threat_snapshots', [row], 'guild_id,uploader,boss_name,snapshot_at')
     .catch(err => console.warn('[threat-snap] upsert failed:', err?.message));
-  _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total });
+  _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, written: 1 }));
 }
@@ -4056,7 +4057,7 @@ async function _handleAgentFunEvent(req, res) {
   }
   const written = await supabase.upsert('fun_events', rows, 'guild_id,event_type,caster,event_ts')
     .catch(err => { console.warn('[fun-event] upsert failed:', err?.message); return null; });
-  _trackUpload({ endpoint: 'fun_event', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
+  _trackUpload({ endpoint: 'fun_event', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
 }
@@ -4128,7 +4129,7 @@ async function _handleAgentHistoricalChat(req, res) {
     console.warn('[historical-chat] supabase mirror failed:', err?.message);
   }
 
-  _trackUpload({ endpoint: 'historical_chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
+  _trackUpload({ endpoint: 'historical_chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, stored: lines.length }));
 }
@@ -4196,7 +4197,7 @@ async function _handleAgentLockout(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'lockout', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total });
+  _trackUpload({ endpoint: 'lockout', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
 }
@@ -5747,6 +5748,7 @@ async function _handleAgentUpload(req, res) {
     agentVersion:  payload?.agent_version,
     payloadBytes:  total,
     agentState:    payload?.agent_state || null,
+    uploadedBy:    identity.discord_id,
   });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
