@@ -44,30 +44,30 @@
   #setupbar input[type=range]{flex:1;cursor:pointer}
 
   /* ─── Timer countdown stack ───────────────────────────────────────────
-     One vertical row per active timer in the agent's _activeTimers map.
-     Top-left corner so the centered alert flash stays unblocked. Each row
-     is name + remaining + a progress bar that shrinks as the timer ticks.
-     Soonest-to-expire is on top (the agent sorts that way).             */
+     GINA-style debuff-tracker rows: time on the LEFT (monospace, padded),
+     then "Boss - Effect" label. No progress bar — the time count IS the
+     progress. One row per active timer in the agent's _activeTimers map.
+     Top-left corner so the centered alert flash stays unblocked. Soonest-
+     to-expire is on top (the agent sorts that way).                      */
   #timers{position:fixed;top:34px;left:8px;display:flex;flex-direction:column;
-    gap:4px;z-index:40;min-width:180px;max-width:280px;pointer-events:none}
-  .timer-row{padding:4px 8px;background:rgba(0,0,0,0.55);border-radius:4px;
-    border-left:3px solid #f6c365;color:#fff;font-size:12px;line-height:1.2;
-    text-shadow:0 1px 2px #000}
-  .timer-row .timer-head{display:flex;justify-content:space-between;gap:8px;
-    margin-bottom:2px}
-  .timer-row .timer-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;
-    white-space:nowrap;flex:1}
+    gap:2px;z-index:40;min-width:180px;max-width:320px;pointer-events:none;
+    font-family:ui-monospace,Menlo,Consolas,monospace}
+  .timer-row{display:flex;align-items:baseline;gap:8px;
+    padding:2px 8px;background:rgba(0,0,0,0.6);border-radius:3px;
+    color:#fff;font-size:13px;line-height:1.25;
+    text-shadow:0 1px 2px #000;border-left:2px solid #f6c365}
   .timer-row .timer-remain{color:#f6c365;font-variant-numeric:tabular-nums;
-    font-weight:600;flex-shrink:0}
-  .timer-row .timer-bar{height:3px;background:rgba(255,255,255,0.15);
-    border-radius:2px;overflow:hidden}
-  .timer-row .timer-bar > div{height:100%;background:#f6c365;
-    transition:width 100ms linear}
+    font-weight:600;flex-shrink:0;min-width:3.5em}
+  .timer-row .timer-label{flex:1;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .timer-row .timer-target{color:#fff;font-weight:500}
+  .timer-row .timer-sep{color:rgba(255,255,255,0.45);margin:0 4px}
+  .timer-row .timer-effect{color:#c9d1d9}
   .timer-row.test{border-left-color:#d69922}
-  .timer-row.test .timer-name::after{content:' TEST';color:#d69922;
-    font-size:10px;margin-left:4px}
+  .timer-row.test .timer-label::after{content:' TEST';color:#d69922;
+    font-size:10px;margin-left:6px}
+  .timer-row.warn{background:rgba(60,16,16,0.7);border-left-color:#ff8a65}
   .timer-row.warn .timer-remain{color:#ff8a65}
-  .timer-row.warn .timer-bar > div{background:#ff8a65}
   /* Setup mode pushes the timer stack down so the orange status bar at
      top doesn't sit on top of it. */
   body.setup #timers{top:58px}
@@ -201,37 +201,69 @@
   // every 100ms locally between polls for a snappier feel.
   const timersEl = document.getElementById('timers');
   const timerNodes = new Map();   // id → { row, name, bar, remain, duration_sec, ends_at_local }
+  // GINA-style MM:SS — always 5 chars wide so rows align vertically. For
+  // timers > 1 hour we widen to H:MM:SS instead of overflowing the SS slot.
   function fmtRemain(ms){
-    if (ms <= 0) return '0s';
+    if (ms <= 0) return '00:00';
     const s = Math.ceil(ms / 1000);
-    if (s < 60) return s + 's';
-    const m = Math.floor(s / 60);
-    const rem = s - m * 60;
-    return m + ':' + String(rem).padStart(2, '0');
+    if (s >= 3600) {
+      const h  = Math.floor(s / 3600);
+      const mm = Math.floor((s - h * 3600) / 60);
+      const ss = s - h * 3600 - mm * 60;
+      return h + ':' + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+    }
+    const m  = Math.floor(s / 60);
+    const ss = s - m * 60;
+    return String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+  }
+  // Escape user-controlled text before injecting into innerHTML so a trigger
+  // name with stray HTML can't break the overlay layout.
+  function _esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
   function renderTimers(serverTimers){
     const seen = new Set();
     for (const t of (serverTimers || [])){
       seen.add(t.id);
       let n = timerNodes.get(t.id);
+      const target = t.target || '';
+      const effect = t.effect || t.name || 'timer';
       if (!n){
         const row = document.createElement('div');
         row.className = 'timer-row' + (t.test ? ' test' : '');
+        // GINA-style row: [remain] [Boss - Effect] on one line. No progress
+        // bar; the countdown is the progress. Pad the remain cell so the
+        // labels line up across rows of different durations.
         row.innerHTML =
-          '<div class="timer-head"><span class="timer-name"></span>'
-          + '<span class="timer-remain"></span></div>'
-          + '<div class="timer-bar"><div></div></div>';
+          '<span class="timer-remain"></span>'
+          + '<span class="timer-label">'
+          + (target ? '<span class="timer-target">' + _esc(target) + '</span><span class="timer-sep">-</span>' : '')
+          + '<span class="timer-effect">' + _esc(effect) + '</span>'
+          + '</span>';
         timersEl.appendChild(row);
         n = {
           row,
-          name:    row.querySelector('.timer-name'),
           remain:  row.querySelector('.timer-remain'),
-          bar:     row.querySelector('.timer-bar > div'),
+          target:  target,
+          effect:  effect,
           duration_sec: t.duration_sec || 1,
           warned: false,
         };
-        n.name.textContent = t.name || 'timer';
         timerNodes.set(t.id, n);
+      } else if (n.target !== target || n.effect !== effect) {
+        // Re-fire with different captures shouldn't actually hit the same id
+        // (per-capture keying creates distinct ids), but if the agent ever
+        // remaps an existing timer's label we don't want stale text.
+        const label = n.row.querySelector('.timer-label');
+        if (label) {
+          label.innerHTML =
+            (target ? '<span class="timer-target">' + _esc(target) + '</span><span class="timer-sep">-</span>' : '')
+            + '<span class="timer-effect">' + _esc(effect) + '</span>';
+        }
+        n.target = target;
+        n.effect = effect;
       }
       n.ends_at_local = Date.now() + t.remaining_ms;
       n.duration_sec  = t.duration_sec || n.duration_sec;
@@ -251,8 +283,6 @@
       const remMs = n.ends_at_local - now;
       if (remMs <= 0){ n.row.remove(); timerNodes.delete(id); continue; }
       n.remain.textContent = fmtRemain(remMs);
-      const pct = Math.max(0, Math.min(100, (remMs / (n.duration_sec * 1000)) * 100));
-      n.bar.style.width = pct + '%';
       // Pre-end warning callout: fire once when the countdown crosses into the
       // warning window. Reset the latch if the timer restarts (remaining climbs
       // back above the threshold) so a re-pulled timer warns again.
@@ -260,7 +290,7 @@
         if (remMs > n.warn_ms){ n.warned = false; }
         else if (!n.warned){ n.warned = true; fire({ text: n.warn_text, tts: n.warn_text }); }
       }
-      // Last 5s → switch the row's accent to amber so it visually pops.
+      // Last 5s → amber accent + background so the row visually pops.
       if (remMs < 5000) n.row.classList.add('warn');
       else              n.row.classList.remove('warn');
     }

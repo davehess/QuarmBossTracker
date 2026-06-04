@@ -10759,22 +10759,36 @@ function _startTimer(t, tsMs, isTest, captures) {
   // Captures are sorted by key so insert-order can't cause cache misses.
   const baseId = String(t.id || t.name || 'unknown');
   let captureSuffix = '';
-  let captureLabel  = '';
+  // "target" — the thing the timer is ABOUT (the boss the spell was cast on,
+  // OR the boss currently being fought if no explicit target was captured).
+  // Surfaces as the prefix in the overlay's GINA-style row: "Guardian wurm -
+  // Cripple". When falling back to the current encounter boss, the row reads
+  // exactly like a debuff tracker — boss on the left, effect on the right.
+  let timerTarget = null;
   if (captures && typeof captures === 'object') {
     const keys = Object.keys(captures).sort();
     if (keys.length > 0) {
       captureSuffix = '|' + keys.map(k => k + '=' + String(captures[k])).join('|');
-      // Prefer "target" / "npc" / first capture for the display label.
-      const prefer = captures.target || captures.npc || captures.mob || captures[keys[0]];
-      if (prefer) captureLabel = ': ' + String(prefer);
+      timerTarget = captures.target || captures.npc || captures.mob || captures[keys[0]] || null;
     }
+  }
+  // Fallback: use the current encounter's boss name when the trigger pattern
+  // didn't carry a target capture. Most boss-cast spells don't name the mob in
+  // the log line ("Cripple lands on you"), so the bossName context is what
+  // makes the timer label informative on the overlay.
+  if (!timerTarget && stats.currentEncounterThreat && stats.currentEncounterThreat.bossName) {
+    timerTarget = stats.currentEncounterThreat.bossName;
   }
   const id = baseId + captureSuffix;
   const startMs = tsMs || Date.now();
   const action = (Array.isArray(t.actions) && t.actions[0]) || {};
   _activeTimers.set(id, {
     id,
-    name:           (t.name || 'timer') + captureLabel,
+    // `name` keeps backward compatibility (older dashboards read it). The
+    // overlay renderer prefers `target` + `effect` for the GINA-style row.
+    name:           timerTarget ? (timerTarget + ' - ' + (t.name || 'timer')) : (t.name || 'timer'),
+    target:         timerTarget || null,
+    effect:         t.name || 'timer',
     started_at_ms:  startMs,
     ends_at_ms:     startMs + (t.timer_duration_sec * 1000),
     duration_sec:   t.timer_duration_sec,
@@ -10802,6 +10816,8 @@ function _activeTimersSnapshot() {
     out.push({
       id:           t.id,
       name:         t.name,
+      target:       t.target || null,   // GINA-style row prefix (boss/mob)
+      effect:       t.effect || t.name, // GINA-style row suffix (spell/effect)
       remaining_ms: t.ends_at_ms - now,
       duration_sec: t.duration_sec,
       color:        t.color,
