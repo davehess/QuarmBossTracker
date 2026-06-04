@@ -104,8 +104,13 @@ function defaultConfig() {
     eqPathsExcluded: [],     // auto-detected paths the user explicitly unchecked
     botUrl: 'https://wolfpackparse.up.railway.app/api/agent/encounter',
     token: null,
-    showHud: true,           // DPS HUD overlay user pref
-    enableTriggerTts: true,  // Trigger TTS overlay user pref
+    // Overlays default OFF on a fresh install — a brand-new user shouldn't be
+    // ambushed by floating windows before they've opted in. They turn these on
+    // from the first-run setup page or the tray "Overlays" submenu. (Existing
+    // installs keep whatever they had: loadConfig does Object.assign over the
+    // saved config, and onboarded users have these persisted already.)
+    showHud: false,          // DPS HUD overlay user pref
+    enableTriggerTts: false, // Trigger TTS overlay user pref
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
     tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
     onboarded: false,        // false until user dismisses or completes loading
@@ -1950,6 +1955,58 @@ ipcMain.handle('overlay-drag-start', (e) => {
   return true;
 });
 ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
+
+// Hover-to-interact for click-through overlays. When overlays are LOCKED they
+// are click-through (setIgnoreMouseEvents(true,{forward:true})), so a corner
+// button (✕ hide / ⚙ gear) wouldn't catch a click. The forward:true flag means
+// the renderer still receives mousemove/enter/leave, so a control can ask us to
+// momentarily make ITS window interactive while the cursor is over it, then
+// restore the click-through state on mouseleave. Standard Electron recipe.
+ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    if (wantInteractive) {
+      win.setIgnoreMouseEvents(false);
+    } else {
+      // Restore whatever the lock state dictates for this window.
+      const cfg = loadConfig();
+      const locked = !setupMode && cfg.overlaysLocked !== false;
+      if (locked) win.setIgnoreMouseEvents(true, { forward: true });
+      else        win.setIgnoreMouseEvents(false);
+    }
+  } catch {}
+  return true;
+});
+
+// Hide the overlay that sent this — the ✕ in an overlay's corner. For the
+// named overlays (hud/trigger/charm) we flip the matching pref OFF (so it
+// stays hidden across restarts and the tray checkbox updates); for a panel
+// overlay we just close the window. The user re-enables named overlays from
+// the tray "Overlays" submenu.
+ipcMain.handle('hide-overlay', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const cfg = loadConfig();
+    if (win === overlayWindow) {
+      cfg.showHud = false; saveConfig(cfg);
+      try { overlayWindow.hide(); } catch {}
+    } else if (win === triggerWindow) {
+      cfg.enableTriggerTts = false; saveConfig(cfg);
+      try { triggerWindow.hide(); } catch {}
+    } else if (win === charmWindow) {
+      cfg.showCharm = false; saveConfig(cfg);
+      try { charmWindow.hide(); } catch {}
+    } else {
+      for (const [key, w] of panelOverlays.entries()) {
+        if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
+      }
+    }
+    pushStatus();
+    return true;
+  } catch { return false; }
+});
 
 // EQ install discovery — surfaced to the multi-folder picker UI.
 ipcMain.handle('find-eq-installs', () => {

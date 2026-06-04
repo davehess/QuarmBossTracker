@@ -23,6 +23,23 @@
 ; the boot log "userData=...\AppData\Roaming\wolfpack-mimic". We also sweep the
 ; productName-cased path in case a future build flips that mapping; RMDir on a
 ; missing path is a harmless no-op.
+; Directory-page guidance. Testers (incl. the guild leader) had a hard time
+; choosing an install location because it wasn't clear what the choice means —
+; and one tester dropped the setup .exe into his EverQuest folder expecting it
+; to install there / be his EQ folder. Clarify on the "choose location" page
+; that this is just where the small Mimic APP lives, that the default is fine
+; for almost everyone, and that the EverQuest folder is picked INSIDE the app
+; on first run (not here). customHeader is inserted before the MUI pages, so the
+; define lands in time. Guard with !ifndef so we never collide with an
+; electron-builder define (a redefine would error; a no-op never breaks the
+; build). If the assisted template doesn't consume this constant, it's simply
+; ignored — harmless either way.
+!macro customHeader
+  !ifndef MUI_DIRECTORYPAGE_TEXT_TOP
+    !define MUI_DIRECTORYPAGE_TEXT_TOP "Choose where to install the Wolf Pack Mimic app. The default is fine for almost everyone — this is only where the small app lives, NOT your EverQuest folder. Mimic finds your EQ logs for you on first run. (Advanced: pick your Quarm folder if you like keeping everything in one place.)"
+  !endif
+!macroend
+
 ; A discoverable Start Menu uninstaller. electron-builder registers the
 ; Add/Remove Programs entry, but testers expected to FIND an uninstaller — so
 ; drop a shortcut next to the app's Start Menu entry. ${UNINSTALL_FILENAME} is

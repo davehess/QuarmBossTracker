@@ -34,7 +34,9 @@
   on killer+victim within a 2-min window (web `pvp/[name]/page.tsx`). Any future
   assist work should keep that in mind (or fix the agent to link the FK).
 
-## BACKLOG (pick next 2–3 to do well)
+## BACKLOG — agreed priority order: G → A → C → E → B → H → I → D
+(Set 2026-06-04. Driving toward the next raid: Sun/Wed/Thu 8:30pm ET. Testing
+with colleagues will follow this exact order.)
 
 ### Quick wins
 - **A. Pet slot 16 → charm overlay** — Mimic `_zealAbsorb` reads gauge slot 16
@@ -60,6 +62,31 @@
   `_zealState` changes, debounced). (agent+bot+web)
 
 ### Large
+- **G. Mimic overlay/setup overhaul — ✅ SHIPPED (Mimic 1.0.6).**
+  - Setup page (`loading.html`): Connect card now offers token **OR** Discord
+    sign-in (device-code); new **EverQuest folder** card (2nd item) shows what
+    Mimic auto-detected + lets you add a folder — directly answers "couldn't
+    locate my files"; new **Overlays** opt-in card (all off, live toggles).
+  - Overlays **OFF by default** (`defaultConfig` showHud/enableTriggerTts → false;
+    showCharm was already off). Each overlay (hud/trigger/charm + panel overlays)
+    has a corner **✕** to hide it. ✕ works even when overlays are LOCKED via a
+    new hover-to-interact IPC (`overlay-hover-interactive`) that uses the
+    existing `forward:true` flag — this also makes the injected ⚙ gear clickable
+    when locked (it wasn't before).
+  - New IPC: `hide-overlay`, `overlay-hover-interactive`. New preload bridges:
+    `hideThisOverlay`, `overlayHoverInteractive`. Setup overlay toggles reuse
+    `saveConfig` (its handler already applies visibility live).
+  - Installer (`build/installer.nsh`): added guarded `customHeader` with
+    `MUI_DIRECTORYPAGE_TEXT_TOP` clarifying "this is the app location, not your
+    EQ folder; default is fine." Guarded with `!ifndef` so it can't break the
+    build. **Still TODO (needs a Windows build to validate): the user's
+    "Quick install to AppData vs Choose location" two-mode page** — that needs a
+    real nsDialogs custom page; deferred because a bad .nsh fails the whole Mimic
+    build and we can't test NSIS in this env.
+  - ⚠ Could not build/run Electron here — needs a Windows run to confirm the ✕
+    catches clicks when locked and the setup cards behave. Syntax-checked all
+    four HTML inline scripts + main.js/preload.js via node.
+
 - **F. /who web section** — name search w/ autocomplete, browse-by-guild,
   and let signed-in users set their own toon's class when known (write to
   `characters.class`, owner-gated). Data: `characters` + `who_observations`.

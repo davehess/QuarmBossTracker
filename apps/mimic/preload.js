@@ -37,6 +37,14 @@ contextBridge.exposeInMainWorld('mimic', {
   overlayDragStart: () => ipcRenderer.invoke('overlay-drag-start'),
   overlayDragEnd:   () => ipcRenderer.invoke('overlay-drag-end'),
 
+  // Click-through overlays: ask main to momentarily make THIS window
+  // interactive while the cursor is over a corner control, so the click lands
+  // even when overlays are locked. Pair mouseenter(true)/mouseleave(false).
+  overlayHoverInteractive: (want) => ipcRenderer.invoke('overlay-hover-interactive', !!want),
+  // Hide the overlay that calls this (the ✕). Named overlays flip their pref
+  // off; panel overlays close.
+  hideThisOverlay: () => ipcRenderer.invoke('hide-overlay'),
+
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),
   pickEqDir:      () => ipcRenderer.invoke('pick-eq-dir'),
@@ -100,10 +108,18 @@ if (location.protocol === 'http:') {
       'background:#161b22', 'color:#c9d1d9', 'border:1px solid #2a3140',
       'font-size:17px', 'cursor:pointer', 'line-height:1',
     ].join(';'));
-    gear.onmouseenter = () => { gear.style.borderColor = '#58a6ff'; gear.style.color = '#58a6ff'; };
+    // Hover-to-interact: when this is a (click-through) overlay window, ask
+    // main to make the window interactive while the cursor is over the gear so
+    // the click registers even when overlays are locked. Restore on leave.
+    const _hoverInteractive = (on) => {
+      if (!isOverlayWindow) return;
+      try { ipcRenderer.invoke('overlay-hover-interactive', on); } catch (e) {}
+    };
+    gear.onmouseenter = () => { gear.style.borderColor = '#58a6ff'; gear.style.color = '#58a6ff'; _hoverInteractive(true); };
     gear.onmouseleave = () => {
       gear.style.borderColor = setupOn && isOverlayWindow ? '#d69922' : '#2a3140';
       gear.style.color       = setupOn && isOverlayWindow ? '#d69922' : '#c9d1d9';
+      _hoverInteractive(false);
     };
     gear.onclick = () => {
       try {
@@ -123,6 +139,26 @@ if (location.protocol === 'http:') {
       } catch (e) {}
     };
     document.body.appendChild(gear);
+
+    // ✕ close button — overlay (panel) windows only. Closes this floating
+    // panel directly so the user isn't stuck with a window they can't get rid
+    // of (tester feedback: panel overlays popped up full-window with no way to
+    // close). Sits just left of the gear. Works when locked via hover-interact.
+    if (isOverlayWindow) {
+      const close = document.createElement('button');
+      close.textContent = '✕';
+      close.title = 'Close this overlay';
+      close.setAttribute('style', [
+        'position:fixed', 'top:10px', 'right:52px', 'z-index:99999',
+        'width:34px', 'height:34px', 'border-radius:8px',
+        'background:#161b22', 'color:#c9d1d9', 'border:1px solid #2a3140',
+        'font-size:15px', 'cursor:pointer', 'line-height:1',
+      ].join(';'));
+      close.onmouseenter = () => { close.style.borderColor = '#f87171'; close.style.color = '#f87171'; _hoverInteractive(true); };
+      close.onmouseleave = () => { close.style.borderColor = '#2a3140'; close.style.color = '#c9d1d9'; _hoverInteractive(false); };
+      close.onclick = () => { try { ipcRenderer.invoke('hide-overlay'); } catch (e) {} };
+      document.body.appendChild(close);
+    }
 
     // Skip the connection banner in overlay windows — the banner is a
     // main-dashboard nudge ("paste your token to start sharing parses").

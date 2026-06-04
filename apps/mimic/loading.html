@@ -119,18 +119,72 @@
   <h2>Quick setup <span style="color:#6b7280;text-transform:none;font-weight:normal">— change any of these later from the tray menu</span></h2>
   <p class="section-hint">Everything below is optional. Skip to launch in local-only mode and edit settings whenever.</p>
 
-  <!-- TOKEN -->
+  <!-- CONNECT (token OR Discord) -->
   <div class="card" id="cardToken">
     <div class="card-h">
       <span class="ico">🔑</span>
-      <span class="title">Wolf Pack token</span>
+      <span class="title">Connect to Wolf Pack</span>
       <span class="badge" id="tokenBadge">Optional</span>
     </div>
-    <p>Paste your token to share parses with the guild and unlock your stats on wolfpack.quest. Leave blank to use Mimic locally only — no uploads.</p>
+    <p>Share your parses with the guild and unlock your stats on wolfpack.quest. Connect <b>either</b> way below — or leave both blank to run Mimic locally only (no uploads).</p>
+
+    <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin:2px 0 6px">Option A — paste a token</div>
     <div class="row">
       <input id="token" type="text" placeholder="Run /token in Discord and paste here…" />
       <button id="saveToken">Save token</button>
       <span class="saved" id="tokenSaved"></span>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin:12px 0 8px">
+      <div style="flex:1;height:1px;background:#2a3140"></div>
+      <span style="font-size:10px;color:#6b7280">OR</span>
+      <div style="flex:1;height:1px;background:#2a3140"></div>
+    </div>
+
+    <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin:2px 0 6px">Option B — sign in with Discord</div>
+    <div id="acctSignedOut" class="row">
+      <button id="acctSignInBtn" style="background:#5865f2">⛓ Sign in with Discord</button>
+      <span class="saved" style="color:#6b7280">Persists across upgrades · unlocks cross-machine sync</span>
+    </div>
+    <div id="acctLinking" style="display:none;margin-top:8px;padding:10px 12px;background:#0e1116;border:1px dashed #58a6ff;border-radius:6px">
+      <div style="font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Paste this code at <span id="acctLinkUrl" style="color:#58a6ff">wolfpack.quest/auth/mimic-link</span> (we opened it for you)</div>
+      <div class="row">
+        <div id="acctLinkCode" style="font-size:22px;letter-spacing:0.3em;color:#f6c365;font-weight:bold;background:#161b22;border:1px solid #2a3140;border-radius:4px;padding:5px 12px">------</div>
+        <button id="acctLinkCopyBtn" class="ghost">Copy</button>
+        <span id="acctLinkRemaining" style="font-size:11px;color:#8b949e"></span>
+        <button id="acctLinkCancelBtn" class="ghost">Cancel</button>
+      </div>
+    </div>
+    <div id="acctSignedIn" style="display:none;margin-top:8px;padding:10px 12px;background:#0f2a1a;border:1px solid #1a7f37;border-radius:6px">
+      <div class="row">
+        <span style="font-size:13px">✓ Signed in as <b id="acctName" style="color:#56d364">—</b></span>
+        <button id="acctSignOutBtn" class="ghost" style="margin-left:auto">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EQ FOLDERS (2nd item — Mimic reads your EQ logs to parse) -->
+  <div class="card" id="cardEq">
+    <div class="card-h">
+      <span class="ico">📁</span>
+      <span class="title">EverQuest folder</span>
+      <span class="badge" id="eqBadge">Scanning…</span>
+    </div>
+    <p>Mimic parses your fights by reading EverQuest's <b>log files</b>, so it needs your <b>EQ install folder</b>. We scan for it automatically — confirm it below, or add it if your EQ lives somewhere unusual. <span style="color:#6b7280">(This is your EverQuest folder, <i>not</i> where Mimic itself installed.)</span></p>
+    <div id="eqDetectedHint" class="saved" style="color:#8b949e;display:block;margin-bottom:6px">Scanning for eqgame.exe…</div>
+    <div id="eqDetectedList"></div>
+    <div id="eqManualList" style="margin-top:4px"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="eqAddFolder" class="ghost">📁 Add another folder…</button>
+      <button id="eqSave">Save folder</button>
+      <span class="saved" id="eqSaved"></span>
+    </div>
+    <details style="margin-top:8px;font-size:11px;color:#6b7280">
+      <summary style="cursor:pointer">Where did we look?</summary>
+      <div id="eqScannedList" style="margin-top:4px;font-size:10px;line-height:1.6"></div>
+    </details>
+    <div id="eqWarning" style="display:none;margin-top:8px;padding:8px 10px;border-radius:4px;background:#2a2010;border:1px solid #6b5320;color:#f6c365;font-size:11px">
+      ⚠ No EQ folder selected. Mimic can't parse anything until it knows where EverQuest is installed.
     </div>
   </div>
 
@@ -161,6 +215,19 @@
       <input type="checkbox" id="quietMode">
       <span>Quiet mode — uploads only, no local overlays<span class="desc">Switch this off anytime from the tray menu.</span></span>
     </label>
+  </div>
+
+  <!-- OVERLAYS (off by default — opt in here or from the tray) -->
+  <div class="card" id="cardOverlays">
+    <div class="card-h">
+      <span class="ico">🪟</span>
+      <span class="title">On-screen overlays</span>
+      <span class="badge">Off by default</span>
+    </div>
+    <p>Floating, always-on-top panels you can place over EverQuest. All start <b>off</b> — turn on what you want (and change it anytime from the tray → <b>Overlays</b>). Each overlay has an <b>✕</b> in its corner to hide it again, and the tray's <b>Setup mode</b> lets you drag + resize them.</p>
+    <label class="radio"><input type="checkbox" id="ovHud"><span>⚔️ DPS HUD<span class="desc">Live damage for the fight you're in.</span></span></label>
+    <label class="radio"><input type="checkbox" id="ovTrigger"><span>⚡ Trigger alerts (TTS) + timers<span class="desc">Speaks + flashes your raid triggers and shows debuff timers.</span></span></label>
+    <label class="radio"><input type="checkbox" id="ovCharm"><span>🔮 Charm tracker<span class="desc">Recharm countdown — handy for charm classes (enchanters, etc.).</span></span></label>
   </div>
 
   <div class="actions">
@@ -339,6 +406,183 @@
     const mode = cfg.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === mode); });
     $('quietMode').checked = !!cfg.quietMode;
+    $('ovHud').checked     = !!cfg.showHud;
+    $('ovTrigger').checked = !!cfg.enableTriggerTts;
+    $('ovCharm').checked   = !!cfg.showCharm;
+  }
+
+  // ── Overlay opt-in checkboxes ────────────────────────────────────────────
+  // saveConfig's main-process handler applies overlay visibility live, so
+  // flipping one of these shows/hides the overlay immediately (the windows are
+  // created at startup; visibility is governed by these prefs).
+  [['ovHud','showHud'], ['ovTrigger','enableTriggerTts'], ['ovCharm','showCharm']].forEach(([id, key]) => {
+    $(id).addEventListener('change', async (e) => {
+      pingUserInteraction();
+      try { await window.mimic.saveConfig({ [key]: e.target.checked }); } catch (_) {}
+    });
+  });
+
+  // ── EQ folder picker (ported from Settings — same _norm/collect logic) ────
+  let _foundCandidates = [];
+  let _checkedFound    = new Set();
+  let _manualFolders   = [];
+  let _excludedFound   = new Set();
+  function _norm(p){ return String(p || '').replace(/[\\/]+/g, '\\').replace(/\\+$/, '').toLowerCase(); }
+  function _collectEqPaths(){
+    const out = [];
+    for (const c of _foundCandidates) if (_checkedFound.has(_norm(c.path))) out.push(c.path);
+    for (const p of _manualFolders) out.push(p);
+    return out;
+  }
+  function _updateEqBadge(){
+    const total = _checkedFound.size + _manualFolders.length;
+    $('eqWarning').style.display = total === 0 ? 'block' : 'none';
+    const badge = $('eqBadge');
+    if (total === 0) { badge.textContent = 'Action needed'; badge.className = 'badge priv'; }
+    else { badge.textContent = total === 1 ? '1 folder' : total + ' folders'; badge.className = 'badge ok'; }
+  }
+  function _renderEqPicker(){
+    const list = $('eqDetectedList');
+    const hint = $('eqDetectedHint');
+    if (_foundCandidates.length === 0) {
+      hint.textContent = 'No EQ install auto-detected. Use “Add another folder…” to point Mimic at your EverQuest folder.';
+      list.innerHTML = '';
+    } else {
+      hint.textContent = 'Auto-detected — tick the folder(s) Mimic should read:';
+      list.innerHTML = _foundCandidates.map((c, i) => {
+        const checked = _checkedFound.has(_norm(c.path));
+        const meta = [];
+        if (c.hasEqgame) meta.push('<span style="color:#56d364">eqgame.exe</span>');
+        if (c.hasLogs)   meta.push((c.logCount || 0) + ' log file' + (c.logCount === 1 ? '' : 's'));
+        else             meta.push('<span style="color:#6b7280">no logs yet</span>');
+        return '<label class="radio" style="align-items:center">' +
+          '<input type="checkbox" class="eqDet" data-idx="' + i + '" ' + (checked ? 'checked' : '') + '>' +
+          '<span><code>' + c.path.replace(/</g,'&lt;') + '</code>' +
+          '<span class="desc">' + meta.join(' · ') + '</span></span></label>';
+      }).join('');
+      list.querySelectorAll('.eqDet').forEach(cb => cb.addEventListener('change', e => {
+        pingUserInteraction();
+        const p = _norm(_foundCandidates[+e.target.dataset.idx].path);
+        if (e.target.checked) { _checkedFound.add(p); _excludedFound.delete(p); }
+        else                  { _checkedFound.delete(p); _excludedFound.add(p); }
+        _updateEqBadge();
+      }));
+    }
+    const ml = $('eqManualList');
+    if (_manualFolders.length === 0) ml.innerHTML = '';
+    else ml.innerHTML = _manualFolders.map((p, i) =>
+      '<div class="row" style="margin:3px 0;justify-content:space-between">' +
+        '<code style="font-size:11px;color:#c9d1d9">' + p.replace(/</g,'&lt;') + '</code>' +
+        '<button type="button" class="eqRm ghost" data-idx="' + i + '" style="padding:2px 8px">✕ Remove</button>' +
+      '</div>').join('');
+    ml.querySelectorAll('.eqRm').forEach(b => b.addEventListener('click', e => {
+      _manualFolders.splice(+e.target.dataset.idx, 1); _renderEqPicker(); _updateEqBadge();
+    }));
+    _updateEqBadge();
+  }
+  async function _loadEqFolders(){
+    let c = {}; try { c = await window.mimic.getConfig(); } catch (_) {}
+    let discovery = { found: [], scanned: [] };
+    try { discovery = await window.mimic.findEqInstalls(); } catch (_) {}
+    _foundCandidates = (discovery && discovery.found) || [];
+    const cfgPaths = Array.isArray(c.eqPaths) ? c.eqPaths : (c.eqPath ? [c.eqPath] : []);
+    const cfgLower = new Set(cfgPaths.map(_norm));
+    const exclLower = new Set((c.eqPathsExcluded || []).map(_norm));
+    _checkedFound = new Set(); _excludedFound = new Set();
+    for (const f of _foundCandidates) {
+      const np = _norm(f.path);
+      if (exclLower.has(np)) _excludedFound.add(np);
+      else if (cfgLower.has(np)) _checkedFound.add(np);
+      else if (f.hasEqgame && cfgPaths.length === 0) _checkedFound.add(np); // first-run prefill
+    }
+    const foundSet = new Set(_foundCandidates.map(f => _norm(f.path)));
+    _manualFolders = cfgPaths.filter(p => !foundSet.has(_norm(p)));
+    $('eqScannedList').innerHTML = (discovery.scanned || []).map(p =>
+      '<div>· <code>' + p.replace(/</g,'&lt;') + '</code></div>').join('') || '<div>No scan results.</div>';
+    _renderEqPicker();
+  }
+  $('eqAddFolder').addEventListener('click', async () => {
+    pingUserInteraction();
+    try {
+      const picked = await window.mimic.pickEqDir();
+      if (!picked) return;
+      const np = _norm(picked);
+      const match = _foundCandidates.find(c => _norm(c.path) === np);
+      if (match) { _checkedFound.add(np); _excludedFound.delete(np); }
+      else if (!_manualFolders.some(p => _norm(p) === np)) _manualFolders.push(picked);
+      _renderEqPicker();
+    } catch (_) {}
+  });
+  $('eqSave').addEventListener('click', async () => {
+    const btn = $('eqSave');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await window.mimic.saveConfig({
+        eqPaths: _collectEqPaths(),
+        eqPathsExcluded: [..._excludedFound],
+        eqPath: null,
+      });
+      await window.mimic.relaunchAgent();
+      $('eqSaved').textContent = '✓ saved · engine restarting';
+      // Re-poll readiness since the agent just restarted with new folders.
+      agentReady = false; _firstRun = false;
+      setStep(2, 'active'); setStep(3, ''); setStep(4, '');
+      stopCountdown();
+      setTimeout(() => { $('eqSaved').textContent = ''; }, 4000);
+      pollEngine();
+    } catch (e) {
+      $('eqSaved').textContent = '✕ ' + (e && e.message ? e.message : String(e));
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save folder';
+    }
+  });
+
+  // ── Wolf Pack account (Discord device-code login) ────────────────────────
+  function _fmtRemaining(ms){
+    if (!ms || ms < 0) return '';
+    const s = Math.ceil(ms / 1000);
+    if (s < 60) return s + 's left';
+    const m = Math.floor(s / 60), r = s - m * 60;
+    return m + ':' + String(r).padStart(2, '0') + ' left';
+  }
+  let _linkRemainingTimer = null;
+  function _renderAccount(status){
+    const linking = status && status.mimicLinking;
+    const session = status && status.mimicSession;
+    $('acctSignedOut').style.display = (!linking && !session) ? '' : 'none';
+    $('acctLinking').style.display   = linking ? '' : 'none';
+    $('acctSignedIn').style.display  = session ? '' : 'none';
+    if (linking) {
+      $('acctLinkCode').textContent = linking.user_code;
+      $('acctLinkUrl').textContent  = (linking.verification_url || 'wolfpack.quest/auth/mimic-link').replace(/^https?:\/\//, '');
+      if (_linkRemainingTimer) clearInterval(_linkRemainingTimer);
+      const paint = () => {
+        const rem = (linking.expires_at || 0) - Date.now();
+        $('acctLinkRemaining').textContent = _fmtRemaining(rem);
+        if (rem <= 0 && _linkRemainingTimer) { clearInterval(_linkRemainingTimer); _linkRemainingTimer = null; }
+      };
+      paint(); _linkRemainingTimer = setInterval(paint, 1000);
+    } else if (_linkRemainingTimer) { clearInterval(_linkRemainingTimer); _linkRemainingTimer = null; }
+    if (session) {
+      $('acctName').textContent = session.display_name || session.discord_id || 'your Discord account';
+      // A completed sign-in is a deliberate decision — release the first-run gate.
+      _firstRun = false;
+    }
+  }
+  function _initAccount(){
+    $('acctSignInBtn').addEventListener('click', async () => {
+      pingUserInteraction();
+      const btn = $('acctSignInBtn'); btn.disabled = true; const orig = btn.textContent; btn.textContent = '⛓ Opening browser…';
+      try { await window.mimic.mimicLinkStart(); /* status push flips to Linking */ }
+      finally { btn.disabled = false; btn.textContent = orig; }
+    });
+    $('acctLinkCopyBtn').addEventListener('click', () => {
+      try { navigator.clipboard.writeText($('acctLinkCode').textContent); } catch (_) {}
+    });
+    $('acctLinkCancelBtn').addEventListener('click', async () => { try { await window.mimic.mimicLinkCancel(); } catch (_) {} });
+    $('acctSignOutBtn').addEventListener('click', async () => { try { await window.mimic.mimicLinkSignOut(); } catch (_) {} });
+    window.mimic.getStatus().then(_renderAccount).catch(() => {});
+    window.mimic.onStatus(_renderAccount);
   }
 
   // ── Card actions ─────────────────────────────────────────────────────────
@@ -392,6 +636,8 @@
   // request takes ~500ms minimum.
   _checkFirstRun();
   hydrate();
+  _loadEqFolders();
+  _initAccount();
   pollEngine();
 
   // Once the user clicks Save token (in the existing handler) OR Skip,
