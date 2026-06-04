@@ -83,6 +83,17 @@ let settingsWindow = null;
 // "damage-done-this-session"). One window per panel; calling
 // createPanelOverlay again with the same key focuses the existing window.
 const panelOverlays = new Map(); // panelKey -> BrowserWindow
+// Named dashboard panels surfaced as tray "Overlays" toggles (in addition to
+// the card "🪟 overlay" buttons). `key` is the emoji-stripped panel title; the
+// dashboard overlay matcher resolves it to the real (emoji-titled) card via
+// _pkStrip. Keep these in sync with the dashboard <h2> titles in the agent.
+const PANEL_OVERLAYS = [
+  { label: '💥 DEEPS — damage breakdown', key: 'deeps' },
+  { label: '💚 Healing — this fight',     key: 'healing' },
+  { label: '🛡 Incoming damage (tanking)', key: 'incoming damage' },
+  { label: '⚔️ Threat detail',            key: 'threat detail' },
+  { label: '📊 Top damage (overall)',     key: 'top damage this session' },
+];
 let tray = null;
 let agentProc = null;
 let agentPort = BASE_PORT;
@@ -1381,7 +1392,7 @@ function createPanelOverlay(panelKey) {
   win.loadURL(`http://127.0.0.1:${agentPort}/?overlay=${encodeURIComponent(panelKey)}`);
   win.on('moved',  () => _persistBounds(boundsKey, win));
   win.on('resize', () => _persistBounds(boundsKey, win));
-  win.on('closed', () => { panelOverlays.delete(panelKey); });
+  win.on('closed', () => { panelOverlays.delete(panelKey); try { pushStatus(); } catch {} });
   win.once('ready-to-show', () => {
     win.showInactive();
     applyOverlayInteractivity();
@@ -1652,6 +1663,20 @@ function buildTrayMenu() {
         if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility();
         pushStatus();
       } },
+    { type: 'separator' },
+    // Panel overlays — surface the most-wanted dashboard panels as named
+    // toggles (the same windows the card "🪟 overlay" buttons open). Checked =
+    // that overlay window is currently open; clicking toggles it. The key is the
+    // emoji-stripped panel title; the dashboard's overlay matcher resolves it to
+    // the emoji-titled card (_pkStrip in WEB_HTML). createPanelOverlay itself
+    // toggles (open if closed, close if open).
+    { label: 'Panel overlays', enabled: false },
+    ...PANEL_OVERLAYS.map(p => ({
+      label: '  ' + p.label,
+      type: 'checkbox',
+      checked: panelOverlays.has(p.key),
+      click: () => { createPanelOverlay(p.key); pushStatus(); },
+    })),
     { type: 'separator' },
     // Lock toggle — unchecking makes the overlays grabbable so you can drag +
     // resize them; checking locks them click-through in place. Pure window

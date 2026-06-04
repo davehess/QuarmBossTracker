@@ -52,10 +52,19 @@ with colleagues will follow this exact order.)
   should expand to show which mobs cast each spell + counts. Needs the agent to
   track per-caster breakdown for resisted spells (currently only spell→count;
   "Last seen from" is always —). (agent)
-- **C. Overlays submenu expansion** — tray Overlays submenu currently has DPS
-  HUD / Trigger alerts / Charm. Add: Healing, Tanking, Threat, Overall DMG,
-  Buff Timers (these already exist as dashboard panel overlays via the card
-  "🪟 overlay" buttons; surface them as named toggles too). (mimic)
+- **C. Overlays submenu expansion — ✅ SHIPPED (agent 3.0.5 · Mimic 1.0.8).**
+  Tray Overlays submenu now has a "Panel overlays" group with named toggles:
+  💥 DEEPS, 💚 Healing, 🛡 Incoming damage (tanking), ⚔️ Threat detail, 📊 Top
+  damage (overall). Each is a checkbox (checked = that panel-overlay window is
+  open) that toggles `createPanelOverlay(key)`. Keys are emoji-stripped panel
+  titles; the dashboard overlay matcher gained an emoji-stripped fallback
+  (`_pkStrip`) so an ASCII key resolves to the emoji-titled card without
+  reproducing exact emoji bytes. Panel `closed` now refreshes the tray.
+  NOTE: "Buff Timers" was intentionally NOT added here — there's no dashboard
+  panel for it yet; it's really backlog **H** (buff/debuff coordination queue).
+  The trigger overlay's timer stack already covers ad-hoc timers.
+  PANEL_OVERLAYS list lives in `apps/mimic/main.js` — keep in sync with the
+  agent dashboard <h2> titles.
 
 ### Medium
 - **D. Detrimental-spell assist credit** — a debuff cast on the PvP victim

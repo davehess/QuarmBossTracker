@@ -5552,13 +5552,20 @@ async function dismissTopDamage(key) {
   } catch (err) {}
   if (overlayKey){
     document.body.classList.add("wp-overlay-mode");
+    // Strip a leading emoji/symbol run so an ASCII key opens an emoji-titled
+    // panel. The 🪟 buttons pass the exact key (emoji included) → exact match;
+    // the tray's Overlays submenu passes a clean key ("healing","threat detail")
+    // → this fallback resolves it to "💚 healing" / "⚔️ threat detail" without
+    // anyone having to reproduce the exact emoji bytes. No-op for ASCII titles.
+    function _pkStrip(s){ return String(s == null ? "" : s).replace(/^[^a-z0-9]+/i, "").trim(); }
+    var overlayKeyStripped = _pkStrip(overlayKey);
     function applyOverlayTarget(){
       var cards = document.querySelectorAll(".section .card");
       var matched = false;
       for (var i = 0; i < cards.length; i++){
         var c = cards[i];
         var k = panelKeyForCard(c);
-        if (k === overlayKey){ c.classList.add("wp-overlay-target"); matched = true; }
+        if (k === overlayKey || _pkStrip(k) === overlayKeyStripped){ c.classList.add("wp-overlay-target"); matched = true; }
         else c.classList.remove("wp-overlay-target");
       }
       // If the panel hasn't rendered yet (data not received), the overlay
