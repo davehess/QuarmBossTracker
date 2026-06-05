@@ -131,6 +131,11 @@ function defaultConfig() {
     quietUpdates: true,
     tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
     onboarded: false,        // false until user dismisses or completes loading
+    // Per-character "do not transmit" list. Names are case-sensitive as they
+    // appear in the eqlog filename (eqlog_<Name>_pq.proj.txt → <Name>). The
+    // agent honors this at the OUTERMOST boundary — excluded log files are
+    // never opened. Going-forward only; doesn't touch already-uploaded data.
+    excludedCharacters: [],
     // Overlay positioning. Locked = click-through, lives in place. Unlocked =
     // draggable + resizable handle shown, NOT click-through, so the user can
     // reposition. Toggling lock is a pure window operation — NEVER restarts
@@ -1173,6 +1178,15 @@ async function launchAgent() {
   // when we have a token + upload URL — local-only installs leave it unset so
   // the agent never tries to upload.
   if (uploadToken && cfg.botUrl) env.WOLFPACK_TOKEN = uploadToken;
+  // Per-character "do not transmit" list — for friends' boxes that play in
+  // other guilds, or any toon the user wants kept out of our DB entirely. The
+  // agent honors this at the outermost boundary (excluded logs aren't tailed),
+  // so nothing about those characters can leave the machine. Set from
+  // onboarding / Settings; user owns the choice.
+  const excluded = Array.isArray(cfg.excludedCharacters)
+    ? cfg.excludedCharacters.map(s => String(s || '').trim()).filter(Boolean)
+    : [];
+  if (excluded.length > 0) env.WOLFPACK_EXCLUDED_CHARS = excluded.join(',');
 
   agentProc = spawn(process.execPath, args, {
     env,
@@ -2267,6 +2281,43 @@ ipcMain.handle('ui-studio-list-characters', () => {
   // Biggest log first (most-played characters at the top of the picker).
   out.sort((a, b) => (b.log_size || 0) - (a.log_size || 0));
   return out;
+});
+
+// Enumerate every character detected in the user's configured EQ folders by
+// log filename (eqlog_<Name>_pq.proj.txt). Used by the onboarding "Transmit?"
+// picker so the user can opt characters out of uploads before any data leaves
+// the machine. log_size lets us sort most-played first; ago_days lets the UI
+// hint at clearly-dormant boxes.
+ipcMain.handle('list-eq-characters', () => {
+  const cfg = loadConfig();
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  const dirs = userPaths.filter(p => _dirHasEqLogs(p));
+  if (dirs.length === 0) return [];
+  const byName = new Map();
+  const now = Date.now();
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const f of entries) {
+      if (!_isEqLogFile(dir, f)) continue;
+      const name = _characterFromLogName(f);
+      if (!name) continue;
+      let size = 0, mtime = 0;
+      try { const st = fs.statSync(path.join(dir, f)); size = st.size; mtime = st.mtime.getTime(); } catch {}
+      const prev = byName.get(name);
+      if (!prev || size > prev.log_size) byName.set(name, { character: name, eqDir: dir, log_size: size, last_mtime: mtime });
+    }
+  }
+  const excluded = new Set(((cfg.excludedCharacters) || []).map(s => String(s || '').toLowerCase()));
+  return [...byName.values()]
+    .map(r => ({
+      ...r,
+      ago_days: r.last_mtime ? Math.floor((now - r.last_mtime) / (24 * 3600 * 1000)) : null,
+      excluded: excluded.has(r.character.toLowerCase()),
+    }))
+    .sort((a, b) => (b.log_size || 0) - (a.log_size || 0));
 });
 
 // Capture: read every ini for the character, upload encrypted to the bot.

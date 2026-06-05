@@ -190,11 +190,24 @@
     </div>
   </div>
 
+  <!-- STEP 3 — CHARACTERS (per-character "Transmit?" opt-out) -->
+  <div class="card" id="cardChars">
+    <div class="card-h">
+      <span class="ico">🧙</span>
+      <span class="title">Step 3 · Your characters</span>
+      <span class="badge" id="charsBadge">Scanning…</span>
+    </div>
+    <p>Mimic detected these characters in your EverQuest folder. Uncheck any toon you <b>don&apos;t</b> want Mimic to transmit data for — useful for friends&apos; boxes that play in other guilds, alts you share, or anything you want kept private. Going-forward only: this won&apos;t touch data already uploaded. Change anytime from the tray menu.</p>
+    <div id="charsList" style="margin-top:6px">
+      <div class="saved" style="color:#8b949e">Pick your EverQuest folder above first, then we&apos;ll list your characters here.</div>
+    </div>
+  </div>
+
   <!-- TELLS -->
   <div class="card" id="cardTells">
     <div class="card-h">
       <span class="ico">💬</span>
-      <span class="title">Step 3 · Your /tells</span>
+      <span class="title">Step 4 · Your /tells</span>
       <span class="badge priv">🔒 PRIVATE</span>
     </div>
     <p>EverQuest writes your <i>tells</i> to your log file. Mimic can surface them so you don't miss one mid-raid. Tells never leave your machine unencrypted — even "Synced" stores them encrypted with a key only you hold.</p>
@@ -262,11 +275,14 @@
   let agentReady      = false;
   // Onboarding gate — the dashboard does NOT open until the user has finished
   // the sequence: (1) signed in OR explicitly chose local-only, (2) an EQ
-  // folder is configured, (3) the engine is up. No auto-redirect; the user
-  // clicks Open dashboard when the gate clears.
+  // folder is configured, (3) the engine is up. First-run users click the
+  // button; RETURNING users (cfg.onboarded === true) auto-open the moment the
+  // engine reports ready, so the launcher feels like the background app it is.
   let signedIn        = false;
   let localOnlyChosen = false;
   let eqConfigured    = false;
+  let _wasOnboarded   = false;
+  let _autoOpened     = false;
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function $(id){ return document.getElementById(id); }
@@ -287,6 +303,13 @@
   function markEngineUp(){
     agentReady = true;
     refreshGate();
+    // Returning users skip this screen: the moment the engine is up, jump to
+    // the dashboard. New users (never onboarded) still have to click through
+    // the setup cards so they see the privacy / overlay choices once.
+    if (_wasOnboarded && !_autoOpened) {
+      _autoOpened = true;
+      setTimeout(openDashboard, 200);
+    }
   }
 
   // Single source of truth for onboarding progress. Recomputes the step chips,
@@ -406,6 +429,13 @@
     $('ovTrigger').checked = !!cfg.enableTriggerTts;
     $('ovCharm').checked   = !!cfg.showCharm;
     refreshGate();
+    // Returning users who already finished onboarding skip this screen — boot
+    // straight to the dashboard once it's up so Mimic feels like the
+    // background app it should be. We don't auto-mark them onboarded here;
+    // refreshGate() controls visibility of the manual button independently.
+    if (cfg.onboarded) {
+      _wasOnboarded = true;
+    }
   }
 
   // ── Overlay opt-in checkboxes ────────────────────────────────────────────
@@ -526,6 +556,7 @@
       // Re-poll readiness since the agent just restarted with new folders.
       agentReady = false;
       refreshGate();
+      _loadCharacters();   // refresh the character picker now folders changed
       setTimeout(() => { $('eqSaved').textContent = ''; }, 4000);
       pollEngine();
     } catch (e) {
@@ -534,6 +565,74 @@
       btn.disabled = false; btn.textContent = 'Save folder';
     }
   });
+
+  // ── Per-character "Transmit?" picker (Step 3) ──────────────────────────────
+  // Lists every character detected by log filename in the configured EQ
+  // folders, with a checkbox each. Unchecking adds to excludedCharacters; the
+  // agent skips those logs entirely on its next launch. Most-played
+  // characters (biggest log) sort first; dormant boxes (>30d) get a hint chip
+  // so a user can spot "oh, that\'s the friend\'s box" at a glance.
+  let _chars = [];
+  let _excludedChars = new Set(); // lower-case names
+  function _renderCharacters() {
+    const list = $('charsList');
+    const badge = $('charsBadge');
+    if (_chars.length === 0) {
+      list.innerHTML = '<div class="saved" style="color:#8b949e">No characters detected yet. Configure an EverQuest folder above and we\'ll list them here.</div>';
+      badge.textContent = '0 chars'; badge.className = 'badge';
+      return;
+    }
+    const fmtSize = (n) => {
+      if (!n) return '0';
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
+      return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    };
+    list.innerHTML = _chars.map(c => {
+      const lc = c.character.toLowerCase();
+      const transmit = !_excludedChars.has(lc);
+      const meta = [];
+      meta.push(fmtSize(c.log_size) + ' log');
+      if (c.ago_days != null) {
+        if (c.ago_days >= 30) meta.push('<span style="color:#f6c365">last played ' + c.ago_days + 'd ago</span>');
+        else if (c.ago_days >= 7) meta.push(c.ago_days + 'd ago');
+        else meta.push('active this week');
+      }
+      return '<label class="radio" style="align-items:center">' +
+        '<input type="checkbox" class="charTx" data-char="' + c.character.replace(/"/g, '') + '"' + (transmit ? ' checked' : '') + '>' +
+        '<span><b>' + c.character.replace(/</g, '&lt;') + '</b>' +
+        '<span class="desc">Transmit data for this character · ' + meta.join(' · ') + '</span></span></label>';
+    }).join('');
+    list.querySelectorAll('.charTx').forEach(cb => cb.addEventListener('change', e => {
+      pingUserInteraction();
+      const name = e.target.dataset.char;
+      const lc = name.toLowerCase();
+      if (e.target.checked) _excludedChars.delete(lc);
+      else _excludedChars.add(lc);
+      // Persist on every change — small set, cheap. Agent reads on next launch.
+      const out = _chars
+        .filter(c => _excludedChars.has(c.character.toLowerCase()))
+        .map(c => c.character);
+      window.mimic.saveConfig({ excludedCharacters: out }).catch(() => {});
+      _updateCharsBadge();
+    }));
+    _updateCharsBadge();
+  }
+  function _updateCharsBadge() {
+    const total = _chars.length;
+    const out = total - _excludedChars.size;
+    const badge = $('charsBadge');
+    if (total === 0) { badge.textContent = '0 chars'; badge.className = 'badge'; return; }
+    if (out === total) { badge.textContent = total + ' transmitting'; badge.className = 'badge ok'; return; }
+    badge.textContent = out + '/' + total + ' transmitting';
+    badge.className = 'badge priv';
+  }
+  async function _loadCharacters() {
+    let cfg = {}; try { cfg = await window.mimic.getConfig(); } catch (_) {}
+    _excludedChars = new Set((cfg.excludedCharacters || []).map(s => String(s || '').toLowerCase()));
+    try { _chars = await window.mimic.listEqCharacters(); } catch (_) { _chars = []; }
+    _renderCharacters();
+  }
 
   // ── Wolf Pack account (Discord device-code login) ────────────────────────
   function _fmtRemaining(ms){
@@ -639,6 +738,7 @@
   // ── Boot ─────────────────────────────────────────────────────────────────
   hydrate();
   _loadEqFolders();
+  _loadCharacters();
   _initAccount();
   pollEngine();
 </script>
