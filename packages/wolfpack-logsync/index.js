@@ -1640,6 +1640,10 @@ class EncounterBuilder {
       if (event.defender) {
         const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
         this._bumpDefender(def, 'rampageHits', 1);
+        // Callout: announce who's taking the rampage (deduped per-target so a
+        // multi-hit rampage / multi-box logs don't spam it). Silent builders
+        // (opt-in backfill replays) must NOT speak old rampages.
+        if (!this.silent) _announceRampage(def, Date.parse(event.ts) || Date.now());
         // We don't know the exact rampage damage from the announcement line alone —
         // the actual hit lines will follow and be counted in damageTaken normally.
         // rampageDmg is accumulated from tagged damage events below.
@@ -10804,6 +10808,34 @@ const _activeOverlays = [];
 function _pushOverlay(o) {
   _activeOverlays.unshift(o);
   if (_activeOverlays.length > 20) _activeOverlays.length = 20;
+}
+
+// Rampage callouts — "who is on rampage". The agent already parses
+// "<Boss> goes on a RAMPAGE against <Target>!" into a rampage event; this
+// surfaces it on the trigger overlay (flash + TTS) so the raid hears who's
+// taking the rampage. Deduped + rate-limited PER TARGET so a multi-hit
+// rampage (or the same line seen across several boxed logs) doesn't
+// machine-gun the TTS. Gated downstream by the user's "Trigger alerts (TTS)"
+// toggle — the overlay only speaks recentTriggerFires when alerts are on.
+const _rampageAnnounce = new Map();   // target.toLowerCase() → lastAnnounceMs
+const RAMPAGE_ANNOUNCE_COOLDOWN_MS = 6000;
+function _announceRampage(target, tsMs) {
+  if (!target) return;
+  const key = target.toLowerCase();
+  const now = tsMs || Date.now();
+  if (now - (_rampageAnnounce.get(key) || 0) < RAMPAGE_ANNOUNCE_COOLDOWN_MS) return;
+  _rampageAnnounce.set(key, now);
+  if (_rampageAnnounce.size > 50) {
+    for (const [k, v] of _rampageAnnounce) if (now - v > 60000) _rampageAnnounce.delete(k);
+  }
+  _pushOverlay({
+    text:    '🔥 RAMPAGE → ' + target,
+    tts:     target + ' is on rampage',
+    trigger: 'rampage',
+    scope:   'guild',
+    firedAt: now,
+    test:    false,
+  });
 }
 
 // Active timer countdowns driven by triggers with timer_duration_sec > 0.
