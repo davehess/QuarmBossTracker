@@ -3654,6 +3654,37 @@ function _serializeForDashboard() {
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
+    // SUMMONED-pet health for the Pet tracker overlay (mage/necro/beastlord) —
+    // the /pet health snapshot per owner, EXCLUDING pets that are currently
+    // active charms (those render in the charm tracker with their tickdown). No
+    // tickdown here, just HP + buff counters. Filtered to the uploader's own
+    // characters, same as charmPets.
+    petHealth: (() => {
+      const myChars = new Set((stats.watchedLogs || [])
+        .map(w => w && w.character && String(w.character).toLowerCase())
+        .filter(Boolean));
+      // Pet names that belong to an ACTIVE charm session → skip (charm tracker).
+      const activeCharmPets = new Set();
+      for (const [, info] of _charmTickTracker) {
+        if (info && info.is_active && info.pet) activeCharmPets.add(String(info.pet).toLowerCase());
+      }
+      const now = Date.now();
+      const out = [];
+      for (const [owner, snap] of _petHealthByOwner) {
+        if (myChars.size > 0 && !myChars.has(owner)) continue;
+        if (!snap || (now - (snap.last_seen_at || 0)) > PET_HEALTH_TTL_MS) continue;
+        if (snap.pet && activeCharmPets.has(String(snap.pet).toLowerCase())) continue;
+        out.push({
+          owner,
+          pet:         snap.pet,
+          hp_pct:      snap.hp_pct != null ? snap.hp_pct : null,
+          buffs:       Array.isArray(snap.buffs) ? snap.buffs : [],
+          observed_at: snap.last_seen_at,
+        });
+      }
+      out.sort((a, b) => (b.observed_at || 0) - (a.observed_at || 0));
+      return out.slice(0, 12);
+    })(),
     // Send ONLY the inventory fields the dashboard's Weapon Loadouts table
     // uses (weapons + bandolier + meta). The full parsed inventory also carries
     // `worn` and a large `bagged` array (every bag + bank slot) per character —

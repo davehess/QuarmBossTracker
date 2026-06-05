@@ -78,6 +78,7 @@ let mainWindow = null;
 let overlayWindow = null;
 let triggerWindow = null;
 let charmWindow   = null;
+let petsWindow    = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
 // "damage-done-this-session"). One window per panel; calling
@@ -597,6 +598,7 @@ function _boundsKeyForWindow(win) {
   if (win === overlayWindow) return 'hudBounds';
   if (win === triggerWindow) return 'triggerBounds';
   if (win === charmWindow)   return 'charmBounds';
+  if (win === petsWindow)    return 'petsBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1462,6 +1464,7 @@ function _overlayEntries() {
   if (overlayWindow && !overlayWindow.isDestroyed()) out.push(['hud',     overlayWindow]);
   if (triggerWindow && !triggerWindow.isDestroyed()) out.push(['trigger', triggerWindow]);
   if (charmWindow   && !charmWindow.isDestroyed())   out.push(['charm',   charmWindow]);
+  if (petsWindow    && !petsWindow.isDestroyed())    out.push(['pets',    petsWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1514,6 +1517,7 @@ function applySetupMode(on) {
     if (!overlayWindow) createOverlayWindow();
     if (!triggerWindow) createTriggerOverlay();
     if (!charmWindow)   createCharmOverlay();
+    if (!petsWindow)    createPetsOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -1523,6 +1527,7 @@ function applySetupMode(on) {
   applyOverlayVisibility();
   applyTriggerVisibility();
   applyCharmVisibility();
+  applyPetsVisibility();
   applyAllOverlayOpacities();
   pushStatus();
 }
@@ -1690,6 +1695,40 @@ function applyCharmVisibility() {
   if (shouldShow) charmWindow.showInactive(); else charmWindow.hide();
 }
 
+// Pet tracker — summoned pets (mage/necro/beastlord) + their /pet health buff
+// counters. Distinct from the charm tracker: no 6s tickdown, no recharm alarm,
+// no break detection — just HP + buff timers for a pet you keep around.
+function createPetsOverlay() {
+  const b = _resolveBounds('petsBounds', 'petsBoundsSig', { x: 700, y: 620, width: 300, height: 160 });
+  petsWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Pet tracker overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 200, minHeight: 70,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  petsWindow.setAlwaysOnTop(true, 'screen-saver');
+  petsWindow.setVisibleOnAllWorkspaces(true);
+  petsWindow.loadFile('pets.html');
+  petsWindow.on('moved',  () => _persistBounds('petsBounds', petsWindow));
+  petsWindow.on('resize', () => _persistBounds('petsBounds', petsWindow));
+  petsWindow.once('ready-to-show', () => {
+    petsWindow.webContents.send('agent-port', agentPort);
+    applyPetsVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(petsWindow, 'pets');
+  });
+}
+function applyPetsVisibility() {
+  if (!petsWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — only useful to pet classes.
+  const shouldShow = unlocked || (cfg.showPets && !cfg.quietMode);
+  if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
+}
+
 // ── Status + Tray ──────────────────────────────────────────────────────────
 function currentStatus() {
   const cfg = loadConfig();
@@ -1704,6 +1743,7 @@ function currentStatus() {
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
     showCharm: !!cfg.showCharm,
+    showPets: !!cfg.showPets,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -1842,6 +1882,11 @@ function buildTrayMenu() {
         if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility();
         pushStatus();
       } },
+    { label: 'Pet tracker (summoned pets)', type: 'checkbox', checked: s.showPets, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showPets = mi.checked; saveConfig(cfg);
+        if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
+        pushStatus();
+      } },
     { type: 'separator' },
     // Panel overlays — surface the most-wanted dashboard panels as named
     // toggles (the same windows the card "🪟 overlay" buttons open). Checked =
@@ -1957,7 +2002,7 @@ function buildTrayMenu() {
     { type: 'separator' },
     { label: 'I use EQLogParser / other parser (Quiet mode)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
-        applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility();
+        applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility();
         pushStatus();
       } },
     { label: 'Overlays', submenu: overlaysSubmenu },
@@ -2257,6 +2302,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === charmWindow) {
       cfg.showCharm = false; saveConfig(cfg);
       try { charmWindow.hide(); } catch {}
+    } else if (win === petsWindow) {
+      cfg.showPets = false; saveConfig(cfg);
+      try { petsWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -2511,7 +2559,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyOverlayInteractivity();
   pushStatus();
   if (tokenChanged) {
     pushMimicSession();
@@ -2532,7 +2580,7 @@ ipcMain.handle('relaunch-agent', async () => { if (agentProc) { try { agentProc.
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility();
   pushStatus();
   return currentStatus();
 });
@@ -2624,6 +2672,7 @@ app.whenReady().then(async () => {
   createOverlayWindow();
   createTriggerOverlay();
   createCharmOverlay();
+  createPetsOverlay();
   pushStatus();
   startZealCapture();
 
@@ -2635,6 +2684,7 @@ app.whenReady().then(async () => {
       [overlayWindow, { x: 40, y: 40, width: 320, height: 220 }],
       [triggerWindow, { x: 700, y: 200, width: 600, height: 200 }],
       [charmWindow,   { x: 700, y: 420, width: 300, height: 180 }],
+      [petsWindow,    { x: 700, y: 620, width: 300, height: 160 }],
     ]) {
       if (!win || win.isDestroyed()) continue;
       try {
