@@ -10912,26 +10912,28 @@ function _announceRampage(target, tsMs) {
     message: '🔥 **RAMPAGE** → ' + target,
     key:     'rampage:' + key,
     tsMs:    now,
+    mode:    'post',
   });
 }
 
 // Enqueue a trigger fire for relay to a Discord channel via the bot's
-// POST /api/agent/trigger. This is the "pipe my triggers into Discord" path —
-// fed by the rampage announcer and by user-defined `discord` trigger actions.
-// `key` is a dedup key (e.g. "rampage:<target>") so N raiders firing the same
-// trigger collapse to one Discord post. Local-only/test fires never reach here.
-function _broadcastTriggerToDiscord({ name, message, key, tsMs }) {
+// POST /api/agent/trigger. `mode` picks the surface:
+//   • 'post'  — bot posts `message` to TRIGGER_BROADCAST_CHANNEL_ID (text).
+//   • 'voice' — bot speaks `message` in RAID_VOICE_CHANNEL_ID via TTS.
+// `key` dedups across every raider's agent (N raiders firing the same trigger
+// collapse to one fire); test fires never reach here.
+function _broadcastTriggerToDiscord({ name, message, key, tsMs, mode, voiceId }) {
   const text = String(message || '').trim();
   if (!text) return;
-  enqueueUpload('trigger', {
-    agent_version: AGENT_VERSION,
-    triggers: [{
-      name:     name || 'trigger',
-      message:  text.slice(0, 300),
-      key:      key ? String(key).slice(0, 120) : null,
-      fired_at: new Date(tsMs || Date.now()).toISOString(),
-    }],
-  });
+  const entry = {
+    name:     name || 'trigger',
+    mode:     mode === 'voice' ? 'voice' : 'post',
+    message:  text.slice(0, 300),
+    key:      key ? String(key).slice(0, 120) : null,
+    fired_at: new Date(tsMs || Date.now()).toISOString(),
+  };
+  if (voiceId) entry.voice_id = String(voiceId).slice(0, 80);
+  enqueueUpload('trigger', { agent_version: AGENT_VERSION, triggers: [entry] });
 }
 
 // Active timer countdowns driven by triggers with timer_duration_sec > 0.
@@ -11400,13 +11402,55 @@ function _fireTriggerActions(t, captures, tsMs, test) {
       console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
     } else if (a.type === 'discord' && !test) {
-      // Broadcast this fire to a Discord channel via the bot. Test fires stay
-      // local (the comment above guarantees no Discord on test). `key` dedups
-      // across every raider's agent; default to name+message when unset.
+      // Broadcast this fire to a text Discord channel via the bot. Test fires
+      // stay local. `key` dedups across every raider's agent (default
+      // name+message). Default mode is 'post'; setting `voice: true` swaps to
+      // the voice surface for a one-shot speak (use 'voice' action for the
+      // countdown form below).
       const msg = _expandTemplate(a.message || a.text || '', captures || {}).trim();
       if (msg) {
         const key = a.key ? _expandTemplate(a.key, captures || {}) : (t.name + ':' + msg);
-        _broadcastTriggerToDiscord({ name: t.name, message: msg, key, tsMs });
+        _broadcastTriggerToDiscord({
+          name: t.name, message: msg, key, tsMs,
+          mode: a.voice ? 'voice' : 'post',
+          voiceId: a.voice_id,
+        });
+      }
+    } else if (a.type === 'voice' && !test) {
+      // Voice TTS action — one-shot or multi-tick countdown.
+      //
+      //   one-shot: { type: 'voice', message: 'rampage on {target}' }
+      //   marks   : { type: 'voice', marks: [
+      //       { at_ms: 0,     text: 'thirty seconds' },
+      //       { at_ms: 20000, text: 'ten seconds, big heals' },
+      //       { at_ms: 25000, text: 'five seconds, remove curse' },
+      //       { at_ms: 30000, text: 'tankbuster' },
+      //   ] }
+      //
+      // The bot speaks each mark into RAID_VOICE_CHANNEL_ID. Marks more than
+      // 60s old at fire time are dropped (covers historical replays + the
+      // case where the live log catches up after a pause). Per-mark key
+      // includes its offset so 30→10→5→0 don't dedup to a single line.
+      const baseKey  = a.key ? _expandTemplate(a.key, captures || {}) : t.name;
+      const voiceId  = a.voice_id || null;
+      const sendAt   = (text, offsetMs) => {
+        const msg = _expandTemplate(text || '', captures || {}).trim();
+        if (!msg) return;
+        const fireMs = (tsMs || Date.now()) + Math.max(0, offsetMs || 0);
+        if (Date.now() - fireMs > 60_000) return;          // stale, drop
+        const delay  = Math.max(0, fireMs - Date.now());
+        const key    = baseKey + ':' + Math.round(offsetMs || 0);
+        setTimeout(() => {
+          _broadcastTriggerToDiscord({
+            name: t.name, message: msg, key, tsMs: Date.now(),
+            mode: 'voice', voiceId,
+          });
+        }, delay);
+      };
+      if (Array.isArray(a.marks) && a.marks.length > 0) {
+        for (const m of a.marks) sendAt(m && (m.text || m.message), m && m.at_ms);
+      } else if (a.message || a.text) {
+        sendAt(a.message || a.text, 0);
       }
     }
     // sound / emit_event beyond the overlay's own audio remain no-ops in v1.

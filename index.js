@@ -4593,14 +4593,32 @@ async function _handleAgentRaidRoster(req, res) {
 // POST /api/agent/trigger
 //
 // "Pipe my triggers into Discord." An agent posts one or more trigger fires:
-//   { agent_version, character, triggers: [ { name, message, key, fired_at } ] }
-// Each `message` is relayed to TRIGGER_BROADCAST_CHANNEL_ID. Fed by the agent's
-// rampage announcer and by user-defined `discord` trigger actions.
+//   { agent_version, character, triggers: [
+//       { name, message, key, fired_at,
+//         mode: 'post' | 'voice',   // default 'post'
+//         voice_id: '...'           // optional ElevenLabs override
+//       },
+//   ] }
+//
+// Each entry routes by `mode`:
+//   • 'post'  — channel.send to TRIGGER_BROADCAST_CHANNEL_ID.
+//   • 'voice' — speak via TTS into RAID_VOICE_CHANNEL_ID (so countdowns reach
+//               everyone in voice without spamming text). Voice playback is a
+//               STUB in this commit: each fire logs "[trigger-voice]" with the
+//               full text + uploader, so the chain is verifiable end-to-end
+//               before the @discordjs/voice + TTS dependencies ship. The bot
+//               STILL applies dedup + rate caps; voice playback wiring slots
+//               into _playVoiceTrigger() with no schema changes.
 //
 // Safety: per-user token (requireAgentAuth) attributes every post; mass-mention
 // parsing is disabled so a captured name can't @everyone; identical fires from
 // many raiders collapse via the per-key dedup; a per-uploader rate cap stops a
-// runaway agent. No-op (200) when no broadcast channel is configured.
+// runaway agent.
+const VOICE_DEDUP_WINDOW_MS = 5_000; // tighter than post — countdown ticks
+                                      // (30→10→5→0) are seconds apart and
+                                      // unique per offset, so 5s lets every
+                                      // tick through while still collapsing
+                                      // multi-agent duplicates of the SAME tick.
 async function _handleAgentTrigger(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -4617,29 +4635,49 @@ async function _handleAgentTrigger(req, res) {
 
   _trackUpload({ endpoint: 'trigger', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
 
-  const channelId = process.env.TRIGGER_BROADCAST_CHANNEL_ID;
+  const postCh  = process.env.TRIGGER_BROADCAST_CHANNEL_ID;
+  const voiceCh = process.env.RAID_VOICE_CHANNEL_ID;
   const triggers  = Array.isArray(payload?.triggers) ? payload.triggers : [];
-  if (!channelId || triggers.length === 0) {
+  if (triggers.length === 0) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, posted: 0, note: channelId ? 'no triggers' : 'no broadcast channel configured' }));
+    return res.end(JSON.stringify({ ok: true, posted: 0, spoken: 0, note: 'no triggers' }));
   }
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const now = Date.now();
-  let posted = 0;
+  let posted = 0, spoken = 0;
   let ch = null;
   for (const ev of triggers) {
     const message = String(ev?.message || '').trim().slice(0, 300);
     if (!message) continue;
-    // Per-uploader rate cap (across all keys).
+    const mode = ev?.mode === 'voice' ? 'voice' : 'post';
+    // Per-uploader rate cap (across all keys + modes).
     const rate = _triggerRate.get(identity.discord_id) || [];
     if (rate.filter(t => now - t < TRIGGER_RATE_WINDOW_MS).length >= TRIGGER_RATE_MAX) break;
-    // Cross-agent dedup by the trigger's own key (falls back to the message).
-    const dedupKey = guildId + '|' + String(ev?.key || message).toLowerCase();
-    if (_triggerDedup.has(dedupKey) && now - _triggerDedup.get(dedupKey) < TRIGGER_DEDUP_WINDOW_MS) continue;
+    // Cross-agent dedup — narrower window for voice so countdown ticks land.
+    const dedupKey = guildId + '|' + mode + '|' + String(ev?.key || message).toLowerCase();
+    const window   = mode === 'voice' ? VOICE_DEDUP_WINDOW_MS : TRIGGER_DEDUP_WINDOW_MS;
+    if (_triggerDedup.has(dedupKey) && now - _triggerDedup.get(dedupKey) < window) continue;
     _triggerDedup.set(dedupKey, now);
+
+    if (mode === 'voice') {
+      // Voice playback STUB. Real impl in commit B (adds @discordjs/voice +
+      // ffmpeg + TTS engines). Logging the fire here makes the chain
+      // verifiable now — set RAID_VOICE_CHANNEL_ID and the bot log shows
+      // exactly what would speak, when, from whom.
+      if (!voiceCh) {
+        // No channel configured — drop silently. Caller still gets an OK.
+      } else {
+        await _playVoiceTrigger({ message, voiceId: ev?.voice_id || null, channelId: voiceCh, uploadedBy: identity.discord_id });
+        spoken++;
+        _triggerRate.set(identity.discord_id, [...rate, now]);
+      }
+      continue;
+    }
+
+    if (!postCh) continue; // post mode but no channel — drop
     try {
-      if (!ch) ch = await client.channels.fetch(channelId).catch(() => null);
+      if (!ch) ch = await client.channels.fetch(postCh).catch(() => null);
       if (!ch || typeof ch.send !== 'function') break;
       await ch.send({ content: message, allowedMentions: { parse: [] } });
       posted++;
@@ -4649,7 +4687,15 @@ async function _handleAgentTrigger(req, res) {
     }
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, posted }));
+  res.end(JSON.stringify({ ok: true, posted, spoken }));
+}
+
+// Voice playback path. STUB until commit B wires @discordjs/voice + the TTS
+// engines (free default, ElevenLabs when ELEVENLABS_API_KEY is set). Until
+// then, every voice fire logs a single line so officers can verify the chain
+// works end-to-end without audio.
+async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy }) {
+  console.log(`[trigger-voice] would speak in <#${channelId}> (voice=${voiceId || 'default'}, by=${uploadedBy}): ${message}`);
 }
 
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
