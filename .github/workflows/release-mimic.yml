@@ -82,6 +82,23 @@ jobs:
           echo "name=$tag"  >> "$GITHUB_OUTPUT"
           echo "build=true" >> "$GITHUB_OUTPUT"
 
+      # On manual dispatch, pin the built version to the tag (minus the leading
+      # `v`). This lets us cut a BETA channel build from a feature branch — a tag
+      # like v1.0.20-beta.1 makes electron-builder use channel `beta` + emit
+      # beta.yml — without committing a `-beta` suffix into the branch's
+      # package.json (which would muddy the eventual merge to main). The
+      # auto-bump path (push to main) is untouched and keeps using package.json.
+      - name: Pin version to dispatch tag (beta/manual builds)
+        if: github.event_name == 'workflow_dispatch' && steps.tag.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ steps.tag.outputs.name }}"; v="${v#v}"
+          tmp=$(mktemp)
+          jq --arg v "$v" '.version=$v' apps/mimic/package.json > "$tmp"
+          mv "$tmp" apps/mimic/package.json
+          echo "Pinned apps/mimic/package.json version → $v"
+
       - uses: actions/setup-node@v5
         if: steps.tag.outputs.build == 'true'
         with:
@@ -182,5 +199,5 @@ jobs:
           files: |
             apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
             apps/mimic/dist/Wolf-Pack-Mimic-*.zip
-            apps/mimic/dist/latest.yml
+            apps/mimic/dist/*.yml
             apps/mimic/dist/*.blockmap

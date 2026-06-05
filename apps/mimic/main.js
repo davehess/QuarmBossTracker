@@ -2077,18 +2077,20 @@ async function checkAgentUpdate() {
 
 function wireAutoUpdater() {
   if (!autoUpdater) return;
-  // Mimic 1.0.0+ uses the DEFAULT `latest` channel — released as a stable
-  // app, no longer a prerelease. electron-updater picks up plain-semver
-  // releases (e.g. v1.0.0, v1.1.0) via the auto-emitted latest.yml.
-  //
-  // Pre-1.0.0 betas were pinned to a custom `mimic-beta` channel because
-  // every release tag carried a `-mimic-beta.N` prerelease suffix and the
-  // updater needed the suffix to match. Those installs DO NOT auto-update to
-  // 1.0.0 (the prerelease check fails) and have to be reinstalled once from
-  // wolfpack.quest/mimic. Going forward, every stable release auto-updates.
-  // Beta channels can come back later if needed by re-adding `channel = …`
-  // here AND a matching prerelease suffix in package.json's version field.
-  autoUpdater.allowPrerelease = false;
+  // Channel is driven by THIS build's own version, baked into app-update.yml by
+  // electron-builder:
+  //   • Stable build (plain semver, e.g. 1.0.20) → channel `latest`,
+  //     allowPrerelease=false → only ever updates to other stable releases.
+  //     Beta prereleases on GitHub are invisible to it.
+  //   • Beta build (prerelease semver, e.g. 1.0.20-beta.1) → channel `beta`,
+  //     allowPrerelease=true → rolls forward through newer betas AND graduates
+  //     to stable once stable's version exceeds the beta (every release carries
+  //     beta.yml via generateUpdatesFilesForAllChannels, so the beta channel
+  //     can read stable releases too).
+  // This is the clean two-track setup: testers opt into the beta by installing
+  // a -beta build once; the wider guild on stable never sees prereleases.
+  const _isBeta = /-/.test(String(app.getVersion() || ''));
+  autoUpdater.allowPrerelease = _isBeta;
   autoUpdater.autoDownload    = true;
   // Apply a downloaded shell update SILENTLY on the next normal quit (no NSIS
   // wizard, no UAC since perMachine:false). Combined with quitAndInstall(true,
