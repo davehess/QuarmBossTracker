@@ -15,6 +15,12 @@ export type BuffRow = {
   buffCount: number;
   byCategory: Record<string, string[]>;
   other: string[];
+  // Live raid group (1–8) from the Zeal raid roster; null = not in the raid.
+  raidGroup?: number | null;
+  inRaid?: boolean;
+  // In the raid roster but no live buff data (not running the agent) → buffs
+  // are unknown rather than missing.
+  noAgent?: boolean;
 };
 
 const STALE_MS = 30 * 60 * 1000;
@@ -102,22 +108,28 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
     });
   }, [rows, selectedClasses, onlyGaps, hideStale, now]);
 
-  // Group by zone. In a raid the zone with the most of our people IS the raid —
-  // so the busiest zone sorts to the top (that's who you care about), then the
-  // rest by headcount, with "unknown zone" last. (Zeal reports each client's own
-  // zone; we don't get true raid/group structure, so shared zone is the proxy
-  // for "grouped up together".)
+  // Group by the LIVE RAID GROUP (1–8) from the Zeal raid roster — the real
+  // raid structure, so a buffer can sweep "Group 3" and see exactly who's
+  // missing what. Characters not in the current raid (parked alts running the
+  // agent) fall into a "Not in raid" bucket sorted last. Falls back gracefully
+  // when no roster is flowing yet: everyone lands in "Not in raid" by zone-less
+  // headcount.
   const groups = useMemo(() => {
     const m = new Map<string, BuffRow[]>();
+    const keyFor = (r: BuffRow) =>
+      (r.raidGroup != null) ? `Group ${r.raidGroup}` : 'Not in raid';
     for (const r of filtered) {
-      const z = r.zone || 'Unknown zone';
-      const arr = m.get(z);
-      if (arr) arr.push(r); else m.set(z, [r]);
+      const k = keyFor(r);
+      const arr = m.get(k);
+      if (arr) arr.push(r); else m.set(k, [r]);
     }
     return [...m.entries()].sort((a, b) => {
-      const au = a[0] === 'Unknown zone', bu = b[0] === 'Unknown zone';
-      if (au !== bu) return au ? 1 : -1;
-      if (b[1].length !== a[1].length) return b[1].length - a[1].length;
+      const an = a[0] === 'Not in raid', bn = b[0] === 'Not in raid';
+      if (an !== bn) return an ? 1 : -1;                 // "Not in raid" last
+      // Group 1, 2, … in numeric order.
+      const ai = parseInt(a[0].replace('Group ', ''), 10);
+      const bi = parseInt(b[0].replace('Group ', ''), 10);
+      if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi;
       return a[0].localeCompare(b[0]);
     });
   }, [filtered]);
@@ -206,20 +218,22 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
               </tr>
             </thead>
             <tbody>
-              {groups.map(([zone, zoneRows], gi) => (
-                <Fragment key={zone}>
+              {groups.map(([groupLabel, groupRows]) => {
+                const isRaidGroup = groupLabel.startsWith('Group ');
+                return (
+                <Fragment key={groupLabel}>
                   <tr className="bg-bg/60">
                     <td colSpan={colSpan} className="px-2 py-1.5 text-[11px]">
-                      <span className="text-gold">📍 {zone}</span>
-                      <span className="text-dim"> · {zoneRows.length} {zoneRows.length === 1 ? 'character' : 'characters'}</span>
-                      {gi === 0 && groups.length > 1 && <span className="text-dim/70"> · most of the pack is here</span>}
+                      <span className="text-gold">{isRaidGroup ? '👥' : '🛋️'} {groupLabel}</span>
+                      <span className="text-dim"> · {groupRows.length} {groupRows.length === 1 ? 'character' : 'characters'}</span>
+                      {!isRaidGroup && <span className="text-dim/70"> · parked / not in the raid window</span>}
                     </td>
                   </tr>
-                  {zoneRows.map(r => {
+                  {groupRows.map(r => {
                     const target = ROLE_TARGETS[r.role] || [];
                     const stale = r.updatedAt ? (now - new Date(r.updatedAt).getTime()) > STALE_MS : true;
                     return (
-                      <tr key={r.name} className={['border-b border-border/40', stale ? 'opacity-50' : ''].join(' ')}>
+                      <tr key={r.name} className={['border-b border-border/40', (stale && !r.noAgent) ? 'opacity-50' : ''].join(' ')}>
                         <td className="p-2 sticky left-0 bg-panel">
                           <div className="text-text flex items-center">
                             <span>{r.name}</span>
@@ -229,36 +243,45 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                             {[r.className || 'Unknown', ROLE_LABELS[r.role]].join(' · ')}
                           </div>
                         </td>
-                        {categories.map(cat => {
-                          const names = r.byCategory[cat];
-                          const present = (names?.length || 0) > 0;
-                          const expected = target.includes(cat);
-                          return (
-                            <td key={cat} className="p-2 text-center">
-                              {present ? (
-                                <span
-                                  className="text-green inline-block max-w-[110px] truncate align-bottom"
-                                  title={names!.join(', ')}
-                                >
-                                  {names![0]}{names!.length > 1 ? ' +' + (names!.length - 1) : ''}
-                                </span>
-                              ) : expected ? (
-                                <span className="text-red-400" title="Expected for this role — missing">— missing</span>
-                              ) : (
-                                <span className="text-dim/40">·</span>
-                              )}
+                        {r.noAgent ? (
+                          <td colSpan={categories.length + 1} className="p-2 text-center text-dim/60 italic text-[11px]">
+                            in the raid but not running the agent — buffs unknown
+                          </td>
+                        ) : (
+                          <>
+                            {categories.map(cat => {
+                              const names = r.byCategory[cat];
+                              const present = (names?.length || 0) > 0;
+                              const expected = target.includes(cat);
+                              return (
+                                <td key={cat} className="p-2 text-center">
+                                  {present ? (
+                                    <span
+                                      className="text-green inline-block max-w-[110px] truncate align-bottom"
+                                      title={names!.join(', ')}
+                                    >
+                                      {names![0]}{names!.length > 1 ? ' +' + (names!.length - 1) : ''}
+                                    </span>
+                                  ) : expected ? (
+                                    <span className="text-red-400" title="Expected for this role — missing">— missing</span>
+                                  ) : (
+                                    <span className="text-dim/40">·</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 text-center" title={r.other.join(', ')}>
+                              {r.other.length > 0 ? <span className="text-dim">{r.other.length}</span> : <span className="text-dim/40">·</span>}
                             </td>
-                          );
-                        })}
-                        <td className="p-2 text-center" title={r.other.join(', ')}>
-                          {r.other.length > 0 ? <span className="text-dim">{r.other.length}</span> : <span className="text-dim/40">·</span>}
-                        </td>
-                        <td className="p-2 text-right text-dim whitespace-nowrap">{ago(r.updatedAt)}</td>
+                          </>
+                        )}
+                        <td className="p-2 text-right text-dim whitespace-nowrap">{r.noAgent ? '—' : ago(r.updatedAt)}</td>
                       </tr>
                     );
                   })}
                 </Fragment>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -269,7 +292,7 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
         (hover for the full list when there&apos;s more than one) ·
         <span className="text-red-400"> — missing</span> = expected for the role but absent ·
         <span className="text-dim"> ·</span> not expected for the role ·
-        grouped by zone (busiest zone = the raid, on top) ·
+        grouped by live <b>raid group</b> (from the Zeal raid roster) ·
         click 📋 next to a name to copy <code>/target &lt;name&gt;</code> for pasting in EQ.
         The <b>Other</b> column counts buffs we couldn&apos;t categorize yet —
         hover it and send the names to an officer so we can map them. Target profiles per role are a

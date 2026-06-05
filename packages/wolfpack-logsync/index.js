@@ -2556,8 +2556,41 @@ function _endpointForKind(kind, botUrl) {
     case 'fun_event':       return base + '/fun_event';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
+    case 'raid_roster':     return base + '/raid-roster';
     default:                return botUrl;
   }
+}
+
+// Decode Zeal's type-5 raid sample and upload the roster (name/class/group/
+// level/rank per member) so the bot can drive the group-based /buffs grid.
+// Debounced: only uploads when the composition changes, or every 60s as a
+// heartbeat to keep captured_at fresh (so the read window on /buffs sees
+// "still in raid"). The raid event is identical from every member's view, so
+// any one running agent uploading it is sufficient — the bot dedups latest.
+let _raidRosterLastUpload = 0;
+let _raidRosterLastHash   = '';
+function _maybeUploadRaidRoster(sample) {
+  try {
+    if (!sample || !sample.data) return;
+    const members = JSON.parse(sample.data);
+    if (!Array.isArray(members) || members.length === 0) return;
+    const compact = members
+      .filter(m => m && m.name)
+      .map(m => ({
+        name:  String(m.name),
+        class: m.class != null ? String(m.class) : null,
+        group: m.group != null ? String(m.group) : null,
+        level: m.level != null ? String(m.level) : null,
+        rank:  m.rank  != null ? String(m.rank)  : null,
+      }));
+    if (compact.length === 0) return;
+    const hash = compact.map(m => m.name + ':' + m.group + ':' + m.class).sort().join('|');
+    const now = Date.now();
+    if (hash === _raidRosterLastHash && (now - _raidRosterLastUpload) < 60000) return;
+    _raidRosterLastHash   = hash;
+    _raidRosterLastUpload = now;
+    enqueueUpload('raid_roster', { members: compact });
+  } catch { /* malformed sample — skip */ }
 }
 
 // The operator's "main" box, used to attribute operator-level uploads
@@ -7305,6 +7338,9 @@ function startWebDashboard(port) {
           _zeal.total += 1;
           if (e && e.sample !== undefined) {
             _zeal.lastSamples[type] = { at: Date.now(), obj: e.sample };
+            // Type 5 = Zeal raid roster. Decode + upload (debounced) so the
+            // group-based /buffs grid knows the live raid composition.
+            if (type === '5') _maybeUploadRaidRoster(e.sample);
           }
         }
         if (events.length) _zeal.lastEventAt = Date.now();
