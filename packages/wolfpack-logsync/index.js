@@ -956,7 +956,13 @@ const _charmTickTracker = new Map();
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
   const k = String(pet).toLowerCase();
-  const ts = atMs || Date.now();
+  // Coerce the anchor to epoch-ms. Callers pass `this.lastEvent`, which is the
+  // ISO string `event.ts` — NOT a number. Stored as-is, that made the charm
+  // overlay compute `Date.now() - "2026-…"` = NaN ("tick NaN · up NaN:NaN").
+  let ts;
+  if (typeof atMs === 'number' && isFinite(atMs)) ts = atMs;
+  else if (atMs != null) { const d = new Date(atMs).getTime(); ts = isFinite(d) ? d : Date.now(); }
+  else ts = Date.now();
   const prev = _charmTickTracker.get(k);
   _charmTickTracker.set(k, {
     pet,
@@ -975,6 +981,53 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
       ? !!opts.is_dire_charm
       : (prev ? !!prev.is_dire_charm : false),
   });
+}
+
+// Reconcile the charm tracker against the LIVE Zeal pet gauge (slot 16). On
+// Quarm the log signals are unreliable — charm-land only shows up when the pet
+// first acks a command ("…Master"), with flavor variants that omit "Master"
+// entirely ("Guarding with my life..oh splendid one."), and the break line is
+// self-only with no mob name ("Your charm spell has worn off."), so our
+// name-based break matcher never fires and stale charms pile up. The gauge,
+// by contrast, shows the pet within ~2s of the charm landing and drops it the
+// instant it breaks — and slot 16 is only ever the LOCAL client's pet, so
+// attribution is unambiguous (no cross-owner mis-fire).
+//
+// Rule: for any character that is streaming a gauge, that gauge is authoritative
+//   • an article-prefixed slot-16 pet ("a "/"an " = a charmed mob, never a
+//     proper-named summoned pet) with no active session → open one (land).
+//   • an active session whose pet is no longer in that owner's slot 16 → close
+//     it (break). A 3s grace avoids closing a just-opened session before the
+//     gauge catches up.
+// Sessions owned by characters NOT streaming a gauge (bystander charms picked
+// up from zone-visible log lines) are left to the log path — untouched here.
+function _reconcileGaugeCharms() {
+  const now = Date.now();
+  const gaugeOwners = new Set();              // ownerLower currently streaming a gauge
+  const gaugePets   = new Map();              // ownerLower → Set(petNameLower) in slot 16
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (!st || !Array.isArray(st.gauges) || st.gauges.length === 0) continue;
+    const ownerLower = String(ch).toLowerCase();
+    gaugeOwners.add(ownerLower);
+    const petG = st.gauges.find(g => g && g.slot === 16 && g.text && /^an?\s+/i.test(String(g.text)));
+    if (!petG) continue;
+    const name = String(petG.text);
+    const k = name.toLowerCase();
+    if (!gaugePets.has(ownerLower)) gaugePets.set(ownerLower, new Set());
+    gaugePets.get(ownerLower).add(k);
+    const cur = _charmTickTracker.get(k);
+    if (!cur || !cur.is_active) _bumpCharmTick(name, ch, 'land', now);   // gauge-sourced land
+  }
+  for (const [k, info] of _charmTickTracker) {
+    if (!info.is_active || !info.owner) continue;
+    const ol = String(info.owner).toLowerCase();
+    if (!gaugeOwners.has(ol)) continue;                       // bystander → log-managed
+    const set = gaugePets.get(ol);
+    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 3000) {
+      _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break
+    }
+  }
 }
 
 function recordWhoEvent(ev) {
@@ -3358,6 +3411,12 @@ function _serializeForDashboard() {
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
     charmPets: (() => {
+      // Reconcile against the live Zeal pet gauge FIRST: open a session the
+      // instant a charmed pet appears in slot 16 (enchanter OR bard charm —
+      // class-agnostic), and close stale sessions whose pet has dropped from
+      // the gauge (the Quarm break line isn't name-matchable, so without this
+      // broken charms pile up — the "two charms showing at once" bug).
+      _reconcileGaugeCharms();
       // Live pet HP from Zeal gauge slot 16, keyed by the owner's character.
       // Only the local uploader's own pet has gauge data (Zeal reports only the
       // local client's bars), which is exactly the pet the charm overlay cares
