@@ -3582,6 +3582,25 @@ body.wp-overlay-mode .section .card.wp-overlay-target h2 {
   letter-spacing:.1em !important; text-transform:uppercase !important;
   margin:0 0 6px !important; padding:0 !important; border:0 !important;
 }
+/* Compact overlay rendering — the analytical cards (DEEPS, Healing, Threat,
+   Tanking) are full breakdown tables (melee/spell/proc/dot/crit columns with
+   avg/max sub-lines). As an overlay we want a succinct ranked list like the
+   DPS HUD: just the name + primary value. Hide everything past the first two
+   columns, drop the descriptive paragraph + collapsible detail, and tighten
+   the rows. CSS-only so the dashboard render is untouched. */
+body.wp-overlay-mode .wp-overlay-target table th:nth-child(n+3),
+body.wp-overlay-mode .wp-overlay-target table td:nth-child(n+3) { display:none !important; }
+body.wp-overlay-mode .wp-overlay-target > p,
+body.wp-overlay-mode .wp-overlay-target details,
+body.wp-overlay-mode .wp-overlay-target .subtle { display:none !important; }
+body.wp-overlay-mode .wp-overlay-target table { width:100% !important; border-collapse:collapse !important; }
+body.wp-overlay-mode .wp-overlay-target table th,
+body.wp-overlay-mode .wp-overlay-target table td {
+  padding:1px 10px 1px 0 !important; font-size:11px !important;
+  white-space:nowrap !important; line-height:1.35 !important;
+}
+body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
+body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
 <h1>🐺 Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span></h1>
 <div class="subtle" id="header"></div>
