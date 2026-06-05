@@ -358,14 +358,24 @@ export default async function AdminAgentsPage() {
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
 
-  const active = summaries.filter(s => now - s.lastUploadMs <= day);
-  const stale  = summaries.filter(s => now - s.lastUploadMs > day);
+  // "Dormant" = not seen in a full raid-week (Sun/Wed/Thu means a 4-day gap
+  // between raid nights is normal, so 7 days is the first point we can call a
+  // stream genuinely gone quiet without hiding a regular mid-week raider).
+  // Dormant families are HIDDEN from the board but kept in the database — they
+  // pop back the moment that character uploads again.
+  const dormantDays = 7;
+  const dormantMs   = dormantDays * day;
 
-  // Family view: fold characters into their main, split active/stale by the
-  // family's most-recent upload across all its characters.
+  const active = summaries.filter(s => now - s.lastUploadMs <= day);
+  const stale  = summaries.filter(s => now - s.lastUploadMs > day && now - s.lastUploadMs <= dormantMs);
+
+  // Family view: fold characters into their main, split active/quiet/dormant by
+  // the family's most-recent upload across all its characters.
   const families       = groupByMain(summaries, roster, memberName);
-  const activeFamilies = families.filter(f => now - f.latestMs <= day);
-  const staleFamilies  = families.filter(f => now - f.latestMs > day);
+  const activeFamilies  = families.filter(f => now - f.latestMs <= day);
+  const staleFamilies   = families.filter(f => now - f.latestMs > day && now - f.latestMs <= dormantMs);
+  const dormantFamilies = families.filter(f => now - f.latestMs > dormantMs);
+  const dormantChars    = dormantFamilies.reduce((a, f) => a + f.members.length, 0);
   const totalUploads = stats.reduce((a, r) => a + (Number(r.upload_count) || 0), 0);
   const totalErrors  = stats.reduce((a, r) => a + (Number(r.error_count)  || 0), 0);
   // "Recent errors" is now the current last-error per character (one row each),
@@ -414,9 +424,10 @@ export default async function AdminAgentsPage() {
           row-per-upload <code>agent_uploads</code> log was retired to stay on the
           Supabase free tier). Totals are all-time; activity is shown by last-seen.
         </p>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4 text-xs">
           <Stat label="Active 24h"    value={active.length} color="text-green" />
-          <Stat label="Stale (24h+)"  value={stale.length}  color="text-orange" />
+          <Stat label="Quiet (this week)" value={stale.length} color="text-orange" />
+          <Stat label="Dormant (hidden)" value={dormantChars} color="text-dim" />
           <Stat label="Total uploads" value={totalUploads} />
           <Stat label="Total errors"  value={totalErrors} color="text-red-400" />
           <Stat label="Backfill open" value={bfCounts.pending + bfCounts.acked + bfCounts.running} color="text-blue" />
@@ -525,19 +536,29 @@ export default async function AdminAgentsPage() {
         )}
       </section>
 
-      {/* Stale uploaders — same family grouping, collapsed by default so the
-          old pre-discord-auth streams stay out of the way. They self-refresh
-          the moment that character uploads again under a per-user token. */}
+      {/* Quiet uploaders — went silent in the last 24h but seen within the
+          raid-week, so likely just between raid nights. Collapsed by default.
+          Anything dormant past {dormantDays}d is hidden entirely (below). */}
       {staleFamilies.length > 0 && (
         <details className="group bg-panel border border-border rounded-lg [&_summary::-webkit-details-marker]:hidden">
           <summary className="text-sm text-orange px-4 py-3 border-b border-border cursor-pointer select-none flex items-center gap-2 hover:bg-[#1a212c]">
             <span className="text-dim text-[10px] transition-transform group-[[open]]:rotate-90">▶</span>
-            Stale mains (active in last 30d, nothing in last 24h) — {staleFamilies.length}
+            Quiet mains (no upload in 24h, seen this week) — {staleFamilies.length}
             <span className="text-dim font-normal"> · {stale.length} character{stale.length === 1 ? '' : 's'}</span>
             <span className="text-dim font-normal text-[11px] ml-auto">click to expand</span>
           </summary>
           <div>{staleFamilies.map(f => <FamilyRow key={f.mainName} fam={f} stale />)}</div>
         </details>
+      )}
+
+      {/* Dormant streams are hidden, not deleted — surfaced only as a count so
+          the board stays clean while the history stays in the database. */}
+      {dormantFamilies.length > 0 && (
+        <div className="text-xs text-dim px-1">
+          💤 {dormantFamilies.length} dormant {dormantFamilies.length === 1 ? 'stream' : 'streams'}
+          {' '}({dormantChars} character{dormantChars === 1 ? '' : 's'}) not seen in {dormantDays}+ days are hidden —
+          their upload history is kept in the database and they reappear automatically on the next upload.
+        </div>
       )}
 
       {/* Last error per character (we no longer keep a per-upload error log) */}
