@@ -1191,11 +1191,16 @@ function applyPetHealthLine(line, character) {
   const rep = _petHealthByOwner.get(owner);
   if (!rep) return;                                                 // not inside a report
   if ((tsMs - (rep.last_line_at || 0)) > PET_REPORT_GAP_MS) return; // window lapsed
-  // A bare line that exactly names a known TIMED buff → a pet buff. Gating on
-  // the catalog keeps random chatter out: only real timed-buff spell names match.
+  // A bare line that names a known spell → a pet buff. Gating on the catalog
+  // keeps random chatter out: only real spell names match. We deliberately do
+  // NOT require a timed-formula duration here — some real buffs report dur=0
+  // with a formula-only duration (formula 7, etc.), and a stale v1 disk catalog
+  // (no dur/durf yet) would otherwise drop every chip. The actual countdown
+  // still comes from observed buff landings; this just captures the NAME so the
+  // chip appears in the overlay (with "?" until a landing supplies the timer).
   const e = _spellByNameLower.get(body.toLowerCase());
-  if (e && _isTimedDurationFormula(e.durf) && Number(e.dur) > 0) {
-    rep.buffs.set(body.toLowerCase(), { name: e.name, dur_ticks: e.dur, dur_formula: e.durf });
+  if (e) {
+    rep.buffs.set(body.toLowerCase(), { name: e.name, dur_ticks: e.dur || null, dur_formula: e.durf || null });
     rep.last_line_at = tsMs;
     rep.last_seen_at = Date.now();
   }

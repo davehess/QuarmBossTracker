@@ -4565,31 +4565,70 @@ async function _handleAgentMobInfo(req, res) {
 // GET /api/agent/who-lookup?names=a,b,c
 //
 // De-anonymizes /who rows for Mimic's /who overlay. The overlay only asks for
-// names that showed up ANONYMOUS in the live /who; we answer from the bot's
-// merged who history (state.whoData) — the last non-anon class/level/guild we
-// ever saw for that name, plus the sticky Zek flag (auto from a Zek guild or set
-// via /markzek). Pure in-memory lookup, so it's cheap to call per /who.
+// names that showed up ANONYMOUS in the live /who; we answer from THREE sources,
+// in priority order:
+//   1. state.whoData      — the merged who history (last non-anon class/level/
+//                           guild we ever saw + the sticky Zek flag)
+//   2. OpenDKP roster     — for guild members whose only /who rows are anon
+//                           (Quarm's anon-by-default raiders); class lives here
+//   3. supabase characters — secondary backstop / pulled if roster misses
+// All in-memory after the first lookup, so it's cheap to call per /who.
 async function _handleAgentWhoLookup(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
   const { getWhoEntry } = require('./utils/state');
+  let getRosterChar = null;
+  try { getRosterChar = require('./utils/roster').getCharacter; } catch { /* roster optional */ }
+
   let namesParam = '';
   try { namesParam = new URL(req.url, 'http://x').searchParams.get('names') || ''; } catch { /* */ }
   const names = namesParam.split(',').map(s => s.trim()).filter(Boolean).slice(0, 80);
+
+  // Pass 1: state.whoData + roster (both in-memory). Note any name still missing
+  // a class so pass 2 can backfill from supabase characters.
   const results = {};
+  const needSupabase = [];
   for (const nm of names) {
-    let w = null;
-    try { w = getWhoEntry(nm); } catch { /* */ }
-    if (!w) continue;
-    results[nm.toLowerCase()] = {
-      class:     w.class || null,
-      level:     w.level || null,
-      guild:     w.guild || null,
-      guild_rank: w.guildRank || null,
-      is_zek:    !!w.is_zek,
-      last_seen: w.lastSeen || null,
+    const key = nm.toLowerCase();
+    const w = (() => { try { return getWhoEntry(nm); } catch { return null; } })();
+    const r = getRosterChar ? getRosterChar(nm) : null;
+    // Skip names we have NOTHING on — overlay treats absent as "no history."
+    if (!w && !r) continue;
+    results[key] = {
+      class:      (w && w.class)   || (r && r.class)   || null,
+      level:      (w && w.level)   || null,                            // roster has no level
+      guild:      (w && w.guild)   || null,
+      guild_rank: (w && w.guildRank) || null,
+      is_zek:     !!(w && w.is_zek),
+      last_seen:  (w && w.lastSeen) || null,
+      source:     (w && w.class) ? 'who' : (r && r.class) ? 'roster' : 'who',
     };
+    if (!results[key].class) needSupabase.push(nm);
   }
+
+  // Pass 2: backfill missing-class names from supabase characters (one batched
+  // query, only when needed). Best-effort — if supabase is off or errors,
+  // we just return what we have from passes 1.
+  if (needSupabase.length) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        const inList = needSupabase.map(n => `"${n.replace(/"/g, '')}"`).join(',');
+        const rows = await supabase.select('characters',
+          `name=in.(${encodeURIComponent(inList)})&select=name,class&limit=80`);
+        if (Array.isArray(rows)) {
+          for (const row of rows) {
+            const key = String(row.name || '').toLowerCase();
+            if (results[key] && !results[key].class && row.class) {
+              results[key].class  = row.class;
+              results[key].source = 'characters';
+            }
+          }
+        }
+      }
+    } catch (err) { console.warn('[who-lookup] characters backfill failed:', err?.message); }
+  }
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, results }));
 }
