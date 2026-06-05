@@ -13,7 +13,7 @@
 //   • Mass-buff cooldown + Feral Avatar queue (roadmap stage 3)
 //   • DKP auction winner highlight (roadmap stage 4)
 
-import { Fragment, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS, HP_SLOTS, HP_SLOT_LABELS,
   type BuffCategory, type Role, type HpSlotState,
@@ -27,7 +27,7 @@ export type RaidRow = {
   level: number | null;
   rank: string | null;           // '2' raid leader, '1' group leader
   inRaid: boolean;
-  noAgent: boolean;
+  noAgent: boolean;              // not running Mimic → unknown buff state
   zone: string | null;
   updatedAt: string | null;
   buffCount: number;
@@ -36,6 +36,7 @@ export type RaidRow = {
   hpSlots: HpSlotState;
   tier: 'green' | 'yellow' | 'orange' | 'red' | 'unknown';
   buffs: { name: string; ticks: number | null }[];
+  isMe: boolean;                 // the signed-in user's character
 };
 
 const TIER_STYLE: Record<RaidRow['tier'], { bg: string; bar: string; label: string }> = {
@@ -73,8 +74,22 @@ function ago(iso: string | null): string {
   return h + 'h ago';
 }
 
+// The classes we offer in Buffer-mode. Order matters — used by the chip strip.
+const BUFFER_CLASSES = ['Cleric', 'Druid', 'Shaman', 'Enchanter', 'Bard'] as const;
+type BufferClass = typeof BUFFER_CLASSES[number];
+
+// Normalize an arbitrary class string to one of our Buffer-mode classes (or
+// null if it's not a class that buffs). Used to auto-pick the signed-in user's
+// class as the default Buffer-mode focus.
+function asBufferClass(s: string | null | undefined): BufferClass | '' {
+  if (!s) return '';
+  const n = s.trim().toLowerCase();
+  for (const c of BUFFER_CLASSES) if (c.toLowerCase() === n) return c;
+  return '';
+}
+
 export default function RaidView({
-  rows, raidSize, mimicCovered, leaderName, leaderClass, groupLeaders,
+  rows, raidSize, mimicCovered, leaderName, leaderClass, groupLeaders, myClass,
 }: {
   rows: RaidRow[];
   raidSize: number;
@@ -82,8 +97,12 @@ export default function RaidView({
   leaderName: string | null;
   leaderClass: string | null;
   groupLeaders: Record<number, string>;
+  myClass: string | null;
 }) {
-  const [bufferClass, setBufferClass] = useState<string>('');     // '' = no filter
+  // Default Buffer-mode class = the signed-in user's own class as detected in
+  // the raid roster. Override is always available; some folks swap to help
+  // cover a shortage and the chip strip lets them flip.
+  const [bufferClass, setBufferClass] = useState<BufferClass | ''>(() => asBufferClass(myClass));
   const [selectedName, setSelectedName] = useState<string | null>(null);
 
   // Group by raid group. Parked alts → "Not in raid" bucket sorted last.
@@ -130,6 +149,20 @@ export default function RaidView({
     return out.slice(0, 30);
   }, [bufferClass, rows]);
 
+  // Class counts — for the sidebar AND for the buffer-mode auto-detection of
+  // useful classes. Only count in-raid characters.
+  const classCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.inRaid) continue;
+      const k = r.className || 'Unknown';
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [rows]);
+
+  const focused = bufferClass !== '';
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -137,7 +170,7 @@ export default function RaidView({
         <div>
           <h1 className="text-2xl text-gold">⚔️ Raid</h1>
           <p className="text-sm text-dim mt-1">
-            Live operational view — built from the Zeal raid roster + every Mimic that's running.
+            Live operational view — built from the Zeal raid roster + every Mimic that&apos;s running.
             {' '}
             <span className="text-orange text-xs">[mockup — stage 1 of <code>docs/raid-hub-roadmap.md</code>]</span>
           </p>
@@ -145,15 +178,11 @@ export default function RaidView({
         <a href="/buffs" className="text-xs text-blue hover:underline">← classic /buffs view</a>
       </div>
 
-      {/* Top-line stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-        <Stat label="In raid"        value={String(raidSize)}                          color="text-text" />
-        <Stat label="Mimic coverage" value={`${mimicCovered} / ${raidSize}`}           color={mimicCovered === raidSize ? 'text-green' : 'text-orange'} />
-        <Stat label="Raid leader"    value={leaderName ?? '—'}                         color={leaderName ? 'text-gold' : 'text-dim'} sub={leaderClass || undefined} />
-        <Stat label="Groups"         value={String(Object.keys(groupLeaders).length || groups.filter(g => g[0].startsWith('Group ')).length)} color="text-text" />
-      </div>
+      {/* Coverage unlocks first — the "more Mimics = more capabilities" pitch.
+          Front-and-center so it's the first thing a guildie sees. */}
+      <CoverageUnlocks raidSize={raidSize} mimicCovered={mimicCovered} />
 
-      {/* Raid leader → Discord callout (preview — needs /ari + discord_id join) */}
+      {/* Raid leader callout */}
       {leaderName && (
         <div className="bg-panel border border-border rounded-lg p-3 text-xs flex items-center justify-between gap-3 flex-wrap">
           <div>
@@ -165,66 +194,28 @@ export default function RaidView({
         </div>
       )}
 
-      {/* Coverage unlocks — the "more Mimics = more capabilities" pitch,
-          rendered live from the current coverage so the page IS the
-          marketing material. */}
-      <CoverageUnlocks
-        raidSize={raidSize}
-        mimicCovered={mimicCovered}
+      {/* Buffer mode — when OFF, show the class picker. When ON, show ONLY the
+          picked class as a single elevated chip with the queue underneath, so
+          the buffer can focus without the other classes' noise. */}
+      <BufferModeBar
+        bufferClass={bufferClass}
+        myClass={myClass}
+        onPick={(c) => setBufferClass(c)}
+        bufferQueueLen={bufferQueue.length}
       />
+      {focused && (
+        <BufferQueue
+          bufferClass={bufferClass as BufferClass}
+          queue={bufferQueue}
+          onSelect={(n) => setSelectedName(n)}
+        />
+      )}
 
-      {/* Buffer mode selector */}
-      <div className="bg-panel border border-border rounded-lg p-3">
-        <div className="flex items-center gap-2 flex-wrap text-xs">
-          <span className="text-dim mr-1">I&apos;m buffing as:</span>
-          {(['', 'Cleric', 'Druid', 'Shaman', 'Enchanter', 'Bard'] as const).map(c => (
-            <button
-              key={c || 'none'}
-              onClick={() => setBufferClass(c)}
-              className={[
-                'px-2 py-0.5 rounded border text-xs transition-colors',
-                bufferClass === c
-                  ? 'bg-accent border-accent text-white'
-                  : 'bg-bg border-border text-dim hover:text-text',
-              ].join(' ')}
-            >
-              {c || 'off'}
-            </button>
-          ))}
-          {bufferClass && (
-            <span className="text-[10px] uppercase tracking-widest text-orange border border-orange/40 rounded px-1.5 py-0.5 ml-auto">
-              preview · needs real cast timers
-            </span>
-          )}
-        </div>
-        {bufferClass && bufferQueue.length > 0 && (
-          <ul className="mt-3 text-xs space-y-1.5">
-            {bufferQueue.map(({ row, missing }) => (
-              <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1">
-                <span className={['inline-block w-1.5 h-4 rounded-sm', TIER_STYLE[row.tier].bar].join(' ')} />
-                <button
-                  onClick={() => setSelectedName(row.name)}
-                  className="text-text hover:text-blue underline-offset-2 hover:underline"
-                >
-                  {row.name}
-                </button>
-                <span className="text-dim text-[11px]">{row.className} · Grp {row.raidGroup ?? '?'}</span>
-                <span className="text-dim ml-auto">
-                  {missing.map(c => CATEGORY_LABELS[c]).join(' · ') || 'HP slot missing'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {bufferClass && bufferQueue.length === 0 && (
-          <div className="text-xs text-dim mt-2">
-            No gaps for a {bufferClass} to fill right now — everyone in raid running Mimic is covered. (Untracked raiders still need eyes.)
-          </div>
-        )}
-      </div>
+      {/* The raid grid + sidebars */}
+      <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr_320px] gap-4">
+        {/* Class-count panel — at-a-glance "what classes do we have tonight". */}
+        <ClassCountPanel counts={classCounts} raidSize={raidSize} />
 
-      {/* The raid grid + side panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
         <div className="space-y-3">
           {groups.length === 0 ? (
             <div className="bg-panel border border-border rounded-lg p-6 text-center text-dim text-sm">
@@ -234,14 +225,22 @@ export default function RaidView({
             const isRaidGroup = label.startsWith('Group ');
             const grpNum = isRaidGroup ? parseInt(label.replace('Group ', ''), 10) : null;
             const leader = grpNum != null ? groupLeaders[grpNum] : null;
+            // Does this group have at least one Mimic? Drives the group header
+            // chip — clarifies "do we have HP signals from this group at all?"
+            const mimicInGroup = grpRows.some(r => !r.noAgent);
             return (
               <section key={label} className="bg-panel border border-border rounded-lg overflow-hidden">
                 <header className="px-3 py-2 bg-bg/60 border-b border-border flex items-center justify-between gap-2 flex-wrap">
-                  <div>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-gold">{isRaidGroup ? '👥' : '🛋️'} {label}</span>
-                    <span className="text-dim text-xs"> · {grpRows.length} {grpRows.length === 1 ? 'char' : 'chars'}</span>
-                    {leader && <span className="text-dim text-xs"> · 🎯 {leader}</span>}
-                    {!isRaidGroup && <span className="text-dim/70 text-xs"> · parked / not in current raid</span>}
+                    <span className="text-dim text-xs">{grpRows.length} {grpRows.length === 1 ? 'char' : 'chars'}</span>
+                    {leader && <span className="text-dim text-xs">· 🎯 {leader}</span>}
+                    {isRaidGroup && (
+                      mimicInGroup
+                        ? <span title="At least one Mimic in this group → HP signals available" className="text-[9px] uppercase tracking-widest text-green border border-green/40 rounded px-1.5 py-0.5">🐺 mimic</span>
+                        : <span title="No Mimic in this group — HP signals unavailable" className="text-[9px] uppercase tracking-widest text-dim border border-dim/40 rounded px-1.5 py-0.5">no mimic</span>
+                    )}
+                    {!isRaidGroup && <span className="text-dim/70 text-xs">parked / not in current raid</span>}
                   </div>
                   <TierLegend rows={grpRows} />
                 </header>
@@ -253,7 +252,7 @@ export default function RaidView({
                     return (
                       <li
                         key={r.name}
-                        className={['flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-[#1a212c] transition-colors', style.bg].join(' ')}
+                        className={['flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-[#1a212c] transition-colors', style.bg, r.isMe ? 'ring-1 ring-blue/60' : ''].join(' ')}
                         onClick={() => setSelectedName(r.name)}
                       >
                         <span className={['inline-block w-1 h-5 rounded-sm shrink-0', style.bar].join(' ')} />
@@ -261,7 +260,16 @@ export default function RaidView({
                           {isLeader && <span title="Raid leader" className="text-gold">👑 </span>}
                           {isGrpLead && <span title="Group leader" className="text-blue">⭐ </span>}
                           {r.name}
+                          {r.isMe && <span title="That&apos;s you" className="text-blue ml-1">·</span>}
                         </span>
+                        {!r.noAgent && (
+                          <span
+                            title="Running Mimic — buffs + HP signals flowing"
+                            className="text-[9px] leading-none px-1 py-0.5 rounded bg-blue/15 text-blue border border-blue/30 shrink-0"
+                          >
+                            🐺
+                          </span>
+                        )}
                         <span className="text-dim text-[10px] shrink-0">
                           {r.className || 'Unknown'} · {ROLE_LABELS[r.role]}
                         </span>
@@ -301,13 +309,133 @@ export default function RaidView({
   );
 }
 
-function Stat({ label, value, sub, color = 'text-text' }: { label: string; value: string; sub?: string; color?: string }) {
+// Compact "I'm buffing as <class>" picker. When a class is picked we elevate
+// it to a single chip with an X to clear, so the buffer can focus on their
+// queue without the other classes' buttons crowding the view.
+function BufferModeBar({
+  bufferClass, myClass, onPick, bufferQueueLen,
+}: {
+  bufferClass: BufferClass | '';
+  myClass: string | null;
+  onPick: (c: BufferClass | '') => void;
+  bufferQueueLen: number;
+}) {
+  if (bufferClass !== '') {
+    return (
+      <div className="bg-panel border border-accent/60 rounded-lg p-3 text-xs flex items-center gap-2 flex-wrap">
+        <span className="text-dim">Buffing as</span>
+        <span className="text-base text-white bg-accent border border-accent rounded px-2 py-0.5 font-medium">
+          {bufferClass}
+        </span>
+        <span className="text-dim">·</span>
+        <span className="text-text">{bufferQueueLen} {bufferQueueLen === 1 ? 'raider' : 'raiders'} on your queue</span>
+        <button
+          onClick={() => onPick('')}
+          className="ml-auto text-dim hover:text-text text-xs border border-border rounded px-2 py-0.5"
+          title="Back to all classes"
+        >
+          ✕ exit
+        </button>
+        <span className="text-[10px] uppercase tracking-widest text-orange border border-orange/40 rounded px-1.5 py-0.5">
+          preview · needs real cast timers
+        </span>
+      </div>
+    );
+  }
   return (
-    <div className="bg-bg border border-border rounded p-2.5">
-      <div className={['text-lg leading-tight', color].join(' ')}>{value}</div>
-      <div className="text-dim text-[10px] uppercase tracking-widest">{label}</div>
-      {sub && <div className="text-dim text-[10px] mt-0.5">{sub}</div>}
+    <div className="bg-panel border border-border rounded-lg p-3 text-xs">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-dim mr-1">I&apos;m buffing as:</span>
+        {BUFFER_CLASSES.map(c => {
+          const isMy = myClass && c.toLowerCase() === myClass.toLowerCase();
+          return (
+            <button
+              key={c}
+              onClick={() => onPick(c)}
+              className={[
+                'px-2 py-0.5 rounded border text-xs transition-colors',
+                isMy
+                  ? 'bg-accent/10 border-accent text-accent hover:bg-accent/20'
+                  : 'bg-bg border-border text-dim hover:text-text',
+              ].join(' ')}
+              title={isMy ? 'Your class' : undefined}
+            >
+              {c}{isMy ? ' (you)' : ''}
+            </button>
+          );
+        })}
+        <span className="text-dim ml-auto text-[10px]">
+          Defaults to your class · override to cover a shortage
+        </span>
+      </div>
     </div>
+  );
+}
+
+// The focused buffer queue — only shown when a class is picked.
+function BufferQueue({
+  bufferClass, queue, onSelect,
+}: {
+  bufferClass: BufferClass;
+  queue: { row: RaidRow; missing: BuffCategory[] }[];
+  onSelect: (name: string) => void;
+}) {
+  if (queue.length === 0) {
+    return (
+      <div className="bg-panel border border-border rounded-lg p-3 text-xs text-dim">
+        No gaps for a {bufferClass} to fill right now — every Mimic-running raider is covered. Untracked raiders still need eyes.
+      </div>
+    );
+  }
+  return (
+    <div className="bg-panel border border-border rounded-lg p-3">
+      <div className="text-[10px] uppercase tracking-widest text-dim mb-2">Buff queue · severity-first</div>
+      <ul className="text-xs space-y-1.5">
+        {queue.map(({ row, missing }) => (
+          <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1.5 last:border-0">
+            <span className={['inline-block w-1.5 h-5 rounded-sm', TIER_STYLE[row.tier].bar].join(' ')} />
+            <button
+              onClick={() => onSelect(row.name)}
+              className="text-text hover:text-blue underline-offset-2 hover:underline"
+            >
+              {row.name}
+            </button>
+            {!row.noAgent && (
+              <span className="text-[9px] leading-none px-1 py-0.5 rounded bg-blue/15 text-blue border border-blue/30">🐺</span>
+            )}
+            <span className="text-dim text-[11px]">{row.className} · Grp {row.raidGroup ?? '?'}</span>
+            <span className="text-dim ml-auto text-[11px]">
+              {missing.map(c => CATEGORY_LABELS[c]).join(' · ') || 'HP slot missing'}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Class-count sidebar — "what do we have in raid tonight, at a glance".
+function ClassCountPanel({ counts, raidSize }: { counts: [string, number][]; raidSize: number }) {
+  return (
+    <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start sticky top-2">
+      <div className="text-[10px] uppercase tracking-widest text-dim mb-2">Classes in raid</div>
+      {counts.length === 0 ? (
+        <div className="text-dim italic">No roster yet.</div>
+      ) : (
+        <ul className="space-y-0.5">
+          {counts.map(([cls, n]) => (
+            <li key={cls} className="flex justify-between text-text">
+              <span className="truncate">{cls}</span>
+              <span className="text-dim tabular-nums">×{n}</span>
+            </li>
+          ))}
+          <li className="flex justify-between text-dim border-t border-border/40 mt-1 pt-1">
+            <span>Total</span>
+            <span className="tabular-nums">{raidSize}</span>
+          </li>
+        </ul>
+      )}
+    </aside>
   );
 }
 

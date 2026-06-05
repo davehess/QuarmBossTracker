@@ -144,6 +144,21 @@ buff window organized **by slot priority for their class**, with open slots:
 4. **Stage 4 — Loot loop** (depends on `/raid` being the canonical view):
    - Auction-winner highlight + "Add as looter" button on `/raid`.
 5. **Stage 5 — Group-buff regrouping suggestions + RaidHelper class slotting.**
+6. **Stage 6 — Mob Info overlay** (user-asked, queued AFTER `/raid` work):
+   - Mimic overlay showing current target's stats card (the screenshot the user
+     shared: name, class, HP, AC, dmg range, resists MR/FR/CR/PR/DR, Summon /
+     Enrage / Flurry / Magical chips, Spells / Loot / Compact tabs).
+   - Data ready: target name comes from Zeal (`character_live_state.target_name`);
+     mob stats from `eqemu_npc_types` (we mirror it); specials column was added
+     to the sync (`npcspecialattks` — needs a forced sync to backfill).
+   - Bot endpoint: `mob-info` — target name → best `eqemu_npc_types` row → decode
+     class int → "Warrior", decode `npcspecialattks` letter flags →
+     Summon/Enrage/Flurry/Magical chips, plus top loot from the drops view.
+   - Mimic side: new overlay window with the tabbed card, tray toggle +
+     onboarding opt-in (like charm/DPS overlays).
+   - Honest limits: trash mobs with the same name in different zones can't be
+     disambiguated (no instance id, npc_types.zone_short NULL across the
+     catalog); named/raid targets resolve cleanly.
 
 ---
 

@@ -45,9 +45,12 @@ type RosterRow = {
   rank: string | null;
 };
 
-// Color tier — at-a-glance triage signal. Driven by missing role-expected
-// categories, missing HP slots, and how close any buff is to falling off.
-// Tunable; this is a first pass per the roadmap doc.
+// Color tier — at-a-glance triage signal, per the user's spec:
+//   RED    — no buffs at all (or essentially none — buff_count 0)
+//   ORANGE — missing critical buff family for the role: any HP slot empty, OR
+//            a priest/caster missing mana / mana-regen
+//   YELLOW — missing one or two of the OTHER role-target categories
+//   GREEN  — all role-expected buffs present (and all 3 HP slots filled)
 function colorTier(
   role: Role,
   byCategory: Record<string, string[]>,
@@ -56,18 +59,24 @@ function colorTier(
   noAgent: boolean,
 ): 'green' | 'yellow' | 'orange' | 'red' | 'unknown' {
   if (noAgent) return 'unknown';
-  const target = ROLE_TARGETS[role] || [];
-  const missingCats = target.filter(c => !(byCategory[c]?.length)).length;
-  const missingHpSlots = (['A','B','C'] as const).filter(s => !hpSlots[s]).length;
-  // "Critical missing" = no HP slot at all, or a priest/caster with no mana regen.
-  const criticalMissing =
-    missingHpSlots >= 3 ||
-    ((role === 'priest' || role === 'caster') && !byCategory.manaRegen?.length);
-  if (criticalMissing) return 'red';
-  // Anything close to falling off? (Ticks remaining ≤ 2 = ~12s left.)
-  const expiringSoon = (buffs ?? []).some(b => b && b.ticks != null && b.ticks <= 2 && b.ticks > 0);
-  if (expiringSoon) return 'orange';
-  if (missingCats > 0 || missingHpSlots > 0) return 'yellow';
+  const totalBuffs = (buffs ?? []).filter(b => b && b.name).length;
+  if (totalBuffs === 0) return 'red';
+
+  const missingHpSlots = (['A','B','C'] as const).filter(s => !hpSlots[s]);
+  const isCaster = role === 'caster' || role === 'priest';
+  const missingMana       = isCaster && !byCategory.mana?.length;
+  const missingManaRegen  = isCaster && !byCategory.manaRegen?.length;
+
+  // ORANGE: any HP slot empty, OR a caster missing mana/mana-regen.
+  if (missingHpSlots.length > 0 || missingMana || missingManaRegen) return 'orange';
+
+  // YELLOW: missing one or two of the OTHER (non-HP, non-mana) role-target
+  // categories. mana/manaRegen are excluded because they're already handled
+  // by the orange tier above.
+  const target = (ROLE_TARGETS[role] || []).filter(c => c !== 'mana' && c !== 'manaRegen');
+  const missingOther = target.filter(c => !(byCategory[c]?.length)).length;
+  if (missingOther > 0) return 'yellow';
+
   return 'green';
 }
 
@@ -79,7 +88,7 @@ export default async function RaidHubPage() {
   const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
 
   const admin = supabaseAdmin();
-  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }] = await Promise.all([
+  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }] = await Promise.all([
     admin.from('character_live_state')
       .select('character, zone_name, buffs, buff_count, updated_at')
       .eq('guild_id', 'wolfpack')
@@ -91,7 +100,15 @@ export default async function RaidHubPage() {
       .select('name, class, group_num, level, rank, captured_at')
       .eq('guild_id', 'wolfpack')
       .gte('captured_at', rosterSince),
+    // Signed-in user → discord_id so we can find THEIR character in the raid.
+    // Lets us auto-pick a default Buffer-mode class (their own class) and
+    // optionally highlight their row. Override is still always available.
+    admin.from('wolfpack_members')
+      .select('discord_id')
+      .eq('user_id', user.id)
+      .maybeSingle(),
   ]);
+  const meDiscordId = memberRow?.discord_id ?? null;
 
   const rosterByName = new Map<string, RosterRow>(
     ((rosterRows ?? []) as RosterRow[]).map(r => [r.name.toLowerCase(), r]),
@@ -102,6 +119,20 @@ export default async function RaidHubPage() {
   );
   const classFor = (name: string): string | null =>
     classByName.get(name.toLowerCase()) ?? rosterByName.get(name.toLowerCase())?.class ?? null;
+  // name(lower) → discord_id (for the "me" highlight) and discord_id → set of
+  // owned characters. Family roots inherit their own discord_id; alts inherit
+  // the family root's via main_name.
+  const charByName = new Map<string, { name: string; main_name: string | null; discord_id: string | null }>(
+    ((charRows ?? []) as { name: string; class: string | null; main_name: string | null; discord_id: string | null }[])
+      .map(c => [c.name.toLowerCase(), { name: c.name, main_name: c.main_name, discord_id: c.discord_id }]),
+  );
+  const discordIdFor = (name: string): string | null => {
+    const e = charByName.get(name.toLowerCase());
+    if (!e) return null;
+    if (e.discord_id) return e.discord_id;
+    if (e.main_name) return charByName.get(e.main_name.toLowerCase())?.discord_id ?? null;
+    return null;
+  };
 
   function bucketBuffs(buffs: { name: string; ticks: number | null }[] | null) {
     const byCategory: Record<string, string[]> = {};
@@ -152,6 +183,7 @@ export default async function RaidHubPage() {
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, live?.buffs ?? null, noAgent),
       buffs: live?.buffs ?? [],
+      isMe: !!(meDiscordId && discordIdFor(rr.name) === meDiscordId),
     });
   }
   // 2. Anyone with live state but NOT in the roster (parked alt running Mimic,
@@ -181,8 +213,14 @@ export default async function RaidHubPage() {
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, r.buffs, false),
       buffs: r.buffs ?? [],
+      isMe: !!(meDiscordId && discordIdFor(r.character) === meDiscordId),
     });
   }
+
+  // The signed-in user's class as they appear in the current raid (if any) —
+  // used as the default Buffer-mode class. They can override.
+  const myInRaid = rows.find(r => r.inRaid && r.isMe) || rows.find(r => r.isMe);
+  const myClass  = myInRaid?.className || null;
 
   // Headline counters (raid leader name, coverage, etc.) computed here so the
   // client component just renders.
@@ -204,6 +242,7 @@ export default async function RaidHubPage() {
       leaderName={leader?.name ?? null}
       leaderClass={leader?.className ?? null}
       groupLeaders={Object.fromEntries(groupLeaders)}
+      myClass={myClass}
     />
   );
 }
