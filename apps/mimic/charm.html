@@ -38,6 +38,18 @@
   .charm .meta .hp{color:#56d364;font-weight:bold}
   .hpbar{height:5px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .hpbar > div{height:100%;transition:width 200ms linear,background 200ms linear}
+  /* /pet health buff chips — each pet buff with its remaining time from the
+     last /pet health report. Same tone tiers as the web BuffChip: dim → low
+     (orange ≤6m) → crit (red ≤2m). Stale (no fresh report in N min) is faded. */
+  .petbuffs{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;font-size:10px;line-height:1.2}
+  .petbuffs .stale{opacity:0.5}
+  .petbuff{padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.06);
+    border:1px solid rgba(255,255,255,0.10);color:#c9d1d9;text-shadow:0 1px 2px #000}
+  .petbuff .nm{color:#7ee787}
+  .petbuff .t{font-variant-numeric:tabular-nums;margin-left:4px;color:#8b949e}
+  .petbuff.low .t{color:#f0883e}
+  .petbuff.crit .t{color:#f85149}
+  .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
   /* drag/lock/setup — same pattern as overlay.html / triggers.html */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -150,6 +162,83 @@
       u.rate = 1.05; u.volume = 1; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch (e) {}
   }
   function fmtElapsed(ms){ var s = Math.floor(ms/1000); var m = Math.floor(s/60); var r = s - m*60; return m + ':' + String(r).padStart(2,'0'); }
+  // Mirror of web/lib/buffs.ts shortBuffName — same shorthand the guild reads
+  // on /raid + /buffs, just inlined here since charm.html is a standalone
+  // localhost page (no module imports). Update both lists together when a new
+  // buff surfaces.
+  var SHORT_BUFF_RULES = [
+    [/protection of the glades/i, 'POTG'],
+    [/protection of the cabbage/i, 'POTC'],
+    [/aegolism/i, 'Aego'],
+    [/talisman of wunshi/i, 'ToW'],
+    [/khura'?s? focusing/i, 'Khuras'],
+    [/brell'?s? (?:mountainous barrier|steadfast bulwark|blessing)/i, 'Brell'],
+    [/arch shielding/i, 'Arch'],
+    [/koadic'?s endless intellect/i, 'KEI'],
+    [/clarity ii/i, 'C2'],
+    [/visions of grandeur/i, 'VoG'],
+    [/gift of pure thought/i, 'GoPT'],
+    [/spirit of (?:the )?wolf/i, 'SOW'],
+    [/flight of eagles?/i, 'FoE'],
+    [/spirit of bihli/i, 'Bihli'],
+    [/focus(?:ing)? of spirit/i, 'FoS'],
+    [/speed of the shissar/i, 'Shissar'],
+  ];
+  function shortBuffName(name){
+    var raw = String(name || '').trim(); if (!raw) return raw;
+    var sym = raw.match(/symbol of (?:the )?(\w+)/i);
+    if (sym) { var w = sym[1]; return 'Sym ' + (w[0].toUpperCase() + w.slice(1).toLowerCase()); }
+    for (var i=0;i<SHORT_BUFF_RULES.length;i++){ if (SHORT_BUFF_RULES[i][0].test(raw)) return SHORT_BUFF_RULES[i][1]; }
+    return raw;
+  }
+  // Compact countdown: "1h12m" / "8m" / "45s" / "0s". Elapsed-adjusts the
+  // "remaining" reported at observed_at_ms; once <= 0 we show 0s (rather than
+  // hiding) so the chip's visible-but-spent state reads as "this expired
+  // recently — re-buff."
+  function fmtRem(remSecs, observedAtMs){
+    if (remSecs == null) return '';
+    var elapsed = observedAtMs ? Math.max(0, (Date.now() - observedAtMs) / 1000) : 0;
+    var s = Math.max(0, Math.round(remSecs - elapsed));
+    if (s >= 3600) { var h = Math.floor(s/3600); var mm = Math.round((s%3600)/60); return mm ? (h+'h'+mm+'m') : (h+'h'); }
+    if (s >= 60)   return Math.floor(s/60) + 'm';
+    return s + 's';
+  }
+  function buffTone(remSecs, observedAtMs){
+    if (remSecs == null) return '';
+    var elapsed = observedAtMs ? Math.max(0, (Date.now() - observedAtMs) / 1000) : 0;
+    var s = remSecs - elapsed;
+    if (s <= 120) return 'crit';
+    if (s <= 360) return 'low';
+    return '';
+  }
+  function renderPetBuffs(p){
+    var buffs = Array.isArray(p.pet_buffs) ? p.pet_buffs : null;
+    if (!buffs || !buffs.length) return '';
+    var obs = p.pet_health_observed_at || null;
+    // After 5 min from the last /pet health, the numbers are old enough to
+    // flag the row as stale — the buffs probably still exist, but the time
+    // remaining is more guess than fact.
+    var staleMs = obs ? (Date.now() - obs) : null;
+    var staleClass = (staleMs != null && staleMs > 5*60*1000) ? ' stale' : '';
+    var chips = '';
+    for (var i=0;i<buffs.length;i++){
+      var b = buffs[i]; if (!b || !b.name) continue;
+      // Hide chips that are >30s expired by our clock — the pet has lost it,
+      // showing it adds noise.
+      var elapsed = obs ? (Date.now() - obs) / 1000 : 0;
+      if (b.remaining_secs != null && (b.remaining_secs - elapsed) < -30) continue;
+      var tone = buffTone(b.remaining_secs, obs);
+      var t = fmtRem(b.remaining_secs, obs);
+      var title = b.name + ' · ' + (t || '?') + ' left (from last /pet health)';
+      chips += '<span class="petbuff ' + tone + '" title="' + esc(title) + '">'
+            +    '<span class="nm">' + esc(shortBuffName(b.name)) + '</span>'
+            +    (t ? '<span class="t">' + t + '</span>' : '')
+            +  '</span>';
+    }
+    if (!chips) return '';
+    var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : '/pet health';
+    return '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
+  }
 
   // Per-charm session memory: key → { started_at, warned }. Re-armed when a
   // pet's started_at changes (re-charm = new session). Used to fire the warn
@@ -250,6 +339,7 @@
           + hpBar
           + '<div class="tickbar"><div style="width:' + tickPct.toFixed(0) + '%"></div></div>'
           + durBar
+          + renderPetBuffs(p)
           + '</div>';
       }
       listEl.innerHTML = html;
