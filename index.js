@@ -2522,10 +2522,25 @@ const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
 // still letting a genuinely distinct later repeat through.
 const CHAT_RELAY_DEDUP_WINDOW_MS = 12_000;
 const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
+// Trigger-broadcast dedup: every raider's agent fires the same trigger (e.g. a
+// boss rampage), so collapse by guild|key within a short window — one Discord
+// post per event. The key is the trigger's own dedup key ("rampage:<target>").
+const TRIGGER_DEDUP_WINDOW_MS = 10_000;
+const _triggerDedup = new Map();   // key: "guild|key" → timestamp
+// Light per-uploader rate cap so a misbehaving agent can't flood the channel
+// with DISTINCT messages (the dedup above only collapses identical keys).
+const TRIGGER_RATE_WINDOW_MS = 60_000;
+const TRIGGER_RATE_MAX       = 30;  // posts per uploader per window
+const _triggerRate = new Map();    // discordId → [timestamps]
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
   for (const [k, v] of _chatRelayDedup) if (v < now - CHAT_RELAY_DEDUP_WINDOW_MS) _chatRelayDedup.delete(k);
+  for (const [k, v] of _triggerDedup)   if (v < now - TRIGGER_DEDUP_WINDOW_MS)    _triggerDedup.delete(k);
+  for (const [k, arr] of _triggerRate) {
+    const kept = arr.filter(t => now - t < TRIGGER_RATE_WINDOW_MS);
+    if (kept.length) _triggerRate.set(k, kept); else _triggerRate.delete(k);
+  }
 }, 10_000);
 
 // ── Era boundaries for chat thread routing ─────────────────────────────────
@@ -4575,6 +4590,68 @@ async function _handleAgentRaidRoster(req, res) {
   }
 }
 
+// POST /api/agent/trigger
+//
+// "Pipe my triggers into Discord." An agent posts one or more trigger fires:
+//   { agent_version, character, triggers: [ { name, message, key, fired_at } ] }
+// Each `message` is relayed to TRIGGER_BROADCAST_CHANNEL_ID. Fed by the agent's
+// rampage announcer and by user-defined `discord` trigger actions.
+//
+// Safety: per-user token (requireAgentAuth) attributes every post; mass-mention
+// parsing is disabled so a captured name can't @everyone; identical fires from
+// many raiders collapse via the per-key dedup; a per-uploader rate cap stops a
+// runaway agent. No-op (200) when no broadcast channel is configured.
+async function _handleAgentTrigger(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 64 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  _trackUpload({ endpoint: 'trigger', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+
+  const channelId = process.env.TRIGGER_BROADCAST_CHANNEL_ID;
+  const triggers  = Array.isArray(payload?.triggers) ? payload.triggers : [];
+  if (!channelId || triggers.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, posted: 0, note: channelId ? 'no triggers' : 'no broadcast channel configured' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const now = Date.now();
+  let posted = 0;
+  let ch = null;
+  for (const ev of triggers) {
+    const message = String(ev?.message || '').trim().slice(0, 300);
+    if (!message) continue;
+    // Per-uploader rate cap (across all keys).
+    const rate = _triggerRate.get(identity.discord_id) || [];
+    if (rate.filter(t => now - t < TRIGGER_RATE_WINDOW_MS).length >= TRIGGER_RATE_MAX) break;
+    // Cross-agent dedup by the trigger's own key (falls back to the message).
+    const dedupKey = guildId + '|' + String(ev?.key || message).toLowerCase();
+    if (_triggerDedup.has(dedupKey) && now - _triggerDedup.get(dedupKey) < TRIGGER_DEDUP_WINDOW_MS) continue;
+    _triggerDedup.set(dedupKey, now);
+    try {
+      if (!ch) ch = await client.channels.fetch(channelId).catch(() => null);
+      if (!ch || typeof ch.send !== 'function') break;
+      await ch.send({ content: message, allowedMentions: { parse: [] } });
+      posted++;
+      _triggerRate.set(identity.discord_id, [...rate, now]);
+    } catch (err) {
+      console.warn('[trigger] post failed:', err?.message);
+    }
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, posted }));
+}
+
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
 // thread, mirroring the /feedback command's embed + buttons, then stamp the
 // row's discord_msg_id/link so it's posted exactly once. Called on an interval
@@ -5959,6 +6036,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentRaidRoster(req, res); }
     catch (err) {
       console.error('[raid-roster] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/trigger') {
+    try { return await _handleAgentTrigger(req, res); }
+    catch (err) {
+      console.error('[trigger] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

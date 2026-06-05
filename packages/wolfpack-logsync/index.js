@@ -2557,6 +2557,7 @@ function _endpointForKind(kind, botUrl) {
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
+    case 'trigger':         return base + '/trigger';
     default:                return botUrl;
   }
 }
@@ -10903,6 +10904,34 @@ function _announceRampage(target, tsMs) {
     firedAt: now,
     test:    false,
   });
+  // Pipe the same callout to Discord (no-op unless an officer set
+  // TRIGGER_BROADCAST_CHANNEL_ID on the bot). The bot dedups across every
+  // raider's agent by the key, so the channel sees one line per rampage target.
+  _broadcastTriggerToDiscord({
+    name:    'rampage',
+    message: '🔥 **RAMPAGE** → ' + target,
+    key:     'rampage:' + key,
+    tsMs:    now,
+  });
+}
+
+// Enqueue a trigger fire for relay to a Discord channel via the bot's
+// POST /api/agent/trigger. This is the "pipe my triggers into Discord" path —
+// fed by the rampage announcer and by user-defined `discord` trigger actions.
+// `key` is a dedup key (e.g. "rampage:<target>") so N raiders firing the same
+// trigger collapse to one Discord post. Local-only/test fires never reach here.
+function _broadcastTriggerToDiscord({ name, message, key, tsMs }) {
+  const text = String(message || '').trim();
+  if (!text) return;
+  enqueueUpload('trigger', {
+    agent_version: AGENT_VERSION,
+    triggers: [{
+      name:     name || 'trigger',
+      message:  text.slice(0, 300),
+      key:      key ? String(key).slice(0, 120) : null,
+      fired_at: new Date(tsMs || Date.now()).toISOString(),
+    }],
+  });
 }
 
 // Active timer countdowns driven by triggers with timer_duration_sec > 0.
@@ -11370,8 +11399,17 @@ function _fireTriggerActions(t, captures, tsMs, test) {
       _pushOverlay(overlay);
       console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
+    } else if (a.type === 'discord' && !test) {
+      // Broadcast this fire to a Discord channel via the bot. Test fires stay
+      // local (the comment above guarantees no Discord on test). `key` dedups
+      // across every raider's agent; default to name+message when unset.
+      const msg = _expandTemplate(a.message || a.text || '', captures || {}).trim();
+      if (msg) {
+        const key = a.key ? _expandTemplate(a.key, captures || {}) : (t.name + ':' + msg);
+        _broadcastTriggerToDiscord({ name: t.name, message: msg, key, tsMs });
+      }
     }
-    // sound / discord / emit_event beyond the overlay's own audio are no-ops in v1.
+    // sound / emit_event beyond the overlay's own audio remain no-ops in v1.
   }
   // Trigger-level timer countdown (separate from per-action overlays).
   // Starts when timer_duration_sec > 0 on the trigger itself. Captures
