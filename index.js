@@ -63,7 +63,6 @@ const {
   getAllPvpKills, clearPvpKill, getQuake, saveQuake, clearQuake,
   getActivePvpNightUserIds,
   recordPvpKill, setPvpKillThreadMessageId,
-  addPvpAlertHowler,
   hasSeenWelcome, markWelcomeSeen,
   getRaidSession, clearRaidSession, accumulateSessionDamage,
   clearRaidNight,
@@ -1265,31 +1264,41 @@ async function handlePvpRoleToggle(interaction, silent) {
 }
 
 // ── PVP alert howl button ──────────────────────────────────────────────────
+// Source of truth is the MESSAGE itself, not state.json. The previous version
+// read the howler list from `pvpAlerts[messageId].howlers` in state, which got
+// wiped on every redeploy / state restore — so a fresh howl on a still-live
+// message would render with just the new clicker (the prior howlers vanished
+// from the rebuilt line). The Discord message already records every prior
+// howler in its content (as `<@id>` mentions on the howl line), so parse that
+// and append. Stateless, redeploy-proof, and the message is always correct.
+const HOWL_LINE_RX = /howls? back!/;
 async function handlePvpAlertHowl(interaction) {
-  const messageId = interaction.customId.replace('pvpalert_howl:', '');
-  const howlers   = addPvpAlertHowler(messageId, interaction.user.id);
+  const origMsg = interaction.message;
+  // Parse existing howler IDs from the message — they live as <@id> mentions
+  // on the howl line ("X howls back!" / "X and Y howl back!" / Oxford-comma).
+  const existingLine = (origMsg.content || '').split('\n').find(l => HOWL_LINE_RX.test(l)) || '';
+  const existingIds  = [...existingLine.matchAll(/<@!?(\d+)>/g)].map(m => m[1]);
+  // Append the clicker if they're not already in the list.
+  const userId  = interaction.user.id;
+  const howlers = existingIds.includes(userId) ? existingIds : [...existingIds, userId];
 
-  // Build Oxford comma mention list
+  // Rebuild the Oxford-comma howl line from the merged set.
   const mentions = howlers.map(id => `<@${id}>`);
   let howlLine;
-  if (mentions.length === 1) {
-    howlLine = `${mentions[0]} howls back!`;
-  } else if (mentions.length === 2) {
-    howlLine = `${mentions[0]} and ${mentions[1]} howl back!`;
-  } else {
-    howlLine = `${mentions.slice(0, -1).join(', ')}, and ${mentions[mentions.length - 1]} howl back!`;
-  }
+  if (mentions.length === 1)      howlLine = `${mentions[0]} howls back!`;
+  else if (mentions.length === 2) howlLine = `${mentions[0]} and ${mentions[1]} howl back!`;
+  else                            howlLine = `${mentions.slice(0, -1).join(', ')}, and ${mentions[mentions.length - 1]} howl back!`;
 
-  // Replace/append howlers line without touching the original alert content.
-  // Filter matches BOTH "X howls back!" (singular, 1 howler) and "X and Y howl
-  // back!" / "X, Y, and Z howl back!" (plural, 2+ howlers) — the previous
-  // .includes('howls back!') only caught the singular variant, so a second
-  // click switched to plural and the line stopped being replaceable, piling
-  // up one new line per click instead of editing in place.
-  const origMsg     = interaction.message;
-  const baseContent = origMsg.content.split('\n').filter(l => !/howls? back!/.test(l)).join('\n');
+  const baseContent = (origMsg.content || '').split('\n').filter(l => !HOWL_LINE_RX.test(l)).join('\n');
   try {
-    await origMsg.edit({ content: `${baseContent}\n${howlLine}`, components: origMsg.components });
+    // Don't ping the mentioned howlers again on every edit — only the original
+    // @PVP role ping in the base content matters; their names here are just
+    // the running tally.
+    await origMsg.edit({
+      content:         `${baseContent}\n${howlLine}`,
+      components:      origMsg.components,
+      allowedMentions: { parse: [] },
+    });
   } catch (err) { console.warn('pvpalert_howl: could not edit message:', err?.message); }
 
   await interaction.reply({ flags: MessageFlags.Ephemeral, content: '🐺 AWROOOOOO!' });
