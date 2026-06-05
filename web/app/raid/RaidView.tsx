@@ -20,9 +20,12 @@ import {
   type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
 
-// Tone for a buff's live time-left — crit (refresh now) → low → ok.
+// Tone for a buff's live time-left — crit (refresh now) → low → ok. "unknown"
+// renders the "?" chip dimmer + italic so it reads differently from a real
+// countdown (Zeal couldn't capture a duration — usually a clickie/song).
 const TIME_TONE_CLASS: Record<string, string> = {
   crit: 'text-red-400', low: 'text-orange', ok: 'text-dim', none: 'text-dim',
+  unknown: 'text-dim italic',
 };
 
 export type RaidRow = {
@@ -481,8 +484,9 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
   const BuffChip = ({ name }: { name: string }) => {
     const t = fmtBuffRemaining(ticksFor(name), atMs);
     const tone = buffTimeTone(ticksFor(name), atMs);
+    const titleSuffix = tone === 'unknown' ? ' · duration unknown' : t ? ` · ${t} left` : '';
     return (
-      <span className="truncate" title={name + (t ? ` · ${t} left` : '')}>
+      <span className="truncate" title={name + titleSuffix}>
         <span className="text-green">{shortBuffName(name)}</span>
         {t && <span className={['ml-1 tabular-nums', TIME_TONE_CLASS[tone]].join(' ')}>{t}</span>}
       </span>

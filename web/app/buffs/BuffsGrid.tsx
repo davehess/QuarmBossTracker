@@ -31,12 +31,15 @@ export type BuffRow = {
 
 const STALE_MS = 30 * 60 * 1000;
 
-// Tone for a buff's remaining time — crit (refresh now) → low → ok.
+// Tone for a buff's remaining time — crit (refresh now) → low → ok. "unknown"
+// renders the "?" chip dimmer + italic so a buffer can tell at a glance "we
+// don't know how long this lasts" vs. a real countdown.
 const TIME_TONE_CLASS: Record<string, string> = {
-  crit: 'text-red-400',
-  low:  'text-orange',
-  ok:   'text-dim',
-  none: 'text-dim',
+  crit:    'text-red-400',
+  low:     'text-orange',
+  ok:      'text-dim',
+  none:    'text-dim',
+  unknown: 'text-dim italic',
 };
 
 // One buff: guild-shorthand name + its live time-left badge (toned so a buffer
@@ -45,8 +48,9 @@ function BuffChip({ name, ticks, updatedAt }: { name: string; ticks: number | nu
   const at = updatedAt ? new Date(updatedAt).getTime() : null;
   const t = fmtBuffRemaining(ticks, at);
   const tone = buffTimeTone(ticks, at);
+  const titleSuffix = tone === 'unknown' ? ' · duration unknown' : t ? ` · ${t} left` : '';
   return (
-    <span title={name + (t ? ` · ${t} left` : '')}>
+    <span title={name + titleSuffix}>
       <span className="text-green">{shortBuffName(name)}</span>
       {t && <span className={['ml-1 tabular-nums', TIME_TONE_CLASS[tone]].join(' ')}>{t}</span>}
     </span>

@@ -260,11 +260,19 @@ export function buffRemainingSecs(
   return secs > 0 ? secs : 0;
 }
 
-/** "1h12m" / "8m" / "45s" / "" (unknown or permanent). */
+/** "1h12m" / "8m" / "45s" — or "?" when Zeal didn't report a duration. Empty
+ *  string for permanent buffs (illusions / clickies). The two non-empty cases
+ *  are visually distinguished by buffTimeTone → "unknown" gets its own tone. */
 export function fmtBuffRemaining(
   ticks: number | null | undefined,
   updatedAtMs?: number | null,
 ): string {
+  // Unknown — Zeal couldn't capture a tick count for this buff. Surface a "?"
+  // so the chip still tells the buffer something is up rather than going blank
+  // (blank reads as "all good, no countdown" — which is wrong here).
+  if (ticks == null || !Number.isFinite(ticks) || ticks <= 0) return '?';
+  // Permanent → no countdown chip at all; the name alone is the signal.
+  if (ticks >= PERMANENT_TICKS) return '';
   const secs = buffRemainingSecs(ticks, updatedAtMs);
   if (secs == null) return '';
   const s = Math.round(secs);
@@ -277,13 +285,16 @@ export function fmtBuffRemaining(
   return `${s}s`;
 }
 
-export type BuffTimeTone = 'crit' | 'low' | 'ok' | 'none';
+export type BuffTimeTone = 'crit' | 'low' | 'ok' | 'none' | 'unknown';
 
-/** crit ≤2m (refresh now) · low ≤6m (getting short) · ok · none (unknown/perm). */
+/** crit ≤2m (refresh now) · low ≤6m (getting short) · ok · unknown (Zeal had
+ *  no duration; the "?" chip uses this) · none (permanent, no chip). */
 export function buffTimeTone(
   ticks: number | null | undefined,
   updatedAtMs?: number | null,
 ): BuffTimeTone {
+  if (ticks == null || !Number.isFinite(ticks) || ticks <= 0) return 'unknown';
+  if (ticks >= PERMANENT_TICKS) return 'none';
   const secs = buffRemainingSecs(ticks, updatedAtMs);
   if (secs == null) return 'none';
   if (secs <= 120) return 'crit';
