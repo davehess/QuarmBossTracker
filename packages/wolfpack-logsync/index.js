@@ -328,6 +328,7 @@ const KEEP_PATTERNS = [
   /\bfor \d+ points? of (mana|stamina|hit points|endurance)/i,
   /\bhas been healed/i,
   /\byou begin casting/i,
+  /\byou begin singing/i,                         // bard songs (incl. charm) — for the charm-tracker duration
   /\bbegins? to cast/i,
   /\byou cast /i,
   /\bresisted your/i,
@@ -402,6 +403,48 @@ function isPlausibleAttacker(name) {
   if (/\s/.test(name)) return true;          // multi-word → NPC filters handle it
   return /^[A-Z]/.test(name);                // single token must be capitalized
 }
+
+// ── Charm-spell catalog (for the charm-tracker duration bar) ─────────────────
+// Maps the exact spell/song name (as it appears in "You begin casting <X>." /
+// "You begin singing <X>.") → { cls, dur }. `cls` is 'bard' for songs (short,
+// re-sung often → recharm warning fires 6s before the last tick) and
+// 'enchanter' for everyone else's timed charm (longer → warning at 30s
+// remaining). `dur` is the spell duration in SECONDS at level 60 (the guild's
+// cap), derived from eqemu_spells (buffduration × 6, level-capped by formula).
+//
+// ⚠️ These are the spell's MAX duration — Quarm charm usually breaks earlier on
+// a per-tick check, and the enchanter cap is long, so the 30s-remaining warning
+// lands near natural expiry. Tune freely: the bar + warning are driven entirely
+// off this table, so correcting a value here is the whole change. Bard values
+// (60s / 18s) are practical as-is.
+const CHARM_SPELLS = new Map([
+  // Bard — short songs, recharmed constantly.
+  ["solon's bewitching bravura", { cls: 'bard', dur: 60 }],
+  ["solon's song of the sirens",  { cls: 'bard', dur: 18 }],
+  // Enchanter (+ druid/necro animal/undead charm share the same 205/formula-10
+  // line). Single-target timed charm.
+  ['charm',             { cls: 'enchanter', dur: 720 }],
+  ['beguile',           { cls: 'enchanter', dur: 720 }],
+  ['cajole',            { cls: 'enchanter', dur: 720 }],
+  ['allure',            { cls: 'enchanter', dur: 720 }],
+  ['persuade',          { cls: 'enchanter', dur: 720 }],
+  ['alluring whispers', { cls: 'enchanter', dur: 720 }],
+  ["boltran`s agacerie",{ cls: 'enchanter', dur: 420 }],
+  ["boltran's agacerie",{ cls: 'enchanter', dur: 420 }],
+  ['dictate',           { cls: 'enchanter', dur: 48  }],   // AoE charm — short
+  // Druid animal charm.
+  ['charm animals',     { cls: 'enchanter', dur: 720 }],
+  ['beguile animals',   { cls: 'enchanter', dur: 720 }],
+  ['allure of the wild',{ cls: 'enchanter', dur: 720 }],
+  ['befriend animal',   { cls: 'enchanter', dur: 720 }],
+  ['call of karana',    { cls: 'enchanter', dur: 720 }],
+  // Necro undead charm.
+  ['cajoling whispers', { cls: 'enchanter', dur: 720 }],
+  ['beguile undead',    { cls: 'enchanter', dur: 720 }],
+  ['cajole undead',     { cls: 'enchanter', dur: 720 }],
+  ['thrall of bones',   { cls: 'enchanter', dur: 720 }],
+  ['dominate undead',   { cls: 'enchanter', dur: 720 }],
+]);
 
 // ── Event parser ────────────────────────────────────────────────────────────
 // Turn a kept line into a structured event. Returns null if we can't parse it.
@@ -736,7 +779,10 @@ function parseEvent(line, ts) {
   }
 
   // ── Casts ─────────────────────────────────────────────────────────────────
-  m = line.match(/\]\s+You begin casting\s+(.+?)\./i);
+  // "singing" covers bard songs so the charm tracker can pick up a bard's charm
+  // song (Solon's Bewitching Bravura, etc.) the same way it reads an enchanter's
+  // "You begin casting Allure".
+  m = line.match(/\]\s+You begin (?:casting|singing)\s+(.+?)\./i);
   if (m) {
     return { ts: tsIso, type: 'cast', attacker: null /* self */, ability: m[1] };
   }
@@ -953,6 +999,11 @@ const knownPetOwners = new Map();
 //   petLower -> { pet, owner, last_tick_at, last_event ('land'|'break'),
 //                 is_active }
 const _charmTickTracker = new Map();
+// Most-recent self charm-spell cast, staged by the `cast` handler. Consumed by
+// the next charm-land (gauge or log) within a short window to attach the charm's
+// class + duration to the session, driving the duration bar + class-aware warn.
+let _pendingCharmSpell = null;   // { cls, dur, owner, ts } | null
+const PENDING_CHARM_WINDOW_MS = 12_000;
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
   const k = String(pet).toLowerCase();
@@ -973,14 +1024,40 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     // started_at anchors elapsed/duration in the charm overlay. Set on land;
     // carried forward on break so the closed entry still reports how long the
     // charm lasted.
-    started_at: eventKind === 'land' ? ts : (prev ? prev.started_at : ts),
+    // Keep the original land time while the charm stays active, so a second
+    // 'land' for the SAME session (e.g. gauge land then the later "…Master" log
+    // ack) doesn't reset the duration/tick bars. A re-charm after a break
+    // (prev.is_active=false) starts a fresh clock.
+    started_at: eventKind === 'land'
+      ? ((prev && prev.is_active) ? prev.started_at : ts)
+      : (prev ? prev.started_at : ts),
     // Dire Charm (AA) is permanent until a resist break — the overlay shows
     // no duration countdown for it, only the break alarm. Regular charm is
     // timed. Sticky across the session for this pet.
     is_dire_charm: opts && opts.is_dire_charm != null
       ? !!opts.is_dire_charm
       : (prev ? !!prev.is_dire_charm : false),
+    // Charm class + duration (seconds) for the duration bar. Set from the
+    // staged charm-spell cast on land; carried forward across ticks so the bar
+    // persists for the whole session.
+    charm_class:  (opts && opts.charm_class)  || (prev ? prev.charm_class  : null),
+    duration_sec: (opts && opts.duration_sec != null) ? opts.duration_sec
+                : (prev ? prev.duration_sec : null),
   });
+}
+
+// If a self charm-spell cast is staged and still fresh, return its {cls,dur}
+// (consuming it) to attach to a landing charm session — else null.
+function _consumePendingCharmSpell(owner, nowMs) {
+  const p = _pendingCharmSpell;
+  if (!p) return null;
+  if ((nowMs || Date.now()) - p.ts > PENDING_CHARM_WINDOW_MS) { _pendingCharmSpell = null; return null; }
+  // Owner sanity: if the cast recorded an owner, it must match the landing pet's
+  // owner (case-insensitive). Gauge-land owner is the local char; log-land owner
+  // resolves the same way, so this holds for self charm.
+  if (p.owner && owner && String(p.owner).toLowerCase() !== String(owner).toLowerCase()) return null;
+  _pendingCharmSpell = null;
+  return { charm_class: p.cls, duration_sec: p.dur };
 }
 
 // Reconcile the charm tracker against the LIVE Zeal pet gauge (slot 16). On
@@ -1017,7 +1094,10 @@ function _reconcileGaugeCharms() {
     if (!gaugePets.has(ownerLower)) gaugePets.set(ownerLower, new Set());
     gaugePets.get(ownerLower).add(k);
     const cur = _charmTickTracker.get(k);
-    if (!cur || !cur.is_active) _bumpCharmTick(name, ch, 'land', now);   // gauge-sourced land
+    if (!cur || !cur.is_active) {
+      const pc = _consumePendingCharmSpell(ch, now) || {};       // attach spell duration/class if just cast
+      _bumpCharmTick(name, ch, 'land', now, pc);                 // gauge-sourced land
+    }
   }
   for (const [k, info] of _charmTickTracker) {
     if (!info.is_active || !info.owner) continue;
@@ -1493,6 +1573,7 @@ class EncounterBuilder {
           && this._pendingDireCharm.caster.toLowerCase() === owner.toLowerCase()
           && (startTs - this._pendingDireCharm.ts) < 10_000);
         if (isDC) this._pendingDireCharm = null;
+        const pcSpell = _consumePendingCharmSpell(owner, startTs) || {};
         this._activeCharms.set(petKey, {
           pet:           event.pet,
           owner,
@@ -1507,7 +1588,7 @@ class EncounterBuilder {
         // Charm landed → that moment is the mob's tick; start the 6s
         // countdown on the global tracker. Pass the dire-charm flag so the
         // charm overlay knows whether to show a duration countdown.
-        _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: isDC });
+        _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: isDC, ...pcSpell });
       }
       return;
     }
@@ -1994,6 +2075,14 @@ class EncounterBuilder {
       if (caster) {
         const byChar = stats.castCounts[caster] || (stats.castCounts[caster] = {});
         byChar[spell] = (byChar[spell] || 0) + 1;
+      }
+      // Charm-spell cast → stage its class + duration so the next charm-land
+      // (gauge or log) can attach a duration bar to the session. Self-cast only
+      // (no attacker = the builder's own character cast it); matched to the land
+      // by a short time window, mirroring _pendingDireCharm.
+      if (!event.attacker) {
+        const ci = CHARM_SPELLS.get(String(spell).toLowerCase());
+        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: this.character || null, ts: Date.now() };
       }
     }
 
@@ -3446,6 +3535,8 @@ function _serializeForDashboard() {
           is_active:     info.is_active,
           started_at:    info.started_at,
           is_dire_charm: info.is_dire_charm,
+          charm_class:   info.charm_class  || null,
+          duration_sec:  info.duration_sec != null ? info.duration_sec : null,
           pet_hp_pct:    lp && lp.hp_pct != null ? lp.hp_pct : null,
         });
       }
