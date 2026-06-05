@@ -525,15 +525,19 @@ export default async function AdminAgentsPage() {
         )}
       </section>
 
-      {/* Stale uploaders — same family grouping */}
+      {/* Stale uploaders — same family grouping, collapsed by default so the
+          old pre-discord-auth streams stay out of the way. They self-refresh
+          the moment that character uploads again under a per-user token. */}
       {staleFamilies.length > 0 && (
-        <section className="bg-panel border border-border rounded-lg">
-          <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
+        <details className="group bg-panel border border-border rounded-lg [&_summary::-webkit-details-marker]:hidden">
+          <summary className="text-sm text-orange px-4 py-3 border-b border-border cursor-pointer select-none flex items-center gap-2 hover:bg-[#1a212c]">
+            <span className="text-dim text-[10px] transition-transform group-[[open]]:rotate-90">▶</span>
             Stale mains (active in last 30d, nothing in last 24h) — {staleFamilies.length}
             <span className="text-dim font-normal"> · {stale.length} character{stale.length === 1 ? '' : 's'}</span>
-          </h3>
+            <span className="text-dim font-normal text-[11px] ml-auto">click to expand</span>
+          </summary>
           <div>{staleFamilies.map(f => <FamilyRow key={f.mainName} fam={f} stale />)}</div>
-        </section>
+        </details>
       )}
 
       {/* Last error per character (we no longer keep a per-upload error log) */}
