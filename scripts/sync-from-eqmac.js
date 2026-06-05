@@ -66,6 +66,13 @@ const WHITELIST = {
   spawnentry:          { dest: 'eqemu_spawnentry',        transform: 'spawnentry' },
   spawn2:              { dest: 'eqemu_spawn2',            transform: 'spawn2' },
   spells_new:          { dest: 'eqemu_spells',            transform: 'spells' },
+  // AA data — for inferring buff durations (Spell Casting Reinforcement etc.)
+  // and resolving the numeric AA ids in a player's Quarmy AAIndex to a name +
+  // per-rank effect. altadv_vars = the AA list (name is a real column, so ids
+  // resolve directly); aa_effects = per-rank effect (effectid=SPA, base1=value,
+  // e.g. the 5/15/30% on a duration AA).
+  altadv_vars:         { dest: 'eqemu_altadv_vars',       transform: 'altadv_vars' },
+  aa_effects:          { dest: 'eqemu_aa_effects',        transform: 'aa_effects' },
 };
 
 // ── Supabase REST helper ────────────────────────────────────────────────────
@@ -467,6 +474,28 @@ const TRANSFORMS = {
       spell_fades: r.spell_fades || null,
     };
   },
+  // AA definition list. skill_id is the per-rank/internal id; eqmacid is the
+  // grouped Mac-client ability id (this is what a Quarmy AAIndex row references).
+  // name is a real display name. classes is a class bitmask; max_level = ranks.
+  altadv_vars: (cols, row) => {
+    const r = pick(cols, row, ['skill_id', 'eqmacid', 'name', 'cost', 'max_level', 'type', 'spell_type', 'prereq_skill', 'prereq_minpoints', 'spellid', 'classes', 'class_type', 'aa_expansion', 'special_category', 'level_inc', 'cost_inc']);
+    if (r.skill_id == null) return null;
+    return {
+      skill_id: r.skill_id, eqmacid: r.eqmacid, name: r.name,
+      cost: r.cost, max_level: r.max_level, type: r.type, spell_type: r.spell_type,
+      prereq_skill: r.prereq_skill, prereq_minpoints: r.prereq_minpoints,
+      spellid: r.spellid, classes: r.classes, class_type: r.class_type,
+      aa_expansion: r.aa_expansion, special_category: r.special_category,
+      level_inc: r.level_inc, cost_inc: r.cost_inc,
+    };
+  },
+  // Per-(aaid, slot) AA effect. effectid = SPA; base1/base2 = values. The
+  // buff-duration % (e.g. 5/15/30 on Spell Casting Reinforcement) lives in base1.
+  aa_effects: (cols, row) => {
+    const r = pick(cols, row, ['aaid', 'slot', 'effectid', 'base1', 'base2']);
+    if (r.aaid == null || r.slot == null) return null;
+    return { aaid: r.aaid, slot: r.slot, effectid: r.effectid, base1: r.base1, base2: r.base2 };
+  },
 };
 
 function pick(cols, row, wanted) {
@@ -530,6 +559,8 @@ const PK_MAP = {
   eqemu_spawnentry:        ['spawngroup_id', 'npc_id'],
   eqemu_spawn2:            ['id'],
   eqemu_spells:            ['id'],
+  eqemu_altadv_vars:       ['skill_id'],
+  eqemu_aa_effects:        ['aaid', 'slot'],
 };
 
 // ── Exports for tests ───────────────────────────────────────────────────────
@@ -608,6 +639,7 @@ if (require.main !== module) return;
     'eqemu_loottable', 'eqemu_lootdrop', 'eqemu_loottable_entries', 'eqemu_lootdrop_entries',
     'eqemu_spawngroup', 'eqemu_spawnentry', 'eqemu_spawn2',
     'eqemu_spells',
+    'eqemu_altadv_vars', 'eqemu_aa_effects',
   ];
   for (const dest of ORDER) {
     if (!buffers[dest] || !buffers[dest].length) continue;
