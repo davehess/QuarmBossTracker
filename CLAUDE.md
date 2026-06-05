@@ -2,10 +2,10 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.17 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 3.0.31 | `packages/wolfpack-logsync/package.json` |
+| **Bot** | 3.0.18 | `package.json` |
+| **Agent** (`wolfpack-logsync`) | 3.0.32 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 1.0.28 | `web/package.json` |
-| **Mimic** (Electron desktop) | 1.0.28 | `apps/mimic/package.json` |
+| **Mimic** (Electron desktop) | 1.0.29 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)
@@ -178,6 +178,7 @@ zone on insert — `find_or_create_encounter` currently leaves it NULL.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/agent/latest-version` | Advertises current agent version + requested-characters list (for "rerun" prompts) |
+| `GET` | `/api/agent/mob-info` | `?name=<npc>` → target NPC stats from `eqemu_npc_types` (HP, AC, MR/FR/CR/PR/DR, min/max dmg, decoded special attacks, class). Name normalized (spaces/backticks/`#` → underscore) for catalog match. Cached 6h. Powers Mimic's Mob Info overlay. |
 | `POST` | `/api/agent/encounter` | Encounter ingest — combat events → parse cards + Supabase encounters/contributions/encounter_players |
 | `POST` | `/api/agent/chat` | Live `/gu` + `/rs` relay. **Currently routes via era threads; era subdivision is deprecated — will become direct post.** |
 | `POST` | `/api/agent/pvp` | PvP kill/death broadcast to `PVP_CHANNEL_ID` with 5s dedup |

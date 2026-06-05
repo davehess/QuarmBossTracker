@@ -79,6 +79,7 @@ let overlayWindow = null;
 let triggerWindow = null;
 let charmWindow   = null;
 let petsWindow    = null;
+let mobInfoWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
 // "damage-done-this-session"). One window per panel; calling
@@ -599,6 +600,7 @@ function _boundsKeyForWindow(win) {
   if (win === triggerWindow) return 'triggerBounds';
   if (win === charmWindow)   return 'charmBounds';
   if (win === petsWindow)    return 'petsBounds';
+  if (win === mobInfoWindow) return 'mobInfoBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1465,6 +1467,7 @@ function _overlayEntries() {
   if (triggerWindow && !triggerWindow.isDestroyed()) out.push(['trigger', triggerWindow]);
   if (charmWindow   && !charmWindow.isDestroyed())   out.push(['charm',   charmWindow]);
   if (petsWindow    && !petsWindow.isDestroyed())    out.push(['pets',    petsWindow]);
+  if (mobInfoWindow && !mobInfoWindow.isDestroyed()) out.push(['mobinfo', mobInfoWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1518,6 +1521,7 @@ function applySetupMode(on) {
     if (!triggerWindow) createTriggerOverlay();
     if (!charmWindow)   createCharmOverlay();
     if (!petsWindow)    createPetsOverlay();
+    if (!mobInfoWindow) createMobInfoOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -1528,6 +1532,7 @@ function applySetupMode(on) {
   applyTriggerVisibility();
   applyCharmVisibility();
   applyPetsVisibility();
+  applyMobInfoVisibility();
   applyAllOverlayOpacities();
   pushStatus();
 }
@@ -1729,6 +1734,37 @@ function applyPetsVisibility() {
   if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
 }
 
+// Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
+function createMobInfoOverlay() {
+  const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
+  mobInfoWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Mob Info overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 230, minHeight: 90,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  mobInfoWindow.setAlwaysOnTop(true, 'screen-saver');
+  mobInfoWindow.setVisibleOnAllWorkspaces(true);
+  mobInfoWindow.loadFile('mobinfo.html');
+  mobInfoWindow.on('moved',  () => _persistBounds('mobInfoBounds', mobInfoWindow));
+  mobInfoWindow.on('resize', () => _persistBounds('mobInfoBounds', mobInfoWindow));
+  mobInfoWindow.once('ready-to-show', () => {
+    mobInfoWindow.webContents.send('agent-port', agentPort);
+    applyMobInfoVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(mobInfoWindow, 'mobinfo');
+  });
+}
+function applyMobInfoVisibility() {
+  if (!mobInfoWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showMobInfo && !cfg.quietMode);
+  if (shouldShow) mobInfoWindow.showInactive(); else mobInfoWindow.hide();
+}
+
 // ── Status + Tray ──────────────────────────────────────────────────────────
 function currentStatus() {
   const cfg = loadConfig();
@@ -1744,6 +1780,7 @@ function currentStatus() {
     enableTriggerTts: !!cfg.enableTriggerTts,
     showCharm: !!cfg.showCharm,
     showPets: !!cfg.showPets,
+    showMobInfo: !!cfg.showMobInfo,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -1887,6 +1924,11 @@ function buildTrayMenu() {
         if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
         pushStatus();
       } },
+    { label: 'Mob Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
+        if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
+        pushStatus();
+      } },
     { type: 'separator' },
     // Panel overlays — surface the most-wanted dashboard panels as named
     // toggles (the same windows the card "🪟 overlay" buttons open). Checked =
@@ -2002,7 +2044,7 @@ function buildTrayMenu() {
     { type: 'separator' },
     { label: 'I use EQLogParser / other parser (Quiet mode)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
-        applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility();
+        applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility();
         pushStatus();
       } },
     { label: 'Overlays', submenu: overlaysSubmenu },
@@ -2306,6 +2348,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showPets = !cfg.showPets; saveConfig(cfg);
       if (cfg.showPets && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
       break;
+    case 'mobinfo':
+      cfg.showMobInfo = !cfg.showMobInfo; saveConfig(cfg);
+      if (cfg.showMobInfo && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
+      break;
     default:
       return null;
   }
@@ -2335,6 +2381,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === petsWindow) {
       cfg.showPets = false; saveConfig(cfg);
       try { petsWindow.hide(); } catch {}
+    } else if (win === mobInfoWindow) {
+      cfg.showMobInfo = false; saveConfig(cfg);
+      try { mobInfoWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -2589,7 +2638,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyOverlayInteractivity();
   pushStatus();
   if (tokenChanged) {
     pushMimicSession();
@@ -2610,7 +2659,7 @@ ipcMain.handle('relaunch-agent', async () => { if (agentProc) { try { agentProc.
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility();
   pushStatus();
   return currentStatus();
 });
@@ -2703,6 +2752,7 @@ app.whenReady().then(async () => {
   createTriggerOverlay();
   createCharmOverlay();
   createPetsOverlay();
+  createMobInfoOverlay();
   pushStatus();
   startZealCapture();
 
@@ -2715,6 +2765,7 @@ app.whenReady().then(async () => {
       [triggerWindow, { x: 700, y: 200, width: 600, height: 200 }],
       [charmWindow,   { x: 700, y: 420, width: 300, height: 180 }],
       [petsWindow,    { x: 700, y: 620, width: 300, height: 160 }],
+      [mobInfoWindow, { x: 700, y: 60,  width: 320, height: 200 }],
     ]) {
       if (!win || win.isDestroyed()) continue;
       try {

@@ -3748,6 +3748,9 @@ function _serializeForDashboard() {
       out.sort((a, b) => (b.observed_at || 0) - (a.observed_at || 0));
       return out.slice(0, 12);
     })(),
+    // Current target NPC stats for the Mob Info overlay (catalog stats from the
+    // bot + live target HP%). null when nothing is targeted.
+    mobInfo: buildMobInfo(),
     // Send ONLY the inventory fields the dashboard's Weapon Loadouts table
     // uses (weapons + bandolier + meta). The full parsed inventory also carries
     // `worn` and a large `bagged` array (every bag + bank slot) per character —
@@ -11553,6 +11556,71 @@ function _livePetHpByOwner() {
     if (pet) out.set(String(ch).toLowerCase(), { name: pet.text, hp_pct: pet.hp_pct });
   }
   return out;
+}
+
+// ── Mob Info (target NPC stats) for the Mimic overlay ────────────────────────
+// The agent's current Zeal target → eqemu_npc_types stats, fetched once per mob
+// from the bot's /api/agent/mob-info and cached (static catalog data). Exposed
+// on /api/state as `mobInfo` with the live target HP% layered on; the overlay
+// renders HP / AC / resists / special attacks.
+const _mobInfoByName  = new Map();   // normName → { at, mob|null }
+const _mobInfoInflight = new Set();
+const MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;
+function _normMobNameAgent(n) {
+  return String(n || '').trim().toLowerCase().replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+}
+function fetchMobInfo(name) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
+  const norm = _normMobNameAgent(name);
+  if (!norm || _mobInfoInflight.has(norm)) return;
+  const cached = _mobInfoByName.get(norm);
+  if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
+  _mobInfoInflight.add(norm);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _mobInfoInflight.delete(norm);
+        try { const j = JSON.parse(body); _mobInfoByName.set(norm, { at: Date.now(), mob: (j && j.mob) ? j.mob : null }); }
+        catch { _mobInfoByName.set(norm, { at: Date.now(), mob: null }); }
+      });
+    });
+    req.on('error',   () => { _mobInfoInflight.delete(norm); });
+    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(norm); });
+    req.end();
+  } catch { _mobInfoInflight.delete(norm); }
+}
+// The freshest watched character's Zeal target (name + live HP%).
+function _currentTargetState() {
+  let best = null;
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || !st.target_name) continue;
+    if (!best || (st.updatedAt || 0) > (best.updatedAt || 0)) best = st;
+  }
+  return best;
+}
+function buildMobInfo() {
+  const st = _currentTargetState();
+  if (!st || !st.target_name) return null;
+  const norm = _normMobNameAgent(st.target_name);
+  const cached = _mobInfoByName.get(norm);
+  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name);
+  return {
+    target_name:   st.target_name,
+    target_hp_pct: st.target_hp_pct != null ? st.target_hp_pct : null,
+    mob:           cached ? cached.mob : null,   // null until the lookup returns
+    loading:       !cached,
+  };
 }
 
 // ── Live character state → bot → Supabase (wolfpack.quest/me) ───────────────

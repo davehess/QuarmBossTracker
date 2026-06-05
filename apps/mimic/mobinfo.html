@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>mobinfo</title>
+<style>
+  /* Mob Info overlay — current target's catalog stats (HP, AC, resists, special
+     attacks) from eqemu_npc_types via the bot, with the live target HP% layered
+     on. Read-only; no tickdown. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:7px 9px;}
+  .title{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    font-size:12px;color:#d2a8ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
+  .conn{font-size:11px}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .mob{padding:7px 9px;background:rgba(8,5,16,0.72);border-radius:7px;
+    border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
+  .mob .nm{font-size:15px;font-weight:bold;color:#e9d5ff}
+  .mob .cls{font-size:11px;color:#9b8bb5;margin-left:5px}
+  .mob .sub{font-size:10px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
+  .hpbar{height:7px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:5px}
+  .hpbar > div{height:100%;transition:width 250ms linear,background 250ms linear}
+  /* resist grid */
+  .res{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:7px}
+  .res .cell{text-align:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:3px 0}
+  .res .lab{font-size:9px;color:#8b949e;letter-spacing:0.5px}
+  .res .val{font-size:13px;font-weight:bold;font-variant-numeric:tabular-nums}
+  /* special attack chips */
+  .spec{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+  .spec .chip{font-size:10px;padding:2px 7px;border-radius:4px;background:#2a1d3d;
+    color:#d2a8ff;border:1px solid #3d2a57}
+  .spec .chip.warn{background:#3d1d1d;color:#ffb3b3;border-color:#5a2a2a}
+  .spec .chip.imm{background:#1d2a3d;color:#9ecbff;border-color:#2a3d57}
+  #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:4px 0}
+  /* drag/lock/setup chrome — same pattern as the other overlays. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(163,113,247,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(163,113,247,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(163,113,247,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag to move this overlay">✥</button>
+  <button id="hide-btn" title="Hide Mob Info (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Mob Info</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span>🎯 Mob Info</span><span id="conn" class="conn bad">○</span></div>
+    <div id="body"></div>
+    <div id="empty">no target</div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { window.mimic.setSetupMode(false); } catch (e) {} });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
+  // Special attacks that are dangerous (call out red) vs immunities (blue).
+  var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
+  function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
+
+  var bodyEl = document.getElementById('body');
+  var emptyEl = document.getElementById('empty');
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      const s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      const mi = s.mobInfo;
+      if (!mi || !mi.target_name) { bodyEl.innerHTML = ''; emptyEl.style.display = 'block'; return; }
+      emptyEl.style.display = 'none';
+      const mob = mi.mob || null;
+      const nm = mob && mob.name ? mob.name : mi.target_name;
+      const cls = mob && mob.class ? ' <span class="cls">(' + esc(mob.class) + ')</span>' : '';
+      // Live target HP%
+      var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
+      var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
+      var hpBar = hp != null ? '<div class="hpbar"><div style="width:'+hp.toFixed(0)+'%;background:'+hpColor+'"></div></div>' : '';
+      // sub line: HP pool · dmg range · level
+      var sub = [];
+      if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
+      if (mob && mob.mindmg != null && mob.maxdmg != null) sub.push(mob.mindmg + '–' + mob.maxdmg + ' dmg');
+      if (mob && mob.level != null) sub.push('L' + mob.level);
+      if (hp != null) sub.push(Math.round(hp) + '%');
+      // resist grid (AC + 5 resists)
+      var res = '';
+      if (mob) {
+        var cells = [['AC', mob.ac], ['MR', mob.resists&&mob.resists.mr], ['FR', mob.resists&&mob.resists.fr],
+                    ['CR', mob.resists&&mob.resists.cr], ['PR', mob.resists&&mob.resists.pr], ['DR', mob.resists&&mob.resists.dr]];
+        // color resists: high = hard (red), low = soft (green)
+        function resColor(v){ if (v == null) return '#8b949e'; if (v >= 150) return '#f85149'; if (v >= 75) return '#f0883e'; return '#56d364'; }
+        for (var i=0;i<cells.length;i++){
+          var lab = cells[i][0], v = cells[i][1];
+          var col = lab === 'AC' ? '#d2a8ff' : resColor(v);
+          res += '<div class="cell"><div class="lab">'+lab+'</div><div class="val" style="color:'+col+'">'+(v==null?'?':v)+'</div></div>';
+        }
+        res = '<div class="res">'+res+'</div>';
+      }
+      // special attacks
+      var spec = '';
+      if (mob && Array.isArray(mob.specials) && mob.specials.length){
+        var chips='';
+        for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += '<span class="'+specClass(lab)+'">'+esc(lab)+'</span>'; }
+        spec = '<div class="spec">'+chips+'</div>';
+      }
+      var loadingNote = (!mob && mi.loading) ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
+                       : (!mob ? '<div class="sub">no catalog stats for this target</div>' : '');
+      bodyEl.innerHTML = '<div class="mob">'
+        + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
+        + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
+        + hpBar
+        + res
+        + spec
+        + loadingNote
+        + '</div>';
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  tick(); setInterval(tick, 500);
+</script>
+</body></html>

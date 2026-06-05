@@ -4474,6 +4474,94 @@ async function _handleAgentSpellCatalog(req, res) {
   return res.end(_spellCatalogCache.body);
 }
 
+// GET /api/agent/mob-info?name=<npc>
+//
+// Target-mob lookup for Mimic's Mob Info overlay. Resolves the agent's current
+// Zeal target name to its eqemu_npc_types row and returns the combat-relevant
+// stats (HP, AC, the five resists, melee range, decoded special attacks). NPC
+// catalog names use underscores ("Aten_Ha_Ra"); the Zeal target name may use
+// spaces or backticks, so we normalize both to underscores for the match.
+const _MOB_SPECIAL_LABELS = {
+  1:'Summon', 2:'Enrage', 3:'Rampage', 4:'Area Rampage', 5:'Flurry',
+  6:'Triple Attack', 7:'Quad Attack', 9:'Bane', 10:'Magical', 11:'Ranged',
+  12:'Unslowable', 13:'Unmezzable', 14:'Uncharmable', 15:'Unstunnable',
+  16:'Unsnareable', 17:'Unfearable', 18:'Undispellable', 19:'Immune Melee',
+  20:'Immune Magic', 21:'Immune Fleeing', 23:'Immune Non-Magical',
+  27:'Immune Feign Death', 28:'Immune Taunt', 31:'Immune Pacify',
+};
+const _MOB_CLASS_NAMES = {
+  1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
+  7:'Monk', 8:'Bard', 9:'Rogue', 10:'Shaman', 11:'Necromancer', 12:'Wizard',
+  13:'Magician', 14:'Enchanter', 15:'Beastlord', 16:'Berserker',
+};
+function _decodeMobSpecials(special_abilities, npcspecialattks) {
+  const out = [];
+  if (special_abilities) {
+    for (const part of String(special_abilities).split('^')) {
+      const bits = part.split(',');
+      const id = parseInt(bits[0], 10);
+      if (!Number.isFinite(id)) continue;
+      if (bits[1] != null && String(bits[1]).trim() === '0') continue;   // disabled
+      const label = _MOB_SPECIAL_LABELS[id];
+      if (label && !out.includes(label)) out.push(label);
+    }
+  } else if (npcspecialattks) {
+    const FLAG = { E:'Enrage', F:'Flurry', R:'Rampage', r:'Area Rampage', S:'Summon',
+      T:'Triple Attack', Q:'Quad Attack', b:'Bane', m:'Magical', a:'Ranged' };
+    for (const ch of String(npcspecialattks)) if (FLAG[ch] && !out.includes(FLAG[ch])) out.push(FLAG[ch]);
+  }
+  return out;
+}
+function _normMobName(n) {
+  return String(n || '').trim().toLowerCase().replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+}
+const _mobInfoCache = new Map();   // normName → { at, row|null }
+const _MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;   // static catalog data — cache hard
+async function _handleAgentMobInfo(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  let name = '';
+  try { name = new URL(req.url, 'http://x').searchParams.get('name') || ''; } catch { /* */ }
+  const norm = _normMobName(name);
+  if (!norm) { res.writeHead(400); return res.end(JSON.stringify({ error: 'name required' })); }
+
+  const cached = _mobInfoCache.get(norm);
+  if (cached && (Date.now() - cached.at) < _MOB_INFO_TTL_MS) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, mob: cached.row }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, mob: null })); }
+  let mob = null;
+  try {
+    // Case-insensitive exact match on the normalized (underscored) name.
+    const rows = await supabase.select('eqemu_npc_types',
+      `name=ilike.${encodeURIComponent(norm)}&select=name,class,level,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
+    const r = Array.isArray(rows) && rows[0];
+    if (r) {
+      mob = {
+        name:    String(r.name || name).replace(/_/g, ' '),
+        class:   _MOB_CLASS_NAMES[r.class] || null,
+        level:   r.level ?? null,
+        hp:      r.hp ?? null,
+        ac:      r.ac ?? null,
+        resists: { mr: r.mr ?? null, fr: r.fr ?? null, cr: r.cr ?? null, pr: r.pr ?? null, dr: r.dr ?? null },
+        mindmg:  r.mindmg ?? null,
+        maxdmg:  r.maxdmg ?? null,
+        raid_target: !!r.raid_target,
+        specials: _decodeMobSpecials(r.special_abilities, r.npcspecialattks),
+      };
+    }
+  } catch (err) {
+    console.warn('[mob-info] lookup failed:', err?.message);
+  }
+  _mobInfoCache.set(norm, { at: Date.now(), row: mob });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, mob }));
+}
+
 // ── Backfill requests ──────────────────────────────────────────────────────
 // Officer-filed via /admin/encounters → agent polls here per character to
 // pick up its pending rows. Lifecycle: pending → acked (agent claimed it,
@@ -6110,6 +6198,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentIncomplete(req, res); }
     catch (err) {
       console.error('[incomplete] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/mob-info')) {
+    try { return await _handleAgentMobInfo(req, res); }
+    catch (err) {
+      console.error('[mob-info] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
