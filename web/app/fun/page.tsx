@@ -238,34 +238,29 @@ async function loadCounters() {
 
   // ── Lord of Ire vanquished — counts every Plane of Hate instance boss kill
   // 🐉 Dragon Punch — monk "Stunning Kick / Force of Disruption" proc card.
-  // Each "<target> is stricken by the force of a dragon." in any agent's log
-  // emits a fun_event {type: 'dragon_punch', caster: <monk>, target}. Powers
-  // a per-monk counter so we can chant about who's been fixing positioning
-  // the most. Caster is the LOG OWNER — EQ only emits this line to the
-  // kicker, so bystander agents don't see it; no cross-agent overlap.
+  // The proc line "<target> is stricken by the force of a dragon." names only
+  // the TARGET, never the kicker, and is BYSTANDER-VISIBLE — every boxed /
+  // grouped agent sees the same punch and the agent credited its own log owner,
+  // so per-player attribution was both wrong AND over-counted (the same physical
+  // punch counted once per watching character). So we anonymize it: count
+  // DISTINCT (target, event_ts) — one physical reposition regardless of how many
+  // agents logged it — and report a guild total with no names.
   try {
-    const { data: dpRows, count: dpTotal } = await sb
+    const { data: dpRows } = await sb
       .from('fun_events')
-      .select('caster', { count: 'exact' })
+      .select('target, event_ts')
       .eq('event_type', 'dragon_punch');
-    const tally = new Map<string, number>();
-    for (const r of (dpRows ?? []) as { caster: string | null }[]) {
-      const k = r.caster || 'unknown';
-      tally.set(k, (tally.get(k) ?? 0) + 1);
+    const seen = new Set<string>();
+    for (const r of (dpRows ?? []) as { target: string | null; event_ts: string | null }[]) {
+      seen.add(`${(r.target || '?').toLowerCase()}|${r.event_ts || ''}`);
     }
-    const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1]);
-    const total  = dpTotal ?? 0;
-    if (total > 0 && ranked.length > 0) {
-      const top = ranked[0];
-      const others = ranked.slice(1, 3).map(([name, n]) => `${name} ×${n}`);
-      const sub = others.length > 0
-        ? `${top[0]} has Dragon Punched ${top[1].toLocaleString()} target${top[1] === 1 ? '' : 's'} to fix positioning · ${others.join(' · ')}`
-        : `${top[0]} has Dragon Punched ${top[1].toLocaleString()} target${top[1] === 1 ? '' : 's'} to fix positioning`;
+    const total = seen.size;
+    if (total > 0) {
       counters.push({
         label: 'Dragon punches landed',
         emoji: '🐉',
         value: total,
-        sub,
+        sub: `Mobs have been repositioned by Dragon Punch ${total.toLocaleString()} time${total === 1 ? '' : 's'}`,
       });
     }
   } catch (err) { void err; }

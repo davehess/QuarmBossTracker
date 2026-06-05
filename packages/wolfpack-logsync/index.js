@@ -328,6 +328,7 @@ const KEEP_PATTERNS = [
   /\bfor \d+ points? of (mana|stamina|hit points|endurance)/i,
   /\bhas been healed/i,
   /\byou begin casting/i,
+  /\byou begin singing/i,                         // bard songs (incl. charm) — for the charm-tracker duration
   /\bbegins? to cast/i,
   /\byou cast /i,
   /\bresisted your/i,
@@ -402,6 +403,48 @@ function isPlausibleAttacker(name) {
   if (/\s/.test(name)) return true;          // multi-word → NPC filters handle it
   return /^[A-Z]/.test(name);                // single token must be capitalized
 }
+
+// ── Charm-spell catalog (for the charm-tracker duration bar) ─────────────────
+// Maps the exact spell/song name (as it appears in "You begin casting <X>." /
+// "You begin singing <X>.") → { cls, dur }. `cls` is 'bard' for songs (short,
+// re-sung often → recharm warning fires 6s before the last tick) and
+// 'enchanter' for everyone else's timed charm (longer → warning at 30s
+// remaining). `dur` is the spell duration in SECONDS at level 60 (the guild's
+// cap), derived from eqemu_spells (buffduration × 6, level-capped by formula).
+//
+// ⚠️ These are the spell's MAX duration — Quarm charm usually breaks earlier on
+// a per-tick check, and the enchanter cap is long, so the 30s-remaining warning
+// lands near natural expiry. Tune freely: the bar + warning are driven entirely
+// off this table, so correcting a value here is the whole change. Bard values
+// (60s / 18s) are practical as-is.
+const CHARM_SPELLS = new Map([
+  // Bard — short songs, recharmed constantly.
+  ["solon's bewitching bravura", { cls: 'bard', dur: 60 }],
+  ["solon's song of the sirens",  { cls: 'bard', dur: 18 }],
+  // Enchanter (+ druid/necro animal/undead charm share the same 205/formula-10
+  // line). Single-target timed charm.
+  ['charm',             { cls: 'enchanter', dur: 720 }],
+  ['beguile',           { cls: 'enchanter', dur: 720 }],
+  ['cajole',            { cls: 'enchanter', dur: 720 }],
+  ['allure',            { cls: 'enchanter', dur: 720 }],
+  ['persuade',          { cls: 'enchanter', dur: 720 }],
+  ['alluring whispers', { cls: 'enchanter', dur: 720 }],
+  ["boltran`s agacerie",{ cls: 'enchanter', dur: 420 }],
+  ["boltran's agacerie",{ cls: 'enchanter', dur: 420 }],
+  ['dictate',           { cls: 'enchanter', dur: 48  }],   // AoE charm — short
+  // Druid animal charm.
+  ['charm animals',     { cls: 'enchanter', dur: 720 }],
+  ['beguile animals',   { cls: 'enchanter', dur: 720 }],
+  ['allure of the wild',{ cls: 'enchanter', dur: 720 }],
+  ['befriend animal',   { cls: 'enchanter', dur: 720 }],
+  ['call of karana',    { cls: 'enchanter', dur: 720 }],
+  // Necro undead charm.
+  ['cajoling whispers', { cls: 'enchanter', dur: 720 }],
+  ['beguile undead',    { cls: 'enchanter', dur: 720 }],
+  ['cajole undead',     { cls: 'enchanter', dur: 720 }],
+  ['thrall of bones',   { cls: 'enchanter', dur: 720 }],
+  ['dominate undead',   { cls: 'enchanter', dur: 720 }],
+]);
 
 // ── Event parser ────────────────────────────────────────────────────────────
 // Turn a kept line into a structured event. Returns null if we can't parse it.
@@ -736,7 +779,10 @@ function parseEvent(line, ts) {
   }
 
   // ── Casts ─────────────────────────────────────────────────────────────────
-  m = line.match(/\]\s+You begin casting\s+(.+?)\./i);
+  // "singing" covers bard songs so the charm tracker can pick up a bard's charm
+  // song (Solon's Bewitching Bravura, etc.) the same way it reads an enchanter's
+  // "You begin casting Allure".
+  m = line.match(/\]\s+You begin (?:casting|singing)\s+(.+?)\./i);
   if (m) {
     return { ts: tsIso, type: 'cast', attacker: null /* self */, ability: m[1] };
   }
@@ -953,10 +999,21 @@ const knownPetOwners = new Map();
 //   petLower -> { pet, owner, last_tick_at, last_event ('land'|'break'),
 //                 is_active }
 const _charmTickTracker = new Map();
+// Most-recent self charm-spell cast, staged by the `cast` handler. Consumed by
+// the next charm-land (gauge or log) within a short window to attach the charm's
+// class + duration to the session, driving the duration bar + class-aware warn.
+let _pendingCharmSpell = null;   // { cls, dur, owner, ts } | null
+const PENDING_CHARM_WINDOW_MS = 12_000;
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
   const k = String(pet).toLowerCase();
-  const ts = atMs || Date.now();
+  // Coerce the anchor to epoch-ms. Callers pass `this.lastEvent`, which is the
+  // ISO string `event.ts` — NOT a number. Stored as-is, that made the charm
+  // overlay compute `Date.now() - "2026-…"` = NaN ("tick NaN · up NaN:NaN").
+  let ts;
+  if (typeof atMs === 'number' && isFinite(atMs)) ts = atMs;
+  else if (atMs != null) { const d = new Date(atMs).getTime(); ts = isFinite(d) ? d : Date.now(); }
+  else ts = Date.now();
   const prev = _charmTickTracker.get(k);
   _charmTickTracker.set(k, {
     pet,
@@ -967,14 +1024,90 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     // started_at anchors elapsed/duration in the charm overlay. Set on land;
     // carried forward on break so the closed entry still reports how long the
     // charm lasted.
-    started_at: eventKind === 'land' ? ts : (prev ? prev.started_at : ts),
+    // Keep the original land time while the charm stays active, so a second
+    // 'land' for the SAME session (e.g. gauge land then the later "…Master" log
+    // ack) doesn't reset the duration/tick bars. A re-charm after a break
+    // (prev.is_active=false) starts a fresh clock.
+    started_at: eventKind === 'land'
+      ? ((prev && prev.is_active) ? prev.started_at : ts)
+      : (prev ? prev.started_at : ts),
     // Dire Charm (AA) is permanent until a resist break — the overlay shows
     // no duration countdown for it, only the break alarm. Regular charm is
     // timed. Sticky across the session for this pet.
     is_dire_charm: opts && opts.is_dire_charm != null
       ? !!opts.is_dire_charm
       : (prev ? !!prev.is_dire_charm : false),
+    // Charm class + duration (seconds) for the duration bar. Set from the
+    // staged charm-spell cast on land; carried forward across ticks so the bar
+    // persists for the whole session.
+    charm_class:  (opts && opts.charm_class)  || (prev ? prev.charm_class  : null),
+    duration_sec: (opts && opts.duration_sec != null) ? opts.duration_sec
+                : (prev ? prev.duration_sec : null),
   });
+}
+
+// If a self charm-spell cast is staged and still fresh, return its {cls,dur}
+// (consuming it) to attach to a landing charm session — else null.
+function _consumePendingCharmSpell(owner, nowMs) {
+  const p = _pendingCharmSpell;
+  if (!p) return null;
+  if ((nowMs || Date.now()) - p.ts > PENDING_CHARM_WINDOW_MS) { _pendingCharmSpell = null; return null; }
+  // Owner sanity: if the cast recorded an owner, it must match the landing pet's
+  // owner (case-insensitive). Gauge-land owner is the local char; log-land owner
+  // resolves the same way, so this holds for self charm.
+  if (p.owner && owner && String(p.owner).toLowerCase() !== String(owner).toLowerCase()) return null;
+  _pendingCharmSpell = null;
+  return { charm_class: p.cls, duration_sec: p.dur };
+}
+
+// Reconcile the charm tracker against the LIVE Zeal pet gauge (slot 16). On
+// Quarm the log signals are unreliable — charm-land only shows up when the pet
+// first acks a command ("…Master"), with flavor variants that omit "Master"
+// entirely ("Guarding with my life..oh splendid one."), and the break line is
+// self-only with no mob name ("Your charm spell has worn off."), so our
+// name-based break matcher never fires and stale charms pile up. The gauge,
+// by contrast, shows the pet within ~2s of the charm landing and drops it the
+// instant it breaks — and slot 16 is only ever the LOCAL client's pet, so
+// attribution is unambiguous (no cross-owner mis-fire).
+//
+// Rule: for any character that is streaming a gauge, that gauge is authoritative
+//   • an article-prefixed slot-16 pet ("a "/"an " = a charmed mob, never a
+//     proper-named summoned pet) with no active session → open one (land).
+//   • an active session whose pet is no longer in that owner's slot 16 → close
+//     it (break). A 3s grace avoids closing a just-opened session before the
+//     gauge catches up.
+// Sessions owned by characters NOT streaming a gauge (bystander charms picked
+// up from zone-visible log lines) are left to the log path — untouched here.
+function _reconcileGaugeCharms() {
+  const now = Date.now();
+  const gaugeOwners = new Set();              // ownerLower currently streaming a gauge
+  const gaugePets   = new Map();              // ownerLower → Set(petNameLower) in slot 16
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (!st || !Array.isArray(st.gauges) || st.gauges.length === 0) continue;
+    const ownerLower = String(ch).toLowerCase();
+    gaugeOwners.add(ownerLower);
+    const petG = st.gauges.find(g => g && g.slot === 16 && g.text && /^an?\s+/i.test(String(g.text)));
+    if (!petG) continue;
+    const name = String(petG.text);
+    const k = name.toLowerCase();
+    if (!gaugePets.has(ownerLower)) gaugePets.set(ownerLower, new Set());
+    gaugePets.get(ownerLower).add(k);
+    const cur = _charmTickTracker.get(k);
+    if (!cur || !cur.is_active) {
+      const pc = _consumePendingCharmSpell(ch, now) || {};       // attach spell duration/class if just cast
+      _bumpCharmTick(name, ch, 'land', now, pc);                 // gauge-sourced land
+    }
+  }
+  for (const [k, info] of _charmTickTracker) {
+    if (!info.is_active || !info.owner) continue;
+    const ol = String(info.owner).toLowerCase();
+    if (!gaugeOwners.has(ol)) continue;                       // bystander → log-managed
+    const set = gaugePets.get(ol);
+    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 3000) {
+      _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break
+    }
+  }
 }
 
 function recordWhoEvent(ev) {
@@ -1440,6 +1573,7 @@ class EncounterBuilder {
           && this._pendingDireCharm.caster.toLowerCase() === owner.toLowerCase()
           && (startTs - this._pendingDireCharm.ts) < 10_000);
         if (isDC) this._pendingDireCharm = null;
+        const pcSpell = _consumePendingCharmSpell(owner, startTs) || {};
         this._activeCharms.set(petKey, {
           pet:           event.pet,
           owner,
@@ -1454,7 +1588,7 @@ class EncounterBuilder {
         // Charm landed → that moment is the mob's tick; start the 6s
         // countdown on the global tracker. Pass the dire-charm flag so the
         // charm overlay knows whether to show a duration countdown.
-        _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: isDC });
+        _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: isDC, ...pcSpell });
       }
       return;
     }
@@ -1941,6 +2075,14 @@ class EncounterBuilder {
       if (caster) {
         const byChar = stats.castCounts[caster] || (stats.castCounts[caster] = {});
         byChar[spell] = (byChar[spell] || 0) + 1;
+      }
+      // Charm-spell cast → stage its class + duration so the next charm-land
+      // (gauge or log) can attach a duration bar to the session. Self-cast only
+      // (no attacker = the builder's own character cast it); matched to the land
+      // by a short time window, mirroring _pendingDireCharm.
+      if (!event.attacker) {
+        const ci = CHARM_SPELLS.get(String(spell).toLowerCase());
+        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: this.character || null, ts: Date.now() };
       }
     }
 
@@ -2557,6 +2699,7 @@ function _endpointForKind(kind, botUrl) {
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
+    case 'trigger':         return base + '/trigger';
     default:                return botUrl;
   }
 }
@@ -3357,6 +3500,12 @@ function _serializeForDashboard() {
     // a 6s countdown to next mob tick / next charm check. Sorted most-
     // recently-updated first; capped to 12 to keep the payload small.
     charmPets: (() => {
+      // Reconcile against the live Zeal pet gauge FIRST: open a session the
+      // instant a charmed pet appears in slot 16 (enchanter OR bard charm —
+      // class-agnostic), and close stale sessions whose pet has dropped from
+      // the gauge (the Quarm break line isn't name-matchable, so without this
+      // broken charms pile up — the "two charms showing at once" bug).
+      _reconcileGaugeCharms();
       // Live pet HP from Zeal gauge slot 16, keyed by the owner's character.
       // Only the local uploader's own pet has gauge data (Zeal reports only the
       // local client's bars), which is exactly the pet the charm overlay cares
@@ -3386,6 +3535,8 @@ function _serializeForDashboard() {
           is_active:     info.is_active,
           started_at:    info.started_at,
           is_dire_charm: info.is_dire_charm,
+          charm_class:   info.charm_class  || null,
+          duration_sec:  info.duration_sec != null ? info.duration_sec : null,
           pet_hp_pct:    lp && lp.hp_pct != null ? lp.hp_pct : null,
         });
       }
@@ -10903,6 +11054,36 @@ function _announceRampage(target, tsMs) {
     firedAt: now,
     test:    false,
   });
+  // Pipe the same callout to Discord (no-op unless an officer set
+  // TRIGGER_BROADCAST_CHANNEL_ID on the bot). The bot dedups across every
+  // raider's agent by the key, so the channel sees one line per rampage target.
+  _broadcastTriggerToDiscord({
+    name:    'rampage',
+    message: '🔥 **RAMPAGE** → ' + target,
+    key:     'rampage:' + key,
+    tsMs:    now,
+    mode:    'post',
+  });
+}
+
+// Enqueue a trigger fire for relay to a Discord channel via the bot's
+// POST /api/agent/trigger. `mode` picks the surface:
+//   • 'post'  — bot posts `message` to TRIGGER_BROADCAST_CHANNEL_ID (text).
+//   • 'voice' — bot speaks `message` in RAID_VOICE_CHANNEL_ID via TTS.
+// `key` dedups across every raider's agent (N raiders firing the same trigger
+// collapse to one fire); test fires never reach here.
+function _broadcastTriggerToDiscord({ name, message, key, tsMs, mode, voiceId }) {
+  const text = String(message || '').trim();
+  if (!text) return;
+  const entry = {
+    name:     name || 'trigger',
+    mode:     mode === 'voice' ? 'voice' : 'post',
+    message:  text.slice(0, 300),
+    key:      key ? String(key).slice(0, 120) : null,
+    fired_at: new Date(tsMs || Date.now()).toISOString(),
+  };
+  if (voiceId) entry.voice_id = String(voiceId).slice(0, 80);
+  enqueueUpload('trigger', { agent_version: AGENT_VERSION, triggers: [entry] });
 }
 
 // Active timer countdowns driven by triggers with timer_duration_sec > 0.
@@ -11370,8 +11551,59 @@ function _fireTriggerActions(t, captures, tsMs, test) {
       _pushOverlay(overlay);
       console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
+    } else if (a.type === 'discord' && !test) {
+      // Broadcast this fire to a text Discord channel via the bot. Test fires
+      // stay local. `key` dedups across every raider's agent (default
+      // name+message). Default mode is 'post'; setting `voice: true` swaps to
+      // the voice surface for a one-shot speak (use 'voice' action for the
+      // countdown form below).
+      const msg = _expandTemplate(a.message || a.text || '', captures || {}).trim();
+      if (msg) {
+        const key = a.key ? _expandTemplate(a.key, captures || {}) : (t.name + ':' + msg);
+        _broadcastTriggerToDiscord({
+          name: t.name, message: msg, key, tsMs,
+          mode: a.voice ? 'voice' : 'post',
+          voiceId: a.voice_id,
+        });
+      }
+    } else if (a.type === 'voice' && !test) {
+      // Voice TTS action — one-shot or multi-tick countdown.
+      //
+      //   one-shot: { type: 'voice', message: 'rampage on {target}' }
+      //   marks   : { type: 'voice', marks: [
+      //       { at_ms: 0,     text: 'thirty seconds' },
+      //       { at_ms: 20000, text: 'ten seconds, big heals' },
+      //       { at_ms: 25000, text: 'five seconds, remove curse' },
+      //       { at_ms: 30000, text: 'tankbuster' },
+      //   ] }
+      //
+      // The bot speaks each mark into RAID_VOICE_CHANNEL_ID. Marks more than
+      // 60s old at fire time are dropped (covers historical replays + the
+      // case where the live log catches up after a pause). Per-mark key
+      // includes its offset so 30→10→5→0 don't dedup to a single line.
+      const baseKey  = a.key ? _expandTemplate(a.key, captures || {}) : t.name;
+      const voiceId  = a.voice_id || null;
+      const sendAt   = (text, offsetMs) => {
+        const msg = _expandTemplate(text || '', captures || {}).trim();
+        if (!msg) return;
+        const fireMs = (tsMs || Date.now()) + Math.max(0, offsetMs || 0);
+        if (Date.now() - fireMs > 60_000) return;          // stale, drop
+        const delay  = Math.max(0, fireMs - Date.now());
+        const key    = baseKey + ':' + Math.round(offsetMs || 0);
+        setTimeout(() => {
+          _broadcastTriggerToDiscord({
+            name: t.name, message: msg, key, tsMs: Date.now(),
+            mode: 'voice', voiceId,
+          });
+        }, delay);
+      };
+      if (Array.isArray(a.marks) && a.marks.length > 0) {
+        for (const m of a.marks) sendAt(m && (m.text || m.message), m && m.at_ms);
+      } else if (a.message || a.text) {
+        sendAt(a.message || a.text, 0);
+      }
     }
-    // sound / discord / emit_event beyond the overlay's own audio are no-ops in v1.
+    // sound / emit_event beyond the overlay's own audio remain no-ops in v1.
   }
   // Trigger-level timer countdown (separate from per-action overlays).
   // Starts when timer_duration_sec > 0 on the trigger itself. Captures
@@ -11858,6 +12090,37 @@ async function main() {
       try { saveSessionState(); } catch {}
     }
   }, 60_000);
+
+  // Per-character "do not transmit" list. Set by the user from Mimic
+  // (onboarding + Settings) for characters they don't want any data uploaded
+  // about — typically friends' boxes that play in other guilds, alts they
+  // share data on, etc. Enforced at the OUTERMOST boundary: an excluded
+  // character's log file is never opened, never tailed, never registered as a
+  // watchedLog. Nothing about that character can ever leave the machine,
+  // regardless of how many downstream code paths the agent grows. Case-
+  // insensitive match on the canonical (filename-derived) character name.
+  const excludedCsv = process.env.WOLFPACK_EXCLUDED_CHARS || '';
+  const excludedSet = new Set(
+    excludedCsv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  if (excludedSet.size > 0) {
+    console.log(`[exclude] not transmitting for: ${[...excludedSet].join(', ')}`);
+  }
+  const allLogs    = args.logs;
+  const filtered   = [];
+  const droppedFor = [];
+  for (const p of allLogs) {
+    const fromName = characterFromFilename(p) || '';
+    if (fromName && excludedSet.has(fromName.toLowerCase())) {
+      droppedFor.push(fromName);
+      continue;
+    }
+    filtered.push(p);
+  }
+  if (droppedFor.length > 0) {
+    console.log(`[exclude] dropped ${droppedFor.length} log file(s) for excluded characters: ${droppedFor.join(', ')}`);
+  }
+  args.logs = filtered;
 
   // One encounter builder per log file (per character)
   const builders = args.logs.map(logPath => {

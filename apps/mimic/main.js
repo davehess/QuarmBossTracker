@@ -131,6 +131,11 @@ function defaultConfig() {
     quietUpdates: true,
     tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
     onboarded: false,        // false until user dismisses or completes loading
+    // Per-character "do not transmit" list. Names are case-sensitive as they
+    // appear in the eqlog filename (eqlog_<Name>_pq.proj.txt → <Name>). The
+    // agent honors this at the OUTERMOST boundary — excluded log files are
+    // never opened. Going-forward only; doesn't touch already-uploaded data.
+    excludedCharacters: [],
     // Overlay positioning. Locked = click-through, lives in place. Unlocked =
     // draggable + resizable handle shown, NOT click-through, so the user can
     // reposition. Toggling lock is a pure window operation — NEVER restarts
@@ -576,7 +581,21 @@ function findEqInstalls(hint) {
 // at ~60fps and applies setBounds. 1:1 cursor-to-window motion, no Chromium
 // hit-test path involved.
 let _dragSession = null;  // { win, offsetX, offsetY, width, height, interval }
-function _startWindowDrag(win) {
+// Map an overlay window to its config bounds key, so a manual ✥-drag persists
+// to the SAME key the window restores from (_resolveBounds). Without this the
+// drag end persisted to `undefined`, so position never saved → every launch
+// fell back to the default. THE position-reset bug.
+function _boundsKeyForWindow(win) {
+  if (!win) return null;
+  if (win === overlayWindow) return 'hudBounds';
+  if (win === triggerWindow) return 'triggerBounds';
+  if (win === charmWindow)   return 'charmBounds';
+  for (const [panelKey, w] of panelOverlays.entries()) {
+    if (w === win) return 'panelBounds_' + panelKey;
+  }
+  return null;
+}
+function _startWindowDrag(win, persistKey) {
   if (!win || win.isDestroyed()) return;
   _stopWindowDrag();
   try {
@@ -584,6 +603,7 @@ function _startWindowDrag(win) {
     const b = win.getBounds();
     _dragSession = {
       win,
+      persistKey: persistKey || _boundsKeyForWindow(win),
       offsetX: c.x - b.x,
       offsetY: c.y - b.y,
       width:   b.width,
@@ -1173,6 +1193,15 @@ async function launchAgent() {
   // when we have a token + upload URL — local-only installs leave it unset so
   // the agent never tries to upload.
   if (uploadToken && cfg.botUrl) env.WOLFPACK_TOKEN = uploadToken;
+  // Per-character "do not transmit" list — for friends' boxes that play in
+  // other guilds, or any toon the user wants kept out of our DB entirely. The
+  // agent honors this at the outermost boundary (excluded logs aren't tailed),
+  // so nothing about those characters can leave the machine. Set from
+  // onboarding / Settings; user owns the choice.
+  const excluded = Array.isArray(cfg.excludedCharacters)
+    ? cfg.excludedCharacters.map(s => String(s || '').trim()).filter(Boolean)
+    : [];
+  if (excluded.length > 0) env.WOLFPACK_EXCLUDED_CHARS = excluded.join(',');
 
   agentProc = spawn(process.execPath, args, {
     env,
@@ -2063,18 +2092,20 @@ async function checkAgentUpdate() {
 
 function wireAutoUpdater() {
   if (!autoUpdater) return;
-  // Mimic 1.0.0+ uses the DEFAULT `latest` channel — released as a stable
-  // app, no longer a prerelease. electron-updater picks up plain-semver
-  // releases (e.g. v1.0.0, v1.1.0) via the auto-emitted latest.yml.
-  //
-  // Pre-1.0.0 betas were pinned to a custom `mimic-beta` channel because
-  // every release tag carried a `-mimic-beta.N` prerelease suffix and the
-  // updater needed the suffix to match. Those installs DO NOT auto-update to
-  // 1.0.0 (the prerelease check fails) and have to be reinstalled once from
-  // wolfpack.quest/mimic. Going forward, every stable release auto-updates.
-  // Beta channels can come back later if needed by re-adding `channel = …`
-  // here AND a matching prerelease suffix in package.json's version field.
-  autoUpdater.allowPrerelease = false;
+  // Channel is driven by THIS build's own version, baked into app-update.yml by
+  // electron-builder:
+  //   • Stable build (plain semver, e.g. 1.0.20) → channel `latest`,
+  //     allowPrerelease=false → only ever updates to other stable releases.
+  //     Beta prereleases on GitHub are invisible to it.
+  //   • Beta build (prerelease semver, e.g. 1.0.20-beta.1) → channel `beta`,
+  //     allowPrerelease=true → rolls forward through newer betas AND graduates
+  //     to stable once stable's version exceeds the beta (every release carries
+  //     beta.yml via generateUpdatesFilesForAllChannels, so the beta channel
+  //     can read stable releases too).
+  // This is the clean two-track setup: testers opt into the beta by installing
+  // a -beta build once; the wider guild on stable never sees prereleases.
+  const _isBeta = /-/.test(String(app.getVersion() || ''));
+  autoUpdater.allowPrerelease = _isBeta;
   autoUpdater.autoDownload    = true;
   // Apply a downloaded shell update SILENTLY on the next normal quit (no NSIS
   // wizard, no UAC since perMachine:false). Combined with quitAndInstall(true,
@@ -2140,7 +2171,7 @@ function scheduleAgentUpdates() {
 ipcMain.handle('overlay-drag-start', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
-    _startWindowDrag(win);
+    _startWindowDrag(win, _boundsKeyForWindow(win));
   } catch {}
   return true;
 });
@@ -2267,6 +2298,43 @@ ipcMain.handle('ui-studio-list-characters', () => {
   // Biggest log first (most-played characters at the top of the picker).
   out.sort((a, b) => (b.log_size || 0) - (a.log_size || 0));
   return out;
+});
+
+// Enumerate every character detected in the user's configured EQ folders by
+// log filename (eqlog_<Name>_pq.proj.txt). Used by the onboarding "Transmit?"
+// picker so the user can opt characters out of uploads before any data leaves
+// the machine. log_size lets us sort most-played first; ago_days lets the UI
+// hint at clearly-dormant boxes.
+ipcMain.handle('list-eq-characters', () => {
+  const cfg = loadConfig();
+  const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
+                  ? cfg.eqPaths
+                  : (cfg.eqPath ? [cfg.eqPath] : []);
+  const dirs = userPaths.filter(p => _dirHasEqLogs(p));
+  if (dirs.length === 0) return [];
+  const byName = new Map();
+  const now = Date.now();
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const f of entries) {
+      if (!_isEqLogFile(dir, f)) continue;
+      const name = _characterFromLogName(f);
+      if (!name) continue;
+      let size = 0, mtime = 0;
+      try { const st = fs.statSync(path.join(dir, f)); size = st.size; mtime = st.mtime.getTime(); } catch {}
+      const prev = byName.get(name);
+      if (!prev || size > prev.log_size) byName.set(name, { character: name, eqDir: dir, log_size: size, last_mtime: mtime });
+    }
+  }
+  const excluded = new Set(((cfg.excludedCharacters) || []).map(s => String(s || '').toLowerCase()));
+  return [...byName.values()]
+    .map(r => ({
+      ...r,
+      ago_days: r.last_mtime ? Math.floor((now - r.last_mtime) / (24 * 3600 * 1000)) : null,
+      excluded: excluded.has(r.character.toLowerCase()),
+    }))
+    .sort((a, b) => (b.log_size || 0) - (a.log_size || 0));
 });
 
 // Capture: read every ini for the character, upload encrypted to the bot.

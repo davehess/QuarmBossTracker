@@ -2,9 +2,9 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.13 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 3.0.17 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 1.0.20 | `web/package.json` |
+| **Bot** | 3.0.14 | `package.json` |
+| **Agent** (`wolfpack-logsync`) | 3.0.18 | `packages/wolfpack-logsync/package.json` |
+| **Web** (`wolfpack.quest`) | 1.0.22 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.19 | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
@@ -185,6 +185,8 @@ zone on insert — `find_or_create_encounter` currently leaves it NULL.
 | `POST` | `/api/agent/lockout` | `/sll`-style lockout relay; never clears on "Available" |
 | `POST` | `/api/agent/historical_chat` | Historical `/gu` + `/rs` backfill from older logs → `chat_messages` table. Not displayed on Discord. |
 | `POST` | `/api/agent/live-state` | Snapshot of each watched character's current buffs + last-seen zone (Zeal stream). Upsert into `character_live_state` by `(guild_id, character)`. Powers `/me` Buffs & Zone. Agent sends on change only. |
+| `POST` | `/api/agent/raid-roster` | Zeal type-5 raid roster (name/class/group/level/rank) → `raid_roster` upsert by `(guild_id, name)`. Powers the group-based `/buffs` grid. |
+| `POST` | `/api/agent/trigger` | **Trigger → Discord pipe.** Agent relays trigger fires `{triggers:[{name,message,key,fired_at}]}`; bot posts each `message` to `TRIGGER_BROADCAST_CHANNEL_ID` (no-op if unset). Dedups across raiders by `key` (10s), per-uploader rate cap (30/60s), mass-mentions disabled. Fed by the rampage announcer + user-defined `discord` trigger actions. |
 | `GET/POST` | `/` | Health check (`200 OK`) |
 
 Payload limits: chat 256KB, encounter upload 10MB. Returns `503` if `WOLFPACK_AGENT_TOKEN` unset.
@@ -506,7 +508,7 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
                  "pet_leaders": { "petname": "Owner" } } }
 ```
 
-**Durable upload queue (v2.4.18+):** Every outbound POST (encounter, chat, pvp, bosskill, lockout, historical_chat, fun_event) routes through `enqueueUpload()` and persists to `logsync.queue.json` next to the other state files. Drain loop walks the queue every 15s with exponential backoff (30s → 60s → 2m → 4m → 8m → 10m cap). 4xx responses (400/401/403/404/422) drop entries as permanent failures with a loud warning; everything else retries. Cap of 50 entries per drain pass prevents huge backlogs from wedging the loop; if there's still due work, an immediate-3s-later kick keeps the queue flowing. Sync flush on every exit pathway (`SIGINT`/`SIGTERM`/normal `exit`) so the in-memory state isn't lost between debounced disk saves. Queue replays on agent startup so a crash mid-outage doesn't lose anything either. Dashboard header chip shows pending count + last error.
+**Durable upload queue (v2.4.18+):** Every outbound POST (encounter, chat, pvp, bosskill, lockout, historical_chat, fun_event, raid_roster, trigger) routes through `enqueueUpload()` and persists to `logsync.queue.json` next to the other state files. Drain loop walks the queue every 15s with exponential backoff (30s → 60s → 2m → 4m → 8m → 10m cap). 4xx responses (400/401/403/404/422) drop entries as permanent failures with a loud warning; everything else retries. Cap of 50 entries per drain pass prevents huge backlogs from wedging the loop; if there's still due work, an immediate-3s-later kick keeps the queue flowing. Sync flush on every exit pathway (`SIGINT`/`SIGTERM`/normal `exit`) so the in-memory state isn't lost between debounced disk saves. Queue replays on agent startup so a crash mid-outage doesn't lose anything either. Dashboard header chip shows pending count + last error.
 
 **Update gate (v2.4.18+):** `[U]` keypress and `POST /api/update` refuse to bounce the agent when:
 1. Upload queue has pending entries

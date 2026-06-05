@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.14': [
+    '**Triggers can now pipe into Discord** — boss **rampage callouts** (and any trigger with a Discord action) post straight to a channel, so the whole raid sees "🔥 RAMPAGE → \\<target>" without everyone needing the overlay. Every raider\'s agent fires it, but the bot collapses the duplicates so the channel only shows one line per rampage. Officers: set `TRIGGER_BROADCAST_CHANNEL_ID` to turn it on (it\'s off until a channel is configured). This is the first piece of a bigger event-driven trigger system coming to Mimic.',
+  ],
   '3.0.11': [
     '**New Mimic Parser install + `/parsehelp`** — the desktop app now signs you in with Discord on first run (no token to copy/paste — it links your account and starts uploading for you), auto-detects your EQ folder, and installs with no admin prompt. Run `/parsehelp` for the full walkthrough, or grab it at wolfpack.quest/mimic. Officers can broadcast the steps to a channel with `/postparsehelp`.',
   ],

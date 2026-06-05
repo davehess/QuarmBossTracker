@@ -18,8 +18,15 @@
     border-radius:5px;border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
   .charm.dire{border-left-color:#56d364}
   .charm.warn{border-left-color:#f0883e;animation:pulse 0.8s ease-in-out infinite}
+  .charm.imminent{border-left-color:#f85149}
   .charm.broke{border-left-color:#f85149;background:rgba(80,12,12,0.7)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
+  /* Break imminent → flash the OUTSIDE of the overlay (the whole card stack). */
+  body.imminent #wrap{border-radius:6px;animation:overlayflash 0.55s ease-in-out infinite}
+  @keyframes overlayflash{
+    0%,100%{box-shadow:inset 0 0 0 2px rgba(248,81,73,0.30), 0 0 0 0 rgba(248,81,73,0)}
+    50%    {box-shadow:inset 0 0 0 2px rgba(248,81,73,0.98), 0 0 13px 3px rgba(248,81,73,0.85)}
+  }
   .charm .head{display:flex;justify-content:space-between;gap:8px;font-size:12px}
   .charm .pet{font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .charm .owner{color:#8b949e;font-size:10px}
@@ -173,6 +180,7 @@
       }
 
       var html = '';
+      var anyImminent = false;
       for (const p of active) {
         const startedAt = p.started_at || p.last_tick_at || now;
         const elapsed = Math.max(0, now - startedAt);
@@ -183,15 +191,38 @@
         const remTick = 6000 - (intoTick < 0 ? 0 : intoTick);
         const tickPct = (remTick / 6000) * 100;
 
+        // Full charm DURATION (the spell's length) — second bar + class-aware
+        // break warning. duration_sec/charm_class come from the detected charm
+        // spell; null when we never saw the cast (gauge-only land), in which
+        // case the duration bar is simply omitted.
+        const durSec   = (typeof p.duration_sec === 'number' && p.duration_sec > 0) ? p.duration_sec : null;
+        const isBard   = p.charm_class === 'bard';
+        const durRemMs = durSec != null ? Math.max(0, durSec * 1000 - elapsed) : null;
+        const durPct   = durSec != null ? Math.max(0, Math.min(100, (durRemMs / (durSec * 1000)) * 100)) : null;
+        // Total ticks the charm lasts (x/y display: current tick / max).
+        const maxTicks = durSec != null ? Math.max(1, Math.round(durSec / 6)) : null;
+        // Warn lead: bards re-sing constantly, so cue 6s before the last tick;
+        // everyone else gets an earlier "charm breaking in 30 seconds".
+        const warnLeadMs = isBard ? 6000 : 30000;
+        // Break imminent → flash the card border + the whole overlay outline.
+        const imminent = durSec != null && !p.is_dire_charm && durRemMs <= warnLeadMs;
+        if (imminent) anyImminent = true;
+
         // Session memory + proactive warn.
         var mem = prevActive.get(p.key);
-        if (!mem || mem.started_at !== startedAt) { mem = { started_at: startedAt, warned: false }; prevActive.set(p.key, mem); }
+        if (!mem || mem.started_at !== startedAt) { mem = { started_at: startedAt, warned: false, durWarned: false }; prevActive.set(p.key, mem); }
         var warnHit = false;
         if (warnAt > 0 && !p.is_dire_charm && !mem.warned && elapsed >= warnAt * 1000) {
           mem.warned = true; warnHit = true; speak('recharm pet');
         }
+        // Duration-based break warning (once per session). Only when we know the
+        // spell duration and it's a timed charm (not Dire).
+        if (durSec != null && !p.is_dire_charm && !mem.durWarned && durRemMs <= warnLeadMs) {
+          mem.durWarned = true; warnHit = true;
+          speak(isBard ? 'charm breaking' : 'charm breaking in 30 seconds');
+        }
 
-        var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (warnHit ? ' warn' : '');
+        var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (warnHit ? ' warn' : '') + (imminent ? ' imminent' : '');
         var badge = p.is_dire_charm ? '<span class="badge">DIRE</span>' : '<span class="badge">charm</span>';
         var warnLine = (warnAt > 0 && !p.is_dire_charm)
           ? ' · recharm in ' + Math.max(0, Math.ceil(warnAt - elapsed/1000)) + 's'
@@ -204,15 +235,25 @@
         var hpBar = hp != null
           ? '<div class="hpbar"><div style="width:' + hp.toFixed(0) + '%;background:' + hpColor + '"></div></div>'
           : '';
+        // Full-length charm-duration bar (the spell's length). Greens down to
+        // amber→red as it nears expiry; only shown when we know the duration.
+        var durStr = '', durBar = '';
+        if (durSec != null && !p.is_dire_charm) {
+          var durColor = durRemMs > warnLeadMs ? '#3b82f6' : (durRemMs > warnLeadMs/2 ? '#f0883e' : '#f85149');
+          durStr = ' · breaks ' + fmtElapsed(durRemMs);
+          durBar = '<div class="tickbar" style="margin-top:2px"><div style="width:' + durPct.toFixed(1) + '%;background:' + durColor + '"></div></div>';
+        }
         html += '<div class="' + cls + '">'
           + '<div class="head"><span class="pet">' + esc(p.pet || '?') + badge + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
-          + '<div class="meta">tick ' + ticks + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · up ' + fmtElapsed(elapsed) + hpStr + warnLine + '</div>'
+          + '<div class="meta">tick ' + ticks + (maxTicks != null ? '/' + maxTicks : '') + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · up ' + fmtElapsed(elapsed) + durStr + hpStr + warnLine + '</div>'
           + hpBar
           + '<div class="tickbar"><div style="width:' + tickPct.toFixed(0) + '%"></div></div>'
+          + durBar
           + '</div>';
       }
       listEl.innerHTML = html;
+      document.body.classList.toggle('imminent', anyImminent);
       emptyEl.style.display = active.length ? 'none' : 'block';
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';

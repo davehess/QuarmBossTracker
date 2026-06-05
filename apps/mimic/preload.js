@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),
   pickEqDir:      () => ipcRenderer.invoke('pick-eq-dir'),
+  listEqCharacters: () => ipcRenderer.invoke('list-eq-characters'),
 
   // UI Studio — capture / restore EQ ini files (windows, hotkeys, chat
   // tabs, bandolier, socials, eqclient.ini) so a user can set up an

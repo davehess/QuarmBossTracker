@@ -62,14 +62,16 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'spirit of wolf', 'spirit of the wolf', 'flight of eagle', 'pack spirit',
     'selo', 'journeyman', 'run speed', 'spirit of the shrew',
   ],
-  // ATK / STR / offense.
+  // ATK / STR / offense (incl. the Beastlord/Druid avatar + warder lines).
   attack: [
     'strength', 'avatar', 'ferocity', 'champion', 'primal', 'war march',
     'savage', 'brutal', 'might of', 'tumultuous', 'aggression', 'bull',
+    'call of the predator', 'feral avatar', 'ancient: feral',
   ],
-  // Damage shields.
-  ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat', 'damage shield', 'legacy of'],
-  // Resist buffs (single + group).
+  // Damage shields (buffs + bard DS songs).
+  ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat', 'damage shield', 'legacy of', 'shield of barbs'],
+  // Resist buffs (single + group). "Circle of Seasons" is the Druid all-resist
+  // group buff seen in raid dumps.
   resists: [
     'resist', 'endure', 'protection of', 'talisman of altuna', 'talisman of jasinth',
     'talisman of shadoo', 'circle of', 'aegis of bathezid', 'colossal', 'elemental',
@@ -96,13 +98,15 @@ export const ROLE_LABELS: Record<Role, string> = {
   tank: 'Tank', melee: 'Melee', priest: 'Priest', caster: 'Caster', bard: 'Bard', other: 'Other',
 };
 
+// HP is tracked separately via the three HP slots (every role wants all three),
+// so it's not repeated here. These are the NON-HP categories expected per role.
 export const ROLE_TARGETS: Record<Role, BuffCategory[]> = {
-  tank:   ['hp', 'haste', 'attack', 'ds', 'resists'],
-  melee:  ['hp', 'haste', 'attack', 'resists'],
-  priest: ['hp', 'mana', 'manaRegen', 'resists'],
-  caster: ['hp', 'mana', 'manaRegen', 'resists'],
-  bard:   ['hp', 'haste', 'resists'],
-  other:  ['hp', 'resists'],
+  tank:   ['haste', 'attack', 'ds', 'resists'],
+  melee:  ['haste', 'attack', 'resists'],
+  priest: ['mana', 'manaRegen', 'resists'],
+  caster: ['mana', 'manaRegen', 'resists'],
+  bard:   ['haste', 'resists'],
+  other:  ['resists'],
 };
 
 const CLASS_ROLE: Record<string, Role> = {
@@ -122,3 +126,58 @@ export function classToRole(className: string | null | undefined): Role {
   if (!className) return 'other';
   return CLASS_ROLE[className.toLowerCase().trim()] || 'other';
 }
+
+// ── HP buff slots ────────────────────────────────────────────────────────────
+// EQ HP buffs stack in three slots; the grid shows whether each is filled so a
+// buffer sees exactly which HP buff a raider is missing.
+//   A — "POTG / Aegolism" slot: Druid Protection of the Glades / of the Cabbage
+//       (these carry mana regen, preferred for casters/priests), Cleric Blessing
+//       of / Ancient: Gift of Aegolism, Shaman Talisman of Wunshi.
+//   B — Symbol slot: Cleric Symbol of Marzin / Naltron / Ryltan / Pinzarn / Transal.
+//   C — secondary HP: Cleric Khura's Focusing, Brell's Mountainous Barrier,
+//       Wizard Arch Shielding.
+// AEGOLISM is special — Blessing of / Ancient: Gift of Aegolism fill BOTH A and B.
+export type HpSlot = 'A' | 'B' | 'C';
+
+export const HP_SLOT_LABELS: Record<HpSlot, string> = {
+  A: 'HP · POTG/Aego',
+  B: 'HP · Symbol',
+  C: 'HP · Khura/Brell',
+};
+export const HP_SLOT_PROVIDER: Record<HpSlot, string> = {
+  A: 'Druid (POTG/POTC) · Cleric (Aego) · Shaman (ToW)',
+  B: 'Cleric (Symbol)',
+  C: 'Cleric (Khura/Brell) · Wizard (Arch)',
+};
+
+const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
+  A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi'],
+  B: ['symbol of'],
+  C: ['khura', 'brell', 'arch shielding'],
+};
+const AEGOLISM_KEYWORDS = ['aegolism'];
+
+export type HpSlotState = { A: string | null; B: string | null; C: string | null };
+
+/** Which of the three HP slots a character's buff list fills (and with what). */
+export function analyzeHpSlots(buffNames: string[]): HpSlotState {
+  const out: HpSlotState = { A: null, B: null, C: null };
+  for (const raw of buffNames) {
+    const n = (raw || '').toLowerCase();
+    if (!n) continue;
+    if (AEGOLISM_KEYWORDS.some(k => n.includes(k))) {   // fills A + B at once
+      out.A = out.A || raw;
+      out.B = out.B || raw;
+      continue;
+    }
+    (['A', 'B', 'C'] as HpSlot[]).forEach(slot => {
+      if (!out[slot] && HP_SLOT_KEYWORDS[slot].some(k => n.includes(k))) out[slot] = raw;
+    });
+  }
+  return out;
+}
+
+// Every raid role wants all three HP slots filled. (Casters/priests ideally via
+// POTG for the mana regen; melee/hybrids via Aegolism — but a filled slot is a
+// filled slot, and the provider hint covers the nuance.)
+export const HP_SLOTS: HpSlot[] = ['A', 'B', 'C'];
