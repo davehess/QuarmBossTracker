@@ -5736,10 +5736,25 @@ function renderOptin(o) {
           ? f.resume.chatCount + ' chat · ' + (f.resume.encounterCount || 0) + ' enc'
           : '';
         const tip = [when, ver, counts].filter(Boolean).join(' · ');
+        // /who-only rescan label — show whether this file has been rescanned
+        // under a recent agent version. Pre-v3.0.35 backfills missed visible-
+        // class /who rows due to a keep-pattern bug; the ↺ /who button below
+        // walks the file again for /who rows only (fast — skips chat + combat).
+        const whoVer = f.resume?.whoRescanVersion ? 'v' + f.resume.whoRescanVersion : '';
+        const whoWhen = f.resume?.whoRescanAt
+          ? new Date(f.resume.whoRescanAt).toLocaleString()
+          : '';
+        const whoCount = f.resume?.whoRescanCount != null ? f.resume.whoRescanCount + ' /who' : '';
+        const whoTip = [whoWhen, whoVer, whoCount].filter(Boolean).join(' · ');
+        const whoLabel = whoTip
+          ? ' <span class="dim" style="font-size:10px" title="' + esc(whoTip) + '">↺ rescanned ' + esc(whoVer) + '</span>'
+          : '';
         resumeStr =
           '<span style="color:var(--green)" title="' + esc(tip) + '">✓ done</span>' +
           (when ? ' <span class="dim" style="font-size:10px">' + esc(when.replace(/, /, ' ')) + (ver ? ' · ' + esc(ver) : '') + '</span>' : '') +
-          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting." style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>';
+          whoLabel +
+          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting." style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>' +
+          ' <button data-rescan-who="' + esc(f.path) + '" title="Re-scan this file for /who rows only (fast — skips chat + combat which are already uploaded). Captures visible-class /who rows that a pre-v3.0.35 keep-pattern bug silently dropped." style="margin-left:4px;background:#1f6feb;border:1px solid #1f6feb;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↺ /who only</button>';
       }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
         const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
@@ -5826,6 +5841,18 @@ function renderOptin(o) {
       if (!p) return;
       if (!confirm('Re-run backfill on this file from the beginning? Useful when the log has grown since the last completion.')) return;
       await postOptin('rerun', { paths: [p] });
+      refreshOptin();
+    });
+  });
+  // /who-only rescan — fast path that walks the file for /who rows ONLY, skips
+  // chat + combat. Use after upgrading past a /who keep-pattern fix (v3.0.35
+  // and later) to retroactively capture rows that earlier agents byte-dropped.
+  root.querySelectorAll('button[data-rescan-who]').forEach(b => {
+    _bindOnce(b, 'click', async () => {
+      const p = b.dataset.rescanWho;
+      if (!p) return;
+      if (!confirm('Re-scan this file for /who rows only? Fast — skips chat and combat (already uploaded). Captures visible-class /who rows that the pre-v3.0.35 keep pattern silently dropped.')) return;
+      await postOptin('rescan-who', { paths: [p] });
       refreshOptin();
     });
   });
@@ -8312,6 +8339,21 @@ function startWebDashboard(port) {
             runOptinBackfill(toRerun, { log: (m) => console.log(`[optin] ${m}`) });
             console.log(`[optin] Re-run kicked for ${toRerun.length} file(s)`);
           }
+        } else if (action === 'rescan-who') {
+          // /who-only rescan: walk these files for /who rows only — skip chat
+          // (already uploaded) and combat (skipped by backfill anyway). For
+          // anyone who completed a backfill under the pre-v3.0.35 buggy keep
+          // pattern that dropped non-anon /who rows — this retroactively
+          // populates who_observations with the visible-class data that was
+          // silently lost. Does NOT clear progress; doesn't touch chat/combat
+          // completion state.
+          const toScan = paths.length > 0
+            ? paths.map(p => byPath.get(p)).filter(Boolean)
+            : _optinState.files;
+          if (toScan.length > 0) {
+            runOptinBackfill(toScan, { whoOnly: true, log: (m) => console.log(`[optin] ${m}`) });
+            console.log(`[optin] /who rescan kicked for ${toScan.length} file(s)`);
+          }
         } else if (action === 'ack-backfill' || action === 'dismiss-backfill') {
           // Backfill request status transitions — POST to the bot, then
           // re-poll so the local view reflects what the bot sees.
@@ -9276,8 +9318,15 @@ function runOptinBackfill(files, opts = {}) {
   const onStatus = opts.onStatus || (() => {});
   const log = opts.log || (() => {});
   const { botUrl, token, dryRun } = _uploadOpts || {};
+  // whoOnly fast path — for files that were already backfilled under a buggy
+  // /who keep-pattern (pre-v3.0.35) and need their /who history re-walked
+  // without re-uploading chat / combat. Skips the EncounterBuilder + chat batch
+  // entirely; per-line work is just shouldKeep + parseEvent + recordWhoEvent on
+  // /who-type events. The existing 5s ticker flushes whoData on growth, so the
+  // bot's who_observations populates without any new endpoint.
+  const whoOnly = !!opts.whoOnly;
 
-  log(`Starting backfill on ${files.length} file(s) — chat + combat + /who...`);
+  log(`Starting ${whoOnly ? '/who-only rescan' : 'backfill'} on ${files.length} file(s)${whoOnly ? ' (fast path)' : ' — chat + combat + /who'}...`);
 
   for (const f of files) {
     if (_activeBackfills.has(f.path)) {
@@ -9329,10 +9378,15 @@ function runOptinBackfill(files, opts = {}) {
 
     (async () => {
       const stored    = _optinState.progress[f.path];
-      const startByte = stored?.bytePos || 0;
+      // /who-only rescan ALWAYS starts at 0 — the existing bytePos only matters
+      // for chat/combat completion; we're walking the whole file for /who rows
+      // that the pre-v3.0.35 keep-pattern dropped.
+      const startByte = whoOnly ? 0 : (stored?.bytePos || 0);
       const totalBytes = f.sizeBytes || 0;
       status.bytePos = startByte;
-      if (startByte > 0) {
+      if (whoOnly) {
+        log(`  Rescanning ${f.character} for /who rows from ${f.path}...`);
+      } else if (startByte > 0) {
         log(`  Resuming ${f.character} from ${Math.floor(startByte/Math.max(totalBytes,1)*100)}% (${startByte} bytes)`);
       } else {
         log(`  Backfilling ${f.character} from ${f.path}...`);
@@ -9402,19 +9456,28 @@ function runOptinBackfill(files, opts = {}) {
             }
 
             // Chat comes first — chat lines don't survive shouldKeep().
-            const chatMsg = parseChatLine(line, f.character);
-            if (chatMsg) {
-              chatBatch.push({ ...chatMsg, uploadedBy: f.character });
-              status.chatCount++;
-              if (chatBatch.length >= 500) flushChat(true).catch(() => {});
-              return;
+            // SKIPPED in /who-only rescan: chat has already been uploaded; we
+            // don't want to re-walk it.
+            if (!whoOnly) {
+              const chatMsg = parseChatLine(line, f.character);
+              if (chatMsg) {
+                chatBatch.push({ ...chatMsg, uploadedBy: f.character });
+                status.chatCount++;
+                if (chatBatch.length >= 500) flushChat(true).catch(() => {});
+                return;
+              }
             }
             // Combat + /who: shouldKeep with defaults; parseEvent populates the
             // module-level whoData map as a side-effect for /who output rows.
             if (!shouldKeep(line)) return;
             const ts = parseEqTimestamp(line);
             const ev = parseEvent(line, ts);
-            if (ev) builder.add(ev);
+            if (!ev) return;
+            if (whoOnly) {
+              if (ev.type === 'who') { recordWhoEvent(ev); status.whoCount = (status.whoCount || 0) + 1; }
+              return;       // ignore all other event types in fast path
+            }
+            builder.add(ev);
           },
           ({ bytePos, lineNum }) => {
             status.bytePos = bytePos;
@@ -9441,6 +9504,22 @@ function runOptinBackfill(files, opts = {}) {
           // where we left off via _optinState.progress[f.path].bytePos.
           status.state = 'paused';
           log(`  ⏸ Paused: ${f.character} (${status.chatCount} chat, ${status.encounterCount} encounters processed; click Backfill again to resume)`);
+        } else if (whoOnly) {
+          // Don't overwrite the existing progress entry — that records the full
+          // backfill state (chatCount, encounterCount, complete). A /who-only
+          // rescan just walked the bytes for /who rows; we stamp whoRescanAt /
+          // whoRescanVersion so the UI can show "rescanned under vX" without
+          // implying chat or combat was re-uploaded.
+          const prior = _optinState.progress[f.path] || {};
+          _optinState.progress[f.path] = {
+            ...prior,
+            whoRescanAt:      new Date().toISOString(),
+            whoRescanVersion: AGENT_VERSION,
+            whoRescanCount:   status.whoCount || 0,
+          };
+          _saveOptInState();
+          status.state = 'done';
+          log(`  ✓ /who rescan done: ${f.character} v${AGENT_VERSION} (${status.whoCount || 0} /who row(s) attributed)`);
         } else {
           _optinState.progress[f.path] = {
             bytePos: totalBytes, lineNum: -1, totalBytes,
