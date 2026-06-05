@@ -581,7 +581,21 @@ function findEqInstalls(hint) {
 // at ~60fps and applies setBounds. 1:1 cursor-to-window motion, no Chromium
 // hit-test path involved.
 let _dragSession = null;  // { win, offsetX, offsetY, width, height, interval }
-function _startWindowDrag(win) {
+// Map an overlay window to its config bounds key, so a manual ✥-drag persists
+// to the SAME key the window restores from (_resolveBounds). Without this the
+// drag end persisted to `undefined`, so position never saved → every launch
+// fell back to the default. THE position-reset bug.
+function _boundsKeyForWindow(win) {
+  if (!win) return null;
+  if (win === overlayWindow) return 'hudBounds';
+  if (win === triggerWindow) return 'triggerBounds';
+  if (win === charmWindow)   return 'charmBounds';
+  for (const [panelKey, w] of panelOverlays.entries()) {
+    if (w === win) return 'panelBounds_' + panelKey;
+  }
+  return null;
+}
+function _startWindowDrag(win, persistKey) {
   if (!win || win.isDestroyed()) return;
   _stopWindowDrag();
   try {
@@ -589,6 +603,7 @@ function _startWindowDrag(win) {
     const b = win.getBounds();
     _dragSession = {
       win,
+      persistKey: persistKey || _boundsKeyForWindow(win),
       offsetX: c.x - b.x,
       offsetY: c.y - b.y,
       width:   b.width,
@@ -2156,7 +2171,7 @@ function scheduleAgentUpdates() {
 ipcMain.handle('overlay-drag-start', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
-    _startWindowDrag(win);
+    _startWindowDrag(win, _boundsKeyForWindow(win));
   } catch {}
   return true;
 });
