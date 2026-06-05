@@ -158,6 +158,38 @@ if (location.protocol === 'http:') {
       close.onmouseleave = () => { close.style.borderColor = '#2a3140'; close.style.color = '#c9d1d9'; _hoverInteractive(false); };
       close.onclick = () => { try { ipcRenderer.invoke('hide-overlay'); } catch (e) {} };
       document.body.appendChild(close);
+
+      // ✥ move square — top-left corner. Drag the panel overlay directly
+      // without flipping Setup mode. Works when the window is locked
+      // (click-through) via the same hover-interact handshake: keep the window
+      // interactive through the drag so document mouseup still fires, then
+      // restore click-through after.
+      const move = document.createElement('button');
+      move.textContent = '✥';
+      move.title = 'Drag to move this overlay';
+      move.setAttribute('style', [
+        'position:fixed', 'top:10px', 'left:12px', 'z-index:99999',
+        'width:34px', 'height:34px', 'border-radius:8px',
+        'background:#161b22', 'color:#c9d1d9', 'border:1px solid #2a3140',
+        'font-size:15px', 'cursor:move', 'line-height:1',
+      ].join(';'));
+      let _panelDragging = false;
+      move.onmouseenter = () => { move.style.borderColor = '#58a6ff'; move.style.color = '#58a6ff'; _hoverInteractive(true); };
+      move.onmouseleave = () => { move.style.borderColor = '#2a3140'; move.style.color = '#c9d1d9'; if (!_panelDragging) _hoverInteractive(false); };
+      move.onmousedown = (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        _panelDragging = true;
+        try { ipcRenderer.invoke('overlay-drag-start'); } catch (err) {}
+      };
+      document.addEventListener('mouseup', () => {
+        if (_panelDragging) {
+          _panelDragging = false;
+          try { ipcRenderer.invoke('overlay-drag-end'); } catch (err) {}
+          _hoverInteractive(false);
+        }
+      });
+      document.body.appendChild(move);
     }
 
     // Skip the connection banner in overlay windows — the banner is a

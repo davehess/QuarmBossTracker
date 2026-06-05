@@ -54,8 +54,16 @@
     font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
   #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
   body.setup #hide-btn{top:30px}
+  /* ✥ persistent move square — drag without unlocking from the tray. */
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  body.setup #move-btn{top:30px}
 </style></head>
 <body>
+  <button id="move-btn" title="Drag to move this overlay">✥</button>
   <button id="hide-btn" title="Hide the charm tracker (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
@@ -92,12 +100,21 @@
   }
 
   // Manual drag (same Chromium transparent-window workaround as the others).
-  var moveHandle = document.getElementById('move-handle'); var _dragging = false;
-  if (moveHandle) moveHandle.addEventListener('mousedown', function(e){
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
     if (e.button !== 0) return; e.preventDefault(); _dragging = true;
     try { window.mimic.overlayDragStart(); } catch (err) {}
-  });
-  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  // Persistent corner square — works when locked via hover-interact.
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
   window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
 
   // Setup mode + opacity slider.
