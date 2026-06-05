@@ -209,3 +209,11 @@ ambiguous for same-named trash (no instance id).
    transforms + bot-scheduled timers + `.dno` import to seed the catalog).
 7. **Mob-info overlay.**
 8. Fix **Dragon Punch** attribution.
+
+---
+
+> **Related roadmap:** `docs/raid-hub-roadmap.md` — the next-gen `/raid` view
+> (renamed `/buffs`) that becomes the launchpad for loot, buffing, RaidHelper
+> diff, mass-buff cooldown tracking, and the Feral Avatar queue. Many of its
+> sub-features depend on items in this trigger roadmap (Quarmy AA parser, the
+> agent's `you cast X` signal).
