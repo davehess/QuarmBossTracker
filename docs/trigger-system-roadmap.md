@@ -191,6 +191,20 @@ ambiguous for same-named trash (no instance id).
 3. **Quarmy AA parser** (bot-side) → ranks per character.
 4. **Pet buff timers** (duration calc + overlay rows).
 5. **Voice audio** (the `_playVoiceTrigger` stub → real TTS).
+6. **Tell-back: mention the sender in relayed tell DMs.** When an incoming tell
+   gets relayed to a member's Discord DM (existing `tell_relay` opt-in path in
+   `_handleAgentTells`), resolve the SENDER's character → its `discord_id` via
+   the characters table (or the family-root's discord_id when an alt has none).
+   Replace the plain-text sender name in the DM body with a `<@id>` mention so
+   it pings them and a click opens their profile card → "Send Message".
+   - **Consent:** any guild member with a linked `discord_id` is fair game (per
+     the design call). No new opt-in field.
+   - **Fallback:** unlinked sender → plain text (unchanged behavior).
+   - **Touches:** bot only — `_handleAgentTells` in `index.js` where the DM is
+     composed. Add a character→discord_id lookup helper (cached). Outbound DM
+     uses `allowedMentions: { users: [senderId] }` so the mention pings.
+   - **Tiny gotcha:** Discord DMs can only mention users who share a guild with
+     the bot. Both sides are in our guild, so this holds.
 6. Then the bigger **central event engine** (event bus + condition eval +
    transforms + bot-scheduled timers + `.dno` import to seed the catalog).
 7. **Mob-info overlay.**
