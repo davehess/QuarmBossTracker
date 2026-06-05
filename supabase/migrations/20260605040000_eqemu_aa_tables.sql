@@ -43,5 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_aa_effects_effectid ON public.eqemu_aa_effects (e
 
 ALTER TABLE public.eqemu_altadv_vars ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.eqemu_aa_effects  ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "altadv_vars read" ON public.eqemu_altadv_vars;
+DROP POLICY IF EXISTS "aa_effects read"  ON public.eqemu_aa_effects;
 CREATE POLICY "altadv_vars read" ON public.eqemu_altadv_vars FOR SELECT TO anon, authenticated USING (true);
 CREATE POLICY "aa_effects read"  ON public.eqemu_aa_effects  FOR SELECT TO anon, authenticated USING (true);
