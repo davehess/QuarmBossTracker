@@ -12,7 +12,8 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
-  categorizeBuff, classToRole, CATEGORY_ORDER, type BuffCategory, type Role,
+  categorizeBuff, classToRole, analyzeHpSlots, CATEGORY_ORDER,
+  type BuffCategory, type Role,
 } from '@/lib/buffs';
 import BuffsGrid, { type BuffRow } from './BuffsGrid';
 
@@ -88,6 +89,7 @@ export default async function BuffsPage() {
     liveByName.set(r.character.toLowerCase(), r);
     const className = classFor(r.character);
     const { byCategory, other } = bucketBuffs(r.buffs);
+    const hpSlots = analyzeHpSlots((r.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
     return {
       name: r.character,
       className,
@@ -97,6 +99,7 @@ export default async function BuffsPage() {
       buffCount: r.buff_count ?? (r.buffs?.length ?? 0),
       byCategory,
       other,
+      hpSlots,
       raidGroup: rosterByName.get(r.character.toLowerCase())?.group_num ?? null,
       inRaid: rosterByName.has(r.character.toLowerCase()),
     };
@@ -117,13 +120,16 @@ export default async function BuffsPage() {
       buffCount: 0,
       byCategory: {},
       other: [],
+      hpSlots: { A: null, B: null, C: null },
       raidGroup: rr.group_num ?? null,
       inRaid: true,
       noAgent: true,
     });
   }
 
-  const categories = CATEGORY_ORDER as BuffCategory[];
+  // HP is shown as the three dedicated HP-slot columns, so drop it from the
+  // category column set.
+  const categories = (CATEGORY_ORDER as BuffCategory[]).filter(c => c !== 'hp');
 
   return <BuffsGrid rows={rows} categories={categories} />;
 }

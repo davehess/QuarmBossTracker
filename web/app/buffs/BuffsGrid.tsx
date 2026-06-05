@@ -3,7 +3,8 @@
 import { Fragment, useMemo, useState } from 'react';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS,
-  type BuffCategory, type Role,
+  HP_SLOTS, HP_SLOT_LABELS, HP_SLOT_PROVIDER,
+  type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
 
 export type BuffRow = {
@@ -15,6 +16,8 @@ export type BuffRow = {
   buffCount: number;
   byCategory: Record<string, string[]>;
   other: string[];
+  // Which of the three HP buff slots (A/B/C) are filled, and with what.
+  hpSlots: HpSlotState;
   // Live raid group (1–8) from the Zeal raid roster; null = not in the raid.
   raidGroup?: number | null;
   inRaid?: boolean;
@@ -100,9 +103,13 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
       if (!selectedClasses.has(r.className || 'Unknown')) return false;
       if (hideStale && r.updatedAt && (now - new Date(r.updatedAt).getTime()) > STALE_MS) return false;
       if (onlyGaps) {
+        // noAgent rows have unknown buffs, not known gaps — keep them out of
+        // the gaps-only view rather than flagging every one as missing.
+        if (r.noAgent) return false;
         const target = ROLE_TARGETS[r.role] || [];
-        const hasGap = target.some(cat => !(r.byCategory[cat]?.length));
-        if (!hasGap) return false;
+        const catGap = target.some(cat => !(r.byCategory[cat]?.length));
+        const hpGap = HP_SLOTS.some(slot => !r.hpSlots[slot]);
+        if (!catGap && !hpGap) return false;
       }
       return true;
     });
@@ -134,7 +141,8 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
     });
   }, [filtered]);
 
-  const colSpan = categories.length + 3;
+  // Character + 3 HP slots + category columns + Other + Synced.
+  const colSpan = HP_SLOTS.length + categories.length + 3;
 
   return (
     <div className="space-y-4">
@@ -210,6 +218,11 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
             <thead>
               <tr className="text-dim border-b border-border">
                 <th className="text-left p-2 sticky left-0 bg-panel">Character</th>
+                {HP_SLOTS.map(slot => (
+                  <th key={slot} className="p-2 text-center whitespace-nowrap border-l border-border/40" title={HP_SLOT_PROVIDER[slot]}>
+                    {HP_SLOT_LABELS[slot]}
+                  </th>
+                ))}
                 {categories.map(cat => (
                   <th key={cat} className="p-2 text-center whitespace-nowrap">{CATEGORY_LABELS[cat]}</th>
                 ))}
@@ -244,11 +257,28 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                           </div>
                         </td>
                         {r.noAgent ? (
-                          <td colSpan={categories.length + 1} className="p-2 text-center text-dim/60 italic text-[11px]">
+                          <td colSpan={HP_SLOTS.length + categories.length + 1} className="p-2 text-center text-dim/60 italic text-[11px]">
                             in the raid but not running the agent — buffs unknown
                           </td>
                         ) : (
                           <>
+                            {HP_SLOTS.map(slot => {
+                              const filled = r.hpSlots[slot];
+                              return (
+                                <td key={slot} className="p-2 text-center border-l border-border/40">
+                                  {filled ? (
+                                    <span
+                                      className="text-green inline-block max-w-[110px] truncate align-bottom"
+                                      title={filled}
+                                    >
+                                      {filled}
+                                    </span>
+                                  ) : (
+                                    <span className="text-red-400" title={'Missing — ' + HP_SLOT_PROVIDER[slot]}>— missing</span>
+                                  )}
+                                </td>
+                              );
+                            })}
                             {categories.map(cat => {
                               const names = r.byCategory[cat];
                               const present = (names?.length || 0) > 0;
@@ -288,9 +318,11 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
       )}
 
       <p className="text-[11px] text-dim">
-        Cells show the actual <span className="text-green">buff/song name</span> in that category
-        (hover for the full list when there&apos;s more than one) ·
-        <span className="text-red-400"> — missing</span> = expected for the role but absent ·
+        The first three columns are the <b>HP buff slots</b> every raider wants filled —
+        <b> POTG/Aego</b>, <b>Symbol</b>, and <b>Khura/Brell</b> (hover a header for who provides it).
+        Aegolism fills both POTG and Symbol at once. Cells show the actual
+        <span className="text-green"> buff/song name</span> (hover for the full list when there&apos;s more than one) ·
+        <span className="text-red-400"> — missing</span> = expected but absent ·
         <span className="text-dim"> ·</span> not expected for the role ·
         grouped by live <b>raid group</b> (from the Zeal raid roster) ·
         click 📋 next to a name to copy <code>/target &lt;name&gt;</code> for pasting in EQ.
