@@ -3329,8 +3329,20 @@ function _serializeForDashboard() {
       // local client's bars), which is exactly the pet the charm overlay cares
       // about. Bystanders' pets simply have no HP and render as before.
       const livePet = _livePetHpByOwner();
+      // The charm tracker is a RECHARM timer for YOUR OWN charm. Bystander
+      // charms — other enchanters' pets, picked up via the zone-visible
+      // "<Mob> regards <Charmer> as an ally" line for pet-damage attribution —
+      // must NOT show here, or a non-charmer (monk, etc.) sees a charm they
+      // don't have ("I don't have a charm pet"). Filter to sessions owned by
+      // one of the uploader's watched characters. Until watchedLogs loads
+      // (myChars empty) we don't filter, to avoid hiding a real self-charm
+      // during startup.
+      const myChars = new Set((stats.watchedLogs || [])
+        .map(w => w && w.character && String(w.character).toLowerCase())
+        .filter(Boolean));
       const arr = [];
       for (const [key, info] of _charmTickTracker.entries()) {
+        if (myChars.size > 0 && (!info.owner || !myChars.has(String(info.owner).toLowerCase()))) continue;
         const lp = info.owner ? livePet.get(String(info.owner).toLowerCase()) : null;
         arr.push({
           key,
