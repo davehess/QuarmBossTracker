@@ -22,7 +22,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
-  categorizeBuff, classToRole, analyzeHpSlots, ROLE_TARGETS,
+  categorizeBuff, classToRole, analyzeHpSlots, ROLE_TARGETS, isCorpse,
   type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
 import RaidView, { type RaidRow } from './RaidView';
@@ -110,8 +110,12 @@ export default async function RaidHubPage() {
   ]);
   const meDiscordId = memberRow?.discord_id ?? null;
 
+  // EQ corpses ("<Owner>'s corpse1234") register as live characters — drop them.
+  const liveClean   = ((liveRows ?? []) as LiveStateRow[]).filter(r => !isCorpse(r.character));
+  const rosterClean = ((rosterRows ?? []) as RosterRow[]).filter(r => !isCorpse(r.name));
+
   const rosterByName = new Map<string, RosterRow>(
-    ((rosterRows ?? []) as RosterRow[]).map(r => [r.name.toLowerCase(), r]),
+    rosterClean.map(r => [r.name.toLowerCase(), r]),
   );
   const classByName = new Map<string, string | null>(
     ((charRows ?? []) as { name: string; class: string | null }[])
@@ -149,7 +153,7 @@ export default async function RaidHubPage() {
   // Build rows: every roster member (or live-state character) gets one. Roster
   // wins for grouping; live state fills in buffs/zone.
   const liveByName = new Map<string, LiveStateRow>();
-  for (const r of (liveRows ?? []) as LiveStateRow[]) {
+  for (const r of liveClean) {
     liveByName.set(r.character.toLowerCase(), r);
   }
 
@@ -188,7 +192,7 @@ export default async function RaidHubPage() {
   }
   // 2. Anyone with live state but NOT in the roster (parked alt running Mimic,
   //    or roster not yet flowing) — bucket as "Not in raid".
-  for (const r of (liveRows ?? []) as LiveStateRow[]) {
+  for (const r of liveClean) {
     const lower = r.character.toLowerCase();
     if (seen.has(lower)) continue;
     seen.add(lower);

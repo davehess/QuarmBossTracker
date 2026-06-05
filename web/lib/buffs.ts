@@ -127,6 +127,14 @@ export function classToRole(className: string | null | undefined): Role {
   return CLASS_ROLE[className.toLowerCase().trim()] || 'other';
 }
 
+// EQ corpses register as their own "character" named "<Owner>'s corpse<id>"
+// (e.g. "Hitya's corpse2854"). They leak into character_live_state / raid_roster
+// but are NOT raiders, so the raid + buff views must filter them out.
+const CORPSE_RX = /'s\s+corpse\d*$/i;
+export function isCorpse(name: string | null | undefined): boolean {
+  return !!name && CORPSE_RX.test(name.trim());
+}
+
 // ── HP buff slots ────────────────────────────────────────────────────────────
 // EQ HP buffs stack in three slots; the grid shows whether each is filled so a
 // buffer sees exactly which HP buff a raider is missing.
@@ -181,3 +189,104 @@ export function analyzeHpSlots(buffNames: string[]): HpSlotState {
 // POTG for the mana regen; melee/hybrids via Aegolism — but a filled slot is a
 // filled slot, and the provider hint covers the nuance.)
 export const HP_SLOTS: HpSlot[] = ['A', 'B', 'C'];
+
+// ── Short display names ──────────────────────────────────────────────────────
+// The buff-window names EQ reports are long ("Protection of the Glades") and
+// blow out the grid columns. Raiders know them by their guild shorthand, so we
+// render that instead and keep the full name on hover. First match wins; add
+// rows as new buffs show up in the wild.
+function capWord(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s;
+}
+
+const SHORT_BUFF_RULES: [RegExp, string][] = [
+  // HP — POTG / Aego / Talisman slot
+  [/protection of the glades/i, 'POTG'],
+  [/protection of the cabbage/i, 'POTC'],
+  [/aegolism/i, 'Aego'],
+  [/talisman of wunshi/i, 'ToW'],
+  // HP — Khura / Brell / Arch slot
+  [/khura'?s? focusing/i, 'Khuras'],
+  [/brell'?s? (?:mountainous barrier|steadfast bulwark|blessing)/i, 'Brell'],
+  [/arch shielding/i, 'Arch'],
+  // Mana regen
+  [/koadic'?s endless intellect/i, 'KEI'],
+  [/clarity ii/i, 'C2'],
+  [/visions of grandeur/i, 'VoG'],
+  [/gift of pure thought/i, 'GoPT'],
+  // Run speed
+  [/spirit of (?:the )?wolf/i, 'SOW'],
+  [/flight of eagles?/i, 'FoE'],
+  // Attack / STR / focus
+  [/spirit of bihli/i, 'Bihli'],
+  [/focus(?:ing)? of spirit/i, 'FoS'],
+  // Haste
+  [/speed of the shissar/i, 'Shissar'],
+];
+
+/** Guild-shorthand display name for a buff (POTG, KEI, SOW, …); full name if unknown. */
+export function shortBuffName(name: string | null | undefined): string {
+  const raw = (name || '').trim();
+  if (!raw) return raw;
+  // Symbol of <Deity> → "Sym <Deity>" (keeps which symbol, drops the prefix).
+  const sym = raw.match(/symbol of (?:the )?(\w+)/i);
+  if (sym) return 'Sym ' + capWord(sym[1]);
+  for (const [rx, short] of SHORT_BUFF_RULES) if (rx.test(raw)) return short;
+  return raw;
+}
+
+// ── Buff remaining time (from Zeal ticks) ────────────────────────────────────
+// character_live_state.buffs carries each buff's remaining `ticks` (1 EQ tick =
+// 6 s) as of the row's updated_at. We elapsed-adjust from that timestamp so the
+// page shows a live-ish estimate, and tone it so a buffer can see who needs a
+// top-off at a glance.
+const SECS_PER_TICK = 6;
+// Illusions / some clickies report a huge tick count → treat as permanent and
+// show no countdown rather than a meaningless "9h59m".
+const PERMANENT_TICKS = 6000; // ~10 h
+
+export function buffRemainingSecs(
+  ticks: number | null | undefined,
+  updatedAtMs?: number | null,
+): number | null {
+  if (ticks == null || !Number.isFinite(ticks)) return null;
+  if (ticks <= 0) return null;                 // expired / unknown
+  if (ticks >= PERMANENT_TICKS) return null;   // permanent → no countdown
+  let secs = ticks * SECS_PER_TICK;
+  if (updatedAtMs != null && Number.isFinite(updatedAtMs)) {
+    const elapsed = (Date.now() - updatedAtMs) / 1000;
+    if (elapsed > 0) secs -= elapsed;
+  }
+  return secs > 0 ? secs : 0;
+}
+
+/** "1h12m" / "8m" / "45s" / "" (unknown or permanent). */
+export function fmtBuffRemaining(
+  ticks: number | null | undefined,
+  updatedAtMs?: number | null,
+): string {
+  const secs = buffRemainingSecs(ticks, updatedAtMs);
+  if (secs == null) return '';
+  const s = Math.round(secs);
+  if (s >= 3600) {
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s % 3600) / 60);
+    return m ? `${h}h${m}m` : `${h}h`;
+  }
+  if (s >= 60) return `${Math.floor(s / 60)}m`;
+  return `${s}s`;
+}
+
+export type BuffTimeTone = 'crit' | 'low' | 'ok' | 'none';
+
+/** crit ≤2m (refresh now) · low ≤6m (getting short) · ok · none (unknown/perm). */
+export function buffTimeTone(
+  ticks: number | null | undefined,
+  updatedAtMs?: number | null,
+): BuffTimeTone {
+  const secs = buffRemainingSecs(ticks, updatedAtMs);
+  if (secs == null) return 'none';
+  if (secs <= 120) return 'crit';
+  if (secs <= 360) return 'low';
+  return 'ok';
+}

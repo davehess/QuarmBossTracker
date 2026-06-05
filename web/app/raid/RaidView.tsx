@@ -16,8 +16,14 @@
 import { useMemo, useState } from 'react';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS, HP_SLOTS, HP_SLOT_LABELS,
+  shortBuffName, fmtBuffRemaining, buffTimeTone,
   type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
+
+// Tone for a buff's live time-left — crit (refresh now) → low → ok.
+const TIME_TONE_CLASS: Record<string, string> = {
+  crit: 'text-red-400', low: 'text-orange', ok: 'text-dim', none: 'text-dim',
+};
 
 export type RaidRow = {
   name: string;
@@ -467,6 +473,22 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
   const tierStyle = TIER_STYLE[row.tier];
   const expected = ROLE_TARGETS[row.role] || [];
 
+  // name(lower) → remaining ticks, from the row's own live buff list.
+  const atMs = row.updatedAt ? new Date(row.updatedAt).getTime() : null;
+  const ticksFor = (name: string): number | null =>
+    row.buffs.find(b => b?.name && b.name.toLowerCase() === name.toLowerCase())?.ticks ?? null;
+  // One buff: guild shorthand + toned time-left.
+  const BuffChip = ({ name }: { name: string }) => {
+    const t = fmtBuffRemaining(ticksFor(name), atMs);
+    const tone = buffTimeTone(ticksFor(name), atMs);
+    return (
+      <span className="truncate" title={name + (t ? ` · ${t} left` : '')}>
+        <span className="text-green">{shortBuffName(name)}</span>
+        {t && <span className={['ml-1 tabular-nums', TIME_TONE_CLASS[tone]].join(' ')}>{t}</span>}
+      </span>
+    );
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-2">
@@ -518,7 +540,7 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
                   <li key={slot} className="flex items-center gap-2 text-[11px]">
                     <span className="text-dim w-28 shrink-0">{HP_SLOT_LABELS[slot]}</span>
                     {filled
-                      ? <span className="text-green truncate">{filled}</span>
+                      ? <BuffChip name={filled} />
                       : <span className="text-red-400">— missing</span>}
                   </li>
                 );
@@ -540,7 +562,10 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
                   <li key={cat} className="flex items-center gap-2 text-[11px]">
                     <span className="text-dim w-20 shrink-0">{CATEGORY_LABELS[cat]}</span>
                     {present
-                      ? <span className="text-green truncate" title={names.join(', ')}>{names[0]}{names.length > 1 ? ' +' + (names.length - 1) : ''}</span>
+                      ? <span className="flex items-center gap-1 min-w-0" title={names.join(', ')}>
+                          <BuffChip name={names[0]} />
+                          {names.length > 1 ? <span className="text-green shrink-0">+{names.length - 1}</span> : null}
+                        </span>
                       : <span className="text-red-400">— missing</span>}
                   </li>
                 );

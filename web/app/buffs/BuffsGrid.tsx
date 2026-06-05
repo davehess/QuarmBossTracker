@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState } from 'react';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS,
   HP_SLOTS, HP_SLOT_LABELS, HP_SLOT_PROVIDER,
+  shortBuffName, fmtBuffRemaining, buffTimeTone,
   type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
 
@@ -18,6 +19,8 @@ export type BuffRow = {
   other: string[];
   // Which of the three HP buff slots (A/B/C) are filled, and with what.
   hpSlots: HpSlotState;
+  // name(lower) → remaining ticks (1 tick = 6s) for time-left display.
+  buffTicks?: Record<string, number | null>;
   // Live raid group (1–8) from the Zeal raid roster; null = not in the raid.
   raidGroup?: number | null;
   inRaid?: boolean;
@@ -27,6 +30,28 @@ export type BuffRow = {
 };
 
 const STALE_MS = 30 * 60 * 1000;
+
+// Tone for a buff's remaining time — crit (refresh now) → low → ok.
+const TIME_TONE_CLASS: Record<string, string> = {
+  crit: 'text-red-400',
+  low:  'text-orange',
+  ok:   'text-dim',
+  none: 'text-dim',
+};
+
+// One buff: guild-shorthand name + its live time-left badge (toned so a buffer
+// sees who needs a top-off). updatedAt elapsed-adjusts the tick count.
+function BuffChip({ name, ticks, updatedAt }: { name: string; ticks: number | null | undefined; updatedAt: string | null }) {
+  const at = updatedAt ? new Date(updatedAt).getTime() : null;
+  const t = fmtBuffRemaining(ticks, at);
+  const tone = buffTimeTone(ticks, at);
+  return (
+    <span title={name + (t ? ` · ${t} left` : '')}>
+      <span className="text-green">{shortBuffName(name)}</span>
+      {t && <span className={['ml-1 tabular-nums', TIME_TONE_CLASS[tone]].join(' ')}>{t}</span>}
+    </span>
+  );
+}
 
 // Copy "/target <name>" so a raider can paste straight into EQ. Zeal's pipe is
 // read-only (data flows OUT of EQ; there's no documented inbound slash-command
@@ -267,12 +292,7 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                               return (
                                 <td key={slot} className="p-2 text-center border-l border-border/40">
                                   {filled ? (
-                                    <span
-                                      className="text-green inline-block max-w-[110px] truncate align-bottom"
-                                      title={filled}
-                                    >
-                                      {filled}
-                                    </span>
+                                    <BuffChip name={filled} ticks={r.buffTicks?.[filled.toLowerCase()]} updatedAt={r.updatedAt} />
                                   ) : (
                                     <span className="text-red-400" title={'Missing — ' + HP_SLOT_PROVIDER[slot]}>— missing</span>
                                   )}
@@ -286,11 +306,9 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                               return (
                                 <td key={cat} className="p-2 text-center">
                                   {present ? (
-                                    <span
-                                      className="text-green inline-block max-w-[110px] truncate align-bottom"
-                                      title={names!.join(', ')}
-                                    >
-                                      {names![0]}{names!.length > 1 ? ' +' + (names!.length - 1) : ''}
+                                    <span title={names!.join(', ')}>
+                                      <BuffChip name={names![0]} ticks={r.buffTicks?.[names![0].toLowerCase()]} updatedAt={r.updatedAt} />
+                                      {names!.length > 1 ? <span className="text-green"> +{names!.length - 1}</span> : null}
                                     </span>
                                   ) : expected ? (
                                     <span className="text-red-400" title="Expected for this role — missing">— missing</span>
@@ -320,8 +338,10 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
       <p className="text-[11px] text-dim">
         The first three columns are the <b>HP buff slots</b> every raider wants filled —
         <b> POTG/Aego</b>, <b>Symbol</b>, and <b>Khura/Brell</b> (hover a header for who provides it).
-        Aegolism fills both POTG and Symbol at once. Cells show the actual
-        <span className="text-green"> buff/song name</span> (hover for the full list when there&apos;s more than one) ·
+        Aegolism fills both POTG and Symbol at once. Cells show the
+        <span className="text-green"> buff&apos;s guild shorthand</span> (hover for the full name) plus its
+        <span className="text-dim"> time left</span> from the raider&apos;s own Zeal feed —
+        <span className="text-orange"> orange ≤6m</span> / <span className="text-red-400">red ≤2m</span> flags who needs a top-off soon ·
         <span className="text-red-400"> — missing</span> = expected but absent ·
         <span className="text-dim"> ·</span> not expected for the role ·
         grouped by live <b>raid group</b> (from the Zeal raid roster) ·

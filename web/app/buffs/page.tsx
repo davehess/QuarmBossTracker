@@ -12,7 +12,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
-  categorizeBuff, classToRole, analyzeHpSlots, CATEGORY_ORDER,
+  categorizeBuff, classToRole, analyzeHpSlots, CATEGORY_ORDER, isCorpse,
   type BuffCategory, type Role,
 } from '@/lib/buffs';
 import BuffsGrid, { type BuffRow } from './BuffsGrid';
@@ -56,10 +56,15 @@ export default async function BuffsPage() {
       .gte('captured_at', rosterSince),
   ]);
 
+  // EQ corpses ("<Owner>'s corpse1234") register as live characters — drop them.
+  const liveClean   = ((liveRows ?? []) as LiveStateRow[]).filter(r => !isCorpse(r.character));
+
   // name(lower) → roster entry (group + live Zeal class) for current raid members.
   type RosterRow = { name: string; class: string | null; group_num: number | null };
   const rosterByName = new Map<string, RosterRow>(
-    ((rosterRows ?? []) as RosterRow[]).map(r => [r.name.toLowerCase(), r]),
+    ((rosterRows ?? []) as RosterRow[])
+      .filter(r => !isCorpse(r.name))
+      .map(r => [r.name.toLowerCase(), r]),
   );
 
   // name(lower) → class. Prefer the OpenDKP roster class (authoritative), fall
@@ -86,11 +91,15 @@ export default async function BuffsPage() {
 
   // Build a row per character that has live buff state.
   const liveByName = new Map<string, LiveStateRow>();
-  const rows: BuffRow[] = ((liveRows ?? []) as LiveStateRow[]).map(r => {
+  const rows: BuffRow[] = liveClean.map(r => {
     liveByName.set(r.character.toLowerCase(), r);
     const className = classFor(r.character);
     const { byCategory, other } = bucketBuffs(r.buffs);
     const hpSlots = analyzeHpSlots((r.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
+    // name(lower) → remaining ticks, so the grid can show + tone each buff's
+    // time-left without re-threading the whole buffs array through the row.
+    const buffTicks: Record<string, number | null> = {};
+    for (const b of (r.buffs ?? [])) if (b?.name) buffTicks[b.name.toLowerCase()] = b.ticks ?? null;
     return {
       name: r.character,
       className,
@@ -101,6 +110,7 @@ export default async function BuffsPage() {
       byCategory,
       other,
       hpSlots,
+      buffTicks,
       raidGroup: rosterByName.get(r.character.toLowerCase())?.group_num ?? null,
       inRaid: rosterByName.has(r.character.toLowerCase()),
     };
