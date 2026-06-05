@@ -365,7 +365,7 @@ const TRANSFORMS = {
     };
   },
   npc_types: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn']);
+    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn', 'npcspecialattks', 'special_abilities']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lastname: r.lastname,
@@ -383,6 +383,12 @@ const TRANSFORMS = {
       npc_faction_id: r.npc_faction_id, maxlevel: r.maxlevel, scalerate: r.scalerate,
       raid_target:  !!toBool(r.raid_target),
       rare_spawn:   !!toBool(r.rare_spawn),
+      // Special-attack flags for the mob-info overlay. npcspecialattks is the
+      // classic letter-flag string EQMac carries (S/E/F/m/R/r/T/Q…); decoded
+      // for display by the bot's mob-info endpoint. special_abilities is the
+      // newer parametrized form — kept too if the dump ever switches.
+      npcspecialattks:   (r.npcspecialattks  != null && r.npcspecialattks  !== '') ? String(r.npcspecialattks)  : null,
+      special_abilities: (r.special_abilities != null && r.special_abilities !== '') ? String(r.special_abilities) : null,
     };
   },
   loottable: (cols, row) => {
