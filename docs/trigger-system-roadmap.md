@@ -165,14 +165,16 @@ ambiguous for same-named trash (no instance id).
 
 ## Known issues / TODO queue
 
-1. **Dragon Punch attribution is WRONG** (flagged by the user). The detector
-   (`parseDragonPunch`, `DRAGON_PUNCH_RX` = `"<target> is stricken by the force
-   of a dragon."`) credits the **log owner**, assuming the proc is kicker-only.
-   It's **bystander-visible** — boxed/grouped chars all see Hitya's proc and
-   each credit themselves (Bwavair 111, Hitya 2). The line names only the
-   target, never the kicker → **not attributable as designed.** Fix options:
-   find a kicker-naming signal, or anonymize to a guild total. **Do not trust
-   the per-character Dragon Punch counter until fixed.**
+1. **Dragon Punch attribution — FIXED (display anonymized).** Root cause: the
+   proc line `"<target> is stricken by the force of a dragon."` names only the
+   target, never the kicker, and is **bystander-visible** — boxed/grouped chars
+   all saw Hitya's proc and the agent credited each log owner (Bwavair 111,
+   Hitya 2), both mis-attributing AND over-counting. Fix (web `/fun` only): count
+   **DISTINCT `(target, event_ts)`** = actual physical repositions, shown as an
+   anonymous guild total ("Mobs have been repositioned by Dragon Punch X times").
+   No names, no double-count, works on existing data. *Minor follow-up:* the
+   agent still uploads one row per watching log (bloat, not incorrectness) — the
+   distinct-count absorbs it; could set `caster=null`/mob agent-side later.
 2. **Overlay font-size control** — last piece of the overlay ask (text
    larger/smaller). Position persistence + resize are fixed/working; font size
    is the remaining gap. → beta.
