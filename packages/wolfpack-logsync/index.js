@@ -291,8 +291,8 @@ const PRIORITY_KEEP_PATTERNS = [
   // /tells you,/ filter; keep them so the charm tracker can render the buff
   // list with countdowns. Only the OWNER sees their own pet's reply, so this
   // is per-log private and doesn't leak anything cross-player.
-  /\btells you,\s*['"]I have \d+% of my hit points\.\s*['"]/i,
-  /\btells you,\s*['"][A-Z][\w' :-]+,\s+(?:\d+\s+(?:hour|minute|second)s?(?:,\s+|\s+and\s+)?)+\s*remaining\.\s*['"]/i,
+  /\btells you,\s*['"]I have \d+(?:%| percent) of my hit points(?:\s+left)?\.\s*['"]/i,
+  /\btells you,\s*['"][A-Z][\w' :-]+,\s+(?:\d+\s+(?:hour|minute|second)s?(?:,\s+|\s+and\s+)?)+\s*(?:remaining|left)\.\s*['"]/i,
   // Dire Charm cast detection — flags the next charm-land as the AA
   // permanent variant (vs regular Charm cycling).
   /\b(?:begin(?:s)?\s+(?:to\s+cast|casting))\s+Dire\s+Charm\b/i,
@@ -1159,8 +1159,11 @@ function _parseRemainingClause(s) {
 // or null. The pet name is on the LINE (it's what "tells you") but only the
 // owner sees it, and per the priority-keep guards above only owner-facing
 // lines reach this parser. We attribute by log file's character upstream.
-const _PET_HP_RX   = /^\[(.+?)\]\s+(.+?)\s+tells you,\s*['"]I have (\d+)% of my hit points\.\s*['"]/i;
-const _PET_BUFF_RX = /^\[(.+?)\]\s+(.+?)\s+tells you,\s*['"]([A-Z][\w' :-]+?),\s+((?:\d+\s+(?:hour|minute|second)s?(?:,\s+|\s+and\s+)?)+)\s*remaining\.\s*['"]/i;
+// Wording varies by client/era. Modern: "I have 100% of my hit points." Classic
+// (Quarm uses this): "I have 100 percent of my hit points left." Accept both.
+// Same for the buff line — "remaining." vs "left."
+const _PET_HP_RX   = /^\[(.+?)\]\s+(.+?)\s+tells you,\s*['"]I have (\d+)(?:%| percent) of my hit points(?:\s+left)?\.\s*['"]/i;
+const _PET_BUFF_RX = /^\[(.+?)\]\s+(.+?)\s+tells you,\s*['"]([A-Z][\w' :-]+?),\s+((?:\d+\s+(?:hour|minute|second)s?(?:,\s+|\s+and\s+)?)+)\s*(?:remaining|left)\.\s*['"]/i;
 function parsePetHealthLine(line) {
   if (!line) return null;
   let m = line.match(_PET_HP_RX);
