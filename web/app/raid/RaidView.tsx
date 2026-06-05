@@ -165,6 +165,14 @@ export default function RaidView({
         </div>
       )}
 
+      {/* Coverage unlocks — the "more Mimics = more capabilities" pitch,
+          rendered live from the current coverage so the page IS the
+          marketing material. */}
+      <CoverageUnlocks
+        raidSize={raidSize}
+        mimicCovered={mimicCovered}
+      />
+
       {/* Buffer mode selector */}
       <div className="bg-panel border border-border rounded-lg p-3">
         <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -421,6 +429,112 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
         </>
       )}
     </div>
+  );
+}
+
+// CoverageUnlocks — the live "what more Mimic coverage unlocks for the raid"
+// widget. Each capability declares its requirement: a flat % of raiders on
+// Mimic, or a per-group presence ("at least one Mimic in every group"), or a
+// role gate (the raid leader specifically needs to be on Mimic for certain
+// loops to close). The widget compares current coverage against each gate and
+// shows it as unlocked / partial / locked — screenshot the page on a slow
+// night and the pitch writes itself.
+function CoverageUnlocks({ raidSize, mimicCovered }: { raidSize: number; mimicCovered: number }) {
+  const pct = raidSize > 0 ? Math.round((mimicCovered / raidSize) * 100) : 0;
+  type Cap = {
+    icon: string;
+    name: string;
+    blurb: string;
+    minPct: number;
+  };
+  const caps: Cap[] = [
+    { icon: '🛡️', name: 'Personal buff visibility', blurb: 'Everyone running Mimic sees their own buffs, HP slots, and missing gaps — no tells needed.', minPct: 1 },
+    { icon: '👀', name: 'Crystal-clear buffing duties', blurb: 'Buffers see who needs what, ordered by severity. No more "anyone need C2?" chat spam.', minPct: 25 },
+    { icon: '🔊', name: 'Cross-raid trigger redundancy', blurb: 'If one log misses the rampage / AoE / curse line, another catches it — one bot callout, no spam.', minPct: 40 },
+    { icon: '❤️', name: 'Live HP heat-map', blurb: 'Group HP is exposed via Zeal — a Mimic in each group means a live HP picture of the whole raid.', minPct: 50 },
+    { icon: '⏱️', name: 'Mass-buff cooldown board', blurb: 'See exactly when every cleric MGB Aego / shaman MGB Avatar comes off cooldown. No more guessing.', minPct: 50 },
+    { icon: '🐺', name: 'Smart Feral Avatar queue', blurb: 'Beastlord targeting prioritized by recent damage, with worn-attack-capped melee automatically skipped.', minPct: 60 },
+    { icon: '⛓️', name: 'CH chain integrity tracking', blurb: 'Live cleric rotation: who is up, who is late, gap alerts before the tank eats it.', minPct: 70 },
+    { icon: '📋', name: 'One-tap loot loop', blurb: 'Auction wins highlight on /raid + add-as-looter goes straight to OpenDKP from the raid leader\'s screen.', minPct: 80 },
+    { icon: '✨', name: 'Full raid intel', blurb: 'Everyone visible. Every buff. Every cooldown. Every death timer. Every mob targeted. Nothing missed.', minPct: 100 },
+  ];
+
+  const dramatic = pct < 100; // hide the headline pitch once we've hit it
+
+  return (
+    <section className="bg-gradient-to-br from-[#0d1117] to-[#161b22] border border-border rounded-lg p-4">
+      {dramatic && (
+        <div className="text-sm text-text leading-6 italic mb-3">
+          <span className="text-gold">Imagine</span> a world where your buffs were
+          always accounted for and your buffing duties were crystal clear without
+          extra tells.{' '}
+          <span className="text-dim not-italic">Each raider on Mimic unlocks more of it for the whole pack.</span>
+        </div>
+      )}
+
+      <div className="flex items-baseline justify-between gap-2 mb-2">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-dim">Mimic coverage</div>
+          <div className="text-2xl text-text">{mimicCovered}<span className="text-dim text-sm"> / {raidSize || '?'}</span>
+            {' '}<span className={['text-sm', pct >= 80 ? 'text-green' : pct >= 50 ? 'text-[#d4a72c]' : pct >= 25 ? 'text-orange' : 'text-red-400'].join(' ')}>({pct}%)</span>
+          </div>
+        </div>
+        <div className="text-[11px] text-dim text-right max-w-[20rem]">
+          Mimic is free and silent. Install from{' '}
+          <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">wolfpack.quest/mimic</a>.
+          Settings + token persist across upgrades.
+        </div>
+      </div>
+
+      {/* Big coverage bar */}
+      <div className="h-2 bg-bg rounded-full overflow-hidden mb-3">
+        <div
+          className={['h-full transition-all', pct >= 80 ? 'bg-green' : pct >= 50 ? 'bg-[#d4a72c]' : pct >= 25 ? 'bg-orange' : 'bg-red-500'].join(' ')}
+          style={{ width: pct + '%' }}
+        />
+      </div>
+
+      {/* Capability ladder */}
+      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        {caps.map(c => {
+          const unlocked = pct >= c.minPct;
+          return (
+            <li
+              key={c.name}
+              className={[
+                'flex items-start gap-2 text-[11px] rounded px-2 py-1.5 border',
+                unlocked ? 'border-green/40 bg-[#0f2a1a]/40' : 'border-border bg-bg/40 opacity-70',
+              ].join(' ')}
+              title={unlocked ? 'Unlocked' : `Unlocks at ${c.minPct}% coverage`}
+            >
+              <span className="text-base leading-none mt-0.5">{unlocked ? c.icon : '🔒'}</span>
+              <div className="min-w-0">
+                <div className={unlocked ? 'text-green' : 'text-text'}>
+                  {c.name}
+                  <span className="text-dim text-[10px] font-normal ml-1">
+                    {unlocked ? '✓ unlocked' : `· at ${c.minPct}%`}
+                  </span>
+                </div>
+                <div className="text-dim leading-snug">{c.blurb}</div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      {pct < 100 && raidSize > 0 && (
+        <div className="text-[11px] text-dim mt-3 leading-5">
+          <span className="text-text">{raidSize - mimicCovered}</span> raider{raidSize - mimicCovered === 1 ? '' : 's'} not on Mimic.
+          {' '}
+          {(() => {
+            const next = caps.find(c => pct < c.minPct);
+            if (!next) return 'Add one more and we hit 100%.';
+            const need = Math.max(1, Math.ceil((next.minPct * raidSize) / 100) - mimicCovered);
+            return `Add ${need} more and we unlock ${next.name.toLowerCase()}.`;
+          })()}
+        </div>
+      )}
+    </section>
   );
 }
 
