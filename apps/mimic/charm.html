@@ -255,14 +255,23 @@
       document.getElementById('conn').textContent = '●';
       const now = Date.now();
       const warnAt = parseInt((warnAtEl && warnAtEl.value) || '0', 10) || 0;
+      const LINGER_MS = 5 * 60 * 1000;
       const pets = (s.charmPets || []);
-      const active = pets.filter(function(p){ return p && p.is_active; });
+      // Charmed pets PLUS recently-broken ones we keep showing so the mob tick
+      // counter stays up after a break — until the pet dies (dropped server-side)
+      // or 5 min pass.
+      const shown = pets.filter(function(p){
+        if (!p) return false;
+        if (p.is_active) return true;
+        return p.broke_at && (now - p.broke_at) < LINGER_MS;
+      });
 
-      // Break detection: any key that WAS active last poll but isn't now (or
-      // is now flagged broken) → recharm alarm.
-      var activeKeys = new Set(active.map(function(p){ return p.key; }));
+      // Recharm alert fires the INSTANT a pet stops being charmed — independent
+      // of the linger above. Track charmed keys; a key that was charmed last poll
+      // and isn't now → speak once.
+      var charmedKeys = new Set(pets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
       for (const [key, mem] of prevActive) {
-        if (!activeKeys.has(key)) {
+        if (!charmedKeys.has(key)) {
           speak('recharm pet');
           prevActive.delete(key);
         }
@@ -270,52 +279,51 @@
 
       var html = '';
       var anyImminent = false;
-      for (const p of active) {
+      for (const p of shown) {
+        const broke = !p.is_active;
         const startedAt = p.started_at || p.last_tick_at || now;
         const elapsed = Math.max(0, now - startedAt);
         const ticks = Math.floor(elapsed / 6000);
-        // Mob tick: 6s cycle anchored on the charm-land tick. Countdown to the
-        // next break-risk tick.
+        // Mob tick: 6s cycle anchored on the last tick — keeps running through a
+        // break so the lingering card still counts.
         const intoTick = (now - (p.last_tick_at || startedAt)) % 6000;
         const remTick = 6000 - (intoTick < 0 ? 0 : intoTick);
         const tickPct = (remTick / 6000) * 100;
 
-        // Full charm DURATION (the spell's length) — second bar + class-aware
-        // break warning. duration_sec/charm_class come from the detected charm
-        // spell; null when we never saw the cast (gauge-only land), in which
-        // case the duration bar is simply omitted.
         const durSec   = (typeof p.duration_sec === 'number' && p.duration_sec > 0) ? p.duration_sec : null;
         const isBard   = p.charm_class === 'bard';
         const durRemMs = durSec != null ? Math.max(0, durSec * 1000 - elapsed) : null;
         const durPct   = durSec != null ? Math.max(0, Math.min(100, (durRemMs / (durSec * 1000)) * 100)) : null;
-        // Total ticks the charm lasts (x/y display: current tick / max).
         const maxTicks = durSec != null ? Math.max(1, Math.round(durSec / 6)) : null;
-        // Warn lead: bards re-sing constantly, so cue 6s before the last tick;
-        // everyone else gets an earlier "charm breaking in 30 seconds".
         const warnLeadMs = isBard ? 6000 : 30000;
-        // Break imminent → flash the card border + the whole overlay outline.
-        const imminent = durSec != null && !p.is_dire_charm && durRemMs <= warnLeadMs;
+        // Imminent + the proactive/duration warns apply only while CHARMED — a
+        // broken (lingering) pet has already broken, so no further warns/flash.
+        const imminent = !broke && durSec != null && !p.is_dire_charm && durRemMs <= warnLeadMs;
         if (imminent) anyImminent = true;
 
-        // Session memory + proactive warn.
-        var mem = prevActive.get(p.key);
-        if (!mem || mem.started_at !== startedAt) { mem = { started_at: startedAt, warned: false, durWarned: false }; prevActive.set(p.key, mem); }
         var warnHit = false;
-        if (warnAt > 0 && !p.is_dire_charm && !mem.warned && elapsed >= warnAt * 1000) {
-          mem.warned = true; warnHit = true; speak('recharm pet');
-        }
-        // Duration-based break warning (once per session). Only when we know the
-        // spell duration and it's a timed charm (not Dire).
-        if (durSec != null && !p.is_dire_charm && !mem.durWarned && durRemMs <= warnLeadMs) {
-          mem.durWarned = true; warnHit = true;
-          speak(isBard ? 'charm breaking' : 'charm breaking in 30 seconds');
+        if (!broke) {
+          // Session memory + proactive warn (charmed pets only).
+          var mem = prevActive.get(p.key);
+          if (!mem || mem.started_at !== startedAt) { mem = { started_at: startedAt, warned: false, durWarned: false }; prevActive.set(p.key, mem); }
+          if (warnAt > 0 && !p.is_dire_charm && !mem.warned && elapsed >= warnAt * 1000) {
+            mem.warned = true; warnHit = true; speak('recharm pet');
+          }
+          if (durSec != null && !p.is_dire_charm && !mem.durWarned && durRemMs <= warnLeadMs) {
+            mem.durWarned = true; warnHit = true;
+            speak(isBard ? 'charm breaking' : 'charm breaking in 30 seconds');
+          }
         }
 
-        var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (warnHit ? ' warn' : '') + (imminent ? ' imminent' : '');
-        var badge = p.is_dire_charm ? '<span class="badge">DIRE</span>' : '<span class="badge">charm</span>';
-        var warnLine = (warnAt > 0 && !p.is_dire_charm)
-          ? ' · recharm in ' + Math.max(0, Math.ceil(warnAt - elapsed/1000)) + 's'
-          : (p.is_dire_charm ? ' · permanent (until break)' : '');
+        var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (broke ? ' broke' : '') + (warnHit ? ' warn' : '') + (imminent ? ' imminent' : '');
+        var badge = broke ? '<span class="badge">BROKE</span>'
+                  : (p.is_dire_charm ? '<span class="badge">DIRE</span>' : '<span class="badge">charm</span>');
+        var brokeAgo = broke ? Math.round((now - (p.broke_at || now)) / 1000) : 0;
+        var warnLine = broke
+          ? ' · ⚠ RECHARM — broke ' + brokeAgo + 's ago'
+          : ((warnAt > 0 && !p.is_dire_charm)
+              ? ' · recharm in ' + Math.max(0, Math.ceil(warnAt - elapsed/1000)) + 's'
+              : (p.is_dire_charm ? ' · permanent (until break)' : ''));
         // Live pet HP — Zeal gauge slot 16, present only for the local
         // uploader's own pet. Color the bar green→amber→red as it drops.
         var hp = (p.pet_hp_pct != null) ? Math.max(0, Math.min(100, p.pet_hp_pct)) : null;
@@ -324,10 +332,9 @@
         var hpBar = hp != null
           ? '<div class="hpbar"><div style="width:' + hp.toFixed(0) + '%;background:' + hpColor + '"></div></div>'
           : '';
-        // Full-length charm-duration bar (the spell's length). Greens down to
-        // amber→red as it nears expiry; only shown when we know the duration.
+        // Duration bar — only while charmed (a broken charm's duration is moot).
         var durStr = '', durBar = '';
-        if (durSec != null && !p.is_dire_charm) {
+        if (!broke && durSec != null && !p.is_dire_charm) {
           var durColor = durRemMs > warnLeadMs ? '#3b82f6' : (durRemMs > warnLeadMs/2 ? '#f0883e' : '#f85149');
           durStr = ' · breaks ' + fmtElapsed(durRemMs);
           durBar = '<div class="tickbar" style="margin-top:2px"><div style="width:' + durPct.toFixed(1) + '%;background:' + durColor + '"></div></div>';
@@ -344,7 +351,7 @@
       }
       listEl.innerHTML = html;
       document.body.classList.toggle('imminent', anyImminent);
-      emptyEl.style.display = active.length ? 'none' : 'block';
+      emptyEl.style.display = shown.length ? 'none' : 'block';
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

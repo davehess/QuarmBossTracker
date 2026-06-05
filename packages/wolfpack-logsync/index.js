@@ -1002,6 +1002,10 @@ const knownPetOwners = new Map();
 //   petLower -> { pet, owner, last_tick_at, last_event ('land'|'break'),
 //                 is_active }
 const _charmTickTracker = new Map();
+// How long a broken charm pet LINGERS on the overlay (tick counter still
+// running) before it's dropped — unless the pet dies first. Per user: keep the
+// pet so the mob's tick counter stays visible; remove on death or after 5 min.
+const PET_LINGER_MS = 5 * 60 * 1000;
 // Most-recent self charm-spell cast, staged by the `cast` handler. Consumed by
 // the next charm-land (gauge or log) within a short window to attach the charm's
 // class + duration to the session, driving the duration bar + class-aware warn.
@@ -1024,6 +1028,11 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     last_tick_at: ts,
     last_event: eventKind,         // 'land' or 'break'
     is_active: eventKind === 'land',
+    // When a charm breaks we keep the pet LINGERING on the overlay (tick counter
+    // still running) for a grace period — set on break, cleared on a fresh land.
+    // The overlay fires the recharm alert immediately on this transition, then
+    // keeps showing the pet until it dies or PET_LINGER_MS passes.
+    broke_at: eventKind === 'break' ? ts : null,
     // started_at anchors elapsed/duration in the charm overlay. Set on land;
     // carried forward on break so the closed entry still reports how long the
     // charm lasted.
@@ -1108,9 +1117,33 @@ function _reconcileGaugeCharms() {
     if (!gaugeOwners.has(ol)) continue;                       // bystander → log-managed
     const set = gaugePets.get(ol);
     if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 3000) {
-      _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break
+      _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break (alert fires now)
     }
   }
+  // Drop broken pets that have lingered past the grace window — the overlay keeps
+  // showing them until here so the tick counter stays up after a break.
+  for (const [k, info] of _charmTickTracker) {
+    if (!info.is_active && info.broke_at && (now - info.broke_at) > PET_LINGER_MS) {
+      _charmTickTracker.delete(k);
+    }
+  }
+}
+
+// Charm pet DEATH — remove the lingering pet immediately (per "unless the pet
+// dies or 5 minutes pass"). Charm pets keep their mob name, so a slain line
+// names them: "You have slain a fungoid sporeling!" / "A fungoid sporeling has
+// been slain by Xxch." Returns true if a tracked pet was removed.
+const _PET_SLAIN_RX = /\bhas been slain\b|\bYou have slain\b/i;
+function checkCharmPetDeath(line) {
+  if (!line || !_PET_SLAIN_RX.test(line)) return false;
+  const low = line.toLowerCase();
+  for (const [k, info] of _charmTickTracker) {
+    // Match the pet's name appearing in the slain line. Pet names are mob names
+    // ("a fungoid sporeling") so a substring check on the lowercased line is
+    // safe and catches both "You have slain <pet>" and "<pet> has been slain".
+    if (k && low.includes(k)) { _charmTickTracker.delete(k); return true; }
+  }
+  return false;
 }
 
 // ── /pet health report state (Quarm format) ─────────────────────────────────
@@ -3653,6 +3686,9 @@ function _serializeForDashboard() {
           last_tick_at:  info.last_tick_at,
           last_event:    info.last_event,
           is_active:     info.is_active,
+          // broke_at lets the overlay keep a broken pet visible (tick counter
+          // running) for the 5-min linger window + render the recharm state.
+          broke_at:      info.broke_at || null,
           started_at:    info.started_at,
           is_dire_charm: info.is_dire_charm,
           charm_class:   info.charm_class  || null,
@@ -12753,6 +12789,10 @@ async function main() {
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
         // — no upload, never leaves the machine.
         applyPetHealthLine(line, b.character);
+
+        // Charm pet death → drop it from the tracker right away (don't wait out
+        // the 5-min linger window).
+        checkCharmPetDeath(line);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
