@@ -129,6 +129,13 @@ function defaultConfig() {
     // dialog and surface the ready update as a dashboard banner + the tray
     // "Restart to install" item instead. Toggle in the tray.
     quietUpdates: true,
+    // Beta release channel opt-in. Off = stable only (latest.yml). On = follow
+    // prereleases AND stable (beta.yml — published alongside latest.yml on every
+    // release via generateUpdatesFilesForAllChannels). A stable installer with
+    // this flipped on rolls forward into the next beta automatically; flipping
+    // it back off doesn't downgrade — they just stop receiving new betas until
+    // stable catches up. Toggle in the tray.
+    betaChannel: false,
     tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
     onboarded: false,        // false until user dismisses or completes loading
     // Per-character "do not transmit" list. Names are case-sensitive as they
@@ -1918,6 +1925,28 @@ function buildTrayMenu() {
     checked: loadConfig().quietUpdates === false,
     click: (mi) => { const cfg = loadConfig(); cfg.quietUpdates = !mi.checked; saveConfig(cfg); pushStatus(); },
   };
+  // Beta channel opt-in. Persisted in cfg; takes effect immediately by
+  // reconfiguring the live autoUpdater + kicking off a fresh check so the user
+  // gets feedback right away (a beta will start downloading if one is out, or
+  // the agent log will show "no update available"). Disabled if electron-updater
+  // didn't load (dev mode running via `electron .`).
+  const betaChannelItem = {
+    label: 'Receive beta updates',
+    type: 'checkbox',
+    checked: loadConfig().betaChannel === true,
+    enabled: !!autoUpdater,
+    click: (mi) => {
+      const cfg = loadConfig();
+      cfg.betaChannel = !!mi.checked;
+      saveConfig(cfg);
+      if (autoUpdater) {
+        _applyUpdaterChannel();
+        appendAgentLog(`[updater] beta channel ${cfg.betaChannel ? 'enabled' : 'disabled'} — checking…\n`);
+        safeCheckForUpdates(true);
+      }
+      pushStatus();
+    },
+  };
 
   const menu = Menu.buildFromTemplate([
     { label: headerLabel, enabled: false },
@@ -1939,6 +1968,7 @@ function buildTrayMenu() {
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     updateItem,
     updatePopupItem,
+    betaChannelItem,
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
     // The tray menu opens upward with the cursor resting at the BOTTOM, so a
     // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
@@ -2090,22 +2120,30 @@ async function checkAgentUpdate() {
   }
 }
 
+// Channel resolution. Two inputs feed it:
+//   1. This BUILD's own version (baked into app-update.yml at electron-builder
+//      time) — `-beta.N` suffix means the user originally installed a beta.
+//   2. The USER's current preference (`cfg.betaChannel`), toggled from the
+//      tray menu and persisted.
+// Either being true enables the beta track. The two-input rule means a tester
+// who first installed a beta keeps getting betas even without touching the
+// toggle, AND a stable-installer user can opt in/out at any time. Every release
+// publishes both latest.yml and beta.yml (generateUpdatesFilesForAllChannels),
+// so the beta channel sees stable too — opting OUT just stops the flow of new
+// betas; the user keeps whatever they have until stable catches up.
+function _applyUpdaterChannel() {
+  if (!autoUpdater) return false;
+  const _buildIsBeta = /-/.test(String(app.getVersion() || ''));
+  const userOptedIn  = !!loadConfig().betaChannel;
+  const wantBeta     = _buildIsBeta || userOptedIn;
+  autoUpdater.allowPrerelease = wantBeta;
+  autoUpdater.channel         = wantBeta ? 'beta' : 'latest';
+  return wantBeta;
+}
+
 function wireAutoUpdater() {
   if (!autoUpdater) return;
-  // Channel is driven by THIS build's own version, baked into app-update.yml by
-  // electron-builder:
-  //   • Stable build (plain semver, e.g. 1.0.20) → channel `latest`,
-  //     allowPrerelease=false → only ever updates to other stable releases.
-  //     Beta prereleases on GitHub are invisible to it.
-  //   • Beta build (prerelease semver, e.g. 1.0.20-beta.1) → channel `beta`,
-  //     allowPrerelease=true → rolls forward through newer betas AND graduates
-  //     to stable once stable's version exceeds the beta (every release carries
-  //     beta.yml via generateUpdatesFilesForAllChannels, so the beta channel
-  //     can read stable releases too).
-  // This is the clean two-track setup: testers opt into the beta by installing
-  // a -beta build once; the wider guild on stable never sees prereleases.
-  const _isBeta = /-/.test(String(app.getVersion() || ''));
-  autoUpdater.allowPrerelease = _isBeta;
+  _applyUpdaterChannel();
   autoUpdater.autoDownload    = true;
   // Apply a downloaded shell update SILENTLY on the next normal quit (no NSIS
   // wizard, no UAC since perMachine:false). Combined with quitAndInstall(true,
