@@ -16,6 +16,7 @@ import {
   type BuffCategory, type Role,
 } from '@/lib/buffs';
 import BuffsGrid, { type BuffRow } from './BuffsGrid';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -131,5 +132,22 @@ export default async function BuffsPage() {
   // category column set.
   const categories = (CATEGORY_ORDER as BuffCategory[]).filter(c => c !== 'hp');
 
-  return <BuffsGrid rows={rows} categories={categories} />;
+  return (
+    <div className="space-y-3">
+      {/* Promote the next-gen /raid view (stage-1 mockup). The classic grid
+          below stays so the old workflow is unbroken until /raid catches up. */}
+      <Link
+        href="/raid"
+        className="block bg-panel border border-orange/40 rounded-lg p-3 text-xs hover:border-orange transition-colors no-underline"
+      >
+        <span className="text-orange">🛠️ New: </span>
+        <span className="text-text">
+          <code className="text-blue">/raid</code> — operational raid view (grouped, leader-aware, tiered triage, click-into-character).
+        </span>
+        <span className="text-dim"> Stage-1 mockup; this <code>/buffs</code> page stays as the classic grid.</span>
+        <span className="text-blue ml-1">→</span>
+      </Link>
+      <BuffsGrid rows={rows} categories={categories} />
+    </div>
+  );
 }
