@@ -145,9 +145,16 @@ type CharSummary = {
   // their per-user session token). Compared to the character's owner to flag
   // cross-account uploads (someone running a spouse's / friend's toon).
   uploadedBy: string | null;
+  // True if ANY upload for this character ever carried a per-user Discord token.
+  // false = only ever uploaded under the legacy shared token (a pre-discord-auth
+  // "old one"). Drives the linked/legacy split.
+  everAuthed: boolean;
   // Set when uploadedBy is NOT the character's owner — the display name of the
   // person actually driving the uploads, so the row can show an asterisk.
   foreignUploaderName: string | null;
+  // True when this character isn't in the OpenDKP roster but we folded it into a
+  // family via its uploader's Discord token (e.g. an un-rostered extra box).
+  unrostered: boolean;
 };
 
 // Real EQ player names are letters only. The "(unknown)" sentinel (and the
@@ -182,10 +189,13 @@ function summarize(stats: StatRow[]): CharSummary[] {
         queuePending: null,
         fightActive: null,
         uploadedBy: null,
+        everAuthed: false,
         foreignUploaderName: null,
+        unrostered: false,
       };
       byChar.set(name, s);
     }
+    if (r.uploaded_by_discord_id) s.everAuthed = true;
     const ts = new Date(r.last_uploaded_at).getTime();
     if (ts >= s.lastUploadMs) {
       s.lastUploadMs = ts; s.lastUpload = r.last_uploaded_at; s.agentVersion = r.agent_version;
@@ -216,6 +226,7 @@ function summarize(stats: StatRow[]): CharSummary[] {
 type Family = {
   mainName: string;
   discordId: string | null;
+  ownerNick: string | null;   // Discord nickname of the family owner, if known
   members: CharSummary[];
   latestMs: number;
   latestUpload: string;
@@ -225,38 +236,74 @@ type Family = {
   queueMax: number;
   anyFight: boolean;
   anyForeign: boolean;
+  linked: boolean;            // any member uploads with a per-user Discord token
 };
 
+// Group uploading characters into one family per owner. Discord-auth aware:
+//   1. A character in the OpenDKP roster folds into its main (as before).
+//   2. A character NOT in the roster but uploaded under a per-user Discord token
+//      folds into whatever family that Discord account owns — so an un-rostered
+//      extra box (e.g. "Dant3", run by Dant's owner) lands under Dant instead of
+//      floating as its own orphan main.
+//   3. Anything else (no roster row, no recognizable uploader) stays on its own.
+// The most-recent uploader is still compared to the owner to flag cross-account
+// runs with an asterisk — that toon stays under its OWNER, not the runner.
 function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: Map<string, string>): Family[] {
   const charMap = new Map<string, { main: string; discordId: string | null }>();
   for (const r of roster) {
     const main = (r.main_name && r.main_name.trim()) || r.name;
     charMap.set(r.name.toLowerCase(), { main, discordId: r.discord_id ?? null });
   }
+  // main(lower) → display name, and main(lower) → the family's Discord ID (any
+  // family member that has one — mains often have discord_id null while an alt
+  // carries the link).
+  const mainDisplay = new Map<string, string>();
+  const mainDiscord = new Map<string, string>();
+  for (const r of roster) {
+    const main = (r.main_name && r.main_name.trim()) || r.name;
+    const mk = main.toLowerCase();
+    if (!mainDisplay.has(mk)) mainDisplay.set(mk, main);
+    if (r.discord_id && !mainDiscord.has(mk)) mainDiscord.set(mk, r.discord_id);
+  }
+  // Discord ID → the main(lower) it owns, to attribute un-rostered toons.
+  const discordToMain = new Map<string, string>();
+  for (const [mk, did] of mainDiscord) if (!discordToMain.has(did)) discordToMain.set(did, mk);
+
   // The Discord ID that OWNS a character: its own discord_id, else its main's.
   const ownerOf = (charLower: string): string | null => {
     const e = charMap.get(charLower);
     if (!e) return null;
-    if (e.discordId) return e.discordId;
-    const mainE = charMap.get(e.main.toLowerCase());
-    return mainE?.discordId ?? null;
+    return e.discordId ?? mainDiscord.get(e.main.toLowerCase()) ?? null;
   };
+
   const fams = new Map<string, Family>();
   for (const s of summaries) {
-    const lookup   = charMap.get((s.character || '').toLowerCase());
-    const mainName = lookup?.main ?? s.character;
-    const key      = mainName.toLowerCase();
+    const lower  = (s.character || '').toLowerCase();
+    const lookup = charMap.get(lower);
+    let mainName: string, key: string, owner: string | null;
+    if (lookup) {
+      mainName = lookup.main; key = mainName.toLowerCase();
+      owner = ownerOf(lower);
+    } else if (s.uploadedBy && discordToMain.has(s.uploadedBy)) {
+      // Un-rostered toon, attributed to its uploader's family via the token.
+      key = discordToMain.get(s.uploadedBy)!;
+      mainName = mainDisplay.get(key) || s.character;
+      owner = s.uploadedBy;            // the uploader IS the owner here
+      s.unrostered = true;
+    } else {
+      mainName = s.character; key = lower; owner = s.uploadedBy ?? null;
+    }
 
-    // Cross-account flag: the most-recent uploader isn't this character's
-    // owner (e.g. running a spouse's / friend's toon to fill a class). Valid
-    // upload — just annotate it.
-    const owner = ownerOf((s.character || '').toLowerCase());
+    // Cross-account flag: the most-recent uploader isn't this character's owner
+    // (e.g. running a spouse's / friend's toon to fill a class). Valid upload —
+    // just annotate it so the toon stays under its owner with an asterisk.
     if (s.uploadedBy && owner && s.uploadedBy !== owner) {
       s.foreignUploaderName = memberName.get(s.uploadedBy) || 'another member';
     }
+
     let f = fams.get(key);
     if (!f) {
-      f = { mainName, discordId: lookup?.discordId ?? null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false, anyForeign: false };
+      f = { mainName, discordId: mainDiscord.get(key) ?? null, ownerNick: null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false, anyForeign: false, linked: false };
       fams.set(key, f);
     }
     f.members.push(s);
@@ -267,11 +314,17 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
     if ((s.queuePending ?? 0) > f.queueMax) f.queueMax = s.queuePending ?? 0;
     if (s.fightActive) f.anyFight = true;
     if (s.foreignUploaderName) f.anyForeign = true;
-    if (!f.discordId && lookup?.discordId) f.discordId = lookup.discordId;
+    if (s.everAuthed) f.linked = true;
+    if (!f.discordId && (lookup?.discordId || s.uploadedBy)) f.discordId = lookup?.discordId ?? s.uploadedBy ?? null;
   }
   for (const f of fams.values()) {
     f.members.sort((a, b) => b.lastUploadMs - a.lastUploadMs);
     f.versions.sort().reverse();
+    if (f.discordId) {
+      const nick = memberName.get(f.discordId);
+      // Only show the nickname when it adds info beyond the main's name.
+      if (nick && nick.toLowerCase() !== f.mainName.toLowerCase()) f.ownerNick = nick;
+    }
   }
   return [...fams.values()].sort((a, b) => b.latestMs - a.latestMs);
 }
@@ -602,10 +655,18 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
           ) : (
             <span className="text-dim" title="Operator-level streams (chat / pvp / fun events) with no single character">{fam.mainName}</span>
           )}
+          {fam.ownerNick && <span className="text-dim text-[10px] font-normal ml-1.5">({fam.ownerNick})</span>}
         </span>
         <span className="text-[10px] text-dim border border-border rounded px-1.5 py-0.5 shrink-0">
           {fam.members.length} char{fam.members.length === 1 ? '' : 's'}
         </span>
+        {/* Discord-auth state: linked = at least one box runs a per-user token
+            (the going-forward world); legacy = only the old shared token. */}
+        {fam.linked ? (
+          <span className="text-[9px] uppercase tracking-widest text-green border border-green/40 rounded px-1.5 py-0.5 shrink-0" title="Uploading under a per-user Discord login">🔗 Discord</span>
+        ) : (
+          <span className="text-[9px] uppercase tracking-widest text-dim border border-border rounded px-1.5 py-0.5 shrink-0" title="Still on the legacy shared token — ask them to sign in with Discord in Mimic">legacy</span>
+        )}
         {fam.anyForeign && (
           <span className="text-gold text-sm shrink-0" title="Includes a toon being run by someone other than its owner — expand for details">*</span>
         )}
@@ -639,6 +700,9 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
                       <span className="text-dim">{s.character}</span>
                     )}
                     {multi && isMain && <span className="ml-1.5 text-[9px] uppercase tracking-widest text-gold border border-gold/40 rounded px-1 py-0.5 align-middle">main</span>}
+                    {s.unrostered && (
+                      <span className="ml-1.5 text-[9px] uppercase tracking-widest text-dim border border-border rounded px-1 py-0.5 align-middle" title="Not in the OpenDKP roster — folded into this family by its Discord uploader token. Add it as an alt to label it properly.">unrostered</span>
+                    )}
                     {s.foreignUploaderName && (
                       <span className="ml-1.5 text-gold" title={`Uploaded by ${s.foreignUploaderName} (not the owner)`}>
                         *<span className="text-[10px] text-dim ml-0.5">by {s.foreignUploaderName}</span>
