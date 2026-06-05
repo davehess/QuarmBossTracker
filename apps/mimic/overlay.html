@@ -77,8 +77,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div class="hud">
-    <div class="title"><span>⚔️ Damage — this fight</span><span id="conn" class="conn bad">○</span></div>
-    <div class="boss" id="boss">—</div>
+    <div class="title"><span>⚔️ <span id="boss-name">Damage</span></span><span id="conn" class="conn bad">○</span></div>
     <ul id="deeps"></ul>
     <div class="dim" id="empty">waiting for combat…</div>
   </div>
@@ -178,10 +177,12 @@
       document.getElementById('conn').className='conn ok';
       document.getElementById('conn').textContent='●';
 
-      // Current boss/threat — try a few likely fields.
+      // Current boss/threat → shown in the HUD title so the user knows
+      // exactly what fight the damage rows are scored against. Falls back to
+      // "Damage — this fight" when no encounter is active.
       const boss = (s.currentEncounterThreat && s.currentEncounterThreat.bossName)
                  || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
-      document.getElementById('boss').textContent = boss ? boss : '—';
+      document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
 
       // Per-FIGHT raw damage from currentEncounterThreat.perPlayer[].dmg — the
       // honest damage each player has done to the mob(s) THIS encounter, not

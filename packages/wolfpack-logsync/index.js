@@ -3548,7 +3548,24 @@ body.wp-overlay-mode .banner,
 body.wp-overlay-mode .wp-overlay-btn { display:none !important; }
 body.wp-overlay-mode .section { display:block !important; }
 body.wp-overlay-mode .section .card { display:none !important; }
-body.wp-overlay-mode .section .card.wp-overlay-target { display:block !important; margin:0 !important; box-shadow:0 0 0 1px rgba(31,111,235,.5); background:rgba(22,27,34,.92) !important; }
+/* Match the HUD overlay's GINA-style look: translucent dark fill, blue
+   border + subtle inner shadow, rounded corners. Was a near-opaque flat
+   card (rgba .92) which didn't read as an overlay. The HUD uses rgba
+   0.78 with a 1px blue border; mirror that here so all overlays look
+   consistent and stay readable over the EQ window underneath. */
+body.wp-overlay-mode .section .card.wp-overlay-target {
+  display:block !important; margin:0 !important; padding:8px 10px !important;
+  background:rgba(14,17,22,0.78) !important;
+  border:1px solid rgba(88,166,255,0.4) !important;
+  border-radius:8px !important;
+  box-shadow:0 1px 3px rgba(0,0,0,.4) !important;
+  backdrop-filter:blur(2px);
+}
+body.wp-overlay-mode .section .card.wp-overlay-target h2 {
+  font-size:10px !important; color:#58a6ff !important;
+  letter-spacing:.1em !important; text-transform:uppercase !important;
+  margin:0 0 6px !important; padding:0 !important; border:0 !important;
+}
 </style></head><body>
 <h1>🐺 Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span></h1>
 <div class="subtle" id="header"></div>
