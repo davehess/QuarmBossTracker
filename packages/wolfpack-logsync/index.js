@@ -3786,7 +3786,7 @@ body.wp-overlay-mode .wp-overlay-target table td {
 body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
-<h1>🐺 Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span></h1>
+<h1>🐺 Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span>${process.env.WOLFPACK_APP_CHANNEL === 'beta' ? ' <span title="Receiving beta updates" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks">
   <span>Jump to wolfpack.quest:</span>
