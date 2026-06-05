@@ -11941,6 +11941,37 @@ async function main() {
     }
   }, 60_000);
 
+  // Per-character "do not transmit" list. Set by the user from Mimic
+  // (onboarding + Settings) for characters they don't want any data uploaded
+  // about — typically friends' boxes that play in other guilds, alts they
+  // share data on, etc. Enforced at the OUTERMOST boundary: an excluded
+  // character's log file is never opened, never tailed, never registered as a
+  // watchedLog. Nothing about that character can ever leave the machine,
+  // regardless of how many downstream code paths the agent grows. Case-
+  // insensitive match on the canonical (filename-derived) character name.
+  const excludedCsv = process.env.WOLFPACK_EXCLUDED_CHARS || '';
+  const excludedSet = new Set(
+    excludedCsv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  if (excludedSet.size > 0) {
+    console.log(`[exclude] not transmitting for: ${[...excludedSet].join(', ')}`);
+  }
+  const allLogs    = args.logs;
+  const filtered   = [];
+  const droppedFor = [];
+  for (const p of allLogs) {
+    const fromName = characterFromFilename(p) || '';
+    if (fromName && excludedSet.has(fromName.toLowerCase())) {
+      droppedFor.push(fromName);
+      continue;
+    }
+    filtered.push(p);
+  }
+  if (droppedFor.length > 0) {
+    console.log(`[exclude] dropped ${droppedFor.length} log file(s) for excluded characters: ${droppedFor.join(', ')}`);
+  }
+  args.logs = filtered;
+
   // One encounter builder per log file (per character)
   const builders = args.logs.map(logPath => {
     // Per-file character: the filename (eqlog_<Name>_pq.proj.txt) is
