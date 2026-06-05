@@ -4511,6 +4511,70 @@ async function _handleAgentLiveState(req, res) {
   }
 }
 
+// Ingest the live raid roster from Zeal's type-5 event (decoded agent-side).
+// Payload: { uploaded_by, members: [{ name, class, group, level, rank }] }.
+// Upsert per (guild, name) with a fresh captured_at — any agent in the raid
+// can post (the roster is identical from every member's view), latest wins,
+// and members who leave simply stop being refreshed and age out of the read
+// window on /buffs. Powers the group-based buff grid.
+async function _handleAgentRaidRoster(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => { body += chunk; if (body.length > 256 * 1024) { req.destroy(); resolve(); } });
+    req.on('end', resolve); req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const nowIso  = new Date().toISOString();
+  const members = Array.isArray(payload?.members) ? payload.members : [];
+  const rows = [];
+  const seen = new Set();
+  for (const m of members) {
+    const name = String(m?.name || '').trim();
+    // Real EQ names are letters only; skip blanks / dupes / junk.
+    if (!/^[A-Za-z]{2,30}$/.test(name) || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const grp = Number.parseInt(m?.group, 10);
+    const lvl = Number.parseInt(m?.level, 10);
+    rows.push({
+      guild_id:               guildId,
+      name,
+      class:                  m?.class ? String(m.class).slice(0, 20) : null,
+      group_num:              Number.isFinite(grp) ? grp : null,
+      level:                  Number.isFinite(lvl) ? lvl : null,
+      rank:                   m?.rank ? String(m.rank).slice(0, 20) : null,
+      captured_at:            nowIso,
+      uploaded_by_discord_id: identity.discord_id,
+    });
+  }
+  if (rows.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: 0 }));
+  }
+  try {
+    await supabase.upsert('raid_roster', rows, 'guild_id,name');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
+  }
+}
+
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
 // thread, mirroring the /feedback command's embed + buttons, then stamp the
 // row's discord_msg_id/link so it's posted exactly once. Called on an interval
@@ -5886,6 +5950,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentLiveState(req, res); }
     catch (err) {
       console.error('[live-state] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/raid-roster') {
+    try { return await _handleAgentRaidRoster(req, res); }
+    catch (err) {
+      console.error('[raid-roster] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
