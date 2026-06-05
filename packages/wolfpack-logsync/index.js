@@ -1281,6 +1281,119 @@ function recordWhoEvent(ev) {
   });
   // Anyone we /who'd is a player — whitelist for downstream tank/death tracking
   confirmPlayer(ev.name);
+  // Attribute this row to the in-progress /who run (for the overlay's "current"
+  // vs "recently gone" split).
+  _noteWhoRunName(ev.name);
+}
+
+// ── /who overlay state ───────────────────────────────────────────────────────
+// Drives Mimic's /who overlay: the CURRENT /who (latest run) + a "recently gone"
+// section (seen in a prior /who this session, not in the latest). A /who block
+// is delimited by EQ's "Players in/on EverQuest:" header and the
+// "There are N players..." footer; we collect the rows between into a run set.
+// All local + instant — no upload. Anonymous rows are enriched on demand from
+// the bot's who history (last non-anon class/level/guild + Zek flag).
+let _whoRun = null;             // { startedAt, names:Set<lower>, complete } — in-progress/last
+const WHO_HEADER_RX = /^\[.+?\]\s+Players (?:in|on) EverQuest:/i;
+const WHO_FOOTER_RX = /^\[.+?\]\s+There (?:are|is) \d+ (?:player|players)\b/i;
+function applyWhoLine(line) {
+  if (WHO_HEADER_RX.test(line)) {
+    const ts = parseEqTimestamp(line);
+    _whoRun = { startedAt: ts ? ts.getTime() : Date.now(), names: new Set(), complete: false };
+    return;
+  }
+  if (WHO_FOOTER_RX.test(line)) {
+    if (_whoRun) _whoRun.complete = true;
+  }
+}
+function _noteWhoRunName(name) {
+  if (_whoRun && !_whoRun.complete && name) _whoRun.names.add(String(name).toLowerCase());
+}
+
+// Anon de-anon cache: lower → { at, data|null }. data = { class, level, guild,
+// is_zek, last_seen } from the bot's merged who history.
+const _whoLookupCache = new Map();
+const _whoLookupInflight = new Set();
+const WHO_LOOKUP_TTL_MS = 5 * 60 * 1000;
+function fetchWhoLookup(names) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const now = Date.now();
+  const need = [];
+  for (const n of names) {
+    const k = String(n).toLowerCase();
+    if (_whoLookupInflight.has(k)) continue;
+    const c = _whoLookupCache.get(k);
+    if (c && (now - c.at) < WHO_LOOKUP_TTL_MS) continue;
+    need.push(String(n));
+  }
+  if (!need.length) return;
+  for (const n of need) _whoLookupInflight.add(n.toLowerCase());
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/who-lookup') + '?names=' + encodeURIComponent(need.join(','));
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        for (const n of need) _whoLookupInflight.delete(n.toLowerCase());
+        let r = {};
+        try { const j = JSON.parse(body); r = (j && j.results) || {}; } catch { r = {}; }
+        const t = Date.now();
+        for (const n of need) { const k = n.toLowerCase(); _whoLookupCache.set(k, { at: t, data: r[k] || null }); }
+      });
+    });
+    req.on('error',   () => { for (const n of need) _whoLookupInflight.delete(n.toLowerCase()); });
+    req.on('timeout', () => { req.destroy(); for (const n of need) _whoLookupInflight.delete(n.toLowerCase()); });
+    req.end();
+  } catch { for (const n of need) _whoLookupInflight.delete(n.toLowerCase()); }
+}
+function buildWhoSnapshot() {
+  const now = Date.now();
+  // Current set = the latest /who run. Fallback: names sharing the freshest
+  // observation timestamp (a /who block's rows all land within ~1s).
+  let currentNames = (_whoRun && _whoRun.names.size) ? _whoRun.names : null;
+  if (!currentNames) {
+    let maxObs = 0;
+    for (const v of whoData.values()) { const tt = Date.parse(v.observedAt || 0) || 0; if (tt > maxObs) maxObs = tt; }
+    if (maxObs > 0) {
+      currentNames = new Set();
+      for (const [k, v] of whoData) { const tt = Date.parse(v.observedAt || 0) || 0; if (maxObs - tt <= 8000) currentNames.add(k); }
+    }
+  }
+  if (!currentNames || !currentNames.size) return null;
+  const RECENT_GONE_MS = 30 * 60 * 1000;
+  const current = [], gone = [], anonNeeded = [];
+  for (const [k, v] of whoData) {
+    const entry = {
+      name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
+      guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
+    };
+    if (currentNames.has(k)) {
+      if (v.anonymous) {
+        const known = _whoLookupCache.get(k);
+        if (known && (now - known.at) < WHO_LOOKUP_TTL_MS) entry.known = known.data || null;
+        else anonNeeded.push(v.name);
+      }
+      current.push(entry);
+    } else {
+      const tt = Date.parse(v.observedAt || 0) || 0;
+      if (tt && (now - tt) <= RECENT_GONE_MS) gone.push(entry);
+    }
+  }
+  if (anonNeeded.length) fetchWhoLookup(anonNeeded);
+  current.sort((a, b) => (b.level || 0) - (a.level || 0));
+  gone.sort((a, b) => (Date.parse(b.observedAt || 0) || 0) - (Date.parse(a.observedAt || 0) || 0));
+  return {
+    current,
+    recentGone: gone.slice(0, 30),
+    capturedAt: _whoRun ? _whoRun.startedAt : now,
+  };
 }
 
 // Capture a /guildstatus result — guild + EQ IN-GAME rank, even for /anon
@@ -3751,6 +3864,9 @@ function _serializeForDashboard() {
     // Current target NPC stats for the Mob Info overlay (catalog stats from the
     // bot + live target HP%). null when nothing is targeted.
     mobInfo: buildMobInfo(),
+    // /who overlay: latest /who run + recently-gone, anon rows de-anon'd from
+    // the bot's who history. null until the first /who is parsed.
+    whoSnapshot: buildWhoSnapshot(),
     // Send ONLY the inventory fields the dashboard's Weapon Loadouts table
     // uses (weapons + bandolier + meta). The full parsed inventory also carries
     // `worn` and a large `bagged` array (every bag + bank slot) per character —
@@ -5203,6 +5319,7 @@ var WP_OVERLAY_ROWS = [
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters (mage / necro / beastlord).'],
   ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks.'],
+  ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
 ];
 
 function renderOverlays(s) {
@@ -5257,7 +5374,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, who: !!st.showWho };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -12913,6 +13030,10 @@ async function main() {
         // Charm pet death → drop it from the tracker right away (don't wait out
         // the 5-min linger window).
         checkCharmPetDeath(line);
+
+        // /who block boundaries (header/footer) → demarcate the current /who run
+        // for the /who overlay. Rows themselves are attributed in recordWhoEvent.
+        applyWhoLine(line);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);

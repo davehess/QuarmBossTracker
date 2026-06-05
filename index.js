@@ -4562,6 +4562,38 @@ async function _handleAgentMobInfo(req, res) {
   res.end(JSON.stringify({ ok: true, mob }));
 }
 
+// GET /api/agent/who-lookup?names=a,b,c
+//
+// De-anonymizes /who rows for Mimic's /who overlay. The overlay only asks for
+// names that showed up ANONYMOUS in the live /who; we answer from the bot's
+// merged who history (state.whoData) — the last non-anon class/level/guild we
+// ever saw for that name, plus the sticky Zek flag (auto from a Zek guild or set
+// via /markzek). Pure in-memory lookup, so it's cheap to call per /who.
+async function _handleAgentWhoLookup(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const { getWhoEntry } = require('./utils/state');
+  let namesParam = '';
+  try { namesParam = new URL(req.url, 'http://x').searchParams.get('names') || ''; } catch { /* */ }
+  const names = namesParam.split(',').map(s => s.trim()).filter(Boolean).slice(0, 80);
+  const results = {};
+  for (const nm of names) {
+    let w = null;
+    try { w = getWhoEntry(nm); } catch { /* */ }
+    if (!w) continue;
+    results[nm.toLowerCase()] = {
+      class:     w.class || null,
+      level:     w.level || null,
+      guild:     w.guild || null,
+      guild_rank: w.guildRank || null,
+      is_zek:    !!w.is_zek,
+      last_seen: w.lastSeen || null,
+    };
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, results }));
+}
+
 // ── Backfill requests ──────────────────────────────────────────────────────
 // Officer-filed via /admin/encounters → agent polls here per character to
 // pick up its pending rows. Lifecycle: pending → acked (agent claimed it,
@@ -6207,6 +6239,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentMobInfo(req, res); }
     catch (err) {
       console.error('[mob-info] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/who-lookup')) {
+    try { return await _handleAgentWhoLookup(req, res); }
+    catch (err) {
+      console.error('[who-lookup] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
