@@ -2283,6 +2283,36 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   return true;
 });
 
+// Toggle a named built-in overlay on/off from the dashboard's Overlays tab.
+// Mirrors the tray checkboxes: flips the cfg pref, creates the window on first
+// enable (else applies visibility), and returns the fresh status so the
+// dashboard can repaint the button. Returns null for an unknown name.
+ipcMain.handle('toggle-overlay', (_e, name) => {
+  const cfg = loadConfig();
+  switch (name) {
+    case 'hud':
+      cfg.showHud = !cfg.showHud; saveConfig(cfg);
+      if (cfg.showHud && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility();
+      break;
+    case 'trigger':
+      cfg.enableTriggerTts = !cfg.enableTriggerTts; saveConfig(cfg);
+      if (cfg.enableTriggerTts && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility();
+      break;
+    case 'charm':
+      cfg.showCharm = !cfg.showCharm; saveConfig(cfg);
+      if (cfg.showCharm && !charmWindow) createCharmOverlay(); else applyCharmVisibility();
+      break;
+    case 'pet':
+      cfg.showPets = !cfg.showPets; saveConfig(cfg);
+      if (cfg.showPets && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
+      break;
+    default:
+      return null;
+  }
+  pushStatus();
+  return currentStatus();
+});
+
 // Hide the overlay that sent this — the ✕ in an overlay's corner. For the
 // named overlays (hud/trigger/charm) we flip the matching pref OFF (so it
 // stays hidden across restarts and the tray checkbox updates); for a panel

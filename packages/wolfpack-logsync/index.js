@@ -3883,6 +3883,9 @@ tr:hover td { background:#1f242c }
 .nav button { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12px; }
 .nav button:hover { background:#30363d }
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
+.wp-ov-toggle { min-width:42px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
+.wp-ov-toggle:hover { border-color:var(--blue); color:var(--text); }
+.wp-ov-toggle.on { background:#196c2e; border-color:#2ea043; color:#fff; }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
 .nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
@@ -5188,6 +5191,17 @@ function renderTriggers(s) {
 // visibility + opacity slider. Acts on tray-menu config when Mimic is the
 // host; falls back to a hint when loaded from a non-Mimic browser. The HUD
 // + Trigger overlays are first-class; panel overlays are listed beneath.
+// Built-in overlays the dashboard Overlays tab can toggle. key matches the
+// status flag (showHud / enableTriggerTts / showCharm / showPets / showMobInfo)
+// resolved in wpRefreshOverlayToggles + the Mimic 'toggle-overlay' IPC handler.
+var WP_OVERLAY_ROWS = [
+  ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
+  ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
+  ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
+  ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters (mage / necro / beastlord).'],
+  ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks.'],
+];
+
 function renderOverlays(s) {
   let h = '';
   const mimic = !!(window.mimic && window.mimic.openDashboard);
@@ -5195,33 +5209,71 @@ function renderOverlays(s) {
   h += '<div class="card wide"><h2>🪟 Overlays <span class="dim" style="font-size:11px;font-weight:normal">(transparent windows that float over EQ — DnDOverlay-style)</span></h2>';
   if (!mimic) {
     h += '<div class="dim" style="font-size:12px;padding:8px 0">Overlay controls require Mimic — open this dashboard from the desktop app to use them. (You are viewing it from a browser.)</div>';
-  } else {
-    h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Use the tray menu (right-click the wolf in the system tray) → <b>Overlays</b> to toggle individual overlays, lock/unlock placement, and enter <b>Setup mode</b> to position all overlays at once. Per-overlay opacity is also there.</div>';
-    h += '<div style="font-size:12px;padding:8px;background:#161b22;border:1px solid var(--border);border-radius:6px">';
-    h += '<b>Tip:</b> A panel from this dashboard can be sent to its own transparent overlay window. Each card on the <b>Dashboard</b> tab has an <code style="background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">overlay</code> button in its top-right — click it to launch that panel as an overlay. Use Setup mode in the tray to reposition.';
-    h += '</div>';
+    h += '</div></div>';
+    setSectionHTML('overlays', h);
+    return;
   }
+  h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
   h += '</div>';
 
-  // Built-in overlays summary table (read from /api/state config snapshot)
-  const cfg = s.overlayConfig || {};
+  // Interactive built-in overlay toggles. Buttons carry data-ov="<key>"; a
+  // single delegated click handler (wired once) calls window.mimic.toggleOverlay.
+  // State is refreshed from window.mimic.getStatus() after render + after each
+  // toggle. No inline onclick (keeps the dashboard template free of escaped
+  // quotes — see the WEB_HTML escape-hazard note).
   h += '<div class="card wide"><h2>Built-in overlays</h2>';
-  h += '<table style="font-size:12px">';
-  h += '<tr><th>Overlay</th><th>Default</th><th>Description</th></tr>';
-  // NOTE: deliberately NOT using class="name" on these label cells — the
-  // delegated wolfpack.quest character-link handler (Increment 2a) walks any
-  // .name element, clips text to the first space, and opens
-  // wolfpack.quest/character/<first-token>. "DPS HUD" → "DPS" passes the
-  // looksLikeCharacter filter (3+ caps), opening /character/DPS → 404.
-  // Plain styled text avoids the trap.
-  h += '<tr><td style="color:var(--text)">DPS HUD</td><td class="dim">' + ((cfg.showHud !== false) ? 'on' : 'off') + '</td><td class="dim">Running session DPS, top damage seen, current encounter.</td></tr>';
-  h += '<tr><td style="color:var(--text)">Trigger alerts (TTS)</td><td class="dim">' + ((cfg.enableTriggerTts !== false) ? 'on' : 'off') + '</td><td class="dim">Centered big-text alert from triggers (guild + personal). Speaks the alert via Web Speech.</td></tr>';
+  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Description</th></tr>';
+  for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
+    var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
+    h += '<tr><td style="color:var(--text)">' + label + '</td>'
+      +  '<td><button type="button" class="wp-ov-toggle" data-ov="' + key + '">…</button></td>'
+      +  '<td class="dim">' + desc + '</td></tr>';
+  }
   h += '</table>';
-  h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock state: ' + (cfg.overlaysLocked === false ? '🔓 unlocked' : '🔒 locked') + ' · toggle from the tray menu.</div>';
+  h += '<div class="dim" style="font-size:11px;margin-top:8px">A panel from the <b>Dashboard</b> tab can also be sent to its own overlay via the <code style="background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">overlay</code> button on each card. Lock/Setup placement live in the tray.</div>';
   h += '</div>';
 
   h += '</div>';
   setSectionHTML('overlays', h);
+  wpRefreshOverlayToggles();
+}
+
+// Flip an overlay via the Mimic IPC bridge, then refresh button states.
+function wpToggleOverlay(name) {
+  try {
+    if (window.mimic && window.mimic.toggleOverlay) {
+      var r = window.mimic.toggleOverlay(name);
+      if (r && r.then) r.then(function(){ wpRefreshOverlayToggles(); });
+      else wpRefreshOverlayToggles();
+    }
+  } catch (e) { void e; }
+}
+// Paint each .wp-ov-toggle button from the live Mimic status.
+function wpRefreshOverlayToggles() {
+  if (!(window.mimic && window.mimic.getStatus)) return;
+  try {
+    window.mimic.getStatus().then(function(st){
+      st = st || {};
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo };
+      var btns = document.querySelectorAll('.wp-ov-toggle');
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
+        b.textContent = isOn ? 'ON' : 'OFF';
+        b.className = 'wp-ov-toggle' + (isOn ? ' on' : '');
+      }
+    }).catch(function(){});
+  } catch (e) { void e; }
+}
+// Delegated click — wired once, survives the render loop re-setting innerHTML.
+if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
+  window.__wpOvDelegated = true;
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    var b = (t && t.closest) ? t.closest('.wp-ov-toggle') : null;
+    if (!b) return;
+    var name = b.getAttribute('data-ov');
+    if (name) wpToggleOverlay(name);
+  });
 }
 
 function renderInfo(s) {

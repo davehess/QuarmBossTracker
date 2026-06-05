@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('mimic', {
   setQuietMode:    (on)   => ipcRenderer.invoke('set-quiet-mode', !!on),
   setTellsMode:    (mode) => ipcRenderer.invoke('set-tells-mode', mode),
   setOverlaysLocked: (on) => ipcRenderer.invoke('set-overlays-locked', !!on),
+  // Toggle a named built-in overlay (hud/trigger/charm/pet/mobinfo) on/off from
+  // the dashboard's Overlays tab. Returns the updated status snapshot.
+  toggleOverlay:   (name) => ipcRenderer.invoke('toggle-overlay', name),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),
