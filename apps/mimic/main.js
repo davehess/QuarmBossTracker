@@ -1194,12 +1194,6 @@ async function launchAgent() {
     ELECTRON_RUN_AS_NODE:   '1',
     WOLFPACK_CLIENT:        'mimic',
     WOLFPACK_APP_VERSION:   app.getVersion(),
-    // Drives the BETA chip next to the version in the dashboard header so
-    // testers (and anyone helping them debug) can see at a glance which track
-    // they're on. Resolved the same way as the autoUpdater: build flavor OR
-    // user opt-in. Picked up on next agent (re)launch; we don't bounce the
-    // agent just to refresh a chip.
-    WOLFPACK_APP_CHANNEL:   (/-/.test(String(app.getVersion() || '')) || loadConfig().betaChannel === true) ? 'beta' : 'stable',
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
   // Hand the bearer token to the agent out-of-band (env, not argv). Only set
