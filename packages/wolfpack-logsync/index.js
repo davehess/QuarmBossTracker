@@ -286,13 +286,9 @@ const PRIORITY_KEEP_PATTERNS = [
   // Charm BREAK — bystander visible. Closes the charm session for
   // duration + DPS computation.
   /\b(?:snaps out of(?: the)? charm|is no longer charmed|has been freed of(?: the)? charm)\b/i,
-  // /pet health output — the pet "tells you" each line: HP, weapons, and one
-  // per active buff with remaining time. These are dropped by the general
-  // /tells you,/ filter; keep them so the charm tracker can render the buff
-  // list with countdowns. Only the OWNER sees their own pet's reply, so this
-  // is per-log private and doesn't leak anything cross-player.
-  /\btells you,\s*['"]I have \d+(?:%| percent) of my hit points(?:\s+left)?\.\s*['"]/i,
-  /\btells you,\s*['"][A-Z][\w' :-]+,\s+(?:\d+\s+(?:hour|minute|second)s?(?:,\s+|\s+and\s+)?)+\s*(?:remaining|left)\.\s*['"]/i,
+  // Note: /pet health lines (standalone "I have N percent..." + bare buff names)
+  // are handled by applyPetHealthLine(), which runs BEFORE shouldKeep() in the
+  // tail loop, so they need no priority-keep entry here.
   // Dire Charm cast detection — flags the next charm-land as the AA
   // permanent variant (vs regular Charm cycling).
   /\b(?:begin(?:s)?\s+(?:to\s+cast|casting))\s+Dire\s+Charm\b/i,
@@ -1117,103 +1113,115 @@ function _reconcileGaugeCharms() {
   }
 }
 
-// ── /pet health report state ─────────────────────────────────────────────────
-// When the user runs `/pet health` in-game, their own pet tells THEM each
-// line: an HP percentage, the weapons report, and one line per active buff
-// with a remaining time ("Spirit of Wolf, 35 minutes remaining."). EQ only
-// sends these to the pet's owner, so per-log attribution works: lines we see
-// in <character>.log are reports about <character>'s pet.
-//
-// We hold the latest report per owner. Each "tells you" line updates the
-// matching field on this entry; the charm overlay reads it via /api/state and
-// renders the buff list with countdowns elapsed from observed_at_ms. The next
-// /pet health run replaces the buff set wholesale (pet may have lost or
-// gained buffs since). Entries TTL out after 30 min — beyond that the time-
-// left numbers are stale enough that omitting is more honest than showing.
-const _petHealthByOwner = new Map();           // ownerLower → { pet, hp_pct?, buffs: [{name,remaining_secs,observed_at_ms}], last_seen_at }
+// ── /pet health report state (Quarm format) ─────────────────────────────────
+// On Quarm `/pet health` prints to YOUR OWN log with NO speaker wrapper, NO pet
+// name, and NO durations — just a standalone HP line then one bare buff NAME per
+// line:
+//   [ts] I have 100 percent of my hit points left.
+//   [ts] Storm Strength
+//   [ts] Spirit of Wolf
+// So we assemble a pet view from THREE sources:
+//   • /pet health  → the current buff SET (names, no timer) + HP
+//   • Zeal slot 16 → the pet's NAME + live HP
+//   • buff LANDINGS ("<Pet> looks stronger." → catalog duration) → the TIMERS
+// merged by spell name in petBuffsForOwner(). Per-owner attribution: only the
+// owner's own log carries their pet's /pet health, and a landing's target only
+// counts if it matches that owner's live pet name.
+const _petHealthByOwner = new Map();   // ownerLower → { hp_pct, buffs: Map<spellLower,{name,dur_ticks,dur_formula}>, last_line_at, last_seen_at }
+const _petBuffLandings  = new Map();   // ownerLower → Map<spellLower,{name,dur_ticks,dur_formula,landed_at}>
 const PET_HEALTH_TTL_MS = 30 * 60 * 1000;
+const PET_REPORT_GAP_MS = 6000;        // bare buff lines within 6s of the HP line belong to that report
 
-// "Spirit of Wolf, 35 minutes remaining." / "Aegolism, 1 hour, 5 minutes remaining."
-// EQ uses an Oxford-style separator ("X, Y minutes and Z seconds remaining")
-// for the final two units; everything else is comma-separated.
-function _parseRemainingClause(s) {
-  if (!s) return null;
-  let total = 0;
-  const rx = /(\d+)\s+(hour|minute|second)s?/gi;
-  let m, count = 0;
-  while ((m = rx.exec(s)) !== null) {
-    const n = parseInt(m[1], 10);
-    if (!Number.isFinite(n)) continue;
-    const u = m[2].toLowerCase();
-    if      (u === 'hour')   total += n * 3600;
-    else if (u === 'minute') total += n * 60;
-    else if (u === 'second') total += n;
-    count++;
+// Standalone HP line (no speaker). Quarm: "I have 100 percent of my hit points
+// left." Modern: "I have 100% of my hit points."
+const _PET_HP_RX = /^I have (\d+)(?:%| percent) of my hit points(?:\s+left)?\.?$/i;
+
+// Feed one log line through the /pet health state machine for `character` (the
+// owner). Stateful: an HP line opens a report; subsequent bare lines that name a
+// known timed buff join it until the 6s window lapses.
+function applyPetHealthLine(line, character) {
+  if (!line || !character) return;
+  const m = line.match(/^\[(.+?)\]\s+(.*)$/);
+  if (!m) return;
+  const owner = String(character).toLowerCase();
+  const ts = parseEqTimestamp(line);
+  const tsMs = ts ? ts.getTime() : Date.now();
+  const body = m[2].trim();
+  const hp = body.match(_PET_HP_RX);
+  if (hp) {
+    _petHealthByOwner.set(owner, {
+      hp_pct: parseInt(hp[1], 10), buffs: new Map(),
+      last_line_at: tsMs, last_seen_at: Date.now(),
+    });
+    return;
   }
-  return count > 0 ? total : null;
+  const rep = _petHealthByOwner.get(owner);
+  if (!rep) return;                                                 // not inside a report
+  if ((tsMs - (rep.last_line_at || 0)) > PET_REPORT_GAP_MS) return; // window lapsed
+  // A bare line that exactly names a known TIMED buff → a pet buff. Gating on
+  // the catalog keeps random chatter out: only real timed-buff spell names match.
+  const e = _spellByNameLower.get(body.toLowerCase());
+  if (e && _isTimedDurationFormula(e.durf) && Number(e.dur) > 0) {
+    rep.buffs.set(body.toLowerCase(), { name: e.name, dur_ticks: e.dur, dur_formula: e.durf });
+    rep.last_line_at = tsMs;
+    rep.last_seen_at = Date.now();
+  }
 }
 
-// Parse one log line for a /pet health report fragment. Returns
-//   { kind: 'hp',   pet, hp_pct, ts }
-//   { kind: 'buff', pet, name, remaining_secs, ts }
-// or null. The pet name is on the LINE (it's what "tells you") but only the
-// owner sees it, and per the priority-keep guards above only owner-facing
-// lines reach this parser. We attribute by log file's character upstream.
-// Wording varies by client/era. Modern: "I have 100% of my hit points." Classic
-// (Quarm uses this): "I have 100 percent of my hit points left." Accept both.
-// Same for the buff line — "remaining." vs "left."
-const _PET_HP_RX   = /^\[(.+?)\]\s+(.+?)\s+tells you,\s*['"]I have (\d+)(?:%| percent) of my hit points(?:\s+left)?\.\s*['"]/i;
-const _PET_BUFF_RX = /^\[(.+?)\]\s+(.+?)\s+tells you,\s*['"]([A-Z][\w' :-]+?),\s+((?:\d+\s+(?:hour|minute|second)s?(?:,\s+|\s+and\s+)?)+)\s*(?:remaining|left)\.\s*['"]/i;
-function parsePetHealthLine(line) {
-  if (!line) return null;
-  let m = line.match(_PET_HP_RX);
-  if (m) {
-    const ts = parseEqTimestamp(line);
-    return { kind: 'hp', pet: m[2], hp_pct: parseInt(m[3], 10), ts: ts ? ts.getTime() : Date.now() };
-  }
-  m = line.match(_PET_BUFF_RX);
-  if (m) {
-    const secs = _parseRemainingClause(m[4]);
-    if (secs == null) return null;
-    const ts = parseEqTimestamp(line);
-    return { kind: 'buff', pet: m[2], name: m[3].trim(), remaining_secs: secs, ts: ts ? ts.getTime() : Date.now() };
+// pet name → owner (lowercased), from Zeal gauge slot 16 for watched chars.
+// Summoned pets carry a proper name in slot 16, which is how we know "Jareker
+// looks stronger." is OUR pet getting buffed (vs another player).
+function _petOwnerByName(petLower) {
+  if (!petLower) return null;
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || !Array.isArray(st.gauges)) continue;
+    const pet = st.gauges.find(g => g && g.slot === 16 && g.text);
+    if (pet && String(pet.text).toLowerCase() === petLower) return String(ch).toLowerCase();
   }
   return null;
 }
 
-// Apply a parsed fragment to the per-owner snapshot. character = the log
-// file's identity (the owner; EQ only tells THEM their pet's report).
-function applyPetHealth(frag, character) {
-  if (!frag || !character) return;
-  const owner = String(character).toLowerCase();
-  const now = Date.now();
-  let cur = _petHealthByOwner.get(owner);
-  // New pet name → fresh entry. Same pet → keep accumulating; the next /pet
-  // health run replaces the buff set when we see a new HP line (which always
-  // starts the report).
-  if (!cur || cur.pet !== frag.pet) {
-    cur = { pet: frag.pet, hp_pct: null, buffs: [], last_seen_at: now };
-    _petHealthByOwner.set(owner, cur);
-  }
-  if (frag.kind === 'hp') {
-    cur.hp_pct = frag.hp_pct;
-    cur.buffs  = [];                            // start of a fresh report
-  } else if (frag.kind === 'buff') {
-    // Replace any earlier observation of the same buff (a fresh /pet health
-    // refreshes its remaining); otherwise append.
-    const ix = cur.buffs.findIndex(b => b.name.toLowerCase() === frag.name.toLowerCase());
-    const row = { name: frag.name, remaining_secs: frag.remaining_secs, observed_at_ms: frag.ts };
-    if (ix >= 0) cur.buffs[ix] = row; else cur.buffs.push(row);
-  }
-  cur.last_seen_at = now;
+// A buff landing we already detected (parseBuffLanding) — if its target is one
+// of our pets, stamp landed_at so the Pet tracker can count it down from the
+// spell's catalog duration. Re-cast refreshes landed_at.
+function recordPetBuffLanding(bcEvt) {
+  if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
+  const owner = _petOwnerByName(String(bcEvt.target).toLowerCase());
+  if (!owner) return;
+  let mp = _petBuffLandings.get(owner);
+  if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
+  mp.set(String(bcEvt.spell_name).toLowerCase(), {
+    name: bcEvt.spell_name,
+    dur_ticks: bcEvt.dur_ticks,
+    dur_formula: bcEvt.dur_formula,
+    landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
+  });
 }
 
-function petHealthFor(ownerLower) {
-  if (!ownerLower) return null;
-  const cur = _petHealthByOwner.get(ownerLower);
-  if (!cur) return null;
-  if ((Date.now() - (cur.last_seen_at || 0)) > PET_HEALTH_TTL_MS) return null;
-  return cur;
+// Merge a pet's buffs from the /pet health name set + the landing timers, keyed
+// by spell name. Returns [{ name, remaining_secs|null, observed_at_ms }] for the
+// overlay. A landing's catalog duration gives the countdown (no-focus floor —
+// duration-extension focuses only make it last longer); a /pet-health-only buff
+// shows its name with no timer.
+function petBuffsForOwner(ownerLower) {
+  if (!ownerLower) return [];
+  const now = Date.now();
+  const byName = new Map();
+  const rep = _petHealthByOwner.get(ownerLower);
+  if (rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS) {
+    for (const [k, b] of rep.buffs) byName.set(k, { name: b.name, remaining_secs: null, observed_at_ms: rep.last_seen_at });
+  }
+  const lm = _petBuffLandings.get(ownerLower);
+  if (lm) {
+    for (const [k, b] of lm) {
+      const durSecs = (Number(b.dur_ticks) || 0) * 6;
+      const rem = durSecs - (now - (b.landed_at || now)) / 1000;
+      if (rem < -60) continue;                              // long expired → drop
+      byName.set(k, { name: b.name, remaining_secs: Math.max(0, Math.round(rem)), observed_at_ms: now });
+    }
+  }
+  return Array.from(byName.values());
 }
 
 function recordWhoEvent(ev) {
@@ -3632,12 +3640,12 @@ function _serializeForDashboard() {
       const arr = [];
       for (const [key, info] of _charmTickTracker.entries()) {
         if (myChars.size > 0 && (!info.owner || !myChars.has(String(info.owner).toLowerCase()))) continue;
-        const lp = info.owner ? livePet.get(String(info.owner).toLowerCase()) : null;
-        // /pet health snapshot for this owner — buffs with elapsed-from-observed
-        // remaining time, plus an HP% the overlay can fall back on when the
-        // Zeal gauge isn't streaming (bystander pets, gauge stutter).
-        const ph = info.owner ? petHealthFor(String(info.owner).toLowerCase()) : null;
-        const phMatches = ph && ph.pet && String(ph.pet).toLowerCase() === String(info.pet || '').toLowerCase();
+        const ownerLower = info.owner ? String(info.owner).toLowerCase() : null;
+        const lp = ownerLower ? livePet.get(ownerLower) : null;
+        // The owner's /pet health buff set (+ any landing timers) belongs to
+        // whatever pet they currently have — for a charmer that's the charm.
+        const rep = ownerLower ? _petHealthByOwner.get(ownerLower) : null;
+        const petBuffs = ownerLower ? petBuffsForOwner(ownerLower) : [];
         arr.push({
           key,
           pet: info.pet,
@@ -3649,40 +3657,56 @@ function _serializeForDashboard() {
           is_dire_charm: info.is_dire_charm,
           charm_class:   info.charm_class  || null,
           duration_sec:  info.duration_sec != null ? info.duration_sec : null,
-          pet_hp_pct:    lp && lp.hp_pct != null ? lp.hp_pct : (phMatches ? ph.hp_pct : null),
-          pet_buffs:     phMatches ? ph.buffs : null,
-          pet_health_observed_at: phMatches ? ph.last_seen_at : null,
+          pet_hp_pct:    lp && lp.hp_pct != null ? lp.hp_pct : (rep ? rep.hp_pct : null),
+          pet_buffs:     petBuffs.length ? petBuffs : null,
+          pet_health_observed_at: rep ? rep.last_seen_at : null,
         });
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
-    // SUMMONED-pet health for the Pet tracker overlay (mage/necro/beastlord) —
-    // the /pet health snapshot per owner, EXCLUDING pets that are currently
-    // active charms (those render in the charm tracker with their tickdown). No
-    // tickdown here, just HP + buff counters. Filtered to the uploader's own
-    // characters, same as charmPets.
+    // SUMMONED-pet view for the Pet tracker overlay (mage/necro/beastlord),
+    // EXCLUDING active charms (those render in the charm tracker with the
+    // tickdown). Pet NAME + live HP come from Zeal slot 16; the buff SET from
+    // /pet health; the TIMERS from observed buff landings (petBuffsForOwner).
+    // No tickdown here — just HP + buff counters. Own characters only.
     petHealth: (() => {
       const myChars = new Set((stats.watchedLogs || [])
         .map(w => w && w.character && String(w.character).toLowerCase())
         .filter(Boolean));
+      const livePet = _livePetHpByOwner();         // owner → { name, hp_pct }
       // Pet names that belong to an ACTIVE charm session → skip (charm tracker).
       const activeCharmPets = new Set();
       for (const [, info] of _charmTickTracker) {
         if (info && info.is_active && info.pet) activeCharmPets.add(String(info.pet).toLowerCase());
       }
       const now = Date.now();
+      // Owners worth showing: anyone with a live pet, a /pet health report, or
+      // a recent landing on their pet.
+      const owners = new Set([
+        ...livePet.keys(),
+        ..._petHealthByOwner.keys(),
+        ..._petBuffLandings.keys(),
+      ]);
       const out = [];
-      for (const [owner, snap] of _petHealthByOwner) {
+      for (const owner of owners) {
         if (myChars.size > 0 && !myChars.has(owner)) continue;
-        if (!snap || (now - (snap.last_seen_at || 0)) > PET_HEALTH_TTL_MS) continue;
-        if (snap.pet && activeCharmPets.has(String(snap.pet).toLowerCase())) continue;
+        const lp = livePet.get(owner);
+        const petName = lp ? lp.name : null;
+        // Charm pet (slot-16 name starts with a/an, tracked as active charm) →
+        // skip; it's in the charm tracker.
+        if (petName && activeCharmPets.has(String(petName).toLowerCase())) continue;
+        const rep = _petHealthByOwner.get(owner);
+        const repFresh = rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS;
+        const buffs = petBuffsForOwner(owner);
+        const hp = lp && lp.hp_pct != null ? lp.hp_pct : (repFresh ? rep.hp_pct : null);
+        if (!petName && hp == null && buffs.length === 0) continue;   // nothing to show
         out.push({
           owner,
-          pet:         snap.pet,
-          hp_pct:      snap.hp_pct != null ? snap.hp_pct : null,
-          buffs:       Array.isArray(snap.buffs) ? snap.buffs : [],
-          observed_at: snap.last_seen_at,
+          pet:         petName,
+          hp_pct:      hp,
+          buffs,
+          observed_at: repFresh ? rep.last_seen_at : now,
         });
       }
       out.sort((a, b) => (b.observed_at || 0) - (a.observed_at || 0));
@@ -12720,14 +12744,15 @@ async function main() {
         if (bcEvt && !_sourceExcluded) {
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
           if (!_crossLogDupe(_bcFp)) buffCastBuffer.push(bcEvt);
+          // If the buff landed on one of OUR pets, stamp it for the Pet tracker's
+          // countdown (catalog duration anchored to this land). Local UI only.
+          recordPetBuffLanding(bcEvt);
         }
 
-        // /pet health output — only the pet's owner sees these "tells you"
-        // lines, so per-log attribution is correct. Updates the in-memory
-        // _petHealthByOwner snapshot; the charm overlay reads it via /api/state.
-        // Pure local UI — no upload, never leaves the machine.
-        const phFrag = parsePetHealthLine(line);
-        if (phFrag) applyPetHealth(phFrag, b.character);
+        // /pet health output (Quarm: standalone HP line + bare buff names in the
+        // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
+        // — no upload, never leaves the machine.
+        applyPetHealthLine(line, b.character);
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);

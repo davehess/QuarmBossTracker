@@ -32,6 +32,7 @@
   .petbuff .t{font-variant-numeric:tabular-nums;margin-left:4px;color:#8b949e}
   .petbuff.low .t{color:#f0883e}
   .petbuff.crit .t{color:#f85149}
+  .petbuff .t.q{color:#6e7681}
   .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
   /* drag/lock/setup — same pattern as the other overlays. */
@@ -180,19 +181,24 @@
     var chips = '';
     for (var i=0;i<buffs.length;i++){
       var b = buffs[i]; if (!b || !b.name) continue;
-      // Hide chips >30s expired by our clock — the pet has lost it.
-      var elapsed = obs ? (Date.now() - obs) / 1000 : 0;
-      if (b.remaining_secs != null && (b.remaining_secs - elapsed) < -30) continue;
-      var tone = buffTone(b.remaining_secs, obs);
-      var t = fmtRem(b.remaining_secs, obs);
-      var title = b.name + ' · ' + (t || '?') + ' left (from last /pet health)';
-      chips += '<span class="petbuff ' + tone + '" title="' + esc(title) + '">'
+      // Per-buff observed timestamp: landing-timed buffs carry their own (fresh
+      // each poll); /pet-health-only names fall back to the report time.
+      var bo = b.observed_at_ms || obs;
+      var hasTimer = b.remaining_secs != null;
+      var tone = hasTimer ? buffTone(b.remaining_secs, bo) : '';
+      var t = hasTimer ? fmtRem(b.remaining_secs, bo) : '';
+      // A name with no timer = seen in /pet health but we never witnessed it
+      // land, so we can't time it. Show the name with a "?" so it's clearly
+      // "present, duration unknown" rather than silently timer-less.
+      var tDisp = hasTimer ? t : '?';
+      var title = b.name + (hasTimer ? ' · ' + t + ' left (timed from observed cast)' : ' · present (no cast seen — duration unknown)');
+      chips += '<span class="petbuff ' + (hasTimer ? tone : '') + '" title="' + esc(title) + '">'
             +    '<span class="bn">' + esc(shortBuffName(b.name)) + '</span>'
-            +    (t ? '<span class="t">' + t + '</span>' : '')
+            +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + tDisp + '</span>'
             +  '</span>';
     }
     if (!chips) return '';
-    var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : '/pet health';
+    var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : 'observed casts';
     return '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
   }
 

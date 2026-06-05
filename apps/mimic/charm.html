@@ -36,6 +36,7 @@
   .tickbar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .tickbar > div{height:100%;background:#a371f7;transition:width 100ms linear}
   .charm .meta .hp{color:#56d364;font-weight:bold}
+  .petbuff .t.q{color:#6e7681}
   .hpbar{height:5px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .hpbar > div{height:100%;transition:width 200ms linear,background 200ms linear}
   /* /pet health buff chips — each pet buff with its remaining time from the
@@ -223,16 +224,15 @@
     var chips = '';
     for (var i=0;i<buffs.length;i++){
       var b = buffs[i]; if (!b || !b.name) continue;
-      // Hide chips that are >30s expired by our clock — the pet has lost it,
-      // showing it adds noise.
-      var elapsed = obs ? (Date.now() - obs) / 1000 : 0;
-      if (b.remaining_secs != null && (b.remaining_secs - elapsed) < -30) continue;
-      var tone = buffTone(b.remaining_secs, obs);
-      var t = fmtRem(b.remaining_secs, obs);
-      var title = b.name + ' · ' + (t || '?') + ' left (from last /pet health)';
-      chips += '<span class="petbuff ' + tone + '" title="' + esc(title) + '">'
+      var bo = b.observed_at_ms || obs;
+      var hasTimer = b.remaining_secs != null;
+      var tone = hasTimer ? buffTone(b.remaining_secs, bo) : '';
+      var t = hasTimer ? fmtRem(b.remaining_secs, bo) : '';
+      var tDisp = hasTimer ? t : '?';
+      var title = b.name + (hasTimer ? ' · ' + t + ' left (timed from observed cast)' : ' · present (no cast seen — duration unknown)');
+      chips += '<span class="petbuff ' + (hasTimer ? tone : '') + '" title="' + esc(title) + '">'
             +    '<span class="nm">' + esc(shortBuffName(b.name)) + '</span>'
-            +    (t ? '<span class="t">' + t + '</span>' : '')
+            +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + tDisp + '</span>'
             +  '</span>';
     }
     if (!chips) return '';
