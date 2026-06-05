@@ -4086,6 +4086,77 @@ async function _handleAgentFunEvent(req, res) {
   res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
 }
 
+// POST /api/agent/buff_casts
+//
+// Observed buff landings on other players (see migration 20260605120000). The
+// agent reverse-matches a spell's cast_on_other message in the log and reports
+// { target, spell_id, spell_name, landing_text, dur_ticks, dur_formula, cast_at,
+//   observer }. Every nearby agent sees the same landing, so we upsert with a
+// dedup key that collapses N observers of one cast into one row.
+async function _handleAgentBuffCasts(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const casts = Array.isArray(payload?.casts) ? payload.casts : [];
+  if (casts.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  // Resolved (spell_id) and ambiguous (spell_id = 0) casts dedup on different
+  // partial unique indexes, so upsert them in two passes with the matching
+  // on_conflict target — mixing them in one call would violate one index.
+  const resolved = [];
+  const ambiguous = [];
+  for (const c of casts) {
+    if (!c || !c.target || !c.cast_at) continue;
+    const sid = Number.isFinite(c.spell_id) ? Math.trunc(c.spell_id) : 0;
+    const row = {
+      guild_id:     guildId,
+      target:       String(c.target).slice(0, 64),
+      spell_id:     sid,
+      spell_name:   c.spell_name ? String(c.spell_name).slice(0, 128) : null,
+      landing_text: c.landing_text ? String(c.landing_text).slice(0, 256) : null,
+      dur_ticks:    Number.isFinite(c.dur_ticks) ? Math.trunc(c.dur_ticks) : null,
+      dur_formula:  Number.isFinite(c.dur_formula) ? Math.trunc(c.dur_formula) : null,
+      cast_at:      new Date(c.cast_at).toISOString(),
+      observer:     c.observer ? String(c.observer).slice(0, 64) : null,
+      uploaded_by_discord_id: identity.discord_id,
+    };
+    (sid !== 0 ? resolved : ambiguous).push(row);
+  }
+
+  let written = 0;
+  if (resolved.length) {
+    const r = await supabase.upsert('buff_casts', resolved, 'guild_id,target,spell_id,cast_at')
+      .catch(err => { console.warn('[buff-casts] resolved upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  if (ambiguous.length) {
+    const r = await supabase.upsert('buff_casts', ambiguous, 'guild_id,target,landing_text,cast_at')
+      .catch(err => { console.warn('[buff-casts] ambiguous upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  _trackUpload({ endpoint: 'buff_cast', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
 async function _handleAgentHistoricalChat(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -4355,20 +4426,26 @@ async function _handleAgentSpellCatalog(req, res) {
       while (true) {
         const { data, error } = await supabase
           .from('eqemu_spells')
-          .select('id, name, cast_on_you, cast_on_other, spell_fades')
+          .select('id, name, cast_on_you, cast_on_other, spell_fades, buffduration, buffdurationformula')
           .order('id', { ascending: true })
           .range(from, from + PAGE - 1);
         if (error) throw error;
         if (!data || data.length === 0) break;
         for (const r of data) {
-          // Compact key names so the over-the-wire payload stays small.
-          entries.push({ id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades });
+          // Compact key names so the over-the-wire payload stays small. `dur` =
+          // buffduration cap (ticks), `durf` = duration formula — the agent uses
+          // these to (a) keep only timed buffs when building the cast_on_other
+          // reverse-matcher and (b) estimate a buff's remaining time.
+          entries.push({
+            id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
+            dur: r.buffduration, durf: r.buffdurationformula,
+          });
         }
         if (data.length < PAGE) break;
         from += PAGE;
       }
       const body = JSON.stringify({
-        version: 1,
+        version: 2,   // v2 adds dur/durf per entry (buff-landing matcher + duration)
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
@@ -6178,6 +6255,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentFunEvent(req, res); }
     catch (err) {
       console.error('[fun-event] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/buff_casts') {
+    try { return await _handleAgentBuffCasts(req, res); }
+    catch (err) {
+      console.error('[buff-casts] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

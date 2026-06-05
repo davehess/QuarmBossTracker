@@ -2,8 +2,8 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.14 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 3.0.24 | `packages/wolfpack-logsync/package.json` |
+| **Bot** | 3.0.17 | `package.json` |
+| **Agent** (`wolfpack-logsync`) | 3.0.25 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 1.0.28 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.23 | `apps/mimic/package.json` |
 
@@ -186,6 +186,7 @@ zone on insert — `find_or_create_encounter` currently leaves it NULL.
 | `POST` | `/api/agent/historical_chat` | Historical `/gu` + `/rs` backfill from older logs → `chat_messages` table. Not displayed on Discord. |
 | `POST` | `/api/agent/live-state` | Snapshot of each watched character's current buffs + last-seen zone (Zeal stream). Upsert into `character_live_state` by `(guild_id, character)`. Powers `/me` Buffs & Zone. Agent sends on change only. |
 | `POST` | `/api/agent/raid-roster` | Zeal type-5 raid roster (name/class/group/level/rank) → `raid_roster` upsert by `(guild_id, name)`. Powers the group-based `/buffs` grid. |
+| `POST` | `/api/agent/buff_casts` | **Observed buff-landing ingest.** Agent reverse-matches a tracked buff's `cast_on_other` message in a bystander's log → `{casts:[{target,spell_id,spell_name,landing_text,dur_ticks,dur_formula,cast_at,observer}]}`; bot upserts into `buff_casts`. Fills buff coverage for raiders NOT running the agent (we never see their Zeal window, but anyone near them who runs Mimic sees the land). Dedups across observers; resolved vs ambiguous casts use separate partial-unique indexes. Spell duration columns let the web estimate remaining = no-focus floor. |
 | `POST` | `/api/agent/trigger` | **Trigger → Discord pipe.** Agent relays trigger fires `{triggers:[{name,message,key,fired_at}]}`; bot posts each `message` to `TRIGGER_BROADCAST_CHANNEL_ID` (no-op if unset). Dedups across raiders by `key` (10s), per-uploader rate cap (30/60s), mass-mentions disabled. Fed by the rampage announcer + user-defined `discord` trigger actions. |
 | `GET/POST` | `/` | Health check (`200 OK`) |
 
@@ -462,6 +463,7 @@ Project: `zhtoekwakucbckvatfky`. Migrations applied via GitHub integration on me
 | `chat_messages` | All `/gu` + `/rs` chat — live (`/api/agent/chat`) and historical (`/api/agent/historical_chat`) routes both write here, dedup'd by `(guild_id, ts, channel, speaker, text)` |
 | `who_observations` | Every `/who` line the agent reports. Mirrors `state.whoData` but durable + queryable. Dedup'd per minute per uploader |
 | `character_live_state` | Current buffs + last-seen zone per character (Zeal snapshot). Upserted by `(guild_id, character)` via `POST /api/agent/live-state`. Read-open RLS; shown on `/me` Buffs & Zone. Migration `20260604000000_character_live_state.sql` |
+| `buff_casts` | Observed buff landings on OTHER players, reverse-matched from a bystander's log via the spell's `cast_on_other` message (`POST /api/agent/buff_casts`). Fills buff coverage for raiders not running the agent. Stores `target, spell_id, spell_name, landing_text, dur_ticks, dur_formula, cast_at, observer`. Dedup: resolved casts on `(guild,target,spell_id,cast_at)`, ambiguous (`spell_id=0`) on `(guild,target,landing_text,cast_at)` — two partial-unique indexes. Buffed player's own Zeal ticks (`character_live_state`) take precedence when available. Migration `20260605120000_buff_casts.sql` |
 | `patch_notes`, `officer_notes`, `travel_paths` | Various |
 
 ### RPC / views

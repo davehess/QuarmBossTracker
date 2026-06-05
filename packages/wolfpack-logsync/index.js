@@ -2696,6 +2696,7 @@ function _endpointForKind(kind, botUrl) {
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
+    case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
@@ -8985,6 +8986,12 @@ function runOptinBackfill(files, opts = {}) {
             if (faEvt) funEventBuffer.push(faEvt);
             const savEvt = parseSavageryReceived(line, f.character);
             if (savEvt) funEventBuffer.push(savEvt);
+            // Observed buff landing on another player. Backfilled casts are
+            // almost always already-expired by display time (harmless — the web
+            // filters expired), but they cost nothing and cover the case where a
+            // recent log replay catches a still-active buff.
+            const bcEvt = parseBuffLanding(line, f.character);
+            if (bcEvt) buffCastBuffer.push(bcEvt);
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -9985,6 +9992,7 @@ const pvpBuffer         = [];   // pending PVP broadcast lines
 const pvpAssistBuffer   = [];   // pending PvP assist correlations (us → player damage + their death by someone else)
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
+const buffCastBuffer    = [];   // pending observed buff landings on other players
 const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
 
 // ── Cross-log broadcast dedup ────────────────────────────────────────────────
@@ -10033,6 +10041,8 @@ function startChatRelay() {
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
     if (funEventBuffer.length > 0)
       uploadFunEvents(funEventBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (buffCastBuffer.length > 0)
+      uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts).catch(() => {});
     // Tell relay drains per-character — the endpoint requires one character
     // per request (it gates on characters.tell_relay before storing).
     if (tellBuffer.length > 0) {
@@ -10480,6 +10490,7 @@ function _loadSpellCatalogFromDisk() {
       if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
     }
     _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    _rebuildBuffMatchers();
     console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
   } catch (err) {
     console.warn('[spell-catalog] disk load failed:', err && err.message);
@@ -10538,6 +10549,7 @@ function fetchSpellCatalog({ botUrl, token }) {
               if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
             }
             _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            _rebuildBuffMatchers();
             try {
               const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
               fs.writeFileSync(SPELL_CATALOG_FILE + '.tmp', JSON.stringify(out));
@@ -10565,6 +10577,133 @@ function spellPqdiUrlForName(name) {
   if (!name || !_spellByNameLower.size) return null;
   const e = _spellByNameLower.get(String(name).toLowerCase().trim());
   return (e && e.id) ? `https://www.pqdi.cc/spell/${e.id}` : null;
+}
+
+// ── Buff-landing reverse matcher ────────────────────────────────────────────
+// Fills in buff coverage for raiders NOT running the agent. When someone near a
+// Mimic user gets a tracked buff, EQ logs the spell's `cast_on_other` message
+// with the target's name prefixed, e.g.:
+//   "Bonkur's eye gleams with the power of Aegolism."   (possessive form)
+//   "Bonkur looks very tranquil."                        (space form)
+// The catalog gives us each spell's `other` suffix; we build a reverse index
+// suffix → spell(s) and, for each log line, peel the leading target name off
+// and look the remainder up. We only index TRACKED BUFFS (keyword list mirrors
+// web/lib/buffs.ts) so nukes/DoTs/debuffs never match — their names don't
+// contain buff keywords. Reported casts go to the bot's /api/agent/buff_casts.
+//
+// Keyword list is the union of web/lib/buffs.ts category KEYWORDS + HP-slot
+// keywords. Kept here (not imported) since the agent is a standalone single
+// file; when a new buff surfaces in the web "Other" column, add it both places.
+const _TRACKED_BUFF_KEYWORDS = [
+  // hp
+  'aegolism', 'symbol of', 'temperance', 'hand of conviction', 'blessing of',
+  'brell', 'riotous health', 'inner fire', 'courage', 'daring', 'bravery',
+  'valor', 'resolution', 'heroic bond', 'virtue', 'health', 'center', 'fortitude',
+  // regen
+  'regrowth', 'regenerat', 'chloroplast', 'replenish', 'pack regen',
+  // mana
+  'brilliance', 'iridescence', 'gift of brilliance',
+  // manaRegen
+  'clarity', 'koadic', 'endless intellect', 'breeze', 'clairvoyance',
+  'gift of insight', 'gift of pure thought', 'auspice',
+  // haste
+  'haste', 'celerity', 'quickness', 'swift', 'speed of', 'augmentation',
+  'alacrity', 'aanya', 'battle cry', 'warsong', 'verses of victory',
+  // runSpeed
+  'spirit of wolf', 'spirit of the wolf', 'flight of eagle', 'pack spirit',
+  'selo', 'journeyman', 'run speed', 'spirit of the shrew',
+  // attack
+  'strength', 'avatar', 'ferocity', 'champion', 'primal', 'war march',
+  'savage', 'brutal', 'might of', 'tumultuous', 'aggression', 'bull',
+  'call of the predator', 'feral avatar', 'ancient: feral',
+  // ds
+  'thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat',
+  'damage shield', 'legacy of', 'shield of barbs',
+  // resists
+  'resist', 'endure', 'protection of', 'talisman of altuna', 'talisman of jasinth',
+  'talisman of shadoo', 'circle of', 'aegis of bathezid', 'colossal', 'elemental',
+  // hp slots (extra names not covered above)
+  'protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
+  'khura', 'arch shielding',
+];
+function _isTrackedBuffName(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return false;
+  return _TRACKED_BUFF_KEYWORDS.some(k => n.includes(k));
+}
+
+// EQEmu duration formulas that produce a TIMED buff (level-scaled or fixed).
+// Formula 0 = instant/none, 50/51 = permanent (illusions/auras) — excluded so
+// we don't index permanent-buff messages as countdowns.
+function _isTimedDurationFormula(f) {
+  const n = Number(f);
+  return Number.isFinite(n) && n > 0 && n < 50;
+}
+
+// suffix(lower) → array of { id, name, dur, durf }. Multiple spells can share a
+// landing message ("looks very tranquil." etc.); when that happens the parser
+// reports the cast as ambiguous (spell_id 0) rather than guessing wrong.
+let _buffLandingBySuffix = new Map();
+function _rebuildBuffMatchers() {
+  const m = new Map();
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.other || !e.name) continue;
+    if (!_isTrackedBuffName(e.name)) continue;
+    if (!_isTimedDurationFormula(e.durf)) continue;
+    const suffix = String(e.other).trim().toLowerCase();
+    if (!suffix || suffix.length < 6) continue;   // too short → false positives
+    const arr = m.get(suffix) || [];
+    arr.push({ id: e.id, name: e.name, dur: e.dur, durf: e.durf });
+    m.set(suffix, arr);
+  }
+  _buffLandingBySuffix = m;
+  if (m.size) console.log(`[buff-landing] indexed ${m.size} tracked-buff landing messages`);
+}
+
+// EQ first names: a single capitalized word. Rejects "You", pets ("`s warder"),
+// NPCs with spaces/digits, and the empty string.
+function _looksLikePlayerName(s) {
+  return /^[A-Z][a-zA-Z]{2,19}$/.test(s) && s !== 'You' && s !== 'Your';
+}
+
+// Parse one log line for a tracked-buff landing on another player. Returns
+// { target, spell_id, spell_name, landing_text, dur_ticks, dur_formula,
+//   cast_at, observer } or null. observer = the character whose log this came
+// from (the bystander who witnessed the land).
+function parseBuffLanding(line, observer) {
+  if (!_buffLandingBySuffix.size) return null;
+  const m = line.match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2];
+  // Two ways the target name attaches to the message:
+  //   possessive: "Bonkur's eye gleams..."  → suffix starts at "'s"
+  //   space:      "Bonkur looks very..."     → suffix is everything after sp1
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // name, "'s ..."
+  const sp = body.indexOf(' ');
+  if (sp > 0) candidates.push([body.slice(0, sp), body.slice(sp + 1)]);     // name, "..."
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikePlayerName(name)) continue;
+    const hits = _buffLandingBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    const ts = parseEqTimestamp(line);
+    // Collapse same-name duplicates (e.g. two SoW spell ids); only call it
+    // ambiguous when genuinely different spells share the message.
+    const names = new Set(hits.map(h => h.name));
+    const resolved = names.size === 1 ? hits[0] : null;
+    return {
+      target:      name,
+      spell_id:    resolved ? resolved.id : 0,
+      spell_name:  resolved ? resolved.name : null,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      dur_ticks:   resolved ? resolved.dur : null,
+      dur_formula: resolved ? resolved.durf : null,
+      cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
+      observer:    observer || null,
+    };
+  }
+  return null;
 }
 
 // Poll the bot for officer-filed backfill requests targeting any character
@@ -11688,6 +11827,19 @@ function uploadFunEvents(events, { dryRun } = {}) {
   return Promise.resolve();
 }
 
+// Observed buff landings on other players → bot's /api/agent/buff_casts. The
+// bot dedups across observers, so every nearby agent uploading what it saw is
+// fine (and desirable — more observers = better coverage).
+function uploadBuffCasts(casts, { dryRun } = {}) {
+  if (!Array.isArray(casts) || casts.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const c of casts) console.log(`[buff-cast] ${c.target} ← ${c.spell_name || '(ambiguous: ' + c.landing_text + ')'} @ ${c.cast_at}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('buff_cast', { agent_version: AGENT_VERSION, casts });
+  return Promise.resolve();
+}
+
 // Inbound /tell relay. The bot endpoint re-validates characters.tell_relay
 // before accepting, so this is a safe defense-in-depth — but the agent also
 // gates on stats.characterPrefs[character].tell_relay so we don't burn the
@@ -12415,6 +12567,16 @@ async function main() {
         // event_type, caster, event_ts) dedup collapses overlap.
         const faEvt = parseFeralAvatar(line, b.character);
         if (faEvt && !_sourceExcluded) funEventBuffer.push(faEvt);
+
+        // Observed buff landing on another player (fills coverage for raiders
+        // not running the agent). Cross-log dedup so a buff seen in main + alt
+        // logs of one install isn't double-counted; the bot dedups across
+        // separate installs by (target, spell, cast_at).
+        const bcEvt = parseBuffLanding(line, b.character);
+        if (bcEvt && !_sourceExcluded) {
+          const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
+          if (!_crossLogDupe(_bcFp)) buffCastBuffer.push(bcEvt);
+        }
 
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
