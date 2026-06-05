@@ -294,7 +294,15 @@ const PRIORITY_KEEP_PATTERNS = [
   /\b(?:begin(?:s)?\s+(?:to\s+cast|casting))\s+Dire\s+Charm\b/i,
   // /who output lines — '[60 Storm Warden] Alice (Wood Elf) <Wolf Pack>' etc.
   // Listed here so they can never be dropped by some future broad filter.
-  /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
+  //
+  // Trailing word-boundary anchors go AROUND ANONYMOUS/GM (so we don't keep a
+  // substring like "ANONYMOUSXY") but NOT after \w. The earlier form
+  // (`\d+\s+\w\b`) silently dropped every non-anon /who row because the \b
+  // after \w meant "no word char follows" — but the very next char of any real
+  // class name ("Paladin", "Cleric", "Druid"...) IS a word char, so \b failed.
+  // [ANONYMOUS] and [GM] survived because ']' is non-word; that's why anon
+  // rows alone made it through and visible-class raiders were invisible.
+  /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|\bANONYMOUS\b|\bGM\b)/i,
 ];
 
 // Lines we KEEP (positive list — combat events). Anything not matching here
