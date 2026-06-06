@@ -3630,10 +3630,13 @@ async function _handleAgentServerPanel(req, res) {
           // only return the item_id + priority so the OVERLAY can flag
           // "you wishlisted this." Bid value stays private — only viewable
           // on /me/wishlist.
+          // wishlists has no guild_id column (single-guild deployment) — the
+          // PostgREST 400 from filtering on a missing column floods the logs.
+          // Drop the guild_id clause; character_name is unique enough here.
+          void guildId;
           const wlRows = await supabase.select(
             'wishlists',
             `select=item_id,priority` +
-            `&guild_id=eq.${encodeURIComponent(guildId)}` +
             `&character_name=ilike.${encodeURIComponent(character)}`
           );
           for (const r of (wlRows || [])) wishById.set(r.item_id, { priority: r.priority });
@@ -4427,26 +4430,26 @@ async function _handleAgentSpellCatalog(req, res) {
   const fresh = _spellCatalogCache && (Date.now() - _spellCatalogCache.fetchedAt) < _SPELL_CATALOG_TTL_MS;
   if (!fresh) {
     try {
+      // BUG FIX: previously this code used supabase.from('...').select(...).range(...)
+      // — that's the @supabase/supabase-js SDK API, but ./utils/supabase is a
+      // hand-rolled REST helper that exposes select(table, queryString). Every
+      // request to /api/agent/spell-catalog has been throwing
+      // "supabase.from is not a function" since this endpoint shipped, which
+      // is exactly the 500 the agent logs as "[spell-catalog] HTTP 500".
+      // Switched to the REST helper's actual signature.
       const supabase = require('./utils/supabase');
-      // Stream the catalog in 1k-row pages — Supabase's PostgREST caps a single
-      // SELECT at 1000 rows by default, so a naive .select() would silently
-      // return the first 1k of ~3.9k spells.
       const entries = [];
       let from = 0;
       const PAGE = 1000;
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula';
       while (true) {
-        const { data, error } = await supabase
-          .from('eqemu_spells')
-          .select('id, name, cast_on_you, cast_on_other, spell_fades, buffduration, buffdurationformula')
-          .order('id', { ascending: true })
-          .range(from, from + PAGE - 1);
-        if (error) throw error;
-        if (!data || data.length === 0) break;
+        // PostgREST paging via Range header is wrapped by Supabase's REST API
+        // as offset/limit query params. We pass them as `&offset=X&limit=Y`
+        // which the supabase utility forwards verbatim.
+        const data = await supabase.select('eqemu_spells',
+          `${SELECT}&order=id.asc&offset=${from}&limit=${PAGE}`);
+        if (!Array.isArray(data) || data.length === 0) break;
         for (const r of data) {
-          // Compact key names so the over-the-wire payload stays small. `dur` =
-          // buffduration cap (ticks), `durf` = duration formula — the agent uses
-          // these to (a) keep only timed buffs when building the cast_on_other
-          // reverse-matcher and (b) estimate a buff's remaining time.
           entries.push({
             id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
             dur: r.buffduration, durf: r.buffdurationformula,
