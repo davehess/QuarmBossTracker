@@ -262,7 +262,13 @@
       document.getElementById('conn').textContent = '●';
       const now = Date.now();
       const melodyByChar = s.bardMelody || {};
-      const keys = Object.keys(melodyByChar);
+      // Show only the active EQ window's character so switching windows
+      // doesn't pile up rotations from every alt at once. When the agent
+      // doesn't have an active signal yet, show everything (initial boot).
+      const active = s.activeCharacter ? String(s.activeCharacter).toLowerCase() : null;
+      const keys = active
+        ? Object.keys(melodyByChar).filter(function(k){ return k.toLowerCase() === active; })
+        : Object.keys(melodyByChar);
       var html = '';
       for (var ki = 0; ki < keys.length; ki++) {
         var k = keys[ki];

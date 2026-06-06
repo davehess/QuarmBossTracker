@@ -285,7 +285,15 @@
       // Current boss/threat → shown in the HUD title so the user knows
       // exactly what fight the damage rows are scored against. Falls back to
       // "Damage — this fight" when no encounter is active.
-      const et = s.currentEncounterThreat;
+      // Active-character gate: if the agent reports an active character
+      // (focused EQ window) AND the encounter is from a DIFFERENT character,
+      // we hide the meter. Otherwise it'd "stick" to whichever character's
+      // log most recently published, even after you alt-tab away.
+      let et = s.currentEncounterThreat;
+      if (et && s.activeCharacter && et.uploader
+          && String(et.uploader).toLowerCase() !== String(s.activeCharacter).toLowerCase()) {
+        et = null;
+      }
       const boss = (et && et.bossName) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
 

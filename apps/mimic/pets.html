@@ -310,7 +310,14 @@
       const s = await r.json();
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
-      const pets = (s.petHealth || []);
+      // Show only the active EQ window's character's pet, so alt-tabbing
+      // between EQ clients doesn't show every alt's pet stacked together.
+      // Falls back to all pets when no active signal is reported.
+      const active = s.activeCharacter ? String(s.activeCharacter).toLowerCase() : null;
+      const allPets = (s.petHealth || []);
+      const pets = active
+        ? allPets.filter(function(p){ return p && p.owner && String(p.owner).toLowerCase() === active; })
+        : allPets;
       var html = '';
       for (const p of pets) {
         var obs = p.observed_at || null;

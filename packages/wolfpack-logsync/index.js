@@ -2073,6 +2073,11 @@ class EncounterBuilder {
       bossName:  this.bossName,
       startedAt: this.startedAt,
       flushedAt: null,
+      // The character whose log file this builder is reading. Lets the
+      // damage overlay clear when the active EQ window switches to a
+      // different character — without this the meter "sticks" to whichever
+      // builder published last.
+      uploader:  this.character || null,
       perPlayer,
     };
     // Mirror current DS-reflect accumulator so the dashboard can render
@@ -4239,9 +4244,27 @@ function _serializeForDashboard() {
       targets: [...(s.targets || [])],
     };
   }
+  // Active-character signal — the watched character whose Zeal pipe most
+  // recently sent a sample (i.e. the EQ window the user is currently in).
+  // Lets overlays focus on JUST the focused character — clears pet/charm/
+  // damage when the user alt-tabs to a different EQ window. A 10s recency
+  // window keeps "active" stable across brief Zeal stutters; null when no
+  // sample has arrived recently.
+  const _activeCharacter = (() => {
+    const now = Date.now();
+    let best = null, bestTs = 0;
+    for (const ch of Object.keys(_zealState || {})) {
+      const st = _zealState[ch];
+      const ts = (st && st.updatedAt) || 0;
+      if (ts > bestTs && (now - ts) < 60_000) { bestTs = ts; best = ch; }
+    }
+    return best;
+  })();
+
   return {
     version:            AGENT_VERSION,
     startedAt:          stats.startedAt,
+    activeCharacter:    _activeCharacter,
     sessionEvents:      stats.sessionEvents,
     sessionTotalDamage: stats.sessionTotalDamage,
     sessionDamageBy:    stats.sessionDamageBy,
