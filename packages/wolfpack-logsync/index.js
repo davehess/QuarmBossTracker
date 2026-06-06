@@ -4054,14 +4054,28 @@ function _serializeForDashboard() {
         .map(w => w && w.character && String(w.character).toLowerCase())
         .filter(Boolean));
       const livePet = _livePetHpByOwner();         // owner → { name, hp_pct }
+      // Characters whose Zeal feed is currently fresh — anyone NOT in this set
+      // is logged off / linkdead / their EQ client isn't streaming Zeal. The
+      // pet-state maps persist across restarts and through linkdeath (by
+      // design), so without this gate the user would keep seeing the previous
+      // character's pet card after switching toons. Same ZEAL_STALE_MS the
+      // live-state uploader uses, so the freshness signal is consistent.
+      const liveChars = new Set();
+      const now = Date.now();
+      for (const ch of Object.keys(_zealState || {})) {
+        const st = _zealState[ch];
+        if (st && (now - (st.updatedAt || 0)) <= ZEAL_STALE_MS) {
+          liveChars.add(String(ch).toLowerCase());
+        }
+      }
       // Pet names that belong to an ACTIVE charm session → skip (charm tracker).
       const activeCharmPets = new Set();
       for (const [, info] of _charmTickTracker) {
         if (info && info.is_active && info.pet) activeCharmPets.add(String(info.pet).toLowerCase());
       }
-      const now = Date.now();
       // Owners worth showing: anyone with a live pet, a /pet health report, or
-      // a recent landing on their pet.
+      // a recent landing on their pet — gated below by Zeal-freshness so a
+      // logged-off char's stale state doesn't render.
       const owners = new Set([
         ...livePet.keys(),
         ..._petHealthByOwner.keys(),
@@ -4070,6 +4084,9 @@ function _serializeForDashboard() {
       const out = [];
       for (const owner of owners) {
         if (myChars.size > 0 && !myChars.has(owner)) continue;
+        // Drop logged-off / LD characters — their pet state is stale even if
+        // it's still in the maps because we persist across restarts.
+        if (!liveChars.has(owner)) continue;
         const lp = livePet.get(owner);
         const petName = lp ? lp.name : null;
         // Charm pet (slot-16 name starts with a/an, tracked as active charm) →
@@ -4578,9 +4595,10 @@ function renderHeader(s) {
   //
   // Mimic only — the Mimic preload exposes window.mimic.openSettings; when the
   // dashboard is hit from a regular browser, those banner buttons aren't
-  // actionable so they'd be misleading. Detected via WOLFPACK_CLIENT env, set
-  // by Mimic in main.js when it spawns the agent.
-  const isMimicHosted = process.env.WOLFPACK_CLIENT === 'mimic';
+  // actionable so they'd be misleading. Detect via the same window.mimic
+  // probe other tabs use (process.env is Node-only — this code path runs in
+  // the browser and crashed renderHeader as "process is not defined").
+  const isMimicHosted = !!(window.mimic && window.mimic.openSettings);
   if (isMimicHosted && !s.mimicSignedIn) {
     h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid #f85149">'
        + '⛓ <b>Not signed in to Discord.</b> Your parses won&rsquo;t upload and the guild can&rsquo;t see your stats. '
