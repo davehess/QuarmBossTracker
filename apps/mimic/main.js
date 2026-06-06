@@ -3009,7 +3009,11 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyOverlayInteractivity();
+  // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
+  // on Windows this writes/removes the HKCU\…\Run registry entry via
+  // setLoginItemSettings — no UAC, no admin rights.
+  applyAutoStart();
   pushStatus();
   if (tokenChanged) {
     pushMimicSession();

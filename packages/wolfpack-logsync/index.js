@@ -1308,6 +1308,7 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
   }
   state.castStartedAt = atMs;
   state.lastChangeAt  = atMs;
+  state.castInterrupted = false;   // a new cast clears any prior interrupt flag
 }
 
 // Charm pet DEATH — remove the lingering pet immediately (per "unless the pet
@@ -2278,6 +2279,13 @@ class EncounterBuilder {
       if (state) {
         state.melodyActive = false;
         state.melodyEndedAt = Date.parse(event.ts) || Date.now();
+        // Force the current song row to "stopped" by aging the
+        // castStartedAt timestamp far back. Otherwise the overlay keeps
+        // filling the cast bar as if the song completed — user feedback
+        // was that clicking to stop a song mid-cast looked like it kept
+        // going. This snaps the bar to halt + flips the row to ⏹ instantly.
+        state.castInterrupted = true;
+        state.castStartedAt = state.melodyEndedAt - 60000;
       }
       return;
     }
@@ -4325,6 +4333,29 @@ function _serializeForDashboard() {
         // X" verbatim — useful for non-bard /melody rotations where the
         // log-line "begin casting" is the only other signal.
         const nowCasting = (zealSt && zealSt.casting && String(zealSt.casting).trim()) || null;
+        // Bard utility-buff strip — Amplification (from Voice of the Serpent
+        // clicky) and Resonance/Harmonize (from Shadowsong Cloak). Resonance
+        // and Harmonize are mutually exclusive — a bard with Harmonize never
+        // uses Resonance. We surface whichever the buff window currently has
+        // so the overlay can show a countdown or "off". Non-bard melody users
+        // don't have these clickies; they'll see the strip omitted.
+        const _findBuff = (names) => {
+          for (const b of zealBuffs) {
+            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            const bLow = b.name.toLowerCase();
+            for (const n of names) if (bLow === n) return b;
+          }
+          return null;
+        };
+        const ampBuff = _findBuff(['amplification']);
+        const harBuff = _findBuff(['harmonize']);
+        const resBuff = _findBuff(['resonance']);
+        const bardBuffs = (state.kind === 'song') ? {
+          amplification: ampBuff ? { remaining_ticks: ampBuff.ticks, remaining_secs: ampBuff.ticks * 6 } : null,
+          // Prefer Harmonize when both are present (Harmonize replaces Resonance).
+          harmonize:     harBuff ? { remaining_ticks: harBuff.ticks, remaining_secs: harBuff.ticks * 6 } : null,
+          resonance:     (!harBuff && resBuff) ? { remaining_ticks: resBuff.ticks, remaining_secs: resBuff.ticks * 6 } : null,
+        } : null;
         out[k] = {
           character:      k,
           order:          enrichedOrder,
@@ -4336,6 +4367,8 @@ function _serializeForDashboard() {
           nowCasting,
           melodyActive:   !!state.melodyActive,
           melodyStartedAt: state.melodyStartedAt || null,
+          melodyEndedAt:   state.melodyEndedAt || null,
+          bardBuffs,
         };
       }
       return out;

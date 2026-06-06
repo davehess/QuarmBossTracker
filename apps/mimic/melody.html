@@ -273,8 +273,12 @@
         //   casting → sinceCast < castMs → bar fills 0→100%
         //   done    → cast finished, awaiting next twist
         //   stopped → no cast in STOP_AFTER_MS → freeze as ⏹
-        var isCasting = sinceCast < castMs;
-        var isStopped = !isCasting && sinceChange >= STOP_AFTER_MS;
+        // castInterrupted: user clicked their current song to stop it mid-
+        // cast. Agent ages castStartedAt + raises this flag so we render
+        // the row as stopped immediately (instead of filling the bar as if
+        // the cast finished).
+        var isCasting = !st.castInterrupted && sinceCast < castMs;
+        var isStopped = st.castInterrupted || (!isCasting && sinceChange >= STOP_AFTER_MS);
 
         var castPct = isCasting ? Math.max(0, Math.min(100, (sinceCast / castMs) * 100)) : 100;
 
@@ -337,10 +341,38 @@
         if (st.nowCasting) {
           nowCastingHtml = '<div class="nowcast">↻ <span class="lbl">now casting:</span> <span class="spell">' + esc(shortSongName(st.nowCasting)) + '</span></div>';
         }
+        // Bard utility-buff strip — Amplification (Voice of the Serpent clicky)
+        // + Resonance / Harmonize (Shadowsong Cloak clicky). Static rows at
+        // the bottom showing remaining time OR "off". Only rendered when the
+        // character is a bard (state.kind === 'song' → bardBuffs object set
+        // server-side). Harmonize wins over Resonance when both exist (Quarm
+        // mechanics: Harmonize replaces Resonance for bards that have it).
+        var bardBuffsHtml = '';
+        if (st.bardBuffs) {
+          function _utilRow(label, info, clickyHint) {
+            var t = '<span class="util-t off">off</span>';
+            if (info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0) {
+              var rs = info.remaining_secs;
+              var mm = Math.floor(rs / 60), ss = rs - mm*60;
+              var tStr = mm + ':' + String(ss).padStart(2,'0');
+              var tier = rs <= 30 ? 'crit' : (rs <= 120 ? 'low' : '');
+              t = '<span class="util-t ' + tier + '">' + tStr + '</span>';
+            }
+            return '<div class="util-row" title="' + esc(clickyHint) + '"><span class="util-lbl">' + label + '</span>' + t + '</div>';
+          }
+          var harmonizeOrResonance = st.bardBuffs.harmonize
+            ? _utilRow('Harmonize', st.bardBuffs.harmonize, 'From Shadowsong Cloak — replaces Resonance')
+            : _utilRow('Resonance', st.bardBuffs.resonance, 'From Shadowsong Cloak');
+          bardBuffsHtml = '<div class="bardbuffs">'
+                        + _utilRow('Amplification', st.bardBuffs.amplification, 'From Voice of the Serpent')
+                        + harmonizeOrResonance
+                        + '</div>';
+        }
         html += '<div class="mel">'
               + '<div class="who"><span>' + esc(k.charAt(0).toUpperCase() + k.slice(1)) + '</span><span class="since">' + esc(sinceLabel) + '</span></div>'
               + '<div class="songs">' + rowsHtml + '</div>'
               + nowCastingHtml
+              + bardBuffsHtml
               + '</div>';
       }
       listEl.innerHTML = html;

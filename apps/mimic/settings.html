@@ -46,8 +46,8 @@
   <input id="botUrl" type="text" />
   <div class="hint">Leave the default unless an officer told you otherwise.</div>
 
-  <h2>Wolf Pack account <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">OPTIONAL</span></h2>
-  <div class="sub">Sign in with Discord to link this Mimic install to your account. Persists across upgrades. Optional for v1 — the token above keeps uploads working — but signing in unlocks cross-machine sync and officer tools as they roll out.</div>
+  <h2>Wolf Pack account <span style="background:#5a1d1d;color:#ff9b9b;border:1px solid #a04040;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">REQUIRED</span></h2>
+  <div class="sub">Sign in with Discord to link this Mimic install to your account. Persists across upgrades. <b>Required</b> for charm/melody/pet trackers, suggested triggers, cross-machine sync, and officer tools. <span style="color:#9aa4ad">(If you're running Mimic purely offline — no Discord, no Wolf Pack uploads — you can skip sign-in, but most overlay features will stay hidden.)</span></div>
   <div id="acctSignedOut" style="margin-top:10px">
     <button id="acctSignInBtn" type="button" style="background:#5865f2;border:none;color:#fff;padding:8px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;display:inline-flex;align-items:center;gap:8px">
       <span style="font-size:14px">⛓</span> Sign in to Wolf Pack
@@ -124,6 +124,18 @@
     <label for="overlaysUnlocked">Unlock overlays to move/resize them (uncheck = locked + click-through in place)</label>
   </div>
   <div class="hint">When unlocked, a blue drag bar appears on each overlay — drag to move, pull the edges to resize, then re-lock. Changes apply instantly, no engine restart.</div>
+
+  <div class="row">
+    <input id="autoStart" type="checkbox" />
+    <label for="autoStart">Start Mimic with Windows</label>
+  </div>
+  <div class="hint">Writes a per-user registry key (HKCU\…\Run) — no UAC, no admin rights. Launches Mimic hidden-to-tray on login.</div>
+
+  <div class="row">
+    <input id="hideOverlaysWhenEqDown" type="checkbox" />
+    <label for="hideOverlaysWhenEqDown">Hide overlays when EverQuest isn't running</label>
+  </div>
+  <div class="hint">Polls eqgame.exe every 5s; flips overlays back on when EQ launches. Unchecked = overlays always visible.</div>
 
   <h2>Private — /tells <span class="lock">🔒</span></h2>
   <div class="hint" style="margin-bottom:8px">EQ writes your tells to your log. These never upload to the bot. Display window ships in v0.2; the choice persists now.</div>
@@ -462,6 +474,8 @@
     document.getElementById('showHud').checked           = !!c.showHud;
     document.getElementById('enableTriggerTts').checked  = !!c.enableTriggerTts;
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
+    document.getElementById('autoStart').checked         = (c.autoStart !== false);
+    document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };
@@ -495,6 +509,8 @@
         showHud:          document.getElementById('showHud').checked,
         enableTriggerTts: document.getElementById('enableTriggerTts').checked,
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
+        autoStart:                document.getElementById('autoStart').checked,
+        hideOverlaysWhenEqDown:   document.getElementById('hideOverlaysWhenEqDown').checked,
       };
       if (tokenInput) payload.token = tokenInput;
       await window.mimic.saveConfig(payload);
