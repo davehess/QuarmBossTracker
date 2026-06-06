@@ -2639,25 +2639,20 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
 
 // Resize an overlay window to a named preset, anchored at its CURRENT
 // top-left so a user picking "Larger" from the move-icon context menu sees
-// the same overlay grow downward + rightward rather than jumping to a new
-// position. Sizes deliberately leave height growth to overlay-auto-height
-// (content-driven); we just nudge WIDTH here. Heights snap to a sensible
-// baseline so the next tick's auto-height has room to grow into.
+// the same overlay grow rightward rather than jumping to a new position.
+// HEIGHT is intentionally preserved from current bounds — the overlay's
+// own overlayAutoHeight call (every tick after render) will re-fit the
+// height to its content, so the size preset only changes width. Avoids
+// the "preset shrunk my overlay below its content" bug the user reported.
 ipcMain.handle('overlay-resize-preset', (e, preset) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    const presets = {
-      xs: { width: 200, height: 100 },
-      sm: { width: 260, height: 140 },
-      md: { width: 320, height: 200 },
-      lg: { width: 400, height: 260 },
-      xl: { width: 500, height: 320 },
-    };
-    const p = presets[String(preset || '').toLowerCase()];
-    if (!p) return false;
+    const widths = { xs: 200, sm: 260, md: 320, lg: 400, xl: 500 };
+    const w = widths[String(preset || '').toLowerCase()];
+    if (!w) return false;
     const b = win.getBounds();
-    win.setBounds({ x: b.x, y: b.y, width: p.width, height: p.height });
+    win.setBounds({ x: b.x, y: b.y, width: w, height: b.height });
     return true;
   } catch { return false; }
 });

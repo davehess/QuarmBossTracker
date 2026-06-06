@@ -1274,9 +1274,28 @@ function _findSongBuff(songName, zealBuffs) {
   }
   return null;
 }
+// Detect a bard song by name pattern. Bard songs almost always start with a
+// possessive of one of the canonical author-NPCs ("Selo`s", "Solon`s",
+// "Tarew`s", etc.) or with one of the named song lines ("Anthem de Arms",
+// "Composition of Ervaj", "Warsong of the Vah Shir", etc.). Used to flip
+// state.kind = 'song' once we see ANY bard song, sticking the bard
+// classification for the rest of the session so bardBuffs render correctly
+// for /melody users without us having to query Zeal class data.
+function _isLikelyBardSong(name) {
+  if (!name) return false;
+  const s = String(name);
+  if (/^(?:Selo|Solon|Tarew|Tuyen|Denon|McVaxius|Niv|Brusco|Angstlich|Cassindra|Kelin|Largo|Jonthan)['`]/i.test(s)) return true;
+  if (/^(?:Anthem|Composition|Warsong|Accelerando|Accelerating Chorus|Ancient|Hymn|Verses of|Spirit of Wolf|Nature['`]s Melody|Amplification|Resonance|Harmonize|Vilia['`]s Verses)/i.test(s)) return true;
+  if (/(?:Chant of|Chord|Chorus|Dirge|Ditty|Drums of|Marching Song|Song of)/i.test(s)) return true;
+  return false;
+}
 function _bumpBardMelody(character, spellName, atMs, opts) {
   if (!character || !spellName) return;
-  const kind = (opts && opts.kind) || 'song';   // 'song' (bard) | 'spell' (anyone else)
+  // Auto-detect bard from the song name when the caller didn't explicitly
+  // say. Once we tag a character as 'song', it sticks for the rest of the
+  // session (bards don't morph into wizards mid-fight).
+  let kind = (opts && opts.kind) || 'song';
+  if (_isLikelyBardSong(spellName)) kind = 'song';
   const key = String(character).toLowerCase();
   let state = _bardMelody.get(key);
   if (!state) {
@@ -1290,10 +1309,11 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
     state.currentPos = -1;
     state.cycleLength = 0;
   }
-  // Track the current melody kind on the character's state — if they just
-  // switched between bard songs and spells (e.g. logged off a bard onto a
-  // wizard) we want the overlay to use the right cast-time default.
-  state.kind = kind;
+  // Track the current melody kind on the character's state. Once a bard,
+  // always a bard for this character — never downgrade 'song' → 'spell' on
+  // subsequent casts since a bard's interludes (clickies, items) might
+  // briefly look spell-like by name.
+  if (state.kind !== 'song' || kind === 'song') state.kind = kind;
   const name = String(spellName);
   const lower = name.toLowerCase();
   const existingIdx = state.order.findIndex(o => o && (o.name || '').toLowerCase() === lower);

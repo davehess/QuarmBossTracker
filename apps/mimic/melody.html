@@ -6,9 +6,9 @@
   #wrap{background:rgba(14,17,22,0.78);border:1px solid rgba(163,113,247,0.45);
     border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px);
     position:relative}
-  .title{font-size:10px;color:#a371f7;letter-spacing:0.1em;
+  .title{font-size:11px;color:#a371f7;letter-spacing:0.1em;
     text-transform:uppercase;display:flex;gap:6px;align-items:center}
-  .conn{font-size:9px}
+  .conn{font-size:10px}
   .conn.ok{color:#56d364}
   .conn.bad{color:#f87171}
   /* Empty state: deliberately NO background — feedback was that the "box of
@@ -16,10 +16,22 @@
      plain dimmed text under the title. */
   .empty{color:#6b7280;font-size:10px;margin-top:6px;font-style:italic}
   /* "Now casting: X" — Zeal-driven, real-time. Pulled from label 134. */
-  .nowcast{font-size:10px;color:#c9d1d9;margin-top:5px;padding-top:4px;
-    border-top:1px dashed rgba(110,118,129,0.25);font-variant-numeric:tabular-nums}
+  .nowcast{font-size:10px;color:#c9d1d9;margin-top:4px;font-variant-numeric:tabular-nums}
   .nowcast .lbl{color:#6b7280}
   .nowcast .spell{color:#f6c365;font-weight:600}
+  /* Bard utility-buff strip — persistent (shows "off" when buff absent).
+     Sits BELOW the songs dashed separator and ABOVE "now casting", per
+     user requirement. */
+  .bardbuffs{margin-top:6px;padding-top:5px;border-top:1px dashed rgba(110,118,129,0.30);
+    display:flex;flex-direction:column;gap:2px}
+  .bardbuffs .util-row{display:flex;justify-content:space-between;align-items:baseline;
+    font-size:11px;color:#c9d1d9}
+  .bardbuffs .util-lbl{color:#a371f7;font-weight:600}
+  .bardbuffs .util-t{font-variant-numeric:tabular-nums;color:#7ee787;padding:0 5px;
+    border-radius:3px;background:rgba(126,231,135,0.10);border:1px solid rgba(126,231,135,0.22)}
+  .bardbuffs .util-t.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
+  .bardbuffs .util-t.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
+  .bardbuffs .util-t.off{color:#6b7280;background:rgba(110,118,129,0.10);border-color:rgba(110,118,129,0.25);font-style:italic}
   /* Per-character melody block. */
   .mel{margin-top:6px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)}
   .mel:first-of-type{border-top:none;padding-top:0;margin-top:4px}
@@ -28,8 +40,8 @@
   .mel .who .since{color:#6b7280;font-size:9px;font-weight:normal}
   /* Each song row: [icon] [name] [cast bar]. Vertical stack, cast-order. */
   .songs{display:flex;flex-direction:column;gap:2px}
-  .row{display:grid;grid-template-columns:14px 1fr auto;gap:6px;align-items:center;
-    font-size:11px;line-height:1.4;padding:2px 4px;border-radius:3px;
+  .row{display:grid;grid-template-columns:16px 1fr auto;gap:6px;align-items:center;
+    font-size:13px;line-height:1.45;padding:3px 5px;border-radius:3px;
     background:rgba(255,255,255,0.03)}
   /* Buff-window timer chip — only present for songs whose effect is
      visible in Zeal's buff slots (Amplification, Harmonize, Resonance,
@@ -40,7 +52,7 @@
   .row .timer.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
   .row .timer.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .row .icon{display:flex;align-items:center;justify-content:center;
-    width:14px;height:14px;font-size:11px;color:#8b949e}
+    width:16px;height:16px;font-size:12px;color:#8b949e}
   .row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
   /* Casting row — fills the row background left→right as the cast progresses,
      giving the "arrow getting closer" effect the user asked for. */
@@ -371,8 +383,8 @@
         html += '<div class="mel">'
               + '<div class="who"><span>' + esc(k.charAt(0).toUpperCase() + k.slice(1)) + '</span><span class="since">' + esc(sinceLabel) + '</span></div>'
               + '<div class="songs">' + rowsHtml + '</div>'
-              + nowCastingHtml
               + bardBuffsHtml
+              + nowCastingHtml
               + '</div>';
       }
       listEl.innerHTML = html;

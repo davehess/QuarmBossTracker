@@ -16,21 +16,27 @@
   .lvlRange:empty{margin-right:auto}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .mob{padding:7px 9px;background:rgba(8,5,16,0.72);border-radius:7px;
+  .mob{padding:5px 7px;background:rgba(8,5,16,0.72);border-radius:6px;
     border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
-  .mob .nm{font-size:15px;font-weight:bold;color:#e9d5ff}
-  .mob .cls{font-size:11px;color:#9b8bb5;margin-left:5px}
-  .mob .zone{font-size:10px;color:#79c0ff;margin-top:1px}
-  .mob .sub{font-size:10px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
-  .hpbar{height:7px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:5px}
+  .mob .nm{font-size:12px;font-weight:bold;color:#e9d5ff}
+  .mob .cls{font-size:10px;color:#9b8bb5;margin-left:4px}
+  .mob .zone{font-size:9px;color:#79c0ff;margin-top:1px}
+  .mob .sub{font-size:9px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
+  .hpbar{height:6px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:4px}
   .hpbar > div{height:100%;transition:width 250ms linear,background 250ms linear}
+  /* Mana bar — same shape as HP, blue-shifted. Sits directly under HP for
+     spellcaster NPCs. Hidden when mob has 0 mana (Nagafen, melee mobs). */
+  .manabar{height:5px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:2px}
+  .manabar > div{height:100%;background:#5a8af0;transition:width 250ms linear}
+  .mob .mana{font-size:9px;color:#79c0ff;margin-top:2px;font-variant-numeric:tabular-nums}
   /* resist grid */
   .res{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:7px}
   .res .cell{text-align:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:3px 0}
   .res .lab{font-size:9px;color:#8b949e;letter-spacing:0.5px}
   .res .val{font-size:13px;font-weight:bold;font-variant-numeric:tabular-nums}
-  /* tabs */
-  .tabs{display:flex;gap:2px;margin-left:auto;margin-right:8px}
+  /* tabs — right margin clears the ✕ hide button at top-right (24px wide
+     plus a 4px gutter), so the Loot/Spells tabs never overlap it. */
+  .tabs{display:flex;gap:2px;margin-left:auto;margin-right:28px}
   .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
        border-radius:4px;padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.5px}
   .tab:hover{color:#fff;border-color:#a371f7}
@@ -120,8 +126,9 @@
       <span>🎯 Mob Info</span>
       <span id="lvlRange" class="lvlRange"></span>
       <span class="tabs">
-        <button id="tabStats" class="tab on" type="button">Stats</button>
-        <button id="tabLoot"  class="tab"    type="button">Loot <span class="beta">BETA</span></button>
+        <button id="tabStats"  class="tab on" type="button">Stats</button>
+        <button id="tabLoot"   class="tab"    type="button">Loot <span class="beta">BETA</span></button>
+        <button id="tabSpells" class="tab"    type="button">Spells <span class="beta">BETA</span></button>
       </span>
     </div>
     <div id="body"></div>
@@ -217,23 +224,26 @@
   // we ingest OpenDKP loot history into loot_drops.
   var _tab = 'stats';
   var _lastMi = null;
-  var tabStatsBtn = document.getElementById('tabStats');
-  var tabLootBtn  = document.getElementById('tabLoot');
+  var tabStatsBtn  = document.getElementById('tabStats');
+  var tabLootBtn   = document.getElementById('tabLoot');
+  var tabSpellsBtn = document.getElementById('tabSpells');
   function _setTab(t){
     _tab = t;
-    tabStatsBtn.classList.toggle('on', t === 'stats');
-    tabLootBtn .classList.toggle('on', t === 'loot');
+    tabStatsBtn .classList.toggle('on', t === 'stats');
+    tabLootBtn  .classList.toggle('on', t === 'loot');
+    tabSpellsBtn.classList.toggle('on', t === 'spells');
     _renderBody(_lastMi);
   }
-  tabStatsBtn.addEventListener('click', function(){ _setTab('stats'); });
-  tabLootBtn .addEventListener('click', function(){ _setTab('loot'); });
+  tabStatsBtn .addEventListener('click', function(){ _setTab('stats'); });
+  tabLootBtn  .addEventListener('click', function(){ _setTab('loot'); });
+  tabSpellsBtn.addEventListener('click', function(){ _setTab('spells'); });
   // Hover-interact handshake — when the overlay is LOCKED (click-through),
   // mouse events normally pass through to EQ underneath. The handshake flips
   // the window briefly interactive while the cursor is over a tab button so
   // the click lands instead of going through. Same pattern the ✕ hide and
   // ✥ move buttons use. Without this, the Loot tab was un-clickable on a
   // locked overlay (the most common reason for "Loot is not clickable").
-  [tabStatsBtn, tabLootBtn].forEach(function(btn){
+  [tabStatsBtn, tabLootBtn, tabSpellsBtn].forEach(function(btn){
     if (!btn) return;
     btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
@@ -318,6 +328,15 @@
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
     var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
     var hpBar = hp != null ? '<div class="hpbar"><div style="width:'+hp.toFixed(0)+'%;background:'+hpColor+'"></div></div>' : '';
+    // Mana — comes from eqemu_npc_types.mana via the bot. Render a bar +
+    // numeric line for any NPC with non-zero mana. Live tracking (per-cast
+    // subtraction + regen) is a follow-up — this is the catalog baseline.
+    var manaBar = '';
+    var manaLine = '';
+    if (mob && mob.mana && mob.mana > 0) {
+      manaBar = '<div class="manabar"><div style="width:100%"></div></div>';
+      manaLine = '<div class="mana">' + fmtNum(mob.mana) + ' max mana</div>';
+    }
     var sub = [];
     if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
     if (mob && mob.mindmg != null && mob.maxdmg != null) sub.push(mob.mindmg + '–' + mob.maxdmg + ' dmg');
@@ -339,6 +358,20 @@
     var tabBody = '';
     if (_tab === 'loot') {
       tabBody = renderLoot(mob, mi);
+    } else if (_tab === 'spells') {
+      // Spells & abilities tab. The eqemu spells linkage (npc_spells_id →
+      // eqemu_npc_spells) isn't synced to Supabase yet, so we surface the
+      // mob's decoded special-abilities chips as a "what we know now" view
+      // and a note about the full spell list landing once the catalog syncs.
+      var specChips = '';
+      if (mob && Array.isArray(mob.specials) && mob.specials.length){
+        for (var sj=0; sj<mob.specials.length; sj++){
+          var slab = mob.specials[sj];
+          specChips += '<span class="'+specClass(slab)+'">'+esc(slab)+'</span>';
+        }
+      }
+      tabBody = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>'
+              + '<div class="sub" style="margin-top:6px;color:#6e7681">spell-by-spell list pending eqemu_npc_spells sync.</div>';
     } else {
       // resist grid (AC + 5 resists)
       var res = '';
@@ -368,6 +401,8 @@
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
       + hpBar
+      + manaBar
+      + manaLine
       + tabBody
       + '</div>';
   }
