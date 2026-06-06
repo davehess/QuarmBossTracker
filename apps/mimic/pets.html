@@ -34,6 +34,13 @@
   .petbuff.crit .t{color:#f85149}
   .petbuff .t.q{color:#6e7681}
   .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
+  /* combat stats — running attack signature for the current pet. dual-wield
+     pill highlights when ≥2 skill buckets observed. */
+  .petstats{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;font-size:10px;line-height:1.2;color:#c9d1d9}
+  .petstats .blk{background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;border:1px solid rgba(255,255,255,0.10)}
+  .petstats .blk b{color:#7ee787;font-variant-numeric:tabular-nums}
+  .petstats .dw{background:#3d1d1d;color:#ff7b72;border-color:#5a2a2a;font-weight:600;letter-spacing:0.5px}
+  .petstats .sk{background:rgba(88,166,255,0.10);color:#9ecbff;border-color:rgba(88,166,255,0.25)}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
   /* drag/lock/setup — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -172,6 +179,26 @@
   }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
 
+  function fmtNum(n){ n = +n || 0; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(Math.round(n)); }
+  function renderStats(p){
+    var s = p.stats; if (!s || !s.total_hits) return '';
+    var blocks = '';
+    blocks += '<span class="blk" title="Maximum single hit observed">max <b>'+fmtNum(s.max_hit)+'</b></span>';
+    blocks += '<span class="blk" title="Mean damage per hit">avg <b>'+fmtNum(s.avg_hit)+'</b></span>';
+    blocks += '<span class="blk" title="Total hits landed">hits <b>'+fmtNum(s.total_hits)+'</b></span>';
+    blocks += '<span class="blk" title="Cumulative damage dealt">dmg <b>'+fmtNum(s.total_damage)+'</b></span>';
+    // Per-skill buckets. Multiple distinct buckets = dual-wielding two
+    // different weapon skills. The inverse (two same-skill weapons) cant be
+    // proven from verbs alone, just hinted at by high hits-per-fight.
+    var sk = s.skills || {};
+    var keys = Object.keys(sk);
+    for (var i=0;i<keys.length;i++){
+      var k = keys[i], v = sk[k] || {};
+      blocks += '<span class="blk sk" title="'+esc(k)+': '+v.count+' hits / max '+v.max+' / total '+v.total+'">'+esc(k)+' <b>'+v.count+'</b></span>';
+    }
+    if (s.dual_wielding) blocks += '<span class="blk dw" title="Two or more distinct weapon skills observed — dual-wielding different weapons.">DUAL</span>';
+    return '<div class="petstats">'+blocks+'</div>';
+  }
   function renderBuffs(p){
     var buffs = Array.isArray(p.buffs) ? p.buffs : null;
     if (!buffs || !buffs.length) return '';
@@ -230,6 +257,7 @@
           + '<div class="meta">HP' + (hp != null ? '' : ' ?') + hpStr + ageStr + '</div>'
           + hpBar
           + renderBuffs(p)
+          + renderStats(p)
           + '</div>';
       }
       listEl.innerHTML = html;

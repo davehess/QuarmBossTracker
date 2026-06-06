@@ -1170,6 +1170,146 @@ function checkCharmPetDeath(line) {
 // counts if it matches that owner's live pet name.
 const _petHealthByOwner = new Map();   // ownerLower → { hp_pct, buffs: Map<spellLower,{name,dur_ticks,dur_formula}>, last_line_at, last_seen_at }
 const _petBuffLandings  = new Map();   // ownerLower → Map<spellLower,{name,dur_ticks,dur_formula,landed_at}>
+
+// Per-pet attack observation. Keyed by owner; tracks the CURRENT pet's combat
+// signature so we can show "Smohur · 105 max / 67 avg · 142 hits · Slashing +
+// Crushing (dual-wield)" on the Pet tracker. Skills come from the EQ combat
+// verb on each damage event (slashes/pierces/crushes/bashes/hits/punches/
+// claws/bites/gores/mauls/stings), aggregated as { count, total, max } per
+// normalized skill. Multiple distinct skills observed = dual-wielding two
+// different weapon types (the inverse — dual-wielding two SAME-skill weapons —
+// is harder to detect, but the high hits-per-fight rate hints at it).
+//
+// LOCAL ONLY — never uploaded to the bot. Persisted to disk so a LD reconnect
+// or agent restart brings the running stats back. Keyed on (owner, pet) so a
+// re-summon under a different name starts fresh.
+const _petStatsByOwner  = new Map();   // ownerLower → { pet, skills:{[skill]:{count,total,max}}, totalHits, totalDamage, maxHit, firstSeenAt, lastSeenAt }
+
+// EQ damage verb → skill bucket. Plural/singular collapse so 'slash'/'slashes'
+// both count as Slashing. Generic 'hits' (1H blunt + h2h) is its own bucket
+// because we can't tell apart 1HB and H2H from the verb alone.
+const _PET_VERB_SKILL = {
+  slash:'Slashing', slashes:'Slashing',
+  pierce:'Piercing', pierces:'Piercing',
+  crush:'Crushing', crushes:'Crushing',
+  bash:'Bash', bashes:'Bash',
+  kick:'Kick', kicks:'Kick',
+  punch:'H2H', punches:'H2H',
+  hit:'Hits', hits:'Hits',
+  bite:'Bite', bites:'Bite',
+  claw:'Claw', claws:'Claw',
+  gore:'Gore', gores:'Gore',
+  maul:'Maul', mauls:'Maul',
+  sting:'Sting', stings:'Sting',
+  slice:'Slashing', slices:'Slashing',
+  smash:'Crushing', smashes:'Crushing',
+};
+function _verbToSkill(v) {
+  if (!v) return null;
+  return _PET_VERB_SKILL[String(v).toLowerCase().trim()] || null;
+}
+
+// Record one melee-damage event the pet just landed. character = log file's
+// identity; ev.attacker matches one of our pets via _petOwnerByName / Zeal slot
+// 16. Maintains the per-pet rollup + bumps the disk-save timer.
+function recordPetCombat(ev, character) {
+  if (!ev || ev.type !== 'damage' || !ev.attacker || !ev.amount) return;
+  const petLower = String(ev.attacker).toLowerCase();
+  const owner = _petOwnerByName(petLower);
+  if (!owner) return;                                       // attacker isn't one of our pets
+  const skill = _verbToSkill(ev.ability);
+  if (!skill) return;                                       // not melee (skip nukes/DoTs/non-melee)
+  const amount = Math.max(0, Math.trunc(Number(ev.amount) || 0));
+  if (amount <= 0) return;
+  const now = Date.now();
+  let s = _petStatsByOwner.get(owner);
+  if (!s || s.pet !== ev.attacker) {
+    // New pet (or first sight) — fresh row. Re-summoned pets with a different
+    // proper name reset stats; a same-name re-summon keeps them rolling (we
+    // can't tell same-pet from same-named-replacement from the log).
+    s = { pet: ev.attacker, skills: {}, totalHits: 0, totalDamage: 0, maxHit: 0,
+          firstSeenAt: now, lastSeenAt: now };
+    _petStatsByOwner.set(owner, s);
+  }
+  const sk = s.skills[skill] || { count: 0, total: 0, max: 0 };
+  sk.count += 1; sk.total += amount; if (amount > sk.max) sk.max = amount;
+  s.skills[skill] = sk;
+  s.totalHits += 1; s.totalDamage += amount;
+  if (amount > s.maxHit) s.maxHit = amount;
+  s.lastSeenAt = now;
+  _savePetStateSoon();
+}
+
+// ── Pet-state persistence (disk) ─────────────────────────────────────────────
+// Survives agent restarts + LD reconnects: the agent loses in-memory pet state
+// every restart, but the pet itself usually still has its buffs (pets persist
+// through LD; summoned pets DESPAWN on log off, in which case the TTL drops
+// stale data). On startup we load this once; on every state change we debounce
+// a save (5s window) so a chatty fight doesn't write the file 100x.
+const PET_STATE_FILE = path.join(__dirname, 'logsync.pet-state.json');
+const PET_STATE_SAVE_DEBOUNCE_MS = 5000;
+let _petStateSaveTimer = null;
+
+function _savePetStateSoon() {
+  if (_petStateSaveTimer) return;
+  _petStateSaveTimer = setTimeout(() => {
+    _petStateSaveTimer = null;
+    try {
+      const data = {
+        saved_at: new Date().toISOString(),
+        // Maps + nested Maps serialize as arrays so the round-trip is loss-less.
+        petHealthByOwner: [..._petHealthByOwner.entries()].map(([k, v]) => [k, {
+          hp_pct: v.hp_pct,
+          buffs: [...v.buffs.entries()],
+          last_line_at: v.last_line_at,
+          last_seen_at: v.last_seen_at,
+        }]),
+        petBuffLandings: [..._petBuffLandings.entries()].map(([k, v]) => [k, [...v.entries()]]),
+        petStatsByOwner: [..._petStatsByOwner.entries()],
+      };
+      const out = JSON.stringify(data);
+      fs.writeFileSync(PET_STATE_FILE + '.tmp', out);
+      fs.renameSync(PET_STATE_FILE + '.tmp', PET_STATE_FILE);
+    } catch (err) { console.warn('[pet-state] save failed:', err && err.message); }
+  }, PET_STATE_SAVE_DEBOUNCE_MS);
+}
+
+function _loadPetStateFromDisk() {
+  try {
+    if (!fs.existsSync(PET_STATE_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(PET_STATE_FILE, 'utf8'));
+    const now = Date.now();
+    if (Array.isArray(raw.petHealthByOwner)) {
+      for (const [k, v] of raw.petHealthByOwner) {
+        if (!v || typeof v !== 'object') continue;
+        // TTL — drop entries older than the live cutoff (30 min). Stale buff
+        // numbers are worse than no chips at all.
+        if ((now - (v.last_seen_at || 0)) > PET_HEALTH_TTL_MS) continue;
+        _petHealthByOwner.set(k, {
+          hp_pct: v.hp_pct, buffs: new Map(v.buffs || []),
+          last_line_at: v.last_line_at, last_seen_at: v.last_seen_at,
+        });
+      }
+    }
+    if (Array.isArray(raw.petBuffLandings)) {
+      for (const [k, arr] of raw.petBuffLandings) {
+        const mp = new Map();
+        for (const [bk, bv] of (arr || [])) {
+          // Drop landings whose catalog duration has fully elapsed + a 60s grace.
+          const durSecs = (Number(bv.dur_ticks) || 0) * 6;
+          if (durSecs > 0 && (now - (bv.landed_at || 0)) > (durSecs + 60) * 1000) continue;
+          mp.set(bk, bv);
+        }
+        if (mp.size) _petBuffLandings.set(k, mp);
+      }
+    }
+    if (Array.isArray(raw.petStatsByOwner)) {
+      // Stats keep indefinitely (running performance picture across sessions).
+      for (const [k, v] of raw.petStatsByOwner) _petStatsByOwner.set(k, v);
+    }
+    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} landings · ${_petStatsByOwner.size} stats`);
+  } catch (err) { console.warn('[pet-state] load failed:', err && err.message); }
+}
 const PET_HEALTH_TTL_MS = 30 * 60 * 1000;
 const PET_REPORT_GAP_MS = 6000;        // bare buff lines within 6s of the HP line belong to that report
 
@@ -1194,6 +1334,7 @@ function applyPetHealthLine(line, character) {
       hp_pct: parseInt(hp[1], 10), buffs: new Map(),
       last_line_at: tsMs, last_seen_at: Date.now(),
     });
+    _savePetStateSoon();
     return;
   }
   const rep = _petHealthByOwner.get(owner);
@@ -1211,6 +1352,7 @@ function applyPetHealthLine(line, character) {
     rep.buffs.set(body.toLowerCase(), { name: e.name, dur_ticks: e.dur || null, dur_formula: e.durf || null });
     rep.last_line_at = tsMs;
     rep.last_seen_at = Date.now();
+    _savePetStateSoon();
   }
 }
 
@@ -1243,6 +1385,7 @@ function recordPetBuffLanding(bcEvt) {
     dur_formula: bcEvt.dur_formula,
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
   });
+  _savePetStateSoon();
 }
 
 // Merge a pet's buffs from the /pet health name set + the landing timers, keyed
@@ -3907,12 +4050,26 @@ function _serializeForDashboard() {
         const repFresh = rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS;
         const buffs = petBuffsForOwner(owner);
         const hp = lp && lp.hp_pct != null ? lp.hp_pct : (repFresh ? rep.hp_pct : null);
-        if (!petName && hp == null && buffs.length === 0) continue;   // nothing to show
+        // Combat stats from observed hits — surfaces dual-wield (two distinct
+        // skill buckets) plus the dangerous-number panel (max / avg / count).
+        const ps = _petStatsByOwner.get(owner);
+        const statsForPet = (ps && ps.pet === petName) ? {
+          total_hits:    ps.totalHits,
+          total_damage:  ps.totalDamage,
+          max_hit:       ps.maxHit,
+          avg_hit:       ps.totalHits ? Math.round(ps.totalDamage / ps.totalHits) : 0,
+          skills:        ps.skills,           // { skill: { count, total, max } }
+          dual_wielding: Object.keys(ps.skills || {}).length >= 2,
+          first_seen_at: ps.firstSeenAt,
+          last_seen_at:  ps.lastSeenAt,
+        } : null;
+        if (!petName && hp == null && buffs.length === 0 && !statsForPet) continue;   // nothing to show
         out.push({
           owner,
           pet:         petName,
           hp_pct:      hp,
           buffs,
+          stats:       statsForPet,
           observed_at: repFresh ? rep.last_seen_at : now,
         });
       }
@@ -12728,6 +12885,11 @@ async function main() {
   // to refresh from the bot. We don't await — a slow fetch must not delay
   // boot, and the resisted-spell card just shows plain names until it lands.
   _loadSpellCatalogFromDisk();
+  // Restore the Pet tracker's in-memory state (last /pet health, observed buff
+  // landings, running combat stats) so a Mimic restart or LD reconnect brings
+  // the existing pet timers + stats back instead of starting blank. TTLs in
+  // the loader drop entries old enough to be stale.
+  _loadPetStateFromDisk();
   if (!dryRun && token) {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
@@ -13197,7 +13359,13 @@ async function main() {
         // Cheap: precompiled regex set; usually < 50 entries, < 50µs each.
         try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
         const ev = parseEvent(line, ts);
-        if (ev) b.builder.add(ev);
+        if (ev) {
+          // Pet combat observation — if the attacker is one of our pets (Zeal
+          // slot 16), accumulate skill / max / total / hit-count stats for the
+          // Pet tracker. Side-channel; doesn't touch the encounter builder.
+          try { recordPetCombat(ev, b.character); } catch {}
+          b.builder.add(ev);
+        }
       });
     }
     // Run forever; intervals keep us alive
