@@ -8584,7 +8584,25 @@ function startWebDashboard(port) {
         const character = String(payload?.character || '').trim();
         const st = payload?.state;
         if (character && st && typeof st === 'object') {
+          // Detect a CAST START via Zeal label 134 transition. /melody on
+          // Quarm only logs "You begin playing a melody." once — the per-
+          // song "You begin singing X" lines aren't emitted for melody-
+          // queued songs. But Zeal's casting label DOES update per song,
+          // so a transition from empty-or-different → non-empty here is
+          // our reliable "song starting now" signal. Same path works for
+          // non-bard /melody chains (wizard nuke rotations etc).
+          const prevState = _zealState[character] || {};
+          const prevCasting = (prevState.casting || '').trim();
+          const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          if (newCasting && newCasting !== prevCasting) {
+            // Heuristic: anything > 4 chars + has at least one letter is a
+            // real spell/song name. Filters out one-off junk labels.
+            if (newCasting.length > 4 && /[a-zA-Z]/.test(newCasting)) {
+              _bumpBardMelody(character, newCasting, Date.now(),
+                { kind: (st.class === 'Bard' || /singing/i.test(newCasting)) ? 'song' : 'spell' });
+            }
+          }
           try { _evaluateZealConditions(character, Date.now()); } catch (e) { void e; }
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
