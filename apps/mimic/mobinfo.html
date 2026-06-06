@@ -196,6 +196,17 @@
   }
   tabStatsBtn.addEventListener('click', function(){ _setTab('stats'); });
   tabLootBtn .addEventListener('click', function(){ _setTab('loot'); });
+  // Hover-interact handshake — when the overlay is LOCKED (click-through),
+  // mouse events normally pass through to EQ underneath. The handshake flips
+  // the window briefly interactive while the cursor is over a tab button so
+  // the click lands instead of going through. Same pattern the ✕ hide and
+  // ✥ move buttons use. Without this, the Loot tab was un-clickable on a
+  // locked overlay (the most common reason for "Loot is not clickable").
+  [tabStatsBtn, tabLootBtn].forEach(function(btn){
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  });
 
   // Drop-rate buckets so each row carries a color cue. Same intent as the
   // /loot rarity labels — guaranteed > common > uncommon > rare > ultra.

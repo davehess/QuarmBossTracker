@@ -309,12 +309,11 @@
         // Charm duration. If the agent matched a charm-spell cast against
         // the land we get the exact duration_sec from CHARM_SPELLS; if not
         // (cast missed by parseEvent, gauge-only land, etc.) we still want
-        // a visible countdown — fall back to 30s (SBB's tuned tick-out) and
-        // flag it as estimated so the user knows it's a guess, not a hard
-        // spell-data value. The bard 30s default is the safest "expect a
-        // break by here" baseline for any charm class.
+        // a visible countdown — fall back to 60s (SBB's spell-data max of
+        // 10 ticks @ L60) and flag it as estimated so the user knows it's
+        // a guess. Bard SBB is the dominant charm-cycle case on Quarm.
         const durKnown = (typeof p.duration_sec === 'number' && p.duration_sec > 0);
-        const durSec   = durKnown ? p.duration_sec : 30;
+        const durSec   = durKnown ? p.duration_sec : 60;
         const durEst   = !durKnown;
         const isBard   = p.charm_class === 'bard' || durEst;   // estimate ≈ bard tempo
         const durRemMs = Math.max(0, durSec * 1000 - elapsed);
