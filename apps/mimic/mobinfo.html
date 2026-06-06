@@ -46,6 +46,11 @@
   .loot .lore{font-size:8px;color:#d2a8ff;padding:0 3px;border-radius:2px;background:rgba(163,113,247,0.2)}
   .loot .seen{font-size:8px;color:#a371f7;padding:0 4px;border-radius:2px;background:rgba(163,113,247,0.15);
               border:1px solid rgba(163,113,247,0.35);font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:0.5px}
+  /* Unique (only-this-mob) win counts ride brighter; shared/multi-source ones
+     dim out so the eye reads "reliable" vs "approximate" at a glance. */
+  .loot .seen.uniq{color:#7ee787;background:rgba(126,231,135,0.12);border-color:rgba(126,231,135,0.35)}
+  .loot .seen.shared{opacity:0.7}
+  .loot .unique{font-size:10px;line-height:1;margin-right:2px;color:#f0b429}
   .loot .empty{font-size:11px;color:#6e7681;font-style:italic;padding:5px 0}
   /* special attack chips */
   .spec{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
@@ -198,17 +203,28 @@
       var tier = lootTier(it.pct);
       var pctTxt = fmtPct(it.pct);
       var lore = it.lore ? '<span class="lore" title="LORE — only one per character">LORE</span>' : '';
-      // "won N×" — Wolf Pack's OFFICIAL award count, sourced only from OpenDKP
-      // raid records (chat-extracted is collected but not counted here — too
-      // much trash-loot crossover during raids to be reliable). 0 = we have
-      // no OpenDKP record of this dropping yet.
+      // ⭐ = item drops only from THIS mob (so the Wolf Pack win-count is
+      //     reliable as "from this mob"). Shared items (spells, gems, common
+      //     cloth) get a dim count — could have come from any of N candidates.
+      var unique = !!it.unique_to_mob;
+      var cands  = +it.candidate_npcs || 0;
+      var uniqueChip = unique ? '<span class="unique" title="Unique drop — only this NPC drops this item">⭐</span>' : '';
+      // "N× won" — Wolf Pack's TOTAL OpenDKP win count for this item across
+      // all sources (confident + ambiguous + unknown). For unique items the
+      // count IS from this mob; for shared items it's the total ever won, and
+      // the tooltip surfaces how many candidate sources exist.
       var seen = +it.seen || 0;
+      var seenTip = unique
+        ? 'OpenDKP win-count for this item — drops only from this NPC (unique)'
+        : 'Wolf Pack OpenDKP win-count across ALL ' + cands + ' mobs that drop this item';
       var seenChip = seen > 0
-        ? '<span class="seen" title="OpenDKP-awarded ' + seen + ' time' + (seen === 1 ? '' : 's') + ' to Wolf Pack">' + seen + '× won</span>'
+        ? '<span class="seen' + (unique ? ' uniq' : ' shared') + '" title="' + esc(seenTip) + '">' + seen + '× won</span>'
         : '';
       var title = it.name + (it.pct != null ? ' · ' + pctTxt + ' published drop rate' : '')
-                + (seen > 0 ? ' · OpenDKP awarded ' + seen + '× to Wolf Pack' : '');
+                + (unique ? ' · unique to this mob' : (cands > 1 ? ' · also drops from ' + (cands - 1) + ' other NPC(s)' : ''))
+                + (seen > 0 ? ' · won ' + seen + '× by Wolf Pack' : '');
       rows += '<div class="row ' + tier + '" title="' + esc(title) + '">'
+            + uniqueChip
             + '<span class="nm">' + esc(it.name) + '</span>'
             + lore
             + seenChip

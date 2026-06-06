@@ -4690,27 +4690,46 @@ async function _handleAgentMobInfo(req, res) {
             seen:  0,
           }));
           loot.sort((a, b) => (b.pct || 0) - (a.pct || 0));
-          // Layer in Wolf Pack's OFFICIAL drop count — source='opendkp' only.
-          // Chat-extracted and /loot-command rows are still collected (the
-          // chat→loot pipeline keeps writing for future "saw it drop but
-          // didn't win" analyses), but they're noisy when raid kills happen
-          // alongside trash loot in the same window (Vex Thal trash sharing
-          // drops with the boss is the canonical case). The visible "× N"
-          // count on the Loot tab tracks the OpenDKP awarded record only —
-          // that's the canonical "we got this" signal.
+          // Layer in Wolf Pack's TOTAL won-count per item from OpenDKP records.
+          // Counts every loot_observations row across all opendkp* sources
+          // (confident, ambiguous, unknown) by item_id — not by (npc,item) —
+          // because most ambiguous/unknown rows don't carry a confident npc_id
+          // anyway. Per-mob attribution is approximated through the published
+          // drop table: if this item is on this mob's drop list, we surface
+          // its total win-count alongside; how trustworthy that count is to
+          // THIS specific mob is conveyed by the uniqueness indicator (single-
+          // source vs many) so the user can tell "Crown of Rile 50× — and it
+          // only drops from Lord Nagafen" from "Diamond 50× — but Diamond
+          // drops from 1300 NPCs."
           try {
             const guildId  = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-            const npcId    = r.id;
-            // Matching on npc_id (set by both /backfillopendkploot and the
-            // chat-extracted path) is exact; npc_name_lower is the legacy key
-            // and still works for the /loot-command rows but we no longer count
-            // those.
-            const obs = await supabase.select('loot_observations',
-              `guild_id=eq.${encodeURIComponent(guildId)}&npc_id=eq.${npcId}&source=eq.opendkp&select=item_id&limit=20000`);
-            if (Array.isArray(obs) && obs.length) {
-              const cnt = new Map();
-              for (const row of obs) cnt.set(row.item_id, (cnt.get(row.item_id) || 0) + 1);
-              for (const it of loot) { const n = cnt.get(it.id); if (n) it.seen = n; }
+            const itemIds  = loot.map(it => it.id);
+            if (itemIds.length > 0) {
+              // a) Total Wolf Pack win counts per item across all OpenDKP sources.
+              const obs = await supabase.select('loot_observations',
+                `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&item_id=in.(${itemIds.join(',')})&select=item_id&limit=50000`);
+              if (Array.isArray(obs)) {
+                const cnt = new Map();
+                for (const row of obs) cnt.set(row.item_id, (cnt.get(row.item_id) || 0) + 1);
+                for (const it of loot) { const n = cnt.get(it.id); if (n) it.seen = n; }
+              }
+              // b) Per-item "how many NPCs drop this" → exposes uniqueness so
+              //    the overlay can ⭐ items unique to THIS mob and dim items
+              //    that drop from many places (gems, spells, cloth pieces).
+              const cands = await supabase.select('eqemu_npc_drops',
+                `item_id=in.(${itemIds.join(',')})&select=item_id,npc_id&limit=50000`);
+              if (Array.isArray(cands)) {
+                const distinct = new Map();
+                for (const row of cands) {
+                  if (!distinct.has(row.item_id)) distinct.set(row.item_id, new Set());
+                  distinct.get(row.item_id).add(row.npc_id);
+                }
+                for (const it of loot) {
+                  const n = distinct.get(it.id);
+                  it.candidate_npcs = n ? n.size : 0;
+                  it.unique_to_mob  = (n && n.size === 1);
+                }
+              }
             }
           } catch (err) { console.warn('[mob-info] observed-count fetch failed:', err?.message); }
         }
