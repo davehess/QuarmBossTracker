@@ -4489,6 +4489,72 @@ async function _handleAgentSpellCatalog(req, res) {
   return res.end(_spellCatalogCache.body);
 }
 
+// GET /api/agent/item-clickies
+//
+// Returns the click-effect catalog for every item that has one. Lets the
+// Mimic melody overlay show the right cast time when a player triggers an
+// item (Robe of the Spring → 12s Skin like Nature, not the spell's bare
+// 5s). Shape: { version, fetched_at, count, entries: [{ name, casttime,
+// clickeffect, clicktype, clicklevel }] }. Cached aggressively because the
+// item catalog is huge but virtually static.
+//
+// Defensively handles the case where the migration adding casttime /
+// clickeffect / clicktype columns hasn't applied yet — returns an empty
+// catalog instead of 500ing so the agent can still operate.
+let _itemClickyCache    = null;
+const _ITEM_CLICKY_TTL_MS = 6 * 60 * 60 * 1000;
+async function _handleAgentItemClickies(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const fresh = _itemClickyCache && (Date.now() - _itemClickyCache.fetchedAt) < _ITEM_CLICKY_TTL_MS;
+  if (!fresh) {
+    const entries = [];
+    try {
+      const supabase = require('./utils/supabase');
+      let from = 0;
+      const PAGE = 1000;
+      while (true) {
+        const data = await supabase.select('eqemu_items',
+          `select=id,name,casttime,clickeffect,clicktype,clicklevel&clickeffect=not.is.null&order=id.asc&offset=${from}&limit=${PAGE}`);
+        if (!Array.isArray(data) || data.length === 0) break;
+        for (const r of data) {
+          entries.push({
+            id: r.id, name: r.name,
+            casttime: r.casttime, clickeffect: r.clickeffect,
+            clicktype: r.clicktype, clicklevel: r.clicklevel,
+          });
+        }
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+    } catch (err) {
+      // Column missing (migration not applied yet) or other transient
+      // failure — keep the bot alive and return an empty catalog so the
+      // agent gracefully falls back to spell-based cast times.
+      console.warn('[item-clickies] fetch failed (returning empty):', err && err.message);
+    }
+    const body = JSON.stringify({
+      version: 1,
+      fetched_at: new Date().toISOString(),
+      count: entries.length,
+      entries,
+    });
+    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+    _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+  }
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch && ifNoneMatch === _itemClickyCache.etag) {
+    res.writeHead(304, { 'ETag': _itemClickyCache.etag, 'Cache-Control': 'max-age=21600' });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'ETag': _itemClickyCache.etag,
+    'Cache-Control': 'max-age=21600',
+  });
+  return res.end(_itemClickyCache.body);
+}
+
 // GET /api/agent/mob-info?name=<npc>
 //
 // Target-mob lookup for Mimic's Mob Info overlay. Resolves the agent's current
@@ -6543,6 +6609,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentSpellCatalog(req, res); }
     catch (err) {
       console.error('[spell-catalog] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/item-clickies')) {
+    try { return await _handleAgentItemClickies(req, res); }
+    catch (err) {
+      console.error('[item-clickies] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

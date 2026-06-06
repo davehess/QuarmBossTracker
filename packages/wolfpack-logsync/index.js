@@ -1316,14 +1316,30 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
   if (state.kind !== 'song' || kind === 'song') state.kind = kind;
   const name = String(spellName);
   const lower = name.toLowerCase();
+  // Item-clicky cast-time override. If we saw "Your <item> begins to glow"
+  // for this character within CLICKY_WINDOW_MS, the cast that's starting
+  // now is from that clicky and should use the ITEM's casttime instead of
+  // the underlying spell's. Consume the pending clicky on use so it can't
+  // attach to a later, unrelated cast.
+  let clickyCastMs = null;
+  const pending = _pendingClickies.get(key);
+  if (pending && (atMs - pending.atMs) <= CLICKY_WINDOW_MS) {
+    if (typeof pending.castMs === 'number' && pending.castMs > 0) clickyCastMs = pending.castMs;
+    _pendingClickies.delete(key);
+  } else if (pending) {
+    _pendingClickies.delete(key);   // expired, drop
+  }
   const existingIdx = state.order.findIndex(o => o && (o.name || '').toLowerCase() === lower);
   if (existingIdx >= 0) {
     if (state.cycleLength === 0) state.cycleLength = state.order.length;
     state.currentPos = existingIdx;
     state.order[existingIdx].kind = kind;
+    if (clickyCastMs) state.order[existingIdx].cast_ms = clickyCastMs;
   } else {
     if (state.order.length >= MELODY_CAP) state.order.shift();
-    state.order.push({ name, kind });
+    const entry = { name, kind };
+    if (clickyCastMs) entry.cast_ms = clickyCastMs;
+    state.order.push(entry);
     state.currentPos = state.order.length - 1;
   }
   state.castStartedAt = atMs;
@@ -4410,14 +4426,20 @@ function _serializeForDashboard() {
               out.remaining_secs  = buff.ticks * 6;
               out.buff_name       = buff.name;
             }
-            // Per-song cast time from the spell catalog. Lets the overlay's
-            // progress bar fill at the right rate for long-cast clickies
-            // (Blood Orchid Katana → Spirit of Wolf is 8s, not the 3s bard
-            // song default). Falls back to the row-kind default when the
-            // catalog has no entry.
-            const cat = _spellByNameLower.get(String(e.name).toLowerCase());
-            if (cat && typeof cat.cast_ms === 'number' && cat.cast_ms > 0) {
-              out.cast_ms = cat.cast_ms;
+            // Per-song cast time. Precedence:
+            //   1. ITEM cast time attached to the entry by _bumpBardMelody
+            //      when a "Your <item> begins to glow" line preceded the cast
+            //      (Robe of the Spring → 12s Skin like Nature).
+            //   2. SPELL catalog cast time (most clickies + manual casts).
+            //   3. (Fallback handled overlay-side: 3s for songs, 4s for
+            //      generic spells.)
+            if (typeof e.cast_ms === 'number' && e.cast_ms > 0) {
+              out.cast_ms = e.cast_ms;
+            } else {
+              const cat = _spellByNameLower.get(String(e.name).toLowerCase());
+              if (cat && typeof cat.cast_ms === 'number' && cat.cast_ms > 0) {
+                out.cast_ms = cat.cast_ms;
+              }
             }
             return out;
           });
@@ -11977,6 +11999,21 @@ let _spellByNameLower = new Map();
 let _spellCatalogMeta = null;
 const SPELL_CATALOG_FILE = path.join(__dirname, 'logsync.spell-catalog.json');
 
+// Item-clicky catalog — item name (lowercased) → { casttime, clickeffect,
+// clicktype, clicklevel }. Lets the melody overlay use the ITEM's cast
+// time instead of the underlying spell's when a player triggers a clicky
+// (Robe of the Spring → 12s Skin like Nature, not the bare spell's 5s).
+let _itemClickyByNameLower = new Map();
+let _itemClickyMeta = null;
+const ITEM_CLICKY_FILE = path.join(__dirname, 'logsync.item-clickies.json');
+
+// Pending clicky cast — set when we see "Your <item> begins to glow."
+// in the log. When Zeal label 134 transitions within CLICKY_WINDOW_MS,
+// the resulting cast inherits the item's cast time. Cleared after use
+// or after the window expires.
+const CLICKY_WINDOW_MS = 3000;
+const _pendingClickies = new Map();   // character → { itemName, castMs, atMs }
+
 function _loadSpellCatalogFromDisk() {
   try {
     if (!fs.existsSync(SPELL_CATALOG_FILE)) return;
@@ -12064,6 +12101,77 @@ function fetchSpellCatalog({ botUrl, token }) {
       req.on('timeout', () => { req.destroy(); resolve(); });
       req.end();
     } catch (err) { console.warn('[spell-catalog] setup error:', err && err.message); resolve(); }
+  });
+}
+
+function _loadItemClickiesFromDisk() {
+  try {
+    if (!fs.existsSync(ITEM_CLICKY_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(ITEM_CLICKY_FILE, 'utf8'));
+    if (!Array.isArray(raw.entries)) return;
+    _itemClickyByNameLower = new Map();
+    for (const e of raw.entries) {
+      if (e && e.name) _itemClickyByNameLower.set(String(e.name).toLowerCase(), e);
+    }
+    _itemClickyMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    console.log(`[item-clickies] loaded ${raw.entries.length} clicky items from disk (cached ${raw.fetched_at || '?'})`);
+  } catch (err) {
+    console.warn('[item-clickies] disk load failed:', err && err.message);
+  }
+}
+
+function fetchItemClickies({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/item-clickies');
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      };
+      if (_itemClickyMeta && _itemClickyMeta.etag) headers['If-None-Match'] = _itemClickyMeta.etag;
+      const req = mod.request({
+        method: 'GET', hostname: u.hostname, port: u.port,
+        path: u.pathname + u.search, headers, timeout: 30000,
+      }, (res) => {
+        if (res.statusCode === 304) { res.resume(); return resolve(); }
+        if (res.statusCode !== 200) {
+          res.resume();
+          // Older bots without the route fall through to the health check
+          // (200 OK plain text). Don't spam warnings — just stop trying.
+          return resolve();
+        }
+        const etag = res.headers && res.headers.etag;
+        const ctype = (res.headers && res.headers['content-type']) || '';
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          const looksJson = /json/i.test(ctype) || /^\s*[{[]/.test(body);
+          if (!looksJson) return resolve();
+          try {
+            const data = JSON.parse(body);
+            if (!Array.isArray(data.entries)) { resolve(); return; }
+            _itemClickyByNameLower = new Map();
+            for (const e of data.entries) {
+              if (e && e.name) _itemClickyByNameLower.set(String(e.name).toLowerCase(), e);
+            }
+            _itemClickyMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            try {
+              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
+              fs.writeFileSync(ITEM_CLICKY_FILE + '.tmp', JSON.stringify(out));
+              fs.renameSync(ITEM_CLICKY_FILE + '.tmp', ITEM_CLICKY_FILE);
+            } catch (e) { /* disk cache best-effort */ }
+            console.log(`[item-clickies] fetched ${data.entries.length} clicky items from bot`);
+          } catch (err) { console.warn('[item-clickies] parse failed:', err && err.message); }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch (err) { console.warn('[item-clickies] setup error:', err && err.message); resolve(); }
   });
 }
 
@@ -13863,6 +13971,7 @@ async function main() {
   // to refresh from the bot. We don't await — a slow fetch must not delay
   // boot, and the resisted-spell card just shows plain names until it lands.
   _loadSpellCatalogFromDisk();
+  _loadItemClickiesFromDisk();
   // Restore the Pet tracker's in-memory state (last /pet health, observed buff
   // landings, running combat stats) so a Mimic restart or LD reconnect brings
   // the existing pet timers + stats back instead of starting blank. TTLs in
@@ -13870,11 +13979,13 @@ async function main() {
   _loadPetStateFromDisk();
   if (!dryRun && token) {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
+    fetchItemClickies({ botUrl, token }).catch(() => {});
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
     // but a daily check is cheap (the bot serves a 304 if nothing changed)
     // and stops a long-running agent from drifting indefinitely.
     setInterval(() => {
       fetchSpellCatalog({ botUrl, token }).catch(() => {});
+      fetchItemClickies({ botUrl, token }).catch(() => {});
     }, 24 * 60 * 60 * 1000).unref();
   }
   // Operator's declared main (if the launcher passed --character) — used to
@@ -14172,6 +14283,27 @@ async function main() {
               try { if (stats.castCounts && stats.castCounts[old])  delete stats.castCounts[old]; } catch {}
               try { if (stats.sessionDeeps && stats.sessionDeeps[old]) delete stats.sessionDeeps[old]; } catch {}
               try { if (stats.sessionMends && stats.sessionMends[old]) delete stats.sessionMends[old]; } catch {}
+            }
+          }
+        }
+
+        // ── Item clicky detection ──────────────────────────────────────────
+        // "Your <Item> begins to glow." fires for any equipped/inventory
+        // clicky use (Robe of the Spring, Voice of the Serpent, Blood Orchid
+        // Katana, etc). The underlying spell starts casting immediately
+        // after, so we stash the item's cast time keyed by character and let
+        // _bumpBardMelody pick it up when Zeal label 134 changes within
+        // CLICKY_WINDOW_MS. Without this the overlay defaults to the bare
+        // spell's cast time, which is wrong for any item that overrides it.
+        {
+          const m = line.match(/\]\s+Your\s+(.+?)\s+begins\s+to\s+(?:glow|sparkle|hum|smoke|burn)\b/i);
+          if (m) {
+            const itemName = m[1];
+            const cat = _itemClickyByNameLower.get(itemName.toLowerCase());
+            const castMs = (cat && typeof cat.casttime === 'number' && cat.casttime > 0) ? cat.casttime : null;
+            if (b.character) {
+              _pendingClickies.set(b.character.toLowerCase(),
+                { itemName, castMs, atMs: Date.now() });
             }
           }
         }
