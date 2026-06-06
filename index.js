@@ -4661,8 +4661,15 @@ async function _handleAgentMobInfo(req, res) {
   let mob = null;
   try {
     // Case-insensitive exact match on the normalized (underscored) name.
+    // Try both the plain and #-prefixed forms. Quarm tags instanced/flagged
+    // raid NPCs with a leading "#" in eqemu_npc_types (e.g. "#Arbiter_Korazhk",
+    // "#The_Final_Arbiter") — the agent + bot both strip the # during target-
+    // name normalization, so a straight ilike on the no-# form would never
+    // match those rows. PostgREST OR matches either case in a single round trip.
+    const encPlain  = encodeURIComponent(norm);
+    const encHashed = encodeURIComponent('#' + norm);
     const rows = await supabase.select('eqemu_npc_types',
-      `name=ilike.${encodeURIComponent(norm)}&select=id,name,class,level,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
+      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
     const r = Array.isArray(rows) && rows[0];
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
