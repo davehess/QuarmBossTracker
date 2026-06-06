@@ -4332,6 +4332,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks">
   <span>Jump to wolfpack.quest:</span>
+  <a href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer" title="Raid hub — live grouped roster, color tiers, buff coverage at a glance">/raid</a>
   <a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" title="Your /me dashboard — stats, settings, recent">/me</a>
   <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" title="Recent parses (last 30 days)">parses</a>
   <a href="https://wolfpack.quest/pvp" target="_blank" rel="noreferrer" title="PvP leaderboard">pvp</a>
@@ -4349,8 +4350,13 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="info">Info / Stats</button>
   <button data-tab="optin">Opt-in Logs</button>
+  <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
+     class="nav-quest"
+     style="margin-left:auto;color:var(--orange);border-color:var(--orange)"
+     title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
   <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
      class="nav-quest"
+     style="margin-left:6px"
      title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
   <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections">⚙ Panels</button>
   <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
@@ -11520,10 +11526,14 @@ function _translateDotNetRegex(pattern) {
   let p = String(pattern || '');
   // (?>...) → (?:...)
   p = p.replace(/\(\?>/g, '(?:');
-  // {s} / {S} / {S2} / {c} → permissive captures. {c} is the agent's own
-  // character (substituted at match time later, ideally) but as a stop-gap
-  // we use a non-greedy word match so the trigger compiles & fires.
-  p = p.replace(/\{[sScC]\d*\}/g, '(?:[^\\s]+)');
+  // {s} / {S} / {S2} / {c} → permissive name-like capture. The earlier form
+  // ([^\s]+) refused ANY whitespace, so multi-word mob names ("Zov Va Dyn",
+  // "Aten Ha Ra", "Lord Nagafen") never matched and triggers like Enrage
+  // silently never fired. Allow word chars + space + apostrophe + hyphen,
+  // lazy so the surrounding anchored context (^...$) still constrains the
+  // match. {c} is the agent's own character — substituted at match time
+  // ideally; the stop-gap keeps the trigger compiling + firing.
+  p = p.replace(/\{[sScC]\d*\}/g, "(?:[\\w' -]+?)");
   return p;
 }
 
