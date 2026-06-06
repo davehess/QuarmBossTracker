@@ -667,9 +667,11 @@ function mergeWhoData(rows) {
   const now = new Date().toISOString();
   for (const r of rows) {
     if (!r || !r.name) continue;
-    // Skip level 1-4 characters — traders parked in EC/WC with no combat activity.
-    // Only filter when level is known; anonymous rows (level = null) are kept.
-    if (r.level !== null && r.level !== undefined && r.level < 5) continue;
+    // Threat-focused capture: L50+ only. The /who registry is for PVP target
+    // selection — low-level chars (bank alts, leveling toons, trade chars in EC/
+    // WC) are noise. Anonymous rows (level = null) are explicitly KEPT — could
+    // be a hidden L60 raider; a future de-anon may fill in their real class.
+    if (r.level !== null && r.level !== undefined && r.level < 50) continue;
     const k   = r.name.toLowerCase();
     const old = s.whoData[k] || {};
     // Sticky is_zek: once a character is flagged, they stay flagged unless

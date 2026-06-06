@@ -1272,9 +1272,12 @@ function petBuffsForOwner(ownerLower) {
 
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
-  // Skip level 1-4 characters — these are almost always traders parked in EC/WC.
-  // We only filter when we KNOW the level (null = anonymous, still kept).
-  if (ev.level !== null && ev.level !== undefined && ev.level < 5) return;
+  // Threat-focused capture: L50+ only. Lower levels are noise for the PVP
+  // target-selection use case the /who registry is built for — bank alts,
+  // trade chars, low-zone leveling toons aren't who we're identifying.
+  // Anonymous rows (level === null) are explicitly KEPT — could be a hidden
+  // L60 raider, and a future de-anon may fill in the class.
+  if (ev.level !== null && ev.level !== undefined && ev.level < 50) return;
   const k   = ev.name.toLowerCase();
   const old = whoData.get(k) || {};
   // Mirror server-side mergeWhoData: don't clobber known fields with nulls
@@ -1366,6 +1369,48 @@ function fetchWhoLookup(names) {
     req.end();
   } catch { for (const n of need) _whoLookupInflight.delete(n.toLowerCase()); }
 }
+// PVP threat-priority ordering for the /who overlay. CC/burst casters go top
+// (neutralize them first), then heal denial, then DPS, then tanks; unknown
+// classes sink to the middle so they don't crowd the actionable rows. Anonymous
+// raiders with a known class from history (via _whoLookupCache → entry.known)
+// use that class for ranking, so a de-anon'd Enchanter sorts to the top even
+// when their live row says ANONYMOUS.
+const _THREAT_RANK = {
+  enchanter: 0, ench: 0, enc: 0,
+  wizard: 1, wiz: 1,
+  necromancer: 2, necro: 2, nec: 2,
+  cleric: 3, clr: 3,
+  druid: 4, dru: 4,
+  shaman: 5, shm: 5,
+  magician: 6, mage: 6, mag: 6,
+  bard: 7, brd: 7,
+  beastlord: 8, bst: 8,
+  ranger: 9, rng: 9,
+  rogue: 10, rog: 10,
+  monk: 11, mnk: 11,
+  paladin: 12, pal: 12,
+  'shadow knight': 13, shadowknight: 13, shd: 13, sk: 13,
+  warrior: 14, war: 14,
+  berserker: 15, ber: 15,
+};
+const _THREAT_UNKNOWN = 50;            // unknown / un-de-anon'd → middle bucket
+function _classThreatRank(p) {
+  const live = p.class && String(p.class).toLowerCase().trim();
+  if (live && _THREAT_RANK[live] != null) return _THREAT_RANK[live];
+  const knownClass = p.known && p.known.class && String(p.known.class).toLowerCase().trim();
+  if (knownClass && _THREAT_RANK[knownClass] != null) return _THREAT_RANK[knownClass];
+  return _THREAT_UNKNOWN;
+}
+function _threatSort(a, b) {
+  const ra = _classThreatRank(a), rb = _classThreatRank(b);
+  if (ra !== rb) return ra - rb;
+  // Within the same class bucket: higher level first; then alpha.
+  const la = a.level || (a.known && a.known.level) || 0;
+  const lb = b.level || (b.known && b.known.level) || 0;
+  if (la !== lb) return lb - la;
+  return String(a.name || '').localeCompare(String(b.name || ''));
+}
+
 function buildWhoSnapshot() {
   const now = Date.now();
   // Current set = the latest /who run. Fallback: names sharing the freshest
@@ -1400,7 +1445,7 @@ function buildWhoSnapshot() {
     }
   }
   if (anonNeeded.length) fetchWhoLookup(anonNeeded);
-  current.sort((a, b) => (b.level || 0) - (a.level || 0));
+  current.sort(_threatSort);
   gone.sort((a, b) => (Date.parse(b.observedAt || 0) || 0) - (Date.parse(a.observedAt || 0) || 0));
   return {
     current,
