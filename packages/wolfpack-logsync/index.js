@@ -1232,6 +1232,28 @@ function _reconcileGaugeCharms() {
 const _bardMelody = new Map();
 const MELODY_CAP     = 5;       // Quarm max /melody size
 const MELODY_IDLE_MS = 30_000;  // drop overlay when no sing for 30s
+
+// Song → buff-window-name aliases for songs whose landed effect is reported
+// in the buff window under a DIFFERENT name than what the bard sang. Add as
+// the guild surfaces them — the overlay matches by song name first, then
+// falls back to this table, so direct-match songs (Amplification,
+// Harmonize, etc.) need no entries.
+const SONG_BUFF_ALIASES = new Map([
+  ["niv's melody of preservation", "breath of harmony"],
+  ["niv`s melody of preservation", "breath of harmony"],   // backtick variant some clients emit
+]);
+function _findSongBuff(songName, zealBuffs) {
+  if (!songName || !Array.isArray(zealBuffs) || zealBuffs.length === 0) return null;
+  const sLow = String(songName).toLowerCase();
+  const alias = SONG_BUFF_ALIASES.get(sLow);
+  for (const b of zealBuffs) {
+    if (!b || !b.name) continue;
+    const bLow = String(b.name).toLowerCase();
+    if (bLow === sLow) return b;
+    if (alias && bLow === alias) return b;
+  }
+  return null;
+}
 function _bumpBardMelody(character, songName, atMs) {
   if (!character || !songName) return;
   const key = String(character).toLowerCase();
@@ -4212,13 +4234,33 @@ function _serializeForDashboard() {
         .filter(Boolean));
       const now = Date.now();
       const out = {};
+      // _zealState keys are casing-sensitive (the character's display name as
+      // Mimic pushes it). Build a lowercase index so we can match the melody
+      // key (always lowercased) against the Zeal feed.
+      const zealByLower = new Map();
+      for (const ch of Object.keys(_zealState || {})) zealByLower.set(ch.toLowerCase(), _zealState[ch]);
       for (const [k, state] of _bardMelody.entries()) {
         if (myChars.size > 0 && !myChars.has(k)) continue;
         if (!state || !state.order || state.order.length === 0) continue;
         if (state.lastChangeAt && (now - state.lastChangeAt) > MELODY_IDLE_MS) continue;
+        // Enrich each song with its CURRENT buff-window duration when the
+        // song's effect is visible in Zeal's buff slots. Match the song's
+        // own name first, then fall back to the alias table for songs whose
+        // landing buff has a different name (Niv's Melody of Preservation →
+        // Breath of Harmony, etc.). Ticks count down by 1 every 6s; the
+        // overlay multiplies by 6 to show MM:SS remaining.
+        const zealSt = zealByLower.get(k);
+        const zealBuffs = (zealSt && Array.isArray(zealSt.buffs)) ? zealSt.buffs : [];
+        const enrichedOrder = state.order.map(songName => {
+          const buff = _findSongBuff(songName, zealBuffs);
+          if (buff && typeof buff.ticks === 'number' && buff.ticks > 0) {
+            return { name: songName, remaining_ticks: buff.ticks, remaining_secs: buff.ticks * 6, buff_name: buff.name };
+          }
+          return { name: songName };
+        });
         out[k] = {
           character:      k,
-          order:          state.order,
+          order:          enrichedOrder,
           currentPos:     state.currentPos,
           castStartedAt:  state.castStartedAt,
           cycleLength:    state.cycleLength,
@@ -5746,6 +5788,16 @@ function renderTriggers(s) {
   }
   h += '</div>';
 
+  // Suggested triggers — one-click catalog of pre-tested alerts grouped by
+  // category. Toggling the Enable checkbox creates/removes a personal
+  // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
+  // the 🔊 toggle flips inline TTS on the action. Sits ABOVE personal
+  // triggers because it's the easiest entry point for new users — building
+  // a custom regex is a deep-end activity, not a default workflow.
+  h += '<div class="card wide"><h2>🎯 Suggested triggers <span class="dim" style="font-size:11px;font-weight:normal">(one-click — toggle enabled + TTS per row)</span></h2>';
+  h += '<div id="trigSuggestedList" class="dim" style="font-size:12px">loading…</div>';
+  h += '</div>';
+
   // Personal triggers list — server-rendered table the user can toggle / edit /
   // delete via dedicated buttons. The form panel below owns the create flow.
   h += '<div class="card wide"><h2>👤 Personal triggers <span class="dim" style="font-size:11px;font-weight:normal">(this machine only)</span></h2>';
@@ -5801,6 +5853,9 @@ function renderTriggers(s) {
   // installs itself once and rebinds list rows on every paint).
   if (window._wpTrigEditor && window._wpTrigEditor.mount) {
     window._wpTrigEditor.mount();
+  }
+  if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
+    window._wpSuggestedTriggers.mount();
   }
 }
 
@@ -8112,6 +8167,92 @@ async function dismissTopDamage(key) {
   window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); } };
 })();
 
+// ── 🎯 Suggested triggers panel ─────────────────────────────────────────────
+// One-click pre-tested alerts. Each row is a checkbox (enabled) + speaker
+// toggle (TTS) backed by /api/triggers/suggested. The list is small and
+// stable, so we re-fetch on every mount + after each toggle (cheapest path).
+(function setupSuggestedTriggers(){
+  var mounted = false;
+  var listEl = null;
+  function badge(cat){
+    var color = ({ buff:'#7ee787', debuff:'#ff7b72', mob:'#f0883e',
+                   self:'#d2a8ff', utility:'#79c0ff' })[cat] || '#8b949e';
+    return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + cat + '</span>';
+  }
+  function rowHtml(t){
+    return '<tr data-tid="' + t.id + '">'
+         + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (t.enabled ? 'checked' : '') + '></td>'
+         + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + t.overlay_text + '</span></div></td>'
+         + '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>'
+         + '</tr>';
+  }
+  function groupHtml(category, label, items){
+    if (!items || items.length === 0) return '';
+    var rows = items.map(rowHtml).join('');
+    return '<div style="margin-top:8px"><div style="font-size:11px;color:var(--dim);margin-bottom:3px">' + label + '</div>'
+         + '<table style="width:100%;font-size:12px;border-collapse:collapse;background:rgba(255,255,255,0.02);border-radius:4px"><tr style="color:var(--dim);font-size:10px;border-bottom:1px solid var(--border)">'
+         + '<th style="padding:3px 6px;text-align:left;width:24px">on</th>'
+         + '<th style="padding:3px 6px;text-align:left">cat</th>'
+         + '<th style="padding:3px 6px;text-align:left">trigger</th>'
+         + '<th style="padding:3px 6px;text-align:center;width:60px">TTS</th>'
+         + '</tr>' + rows + '</table></div>';
+  }
+  async function fetchAndRender(){
+    if (!listEl) return;
+    try {
+      var r = await fetch('/api/triggers/suggested');
+      var j = await r.json();
+      var triggers = (j && j.triggers) || [];
+      if (triggers.length === 0) { listEl.innerHTML = '<div style="color:var(--dim);font-size:12px">No suggested triggers configured.</div>'; return; }
+      var groups = { buff:[], debuff:[], mob:[], self:[], utility:[] };
+      for (var i=0;i<triggers.length;i++){ var t = triggers[i]; (groups[t.category] || (groups.utility)).push(t); }
+      var html = '';
+      html += groupHtml('buff',    '✨ Your buffs dropping',  groups.buff);
+      html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
+      html += groupHtml('self',    '⚠ Self-status alerts',    groups.self);
+      html += groupHtml('mob',     '👹 Boss / mob callouts',  groups.mob);
+      html += groupHtml('utility', '🔧 Utility (HP / mana)',  groups.utility);
+      listEl.innerHTML = html;
+      // Wire toggles. Both flips POST to the same endpoint with partial state;
+      // missing fields preserve current values server-side.
+      listEl.querySelectorAll('tr[data-tid]').forEach(function(tr){
+        var id = tr.getAttribute('data-tid');
+        var en = tr.querySelector('.trgEn');
+        var tts = tr.querySelector('.trgTts');
+        if (en) en.addEventListener('change', async function(){
+          tr.style.opacity = '0.5';
+          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked }) }); }
+          catch (e) {}
+          tr.style.opacity = '1';
+          fetchAndRender();   // refresh so tts checkbox enabled-state syncs
+        });
+        if (tts) tts.addEventListener('change', async function(){
+          tr.style.opacity = '0.5';
+          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, tts: tts.checked }) }); }
+          catch (e) {}
+          tr.style.opacity = '1';
+        });
+      });
+    } catch (e) {
+      listEl.innerHTML = '<div style="color:var(--red);font-size:12px">Failed to load suggested triggers: ' + e.message + '</div>';
+    }
+  }
+  function mount(){
+    if (mounted) return;
+    listEl = document.getElementById('trigSuggestedList');
+    if (!listEl) return;
+    mounted = true;
+    fetchAndRender();
+  }
+  function remountIfNeeded(){
+    var n = document.getElementById('trigSuggestedList');
+    if (!n) { mounted = false; return; }
+    if (n !== listEl) { mounted = false; mount(); }
+  }
+  window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); } };
+})();
+
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
 // The operator's own melee + spell criticals this session, per box. Rendered in
 // the main section loop into the stable #wpCritsCard placeholder (in renderDash)
@@ -8542,6 +8683,79 @@ function startWebDashboard(port) {
       if (req.url === '/api/personal-triggers' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ triggers: _serializePersonalTriggers() }));
+      }
+      // GET /api/triggers/suggested — read-only catalog of one-click trigger
+      // templates, enriched with the user's current enabled/TTS state for each.
+      // Powers the "Suggested triggers" panel on the dashboard so adding a
+      // pre-tested alert is a checkbox click instead of a regex paste.
+      if (req.url === '/api/triggers/suggested' && req.method === 'GET') {
+        const items = SUGGESTED_TRIGGERS.map(tpl => {
+          const row = _findSuggestedRow(tpl.id);
+          return {
+            id:        tpl.id,
+            category:  tpl.category,
+            label:     tpl.label,
+            pattern:   tpl.pattern,
+            overlay_text: tpl.overlay_text,
+            overlay_color: tpl.overlay_color || 'red',
+            overlay_ms: tpl.overlay_ms || 4000,
+            tts_default: !!tpl.tts_default,
+            zeal_condition: tpl.zeal_condition || null,
+            cooldown_seconds: tpl.cooldown_seconds || 0,
+            // User-state slice
+            enabled:    !!(row && row.enabled),
+            tts:        _suggestedHasTts(row),
+          };
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ triggers: items }));
+      }
+      // POST /api/triggers/suggested — body { id, enabled?, tts? }. Toggles
+      // a specific suggested trigger by id; missing fields preserve current
+      // state. Enabling instantiates the template into _personalTriggers
+      // (id "suggested:<id>"); disabling removes it. TTS toggles add/remove
+      // the inline `tts` field on the text_overlay action so the trigger
+      // overlay window decides whether to speak.
+      if (req.url === '/api/triggers/suggested' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        const id = String(payload?.id || '').trim();
+        const tpl = SUGGESTED_TRIGGERS.find(t => t.id === id);
+        if (!tpl) { res.writeHead(404); return res.end(JSON.stringify({ error: 'unknown template id' })); }
+        const wantEnabled = payload.enabled == null ? null : !!payload.enabled;
+        const wantTts     = payload.tts == null     ? null : !!payload.tts;
+        const synId = 'suggested:' + tpl.id;
+        const existingIdx = _personalTriggers.findIndex(t => t && t.id === synId);
+        const existing = existingIdx >= 0 ? _personalTriggers[existingIdx] : null;
+        // Resolve desired final state: enabled defaults to existing-or-true;
+        // tts defaults to existing-or-tpl.tts_default.
+        const finalEnabled = wantEnabled != null ? wantEnabled : !!existing;
+        const finalTts     = wantTts     != null ? wantTts     : (existing ? _suggestedHasTts(existing) : !!tpl.tts_default);
+        if (!finalEnabled) {
+          // Disable → drop the row entirely. The user can re-toggle the
+          // checkbox to restore (with template defaults).
+          if (existingIdx >= 0) {
+            _personalTriggers.splice(existingIdx, 1);
+            savePersonalTriggers();
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, enabled: false, tts: false }));
+        }
+        // Enabled — instantiate from the template, then compile + save.
+        const row = _templateToPersonalRow(tpl, { tts: finalTts });
+        try {
+          const compiled = _compilePersonalTrigger(row);
+          if (existingIdx >= 0) _personalTriggers[existingIdx] = compiled;
+          else                  _personalTriggers.push(compiled);
+          savePersonalTriggers();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, enabled: true, tts: finalTts }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'compile failed: ' + (err.message || String(err)) }));
+        }
       }
       if (req.url === '/api/personal-triggers' && req.method === 'POST') {
         const body = await _readBody(req);
@@ -12032,6 +12246,153 @@ function _compileEndEarlyRegex(t) {
     console.warn('[triggers] bad end_early_pattern on "' + (t.name || '?') + '":', err.message);
     return null;
   }
+}
+
+// ── Suggested triggers catalog ─────────────────────────────────────────────
+// One-click trigger templates so a new bard / cleric / etc. can wire up the
+// alerts they actually want without writing regex. Each entry is a fully-
+// formed personal-trigger row except for the volatile fields (enabled, tts).
+// The dashboard reads this list via GET /api/triggers/suggested, marks each
+// entry's state (enabled / tts) based on the matching personal trigger if
+// it exists (matched by the synthetic id "suggested:<template_id>"), and
+// flips toggles via POST /api/triggers/suggested.
+//
+// Categories: 'buff' / 'debuff' / 'mob' / 'self' / 'utility'. These drive
+// the dashboard's visual grouping; the agent doesn't care about them.
+//
+// Pattern conventions: case-insensitive (the default i flag), GINA-style
+// {S1}/{S2}/etc captures are NOT used here — these templates are first-
+// person ("you are…") so there's no name to extract. Adding cooldown_seconds
+// where the trigger could otherwise spam (resists fire every tick).
+const SUGGESTED_TRIGGERS = [
+  // ── Buff drops on YOU — the most-requested alert class. The pattern matches
+  //    the EQ "Your <buff> spell has worn off." line; we cover common Clarity /
+  //    KEI / Aego / POTG / Symbol / Virtue lines individually so each shows
+  //    a category-specific overlay text.
+  { id: 'buff_clarity_drop', category: 'buff', label: 'Clarity / C2 / VoQ dropped',
+    pattern: '^Your (?:Clarity(?: II)?|Voice of Quellious|Gift of (?:Insight|Brilliance)|Koadic\'s Endless Intellect) (?:spell )?has worn off\\.',
+    overlay_text: 'CLARITY DROPPED', overlay_color: 'cyan',  overlay_ms: 5000,
+    tts_default: true,  cooldown_seconds: 3 },
+  { id: 'buff_aego_drop', category: 'buff', label: 'Aego / Virtue / Symbol dropped',
+    pattern: '^Your (?:Aegolism|Virtue|Symbol of (?:Marzin|Ryltan|Naltron|Tnarg|Pinzarn|Transal)|Hand of Virtue|Conviction|Blessing of Aegolism) (?:spell )?has worn off\\.',
+    overlay_text: 'AEGO/SYMBOL DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
+    tts_default: true,  cooldown_seconds: 3 },
+  { id: 'buff_potg_drop', category: 'buff', label: 'POTG / POTC dropped',
+    pattern: '^Your (?:Protection of the (?:Glades|Cabbage|Nine)|Pack Regen) (?:spell )?has worn off\\.',
+    overlay_text: 'POTG DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
+    tts_default: true,  cooldown_seconds: 3 },
+  { id: 'buff_haste_drop', category: 'buff', label: 'Haste dropped',
+    pattern: '^Your (?:Augment(?:ation)?(?: of Death)?|Aanya\'s Quickening|Celerity|Quickness|Swift Like the Wind) (?:spell )?has worn off\\.',
+    overlay_text: 'HASTE DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
+    tts_default: false, cooldown_seconds: 3 },
+  { id: 'buff_dmg_shield_drop', category: 'buff', label: 'Damage shield dropped',
+    pattern: '^Your (?:Shield of (?:Thorns|Spikes|Blades|Brambles|the Eighth|the Magi|the Pellarus)|Thorny Shield|Thistlecoat|Bramblecoat|Spikecoat|Legacy of Spike) (?:spell )?has worn off\\.',
+    overlay_text: 'DAMAGE SHIELD DROPPED', overlay_color: 'cyan', overlay_ms: 4000,
+    tts_default: false, cooldown_seconds: 3 },
+
+  // ── Debuffs landing ON you — actionable: cure, run, recast.
+  { id: 'self_snared', category: 'self', label: 'You are snared / rooted',
+    pattern: '^You have been (?:ensnared|rooted|bound)\\.',
+    overlay_text: 'SNARED / ROOTED', overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 5 },
+  { id: 'self_mezzed', category: 'self', label: 'You are mezzed / charmed',
+    pattern: '^You feel (?:calm|charmed)\\.',
+    overlay_text: 'MEZZED!', overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 5 },
+  { id: 'self_feared', category: 'self', label: 'You are feared',
+    pattern: '^You are afraid\\.',
+    overlay_text: 'FEARED!', overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 5 },
+  { id: 'self_stunned', category: 'self', label: 'You are stunned',
+    pattern: '^You can\'t (?:move|cast spells|do anything while stunned)!',
+    overlay_text: 'STUNNED', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 5 },
+
+  // ── Mob threats — bystander-visible boss callouts.
+  { id: 'mob_rampage', category: 'mob', label: 'Rampage on you',
+    pattern: '\\brampages?\\s+on\\s+(?:you|YOU)\\b',
+    overlay_text: 'RAMPAGE ON YOU', overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 2 },
+  { id: 'mob_enraged', category: 'mob', label: 'Mob is enraged',
+    pattern: '\\bbegins to enrage\\b',
+    overlay_text: 'ENRAGED — STOP DPS', overlay_color: 'red', overlay_ms: 5000,
+    tts_default: true,  cooldown_seconds: 5 },
+  { id: 'mob_fbss_dispel', category: 'mob', label: 'You were dispelled',
+    pattern: '^Your (?:enchantments|magic|spells) (?:fade|wither|wear off)\\b',
+    overlay_text: 'DISPELLED', overlay_color: 'yellow', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 3 },
+
+  // ── Cast feedback — fast-paced raids need quick "did it land?" answers.
+  { id: 'cast_resisted_self', category: 'debuff', label: 'Your spell was resisted',
+    pattern: '^Your target resisted the (.+?) spell\\.',
+    overlay_text: 'RESISTED: {1}', overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 1 },
+  { id: 'cast_interrupted', category: 'self', label: 'Your cast was interrupted',
+    pattern: '^Your (?:spell|target) (?:was )?interrupted',
+    overlay_text: 'INTERRUPTED', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 1 },
+  { id: 'cast_fizzle', category: 'self', label: 'Spell fizzle',
+    pattern: '^You miss the gem|^Your spell fizzles!',
+    overlay_text: 'FIZZLE', overlay_color: 'yellow', overlay_ms: 2000,
+    tts_default: false, cooldown_seconds: 1 },
+
+  // ── Utility — useful but not-every-class triggers.
+  { id: 'low_mana_warn', category: 'utility', label: 'Low on mana (≤20%)',
+    pattern: '',
+    zeal_condition: { field: 'self_mana_pct', op: '<=', value: 20 },
+    overlay_text: 'LOW MANA', overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 30 },
+  { id: 'low_hp_warn', category: 'utility', label: 'Low on HP (≤30%)',
+    pattern: '',
+    zeal_condition: { field: 'self_hp_pct', op: '<=', value: 30 },
+    overlay_text: 'LOW HP', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 15 },
+];
+
+// Convert a SUGGESTED_TRIGGERS template into a personal-trigger row (the
+// shape /api/personal-triggers stores). The synthetic id "suggested:<id>"
+// is the round-trip handle the dashboard uses to find + toggle the saved
+// trigger; once enabled, the row is indistinguishable from any other
+// personal trigger except for its prefixed id, so the user can still edit
+// the pattern / overlay text by hand on the Personal panel if they want.
+function _templateToPersonalRow(tpl, opts) {
+  const o = opts || {};
+  const wantTts = o.tts != null ? !!o.tts : !!tpl.tts_default;
+  const action = {
+    type: 'text_overlay',
+    text: tpl.overlay_text,
+    color: tpl.overlay_color || 'red',
+    duration_ms: tpl.overlay_ms || 4000,
+  };
+  if (wantTts) action.tts = tpl.overlay_text;
+  return {
+    id:            'suggested:' + tpl.id,
+    name:          tpl.label,
+    pattern:       tpl.pattern || '',
+    pattern_flags: 'i',
+    use_regex:     true,
+    enabled:       true,
+    cooldown_seconds:  tpl.cooldown_seconds || 0,
+    timer_duration_sec: 0,
+    end_early_pattern:  null,
+    end_use_regex:      true,
+    zeal_condition:     tpl.zeal_condition || null,
+    actions:            [action],
+  };
+}
+// Look up the saved personal trigger matching a suggested template's id.
+// Returns the trigger or null. Used by the GET endpoint to surface the
+// current enabled / tts state of each template.
+function _findSuggestedRow(templateId) {
+  const wantId = 'suggested:' + templateId;
+  return _personalTriggers.find(t => t && t.id === wantId) || null;
+}
+// Has TTS for the matching personal trigger? True iff the first text_overlay
+// action carries a non-empty `tts` field.
+function _suggestedHasTts(row) {
+  if (!row || !Array.isArray(row.actions)) return false;
+  const a = row.actions.find(x => x && x.type === 'text_overlay');
+  return !!(a && a.tts);
 }
 
 // ── GINA / EQLogParser trigger XML import ─────────────────────────────────

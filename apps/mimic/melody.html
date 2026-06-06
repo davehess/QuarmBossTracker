@@ -20,9 +20,17 @@
   .mel .who .since{color:#6b7280;font-size:9px;font-weight:normal}
   /* Each song row: [icon] [name] [cast bar]. Vertical stack, cast-order. */
   .songs{display:flex;flex-direction:column;gap:2px}
-  .row{display:grid;grid-template-columns:14px 1fr;gap:6px;align-items:center;
+  .row{display:grid;grid-template-columns:14px 1fr auto;gap:6px;align-items:center;
     font-size:11px;line-height:1.4;padding:2px 4px;border-radius:3px;
     background:rgba(255,255,255,0.03)}
+  /* Buff-window timer chip — only present for songs whose effect is
+     visible in Zeal's buff slots (Amplification, Harmonize, Resonance,
+     Niv's / Breath of Harmony, etc.). MM:SS countdown. */
+  .row .timer{font-variant-numeric:tabular-nums;font-size:10px;
+    color:#7ee787;background:rgba(126,231,135,0.10);padding:0 5px;
+    border-radius:3px;border:1px solid rgba(126,231,135,0.22)}
+  .row .timer.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
+  .row .timer.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .row .icon{display:flex;align-items:center;justify-content:center;
     width:14px;height:14px;font-size:11px;color:#8b949e}
   .row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
@@ -215,7 +223,13 @@
 
         var rowsHtml = '';
         for (var i = 0; i < st.order.length; i++) {
-          var name = st.order[i];
+          // Order entries are objects: { name, remaining_secs?, remaining_ticks?, buff_name? }
+          // The agent enriches each song with its buff-window duration when
+          // the song's effect is visible in Zeal's buff slots. Backwards-
+          // compatible: if order[i] is a bare string (old payload), wrap it.
+          var entry = st.order[i];
+          if (typeof entry === 'string') entry = { name: entry };
+          var name = entry.name;
           var rowClass = 'row';
           var icon = '▶';
           var styleAttr = '';
@@ -234,9 +248,23 @@
           } else {
             rowClass += ' queued';
           }
+          // Buff-window timer chip — present only when the song's effect is
+          // tickdown'ing in the buff window. Color tiers mirror the web
+          // BuffChip: low ≤6m amber, crit ≤2m red.
+          var timerHtml = '';
+          if (typeof entry.remaining_secs === 'number' && entry.remaining_secs > 0) {
+            var rs = entry.remaining_secs;
+            var mm = Math.floor(rs / 60), ss = rs - mm*60;
+            var t = mm + ':' + String(ss).padStart(2,'0');
+            var tier = rs <= 120 ? 'crit' : (rs <= 360 ? 'low' : '');
+            var titleExtra = entry.buff_name && entry.buff_name.toLowerCase() !== name.toLowerCase()
+              ? ' · landed as "' + entry.buff_name + '"' : '';
+            timerHtml = '<span class="timer ' + tier + '" title="Buff window: ' + esc(t) + ' remaining' + esc(titleExtra) + '">' + t + '</span>';
+          }
           rowsHtml += '<div class="' + rowClass + '"' + styleAttr + ' title="' + esc(name) + '">'
                     +   '<span class="icon">' + icon + '</span>'
                     +   '<span class="name">' + esc(shortSongName(name)) + '</span>'
+                    +   timerHtml
                     + '</div>';
         }
 
