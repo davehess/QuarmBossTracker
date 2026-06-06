@@ -7,8 +7,9 @@
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:7px 9px;}
-  .title{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#d2a8ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
+  .title > :first-child{margin-right:auto}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
   .mob{padding:7px 9px;background:rgba(8,5,16,0.72);border-radius:7px;
@@ -23,6 +24,27 @@
   .res .cell{text-align:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:3px 0}
   .res .lab{font-size:9px;color:#8b949e;letter-spacing:0.5px}
   .res .val{font-size:13px;font-weight:bold;font-variant-numeric:tabular-nums}
+  /* tabs */
+  .tabs{display:flex;gap:2px;margin-left:auto;margin-right:8px}
+  .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
+       border-radius:4px;padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.5px}
+  .tab:hover{color:#fff;border-color:#a371f7}
+  .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
+  /* loot list */
+  .loot{margin-top:5px;display:flex;flex-direction:column;gap:2px;font-size:10px}
+  .loot .row{display:flex;align-items:baseline;gap:6px;padding:2px 5px;background:rgba(255,255,255,0.03);
+             border-radius:3px;border-left:2px solid transparent}
+  .loot .row.t100{border-left-color:#56d364}                  /* guaranteed */
+  .loot .row.t50 {border-left-color:#3b82f6}                  /* common */
+  .loot .row.t20 {border-left-color:#a371f7}                  /* uncommon */
+  .loot .row.t5  {border-left-color:#f0883e}                  /* rare */
+  .loot .row.t1  {border-left-color:#f85149}                  /* ultra rare */
+  .loot .nm{color:#e6edf3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .loot .pct{font-variant-numeric:tabular-nums;color:#9aa4ad;font-size:9px}
+  .loot .pct.high{color:#56d364}
+  .loot .lore{font-size:8px;color:#d2a8ff;padding:0 3px;border-radius:2px;background:rgba(163,113,247,0.2)}
+  .loot .empty{font-size:11px;color:#6e7681;font-style:italic;padding:5px 0}
   /* special attack chips */
   .spec{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
   .spec .chip{font-size:10px;padding:2px 7px;border-radius:4px;background:#2a1d3d;
@@ -70,7 +92,14 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span>🎯 Mob Info</span><span id="conn" class="conn bad">○</span></div>
+    <div class="title">
+      <span>🎯 Mob Info</span>
+      <span class="tabs">
+        <button id="tabStats" class="tab on" type="button">Stats</button>
+        <button id="tabLoot"  class="tab"    type="button">Loot <span class="beta">BETA</span></button>
+      </span>
+      <span id="conn" class="conn bad">○</span>
+    </div>
     <div id="body"></div>
     <div id="empty">no target</div>
   </div>
@@ -129,34 +158,80 @@
   var bodyEl = document.getElementById('body');
   var emptyEl = document.getElementById('empty');
 
-  async function tick(){
-    try {
-      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
-      const s = await r.json();
-      document.getElementById('conn').className = 'conn ok';
-      document.getElementById('conn').textContent = '●';
-      const mi = s.mobInfo;
-      if (!mi || !mi.target_name) { bodyEl.innerHTML = ''; emptyEl.style.display = 'block'; return; }
-      emptyEl.style.display = 'none';
-      const mob = mi.mob || null;
-      const nm = mob && mob.name ? mob.name : mi.target_name;
-      const cls = mob && mob.class ? ' <span class="cls">(' + esc(mob.class) + ')</span>' : '';
-      // Live target HP%
-      var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
-      var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
-      var hpBar = hp != null ? '<div class="hpbar"><div style="width:'+hp.toFixed(0)+'%;background:'+hpColor+'"></div></div>' : '';
-      // sub line: HP pool · dmg range · level
-      var sub = [];
-      if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
-      if (mob && mob.mindmg != null && mob.maxdmg != null) sub.push(mob.mindmg + '–' + mob.maxdmg + ' dmg');
-      if (mob && mob.level != null) sub.push('L' + mob.level);
-      if (hp != null) sub.push(Math.round(hp) + '%');
+  // Tab state — Stats (default) or Loot. Cached locally so a tab switch doesn't
+  // wait for the next 500ms tick to repaint. Loot uses the eqemu_npc_drops view
+  // for now; the deeper "Wolf Pack's observed drop rate vs published" lands once
+  // we ingest OpenDKP loot history into loot_drops.
+  var _tab = 'stats';
+  var _lastMi = null;
+  var tabStatsBtn = document.getElementById('tabStats');
+  var tabLootBtn  = document.getElementById('tabLoot');
+  function _setTab(t){
+    _tab = t;
+    tabStatsBtn.classList.toggle('on', t === 'stats');
+    tabLootBtn .classList.toggle('on', t === 'loot');
+    _renderBody(_lastMi);
+  }
+  tabStatsBtn.addEventListener('click', function(){ _setTab('stats'); });
+  tabLootBtn .addEventListener('click', function(){ _setTab('loot'); });
+
+  // Drop-rate buckets so each row carries a color cue. Same intent as the
+  // /loot rarity labels — guaranteed > common > uncommon > rare > ultra.
+  function lootTier(p){
+    if (p == null) return '';
+    if (p >= 95) return 't100';
+    if (p >= 35) return 't50';
+    if (p >= 10) return 't20';
+    if (p >= 2)  return 't5';
+    return 't1';
+  }
+  function fmtPct(p){ if (p == null) return '?'; if (p >= 99.95) return '100%'; return p.toFixed(p < 10 ? 1 : 0) + '%'; }
+  function renderLoot(mob){
+    if (!mob || !Array.isArray(mob.loot) || !mob.loot.length) {
+      return '<div class="loot"><div class="empty">no published drop table for this NPC</div></div>';
+    }
+    var rows = '';
+    for (var i=0;i<mob.loot.length;i++){
+      var it = mob.loot[i]; if (!it || !it.name) continue;
+      var tier = lootTier(it.pct);
+      var pctTxt = fmtPct(it.pct);
+      var lore = it.lore ? '<span class="lore" title="LORE — only one per character">LORE</span>' : '';
+      var title = it.name + (it.pct != null ? ' · ' + pctTxt + ' to drop (EQEmu published rate)' : '');
+      rows += '<div class="row ' + tier + '" title="' + esc(title) + '">'
+            + '<span class="nm">' + esc(it.name) + '</span>'
+            + lore
+            + '<span class="pct' + (it.pct >= 50 ? ' high' : '') + '">' + pctTxt + '</span>'
+            + '</div>';
+    }
+    return '<div class="loot">' + rows + '</div>';
+  }
+
+  function _renderBody(mi){
+    if (!mi || !mi.target_name) { bodyEl.innerHTML = ''; emptyEl.style.display = 'block'; return; }
+    emptyEl.style.display = 'none';
+    var mob = mi.mob || null;
+    var nm = mob && mob.name ? mob.name : mi.target_name;
+    var cls = mob && mob.class ? ' <span class="cls">(' + esc(mob.class) + ')</span>' : '';
+    // Header strip — always visible regardless of tab so the user always sees
+    // who they're targeting + live HP%.
+    var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
+    var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
+    var hpBar = hp != null ? '<div class="hpbar"><div style="width:'+hp.toFixed(0)+'%;background:'+hpColor+'"></div></div>' : '';
+    var sub = [];
+    if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
+    if (mob && mob.mindmg != null && mob.maxdmg != null) sub.push(mob.mindmg + '–' + mob.maxdmg + ' dmg');
+    if (mob && mob.level != null) sub.push('L' + mob.level);
+    if (hp != null) sub.push(Math.round(hp) + '%');
+
+    var tabBody = '';
+    if (_tab === 'loot') {
+      tabBody = renderLoot(mob);
+    } else {
       // resist grid (AC + 5 resists)
       var res = '';
       if (mob) {
         var cells = [['AC', mob.ac], ['MR', mob.resists&&mob.resists.mr], ['FR', mob.resists&&mob.resists.fr],
                     ['CR', mob.resists&&mob.resists.cr], ['PR', mob.resists&&mob.resists.pr], ['DR', mob.resists&&mob.resists.dr]];
-        // color resists: high = hard (red), low = soft (green)
         function resColor(v){ if (v == null) return '#8b949e'; if (v >= 150) return '#f85149'; if (v >= 75) return '#f0883e'; return '#56d364'; }
         for (var i=0;i<cells.length;i++){
           var lab = cells[i][0], v = cells[i][1];
@@ -165,7 +240,6 @@
         }
         res = '<div class="res">'+res+'</div>';
       }
-      // special attacks
       var spec = '';
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
         var chips='';
@@ -174,14 +248,24 @@
       }
       var loadingNote = (!mob && mi.loading) ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
                        : (!mob ? '<div class="sub">no catalog stats for this target</div>' : '');
-      bodyEl.innerHTML = '<div class="mob">'
-        + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
-        + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
-        + hpBar
-        + res
-        + spec
-        + loadingNote
-        + '</div>';
+      tabBody = res + spec + loadingNote;
+    }
+    bodyEl.innerHTML = '<div class="mob">'
+      + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
+      + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
+      + hpBar
+      + tabBody
+      + '</div>';
+  }
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      const s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      _lastMi = s.mobInfo;
+      _renderBody(_lastMi);
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

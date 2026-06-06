@@ -4538,9 +4538,36 @@ async function _handleAgentMobInfo(req, res) {
   try {
     // Case-insensitive exact match on the normalized (underscored) name.
     const rows = await supabase.select('eqemu_npc_types',
-      `name=ilike.${encodeURIComponent(norm)}&select=name,class,level,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
+      `name=ilike.${encodeURIComponent(norm)}&select=id,name,class,level,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
     const r = Array.isArray(rows) && rows[0];
     if (r) {
+      // Drop table from eqemu_npc_drops view (per-item effective_chance — the
+      // real published drop rate accounting for table_probability + lootdrop
+      // chance + multiplier). De-duped by item_id; the highest effective_chance
+      // wins when the same item is in multiple lootdrops on the same NPC. Lore
+      // flag carried through so the overlay can label LORE items.
+      let loot = [];
+      try {
+        const lrows = await supabase.select('eqemu_npc_drops',
+          `npc_id=eq.${r.id}&select=item_id,item_name,effective_chance,drop_chance,lore_flag&order=effective_chance.desc.nullslast&limit=80`);
+        if (Array.isArray(lrows) && lrows.length) {
+          const byItem = new Map();
+          for (const it of lrows) {
+            if (!it || !it.item_id) continue;
+            const prev = byItem.get(it.item_id);
+            if (!prev || (it.effective_chance || 0) > (prev.effective_chance || 0)) byItem.set(it.item_id, it);
+          }
+          loot = [...byItem.values()].map(it => ({
+            id:    it.item_id,
+            name:  it.item_name,
+            pct:   it.effective_chance != null ? Number(it.effective_chance) : null,
+            raw_pct: it.drop_chance     != null ? Number(it.drop_chance)     : null,
+            lore:  !!it.lore_flag,
+          }));
+          loot.sort((a, b) => (b.pct || 0) - (a.pct || 0));
+        }
+      } catch (err) { console.warn('[mob-info] loot fetch failed:', err?.message); }
+
       mob = {
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
@@ -4552,6 +4579,7 @@ async function _handleAgentMobInfo(req, res) {
         maxdmg:  r.maxdmg ?? null,
         raid_target: !!r.raid_target,
         specials: _decodeMobSpecials(r.special_abilities, r.npcspecialattks),
+        loot,
       };
     }
   } catch (err) {
