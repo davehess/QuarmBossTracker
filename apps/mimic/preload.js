@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // Renderer reports its content height; main resizes the window to fit so
   // multi-card overlays (charm, pets, /who) grow with their content.
   overlayAutoHeight: (h) => ipcRenderer.invoke('overlay-auto-height', h),
+  // Per-overlay named-size preset (xs / sm / md / lg / xl). Driven by the
+  // right-click context menu on each overlay's ✥ move icon so users can size
+  // a single overlay without diving into Setup mode.
+  overlayResizePreset: (preset) => ipcRenderer.invoke('overlay-resize-preset', preset),
 
   // Click-through overlays: ask main to momentarily make THIS window
   // interactive while the cursor is over a corner control, so the click lands

@@ -11,7 +11,15 @@
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
   .conn.bad{color:#f87171}
-  .empty{color:#6b7280;font-size:10px;margin-top:6px}
+  /* Empty state: deliberately NO background — feedback was that the "box of
+     text" framing of "no bard songs yet" was hard to read. Now reads as
+     plain dimmed text under the title. */
+  .empty{color:#6b7280;font-size:10px;margin-top:6px;font-style:italic}
+  /* "Now casting: X" — Zeal-driven, real-time. Pulled from label 134. */
+  .nowcast{font-size:10px;color:#c9d1d9;margin-top:5px;padding-top:4px;
+    border-top:1px dashed rgba(110,118,129,0.25);font-variant-numeric:tabular-nums}
+  .nowcast .lbl{color:#6b7280}
+  .nowcast .spell{color:#f6c365;font-weight:600}
   /* Per-character melody block. */
   .mel{margin-top:6px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)}
   .mel:first-of-type{border-top:none;padding-top:0;margin-top:4px}
@@ -129,6 +137,29 @@
     moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     moveBtn.addEventListener('mouseleave', function(){ if (!_isDragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
     moveBtn.addEventListener('mousedown', _beginDrag);
+    moveBtn.addEventListener('contextmenu', function(ev){
+      ev.preventDefault();
+      var prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
+      var menu = document.createElement('div');
+      menu.id = 'wpResizeMenu';
+      menu.style.cssText = 'position:fixed;top:30px;left:6px;z-index:200;background:rgba(14,17,22,0.95);border:1px solid rgba(88,166,255,0.4);border-radius:5px;padding:4px;display:flex;flex-direction:column;gap:2px;font-family:ui-monospace,Menlo,Consolas,monospace';
+      [['xs','XS · 200×100'],['sm','S · 260×140'],['md','M · 320×200'],['lg','L · 400×260'],['xl','XL · 500×320']].forEach(function(s){
+        var b = document.createElement('button');
+        b.textContent = s[1];
+        b.style.cssText = 'background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px';
+        b.onmouseenter = function(){ b.style.background = '#1f6feb'; b.style.color = '#fff'; };
+        b.onmouseleave = function(){ b.style.background = '#21262d'; b.style.color = '#c9d1d9'; };
+        b.onclick = function(){ try { window.mimic.overlayResizePreset(s[0]); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+        menu.appendChild(b);
+      });
+      document.body.appendChild(menu);
+      try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
+      setTimeout(function(){
+        document.addEventListener('mousedown', function closer(e){
+          if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', closer); try { window.mimic.overlayHoverInteractive(false); } catch (e2) {} }
+        });
+      }, 0);
+    });
   }
   document.addEventListener('mouseup', function(){
     if (_isDragging) {
@@ -174,14 +205,18 @@
     } catch (e) {}
   }
 
-  // Bard songs cast ~3s on average. Without song-specific cast times in the
-  // catalog we use a flat default — close enough for the visual bar (it
-  // reaches 100% right as the next "begin singing" fires for the next slot).
-  var SONG_CAST_MS = 3000;
-  // Once cast finishes, treat the previous slot as "done" until either the
-  // bard sings something else (next twist) or this much time elapses without
-  // a new sing event — at which point the row freezes as "stopped" so the
-  // bard can see where to resume.
+  // Cast-time default per row kind. Bards: every song is 3.0s — flat,
+  // reliable. Non-bards: spell cast times vary wildly (Heal=2s, Complete
+  // Heal=10s, big nukes=5-6s), and we don't yet ship the per-spell catalog
+  // to the overlay. Use a 4s fallback when kind='spell' so the bar at least
+  // animates; once we wire cast-time lookup from eqemu_spells we'll swap
+  // this for a per-entry value from the agent.
+  var SONG_CAST_MS  = 3000;
+  var SPELL_CAST_MS = 4000;
+  function castMsForKind(kind){ return kind === 'spell' ? SPELL_CAST_MS : SONG_CAST_MS; }
+  // After cast finishes, the previous slot is "done" until either the next
+  // cast fires OR this much time elapses without a new cast — at which point
+  // the row freezes as ⏹ so the user can see where to resume.
   var STOP_AFTER_MS = 5000;
 
   var listEl = document.getElementById('list');
@@ -206,20 +241,26 @@
         var sinceCast = now - castStartedAt;
         var sinceChange = now - (st.lastChangeAt || castStartedAt);
         var currentPos = (typeof st.currentPos === 'number') ? st.currentPos : -1;
+        // Cast time picks per-row kind so a bard melody (3s) and a wizard
+        // chain (4s+) animate at the right pace. Falls back to the state-
+        // level kind ('song' default) if the row didn't carry one.
+        var curEntry = currentPos >= 0 ? st.order[currentPos] : null;
+        var curKind  = (curEntry && curEntry.kind) || st.kind || 'song';
+        var castMs   = castMsForKind(curKind);
 
         // Three states for currentPos:
-        //   casting → sinceCast < SONG_CAST_MS → bar fills 0→100%
-        //   done    → cast finished, song landed, awaiting next twist
-        //   stopped → bard hasn't sung in STOP_AFTER_MS → freeze as ⏹
-        var isCasting = sinceCast < SONG_CAST_MS;
+        //   casting → sinceCast < castMs → bar fills 0→100%
+        //   done    → cast finished, awaiting next twist
+        //   stopped → no cast in STOP_AFTER_MS → freeze as ⏹
+        var isCasting = sinceCast < castMs;
         var isStopped = !isCasting && sinceChange >= STOP_AFTER_MS;
 
-        var castPct = isCasting ? Math.max(0, Math.min(100, (sinceCast / SONG_CAST_MS) * 100)) : 100;
+        var castPct = isCasting ? Math.max(0, Math.min(100, (sinceCast / castMs) * 100)) : 100;
 
         var sinceLabel;
         if (isStopped)      sinceLabel = 'stopped ' + fmtElapsed(sinceChange) + ' ago';
-        else if (isCasting) sinceLabel = 'casting ' + Math.max(0, ((SONG_CAST_MS - sinceCast)/1000)).toFixed(1) + 's';
-        else                sinceLabel = (st.cycleLength > 0 ? (st.cycleLength + '-song melody') : 'building melody…');
+        else if (isCasting) sinceLabel = 'casting ' + Math.max(0, ((castMs - sinceCast)/1000)).toFixed(1) + 's';
+        else                sinceLabel = (st.cycleLength > 0 ? (st.cycleLength + '-' + (curKind === 'spell' ? 'spell' : 'song') + ' melody') : 'building melody…');
 
         var rowsHtml = '';
         for (var i = 0; i < st.order.length; i++) {
@@ -268,9 +309,17 @@
                     + '</div>';
         }
 
+        // "Now casting: X" — pulled from Zeal label 134 in real time, so it
+        // updates immediately when the cast bar starts (no log-line lag). Only
+        // shows while a cast is in flight; otherwise omitted.
+        var nowCastingHtml = '';
+        if (st.nowCasting) {
+          nowCastingHtml = '<div class="nowcast">↻ <span class="lbl">now casting:</span> <span class="spell">' + esc(shortSongName(st.nowCasting)) + '</span></div>';
+        }
         html += '<div class="mel">'
               + '<div class="who"><span>' + esc(k.charAt(0).toUpperCase() + k.slice(1)) + '</span><span class="since">' + esc(sinceLabel) + '</span></div>'
               + '<div class="songs">' + rowsHtml + '</div>'
+              + nowCastingHtml
               + '</div>';
       }
       listEl.innerHTML = html;

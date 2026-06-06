@@ -1259,40 +1259,36 @@ function _findSongBuff(songName, zealBuffs) {
   }
   return null;
 }
-function _bumpBardMelody(character, songName, atMs) {
-  if (!character || !songName) return;
+function _bumpBardMelody(character, spellName, atMs, opts) {
+  if (!character || !spellName) return;
+  const kind = (opts && opts.kind) || 'song';   // 'song' (bard) | 'spell' (anyone else)
   const key = String(character).toLowerCase();
   let state = _bardMelody.get(key);
   if (!state) {
-    state = { order: [], currentPos: -1, castStartedAt: atMs, cycleLength: 0, lastChangeAt: atMs };
+    state = { order: [], currentPos: -1, castStartedAt: atMs, cycleLength: 0, lastChangeAt: atMs, kind };
     _bardMelody.set(key, state);
   }
-  // If we haven't sung in MELODY_IDLE_MS, treat this as a brand-new melody
-  // (the bard zoned / stopped / swapped songs). Avoids merging two
-  // unrelated rotations into one confusing list.
+  // If we haven't cast in MELODY_IDLE_MS, treat this as a brand-new melody
+  // (zoned / stopped / swapped). Avoids merging two unrelated rotations.
   if (state.lastChangeAt && (atMs - state.lastChangeAt) > MELODY_IDLE_MS) {
     state.order = [];
     state.currentPos = -1;
     state.cycleLength = 0;
   }
-  const name = String(songName);
+  // Track the current melody kind on the character's state — if they just
+  // switched between bard songs and spells (e.g. logged off a bard onto a
+  // wizard) we want the overlay to use the right cast-time default.
+  state.kind = kind;
+  const name = String(spellName);
   const lower = name.toLowerCase();
-  const existingIdx = state.order.findIndex(n => n.toLowerCase() === lower);
+  const existingIdx = state.order.findIndex(o => o && (o.name || '').toLowerCase() === lower);
   if (existingIdx >= 0) {
-    // Song already in the list — we've cycled back to it.
-    // The first time this happens, it locks in the melody length.
     if (state.cycleLength === 0) state.cycleLength = state.order.length;
     state.currentPos = existingIdx;
+    state.order[existingIdx].kind = kind;
   } else {
-    // New song. Append if there's room; otherwise the bard is changing their
-    // melody — drop the OLDEST entry to keep the rotation visualization in
-    // sync with what they're actually casting now.
-    if (state.order.length >= MELODY_CAP) {
-      state.order.shift();
-      // currentPos was relative to the old order; we just shifted everything
-      // left by one — the slot the bard just sang lands at the end.
-    }
-    state.order.push(name);
+    if (state.order.length >= MELODY_CAP) state.order.shift();
+    state.order.push({ name, kind });
     state.currentPos = state.order.length - 1;
   }
   state.castStartedAt = atMs;
@@ -2726,8 +2722,14 @@ class EncounterBuilder {
       // songs with event.singing=true). Move-to-front a song-name cycle per
       // character so the melody overlay can show the twist queue + the
       // last-known position when the bard stops melodying. Self-cast only.
-      if (!event.attacker && event.singing && this.character) {
-        _bumpBardMelody(this.character, spell, Date.parse(event.ts) || Date.now());
+      // Melody tracker accepts BOTH bard songs (singing) AND any other cast
+      // (casting). A wizard/cleric/etc. running /melody # # # # cycles spell
+      // gems with cast + recast timing; we still want to show them the
+      // rotation. The cast_kind flag lets the overlay pick the right cast-
+      // time default (bard = 3s, anyone else = look up from eqemu_spells
+      // via the bot or fall back to a sensible per-spell default).
+      if (!event.attacker && this.character) {
+        _bumpBardMelody(this.character, spell, Date.parse(event.ts) || Date.now(), { kind: event.singing ? 'song' : 'spell' });
       }
     }
 
@@ -4256,13 +4258,24 @@ function _serializeForDashboard() {
         // overlay multiplies by 6 to show MM:SS remaining.
         const zealSt = zealByLower.get(k);
         const zealBuffs = (zealSt && Array.isArray(zealSt.buffs)) ? zealSt.buffs : [];
-        const enrichedOrder = state.order.map(songName => {
-          const buff = _findSongBuff(songName, zealBuffs);
+        const enrichedOrder = state.order.map(entry => {
+          // Tolerate the v3.0.49 string-only shape so older saved state keeps
+          // working: { name } object OR bare string both render.
+          const e = (typeof entry === 'string') ? { name: entry } : (entry || { name: '?' });
+          const buff = _findSongBuff(e.name, zealBuffs);
+          const out = { name: e.name, kind: e.kind || state.kind || 'song' };
           if (buff && typeof buff.ticks === 'number' && buff.ticks > 0) {
-            return { name: songName, remaining_ticks: buff.ticks, remaining_secs: buff.ticks * 6, buff_name: buff.name };
+            out.remaining_ticks = buff.ticks;
+            out.remaining_secs  = buff.ticks * 6;
+            out.buff_name       = buff.name;
           }
-          return { name: songName };
+          return out;
         });
+        // Zeal label 134 = the spell name being cast RIGHT NOW. When set
+        // we surface it on the melody so the overlay can show "Now casting:
+        // X" verbatim — useful for non-bard /melody rotations where the
+        // log-line "begin casting" is the only other signal.
+        const nowCasting = (zealSt && zealSt.casting && String(zealSt.casting).trim()) || null;
         out[k] = {
           character:      k,
           order:          enrichedOrder,
@@ -4270,6 +4283,8 @@ function _serializeForDashboard() {
           castStartedAt:  state.castStartedAt,
           cycleLength:    state.cycleLength,
           lastChangeAt:   state.lastChangeAt,
+          kind:           state.kind || 'song',
+          nowCasting,
         };
       }
       return out;
@@ -5876,9 +5891,10 @@ var WP_OVERLAY_ROWS = [
   ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
-  ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters (mage / necro / beastlord).'],
-  ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks.'],
+  ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
+  ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks, drop table.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
+  ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
 ];
 
 function renderOverlays(s) {

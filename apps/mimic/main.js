@@ -2581,6 +2581,31 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
   } catch { return false; }
 });
 
+// Resize an overlay window to a named preset, anchored at its CURRENT
+// top-left so a user picking "Larger" from the move-icon context menu sees
+// the same overlay grow downward + rightward rather than jumping to a new
+// position. Sizes deliberately leave height growth to overlay-auto-height
+// (content-driven); we just nudge WIDTH here. Heights snap to a sensible
+// baseline so the next tick's auto-height has room to grow into.
+ipcMain.handle('overlay-resize-preset', (e, preset) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const presets = {
+      xs: { width: 200, height: 100 },
+      sm: { width: 260, height: 140 },
+      md: { width: 320, height: 200 },
+      lg: { width: 400, height: 260 },
+      xl: { width: 500, height: 320 },
+    };
+    const p = presets[String(preset || '').toLowerCase()];
+    if (!p) return false;
+    const b = win.getBounds();
+    win.setBounds({ x: b.x, y: b.y, width: p.width, height: p.height });
+    return true;
+  } catch { return false; }
+});
+
 // Hover-to-interact for click-through overlays. When overlays are LOCKED they
 // are click-through (setIgnoreMouseEvents(true,{forward:true})), so a corner
 // button (✕ hide / ⚙ gear) wouldn't catch a click. The forward:true flag means
