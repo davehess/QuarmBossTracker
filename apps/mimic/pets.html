@@ -8,7 +8,7 @@
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;}
-  .title{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#79c0ff;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
@@ -88,7 +88,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span>🐾 Pet tracker</span><span id="conn" class="conn bad">○</span></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span>🐾 Pet tracker</span></div>
     <div id="list"></div>
     <div id="empty">no pet — run <b>/pet health</b> in game</div>
   </div>
@@ -269,9 +269,15 @@
       }
       listEl.innerHTML = html;
       emptyEl.style.display = pets.length ? 'none' : 'block';
+      _requestAutoHeight();
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }
+  }
+  function _requestAutoHeight(){
+    if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
+    var w = document.getElementById('wrap'); if (!w) return;
+    try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
   }
   // Delegated dismiss handler (see charm.html for the why).
   listEl.addEventListener('click', function(e){

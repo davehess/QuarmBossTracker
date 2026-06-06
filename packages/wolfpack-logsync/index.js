@@ -427,8 +427,11 @@ function isPlausibleAttacker(name) {
 // off this table, so correcting a value here is the whole change. Bard values
 // (60s / 18s) are practical as-is.
 const CHARM_SPELLS = new Map([
-  // Bard — short songs, recharmed constantly.
-  ["solon's bewitching bravura", { cls: 'bard', dur: 60 }],
+  // Bard — short songs, recharmed constantly. Spell-data durations are 60s /
+  // 18s, but Quarm's per-tick break check fires hard on bards: SBB usually
+  // pops by tick 4-5 in practice, so the tracker tops out at 30s/5 ticks and
+  // the "charm breaking" warn lands on tick 4 instead of tick 9.
+  ["solon's bewitching bravura", { cls: 'bard', dur: 30 }],
   ["solon's song of the sirens",  { cls: 'bard', dur: 18 }],
   // Enchanter (+ druid/necro animal/undead charm share the same 205/formula-10
   // line). Single-target timed charm.

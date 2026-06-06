@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // overlayDragStart; document mouseup calls overlayDragEnd.
   overlayDragStart: () => ipcRenderer.invoke('overlay-drag-start'),
   overlayDragEnd:   () => ipcRenderer.invoke('overlay-drag-end'),
+  // Renderer reports its content height; main resizes the window to fit so
+  // multi-card overlays (charm, pets, /who) grow with their content.
+  overlayAutoHeight: (h) => ipcRenderer.invoke('overlay-auto-height', h),
 
   // Click-through overlays: ask main to momentarily make THIS window
   // interactive while the cursor is over a corner control, so the click lands

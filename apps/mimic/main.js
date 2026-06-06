@@ -2398,6 +2398,32 @@ ipcMain.handle('overlay-drag-start', (e) => {
 });
 ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
 
+// Auto-fit the overlay window to its rendered content height. The renderer
+// passes the natural content height (scrollHeight of #wrap) — we add a small
+// chrome margin, clamp to the work-area height, and apply only when the
+// delta is meaningful so we don't fight the user mid-drag.
+ipcMain.handle('overlay-auto-height', (e, h) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const wanted = Math.max(50, Math.round(+h || 0));
+    if (!wanted) return false;
+    const bounds = win.getBounds();
+    const disp   = screen.getDisplayMatching(bounds);
+    const maxH   = Math.max(80, disp.workArea.height - 20);
+    const target = Math.min(maxH, wanted);
+    // Don't bounce on tiny pixel-rounding deltas (Chromium font metrics jitter
+    // by ±1 between paints); 4 px hysteresis is the sweet spot. Also ignore
+    // shrinks smaller than 12 px — a card collapsing for one tick (e.g. a
+    // re-render between data fetches) shouldn't snap the window down.
+    const delta = target - bounds.height;
+    if (Math.abs(delta) < 4) return true;
+    if (delta < 0 && delta > -12) return true;
+    win.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: target });
+    return true;
+  } catch { return false; }
+});
+
 // Hover-to-interact for click-through overlays. When overlays are LOCKED they
 // are click-through (setIgnoreMouseEvents(true,{forward:true})), so a corner
 // button (✕ hide / ⚙ gear) wouldn't catch a click. The forward:true flag means

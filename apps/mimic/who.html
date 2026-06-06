@@ -8,7 +8,7 @@
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;}
-  .title{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
@@ -77,7 +77,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span>👁 /who</span><span id="conn" class="conn bad">○</span></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span>👁 /who</span></div>
     <div id="body"></div>
     <div id="empty">run <b>/who</b> in game</div>
   </div>
@@ -129,6 +129,11 @@
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function ago(iso){ if(!iso) return ''; var ms = Date.now() - Date.parse(iso); if(!(ms>0)) return ''; var s=Math.floor(ms/1000); if(s<60) return s+'s'; var m=Math.floor(s/60); if(m<60) return m+'m'; return Math.floor(m/60)+'h'; }
+  function _requestAutoHeight(){
+    if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
+    var w = document.getElementById('wrap'); if (!w) return;
+    try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
+  }
 
   function rowHtml(p, gone){
     var zek = !!(p.known && p.known.is_zek);
@@ -166,7 +171,7 @@
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       const w = s.whoSnapshot;
-      if (!w || !Array.isArray(w.current) || !w.current.length) { bodyEl.innerHTML = ''; emptyEl.style.display = 'block'; return; }
+      if (!w || !Array.isArray(w.current) || !w.current.length) { bodyEl.innerHTML = ''; emptyEl.style.display = 'block'; _requestAutoHeight(); return; }
       emptyEl.style.display = 'none';
       var h = '';
       h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
@@ -178,6 +183,7 @@
         h += '</div></div>';
       }
       bodyEl.innerHTML = h;
+      _requestAutoHeight();
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }
