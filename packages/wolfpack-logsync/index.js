@@ -5626,6 +5626,14 @@ function renderOverlays(s) {
     return;
   }
   h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
+  // How to move them. Convention is consistent across every overlay so users
+  // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
+  // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
+  // Stated here once so it's discoverable from the dashboard instead of having
+  // to read the icons' tooltips.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
+    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-right corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-left</b> hides that overlay (turn it back on from this page or the tray).'
+    + '</div>';
   h += '</div>';
 
   // Interactive built-in overlay toggles. Buttons carry data-ov="<key>"; a
