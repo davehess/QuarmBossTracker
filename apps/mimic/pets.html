@@ -12,7 +12,7 @@
     font-size:12px;color:#79c0ff;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .pet{padding:5px 8px;margin-bottom:5px;background:rgba(0,0,0,0.55);
+  .pet{position:relative;padding:5px 8px;margin-bottom:5px;background:rgba(0,0,0,0.55);
     border-radius:5px;border-left:3px solid #58a6ff;text-shadow:0 1px 2px #000;}
   .pet.stale{border-left-color:#6e7681}
   .pet .head{display:flex;justify-content:space-between;gap:8px;font-size:12px}
@@ -41,6 +41,12 @@
   .petstats .blk b{color:#7ee787;font-variant-numeric:tabular-nums}
   .petstats .dw{background:#3d1d1d;color:#ff7b72;border-color:#5a2a2a;font-weight:600;letter-spacing:0.5px}
   .petstats .sk{background:rgba(88,166,255,0.10);color:#9ecbff;border-color:rgba(88,166,255,0.25)}
+  /* ✕ dismiss — top-right of each card; dims by default, hover red. */
+  .pet .dismiss{position:absolute;top:3px;right:4px;width:14px;height:14px;display:flex;
+    align-items:center;justify-content:center;background:rgba(14,17,22,0.4);color:#6e7681;
+    border:1px solid rgba(110,118,129,0.25);border-radius:3px;font-size:10px;line-height:1;
+    cursor:pointer;padding:0;opacity:0.35;transition:opacity .12s;font-family:inherit}
+  .pet .dismiss:hover{opacity:1;color:#f87171;border-color:#f87171;background:rgba(40,10,10,0.7)}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
   /* drag/lock/setup — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -251,7 +257,8 @@
           ? '<div class="hpbar"><div style="width:' + hp.toFixed(0) + '%;background:' + hpColor + '"></div></div>'
           : '';
         var ageStr = obs ? ' · ' + Math.round(ageMs/1000) + 's ago' : '';
-        html += '<div class="pet' + (stale ? ' stale' : '') + '">'
+        html += '<div class="pet' + (stale ? ' stale' : '') + '" data-owner="' + esc(p.owner || '') + '">'
+          + '<button class="dismiss" data-dismiss="' + esc(p.owner || '') + '" title="Dismiss — remove this pet from the tracker">&times;</button>'
           + '<div class="head"><span class="nm">' + esc(p.pet || 'pet') + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
           + '<div class="meta">HP' + (hp != null ? '' : ' ?') + hpStr + ageStr + '</div>'
@@ -266,6 +273,20 @@
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }
   }
+  // Delegated dismiss handler (see charm.html for the why).
+  listEl.addEventListener('click', function(e){
+    var btn = e.target && e.target.closest && e.target.closest('button.dismiss');
+    if (!btn) return;
+    e.stopPropagation();
+    var owner = btn.getAttribute('data-dismiss');
+    if (!owner) return;
+    btn.disabled = true; btn.style.opacity = 0.2;
+    fetch('http://127.0.0.1:'+PORT+'/api/pet/dismiss', {
+      method: 'POST', cache: 'no-store',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ owner: owner })
+    }).catch(function(){}).then(function(){ tick(); });
+  });
   tick(); setInterval(tick, 500);
 </script>
 </body></html>

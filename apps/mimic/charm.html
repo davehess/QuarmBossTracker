@@ -14,8 +14,16 @@
     font-size:12px;color:#c9a0ff;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .charm{padding:5px 8px;margin-bottom:5px;background:rgba(0,0,0,0.55);
+  .charm{position:relative;padding:5px 8px;margin-bottom:5px;background:rgba(0,0,0,0.55);
     border-radius:5px;border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
+  /* ✕ dismiss — top-right of each card, dim by default, light up on hover.
+     Click drops the entry from the agent's tracker. Pointer-events: auto on
+     a transparent overlay so the click lands when the overlay is locked. */
+  .charm .dismiss{position:absolute;top:3px;right:4px;width:14px;height:14px;display:flex;
+    align-items:center;justify-content:center;background:rgba(14,17,22,0.4);color:#6e7681;
+    border:1px solid rgba(110,118,129,0.25);border-radius:3px;font-size:10px;line-height:1;
+    cursor:pointer;padding:0;opacity:0.35;transition:opacity .12s;font-family:inherit}
+  .charm .dismiss:hover{opacity:1;color:#f87171;border-color:#f87171;background:rgba(40,10,10,0.7)}
   .charm.dire{border-left-color:#56d364}
   .charm.warn{border-left-color:#f0883e;animation:pulse 0.8s ease-in-out infinite}
   .charm.imminent{border-left-color:#f85149}
@@ -339,7 +347,8 @@
           durStr = ' · breaks ' + fmtElapsed(durRemMs);
           durBar = '<div class="tickbar" style="margin-top:2px"><div style="width:' + durPct.toFixed(1) + '%;background:' + durColor + '"></div></div>';
         }
-        html += '<div class="' + cls + '">'
+        html += '<div class="' + cls + '" data-key="' + esc(p.key || '') + '">'
+          + '<button class="dismiss" data-dismiss="' + esc(p.key || '') + '" title="Dismiss — remove this pet from the tracker">&times;</button>'
           + '<div class="head"><span class="pet">' + esc(p.pet || '?') + badge + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
           + '<div class="meta">tick ' + ticks + (maxTicks != null ? '/' + maxTicks : '') + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · up ' + fmtElapsed(elapsed) + durStr + hpStr + warnLine + '</div>'
@@ -357,6 +366,23 @@
     }
   }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  // Delegated dismiss handler — listEl is replaced every tick via innerHTML,
+  // so a single delegated listener on the parent survives the re-render.
+  // Stops propagation + click event from triggering hover-interactive enter/
+  // leave shenanigans on the overlay drag plumbing.
+  listEl.addEventListener('click', function(e){
+    var btn = e.target && e.target.closest && e.target.closest('button.dismiss');
+    if (!btn) return;
+    e.stopPropagation();
+    var key = btn.getAttribute('data-dismiss');
+    if (!key) return;
+    btn.disabled = true; btn.style.opacity = 0.2;
+    fetch('http://127.0.0.1:'+PORT+'/api/charm-pet/dismiss', {
+      method: 'POST', cache: 'no-store',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ key: key })
+    }).catch(function(){}).then(function(){ tick(); });
+  });
   tick(); setInterval(tick, 500);
 </script>
 </body></html>

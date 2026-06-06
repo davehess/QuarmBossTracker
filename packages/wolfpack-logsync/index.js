@@ -268,16 +268,14 @@ const PRIORITY_KEEP_PATTERNS = [
   // pet → owner mapping for charm pets. parseEvent below resolves owner
   // to the uploading character (this.character) when it sees this form.
   /\btells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i,
-  // Charm-LAND via ANY pet command ack on an indefinite-article (charmed) mob:
-  //   "A Fungoid Sporeling says 'Following you, Master.'"
-  //   "A Fungoid Sporeling says 'Guarding here Master.'"
+  // Charm-LAND via pet command ack on an indefinite-article (charmed) mob:
   //   "A Fungoid Sporeling tells you, 'Attacking a bat Master.'"
-  // Quarm has no "regards X as an ally" charm-land line, so a pet command is
-  // what tells us a mob is now charmed. These acks otherwise die to the
-  // /says,/ + /tells you,/ drop filters. The leading "a "/"an " keeps player
-  // chat out — no character name starts with an indefinite article — so this
-  // can't leak a player's tell/say even though it overrides those drops.
-  /^\[.+?\]\s+an?\s+.+?\s+(?:tells you|says)\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i,
+  // "tells you" ONLY — never "says". The pet's "Following / Guarding, Master."
+  // responses are PUBLIC and bystanders see them in zone, which leaked
+  // someone else's charm pet into the user's tracker. "tells you" is private
+  // to the pet owner so the priority-keep can safely override the tells-drop
+  // for the owner without surfacing bystander views.
+  /^\[.+?\]\s+an?\s+.+?\s+tells you\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i,
   // Charm-LAND attribution (bystander-visible). "<Mob> regards <Charmer>
   // as an ally." Required so the line survives any future broad drop
   // filter — used to attribute charmed mobs to their enchanter for
@@ -860,7 +858,25 @@ function parseEvent(line, ts) {
   // charm overlay (source:'charm_land' starts the tracked session). MUST come
   // before the proper-named summoned-pet matcher below so a charmed mob's
   // "Attacking … Master" opens a session instead of being treated as a summon.
-  m = line.match(/\]\s+(an?\s+.+?)\s+(?:tells you|says)\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i);
+  // Charm-LAND via pet command ack on an indefinite-article (charmed) mob:
+  //   "A Fungoid Sporeling tells you, 'Attacking a bat Master.'"
+  // The leading indefinite article ("a "/"an ") marks it as a CHARMED creature
+  // rather than a proper-named summoned pet — and rules out a player-chat false
+  // positive, since no character name starts with "a ". Quarm does NOT emit the
+  // classic "regards X as an ally" charm-land line, so a pet command ack is
+  // what actually opens the enchanter/bard charm overlay (source:'charm_land'
+  // starts the tracked session). MUST come before the proper-named summoned-pet
+  // matcher below so a charmed mob's "Attacking … Master" opens a session
+  // instead of being treated as a summon.
+  //
+  // ⚠️ "tells you" ONLY — never "says". The pet's "Following you, Master." /
+  // "Guarding here, Master." responses are PUBLIC ("says") and visible to
+  // every bystander in zone, so matching them attributed *someone else's*
+  // charm pet to __SELF__ — the bystander leak the user reported. "tells you"
+  // is private to the pet owner so it's reliably self-attributable. For the
+  // owner's own initial-follow charm-land we still get a session opened via
+  // _reconcileGaugeCharms() reading Zeal slot 16.
+  m = line.match(/\]\s+(an?\s+.+?)\s+tells you\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i);
   if (m) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__', source: 'charm_land' };
   }
@@ -8304,6 +8320,41 @@ function startWebDashboard(port) {
         if (idx >= 0) arr.splice(idx, 1);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
+      }
+      // ✕ from a charm pet card — drops the entry from _charmTickTracker so
+      // the overlay stops rendering it. Safety net for wrongly-attributed
+      // pets that the gauge reconciler hasn't pruned yet (e.g. a bystander
+      // leak left a stale BROKE card around).
+      if (req.url === '/api/charm-pet/dismiss' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const k = String(payload && payload.key || '').toLowerCase();
+        const removed = k && _charmTickTracker.delete(k);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, removed: !!removed }));
+      }
+      // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
+      // + observed buff landings + stats so the row stops rendering. Useful
+      // when switching toons leaves stale pet state (the freshness gate now
+      // hides logged-off chars, but the buffs/landings still persist and can
+      // re-surface on a new pet).
+      if (req.url === '/api/pet/dismiss' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        const owner = String(payload && payload.owner || '').toLowerCase();
+        let removed = false;
+        if (owner) {
+          if (_petHealthByOwner.delete(owner)) removed = true;
+          if (_petBuffLandings.delete(owner))  removed = true;
+          if (_petStatsByOwner.delete(owner))  removed = true;
+          if (removed) _savePetStateSoon();
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, removed }));
       }
       if (req.url === '/api/optin' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
