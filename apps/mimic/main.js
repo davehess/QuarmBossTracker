@@ -81,6 +81,7 @@ let charmWindow   = null;
 let petsWindow    = null;
 let mobInfoWindow = null;
 let whoWindow     = null;
+let melodyWindow  = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
 // "damage-done-this-session"). One window per panel; calling
@@ -1539,6 +1540,7 @@ function _overlayEntries() {
   if (petsWindow    && !petsWindow.isDestroyed())    out.push(['pets',    petsWindow]);
   if (mobInfoWindow && !mobInfoWindow.isDestroyed()) out.push(['mobinfo', mobInfoWindow]);
   if (whoWindow     && !whoWindow.isDestroyed())     out.push(['who',     whoWindow]);
+  if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1594,6 +1596,7 @@ function applySetupMode(on) {
     if (!petsWindow)    createPetsOverlay();
     if (!mobInfoWindow) createMobInfoOverlay();
     if (!whoWindow)     createWhoOverlay();
+    if (!melodyWindow)  createMelodyOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -1606,6 +1609,7 @@ function applySetupMode(on) {
   applyPetsVisibility();
   applyMobInfoVisibility();
   applyWhoVisibility();
+  applyMelodyVisibility();
   applyAllOverlayOpacities();
   pushStatus();
 }
@@ -1921,6 +1925,39 @@ function applyWhoVisibility() {
   if (shouldShow) whoWindow.showInactive(); else whoWindow.hide();
 }
 
+// Melody overlay — bard /melody twist queue with per-song play / casting /
+// stopped state. Reads from /api/state.bardMelody (per-character).
+function createMelodyOverlay() {
+  const b = _resolveBounds('melodyBounds', 'melodyBoundsSig', { x: 40, y: 600, width: 280, height: 180 });
+  melodyWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Melody overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 200, minHeight: 80,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  melodyWindow.setAlwaysOnTop(true, 'screen-saver');
+  melodyWindow.setVisibleOnAllWorkspaces(true);
+  melodyWindow.loadFile('melody.html');
+  melodyWindow.on('moved',  () => _persistBounds('melodyBounds', melodyWindow));
+  melodyWindow.on('resize', () => _persistBounds('melodyBounds', melodyWindow));
+  melodyWindow.once('ready-to-show', () => {
+    melodyWindow.webContents.send('agent-port', agentPort);
+    applyMelodyVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(melodyWindow, 'melody');
+  });
+}
+function applyMelodyVisibility() {
+  if (!melodyWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — only useful to bards. EQ-gated.
+  const shouldShow = unlocked || (cfg.showMelody && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) melodyWindow.showInactive(); else melodyWindow.hide();
+}
+
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
 // presence poller (on running ↔ not-running flips) and by config toggles.
 function applyAllVisibility() {
@@ -1930,6 +1967,7 @@ function applyAllVisibility() {
   applyPetsVisibility();
   applyMobInfoVisibility();
   applyWhoVisibility();
+  applyMelodyVisibility();
 }
 
 // Autostart-with-Windows wiring. Backed by app.setLoginItemSettings — Electron
@@ -1967,6 +2005,7 @@ function currentStatus() {
     showPets: !!cfg.showPets,
     showMobInfo: !!cfg.showMobInfo,
     showWho: !!cfg.showWho,
+    showMelody: !!cfg.showMelody,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -2123,6 +2162,11 @@ function buildTrayMenu() {
     { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showWho = mi.checked; saveConfig(cfg);
         if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
+        pushStatus();
+      } },
+    { label: 'Melody (bard /melody)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
+        if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -2591,6 +2635,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showWho = !cfg.showWho; saveConfig(cfg);
       if (cfg.showWho && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
       break;
+    case 'melody':
+      cfg.showMelody = !cfg.showMelody; saveConfig(cfg);
+      if (cfg.showMelody && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
+      break;
     default:
       return null;
   }
@@ -2996,6 +3044,7 @@ app.whenReady().then(async () => {
   createPetsOverlay();
   createMobInfoOverlay();
   createWhoOverlay();
+  createMelodyOverlay();
   pushStatus();
   startZealCapture();
 
@@ -3031,6 +3080,7 @@ app.whenReady().then(async () => {
       [petsWindow,    { x: 700, y: 620, width: 300, height: 160 }],
       [mobInfoWindow, { x: 700, y: 60,  width: 320, height: 200 }],
       [whoWindow,     { x: 40,  y: 300, width: 320, height: 280 }],
+      [melodyWindow,  { x: 40,  y: 600, width: 280, height: 180 }],
     ]) {
       if (!win || win.isDestroyed()) continue;
       try {

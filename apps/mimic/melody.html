@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>melody</title>
+<style>
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
+  #wrap{background:rgba(14,17,22,0.78);border:1px solid rgba(163,113,247,0.45);
+    border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px);
+    position:relative}
+  .title{font-size:10px;color:#a371f7;letter-spacing:0.1em;
+    text-transform:uppercase;display:flex;gap:6px;align-items:center}
+  .conn{font-size:9px}
+  .conn.ok{color:#56d364}
+  .conn.bad{color:#f87171}
+  .empty{color:#6b7280;font-size:10px;margin-top:6px}
+  /* Per-character melody block. */
+  .mel{margin-top:6px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)}
+  .mel:first-of-type{border-top:none;padding-top:0;margin-top:4px}
+  .mel .who{font-size:10px;color:#c9d1d9;font-weight:600;display:flex;
+    justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px}
+  .mel .who .since{color:#6b7280;font-size:9px;font-weight:normal}
+  /* Each song row: [icon] [name] [cast bar]. Vertical stack, cast-order. */
+  .songs{display:flex;flex-direction:column;gap:2px}
+  .row{display:grid;grid-template-columns:14px 1fr;gap:6px;align-items:center;
+    font-size:11px;line-height:1.4;padding:2px 4px;border-radius:3px;
+    background:rgba(255,255,255,0.03)}
+  .row .icon{display:flex;align-items:center;justify-content:center;
+    width:14px;height:14px;font-size:11px;color:#8b949e}
+  .row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
+  /* Casting row — fills the row background left→right as the cast progresses,
+     giving the "arrow getting closer" effect the user asked for. */
+  .row.casting{background:linear-gradient(to right,
+    rgba(163,113,247,0.55) 0%, rgba(163,113,247,0.55) var(--p,0%),
+    rgba(163,113,247,0.10) var(--p,0%), rgba(163,113,247,0.10) 100%);
+    color:#fff;border:1px solid rgba(163,113,247,0.4)}
+  .row.casting .icon{color:#fff;animation:pulse 1.2s ease-in-out infinite}
+  .row.casting .name{color:#fff;font-weight:600}
+  /* Completed-this-cycle row — song landed, waiting for the next twist to
+     come around. Green check; subtle so the casting row dominates. */
+  .row.done .icon{color:#56d364}
+  .row.done .name{color:#9aa3ad}
+  /* Stopped — bard stopped singing. The last casting row freezes here with a
+     ⏹ so they can see "I'd resume on this one". */
+  .row.stopped{background:rgba(248,81,73,0.12);border:1px solid rgba(248,81,73,0.4)}
+  .row.stopped .icon{color:#f85149}
+  .row.stopped .name{color:#f6c365;font-weight:600}
+  /* Queued / upcoming — bog-standard play arrow. */
+  .row.queued .icon{color:#a371f7;opacity:0.85}
+  .row.queued .name{color:#c9d1d9}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.65;transform:scale(0.92)}}
+
+  /* ✥ move + ✕ hide corner squares */
+  #move-btn,#hide-btn{position:absolute;top:6px;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;opacity:0.45;transition:opacity .12s;z-index:60}
+  #move-btn{left:6px;cursor:move}
+  #hide-btn{right:6px;cursor:pointer}
+  #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  #drag-controls{display:none;position:absolute;top:4px;left:4px;gap:4px;z-index:50}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked #wrap{border-color:rgba(163,113,247,0.95);
+    box-shadow:0 0 0 1px rgba(163,113,247,0.6);margin-top:32px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;
+    justify-content:center;background:rgba(163,113,247,0.92);color:#fff;
+    border:1px solid rgba(255,255,255,0.4);border-radius:4px;font-size:13px;
+    line-height:1;cursor:move;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,0.4)}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;align-items:center;gap:8px;margin:0 4px;padding:4px 8px;
+    background:rgba(214,153,34,0.92);color:#222;font-size:10px;border-radius:0 0 6px 6px;
+    -webkit-app-region:no-drag;font-weight:600}
+  body.setup #setupbar{display:flex}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
+  <button id="hide-btn" title="Hide this overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Setup</span><span>opacity</span>
+    <input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" />
+    <span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span id="conn" class="conn bad">○</span><span>🎶 Melody</span></div>
+    <div id="list"></div>
+    <div class="empty" id="empty">no bard songs yet — start singing.</div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  // Lock + drag wiring — same handshake as the other overlays.
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _isDragging = false;
+  function _beginDrag(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    _isDragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_isDragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+  }
+  document.addEventListener('mouseup', function(){
+    if (_isDragging) {
+      _isDragging = false;
+      try { window.mimic.overlayDragEnd(); } catch (err) {}
+      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+    }
+  });
+  window.addEventListener('blur', function(){ if (_isDragging) { _isDragging = false; try { window.mimic.overlayDragEnd(); } catch (err) {} } });
+
+  var _overlayKey = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { window.mimic.setSetupMode(false); } catch (e) {} });
+
+  function esc(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  function fmtElapsed(ms){
+    var s = Math.max(0, Math.floor(ms/1000));
+    var m = Math.floor(s/60); var r = s - m*60;
+    return m + ':' + String(r).padStart(2,'0');
+  }
+  // Trim leading possessive prefix so chips fit ("Selo`s Accelerando" → "Accelerando").
+  function shortSongName(name){
+    if (!name) return '';
+    return String(name).replace(/^(?:Selo[`']s|Solon[`']s|Tarew[`']s|Tuyen[`']s|Denon[`']s|McVaxius[`']s|Niv[`']s|Anthem de|Brusco[`']s|Angstlich[`']s|Cassindra[`']s|Kelin[`']s|Largo[`']s|Jonthan[`']s)\s+/i, '');
+  }
+
+  // Tell main.js to resize the window to fit the rendered content.
+  var _lastReqH = 0;
+  function _requestAutoHeight() {
+    try {
+      var wrap = document.getElementById('wrap');
+      if (!wrap || !window.mimic || !window.mimic.overlayAutoHeight) return;
+      var h = Math.ceil(wrap.scrollHeight + 8);
+      if (h !== _lastReqH) { _lastReqH = h; window.mimic.overlayAutoHeight(h); }
+    } catch (e) {}
+  }
+
+  // Bard songs cast ~3s on average. Without song-specific cast times in the
+  // catalog we use a flat default — close enough for the visual bar (it
+  // reaches 100% right as the next "begin singing" fires for the next slot).
+  var SONG_CAST_MS = 3000;
+  // Once cast finishes, treat the previous slot as "done" until either the
+  // bard sings something else (next twist) or this much time elapses without
+  // a new sing event — at which point the row freezes as "stopped" so the
+  // bard can see where to resume.
+  var STOP_AFTER_MS = 5000;
+
+  var listEl = document.getElementById('list');
+  var emptyEl = document.getElementById('empty');
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      const s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      const now = Date.now();
+      const melodyByChar = s.bardMelody || {};
+      const keys = Object.keys(melodyByChar);
+      var html = '';
+      for (var ki = 0; ki < keys.length; ki++) {
+        var k = keys[ki];
+        var st = melodyByChar[k];
+        if (!st || !Array.isArray(st.order) || st.order.length === 0) continue;
+
+        var castStartedAt = st.castStartedAt || st.lastChangeAt || now;
+        var sinceCast = now - castStartedAt;
+        var sinceChange = now - (st.lastChangeAt || castStartedAt);
+        var currentPos = (typeof st.currentPos === 'number') ? st.currentPos : -1;
+
+        // Three states for currentPos:
+        //   casting → sinceCast < SONG_CAST_MS → bar fills 0→100%
+        //   done    → cast finished, song landed, awaiting next twist
+        //   stopped → bard hasn't sung in STOP_AFTER_MS → freeze as ⏹
+        var isCasting = sinceCast < SONG_CAST_MS;
+        var isStopped = !isCasting && sinceChange >= STOP_AFTER_MS;
+
+        var castPct = isCasting ? Math.max(0, Math.min(100, (sinceCast / SONG_CAST_MS) * 100)) : 100;
+
+        var sinceLabel;
+        if (isStopped)      sinceLabel = 'stopped ' + fmtElapsed(sinceChange) + ' ago';
+        else if (isCasting) sinceLabel = 'casting ' + Math.max(0, ((SONG_CAST_MS - sinceCast)/1000)).toFixed(1) + 's';
+        else                sinceLabel = (st.cycleLength > 0 ? (st.cycleLength + '-song melody') : 'building melody…');
+
+        var rowsHtml = '';
+        for (var i = 0; i < st.order.length; i++) {
+          var name = st.order[i];
+          var rowClass = 'row';
+          var icon = '▶';
+          var styleAttr = '';
+          if (i === currentPos) {
+            if (isCasting) {
+              rowClass += ' casting';
+              icon = '▶';
+              styleAttr = ' style="--p:' + castPct.toFixed(1) + '%"';
+            } else if (isStopped) {
+              rowClass += ' stopped';
+              icon = '⏹';
+            } else {
+              rowClass += ' done';
+              icon = '✓';
+            }
+          } else {
+            rowClass += ' queued';
+          }
+          rowsHtml += '<div class="' + rowClass + '"' + styleAttr + ' title="' + esc(name) + '">'
+                    +   '<span class="icon">' + icon + '</span>'
+                    +   '<span class="name">' + esc(shortSongName(name)) + '</span>'
+                    + '</div>';
+        }
+
+        html += '<div class="mel">'
+              + '<div class="who"><span>' + esc(k.charAt(0).toUpperCase() + k.slice(1)) + '</span><span class="since">' + esc(sinceLabel) + '</span></div>'
+              + '<div class="songs">' + rowsHtml + '</div>'
+              + '</div>';
+      }
+      listEl.innerHTML = html;
+      emptyEl.style.display = html ? 'none' : 'block';
+      _requestAutoHeight();
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  // Tick fast so the cast-progress bar animates smoothly (every ~100ms).
+  tick(); setInterval(tick, 150);
+</script>
+</body></html>

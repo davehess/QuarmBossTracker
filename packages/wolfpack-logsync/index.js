@@ -793,10 +793,11 @@ function parseEvent(line, ts) {
   // ── Casts ─────────────────────────────────────────────────────────────────
   // "singing" covers bard songs so the charm tracker can pick up a bard's charm
   // song (Solon's Bewitching Bravura, etc.) the same way it reads an enchanter's
-  // "You begin casting Allure".
-  m = line.match(/\]\s+You begin (?:casting|singing)\s+(.+?)\./i);
+  // "You begin casting Allure". `singing` is true for bard songs and drives the
+  // melody overlay (which only tracks songs, not generic spell casts).
+  m = line.match(/\]\s+You begin (casting|singing)\s+(.+?)\./i);
   if (m) {
-    return { ts: tsIso, type: 'cast', attacker: null /* self */, ability: m[1] };
+    return { ts: tsIso, type: 'cast', attacker: null /* self */, ability: m[2], singing: m[1].toLowerCase() === 'singing' };
   }
   m = line.match(/\]\s+(.+?)\s+begins? to cast\s+(.+?)\./i);
   if (m) {
@@ -1184,6 +1185,74 @@ function _reconcileGaugeCharms() {
       _charmTickTracker.delete(k);
     }
   }
+}
+
+// ── Bard melody tracker ────────────────────────────────────────────────────
+// Goal: a per-character ordered melody (the songs in /melody slot order) +
+// the currently-casting position, so the overlay can render a vertical list
+// where each song row shows: ▶ play icon · song name · casting bar. As the
+// bard twists through the rotation, the "currently casting" indicator walks
+// down the list; when they stop singing, the indicator freezes on the last
+// position as a ⏹ "resume here" marker.
+//
+// Storage: characterLower → {
+//   order:           [songName, …]   // in CAST order; first sing seeds slot 0
+//   currentPos:      number          // index into `order` of the song most
+//                                    //   recently begun (the one casting)
+//   castStartedAt:   number          // ms when the current cast began
+//   cycleLength:     number          // 0 until we detect a repeat, then the
+//                                    //   melody length (2..MELODY_CAP)
+//   lastChangeAt:    number          // last sing event — also drives the
+//                                    //   "idle" / "stopped" overlay state
+// }
+//
+// Cycle detection: bards on Quarm twist 2-5 songs. When a song that's
+// already in `order` is sung again, we know the cycle has wrapped — that
+// repeat sets cycleLength to the current order length and the renderer
+// shifts to a stable looping view (the indicator hops back to that slot).
+// Brand-new songs after cycle detection (the bard added/removed from
+// /melody) reset the order so the display tracks the new rotation.
+const _bardMelody = new Map();
+const MELODY_CAP     = 5;       // Quarm max /melody size
+const MELODY_IDLE_MS = 30_000;  // drop overlay when no sing for 30s
+function _bumpBardMelody(character, songName, atMs) {
+  if (!character || !songName) return;
+  const key = String(character).toLowerCase();
+  let state = _bardMelody.get(key);
+  if (!state) {
+    state = { order: [], currentPos: -1, castStartedAt: atMs, cycleLength: 0, lastChangeAt: atMs };
+    _bardMelody.set(key, state);
+  }
+  // If we haven't sung in MELODY_IDLE_MS, treat this as a brand-new melody
+  // (the bard zoned / stopped / swapped songs). Avoids merging two
+  // unrelated rotations into one confusing list.
+  if (state.lastChangeAt && (atMs - state.lastChangeAt) > MELODY_IDLE_MS) {
+    state.order = [];
+    state.currentPos = -1;
+    state.cycleLength = 0;
+  }
+  const name = String(songName);
+  const lower = name.toLowerCase();
+  const existingIdx = state.order.findIndex(n => n.toLowerCase() === lower);
+  if (existingIdx >= 0) {
+    // Song already in the list — we've cycled back to it.
+    // The first time this happens, it locks in the melody length.
+    if (state.cycleLength === 0) state.cycleLength = state.order.length;
+    state.currentPos = existingIdx;
+  } else {
+    // New song. Append if there's room; otherwise the bard is changing their
+    // melody — drop the OLDEST entry to keep the rotation visualization in
+    // sync with what they're actually casting now.
+    if (state.order.length >= MELODY_CAP) {
+      state.order.shift();
+      // currentPos was relative to the old order; we just shifted everything
+      // left by one — the slot the bard just sang lands at the end.
+    }
+    state.order.push(name);
+    state.currentPos = state.order.length - 1;
+  }
+  state.castStartedAt = atMs;
+  state.lastChangeAt  = atMs;
 }
 
 // Charm pet DEATH — remove the lingering pet immediately (per "unless the pet
@@ -2593,6 +2662,13 @@ class EncounterBuilder {
       if (!event.attacker) {
         const ci = CHARM_SPELLS.get(String(spell).toLowerCase());
         if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: this.character || null, ts: Date.now() };
+      }
+      // Bard melody tracker — singing-only (the parseEvent split tags bard
+      // songs with event.singing=true). Move-to-front a song-name cycle per
+      // character so the melody overlay can show the twist queue + the
+      // last-known position when the bard stops melodying. Self-cast only.
+      if (!event.attacker && event.singing && this.character) {
+        _bumpBardMelody(this.character, spell, Date.parse(event.ts) || Date.now());
       }
     }
 
@@ -4092,6 +4168,32 @@ function _serializeForDashboard() {
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
+    })(),
+    // Bard melody — per watched character, the songs in /melody slot order
+    // + the current cast position. Powers the melody overlay's vertical
+    // list with ▶ play icon, casting bar, and the "stopped here" marker
+    // for resume-after-interrupt. Idle melodies (no sing for MELODY_IDLE_MS)
+    // drop out so the overlay empties when the bard zones / logs off.
+    bardMelody: (() => {
+      const myChars = new Set((stats.watchedLogs || [])
+        .map(w => w && w.character && String(w.character).toLowerCase())
+        .filter(Boolean));
+      const now = Date.now();
+      const out = {};
+      for (const [k, state] of _bardMelody.entries()) {
+        if (myChars.size > 0 && !myChars.has(k)) continue;
+        if (!state || !state.order || state.order.length === 0) continue;
+        if (state.lastChangeAt && (now - state.lastChangeAt) > MELODY_IDLE_MS) continue;
+        out[k] = {
+          character:      k,
+          order:          state.order,
+          currentPos:     state.currentPos,
+          castStartedAt:  state.castStartedAt,
+          cycleLength:    state.cycleLength,
+          lastChangeAt:   state.lastChangeAt,
+        };
+      }
+      return out;
     })(),
     // SUMMONED-pet view for the Pet tracker overlay (mage/necro/beastlord),
     // EXCLUDING active charms (those render in the charm tracker with the
