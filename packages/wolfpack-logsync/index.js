@@ -4348,10 +4348,14 @@ function _serializeForDashboard() {
               out.buff_name       = buff.name;
             }
             return out;
-          })
-          // Drop the utility songs from the main list — they get rendered in
-          // the bardBuffs strip below instead.
-          .filter(o => state.kind !== 'song' || !stripNames.has(String(o.name).toLowerCase()));
+          });
+          // REVERT (3am): the v1.0.54 filter was dropping utility songs
+          // (Amplification, Harmonize, Selo`s Accelerating Chorus, Niv`s,
+          // Nature`s Melody) from the main list because they ALSO render in
+          // the bottom bardBuffs strip. If a bard's melody happens to be
+          // mostly those songs, the main list went empty → "no bard songs
+          // yet" even though the agent IS tracking them. Removed the filter
+          // so songs render in BOTH places — mildly redundant but functional.
         // Zeal label 134 = the spell name being cast RIGHT NOW. When set
         // we surface it on the melody so the overlay can show "Now casting:
         // X" verbatim — useful for non-bard /melody rotations where the
