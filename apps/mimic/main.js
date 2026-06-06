@@ -1118,13 +1118,23 @@ function startZealCapture() {
     const cfg = loadConfig();
     if (cfg.zealPipe === false) { appendAgentLog('[zeal] capture disabled (cfg.zealPipe=false)\n'); return; }
     const seenTypes = new Set();          // "pid:type" we've already log-sampled
+    // Just-in-time Zeal-setup hint. If EQ is running for 60s but the pipe is
+    // silent, we surface a one-time toast suggesting the user enable Zeal's
+    // pipe output. Solves the "melody is empty" / "charm tracker blank" class
+    // of bug reports caused by Zeal pipe being off in the user's EQ config.
+    let _zealFirstEqAt   = 0;
+    let _zealHintFired   = false;
+    let _zealAnyEventYet = false;
     zealWatch = startZealWatch({
       log: appendAgentLog,
       onStatus: (s) => {
         zealLastConnectedPids = s.connectedPids || [];
+        if (zealLastConnectedPids.length > 0 && !_zealFirstEqAt) _zealFirstEqAt = Date.now();
+        if (zealLastConnectedPids.length === 0) _zealFirstEqAt = 0;   // EQ closed — reset window
         _flushZealToAgent();              // push connection change immediately
       },
       onEvent: (pid, obj) => {
+        _zealAnyEventYet = true;
         const type = (obj && (obj.type !== undefined ? String(obj.type) : 'noType'));
         const key = pid + ':' + type;
         // Log one full sample per (pid,type) the first time — keeps the agent
@@ -1151,6 +1161,36 @@ function startZealCapture() {
     });
     setInterval(_flushZealToAgent, 2000);
     setInterval(_flushZealStateToAgent, 300);   // gauge-condition snapshots
+    // Hint check: every 15s, look at the EQ-running window vs zeal traffic.
+    // Suppressed after the first fire (a single user session shouldn't get
+    // nagged repeatedly) AND after any zeal event has arrived (proves pipe
+    // is wired). Also honors cfg.zealHintShown so a once-acknowledged user
+    // doesn't get re-prompted across launches.
+    setInterval(() => {
+      if (_zealHintFired || _zealAnyEventYet) return;
+      if (!_zealFirstEqAt || (Date.now() - _zealFirstEqAt) < 60_000) return;
+      const cfgNow = loadConfig();
+      if (cfgNow.zealHintShown) return;
+      _zealHintFired = true;
+      try { cfgNow.zealHintShown = true; saveConfig(cfgNow); } catch {}
+      appendAgentLog('[zeal] no traffic detected after EQ has been running 60s — prompting user\n');
+      try {
+        if (Notification.isSupported()) {
+          const n = new Notification({
+            title: 'Wolf Pack Mimic — Zeal pipes look off',
+            body:  'EQ is running but no Zeal data is flowing. Open Zeal in-game → Settings → Pipes and enable all data types. Need to verify? Tray → Overlays → Zeal health (diagnostic).',
+          });
+          n.on('click', () => {
+            const cfg2 = loadConfig();
+            cfg2.showZeal = true;
+            saveConfig(cfg2);
+            if (!zealWindow) createZealHealthOverlay(); else applyZealVisibility();
+            pushStatus();
+          });
+          n.show();
+        }
+      } catch {}
+    }, 15_000);
     appendAgentLog('[zeal] capture started — watching for eqgame.exe + Zeal pipes\n');
   } catch (e) {
     appendAgentLog(`[zeal] capture failed to start: ${e && e.message}\n`);
