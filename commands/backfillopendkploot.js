@@ -154,27 +154,43 @@ module.exports = {
       }
     }
 
-    // 4. Build insert rows. Skip items with no confident attribution.
+    // 4. Build insert rows. Confident attributions go in as source='opendkp'.
+    //    Ambiguous + unknown items now persist too (with marker source values
+    //    and npc_id=null) so we can SEE what's being skipped instead of losing
+    //    it — spells + old gear that nobody bids on for years end up here, and
+    //    we want a record we can query. They don't pollute the "× won" count
+    //    on the Loot tab because that filter is source=opendkp only.
     const rows = [];
     let ambiguousSkipped = 0;
     let unknownSkipped   = 0;
     for (const a of awarded) {
       const owner = dropOwnerByItem.get(a.item_id);
-      if (!owner) {
-        if (dropOwnerByItem.has(a.item_id)) ambiguousSkipped++;
-        else unknownSkipped++;
-        continue;
-      }
-      rows.push({
+      const baseRow = {
         guild_id:             guildId,
-        npc_name_lower:       String(owner.npc_name).toLowerCase().replace(/_/g, ' ').trim(),
-        npc_id:               owner.npc_id,
-        item_id:              a.item_id,
-        item_name:            a.item_name,
-        posted_at:            a.raid_ts || new Date().toISOString(),
-        posted_by_discord_id: 'opendkp:raid' + a.raid_id,
-        source:               'opendkp',
-      });
+        item_id:               a.item_id,
+        item_name:             a.item_name,
+        posted_at:             a.raid_ts || new Date().toISOString(),
+        posted_by_discord_id:  'opendkp:raid' + a.raid_id,
+      };
+      if (owner) {
+        rows.push({
+          ...baseRow,
+          npc_name_lower:  String(owner.npc_name).toLowerCase().replace(/_/g, ' ').trim(),
+          npc_id:          owner.npc_id,
+          source:          'opendkp',
+        });
+      } else if (dropOwnerByItem.has(a.item_id)) {
+        // Multiple candidate NPCs in eqemu_npc_drops — persist for later
+        // refinement (encounter-context attribution, expansion filtering, etc.).
+        rows.push({ ...baseRow, npc_name_lower: '(ambiguous)', npc_id: null, source: 'opendkp_ambiguous' });
+        ambiguousSkipped++;
+      } else {
+        // Item ID not in eqemu_npc_drops at all — spells (drop tables differ),
+        // tradeskill items, quest rewards, anything our weekly EQEmu sync
+        // missed. Persist so we can categorize and decide where to look next.
+        rows.push({ ...baseRow, npc_name_lower: '(unknown)', npc_id: null, source: 'opendkp_unknown' });
+        unknownSkipped++;
+      }
     }
 
     if (rows.length === 0) {
@@ -192,20 +208,21 @@ module.exports = {
       );
     }
 
-    // 5. Idempotent insert: drop rows that already exist for (guild,npc_id,
-    //    item_id,posted_at). One narrow select scoped to this window keeps
-    //    re-runs cheap.
+    // 5. Idempotent insert: drop rows that already exist. Key includes source
+    //    so ambiguous/unknown rows have their own namespace and don't collide
+    //    with confident ones. One narrow window-scoped select keeps re-runs
+    //    cheap even on full-history backfills.
     let alreadyPresent = 0;
     try {
       const minTs = rows.reduce((m, r) => (!m || r.posted_at < m) ? r.posted_at : m, null);
       if (minTs) {
         const existing = await supabase.select('loot_observations',
-          `guild_id=eq.${encodeURIComponent(guildId)}&source=eq.opendkp&posted_at=gte.${encodeURIComponent(minTs)}&select=npc_id,item_id,posted_at&limit=10000`);
+          `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&posted_at=gte.${encodeURIComponent(minTs)}&select=npc_id,item_id,posted_at,source&limit=20000`);
         if (Array.isArray(existing)) {
-          const seen = new Set(existing.map(r => `${r.npc_id}|${r.item_id}|${r.posted_at}`));
+          const seen = new Set(existing.map(r => `${r.source}|${r.npc_id ?? 'null'}|${r.item_id}|${r.posted_at}`));
           const before = rows.length;
           for (let i = rows.length - 1; i >= 0; i--) {
-            const k = `${rows[i].npc_id}|${rows[i].item_id}|${rows[i].posted_at}`;
+            const k = `${rows[i].source}|${rows[i].npc_id ?? 'null'}|${rows[i].item_id}|${rows[i].posted_at}`;
             if (seen.has(k)) rows.splice(i, 1);
           }
           alreadyPresent = before - rows.length;
