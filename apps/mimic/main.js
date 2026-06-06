@@ -83,6 +83,7 @@ let mobInfoWindow = null;
 let whoWindow     = null;
 let melodyWindow  = null;
 let zealWindow    = null;
+let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
 // "damage-done-this-session"). One window per panel; calling
@@ -1774,6 +1775,63 @@ function openSettings() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
+// UI Studio — graphical EQ-window editor. Loads per-character ini files
+// from the user's EQ folder, parses XPos/YPos/Size.cx/Size.cy from each
+// section, rescales 1440 → 1080 (or any source→target res), lets the user
+// drag/resize windows with snap-to-edges, then writes back with .bak
+// backups. Lets users prep a UI for a new monitor without launching EQ.
+function openUiStudio() {
+  if (uiStudioWindow) { uiStudioWindow.focus(); return; }
+  uiStudioWindow = new BrowserWindow({
+    width: 1200, height: 780, title: 'Wolf Pack Mimic — UI Studio',
+    backgroundColor: '#0d1117',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  uiStudioWindow.setMenu(null);
+  uiStudioWindow.loadFile('ui-studio.html');
+  uiStudioWindow.on('closed', () => { uiStudioWindow = null; });
+}
+
+// Read a character's full ini bundle (existing UI Studio capture helper
+// gives us this) and return raw text contents per file so the renderer
+// can parse + edit + save in one round-trip.
+ipcMain.handle('ui-studio-read-bundle', (_e, character, eqDir) => {
+  try {
+    const c = String(character || '').trim();
+    const d = String(eqDir || '').trim();
+    if (!c || !d) return null;
+    return _readUiBundle(d, c);
+  } catch { return null; }
+});
+
+// Write the edited bundle back to disk with .bak backups (via
+// _backupAndWriteFile). Only writes files explicitly present in the
+// bundle map — unchanged INIs are left alone, never accidentally cleared.
+ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
+  try {
+    const d = String(eqDir || '').trim();
+    if (!d || !bundle || typeof bundle !== 'object') {
+      return { ok: false, error: 'eqDir + bundle required' };
+    }
+    if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) {
+      return { ok: false, error: 'eqDir does not exist: ' + d };
+    }
+    const written = [];
+    for (const [name, contents] of Object.entries(bundle)) {
+      if (typeof contents !== 'string' || contents.length === 0) continue;
+      // Sanity: only allow plain ini filenames in the EQ dir — no path
+      // traversal, no overwriting files outside the directory.
+      if (!/^[\w.-]+\.ini$/i.test(name)) continue;
+      const target = path.join(d, name);
+      _backupAndWriteFile(target, contents);
+      written.push(name);
+    }
+    return { ok: true, written, count: written.length };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
 // ── EQ-presence detection ───────────────────────────────────────────────────
 // Poll Windows tasklist for eqgame.exe so overlays can hide themselves when
 // the user isn't actually playing. The poll is cheap (one tasklist call every
@@ -2511,6 +2569,7 @@ function buildTrayMenu() {
     connectItem,
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
+    { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
     updateItem,
     updatePopupItem,
     betaChannelItem,

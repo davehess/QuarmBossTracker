@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>UI Studio</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
+    font-family:ui-sans-serif,system-ui,sans-serif;user-select:none;overflow:hidden}
+  /* Top toolbar — resolution pickers, character selector, save/load. */
+  #bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;
+    border-bottom:1px solid #30363d;flex-wrap:wrap}
+  #bar h1{font-size:13px;margin:0;color:#7ee7c7;letter-spacing:0.5px;font-weight:600;margin-right:6px}
+  #bar label{font-size:11px;color:#8b949e;display:flex;align-items:center;gap:4px}
+  #bar select,#bar input,#bar button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;
+    border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit}
+  #bar select:hover,#bar input:hover{border-color:#58a6ff}
+  #bar button{cursor:pointer;background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+  #bar button:hover{background:#388bfd}
+  #bar button.secondary{background:#21262d;border-color:#30363d;color:#c9d1d9;font-weight:500}
+  #bar button.secondary:hover{background:#30363d}
+  #bar button[disabled]{opacity:0.4;cursor:not-allowed}
+  #bar .sep{width:1px;height:18px;background:#30363d;margin:0 2px}
+  #status{margin-left:auto;font-size:10px;color:#8b949e}
+  #status.ok{color:#56d364} #status.err{color:#f87171}
+  /* Canvas — proportional to target resolution, scaled to fit. Black bg
+     represents the EQ screen. Window rectangles overlay. */
+  #stageWrap{display:flex;justify-content:center;align-items:center;flex:1;padding:14px;
+    background:#0a0c10;height:calc(100vh - 50px);overflow:auto}
+  #stage{position:relative;background:#000;border:1px solid #58a6ff;
+    box-shadow:0 0 12px rgba(88,166,255,0.18)}
+  /* Each window rectangle is absolutely positioned inside #stage. */
+  .win{position:absolute;background:rgba(31,111,235,0.18);
+    border:1px solid rgba(88,166,255,0.7);border-radius:2px;cursor:move;
+    overflow:hidden;transition:box-shadow .12s}
+  .win:hover{background:rgba(31,111,235,0.32);box-shadow:0 0 6px rgba(88,166,255,0.5)}
+  .win.selected{border-color:#7ee7c7;background:rgba(126,231,199,0.22);
+    box-shadow:0 0 8px rgba(126,231,199,0.6)}
+  .win .lbl{position:absolute;top:2px;left:4px;font-size:9px;color:#fff;
+    text-shadow:0 1px 2px #000;font-weight:600;pointer-events:none;
+    text-overflow:ellipsis;white-space:nowrap;overflow:hidden;max-width:calc(100% - 8px)}
+  .win .sz{position:absolute;bottom:2px;right:4px;font-size:8px;color:#9aa4ad;
+    text-shadow:0 1px 2px #000;pointer-events:none}
+  .win .grip{position:absolute;width:8px;height:8px;background:#7ee7c7;
+    border:1px solid #000;border-radius:1px;z-index:5}
+  .win .grip.se{right:-4px;bottom:-4px;cursor:nwse-resize}
+  /* Side panel for the selected window's properties. */
+  #side{position:fixed;top:50px;right:0;bottom:0;width:240px;background:#161b22;
+    border-left:1px solid #30363d;padding:10px;font-size:11px;overflow-y:auto;
+    display:none}
+  #side.on{display:block}
+  #side h3{margin:0 0 8px 0;color:#7ee7c7;font-size:12px}
+  #side .field{margin-bottom:6px}
+  #side .field label{display:block;color:#8b949e;font-size:10px;margin-bottom:2px}
+  #side .field input{width:100%;box-sizing:border-box;background:#0d1117;
+    color:#e6edf3;border:1px solid #30363d;border-radius:3px;padding:3px 6px;font-size:11px}
+  #side .row{display:flex;gap:6px}
+  #side .row .field{flex:1}
+  #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
+  #stageWrap.has-side #stage{margin-right:240px}
+  /* Snap edge highlight when dragging — visual feedback when a window
+     edge aligns with another window edge. */
+  .snap-x{position:absolute;width:1px;background:#7ee7c7;pointer-events:none;
+    box-shadow:0 0 4px #7ee7c7;z-index:10}
+  .snap-y{position:absolute;height:1px;background:#7ee7c7;pointer-events:none;
+    box-shadow:0 0 4px #7ee7c7;z-index:10}
+</style></head>
+<body>
+  <div id="bar">
+    <h1>🎨 UI Studio</h1>
+    <label>Character
+      <select id="charSelect"><option value="">— pick —</option></select>
+    </label>
+    <span class="sep"></span>
+    <label>Source
+      <select id="srcRes">
+        <option value="3440x1440">3440×1440</option>
+        <option value="2560x1440" selected>2560×1440</option>
+        <option value="1920x1080">1920×1080</option>
+        <option value="1680x1050">1680×1050</option>
+      </select>
+    </label>
+    <label>→ Target
+      <select id="tgtRes">
+        <option value="1920x1080" selected>1920×1080</option>
+        <option value="2560x1440">2560×1440</option>
+        <option value="1680x1050">1680×1050</option>
+        <option value="3440x1440">3440×1440</option>
+      </select>
+    </label>
+    <button id="loadBtn" class="secondary">Load + Rescale</button>
+    <span class="sep"></span>
+    <button id="snapBtn"  class="secondary" title="Toggle snap to edges (10px)">Snap: ON</button>
+    <button id="resetBtn" class="secondary" title="Undo all changes since load">Reset</button>
+    <button id="saveBtn"  title="Write back to INI with .bak backup">Save</button>
+    <span id="status"></span>
+  </div>
+  <div id="stageWrap"><div id="stage"></div></div>
+  <aside id="side">
+    <h3 id="sideTitle">Window</h3>
+    <div class="row">
+      <div class="field"><label>X</label><input id="fX" type="number" /></div>
+      <div class="field"><label>Y</label><input id="fY" type="number" /></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Width</label><input id="fW" type="number" /></div>
+      <div class="field"><label>Height</label><input id="fH" type="number" /></div>
+    </div>
+    <div class="meta" id="sideMeta"></div>
+  </aside>
+<script>
+  // ── State ────────────────────────────────────────────────────────────────
+  // bundle: { file → contents } loaded from disk. We mutate per-window
+  // positions in `windows[]` and re-emit on save.
+  // windows: parsed window list. Each entry: {
+  //   id, file, section, label, x, y, w, h, origX, origY, origW, origH,
+  //   sectionStart, sectionEnd  (line numbers in the file's contents)
+  // }
+  var STATE = {
+    character: null,
+    eqDir:     null,
+    bundle:    null,          // { filename → text }
+    windows:   [],
+    srcW:      2560, srcH: 1440,
+    tgtW:      1920, tgtH: 1080,
+    snapOn:    true,
+    selected:  -1,
+    sliceScale: 1,            // canvas → world scale for hit testing
+  };
+
+  var statusEl  = document.getElementById('status');
+  var stage     = document.getElementById('stage');
+  var stageWrap = document.getElementById('stageWrap');
+  var side      = document.getElementById('side');
+
+  function setStatus(msg, cls) {
+    statusEl.textContent = msg || '';
+    statusEl.className = cls || '';
+  }
+
+  // ── Bootstrap: list characters via existing UI Studio IPC ────────────────
+  async function bootstrap(){
+    try {
+      var chars = await window.mimic.uiStudioListCharacters();
+      var sel = document.getElementById('charSelect');
+      for (var i = 0; i < chars.length; i++) {
+        var c = chars[i];
+        var opt = document.createElement('option');
+        opt.value = c.character + '|' + c.eqDir;
+        opt.textContent = c.character + (c.ini_count ? ' (' + c.ini_count + ' ini files)' : ' (no inis)');
+        sel.appendChild(opt);
+      }
+    } catch (e) { setStatus('IPC unavailable — open via tray', 'err'); }
+  }
+  bootstrap();
+
+  // ── INI parsing ──────────────────────────────────────────────────────────
+  // EQ INI sections like:
+  //   [InventoryWindow]
+  //   XPos=100
+  //   YPos=200
+  //   Size.cx=400
+  //   Size.cy=300
+  // We extract each [SectionName] block, pull XPos/YPos/Size.cx/Size.cy.
+  // Sections without position data are still parsed (so saving rewrites
+  // verbatim), just not added to the visual list.
+  function parseIni(text){
+    var lines = text.split(/\r?\n/);
+    var sections = [];
+    var cur = null;
+    for (var i = 0; i < lines.length; i++) {
+      var L = lines[i];
+      var m = L.match(/^\s*\[([^\]]+)\]\s*$/);
+      if (m) {
+        if (cur) cur.endLine = i - 1;
+        cur = { name: m[1], startLine: i, endLine: lines.length - 1, props: {} };
+        sections.push(cur);
+        continue;
+      }
+      if (!cur) continue;
+      var kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+      if (kv) cur.props[kv[1]] = kv[2];
+    }
+    return { lines: lines, sections: sections };
+  }
+
+  // Reconstruct file with updated XPos/YPos/Size.cx/Size.cy values. Preserves
+  // line order, formatting, comments — only rewrites the four keys per section.
+  function emitIni(parsed, edits){
+    // edits: { sectionName → { XPos, YPos, "Size.cx", "Size.cy" } }
+    var lines = parsed.lines.slice();
+    for (var i = 0; i < parsed.sections.length; i++) {
+      var sec = parsed.sections[i];
+      var ed = edits[sec.name];
+      if (!ed) continue;
+      for (var ln = sec.startLine + 1; ln <= sec.endLine; ln++) {
+        var L = lines[ln];
+        var kv = L.match(/^(\s*)([\w.]+)(\s*=\s*)(.*)$/);
+        if (!kv) continue;
+        var key = kv[2];
+        if (ed[key] != null) lines[ln] = kv[1] + key + kv[3] + ed[key];
+      }
+    }
+    return lines.join('\n');
+  }
+
+  // ── Load + rescale ───────────────────────────────────────────────────────
+  document.getElementById('loadBtn').addEventListener('click', loadAndRescale);
+  async function loadAndRescale(){
+    var sel = document.getElementById('charSelect').value;
+    if (!sel) { setStatus('pick a character', 'err'); return; }
+    var parts = sel.split('|');
+    STATE.character = parts[0];
+    STATE.eqDir     = parts[1];
+    var srcParts = document.getElementById('srcRes').value.split('x');
+    var tgtParts = document.getElementById('tgtRes').value.split('x');
+    STATE.srcW = parseInt(srcParts[0], 10); STATE.srcH = parseInt(srcParts[1], 10);
+    STATE.tgtW = parseInt(tgtParts[0], 10); STATE.tgtH = parseInt(tgtParts[1], 10);
+    setStatus('loading ' + STATE.character + '…');
+    try {
+      STATE.bundle = await window.mimic.uiStudioReadBundle(STATE.character, STATE.eqDir);
+    } catch (e) { setStatus('read failed: ' + e.message, 'err'); return; }
+    if (!STATE.bundle || Object.keys(STATE.bundle).length === 0) {
+      setStatus('no ini files for ' + STATE.character, 'err');
+      return;
+    }
+    // Parse every ini, extract windows with position data.
+    STATE.windows = [];
+    var fxX = STATE.tgtW / STATE.srcW;
+    var fxY = STATE.tgtH / STATE.srcH;
+    var seq = 0;
+    for (var fname in STATE.bundle) {
+      var parsed = parseIni(STATE.bundle[fname]);
+      STATE.bundle[fname + '__parsed'] = parsed;
+      for (var i = 0; i < parsed.sections.length; i++) {
+        var s = parsed.sections[i];
+        var px = s.props.XPos, py = s.props.YPos;
+        var sw = s.props['Size.cx'], sh = s.props['Size.cy'];
+        if (px == null || py == null) continue;
+        var x = parseInt(px, 10), y = parseInt(py, 10);
+        var w = sw != null ? parseInt(sw, 10) : 200;
+        var h = sh != null ? parseInt(sh, 10) : 100;
+        if (isNaN(x) || isNaN(y)) continue;
+        // Rescale to target resolution.
+        x = Math.round(x * fxX);
+        y = Math.round(y * fxY);
+        w = Math.round(w * fxX);
+        h = Math.round(h * fxY);
+        STATE.windows.push({
+          id:     'w' + (seq++),
+          file:   fname,
+          section: s.name,
+          label:  s.name.replace(/Window$/, ''),
+          x: x, y: y, w: w, h: h,
+          origX: x, origY: y, origW: w, origH: h,
+        });
+      }
+    }
+    setStatus('loaded ' + STATE.windows.length + ' windows · rescaled ' + STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH, 'ok');
+    renderStage();
+  }
+
+  // ── Stage rendering ──────────────────────────────────────────────────────
+  function renderStage(){
+    // Compute canvas size to fit the stageWrap area while preserving aspect.
+    var maxW = stageWrap.clientWidth  - 28;
+    var maxH = stageWrap.clientHeight - 28;
+    var rx = maxW / STATE.tgtW, ry = maxH / STATE.tgtH;
+    STATE.sliceScale = Math.min(rx, ry, 1);
+    var cw = Math.round(STATE.tgtW * STATE.sliceScale);
+    var ch = Math.round(STATE.tgtH * STATE.sliceScale);
+    stage.style.width  = cw + 'px';
+    stage.style.height = ch + 'px';
+    var html = '';
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var w = STATE.windows[i];
+      var sx = Math.round(w.x * STATE.sliceScale);
+      var sy = Math.round(w.y * STATE.sliceScale);
+      var sw = Math.max(8, Math.round(w.w * STATE.sliceScale));
+      var sh = Math.max(8, Math.round(w.h * STATE.sliceScale));
+      var sel = (STATE.selected === i) ? ' selected' : '';
+      html += '<div class="win' + sel + '" data-i="' + i + '" '
+            + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
+            + '<span class="lbl">' + escapeHtml(w.label) + '</span>'
+            + '<span class="sz">' + w.w + '×' + w.h + '</span>'
+            + (STATE.selected === i ? '<div class="grip se" data-grip="se"></div>' : '')
+            + '</div>';
+    }
+    stage.innerHTML = html;
+    updateSidePanel();
+  }
+  window.addEventListener('resize', function(){ if (STATE.windows.length) renderStage(); });
+
+  function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+
+  // ── Drag + resize ────────────────────────────────────────────────────────
+  var DRAG = null;   // { i, mode, startX, startY, origX, origY, origW, origH }
+
+  stage.addEventListener('mousedown', function(e){
+    var el = e.target.closest('.win');
+    if (!el) { STATE.selected = -1; renderStage(); return; }
+    var i = parseInt(el.dataset.i, 10);
+    STATE.selected = i;
+    var grip = e.target.dataset.grip;
+    var mode = grip ? 'resize-' + grip : 'move';
+    DRAG = {
+      i: i, mode: mode,
+      startMx: e.clientX, startMy: e.clientY,
+      origX: STATE.windows[i].x, origY: STATE.windows[i].y,
+      origW: STATE.windows[i].w, origH: STATE.windows[i].h,
+    };
+    renderStage();
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e){
+    if (!DRAG) return;
+    var dx = (e.clientX - DRAG.startMx) / STATE.sliceScale;
+    var dy = (e.clientY - DRAG.startMy) / STATE.sliceScale;
+    var w = STATE.windows[DRAG.i];
+    if (DRAG.mode === 'move') {
+      w.x = Math.round(DRAG.origX + dx);
+      w.y = Math.round(DRAG.origY + dy);
+    } else if (DRAG.mode === 'resize-se') {
+      w.w = Math.max(16, Math.round(DRAG.origW + dx));
+      w.h = Math.max(16, Math.round(DRAG.origH + dy));
+    }
+    // Snap-to-edges of other windows + screen edges (10px tolerance in
+    // world coords). Only on move, not resize.
+    if (STATE.snapOn && DRAG.mode === 'move') applySnap(w);
+    // Clamp to screen bounds.
+    if (w.x < 0) w.x = 0;
+    if (w.y < 0) w.y = 0;
+    if (w.x + w.w > STATE.tgtW) w.x = STATE.tgtW - w.w;
+    if (w.y + w.h > STATE.tgtH) w.y = STATE.tgtH - w.h;
+    renderStage();
+  });
+
+  document.addEventListener('mouseup', function(){ DRAG = null; });
+
+  function applySnap(target) {
+    var TOL = 10;  // world-pixel tolerance
+    // Screen edges
+    var edges = { x: [0, STATE.tgtW], y: [0, STATE.tgtH] };
+    for (var i = 0; i < STATE.windows.length; i++) {
+      if (i === DRAG.i) continue;
+      var o = STATE.windows[i];
+      edges.x.push(o.x, o.x + o.w);
+      edges.y.push(o.y, o.y + o.h);
+    }
+    // Snap left edge and right edge to any candidate X.
+    var bestL = TOL + 1, bestLval = null;
+    var bestR = TOL + 1, bestRval = null;
+    for (var k = 0; k < edges.x.length; k++) {
+      var ex = edges.x[k];
+      if (Math.abs(target.x - ex)               < bestL) { bestL = Math.abs(target.x - ex);               bestLval = ex; }
+      if (Math.abs(target.x + target.w - ex)    < bestR) { bestR = Math.abs(target.x + target.w - ex);    bestRval = ex; }
+    }
+    if (bestL <= TOL) target.x = bestLval;
+    else if (bestR <= TOL) target.x = bestRval - target.w;
+    var bestT = TOL + 1, bestTval = null;
+    var bestB = TOL + 1, bestBval = null;
+    for (var k2 = 0; k2 < edges.y.length; k2++) {
+      var ey = edges.y[k2];
+      if (Math.abs(target.y - ey)               < bestT) { bestT = Math.abs(target.y - ey);               bestTval = ey; }
+      if (Math.abs(target.y + target.h - ey)    < bestB) { bestB = Math.abs(target.y + target.h - ey);    bestBval = ey; }
+    }
+    if (bestT <= TOL) target.y = bestTval;
+    else if (bestB <= TOL) target.y = bestBval - target.h;
+  }
+
+  // ── Side panel ───────────────────────────────────────────────────────────
+  function updateSidePanel(){
+    if (STATE.selected < 0) { side.className = ''; stageWrap.className = ''; return; }
+    var w = STATE.windows[STATE.selected];
+    side.className = 'on'; stageWrap.className = 'has-side';
+    document.getElementById('sideTitle').textContent = w.section;
+    document.getElementById('fX').value = w.x;
+    document.getElementById('fY').value = w.y;
+    document.getElementById('fW').value = w.w;
+    document.getElementById('fH').value = w.h;
+    document.getElementById('sideMeta').innerHTML = 'File: <b>' + escapeHtml(w.file) + '</b><br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
+  }
+  ['fX','fY','fW','fH'].forEach(function(id){
+    document.getElementById(id).addEventListener('input', function(){
+      if (STATE.selected < 0) return;
+      var w = STATE.windows[STATE.selected];
+      var v = parseInt(this.value, 10) || 0;
+      if (id === 'fX') w.x = v; else if (id === 'fY') w.y = v;
+      else if (id === 'fW') w.w = v; else if (id === 'fH') w.h = v;
+      renderStage();
+    });
+  });
+
+  // ── Toolbar actions ──────────────────────────────────────────────────────
+  document.getElementById('snapBtn').addEventListener('click', function(){
+    STATE.snapOn = !STATE.snapOn;
+    this.textContent = 'Snap: ' + (STATE.snapOn ? 'ON' : 'OFF');
+  });
+  document.getElementById('resetBtn').addEventListener('click', function(){
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var w = STATE.windows[i];
+      w.x = w.origX; w.y = w.origY; w.w = w.origW; w.h = w.origH;
+    }
+    renderStage();
+    setStatus('reset to last load', 'ok');
+  });
+  document.getElementById('saveBtn').addEventListener('click', async function(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
+    // Group windows by file. Build edits map per file.
+    var edits = {};   // file → { sectionName → {XPos, YPos, "Size.cx", "Size.cy"} }
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var w = STATE.windows[i];
+      if (!edits[w.file]) edits[w.file] = {};
+      edits[w.file][w.section] = { XPos: w.x, YPos: w.y, 'Size.cx': w.w, 'Size.cy': w.h };
+    }
+    // Emit new file contents.
+    var newBundle = {};
+    for (var fname in edits) {
+      var parsed = STATE.bundle[fname + '__parsed'];
+      if (!parsed) continue;
+      newBundle[fname] = emitIni(parsed, edits[fname]);
+    }
+    setStatus('saving…');
+    try {
+      var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle);
+      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · .bak backups created', 'ok');
+      else setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
+    } catch (e) { setStatus('save failed: ' + e.message, 'err'); }
+  });
+</script>
+</body></html>

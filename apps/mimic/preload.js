@@ -70,6 +70,11 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
   uiStudioRestore:        (params)  => ipcRenderer.invoke('ui-studio-restore', params),
+  // Visual UI Studio editor — read/write per-character ini bundles for the
+  // graphical resolution-rescaling editor. Read returns a raw filename →
+  // text map; write takes the edited map and persists with .bak backups.
+  uiStudioReadBundle:     (character, eqDir) => ipcRenderer.invoke('ui-studio-read-bundle', character, eqDir),
+  uiStudioWriteBundle:    (eqDir, bundle)    => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns
   // { ok, user_code, verification_url, verification_url_complete, expires_at }
