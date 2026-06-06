@@ -1111,12 +1111,17 @@ function _consumePendingCharmSpell(owner, nowMs) {
 //
 // Rule: for any character that is streaming a gauge, that gauge is authoritative
 //   • an article-prefixed slot-16 pet ("a "/"an " = a charmed mob, never a
-//     proper-named summoned pet) with no active session → open one (land).
+//     proper-named summoned pet) seen in two consecutive reconciles → open
+//     a session (land). The two-frame debounce kills the phantom-3s-charm bug
+//     where a single Zeal pulse opened a session that immediately closed —
+//     users reported "BROKE Melting" cards for mobs they never charmed.
 //   • an active session whose pet is no longer in that owner's slot 16 → close
 //     it (break). A 3s grace avoids closing a just-opened session before the
 //     gauge catches up.
 // Sessions owned by characters NOT streaming a gauge (bystander charms picked
 // up from zone-visible log lines) are left to the log path — untouched here.
+const _pendingGaugeCharms = new Map();        // ownerLower → Map<petKey, firstSeenAt>
+const GAUGE_CHARM_DEBOUNCE_MS = 1500;
 function _reconcileGaugeCharms() {
   const now = Date.now();
   const gaugeOwners = new Set();              // ownerLower currently streaming a gauge
@@ -1134,9 +1139,34 @@ function _reconcileGaugeCharms() {
     gaugePets.get(ownerLower).add(k);
     const cur = _charmTickTracker.get(k);
     if (!cur || !cur.is_active) {
-      const pc = _consumePendingCharmSpell(ch, now) || {};       // attach spell duration/class if just cast
-      _bumpCharmTick(name, ch, 'land', now, pc);                 // gauge-sourced land
+      // Debounce: require the same pet name to persist in slot 16 for at
+      // least GAUGE_CHARM_DEBOUNCE_MS before opening a session. A single
+      // Zeal pulse (transient slot-16 read, possibly mid-resist or target/
+      // pet ambiguity) was opening 3-second phantom charms that immediately
+      // broke and lingered as "BROKE" cards for mobs the user never charmed.
+      let pendingByOwner = _pendingGaugeCharms.get(ownerLower);
+      if (!pendingByOwner) { pendingByOwner = new Map(); _pendingGaugeCharms.set(ownerLower, pendingByOwner); }
+      const firstSeen = pendingByOwner.get(k);
+      if (firstSeen == null) {
+        pendingByOwner.set(k, now);
+      } else if ((now - firstSeen) >= GAUGE_CHARM_DEBOUNCE_MS) {
+        const pc = _consumePendingCharmSpell(ch, now) || {};     // attach spell duration/class if just cast
+        _bumpCharmTick(name, ch, 'land', firstSeen, pc);         // gauge-sourced land, anchor to first sighting
+        pendingByOwner.delete(k);
+      }
+    } else {
+      // Already active — clear any stale pending entry so a re-charm after
+      // a break still requires its own two-frame debounce.
+      _pendingGaugeCharms.get(ownerLower)?.delete(k);
     }
+  }
+  // Drop pending entries whose pet is no longer in slot 16 (transient pulse).
+  for (const [ownerLower, pending] of _pendingGaugeCharms) {
+    const liveSet = gaugePets.get(ownerLower);
+    for (const k of pending.keys()) {
+      if (!liveSet || !liveSet.has(k)) pending.delete(k);
+    }
+    if (pending.size === 0) _pendingGaugeCharms.delete(ownerLower);
   }
   for (const [k, info] of _charmTickTracker) {
     if (!info.is_active || !info.owner) continue;

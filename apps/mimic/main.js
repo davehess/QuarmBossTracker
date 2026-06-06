@@ -156,6 +156,17 @@ function defaultConfig() {
     // Per-overlay opacity. Keyed by 'hud', 'trigger', or 'panel:<panelKey>'.
     // Defaults to 1.0 (opaque). 0.25 = mostly transparent.
     overlayOpacity: {},
+    // Auto-start Mimic when Windows logs in. Default ON — the installer also
+    // writes the HKCU\…\Run key so a fresh install auto-starts on next login
+    // without any in-app configuration. Users opt out via the tray "Start
+    // with Windows" checkbox, which routes through Electron's
+    // setLoginItemSettings to remove the Run key.
+    autoStart: true,
+    // Hide overlays when EverQuest isn't running. Default ON — the overlays
+    // are only useful while playing, and a tester reported the floating HUDs
+    // being distracting on their desktop while alt-tabbed out. Unlocking
+    // (setup mode) overrides this so they can still be positioned without EQ.
+    hideOverlaysWhenEqDown: true,
   };
 }
 function loadConfig() {
@@ -1365,10 +1376,18 @@ function navigateToDashboard(reason) {
 
 let _lastConsoleMsg = '';
 function createMainWindow() {
+  // Launched via Windows-login autostart? Start hidden-to-tray so the dashboard
+  // doesn't ambush the user mid-login. The user can pop it open from the tray.
+  // Detected via the --autostart arg (set in applyAutoStart) OR Electron's
+  // openAsHidden flag (which Windows passes when "Start hidden" was checked).
+  const _autoStarted =
+    process.argv.includes('--autostart') ||
+    (process.platform === 'win32' && app.getLoginItemSettings && app.getLoginItemSettings().wasOpenedAtLogin);
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
     title: 'Wolf Pack Mimic — Main window (Dashboard)',
+    show: !_autoStarted,
     // Window + taskbar icon while running. build/icon.ico is buildResources
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
     // comes separately from build/icon.ico via electron-builder win.icon.
@@ -1705,22 +1724,74 @@ function openSettings() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
+// ── EQ-presence detection ───────────────────────────────────────────────────
+// Poll Windows tasklist for eqgame.exe so overlays can hide themselves when
+// the user isn't actually playing. The poll is cheap (one tasklist call every
+// 5s) and runs only on Windows — other platforms keep the legacy "always on"
+// behavior since there's no EverQuest target. State is sticky across one
+// failed poll (CSV parse error etc.) to avoid flicker.
+let _eqRunning = true;     // assume running until first poll resolves
+let _eqPollTimer = null;
+function _checkEqRunning() {
+  return new Promise(resolve => {
+    if (process.platform !== 'win32') return resolve(true);
+    try {
+      const child = spawn('tasklist.exe', ['/FI', 'IMAGENAME eq eqgame.exe', '/NH', '/FO', 'CSV'], { windowsHide: true });
+      let out = '';
+      const onData = chunk => { out += chunk.toString(); };
+      child.stdout.on('data', onData);
+      child.stderr.on('data', () => {});
+      const timer = setTimeout(() => { try { child.kill(); } catch {} ; resolve(_eqRunning); }, 3000);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        // Match any eqgame.exe row — tasklist returns "INFO: No tasks…" on the
+        // stdout when the filter has zero matches.
+        resolve(/eqgame\.exe/i.test(out));
+      });
+      child.once('error', () => { clearTimeout(timer); resolve(_eqRunning); });
+    } catch { resolve(_eqRunning); }
+  });
+}
+async function _pollEqPresence() {
+  const running = await _checkEqRunning();
+  if (running !== _eqRunning) {
+    _eqRunning = running;
+    // Visibility flip — overlays appear/vanish as EQ comes up / goes down.
+    try { applyAllVisibility(); } catch {}
+  }
+}
+function _startEqPolling() {
+  if (_eqPollTimer || process.platform !== 'win32') return;
+  _pollEqPresence().catch(() => {});
+  _eqPollTimer = setInterval(() => { _pollEqPresence().catch(() => {}); }, 5000);
+}
+function _stopEqPolling() {
+  if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }
+}
+
 // ── Visibility helpers (quiet mode is the master override) ─────────────────
 // When overlays are UNLOCKED (positioning mode) we keep them visible
 // regardless of quiet mode / pref toggles so the user can actually grab them
 // — otherwise "unlock to move" would hide the thing you're trying to move.
+// hideOverlaysWhenEqDown gates show-state on EQ being detected as running —
+// also bypassed in unlock mode so the user can place overlays before launching
+// EverQuest.
+function _eqGateOk(cfg) {
+  if (cfg.hideOverlaysWhenEqDown === false) return true;
+  return _eqRunning;
+}
 function applyOverlayVisibility() {
   if (!overlayWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showHud && !cfg.quietMode);
+  const shouldShow = unlocked || (cfg.showHud && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) overlayWindow.showInactive(); else overlayWindow.hide();
 }
 function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.enableTriggerTts && !cfg.quietMode);
+  const shouldShow = unlocked || (cfg.enableTriggerTts && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
 function createCharmOverlay() {
@@ -1750,7 +1821,7 @@ function applyCharmVisibility() {
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
   // Charm tracker is opt-in (default off) — it's only useful to charm classes.
-  const shouldShow = unlocked || (cfg.showCharm && !cfg.quietMode);
+  const shouldShow = unlocked || (cfg.showCharm && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) charmWindow.showInactive(); else charmWindow.hide();
 }
 
@@ -1783,8 +1854,8 @@ function applyPetsVisibility() {
   if (!petsWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  // Opt-in (default off) — only useful to pet classes.
-  const shouldShow = unlocked || (cfg.showPets && !cfg.quietMode);
+  // Opt-in (default off) — only useful to pet classes. EQ-gated.
+  const shouldShow = unlocked || (cfg.showPets && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
 }
 
@@ -1815,7 +1886,7 @@ function applyMobInfoVisibility() {
   if (!mobInfoWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showMobInfo && !cfg.quietMode);
+  const shouldShow = unlocked || (cfg.showMobInfo && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) mobInfoWindow.showInactive(); else mobInfoWindow.hide();
 }
 
@@ -1846,8 +1917,37 @@ function applyWhoVisibility() {
   if (!whoWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showWho && !cfg.quietMode);
+  const shouldShow = unlocked || (cfg.showWho && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) whoWindow.showInactive(); else whoWindow.hide();
+}
+
+// Convenience: refresh every overlay's visibility at once. Used by the EQ-
+// presence poller (on running ↔ not-running flips) and by config toggles.
+function applyAllVisibility() {
+  applyOverlayVisibility();
+  applyTriggerVisibility();
+  applyCharmVisibility();
+  applyPetsVisibility();
+  applyMobInfoVisibility();
+  applyWhoVisibility();
+}
+
+// Autostart-with-Windows wiring. Backed by app.setLoginItemSettings — Electron
+// writes/removes the registry entry under HKCU\…\Run for us. Called from the
+// tray toggle and on startup so the registry stays consistent with the saved
+// config (a user who flipped this in the installer doesn't have to also toggle
+// it in the app for it to stick).
+function applyAutoStart() {
+  if (process.platform !== 'win32') return;
+  try {
+    const cfg = loadConfig();
+    app.setLoginItemSettings({
+      openAtLogin: !!cfg.autoStart,
+      // Launch hidden-to-tray so an auto-start session doesn't pop the
+      // dashboard window in the user's face right after login.
+      args: ['--autostart'],
+    });
+  } catch (e) { void e; }
 }
 
 // ── Status + Tray ──────────────────────────────────────────────────────────
@@ -2140,9 +2240,22 @@ function buildTrayMenu() {
     { type: 'separator' },
     { label: 'I use EQLogParser / other parser (Quiet mode)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
-        applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility();
+        applyAllVisibility();
         pushStatus();
       } },
+    ...(process.platform === 'win32' ? [
+      { label: 'Start with Windows', type: 'checkbox', checked: !!s.autoStart, click: (mi) => {
+          const cfg = loadConfig(); cfg.autoStart = !!mi.checked; saveConfig(cfg);
+          applyAutoStart(); pushStatus();
+        } },
+      { label: 'Hide overlays when EverQuest isn\'t running', type: 'checkbox', checked: s.hideOverlaysWhenEqDown !== false, click: (mi) => {
+          const cfg = loadConfig(); cfg.hideOverlaysWhenEqDown = !!mi.checked; saveConfig(cfg);
+          // Re-probe immediately so the next visibility flip is accurate
+          // instead of waiting up to 5s for the poller to tick.
+          _pollEqPresence().then(() => applyAllVisibility()).catch(() => applyAllVisibility());
+          pushStatus();
+        } },
+    ] : []),
     { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
@@ -2930,7 +3043,16 @@ app.whenReady().then(async () => {
   };
   screen.on('display-removed',          _rescueOverlays);
   screen.on('display-metrics-changed',  _rescueOverlays);
+
+  // Apply autostart setting on every launch — re-synchronizes the HKCU\…\Run
+  // entry with the saved pref (in case the user uninstalled/reinstalled, or
+  // the installer flipped the default).
+  applyAutoStart();
+
+  // Begin polling eqgame.exe presence so overlays auto-hide when the user
+  // isn't in EverQuest. No-op on non-Windows.
+  _startEqPolling();
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });
-app.on('before-quit', () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } });
+app.on('before-quit', () => { quitting = true; _stopEqPolling(); if (agentProc) { try { agentProc.kill(); } catch {} } });

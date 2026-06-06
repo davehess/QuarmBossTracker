@@ -69,13 +69,26 @@
 ; Add/Remove Programs entry, but testers expected to FIND an uninstaller — so
 ; drop a shortcut next to the app's Start Menu entry. ${UNINSTALL_FILENAME} is
 ; the electron-builder-provided uninstaller exe name in $INSTDIR.
+;
+; Also opts the user into Start-with-Windows on install — they kept asking for
+; an installer-time autostart toggle, so we make autostart the default by
+; writing the per-user Run key with --autostart. Mimic's tray "Start with
+; Windows" toggle hooks the same HKCU\…\Run path via Electron's
+; setLoginItemSettings, so the user can flip it later without re-running the
+; installer. The --autostart arg signals createMainWindow() to start
+; hidden-to-tray so login sessions don't ambush them with the dashboard.
 !macro customInstall
   CreateShortCut "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk" "$INSTDIR\${UNINSTALL_FILENAME}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WolfPackMimic" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --autostart'
 !macroend
 
 !macro customUnInstall
   Delete "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk"
+  ; Real uninstall (NOT an electron-updater silent in-place re-install) — drop
+  ; the autostart Run key so we don't try to relaunch from a deleted path next
+  ; login. ${isUpdated} preserves user preference across update reinstalls.
   ${ifNot} ${isUpdated}
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WolfPackMimic"
     RMDir /r "$APPDATA\wolfpack-mimic"
     RMDir /r "$APPDATA\Wolf Pack Mimic"
   ${endIf}
