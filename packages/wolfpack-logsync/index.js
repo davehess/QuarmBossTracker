@@ -1612,15 +1612,24 @@ function petBuffsForOwner(ownerLower) {
   return Array.from(byName.values());
 }
 
+// Long-term who_data registry filter — anonymous rows + level 50+. The
+// transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
+// persistent uploads only carry threat-relevant entries: low-level bank
+// alts and leveling toons aren't useful identity history.
+function _isRegistryWho(v) {
+  if (!v) return false;
+  if (v.anonymous) return true;
+  if (typeof v.level === 'number' && v.level >= 50) return true;
+  return false;
+}
+
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
-  // Threat-focused capture: L50+ only. Lower levels are noise for the PVP
-  // target-selection use case the /who registry is built for — bank alts,
-  // trade chars, low-zone leveling toons aren't who we're identifying.
-  // Previously dropped rows where ev.level < 50 (raid-candidates-only filter).
-  // That made the overlay useless on Quarm where pickup raids include level 30-60
-  // characters and the user wants to see EVERYONE in the zone, not just raiders.
-  // Keep all rows now; downstream consumers can filter as needed.
+  // Keep ALL /who rows in the transient registry so the overlay can render
+  // everyone in the zone (Quarm pickup raids include L30-60 characters).
+  // The persistence/upload paths apply _isRegistryWho to drop low-level
+  // rows before they ship — keeps the bot's who_observations focused on
+  // threat-relevant identities.
   const k   = ev.name.toLowerCase();
   const old = whoData.get(k) || {};
   // Mirror server-side mergeWhoData: don't clobber known fields with nulls
@@ -3172,7 +3181,9 @@ class EncounterBuilder {
         // who_data: snapshot of every /who row this agent has observed since startup.
         // Server upserts into state.whoData so class/level/guild is available for
         // /parsestats embeds and /whois lookups even for non-guildies.
-        who_data:    whoData.size > 0 ? Array.from(whoData.values()) : undefined,
+        who_data:    whoData.size > 0
+          ? Array.from(whoData.values()).filter(_isRegistryWho)
+          : undefined,
         // Per-defender stats — hits-taken, damage-taken, dodges/parries/ripostes/blocks/misses.
         // Server uses this to build tanking leaderboards and incoming-accuracy analytics
         // without having to re-aggregate the raw event stream.
@@ -4459,6 +4470,15 @@ function _serializeForDashboard() {
         const visibleOrder = (state.kind === 'song')
           ? enrichedOrder.filter(e => !e || !stripNames.has(String(e.name).toLowerCase()))
           : enrichedOrder;
+        // Debug: surface the raw buff-slot names so we can see exactly what
+        // Zeal is reporting when a utility song doesn't light up its strip
+        // row. Plain array of "name (Xt)" strings — capped at 25 to keep
+        // /api/state light. Read off the dashboard or curl /api/state to
+        // tell us what to match against in _findBuff.
+        const buffSlotsDebug = zealBuffs
+          .filter(b => b && b.name && typeof b.ticks === 'number' && b.ticks > 0)
+          .slice(0, 25)
+          .map(b => `${b.name} (${b.ticks}t)`);
         out[k] = {
           character:      k,
           order:          visibleOrder,
@@ -4472,6 +4492,7 @@ function _serializeForDashboard() {
           melodyStartedAt: state.melodyStartedAt || null,
           melodyEndedAt:   state.melodyEndedAt || null,
           bardBuffs,
+          buffSlotsDebug,
         };
       }
       return out;
@@ -14017,7 +14038,7 @@ async function main() {
           ended_at:   iso,
           boss_name:  null,
           events:     [],
-          who_data:   Array.from(whoData.values()),
+          who_data:   Array.from(whoData.values()).filter(_isRegistryWho),
         },
       }, { botUrl, token, dryRun }).catch(err => {
         if (!_dashboardEnabled) console.warn(`[who flush] ${err.message}`);
