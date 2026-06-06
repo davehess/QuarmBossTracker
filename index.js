@@ -2807,6 +2807,17 @@ async function _handleAgentChat(req, res) {
       if (supabase.isEnabled()) {
         await supabase.upsert('chat_messages', supabaseChatRows, 'guild_id,ts,channel,speaker,text')
           .catch(err => console.warn('[chat-relay] supabase upsert failed:', err?.message));
+        // Passive loot detection — scan each chat row for EQ item-link IDs (the
+        // 7-digit zero-padded form). For any IDs found, look up the most recent
+        // boss kill within a ~15min window and cross-reference against the
+        // mob's published drop table; matches get recorded in loot_observations.
+        // This is the workhorse that the rarely-used /loot command was supposed
+        // to populate — passive + officer-agnostic + auto-validated by the drop
+        // table. Fire-and-forget so it never blocks the chat relay.
+        for (const row of supabaseChatRows) {
+          _maybeRecordChatLoot(row, identity.discord_id).catch(err =>
+            console.warn('[chat-loot] detect failed:', err?.message));
+        }
       }
     } catch (err) {
       console.warn('[chat-relay] supabase mirror failed:', err?.message);
@@ -4517,6 +4528,119 @@ function _normMobName(n) {
 }
 const _mobInfoCache = new Map();   // normName → { at, row|null }
 const _MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;   // static catalog data — cache hard
+// ── Chat → loot detection ───────────────────────────────────────────────────
+// EQ item links in chat carry their 7-digit zero-padded item ID inline. We
+// scan every relayed chat row for those IDs, find the most-recent boss kill
+// (if there is one within the window), and cross-reference each ID against
+// the mob's published drop table (eqemu_npc_drops). Matches get logged in
+// loot_observations with source='chat_extracted'. The cross-reference IS the
+// false-positive filter — random 7-digit numbers that happen to appear in
+// chat won't be in any expected drop table, so they're silently ignored.
+//
+// Caches:
+//   _recentKillCache  → last kill per guild, refreshed every 30s. Avoids
+//                       hammering the encounters table on every chat line.
+//   _npcDropsCache    → expected item_id set per (guild, npc_id), 6h.
+const CHAT_LOOT_WINDOW_MS = 15 * 60 * 1000;          // a kill within 15 min counts
+const _recentKillCache = new Map();                  // guildId → { at, kill }
+const _RECENT_KILL_TTL_MS = 30 * 1000;
+async function _recentKillFor(guildId) {
+  const cached = _recentKillCache.get(guildId);
+  if (cached && (Date.now() - cached.at) < _RECENT_KILL_TTL_MS) return cached.kill;
+  const supabase = require('./utils/supabase');
+  let kill = null;
+  try {
+    const rows = await supabase.select('encounters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&npc_id=not.is.null&select=npc_id,started_at,ended_at&order=ended_at.desc.nullslast&limit=1`);
+    const r = Array.isArray(rows) && rows[0];
+    if (r) kill = { npc_id: r.npc_id, ended_at: r.ended_at || r.started_at };
+  } catch (err) { console.warn('[chat-loot] recent-kill fetch failed:', err?.message); }
+  _recentKillCache.set(guildId, { at: Date.now(), kill });
+  return kill;
+}
+
+const _npcDropsCache = new Map();                    // `${guild}:${npc_id}` → { at, items: Map<itemId, name> }
+const _NPC_DROPS_TTL_MS = 6 * 60 * 60 * 1000;
+async function _dropsForNpc(guildId, npcId) {
+  const key = `${guildId}:${npcId}`;
+  const cached = _npcDropsCache.get(key);
+  if (cached && (Date.now() - cached.at) < _NPC_DROPS_TTL_MS) return cached.items;
+  const supabase = require('./utils/supabase');
+  const items = new Map();
+  try {
+    const rows = await supabase.select('eqemu_npc_drops',
+      `npc_id=eq.${npcId}&select=item_id,item_name&limit=200`);
+    if (Array.isArray(rows)) for (const r of rows) items.set(r.item_id, r.item_name);
+  } catch (err) { console.warn('[chat-loot] drops fetch failed:', err?.message); }
+  _npcDropsCache.set(key, { at: Date.now(), items });
+  return items;
+}
+
+// Pulls 7-digit IDs from a chat text body. We use negative digit-lookbehind +
+// lookahead instead of \b — \b at the end fails when the next char is a
+// letter (the standard EQ item-link format "1234567ItemName" runs 7→I, both
+// word chars, so \b doesn't fire). (?<!\d)\d{7}(?!\d) catches 7-digit IDs in
+// any text context but won't match within a longer numeric run (10-digit
+// Discord snowflakes etc.). The drop-table filter downstream eliminates the
+// remaining false positives (any 7-digit number that isn't an actual item ID
+// won't be in any mob's loot table).
+function _extractItemIds(text) {
+  if (!text || typeof text !== 'string') return [];
+  const out = new Set();
+  const rx = /(?<!\d)(\d{7})(?!\d)/g;
+  let m;
+  while ((m = rx.exec(text)) !== null) {
+    const id = parseInt(m[1], 10);
+    if (id > 0) out.add(id);
+  }
+  return [...out];
+}
+
+async function _maybeRecordChatLoot(chatRow, uploadedByDiscordId) {
+  const text = chatRow?.text;
+  const ids = _extractItemIds(text);
+  if (ids.length === 0) return;
+  const guildId = chatRow.guild_id;
+  const msgTs   = chatRow.ts ? Date.parse(chatRow.ts) : Date.now();
+  const kill = await _recentKillFor(guildId);
+  if (!kill || !kill.npc_id) return;
+  // Only count loot posted within 15 min of the kill — older chat is ambient
+  // mentions, not a fresh loot announcement.
+  const killTs = kill.ended_at ? Date.parse(kill.ended_at) : 0;
+  if (!killTs || (msgTs - killTs) > CHAT_LOOT_WINDOW_MS || (msgTs - killTs) < -60_000) return;
+  const expected = await _dropsForNpc(guildId, kill.npc_id);
+  if (!expected || expected.size === 0) return;
+  // Look up the npc_name for the npc_name_lower key — same path mob-info uses.
+  const supabase = require('./utils/supabase');
+  let npcName = null;
+  try {
+    const nrows = await supabase.select('eqemu_npc_types', `id=eq.${kill.npc_id}&select=name&limit=1`);
+    if (Array.isArray(nrows) && nrows[0]) npcName = nrows[0].name;
+  } catch (err) { void err; }
+  if (!npcName) return;
+  const npcLower = String(npcName).toLowerCase().replace(/_/g, ' ').trim();
+  // Build observation rows for the matched IDs only — the drop-table filter is
+  // what makes this safe to run on every chat message.
+  const rows = [];
+  for (const id of ids) {
+    const name = expected.get(id);
+    if (!name) continue;
+    rows.push({
+      guild_id:             guildId,
+      npc_name_lower:       npcLower,
+      npc_id:               kill.npc_id,
+      item_id:              id,
+      item_name:            name,
+      posted_at:            new Date(msgTs).toISOString(),
+      posted_by_discord_id: uploadedByDiscordId || null,
+      source:               'chat_extracted',
+    });
+  }
+  if (rows.length === 0) return;
+  await supabase.insert('loot_observations', rows)
+    .catch(err => console.warn('[chat-loot] insert failed:', err?.message));
+}
+
 async function _handleAgentMobInfo(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
