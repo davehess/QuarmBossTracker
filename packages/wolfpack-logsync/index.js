@@ -4571,14 +4571,47 @@ function renderHeader(s) {
   let h = '';
   if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
-  // No EQ logs to tail — the #1 "why is nothing happening" cause. Either EQ
-  // logging is off or the folder isn't configured. Loud, actionable banner.
-  if ((s.watchedLogs || []).length === 0) {
-    h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
-       + '⚠ No EQ logs are being read. Turn on in-game logging — type <b>/log on</b> in EverQuest '
-       + '(and set <b>Logging=on</b> in eqclient.ini), or set your EQ folder in Mimic Settings → EverQuest folders. '
-       + 'Parsing starts automatically the moment a log file appears.'
+  // Setup-state banners. These are the "why is nothing flowing" causes — all
+  // ride at the top of every dashboard tab (the header block is shared, so a
+  // tab-switch never hides them). Stacked when more than one applies so the
+  // user sees every issue at once instead of fixing one and finding another.
+  //
+  // Mimic only — the Mimic preload exposes window.mimic.openSettings; when the
+  // dashboard is hit from a regular browser, those banner buttons aren't
+  // actionable so they'd be misleading. Detected via WOLFPACK_CLIENT env, set
+  // by Mimic in main.js when it spawns the agent.
+  const isMimicHosted = process.env.WOLFPACK_CLIENT === 'mimic';
+  if (isMimicHosted && !s.mimicSignedIn) {
+    h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid #f85149">'
+       + '⛓ <b>Not signed in to Discord.</b> Your parses won&rsquo;t upload and the guild can&rsquo;t see your stats. '
+       + 'Open Mimic Settings → <b>Wolf Pack account</b> to sign in with Discord. '
+       + '<button id="bannerOpenSettings" style="margin-left:8px;background:#fff;color:#000;border:0;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px">Open Settings</button>'
        + '</div>';
+  }
+  // No EQ logs to tail — the #1 "why is nothing happening" cause. We split it
+  // into two sub-states so the fix is exact: (a) no EQ folder configured at all
+  // → tell them to pick one; (b) folder configured but no eqlog_*.txt files →
+  // tell them to turn on in-game logging.
+  if ((s.watchedLogs || []).length === 0) {
+    // WOLFPACK_EQ_DIR is set by Mimic when the user has resolved at least one
+    // EQ folder (cfg.eqPaths or auto-detect). Absent = user hasn't picked a
+    // folder yet — show the "select a folder" banner instead of the generic
+    // "no logs" one.
+    const hasFolders = !!process.env.WOLFPACK_EQ_DIR;
+    if (isMimicHosted && !hasFolders) {
+      h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
+         + '📁 <b>No EQ folder selected.</b> Mimic doesn&rsquo;t know where your EverQuest install is. '
+         + 'Open Mimic Settings → <b>EverQuest folders</b> and add your EQ directory '
+         + '(the one containing <code>eqclient.ini</code> and the <code>Logs</code> subfolder). '
+         + '<button id="bannerOpenSettings" style="margin-left:8px;background:#fff;color:#000;border:0;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px">Open Settings</button>'
+         + '</div>';
+    } else {
+      h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
+         + '⚠ <b>No EQ logs are being read.</b> In-game logging is off. Type <b>/log on</b> in EverQuest, '
+         + 'and set <b>Logging=on</b> in <code>eqclient.ini</code>. '
+         + 'Parsing starts automatically the moment a log file appears.'
+         + '</div>';
+    }
   }
   // Version line — always renders an update-now button on the right so users
   // can trigger a restart-and-pull-latest at any time, even when the bot
@@ -4694,6 +4727,15 @@ function renderHeader(s) {
       'Restarting agent... this page will reload automatically once the server is back up.</div>');
     _startRestartPoll('restartBanner');
   });
+  // Setup banner "Open Settings" buttons — Mimic-only (window.mimic.openSettings
+  // is exposed via preload). Both the not-signed-in and no-folder banners use
+  // id="bannerOpenSettings"; only one is rendered at a time (mutually exclusive
+  // states), so the single binder is fine.
+  const settingsBtn = document.getElementById('bannerOpenSettings');
+  _bindOnce(settingsBtn, 'click', () => {
+    try { if (window.mimic && window.mimic.openSettings) window.mimic.openSettings(); } catch (e) { void e; }
+  });
+
   // Reset-dashboard click — zeros session counters server-side, then we
   // re-pull /api/state so the UI refreshes immediately without a hard reload.
   const r = document.getElementById('resetSessionBtn');
