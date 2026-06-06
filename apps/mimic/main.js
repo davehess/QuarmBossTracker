@@ -20,7 +20,7 @@
 // Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification } = require('electron');
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
@@ -241,6 +241,19 @@ function storeUploadToken(cfg, plain, identity) {
 // onboarding + settings UIs, which never need the raw token — they render
 // "connected as <name>" from status.mimicSession instead. Keeps the bearer
 // out of the renderer process entirely.
+// Returns a short human reason if the user hasn't finished setup, or null when
+// everything's wired. Used to gate the "close to tray" behavior (we refuse to
+// hide Mimic when setup is incomplete — the tray is the #1 thing people don't
+// notice), the launch-time toast, and the tray-tooltip prefix.
+function _setupIssue() {
+  try {
+    const cfg = loadConfig();
+    if (!resolveUploadToken(cfg)) return 'Not signed in to Discord';
+    if (!Array.isArray(cfg.eqPaths) || cfg.eqPaths.length === 0) return 'No EverQuest folder selected';
+    return null;
+  } catch { return null; }
+}
+
 function configForRenderer(cfg) {
   const safe = Object.assign({}, cfg);
   if (safe.session) {
@@ -1391,8 +1404,34 @@ function createMainWindow() {
   });
 
   mainWindow.loadFile('loading.html');
+  // Stop the taskbar flash the moment the user actually looks at Mimic — the
+  // flash is a "look over here" cue, not a permanent decoration.
+  mainWindow.on('focus', () => { try { mainWindow.flashFrame(false); } catch {} });
+
   mainWindow.on('close', (e) => {
-    if (!quitting) { e.preventDefault(); mainWindow.hide(); } // close to tray
+    if (quitting) return;
+    e.preventDefault();
+    // Normally close-to-tray; but when setup is incomplete, REFUSE to hide.
+    // The user reports that "people don't notice the taskbar" — vanishing to
+    // tray with unresolved setup means they forget Mimic exists and never see
+    // the in-page setup banners. Keep it on screen + fire a toast so they
+    // know exactly why.
+    const issue = _setupIssue();
+    if (issue) {
+      try { mainWindow.show(); mainWindow.focus(); } catch {}
+      try { if (process.platform === 'win32') mainWindow.flashFrame(true); } catch {}
+      try {
+        if (Notification.isSupported()) {
+          new Notification({
+            title: '⚠ Wolf Pack Mimic — setup needed',
+            body:  issue + ' — Mimic is staying visible until setup is complete. Click "Open Settings" in the banner.',
+            silent: false,
+          }).show();
+        }
+      } catch (e) { void e; }
+      return;
+    }
+    mainWindow.hide();
   });
 }
 
@@ -1849,6 +1888,11 @@ function pushStatus() {
 function tooltipFor(s) {
   const v = `v${app.getVersion()}`;
   if (!s.agentRunning) return `Wolf Pack Mimic ${v} — agent starting…`;
+  // Setup state wins the tooltip when something's wrong — the tray icon is the
+  // last visible Mimic surface for users who hide the window, so the tooltip
+  // should call out what to fix when they finally hover.
+  const issue = _setupIssue();
+  if (issue) return `⚠ Wolf Pack Mimic ${v} — SETUP NEEDED: ${issue}`;
   const mode = s.localOnly ? 'Local only' : 'Uploading';
   const quiet = s.quietMode ? ' · Quiet mode' : '';
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
@@ -2805,6 +2849,27 @@ app.whenReady().then(async () => {
   createWhoOverlay();
   pushStatus();
   startZealCapture();
+
+  // First-launch + every-launch nudge: if setup is incomplete, fire a Windows
+  // toast notification so the user knows something needs their attention even
+  // when Mimic has been minimized to tray. Delayed a few seconds so it doesn't
+  // collide with the loading screen + so the agent has had a moment to come
+  // up; flashFrame draws attention in the taskbar for users who saw the toast
+  // and want to find Mimic in their open windows.
+  setTimeout(() => {
+    const issue = _setupIssue();
+    if (!issue) return;
+    try { if (mainWindow && process.platform === 'win32') mainWindow.flashFrame(true); } catch {}
+    try {
+      if (Notification.isSupported()) {
+        new Notification({
+          title: '⚠ Wolf Pack Mimic — setup needed',
+          body:  issue + ' — open Mimic to finish.',
+          silent: false,
+        }).show();
+      }
+    } catch (e) { void e; }
+  }, 6000);
 
   // Rescue overlays if the monitor layout changes while running (unplug a
   // second display, resolution switch, etc.). If an overlay ends up off the
