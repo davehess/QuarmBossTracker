@@ -82,11 +82,25 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-blue bg-[#1f6feb33] text-blue text-xs hover:bg-[#1f6feb66] transition-colors whitespace-nowrap no-underline"
-                  title="Wolf Pack Mimic Parser — the all-in-one desktop client (bundles the wolfpack-logsync agent + DPS overlay, trigger TTS, charm tracker, /tells). Downloads the latest installer directly. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
+                  title="Wolf Pack Mimic Parser — the all-in-one desktop client (bundles the wolfpack-logsync agent + DPS overlay, trigger TTS, charm tracker, /tells). Downloads the latest STABLE installer directly. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src="/mimic-logo.png" alt="" width={14} height={14} className="rounded-sm" />
-                  <span>Download Mimic Parser</span>
+                  <span>Download Mimic</span>
+                  <span aria-hidden className="text-dim text-[10px]">↗</span>
+                </a>
+                {/* Beta channel — same installer pipeline, prerelease tag.
+                    For testers who want the next-version features early
+                    and have already toggled the beta channel in their tray.
+                    Quiet styling so the stable button stays the primary CTA. */}
+                <a
+                  href="/mimic/beta?direct=1"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-bg/40 text-dim text-xs hover:bg-bg/70 hover:text-fg transition-colors whitespace-nowrap no-underline"
+                  title="Wolf Pack Mimic — BETA channel. Latest prerelease build with in-progress features. Less stable than the main download; only grab this if you're testing or have been asked to."
+                >
+                  <span>Beta</span>
                   <span aria-hidden className="text-dim text-[10px]">↗</span>
                 </a>
               </div>
