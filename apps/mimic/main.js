@@ -2023,8 +2023,17 @@ function registerHideAllHotkey() {
 // Autostart-with-Windows wiring. Backed by app.setLoginItemSettings — Electron
 // writes/removes the registry entry under HKCU\…\Run for us. Called from the
 // tray toggle and on startup so the registry stays consistent with the saved
-// config (a user who flipped this in the installer doesn't have to also toggle
-// it in the app for it to stick).
+// config.
+//
+// CRITICAL: pass the explicit `name` matching what the NSIS installer writes
+// ("WolfPackMimic"). Without this, Electron uses the app's executable-name
+// default ("Wolf Pack Mimic" or "wolfpack-mimic" depending on packaging),
+// which is DIFFERENT from the installer's key — so Windows ends up with TWO
+// Run keys for the same app, and the Startup apps page shows two entries.
+// _AUTOSTART_REG_NAME is the canonical key name; cleanupDuplicateAutostart
+// below also sweeps any stragglers from older builds that used a different
+// name so existing dupes drain out.
+const _AUTOSTART_REG_NAME = 'WolfPackMimic';
 function applyAutoStart() {
   if (process.platform !== 'win32') return;
   try {
@@ -2034,7 +2043,56 @@ function applyAutoStart() {
       // Launch hidden-to-tray so an auto-start session doesn't pop the
       // dashboard window in the user's face right after login.
       args: ['--autostart'],
+      name: _AUTOSTART_REG_NAME,
     });
+  } catch (e) { void e; }
+  // Always sweep dupes after applying — covers the "user upgraded from a
+  // version that wrote a different name" path so they don't see two
+  // Mimic entries in the Startup apps list.
+  cleanupDuplicateAutostartEntries();
+}
+
+// Remove any HKCU\…\Run entries that point at the installed Mimic exe but
+// use a different value name than our canonical _AUTOSTART_REG_NAME. Users
+// who installed → autostart enabled, then upgraded to a build that started
+// using a new name, would otherwise see two entries in Windows' Startup
+// apps page (both pointing at Mimic). Idempotent: safe to call on every
+// boot + every toggle.
+function cleanupDuplicateAutostartEntries() {
+  if (process.platform !== 'win32') return;
+  try {
+    const { execFile } = require('child_process');
+    // Query the Run key; expect a few rows. We strip everything except
+    // entries whose value-data is the path to OUR mimic exe.
+    execFile('reg.exe',
+      ['QUERY', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'],
+      { windowsHide: true, timeout: 5000 },
+      (err, stdout) => {
+        if (err || !stdout) return;
+        const exeHint = (app.getPath('exe') || '').toLowerCase();
+        const myExeName = 'wolf pack mimic.exe';   // also covers older builds
+        const lines = stdout.split(/\r?\n/);
+        const toDelete = [];
+        for (const line of lines) {
+          // Format: "    NAME    REG_SZ    DATA"
+          const m = line.match(/^\s+(\S.*?)\s+REG_SZ\s+(.+)$/);
+          if (!m) continue;
+          const name = m[1].trim();
+          const data = m[2].trim().toLowerCase();
+          if (name === _AUTOSTART_REG_NAME) continue;        // canonical — keep
+          // Only touch entries that actually point at Mimic (don't go
+          // wiping unrelated apps the user has in their Run key).
+          if (data.includes(myExeName) || (exeHint && data.includes(exeHint))) {
+            toDelete.push(name);
+          }
+        }
+        for (const name of toDelete) {
+          execFile('reg.exe',
+            ['DELETE', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/V', name, '/F'],
+            { windowsHide: true, timeout: 5000 },
+            () => { /* best-effort */ });
+        }
+      });
   } catch (e) { void e; }
 }
 
