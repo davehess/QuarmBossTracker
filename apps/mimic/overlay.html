@@ -11,9 +11,22 @@
     display:flex;justify-content:space-between}
   .boss{font-size:12px;color:#f6c365;margin:4px 0 6px}
   ul{list-style:none;margin:0;padding:0}
-  li{display:flex;justify-content:space-between;font-size:11px;padding:1px 0}
-  li .n{color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
-  li .d{color:#56d364}
+  /* EQLogParser-style row: rank · name · %% · Damage · DPS · Sec. Grid columns
+     are sized so the right-aligned numbers stack cleanly even when the name
+     wraps narrow. */
+  li{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
+     gap:6px;align-items:baseline;font-size:11px;padding:1px 0}
+  li .r{color:#6b7280;text-align:right}
+  li .n{color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  li .p{color:#6b7280;text-align:right;font-size:10px}
+  li .d{color:#56d364;text-align:right;font-variant-numeric:tabular-nums}
+  li .dps{color:#58a6ff;text-align:right;font-variant-numeric:tabular-nums}
+  li .sec{color:#6b7280;text-align:right;font-variant-numeric:tabular-nums;font-size:10px}
+  li.me .n{color:#f6c365;font-weight:600}
+  .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
+     gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
+     text-transform:uppercase;padding:2px 0 1px;border-bottom:1px solid rgba(110,118,129,0.18);margin-bottom:2px}
+  .colhdr .r,.colhdr .p,.colhdr .d,.colhdr .dps,.colhdr .sec{text-align:right}
   .dim{color:#6b7280;font-size:10px}
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
@@ -88,6 +101,9 @@
   </div>
   <div class="hud">
     <div class="title"><span id="conn" class="conn bad">○</span><span>⚔️ <span id="boss-name">Damage</span></span></div>
+    <div id="colhdr" class="colhdr" style="display:none">
+      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d">Damage</span><span class="dps">DPS</span><span class="sec">Sec</span>
+    </div>
     <ul id="deeps"></ul>
     <div class="dim" id="empty">waiting for combat…</div>
   </div>
@@ -188,7 +204,9 @@
     try { window.mimic.setSetupMode(false); } catch (e) {}
   });
 
-  function fmt(n){ n=Number(n)||0; return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(n); }
+  function fmt(n){ n=Number(n)||0; return n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(2)+'K':String(Math.round(n)); }
+  function fmtPct(p){ if (!isFinite(p) || p <= 0) return '—'; return p >= 10 ? p.toFixed(0)+'%' : p.toFixed(1)+'%'; }
+  function esc(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
 
   async function tick(){
     try{
@@ -200,26 +218,51 @@
       // Current boss/threat → shown in the HUD title so the user knows
       // exactly what fight the damage rows are scored against. Falls back to
       // "Damage — this fight" when no encounter is active.
-      const boss = (s.currentEncounterThreat && s.currentEncounterThreat.bossName)
-                 || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
+      const et = s.currentEncounterThreat;
+      const boss = (et && et.bossName) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
 
       // Per-FIGHT raw damage from currentEncounterThreat.perPlayer[].dmg — the
       // honest damage each player has done to the mob(s) THIS encounter, not
-      // total-session-seen. (Total-seen lives on the "Damage Done This Session"
-      // dashboard card, send THAT to its own overlay if you want lifetime.)
-      // Healing + threat are their own overlays — this one is damage only.
+      // total-session-seen. EQLogParser-style layout: rank · name · % ·
+      // Damage · DPS · Sec. Sec/DPS use the fight's elapsed time (startedAt
+      // → now) — the agent doesn't track per-player first-hit timestamps, so
+      // these are fight-relative, not active-time-relative. Close enough for
+      // the in-game HUD.
       let rows = [];
-      const pp = s.currentEncounterThreat && s.currentEncounterThreat.perPlayer;
+      const pp = et && et.perPlayer;
       if (pp && typeof pp === 'object') {
-        rows = Object.entries(pp).map(([name, t]) => [name, (t && t.dmg) || 0]);
+        rows = Object.entries(pp)
+          .map(([name, t]) => [name, (t && t.dmg) || 0])
+          .filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
+          .sort((a,b)=>(b[1]||0)-(a[1]||0))
+          .slice(0,8);
       }
-      rows = rows.filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
-                 .sort((a,b)=>(b[1]||0)-(a[1]||0)).slice(0,8);
+      const sumDmg = rows.reduce((s, r) => s + r[1], 0);
+      const startedAt = et && et.startedAt ? new Date(et.startedAt).getTime() : 0;
+      const flushedAt = et && et.flushedAt;
+      const nowMs = Date.now();
+      const endMs = flushedAt || nowMs;
+      const secs  = startedAt > 0 ? Math.max(1, Math.round((endMs - startedAt) / 1000)) : 0;
+      const me    = s.character || s.uploaderCharacter || s.self || null;
 
       const ul = document.getElementById('deeps');
-      ul.innerHTML = rows.map(([n,d])=>`<li><span class="n">${n}</span><span class="d">${fmt(d)}</span></li>`).join('');
+      ul.innerHTML = rows.map(function(row, i){
+        var n = row[0], d = row[1];
+        var pct = sumDmg > 0 ? (d / sumDmg) * 100 : 0;
+        var dps = secs > 0 ? Math.round(d / secs) : 0;
+        var isMe = me && n.toLowerCase() === me.toLowerCase();
+        return '<li' + (isMe ? ' class="me"' : '') + '>'
+             + '<span class="r">' + (i+1) + '.</span>'
+             + '<span class="n">' + esc(n) + '</span>'
+             + '<span class="p">' + fmtPct(pct) + '</span>'
+             + '<span class="d">' + fmt(d) + '</span>'
+             + '<span class="dps">' + fmt(dps) + '</span>'
+             + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
+             + '</li>';
+      }).join('');
       document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
+      document.getElementById('colhdr').style.display = rows.length ? 'grid' : 'none';
     }catch(e){
       const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';
     }

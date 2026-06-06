@@ -106,18 +106,37 @@ async function load(name: string) {
       .limit(10000);
     const parses = (parseRowsRaw as unknown as ParseRow[]) ?? [];
 
-    // 3. Loot — every opendkp_loot row this character has won, joined to
-    // eqemu_items so we can classify weapon vs armor on the server. No row
-    // cap: the new LootBrowser filters + paginates client-side.
-    const { data: lootRaw } = await sb
+    // 3. Loot — every opendkp_loot row this character has won. We need
+    // eqemu_items to classify weapon vs armor server-side, but
+    // opendkp_loot_recent is a VIEW and opendkp_auctions.item_id has no
+    // declared FK to eqemu_items.id (the FK is on loot_drops / wishlists /
+    // eqemu_lootdrop_entries, not auctions) — so a PostgREST embed errors
+    // and silently drops the entire result set, making every character
+    // page show "LOOT WON 0". Split into two queries and stitch in JS.
+    const { data: lootRowsRaw } = await sb
       .from('opendkp_loot_recent')
-      .select(`
-        item_name, dkp, raid_name, raid_date, game_item_id,
-        eqemu_items ( itemtype, damage, delay, slots, ac )
-      `)
+      .select(`item_name, dkp, raid_name, raid_date, game_item_id`)
       .ilike('character_name', displayName)
       .order('raid_date', { ascending: false });
-    const loot = (lootRaw as unknown as LootRow[]) ?? [];
+    const lootRows = (lootRowsRaw ?? []) as {
+      item_name: string; dkp: number; raid_name: string; raid_date: string; game_item_id: number | null;
+    }[];
+    const itemIds = Array.from(new Set(lootRows.map(l => l.game_item_id).filter((x): x is number => x != null)));
+    const { data: itemRowsRaw } = itemIds.length > 0
+      ? await sb.from('eqemu_items').select('id, itemtype, damage, delay, slots, ac').in('id', itemIds)
+      : { data: [] };
+    const itemById = new Map<number, LootRow['eqemu_items']>(
+      ((itemRowsRaw ?? []) as { id: number; itemtype: number | null; damage: number | null; delay: number | null; slots: number | null; ac: number | null }[])
+        .map(it => [it.id, { itemtype: it.itemtype, damage: it.damage, delay: it.delay, slots: it.slots, ac: it.ac }]),
+    );
+    const loot: LootRow[] = lootRows.map(l => ({
+      item_name:    l.item_name,
+      dkp:          l.dkp,
+      raid_name:    l.raid_name,
+      raid_date:    l.raid_date,
+      game_item_id: l.game_item_id,
+      eqemu_items:  l.game_item_id != null ? (itemById.get(l.game_item_id) ?? null) : null,
+    }));
     const lootEnriched: LootEntry[] = loot.map(l => ({
       item_name:    l.item_name,
       game_item_id: l.game_item_id,
