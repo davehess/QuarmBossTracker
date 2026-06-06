@@ -2503,6 +2503,13 @@ function _httpsGetBuffer(url) {
 
 async function checkAgentUpdate() {
   if (_agentUpdateInFlight) return;
+  // Beta Mimic builds ship their own agent and should NOT hot-swap from
+  // main — main's `/api/agent/latest-version` could be on an older agent
+  // than the one bundled in this beta build, or worse, on a stable release
+  // that's missing beta-only changes. Detect prerelease via the build's own
+  // version (presence of `-` per semver) and skip the swap entirely.
+  // Stable Mimic installs keep their existing 30-min hot-swap cadence.
+  if (/-/.test(String(app.getVersion() || ''))) return;
   _agentUpdateInFlight = true;
   try {
     const cfg = loadConfig();

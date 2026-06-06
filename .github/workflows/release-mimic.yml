@@ -21,12 +21,12 @@ name: Release Mimic (Electron)
 #      build, or rebuilding from a tag that was created some other way.
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
     paths:    ['apps/mimic/package.json']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. v1.0.0)'
+        description: 'Tag to release (e.g. v1.0.0, or v1.0.0-beta.1 for prerelease)'
         required: true
 
 jobs:
