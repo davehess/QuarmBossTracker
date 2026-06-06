@@ -3179,19 +3179,48 @@ function _maybeUploadRaidRoster(sample) {
     if (!sample || !sample.data) return;
     const members = JSON.parse(sample.data);
     if (!Array.isArray(members) || members.length === 0) return;
+    // Build a name(lower) → hp_pct map from every Zeal gauge a watched
+    // character can SEE. The user is in some group; Zeal slot != 1/6/16 with
+    // a name `text` are their groupmates' HP gauges. So a Mimic-running raider
+    // broadcasts HP for the other ~5 people in their group. Each Mimic agent
+    // only sees ITS own group, so the bot's last-write-wins upsert merges
+    // contributions from every Mimic raider into a guild-wide HP view.
+    const liveHpByName = new Map();
+    for (const ch of Object.keys(_zealState || {})) {
+      const st = _zealState[ch];
+      if (!st) continue;
+      // Self HP (slot 1 in the Zeal pipe wire format) — attribute to the
+      // watched character's own name.
+      if (typeof st.self_hp_pct === 'number') liveHpByName.set(ch.toLowerCase(), st.self_hp_pct);
+      // Group members (gauges with text + non-self/target/pet slots).
+      if (Array.isArray(st.gauges)) {
+        for (const g of st.gauges) {
+          if (!g || !g.text || g.hp_pct == null) continue;
+          if (g.slot === 1 || g.slot === 6 || g.slot === 16) continue;   // self / target / pet
+          liveHpByName.set(String(g.text).toLowerCase(), g.hp_pct);
+        }
+      }
+    }
     const compact = members
       .filter(m => m && m.name)
-      .map(m => ({
-        name:  String(m.name),
-        class: m.class != null ? String(m.class) : null,
-        group: m.group != null ? String(m.group) : null,
-        level: m.level != null ? String(m.level) : null,
-        rank:  m.rank  != null ? String(m.rank)  : null,
-      }));
+      .map(m => {
+        const hp = liveHpByName.get(String(m.name).toLowerCase());
+        return {
+          name:   String(m.name),
+          class:  m.class != null ? String(m.class) : null,
+          group:  m.group != null ? String(m.group) : null,
+          level:  m.level != null ? String(m.level) : null,
+          rank:   m.rank  != null ? String(m.rank)  : null,
+          hp_pct: typeof hp === 'number' ? Math.max(0, Math.min(100, Math.round(hp))) : null,
+        };
+      });
     if (compact.length === 0) return;
+    // Hash composition only — NOT HP. HP changes constantly in combat and we
+    // don't want every 1% drop to fire an upload. Heartbeat (10s) refreshes HP
+    // on a cadence the /raid page can show "live-ish" without spam.
     const hash = compact.map(m => m.name + ':' + m.group + ':' + m.class).sort().join('|');
     const now = Date.now();
-    if (hash === _raidRosterLastHash && (now - _raidRosterLastUpload) < 60000) return;
+    if (hash === _raidRosterLastHash && (now - _raidRosterLastUpload) < 10000) return;
     _raidRosterLastHash   = hash;
     _raidRosterLastUpload = now;
     enqueueUpload('raid_roster', { members: compact });

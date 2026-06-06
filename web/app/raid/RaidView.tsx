@@ -39,6 +39,7 @@ export type RaidRow = {
   noAgent: boolean;              // not running Mimic → unknown buff state
   zone: string | null;
   updatedAt: string | null;
+  hpPct: number | null;          // live HP%: roster broadcast (any Mimic groupmate) or self-state HP
   buffCount: number;
   byCategory: Record<string, string[]>;
   other: string[];
@@ -55,6 +56,19 @@ const TIER_STYLE: Record<RaidRow['tier'], { bg: string; bar: string; label: stri
   red:     { bg: 'bg-[#2a1010]/70', bar: 'bg-red-500',    label: 'critical missing' },
   unknown: { bg: 'bg-[#11151c]/60', bar: 'bg-dim',        label: 'no Mimic — unknown' },
 };
+
+// HP bar + HP% text coloring — green > 50% / amber > 20% / red ≤ 20%. Same
+// thresholds as the charm + pet overlays so the visual signal is consistent.
+function hpBarClass(p: number): string {
+  if (p > 50) return 'bg-green';
+  if (p > 20) return 'bg-orange';
+  return 'bg-red-500';
+}
+function hpTextClass(p: number): string {
+  if (p > 50) return 'text-green';
+  if (p > 20) return 'text-orange';
+  return 'text-red-400';
+}
 
 // Class → which buff categories that class provides. Drives the "I'm buffing
 // as <class>" filter. First pass; tunable in lib/buffs.ts later.
@@ -261,7 +275,7 @@ export default function RaidView({
                     return (
                       <li
                         key={r.name}
-                        className={['flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-[#1a212c] transition-colors', style.bg, r.isMe ? 'ring-1 ring-blue/60' : ''].join(' ')}
+                        className={['relative flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-[#1a212c] transition-colors', style.bg, r.isMe ? 'ring-1 ring-blue/60' : ''].join(' ')}
                         onClick={() => setSelectedName(r.name)}
                       >
                         <span className={['inline-block w-1 h-5 rounded-sm shrink-0', style.bar].join(' ')} />
@@ -282,6 +296,14 @@ export default function RaidView({
                         <span className="text-dim text-[10px] shrink-0">
                           {r.className || 'Unknown'} · {ROLE_LABELS[r.role]}
                         </span>
+                        {r.hpPct != null && (
+                          <span
+                            className={['text-[10px] tabular-nums shrink-0', hpTextClass(r.hpPct)].join(' ')}
+                            title={`HP ${Math.round(r.hpPct)}% — last group-pipe sample`}
+                          >
+                            {Math.round(r.hpPct)}%
+                          </span>
+                        )}
                         {r.noAgent
                           ? <span className="text-dim italic text-[10px] ml-auto">no Mimic</span>
                           : (
@@ -290,6 +312,16 @@ export default function RaidView({
                                 <span className="text-dim text-[10px] w-16 text-right">{ago(r.updatedAt)}</span>
                               </>
                             )}
+                        {r.hpPct != null && (
+                          // 2px HP strip absolutely positioned at row bottom — doesn't
+                          // affect row height. Green > 50% → amber > 20% → red. Null
+                          // (no broadcaster yet) renders no strip at all.
+                          <span
+                            aria-hidden
+                            className={['absolute left-0 bottom-0 h-[2px]', hpBarClass(r.hpPct)].join(' ')}
+                            style={{ width: `${Math.max(0, Math.min(100, r.hpPct))}%` }}
+                          />
+                        )}
                       </li>
                     );
                   })}
@@ -304,7 +336,7 @@ export default function RaidView({
         </div>
 
         {/* Side panel — character detail (real buffs/HP-slots/zone). */}
-        <aside className="bg-panel border border-border rounded-lg p-3 text-xs sticky top-2 self-start max-h-[80vh] overflow-y-auto">
+        <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start">
           {!selected ? (
             <div className="text-dim text-center py-10">
               Click a raider to see their full buff state, missing slots, and a one-tap <code>/target</code> copy.
@@ -426,7 +458,7 @@ function BufferQueue({
 // Class-count sidebar — "what do we have in raid tonight, at a glance".
 function ClassCountPanel({ counts, raidSize }: { counts: [string, number][]; raidSize: number }) {
   return (
-    <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start sticky top-2">
+    <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start">
       <div className="text-[10px] uppercase tracking-widest text-dim mb-2">Classes in raid</div>
       {counts.length === 0 ? (
         <div className="text-dim italic">No roster yet.</div>

@@ -4810,6 +4810,11 @@ async function _handleAgentRaidRoster(req, res) {
     seen.add(name.toLowerCase());
     const grp = Number.parseInt(m?.group, 10);
     const lvl = Number.parseInt(m?.level, 10);
+    // hp_pct comes from the uploader's Zeal gauges for their own group
+    // members. Last-write-wins via the upsert merges contributions from every
+    // Mimic raider into a guild-wide HP view (each group's HP comes from the
+    // Mimic-running raider in THAT group).
+    const hp  = Number.parseFloat(m?.hp_pct);
     rows.push({
       guild_id:               guildId,
       name,
@@ -4817,6 +4822,7 @@ async function _handleAgentRaidRoster(req, res) {
       group_num:              Number.isFinite(grp) ? grp : null,
       level:                  Number.isFinite(lvl) ? lvl : null,
       rank:                   m?.rank ? String(m.rank).slice(0, 20) : null,
+      hp_pct:                 Number.isFinite(hp) ? Math.max(0, Math.min(100, hp)) : null,
       captured_at:            nowIso,
       uploaded_by_discord_id: identity.discord_id,
     });

@@ -32,6 +32,7 @@ export const dynamic = 'force-dynamic';
 type LiveStateRow = {
   character: string;
   zone_name: string | null;
+  self_hp_pct: number | null;
   buffs: { name: string; ticks: number | null }[] | null;
   buff_count: number | null;
   updated_at: string | null;
@@ -43,6 +44,7 @@ type RosterRow = {
   group_num: number | null;
   level: number | null;
   rank: string | null;
+  hp_pct: number | null;
 };
 
 // Color tier — at-a-glance triage signal, per the user's spec:
@@ -90,14 +92,14 @@ export default async function RaidHubPage() {
   const admin = supabaseAdmin();
   const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }] = await Promise.all([
     admin.from('character_live_state')
-      .select('character, zone_name, buffs, buff_count, updated_at')
+      .select('character, zone_name, self_hp_pct, buffs, buff_count, updated_at')
       .eq('guild_id', 'wolfpack')
       .order('updated_at', { ascending: false }),
     admin.from('characters')
       .select('name, class, main_name, discord_id')
       .eq('guild_id', 'wolfpack'),
     admin.from('raid_roster')
-      .select('name, class, group_num, level, rank, captured_at')
+      .select('name, class, group_num, level, rank, hp_pct, captured_at')
       .eq('guild_id', 'wolfpack')
       .gte('captured_at', rosterSince),
     // Signed-in user → discord_id so we can find THEIR character in the raid.
@@ -181,6 +183,10 @@ export default async function RaidHubPage() {
       noAgent,
       zone: live?.zone_name ?? null,
       updatedAt: live?.updated_at ?? null,
+      // HP%: roster broadcast (any Mimic raider in this person's group) wins;
+      // own-self HP from character_live_state fills in when this raider runs
+      // Mimic themselves and their group has no other broadcaster yet.
+      hpPct: rr.hp_pct ?? live?.self_hp_pct ?? null,
       buffCount: live?.buff_count ?? (live?.buffs?.length ?? 0),
       byCategory,
       other,
@@ -211,6 +217,7 @@ export default async function RaidHubPage() {
       noAgent: false,
       zone: r.zone_name,
       updatedAt: r.updated_at,
+      hpPct: r.self_hp_pct ?? null,
       buffCount: r.buff_count ?? (r.buffs?.length ?? 0),
       byCategory,
       other,
