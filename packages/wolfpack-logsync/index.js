@@ -2082,6 +2082,7 @@ class EncounterBuilder {
         healRaw:    Math.round(t.healRaw || 0),
         // Inbound damage taken (from mobs) — Tank tab on the damage overlay.
         took:       Math.round(t.took || 0),
+        tookMax:    Math.round(t.tookMax || 0),
         procDetail: t.procDetail || {},
       };
     }
@@ -2731,10 +2732,14 @@ class EncounterBuilder {
       const attackerIsPlayer = attacker && (attacker === this.character || isConfirmedPlayer(attacker));
       if (defenderIsPlayer && !attackerIsPlayer && defender !== attacker) {
         if (!this.threatBy.has(defender)) {
-          this.threatBy.set(defender, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, took: 0, procDetail: {} });
+          this.threatBy.set(defender, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, took: 0, tookMax: 0, procDetail: {} });
         }
         const dt = this.threatBy.get(defender);
         dt.took = (dt.took || 0) + event.amount;
+        // Biggest single hit absorbed — the dangerous one. A tank seeing
+        // a 5k crit absorbed is more useful than knowing they ate 12k
+        // across the fight in 500-damage swings.
+        if (event.amount > (dt.tookMax || 0)) dt.tookMax = event.amount;
       }
     }
 

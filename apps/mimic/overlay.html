@@ -23,6 +23,7 @@
   li .dps{color:#58a6ff;text-align:right;font-variant-numeric:tabular-nums}
   li .sec{color:#6b7280;text-align:right;font-variant-numeric:tabular-nums;font-size:10px}
   li.me .n{color:#f6c365;font-weight:600}
+  .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
   .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
      text-transform:uppercase;padding:2px 0 1px;border-bottom:1px solid rgba(110,118,129,0.18);margin-bottom:2px}
@@ -324,12 +325,15 @@
       // → now) — the agent doesn't track per-player first-hit timestamps, so
       // these are fight-relative, not active-time-relative. Close enough for
       // the in-game HUD.
+      // Each row is [name, primary_value, max_hit].
+      // DPS mode: primary = .dmg, max = 0 (no max-hit tracking for outgoing).
+      // Tank mode: primary = .took, max = .tookMax (biggest single hit absorbed).
       let rows = [];
       const pp = et && et.perPlayer;
       if (pp && typeof pp === 'object') {
         const field = TAB_MODE === 'tank' ? 'took' : 'dmg';
         rows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t[field]) || 0])
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0])
           .filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0))
           .slice(0,8);
@@ -344,13 +348,21 @@
 
       const ul = document.getElementById('deeps');
       ul.innerHTML = rows.map(function(row, i){
-        var n = row[0], d = row[1];
+        var n = row[0], d = row[1], mx = row[2];
         var pct = sumDmg > 0 ? (d / sumDmg) * 100 : 0;
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
+        // In Tank mode, show the biggest single hit absorbed under the
+        // row name as a small subscript — "max 4.1K" makes spike-tank
+        // damage stand out vs the running total. Suppressed in DPS mode
+        // since outbound max-hit isn't tracked (would require another
+        // per-attacker bucket).
+        var maxHitHtml = (TAB_MODE === 'tank' && mx > 0)
+          ? ' <span class="maxhit" title="biggest single hit absorbed">·' + fmt(mx) + '</span>'
+          : '';
         return '<li' + (isMe ? ' class="me"' : '') + '>'
              + '<span class="r">' + (i+1) + '.</span>'
-             + '<span class="n">' + esc(n) + '</span>'
+             + '<span class="n">' + esc(n) + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d) + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
