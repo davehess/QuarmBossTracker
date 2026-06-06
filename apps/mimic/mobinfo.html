@@ -16,6 +16,7 @@
     border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
   .mob .nm{font-size:15px;font-weight:bold;color:#e9d5ff}
   .mob .cls{font-size:11px;color:#9b8bb5;margin-left:5px}
+  .mob .zone{font-size:10px;color:#79c0ff;margin-top:1px}
   .mob .sub{font-size:10px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
   .hpbar{height:7px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:5px}
   .hpbar > div{height:100%;transition:width 250ms linear,background 250ms linear}
@@ -280,6 +281,7 @@
     }
     bodyEl.innerHTML = '<div class="mob">'
       + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
+      + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
       + hpBar
       + tabBody

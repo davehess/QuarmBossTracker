@@ -4742,12 +4742,46 @@ async function _handleAgentMobInfo(req, res) {
         }
       } catch (err) { console.warn('[mob-info] loot fetch failed:', err?.message); }
 
+      // Zone resolution chain (eqemu_npc_types.zone_short is NULL across the
+      // catalog — the weekly sync doesn't pull spawn data):
+      //   1. bosses_local — our curated raid-boss table, 109/112 covered.
+      //      Authoritative for tracked bosses.
+      //   2. encounters   — our own kill history, 88/90 distinct NPCs covered.
+      //      Authoritative for "anything Wolf Pack has actually fought."
+      // For mobs we haven't tracked OR killed (new scripted instances like
+      // a fresh #Arbiter_Korazhk before its first kill), zone stays null —
+      // which renders as no zone line at all on the overlay (more honest
+      // than guessing).
+      let zoneShort = null;
+      try {
+        const blRows = await supabase.select('bosses_local',
+          `npc_id=eq.${r.id}&select=zone_short&limit=1`);
+        const bl = Array.isArray(blRows) && blRows[0];
+        if (bl?.zone_short) {
+          zoneShort = bl.zone_short;
+        } else {
+          const encRows = await supabase.select('encounters',
+            `npc_id=eq.${r.id}&zone_short=not.is.null&select=zone_short&order=ended_at.desc.nullslast&limit=1`);
+          if (Array.isArray(encRows) && encRows[0]?.zone_short) zoneShort = encRows[0].zone_short;
+        }
+      } catch (err) { console.warn('[mob-info] zone fetch failed:', err?.message); }
+      let zoneLong = null;
+      if (zoneShort) {
+        try {
+          const zRows = await supabase.select('eqemu_zone',
+            `short_name=eq.${encodeURIComponent(zoneShort)}&select=long_name&limit=1`);
+          if (Array.isArray(zRows) && zRows[0]?.long_name) zoneLong = zRows[0].long_name;
+        } catch (err) { console.warn('[mob-info] zone long_name resolve failed:', err?.message); }
+      }
+
       mob = {
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
         level:   r.level ?? null,
         hp:      r.hp ?? null,
         ac:      r.ac ?? null,
+        zone:    zoneLong,
+        zone_short: zoneShort,
         resists: { mr: r.mr ?? null, fr: r.fr ?? null, cr: r.cr ?? null, pr: r.pr ?? null, dr: r.dr ?? null },
         mindmg:  r.mindmg ?? null,
         maxdmg:  r.maxdmg ?? null,
