@@ -1617,9 +1617,10 @@ function recordWhoEvent(ev) {
   // Threat-focused capture: L50+ only. Lower levels are noise for the PVP
   // target-selection use case the /who registry is built for — bank alts,
   // trade chars, low-zone leveling toons aren't who we're identifying.
-  // Anonymous rows (level === null) are explicitly KEPT — could be a hidden
-  // L60 raider, and a future de-anon may fill in the class.
-  if (ev.level !== null && ev.level !== undefined && ev.level < 50) return;
+  // Previously dropped rows where ev.level < 50 (raid-candidates-only filter).
+  // That made the overlay useless on Quarm where pickup raids include level 30-60
+  // characters and the user wants to see EVERYONE in the zone, not just raiders.
+  // Keep all rows now; downstream consumers can filter as needed.
   const k   = ev.name.toLowerCase();
   const old = whoData.get(k) || {};
   // Mirror server-side mergeWhoData: don't clobber known fields with nulls
@@ -2054,6 +2055,8 @@ class EncounterBuilder {
         // distinct from the threat-weighted numbers above.
         dmg:        Math.round(t.dmg || 0),
         healRaw:    Math.round(t.healRaw || 0),
+        // Inbound damage taken (from mobs) — Tank tab on the damage overlay.
+        took:       Math.round(t.took || 0),
         procDetail: t.procDetail || {},
       };
     }
@@ -2676,6 +2679,32 @@ class EncounterBuilder {
           b.total += event.amount;
           if (event.amount > b.max) b.max = event.amount;
         }
+      }
+    }
+
+    // Tank-meter inbound damage. Sum incoming damage per player so the
+    // overlay's "Tank" tab can show who's eating the boss's melee — same
+    // perPlayer scoreboard, swapped data source (.took instead of .dmg).
+    //   Defender filter: must be a known player (own char OR /who-confirmed
+    //   OR PvP confirmed).
+    //   Attacker filter: must NOT be a known player (we only want incoming
+    //   from mobs; PvP / friendly-fire is excluded so the meter stays
+    //   "damage the tank ate from the mob").
+    if (event.type === 'damage' && event.amount > 0 && event.defender) {
+      const defRaw = event.defender;
+      const defender = /^you$/i.test(defRaw) ? (this.character || 'You') : defRaw;
+      const atkRaw  = event.attacker;
+      const attacker = (atkRaw === null || /^you$/i.test(atkRaw || ''))
+        ? (this.character || 'You')
+        : atkRaw;
+      const defenderIsPlayer = defender && (defender === this.character || isConfirmedPlayer(defender));
+      const attackerIsPlayer = attacker && (attacker === this.character || isConfirmedPlayer(attacker));
+      if (defenderIsPlayer && !attackerIsPlayer && defender !== attacker) {
+        if (!this.threatBy.has(defender)) {
+          this.threatBy.set(defender, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, took: 0, procDetail: {} });
+        }
+        const dt = this.threatBy.get(defender);
+        dt.took = (dt.took || 0) + event.amount;
       }
     }
 

@@ -113,7 +113,7 @@
       </span>
     </div>
     <div id="colhdr" class="colhdr" style="display:none">
-      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d">Damage</span><span class="dps">DPS</span><span class="sec">Sec</span>
+      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
     </div>
     <ul id="deeps"></ul>
     <div class="dim" id="empty">waiting for combat…</div>
@@ -256,6 +256,25 @@
   function fmtPct(p){ if (!isFinite(p) || p <= 0) return '—'; return p >= 10 ? p.toFixed(0)+'%' : p.toFixed(1)+'%'; }
   function esc(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
 
+  // DPS / Tank tab — same scoreboard surface, swapped data source.
+  // DPS reads perPlayer[].dmg (outgoing damage to current-fight mobs);
+  // Tank reads perPlayer[].took (incoming damage from mobs). Selection
+  // is local to this overlay session — no persistence yet.
+  var TAB_MODE = 'dps';
+  var tabDpsBtn  = document.getElementById('tabDps');
+  var tabTankBtn = document.getElementById('tabTank');
+  function _setTab(mode) {
+    TAB_MODE = mode;
+    if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', mode === 'dps');
+    if (tabTankBtn) tabTankBtn.classList.toggle('on', mode === 'tank');
+    var hdr = document.getElementById('boss-name');
+    // The title prefix gets a Tank flag so it's obvious you're not on DPS.
+    if (hdr && hdr.dataset) hdr.dataset.tabMode = mode;
+    tick().catch(function(){});
+  }
+  if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
+  if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
+
   async function tick(){
     try{
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
@@ -280,8 +299,9 @@
       let rows = [];
       const pp = et && et.perPlayer;
       if (pp && typeof pp === 'object') {
+        const field = TAB_MODE === 'tank' ? 'took' : 'dmg';
         rows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t.dmg) || 0])
+          .map(([name, t]) => [name, (t && t[field]) || 0])
           .filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0))
           .slice(0,8);
@@ -311,6 +331,12 @@
       }).join('');
       document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
       document.getElementById('colhdr').style.display = rows.length ? 'grid' : 'none';
+      // Header labels track tab mode so the user can tell DPS vs Tank apart
+      // even without looking at the tab buttons (e.g. screenshots).
+      var colD   = document.getElementById('colD');
+      var colDps = document.getElementById('colDps');
+      if (colD)   colD  .textContent = TAB_MODE === 'tank' ? 'Taken' : 'Damage';
+      if (colDps) colDps.textContent = TAB_MODE === 'tank' ? 'DTPS'  : 'DPS';
     }catch(e){
       const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';
     }
