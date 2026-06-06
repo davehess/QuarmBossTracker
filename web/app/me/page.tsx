@@ -821,10 +821,14 @@ export default async function MePage() {
                         <div className="text-[10px] text-dim mb-1">Top skills by damage</div>
                         <ul className="space-y-0.5 text-xs">
                           {s.topSkills.map(t => (
-                            <li key={t.skill} className="flex items-center justify-between gap-2">
-                              <span className="text-text truncate">{t.skill}</span>
-                              <span className="text-dim text-[10px] whitespace-nowrap">{t.hits.toLocaleString()} hits</span>
-                              <span className="text-text text-[10px] whitespace-nowrap w-20 text-right">{t.dmg.toLocaleString()}</span>
+                            // Fixed-width middle/right columns instead of
+                            // justify-between — keeps the hit/damage columns
+                            // vertically aligned across rows regardless of how
+                            // wide the skill name is.
+                            <li key={t.skill} className="flex items-center gap-2">
+                              <span className="flex-1 min-w-0 text-text truncate">{t.skill}</span>
+                              <span className="w-24 shrink-0 text-dim text-[10px] text-right tabular-nums whitespace-nowrap">{t.hits.toLocaleString()} hits</span>
+                              <span className="w-24 shrink-0 text-text text-[10px] text-right tabular-nums whitespace-nowrap">{t.dmg.toLocaleString()}</span>
                             </li>
                           ))}
                         </ul>
@@ -856,12 +860,16 @@ export default async function MePage() {
                 ) : (
                   <ul className="space-y-1 text-xs">
                     {s.recentEncounters.map(e => (
-                      <li key={e.id} className="flex items-center justify-between gap-2">
-                        <Link href={`/parses/${e.id}`} className="text-blue hover:underline truncate">
+                      // Fixed-width date + damage columns so they line up the
+                      // same way across rows no matter how long the mob name
+                      // is (was using justify-between, which floats the middle
+                      // column to wherever the first column's content ends).
+                      <li key={e.id} className="flex items-center gap-2">
+                        <Link href={`/parses/${e.id}`} className="flex-1 min-w-0 text-blue hover:underline truncate">
                           {e.npc_name || 'unknown'}
                         </Link>
-                        <span className="text-dim text-[10px] whitespace-nowrap">{fmtAbs(e.started_at, tz)}</span>
-                        <span className="text-text text-[10px] whitespace-nowrap w-20 text-right">{e.damage.toLocaleString()}</span>
+                        <span className="w-36 shrink-0 text-dim text-[10px] text-right tabular-nums whitespace-nowrap">{fmtAbs(e.started_at, tz)}</span>
+                        <span className="w-20 shrink-0 text-text text-[10px] text-right tabular-nums whitespace-nowrap">{e.damage.toLocaleString()}</span>
                       </li>
                     ))}
                   </ul>
