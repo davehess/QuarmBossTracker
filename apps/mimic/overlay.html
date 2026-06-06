@@ -258,19 +258,31 @@
 
   // DPS / Tank tab — same scoreboard surface, swapped data source.
   // DPS reads perPlayer[].dmg (outgoing damage to current-fight mobs);
-  // Tank reads perPlayer[].took (incoming damage from mobs). Selection
-  // is local to this overlay session — no persistence yet.
+  // Tank reads perPlayer[].took (incoming damage from mobs). Choice
+  // persists in localStorage so a Mimic restart keeps the user's pick.
+  var TAB_MODE_KEY = 'wp.damageTabMode';
   var TAB_MODE = 'dps';
+  try {
+    var saved = localStorage.getItem(TAB_MODE_KEY);
+    if (saved === 'dps' || saved === 'tank') TAB_MODE = saved;
+  } catch (e) {}
   var tabDpsBtn  = document.getElementById('tabDps');
   var tabTankBtn = document.getElementById('tabTank');
   function _setTab(mode) {
     TAB_MODE = mode;
+    try { localStorage.setItem(TAB_MODE_KEY, mode); } catch (e) {}
     if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', mode === 'dps');
     if (tabTankBtn) tabTankBtn.classList.toggle('on', mode === 'tank');
     var hdr = document.getElementById('boss-name');
     // The title prefix gets a Tank flag so it's obvious you're not on DPS.
     if (hdr && hdr.dataset) hdr.dataset.tabMode = mode;
     tick().catch(function(){});
+  }
+  // Apply persisted mode to button .on classes on initial load (HTML defaults
+  // to DPS being .on; if the user saved Tank, swap them now).
+  if (TAB_MODE === 'tank') {
+    if (tabDpsBtn)  tabDpsBtn .classList.remove('on');
+    if (tabTankBtn) tabTankBtn.classList.add('on');
   }
   if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
   if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
@@ -290,12 +302,20 @@
       // we hide the meter. Otherwise it'd "stick" to whichever character's
       // log most recently published, even after you alt-tab away.
       let et = s.currentEncounterThreat;
+      var _otherCharFight = null;     // captured uploader name when filtered out
       if (et && s.activeCharacter && et.uploader
           && String(et.uploader).toLowerCase() !== String(s.activeCharacter).toLowerCase()) {
+        _otherCharFight = et.uploader;
         et = null;
       }
       const boss = (et && et.bossName) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
+      // Tell the user when an OTHER character's fight is being hidden, so the
+      // empty meter isn't mysterious. Updates the empty-state in-place.
+      var emptyHint = document.getElementById('empty');
+      if (emptyHint) emptyHint.textContent = _otherCharFight
+        ? 'fight in progress on ' + _otherCharFight
+        : 'waiting for combat…';
 
       // Per-FIGHT raw damage from currentEncounterThreat.perPlayer[].dmg — the
       // honest damage each player has done to the mob(s) THIS encounter, not
