@@ -139,6 +139,38 @@ module.exports = {
     // ── Enrich items with rarity labels ──────────────────────────────────────
     const enrichedItems = enrichLootItems(parsedItems, dropHistory, dropTable);
 
+    // ── Log each parsed item to loot_observations so the Mob Info Loot tab
+    //    can show "seen N×" alongside the published drop %. One row per item
+    //    per /loot call; counts are simple aggregations downstream. Best-effort
+    //    — a failed write doesn't block the auction post.
+    try {
+      const npcLower = boss?.name
+        ? String(boss.name).toLowerCase().replace(/_/g, ' ').trim()
+        : null;
+      if (npcLower && parsedItems.length > 0) {
+        const supabase = require('../utils/supabase');
+        if (supabase.isEnabled()) {
+          const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+          const nowIso = new Date().toISOString();
+          const rows = parsedItems
+            .filter(it => Number.isFinite(it.gameItemId) && it.gameItemId > 0)
+            .map(it => ({
+              guild_id:             guildId,
+              npc_name_lower:       npcLower,
+              item_id:              it.gameItemId,
+              item_name:            it.name || null,
+              posted_at:            nowIso,
+              posted_by_discord_id: interaction.user.id,
+              source:               'loot_command',
+            }));
+          if (rows.length) {
+            await supabase.insert('loot_observations', rows)
+              .catch(err => console.warn('[loot] observation insert failed:', err?.message));
+          }
+        }
+      }
+    } catch (err) { console.warn('[loot] observation log failed:', err?.message); }
+
     // ── Verify there's an active raid in OpenDKP to link auctions against ───
     // OpenDKP auto-links a new auction to whatever raid is currently open
     // for this client — no RaidId in the create-auction payload. If no raid

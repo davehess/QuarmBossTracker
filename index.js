@@ -4563,8 +4563,25 @@ async function _handleAgentMobInfo(req, res) {
             pct:   it.effective_chance != null ? Number(it.effective_chance) : null,
             raw_pct: it.drop_chance     != null ? Number(it.drop_chance)     : null,
             lore:  !!it.lore_flag,
+            seen:  0,
           }));
           loot.sort((a, b) => (b.pct || 0) - (a.pct || 0));
+          // Layer in Wolf Pack's observed drop count from loot_observations
+          // (populated by the /loot officer command). Matched by npc_name_lower
+          // — boss.name in /loot is humanized ("Lord Nagafen") and the catalog
+          // is underscored ("Lord_Nagafen") so we normalize both ends the same
+          // way: lower + underscore→space + trim.
+          try {
+            const guildId  = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+            const npcLower = String(r.name || '').toLowerCase().replace(/_/g, ' ').trim();
+            const obs = await supabase.select('loot_observations',
+              `guild_id=eq.${encodeURIComponent(guildId)}&npc_name_lower=eq.${encodeURIComponent(npcLower)}&select=item_id&limit=5000`);
+            if (Array.isArray(obs) && obs.length) {
+              const cnt = new Map();
+              for (const row of obs) cnt.set(row.item_id, (cnt.get(row.item_id) || 0) + 1);
+              for (const it of loot) { const n = cnt.get(it.id); if (n) it.seen = n; }
+            }
+          } catch (err) { console.warn('[mob-info] observed-count fetch failed:', err?.message); }
         }
       } catch (err) { console.warn('[mob-info] loot fetch failed:', err?.message); }
 

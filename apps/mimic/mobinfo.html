@@ -44,6 +44,8 @@
   .loot .pct{font-variant-numeric:tabular-nums;color:#9aa4ad;font-size:9px}
   .loot .pct.high{color:#56d364}
   .loot .lore{font-size:8px;color:#d2a8ff;padding:0 3px;border-radius:2px;background:rgba(163,113,247,0.2)}
+  .loot .seen{font-size:8px;color:#a371f7;padding:0 4px;border-radius:2px;background:rgba(163,113,247,0.15);
+              border:1px solid rgba(163,113,247,0.35);font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:0.5px}
   .loot .empty{font-size:11px;color:#6e7681;font-style:italic;padding:5px 0}
   /* special attack chips */
   .spec{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
@@ -196,10 +198,18 @@
       var tier = lootTier(it.pct);
       var pctTxt = fmtPct(it.pct);
       var lore = it.lore ? '<span class="lore" title="LORE — only one per character">LORE</span>' : '';
-      var title = it.name + (it.pct != null ? ' · ' + pctTxt + ' to drop (EQEmu published rate)' : '');
+      // "seen N×" — Wolf Pack's own observation count from /loot postings. 0 =
+      // we've never logged this drop here yet; ≥1 lights up the chip in purple.
+      var seen = +it.seen || 0;
+      var seenChip = seen > 0
+        ? '<span class="seen" title="Wolf Pack has logged this drop ' + seen + ' time' + (seen === 1 ? '' : 's') + ' (from /loot)">' + seen + '×</span>'
+        : '';
+      var title = it.name + (it.pct != null ? ' · ' + pctTxt + ' published drop rate' : '')
+                + (seen > 0 ? ' · seen ' + seen + '× by Wolf Pack' : '');
       rows += '<div class="row ' + tier + '" title="' + esc(title) + '">'
             + '<span class="nm">' + esc(it.name) + '</span>'
             + lore
+            + seenChip
             + '<span class="pct' + (it.pct >= 50 ? ' high' : '') + '">' + pctTxt + '</span>'
             + '</div>';
     }
