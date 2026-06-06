@@ -4905,6 +4905,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="info">Info / Stats</button>
   <button data-tab="optin">Opt-in Logs</button>
+  <button id="wpUiStudioBtn" type="button"
+     style="background:transparent;border:1px solid var(--green);color:var(--green);padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit"
+     title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
   <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
      class="nav-quest"
      style="margin-left:auto;color:var(--orange);border-color:var(--orange)"
@@ -6814,6 +6817,27 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
 refresh(); setInterval(refresh, 2000);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
+
+// UI Studio nav button — opens the standalone editor window via Electron IPC.
+// Available only when the dashboard is running inside Mimic's main window
+// (preload exposes window.mimic). In a plain browser the button stays
+// visible but its click silently no-ops, since the IPC is the only entry
+// point. The button is OUTSIDE the [data-tab] selector above so it doesn't
+// participate in the in-page tab swap — it's a side door, not a tab body.
+var _uiStudioBtn = document.getElementById('wpUiStudioBtn');
+if (_uiStudioBtn) {
+  _uiStudioBtn.addEventListener('click', function(){
+    if (window.mimic && window.mimic.openUiStudio) {
+      try { window.mimic.openUiStudio(); } catch (e) {}
+    }
+  });
+  // Dim the button in non-Mimic browser contexts so users aren't confused
+  // by an unresponsive control.
+  if (!(window.mimic && window.mimic.openUiStudio)) {
+    _uiStudioBtn.style.opacity = '0.4';
+    _uiStudioBtn.title = 'UI Studio is only available inside Mimic — open the Mimic dashboard window';
+  }
+}
 
 // Buffs & Zone per-character hide (✕) + "show all". Stored in localStorage so a
 // machine's "don't care" choices persist; renderZealClients reads the set each

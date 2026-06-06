@@ -75,6 +75,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // text map; write takes the edited map and persists with .bak backups.
   uiStudioReadBundle:     (character, eqDir) => ipcRenderer.invoke('ui-studio-read-bundle', character, eqDir),
   uiStudioWriteBundle:    (eqDir, bundle)    => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle),
+  // Open the standalone UI Studio editor window from the dashboard's nav.
+  openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns
   // { ok, user_code, verification_url, verification_url_complete, expires_at }

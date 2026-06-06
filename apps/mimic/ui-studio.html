@@ -25,13 +25,27 @@
     background:#0a0c10;height:calc(100vh - 50px);overflow:auto}
   #stage{position:relative;background:#000;border:1px solid #58a6ff;
     box-shadow:0 0 12px rgba(88,166,255,0.18)}
-  /* Each window rectangle is absolutely positioned inside #stage. */
+  /* Each window rectangle is absolutely positioned inside #stage. Color-coded
+     by kind so a glance at the canvas tells you what's a chat window vs a
+     buff bar vs a spell-gem strip without having to read every label. */
   .win{position:absolute;background:rgba(31,111,235,0.18);
     border:1px solid rgba(88,166,255,0.7);border-radius:2px;cursor:move;
     overflow:hidden;transition:box-shadow .12s}
-  .win:hover{background:rgba(31,111,235,0.32);box-shadow:0 0 6px rgba(88,166,255,0.5)}
-  .win.selected{border-color:#7ee7c7;background:rgba(126,231,199,0.22);
-    box-shadow:0 0 8px rgba(126,231,199,0.6)}
+  .win.kind-chat     {background:rgba(126,231,199,0.18);border-color:rgba(126,231,199,0.7)}
+  .win.kind-buffs    {background:rgba(212,153,255,0.18);border-color:rgba(212,153,255,0.7)}
+  .win.kind-songs    {background:rgba(255,176,217,0.18);border-color:rgba(255,176,217,0.7)}
+  .win.kind-gems     {background:rgba(214,153,34,0.20);border-color:rgba(214,153,34,0.75)}
+  .win.kind-inventory{background:rgba(187,154,121,0.18);border-color:rgba(187,154,121,0.7)}
+  .win.kind-group    {background:rgba(105,219,124,0.18);border-color:rgba(105,219,124,0.7)}
+  .win.kind-raid     {background:rgba(248,81,73,0.18);border-color:rgba(248,81,73,0.7)}
+  .win.kind-target   {background:rgba(255,123,114,0.18);border-color:rgba(255,123,114,0.7)}
+  .win.kind-player   {background:rgba(255,176,176,0.18);border-color:rgba(255,176,176,0.7)}
+  .win.kind-hotbar   {background:rgba(240,136,62,0.18);border-color:rgba(240,136,62,0.7)}
+  .win.kind-pet      {background:rgba(192,154,255,0.15);border-color:rgba(192,154,255,0.6)}
+  .win.kind-compass,.win.kind-map{background:rgba(110,155,214,0.15);border-color:rgba(110,155,214,0.6)}
+  .win:hover{filter:brightness(1.4);box-shadow:0 0 6px rgba(88,166,255,0.5)}
+  .win.selected{border-color:#7ee7c7;background:rgba(126,231,199,0.32);
+    box-shadow:0 0 10px rgba(126,231,199,0.8)}
   .win .lbl{position:absolute;top:2px;left:4px;font-size:9px;color:#fff;
     text-shadow:0 1px 2px #000;font-weight:600;pointer-events:none;
     text-overflow:ellipsis;white-space:nowrap;overflow:hidden;max-width:calc(100% - 8px)}
@@ -201,6 +215,71 @@
   }
 
   // ── Load + rescale ───────────────────────────────────────────────────────
+  // Heuristic window classifier — derives a kind + icon + extracted
+  // contents from a parsed [Section] block. The EQ INI format varies a
+  // little between client versions, so we look for several known key
+  // patterns instead of requiring exact matches.
+  function classifyWindow(section) {
+    var name  = section.name;
+    var props = section.props || {};
+    var lower = name.toLowerCase();
+    var icon  = '▢';
+    var kind  = 'generic';
+    var contents = [];
+    // Chat: explicit ChatWindow or anything starting with "CW" plus a
+    // ChatChannel/ChatFilter key as a fallback signal.
+    var hasChatHints = Object.keys(props).some(function(k){
+      var kl = k.toLowerCase();
+      return kl.indexOf('chat') >= 0 || kl.indexOf('channel') >= 0 || kl.indexOf('filter') >= 0;
+    });
+    if (/chat|^cw/i.test(name) || hasChatHints) {
+      icon = '💬'; kind = 'chat';
+      // Extract tab metadata. Try TabCount + Tab<N>Name, or Tab.<N>=, or
+      // ChatChannels.<N>=. Anything that looks like a tab name gets listed.
+      var tabs = [];
+      Object.keys(props).forEach(function(k){
+        if (/^Tab\d+Name$/i.test(k))   tabs.push(props[k]);
+        else if (/^Tab\.\d+$/i.test(k)) tabs.push(props[k]);
+        else if (/^TabName$/i.test(k))  tabs.push(props[k]);
+      });
+      if (tabs.length) contents.push({ label: 'Tabs',     value: tabs.join(', ') });
+      // Channel filter, default channel, locked state.
+      ['ChatChannels','ChatFilter','DefaultChannel','LockedDefault','Filters','WindowName']
+        .forEach(function(k){
+          if (props[k] != null && props[k] !== '') contents.push({ label: k, value: props[k] });
+        });
+      if (contents.length === 0) contents.push({ label: 'Type', value: 'chat window (no tab metadata in this version)' });
+    } else if (/inventory/i.test(name))           { icon = '🎒'; kind = 'inventory'; }
+    else  if (/buff/i.test(name))                 { icon = '✨'; kind = 'buffs'; }
+    else  if (/song|melody/i.test(name))          { icon = '🎵'; kind = 'songs'; }
+    else  if (/spell.*gem|gem.*spell|spellbar/i.test(name)) { icon = '🔮'; kind = 'gems'; }
+    else  if (/^group/i.test(name))               { icon = '👥'; kind = 'group'; }
+    else  if (/raid/i.test(name))                 { icon = '⚔️'; kind = 'raid'; }
+    else  if (/target/i.test(name))               { icon = '🎯'; kind = 'target'; }
+    else  if (/player|pdc|hp|mana/i.test(name))   { icon = '❤️'; kind = 'player'; }
+    else  if (/hot.*button|hotbar/i.test(name))   { icon = '🔥'; kind = 'hotbar'; }
+    else  if (/compass/i.test(name))              { icon = '🧭'; kind = 'compass'; }
+    else  if (/map/i.test(name))                  { icon = '🗺️'; kind = 'map'; }
+    else  if (/pet/i.test(name))                  { icon = '🐺'; kind = 'pet'; }
+    else  if (/social/i.test(name))               { icon = '💼'; kind = 'social'; }
+    // Always include WindowName when present (human-readable title).
+    if (kind !== 'chat' && props.WindowName) {
+      contents.push({ label: 'WindowName', value: props.WindowName });
+    }
+    // Pull a few common informative props as fallback contents.
+    if (contents.length === 0) {
+      ['Locked','Fades','Alpha'].forEach(function(k){
+        if (props[k] != null) contents.push({ label: k, value: props[k] });
+      });
+    }
+    return {
+      icon:  icon,
+      label: name.replace(/Window$/, '').replace(/^_+/, ''),
+      kind:  kind,
+      contents: contents,
+    };
+  }
+
   document.getElementById('loadBtn').addEventListener('click', loadAndRescale);
   async function loadAndRescale(){
     var sel = document.getElementById('charSelect').value;
@@ -242,11 +321,19 @@
         y = Math.round(y * fxY);
         w = Math.round(w * fxX);
         h = Math.round(h * fxY);
+        // Classify the window type + extract contents-of-interest for the
+        // side panel. Most windows are self-describing by section name;
+        // chat windows are the interesting one — they carry tab + channel
+        // metadata that the user wants visible without poking through INIs.
+        var classify = classifyWindow(s);
         STATE.windows.push({
           id:     'w' + (seq++),
           file:   fname,
           section: s.name,
-          label:  s.name.replace(/Window$/, ''),
+          label:  classify.icon + ' ' + classify.label,
+          kind:    classify.kind,
+          contents: classify.contents,
+          props:    s.props,
           x: x, y: y, w: w, h: h,
           origX: x, origY: y, origW: w, origH: h,
         });
@@ -275,7 +362,8 @@
       var sw = Math.max(8, Math.round(w.w * STATE.sliceScale));
       var sh = Math.max(8, Math.round(w.h * STATE.sliceScale));
       var sel = (STATE.selected === i) ? ' selected' : '';
-      html += '<div class="win' + sel + '" data-i="' + i + '" '
+      var kindCls = w.kind ? ' kind-' + w.kind : '';
+      html += '<div class="win' + sel + kindCls + '" data-i="' + i + '" '
             + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
             + '<span class="lbl">' + escapeHtml(w.label) + '</span>'
             + '<span class="sz">' + w.w + '×' + w.h + '</span>'
@@ -370,12 +458,24 @@
     if (STATE.selected < 0) { side.className = ''; stageWrap.className = ''; return; }
     var w = STATE.windows[STATE.selected];
     side.className = 'on'; stageWrap.className = 'has-side';
-    document.getElementById('sideTitle').textContent = w.section;
+    document.getElementById('sideTitle').textContent = w.label;
     document.getElementById('fX').value = w.x;
     document.getElementById('fY').value = w.y;
     document.getElementById('fW').value = w.w;
     document.getElementById('fH').value = w.h;
-    document.getElementById('sideMeta').innerHTML = 'File: <b>' + escapeHtml(w.file) + '</b><br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
+    var meta = 'File: <b>' + escapeHtml(w.file) + '</b>'
+             + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
+             + '<br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
+    if (w.contents && w.contents.length > 0) {
+      meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
+            + '<div style="color:#7ee7c7;font-size:11px;margin-bottom:4px">Contains</div>';
+      for (var ci = 0; ci < w.contents.length; ci++) {
+        var c = w.contents[ci];
+        meta += '<div style="margin-bottom:3px"><span style="color:#8b949e">' + escapeHtml(c.label) + ':</span> '
+              + '<span style="color:#e6edf3;word-break:break-all">' + escapeHtml(c.value) + '</span></div>';
+      }
+    }
+    document.getElementById('sideMeta').innerHTML = meta;
   }
   ['fX','fY','fW','fH'].forEach(function(id){
     document.getElementById(id).addEventListener('input', function(){

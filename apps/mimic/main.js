@@ -1832,6 +1832,11 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
   }
 });
 
+// Open UI Studio from the dashboard nav button. Same entry point as the
+// tray menu item — openUiStudio focuses the existing window if one is
+// already open instead of stacking duplicates.
+ipcMain.handle('open-ui-studio', () => { openUiStudio(); return true; });
+
 // ── EQ-presence detection ───────────────────────────────────────────────────
 // Poll Windows tasklist for eqgame.exe so overlays can hide themselves when
 // the user isn't actually playing. The poll is cheap (one tasklist call every
