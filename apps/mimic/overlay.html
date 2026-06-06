@@ -100,7 +100,18 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div class="hud">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>⚔️ <span id="boss-name">Damage</span></span></div>
+    <div class="title">
+      <span id="conn" class="conn bad">○</span>
+      <span>⚔️ <span id="boss-name">Damage</span></span>
+      <!-- DPS / Tank tab toggle — same surface EQLogParser exposes. DPS reads
+           perPlayer[].dmg from the active encounter; Tank reads incoming damage
+           (perPlayer[].took) so you can see who's eating the boss melee in
+           real time. -->
+      <span class="tabs">
+        <button id="tabDps"  class="tab on" type="button">DPS</button>
+        <button id="tabTank" class="tab"    type="button">Tank</button>
+      </span>
+    </div>
     <div id="colhdr" class="colhdr" style="display:none">
       <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d">Damage</span><span class="dps">DPS</span><span class="sec">Sec</span>
     </div>
