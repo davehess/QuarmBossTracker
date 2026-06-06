@@ -3062,6 +3062,27 @@ ipcMain.handle('create-panel-overlay', (_e, panelKey) => createPanelOverlay(pane
 // Master setup-mode toggle — every overlay shown + unlocked at once for
 // placement; opacity sliders + lock-here buttons appear on each.
 ipcMain.handle('set-setup-mode', (_e, on) => { applySetupMode(!!on); return setupMode; });
+// Per-window setup mode — triggered by right-clicking the ✥ on a single
+// overlay. Doesn't flip the global setupMode (so the other overlays stay
+// where they are). The renderer flips body.setup itself to show its own
+// opacity slider; we just unlock + force-show THIS window so it can be
+// moved/resized without affecting the rest.
+ipcMain.handle('set-setup-mode-this', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    // Unlock + show JUST this window; keep the others' state intact.
+    win.setIgnoreMouseEvents(false);
+    win.setResizable(true);
+    try { win.showInactive(); } catch {}
+    try {
+      win.webContents.send('overlay-locked', false);
+      win.webContents.send('setup-mode', { active: true, overlayKey: key, scope: 'this' });
+    } catch {}
+    return true;
+  } catch { return false; }
+});
 // Per-overlay opacity (renderer slider in setup mode). key matches the
 // _overlayEntries() taxonomy: 'hud' | 'trigger' | 'panel:<panelKey>'.
 ipcMain.handle('set-overlay-opacity', (_e, key, value) => {

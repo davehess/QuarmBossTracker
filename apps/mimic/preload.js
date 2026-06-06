@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // the renderer can show the per-window control strip (opacity slider, etc.)
   onSetupMode:      (cb)         => ipcRenderer.on('setup-mode', (_e, payload) => cb(payload)),
   setSetupMode:     (on)         => ipcRenderer.invoke('set-setup-mode', !!on),
+  // Setup mode for JUST this overlay window — driven by right-click on the
+  // ✥ move icon. Doesn't flip the global setupMode.
+  setSetupModeThis: ()            => ipcRenderer.invoke('set-setup-mode-this'),
   setOverlayOpacity:(key, value) => ipcRenderer.invoke('set-overlay-opacity', key, value),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on

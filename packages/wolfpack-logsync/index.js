@@ -4335,19 +4335,23 @@ function _serializeForDashboard() {
         // overlay multiplies by 6 to show MM:SS remaining.
         const zealSt = zealByLower.get(k);
         const zealBuffs = (zealSt && Array.isArray(zealSt.buffs)) ? zealSt.buffs : [];
-        const enrichedOrder = state.order.map(entry => {
-          // Tolerate the v3.0.49 string-only shape so older saved state keeps
-          // working: { name } object OR bare string both render.
-          const e = (typeof entry === 'string') ? { name: entry } : (entry || { name: '?' });
-          const buff = _findSongBuff(e.name, zealBuffs);
-          const out = { name: e.name, kind: e.kind || state.kind || 'song' };
-          if (buff && typeof buff.ticks === 'number' && buff.ticks > 0) {
-            out.remaining_ticks = buff.ticks;
-            out.remaining_secs  = buff.ticks * 6;
-            out.buff_name       = buff.name;
-          }
-          return out;
-        });
+        const enrichedOrder = state.order
+          .map(entry => {
+            // Tolerate the v3.0.49 string-only shape so older saved state keeps
+            // working: { name } object OR bare string both render.
+            const e = (typeof entry === 'string') ? { name: entry } : (entry || { name: '?' });
+            const buff = _findSongBuff(e.name, zealBuffs);
+            const out = { name: e.name, kind: e.kind || state.kind || 'song' };
+            if (buff && typeof buff.ticks === 'number' && buff.ticks > 0) {
+              out.remaining_ticks = buff.ticks;
+              out.remaining_secs  = buff.ticks * 6;
+              out.buff_name       = buff.name;
+            }
+            return out;
+          })
+          // Drop the utility songs from the main list — they get rendered in
+          // the bardBuffs strip below instead.
+          .filter(o => state.kind !== 'song' || !stripNames.has(String(o.name).toLowerCase()));
         // Zeal label 134 = the spell name being cast RIGHT NOW. When set
         // we surface it on the melody so the overlay can show "Now casting:
         // X" verbatim — useful for non-bard /melody rotations where the
@@ -4370,12 +4374,38 @@ function _serializeForDashboard() {
         const ampBuff = _findBuff(['amplification']);
         const harBuff = _findBuff(['harmonize']);
         const resBuff = _findBuff(['resonance']);
+        const accBuff = _findBuff(['accelerating chorus', "selo`s accelerating chorus", "selo's accelerating chorus"]);
+        const nivBuff = _findBuff(['breath of harmony', "niv`s melody of preservation", "niv's melody of preservation"]);
+        const natBuff = _findBuff(["nature`s melody", "nature's melody"]);
+        const _wantedCastNames = ['amplification', 'harmonize', 'resonance',
+          "selo`s accelerating chorus", "selo's accelerating chorus", 'accelerating chorus',
+          "niv`s melody of preservation", "niv's melody of preservation",
+          "nature`s melody", "nature's melody"];
+        const nowCastingLower = nowCasting ? nowCasting.toLowerCase() : '';
+        const _isCasting = (names) => names.some(n => n === nowCastingLower);
         const bardBuffs = (state.kind === 'song') ? {
           amplification: ampBuff ? { remaining_ticks: ampBuff.ticks, remaining_secs: ampBuff.ticks * 6 } : null,
           // Prefer Harmonize when both are present (Harmonize replaces Resonance).
           harmonize:     harBuff ? { remaining_ticks: harBuff.ticks, remaining_secs: harBuff.ticks * 6 } : null,
           resonance:     (!harBuff && resBuff) ? { remaining_ticks: resBuff.ticks, remaining_secs: resBuff.ticks * 6 } : null,
+          accelerating_chorus: accBuff ? { remaining_ticks: accBuff.ticks, remaining_secs: accBuff.ticks * 6 } : null,
+          nivs:          nivBuff ? { remaining_ticks: nivBuff.ticks, remaining_secs: nivBuff.ticks * 6 } : null,
+          natures:       natBuff ? { remaining_ticks: natBuff.ticks, remaining_secs: natBuff.ticks * 6 } : null,
+          // Per-row cast indicators — true when the Zeal currentCasting label
+          // matches this buff's spell name. Drives a pulsing ▶ next to the
+          // row in the overlay so the bard sees which utility is in flight.
+          casting: {
+            amplification:       _isCasting(['amplification']),
+            harmonize_resonance: _isCasting(['harmonize', 'resonance']),
+            accelerating_chorus: _isCasting(["selo`s accelerating chorus", "selo's accelerating chorus", 'accelerating chorus']),
+            nivs:                _isCasting(["niv`s melody of preservation", "niv's melody of preservation"]),
+            natures:             _isCasting(["nature`s melody", "nature's melody"]),
+          },
         } : null;
+        // Names that get HIDDEN from the main songs list because they have a
+        // dedicated row in the bottom strip — keeps the main list focused on
+        // the actual /melody rotation rather than utility clickies.
+        const stripNames = new Set(_wantedCastNames);
         out[k] = {
           character:      k,
           order:          enrichedOrder,

@@ -24,8 +24,11 @@
      user requirement. */
   .bardbuffs{margin-top:6px;padding-top:5px;border-top:1px dashed rgba(110,118,129,0.30);
     display:flex;flex-direction:column;gap:2px}
-  .bardbuffs .util-row{display:flex;justify-content:space-between;align-items:baseline;
+  .bardbuffs .util-row{display:grid;grid-template-columns:14px 1fr auto;gap:6px;align-items:baseline;
     font-size:11px;color:#c9d1d9}
+  .bardbuffs .util-cast{color:#a371f7;font-size:10px;text-align:center;animation:utilpulse 1.2s ease-in-out infinite}
+  .bardbuffs .util-cast.off{opacity:0.18;animation:none}
+  @keyframes utilpulse{0%,100%{opacity:1}50%{opacity:0.4}}
   .bardbuffs .util-lbl{color:#a371f7;font-weight:600}
   .bardbuffs .util-t{font-variant-numeric:tabular-nums;color:#7ee787;padding:0 5px;
     border-radius:3px;background:rgba(126,231,135,0.10);border:1px solid rgba(126,231,135,0.22)}
@@ -168,7 +171,14 @@
       setupBtn.textContent = '🛠 Setup mode (place + opacity)';
       setupBtn.style.cssText = 'background:#2a1d3d;color:#d2a8ff;border:1px solid #a371f7;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
       setupBtn.onmouseenter = function(){ setupBtn.style.background='#3d2a57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
-      setupBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+      setupBtn.textContent = '🛠 Setup THIS overlay';
+      setupBtn.onclick = function(){ try { window.mimic.setSetupModeThis(); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+      var setupAllBtn = document.createElement('button');
+      setupAllBtn.textContent = '🛠 Setup ALL overlays';
+      setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
+      setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
+      setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+      menu.insertBefore(setupAllBtn, setupBtn.nextSibling);
       menu.insertBefore(setupBtn, menu.firstChild);
       document.body.appendChild(menu);
       try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
@@ -361,7 +371,9 @@
         // mechanics: Harmonize replaces Resonance for bards that have it).
         var bardBuffsHtml = '';
         if (st.bardBuffs) {
-          function _utilRow(label, info, clickyHint) {
+          var casting = st.bardBuffs.casting || {};
+          function _utilRow(label, info, isCasting, clickyHint) {
+            var castIcon = isCasting ? '<span class="util-cast">▶</span>' : '<span class="util-cast off">▶</span>';
             var t = '<span class="util-t off">off</span>';
             if (info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0) {
               var rs = info.remaining_secs;
@@ -370,14 +382,19 @@
               var tier = rs <= 30 ? 'crit' : (rs <= 120 ? 'low' : '');
               t = '<span class="util-t ' + tier + '">' + tStr + '</span>';
             }
-            return '<div class="util-row" title="' + esc(clickyHint) + '"><span class="util-lbl">' + label + '</span>' + t + '</div>';
+            return '<div class="util-row" title="' + esc(clickyHint) + '">'
+                 + castIcon
+                 + '<span class="util-lbl">' + label + '</span>' + t + '</div>';
           }
           var harmonizeOrResonance = st.bardBuffs.harmonize
-            ? _utilRow('Harmonize', st.bardBuffs.harmonize, 'From Shadowsong Cloak — replaces Resonance')
-            : _utilRow('Resonance', st.bardBuffs.resonance, 'From Shadowsong Cloak');
+            ? _utilRow('Harmonize',   st.bardBuffs.harmonize, !!casting.harmonize_resonance, 'From Shadowsong Cloak — replaces Resonance')
+            : _utilRow('Resonance',   st.bardBuffs.resonance, !!casting.harmonize_resonance, 'From Shadowsong Cloak');
           bardBuffsHtml = '<div class="bardbuffs">'
-                        + _utilRow('Amplification', st.bardBuffs.amplification, 'From Voice of the Serpent')
+                        + _utilRow('Amplification',          st.bardBuffs.amplification,        !!casting.amplification,       'From Voice of the Serpent')
                         + harmonizeOrResonance
+                        + _utilRow("Selo`s Accel. Chorus",   st.bardBuffs.accelerating_chorus,  !!casting.accelerating_chorus, 'Group-wide haste utility')
+                        + _utilRow("Niv`s Melody",           st.bardBuffs.nivs,                 !!casting.nivs,                'Niv`s Melody of Preservation → Breath of Harmony')
+                        + _utilRow("Nature`s Melody",        st.bardBuffs.natures,              !!casting.natures,             'Nature`s Melody')
                         + '</div>';
         }
         html += '<div class="mel">'
