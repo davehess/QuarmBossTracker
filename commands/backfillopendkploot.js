@@ -171,6 +171,9 @@ module.exports = {
         item_name:             a.item_name,
         posted_at:             a.raid_ts || new Date().toISOString(),
         posted_by_discord_id:  'opendkp:raid' + a.raid_id,
+        raid_id:               a.raid_id,
+        winner_character:      a.character || null,
+        dkp_amount:            Number.isFinite(a.dkp) ? a.dkp : null,
       };
       if (owner) {
         rows.push({
@@ -208,22 +211,29 @@ module.exports = {
       );
     }
 
-    // 5. Idempotent insert: drop rows that already exist. Key includes source
-    //    so ambiguous/unknown rows have their own namespace and don't collide
-    //    with confident ones. One narrow window-scoped select keeps re-runs
-    //    cheap even on full-history backfills.
+    // 5. Idempotent insert. Dedup key = (source, raid_id, item_id, winner,
+    //    dkp). raid_id + winner + dkp identify an OpenDKP award uniquely (the
+    //    same item awarded twice in a raid has different winners or DKP, or
+    //    we'd want both rows anyway). Old broken key was (source, npc_id,
+    //    item_id, posted_at_string) which collapsed legit multi-drops AND
+    //    failed across JS-vs-Postgres timestamp formats — we now compare
+    //    posted_at via Date.parse() so format drift can't bite again.
     let alreadyPresent = 0;
     try {
-      const minTs = rows.reduce((m, r) => (!m || r.posted_at < m) ? r.posted_at : m, null);
+      const minTs = rows.reduce((m, r) => {
+        const t = Date.parse(r.posted_at) || 0;
+        return (!m || t < m) ? t : m;
+      }, null);
       if (minTs) {
+        const minIso = new Date(minTs).toISOString();
         const existing = await supabase.select('loot_observations',
-          `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&posted_at=gte.${encodeURIComponent(minTs)}&select=npc_id,item_id,posted_at,source&limit=20000`);
+          `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&posted_at=gte.${encodeURIComponent(minIso)}&select=raid_id,item_id,winner_character,dkp_amount,source&limit=40000`);
         if (Array.isArray(existing)) {
-          const seen = new Set(existing.map(r => `${r.source}|${r.npc_id ?? 'null'}|${r.item_id}|${r.posted_at}`));
+          const keyOf = r => `${r.source}|${r.raid_id ?? 'null'}|${r.item_id}|${r.winner_character ?? ''}|${r.dkp_amount ?? ''}`;
+          const seen = new Set(existing.map(keyOf));
           const before = rows.length;
           for (let i = rows.length - 1; i >= 0; i--) {
-            const k = `${rows[i].source}|${rows[i].npc_id ?? 'null'}|${rows[i].item_id}|${rows[i].posted_at}`;
-            if (seen.has(k)) rows.splice(i, 1);
+            if (seen.has(keyOf(rows[i]))) rows.splice(i, 1);
           }
           alreadyPresent = before - rows.length;
         }
