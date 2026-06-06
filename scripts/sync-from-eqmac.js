@@ -66,6 +66,12 @@ const WHITELIST = {
   spawnentry:          { dest: 'eqemu_spawnentry',        transform: 'spawnentry' },
   spawn2:              { dest: 'eqemu_spawn2',            transform: 'spawn2' },
   spells_new:          { dest: 'eqemu_spells',            transform: 'spells' },
+  // NPC spell-list catalog. npc_spells = list metadata + global proc fallback;
+  // npc_spells_entries = the per-list spell rows (manacost, recast, priority,
+  // level range). Joined into eqemu_npc_types via npc_spells_id. Powers Mob
+  // Info "Spells" tab + caster-mob mana tracking.
+  npc_spells:          { dest: 'eqemu_npc_spells',         transform: 'npc_spells' },
+  npc_spells_entries:  { dest: 'eqemu_npc_spells_entries', transform: 'npc_spells_entries' },
   // AA data — for inferring buff durations (Spell Casting Reinforcement etc.)
   // and resolving the numeric AA ids in a player's Quarmy AAIndex to a name +
   // per-rank effect. altadv_vars = the AA list (name is a real column, so ids
@@ -474,6 +480,35 @@ const TRANSFORMS = {
       spell_fades: r.spell_fades || null,
     };
   },
+  // NPC spell-list metadata. id = the list (referenced by eqemu_npc_types.
+  // npc_spells_id); parent_list = inheritance (a list inherits its parent's
+  // entries); attack_proc + proc_chance = the global proc fallback when the
+  // NPC isn't engaged with a specific spell. The rest are engage/idle/pursue
+  // recast / chance tuning that we keep verbatim for future use.
+  npc_spells: (cols, row) => {
+    const r = pick(cols, row, [
+      'id', 'name', 'parent_list', 'attack_proc', 'proc_chance',
+      'range_proc', 'rproc_chance', 'defensive_proc', 'dproc_chance', 'fail_recast',
+      'engaged_no_sp_recast_min', 'engaged_no_sp_recast_max',
+      'engaged_b_self_chance', 'engaged_b_other_chance', 'engaged_d_chance',
+      'pursue_no_sp_recast_min', 'pursue_no_sp_recast_max', 'pursue_d_chance',
+      'idle_no_sp_recast_min', 'idle_no_sp_recast_max', 'idle_b_chance',
+    ]);
+    if (r.id == null) return null;
+    return r;
+  },
+  // Per-(list, spell, minlevel) entry. type = bitmask of when the NPC will use
+  // this spell (engaged-d / engaged-b / pursue-d / idle-b); manacost = the
+  // override (-1 = pull from spell catalog); recast_delay is per-spell cooldown.
+  // priority orders the AI's pick within a triggered category.
+  npc_spells_entries: (cols, row) => {
+    const r = pick(cols, row, [
+      'npc_spells_id', 'spellid', 'minlevel', 'maxlevel', 'type',
+      'manacost', 'recast_delay', 'priority', 'resist_adjust', 'min_hp', 'max_hp',
+    ]);
+    if (r.npc_spells_id == null || r.spellid == null || r.minlevel == null) return null;
+    return r;
+  },
   // AA definition list. skill_id is the per-rank/internal id; eqmacid is the
   // grouped Mac-client ability id (this is what a Quarmy AAIndex row references).
   // name is a real display name. classes is a class bitmask; max_level = ranks.
@@ -559,6 +594,8 @@ const PK_MAP = {
   eqemu_spawnentry:        ['spawngroup_id', 'npc_id'],
   eqemu_spawn2:            ['id'],
   eqemu_spells:            ['id'],
+  eqemu_npc_spells:        ['id'],
+  eqemu_npc_spells_entries:['npc_spells_id', 'spellid', 'minlevel'],
   eqemu_altadv_vars:       ['skill_id'],
   eqemu_aa_effects:        ['aaid', 'slot'],
 };
