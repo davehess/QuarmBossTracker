@@ -19,12 +19,12 @@ const { isPopLocked } = require('../utils/config');
 // ── Easter-egg boss chain ─────────────────────────────────────────────────────
 const EASTER_EGG_CHAIN = [
   {
-    id: '_fippy_darkpaw', name: 'Fippy Darkpaw', zone: 'Qeynos Hills', emoji: '🐾',
+    id: '_fippy_darkpaw', name: 'Fippy Darkpaw', zone: 'Qeynos', emoji: '🐾',
     pqdiUrl: 'https://www.pqdi.cc/npc/2174',
     quote: "Fippy Darkpaw shouts, '<BBBBBAAAARRRKKKK!> You wolves will pay for ruining our homeland! GRRRRRRRR! Family Darkpaw of the Sabertooth Clan will slay you all! <BARK!>'",
   },
   {
-    id: '_nillipuss', name: 'Nillipuss', zone: 'Plane of Mischief', emoji: '🧙',
+    id: '_nillipuss', name: 'Nillipuss', zone: 'Rivervale', emoji: '🧙',
     pqdiUrl: 'https://www.pqdi.cc/npc/19015',
     quote: "Nillipuss, Nillipuss is my name. Stealing jumjum is my game. Think you can catch me? Let's see if you can! I'll always run faster than you ever ran.",
   },
