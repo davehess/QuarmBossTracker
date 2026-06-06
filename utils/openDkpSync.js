@@ -587,10 +587,16 @@ async function _syncListEndpoint({
     try { arr = await fetchPage(page); }
     catch (err) { return { error: err?.message || String(err), upserted: totalUpserted, pages: pagesWalked }; }
 
-    // Same shape conventions as auctions: { TotalPages, CurrentPage, BidResults } —
-    // OpenDKP appears to consistently wrap list payloads. We accept BidResults,
-    // Results, and raw arrays.
+    // OpenDKP wraps list payloads inside { TotalPages, CurrentPage, <KEY> }
+    // where <KEY> varies per endpoint: BidResults (auctions), Audits, Adjustments,
+    // Items, Results — and in some cases the response IS a bare array. We accept
+    // all of those, plus a capitalized form derived from the endpoint label
+    // ("audits" → "Audits") as the primary fallback.
+    const capLabel = label ? label.charAt(0).toUpperCase() + label.slice(1) : null;
     const list = Array.isArray(arr?.BidResults) ? arr.BidResults
+              : Array.isArray(arr?.Audits)     ? arr.Audits
+              : Array.isArray(arr?.Adjustments) ? arr.Adjustments
+              : (capLabel && Array.isArray(arr?.[capLabel])) ? arr[capLabel]
               : Array.isArray(arr?.Results)    ? arr.Results
               : Array.isArray(arr?.Items)      ? arr.Items
               : Array.isArray(arr)             ? arr
