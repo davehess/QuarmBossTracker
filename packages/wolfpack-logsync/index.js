@@ -14016,7 +14016,7 @@ async function main() {
 
   // Watch mode (default for live raids)
   if (args.flags.watch || (!args.flags.once && !args.flags.since)) {
-    if (!_dashboardEnabled) console.log(`Watching ${builders.length} log file(s). Press Ctrl+C to stop.`);
+    console.log(`[boot] wolfpack-logsync v${AGENT_VERSION} ready — watching ${builders.length} log file(s).`);
     startChatRelay();  // start the 5s guild/raid chat flush interval
     for (const b of builders) {
       const watched = stats.watchedLogs.find(w => w.logPath === b.logPath);
