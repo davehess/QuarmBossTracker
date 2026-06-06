@@ -17,16 +17,23 @@
   .sec-h .n{color:#7ee7c7}
   .rowlist{display:flex;flex-direction:column;gap:1px;background:rgba(0,0,0,0.5);border-radius:5px;padding:4px 6px}
   .gone .rowlist{background:rgba(0,0,0,0.35)}
-  .r{display:flex;align-items:baseline;gap:6px;font-size:11px;line-height:1.45;text-shadow:0 1px 2px #000}
-  .r .nm{font-weight:bold;color:#e6edf3}
+  .r{display:flex;align-items:baseline;gap:5px;font-size:11px;line-height:1.45;text-shadow:0 1px 2px #000}
+  .r .nm{font-weight:bold;color:#e6edf3;flex-shrink:0}
   .r.zek .nm{color:#ff7b72}
-  .r .meta{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums}
-  .r .guild{color:#6e9bd6;font-size:10px}
-  .r .flag{font-size:9px;padding:0 4px;border-radius:3px;margin-left:1px}
+  .r .guild{color:#6e9bd6;font-size:10px;flex-shrink:0}
+  /* spacer pushes everything after it to the right edge — anon/gm/zek
+     flags, then class, then level (rightmost). */
+  .r .sp{flex:1;min-width:4px}
+  .r .flag{font-size:9px;padding:0 4px;border-radius:3px;flex-shrink:0}
   .r .flag.anon{background:#2d2150;color:#c9a0ff}
   .r .flag.gm{background:#3d3416;color:#f0d264}
   .r .flag.zek{background:#3d1d1d;color:#ff7b72}
-  .r .known{color:#8b949e;font-size:10px;font-style:italic}
+  /* Class + level columns: dim, right-side. Italic on de-anon'd values
+     (sourced from who history, not the live row) so the user can tell. */
+  .r .klass{font-size:10px;color:#9aa4ad;flex-shrink:0}
+  .r .lvl{font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;min-width:28px;text-align:right}
+  .r .klass.deanon,.r .lvl.deanon{font-style:italic;color:#6e7681}
+  .r .goneAt{font-size:10px;color:#9aa4ad;flex-shrink:0}
   .gone .r .nm{color:#9aa4ad;font-weight:normal}
   .gone .r{opacity:0.85}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:3px 0}
@@ -126,27 +133,27 @@
   function rowHtml(p, gone){
     var zek = !!(p.known && p.known.is_zek);
     var cls = 'r' + (zek ? ' zek' : '');
-    var nm = '<span class="nm">' + esc(p.name || '?') + '</span>';
-    // meta: level + class (live, or known-from-history for anon)
-    var lvl = p.level, klass = p.class;
-    var knownStr = '';
-    if (p.anonymous && p.known) {
-      // de-anon from history — shown italic so it's clearly "what we know," not live
-      var kparts = [];
-      if (p.known.level) kparts.push('L' + p.known.level);
-      if (p.known.class) kparts.push(p.known.class);
-      if (p.known.guild) kparts.push('<' + esc(p.known.guild) + '>');
-      if (kparts.length) knownStr = '<span class="known">was ' + kparts.join(' ') + '</span>';
-    }
-    var meta = '';
-    if (lvl || klass) meta = '<span class="meta">' + (lvl ? 'L'+lvl : '') + (klass ? ' '+esc(klass) : '') + '</span>';
-    var guild = p.guild ? '<span class="guild">&lt;' + esc(p.guild) + '&gt;</span>' : '';
-    var flags = '';
-    if (p.anonymous) flags += '<span class="flag anon">anon</span>';
-    if (p.gm)        flags += '<span class="flag gm">GM</span>';
-    if (zek)         flags += '<span class="flag zek">ZEK</span>';
-    var goneStr = gone ? '<span class="meta">· ' + ago(p.observedAt) + ' ago</span>' : '';
-    return '<div class="' + cls + '">' + nm + meta + guild + knownStr + flags + goneStr + '</div>';
+    // De-anon fallback: when the LIVE row is anon (class/level/guild null),
+    // fill in from who history so the right-side columns still render. Mark
+    // those values italic so the user can tell live vs known at a glance.
+    var liveLvl   = p.level;
+    var liveKlass = p.class;
+    var liveGuild = p.guild;
+    var lvl   = liveLvl   || (p.known && p.known.level) || null;
+    var klass = liveKlass || (p.known && p.known.class) || null;
+    var guild = liveGuild || (p.known && p.known.guild) || null;
+    var lvlIsDeanon   = !liveLvl   && lvl   != null;
+    var klassIsDeanon = !liveKlass && klass != null;
+    var parts = ['<span class="nm">' + esc(p.name || '?') + '</span>'];
+    if (guild) parts.push('<span class="guild">&lt;' + esc(guild) + '&gt;</span>');
+    parts.push('<span class="sp"></span>');
+    if (p.anonymous) parts.push('<span class="flag anon">anon</span>');
+    if (p.gm)        parts.push('<span class="flag gm">GM</span>');
+    if (zek)         parts.push('<span class="flag zek">ZEK</span>');
+    if (klass) parts.push('<span class="klass' + (klassIsDeanon ? ' deanon' : '') + '">' + esc(klass) + '</span>');
+    if (lvl)   parts.push('<span class="lvl'   + (lvlIsDeanon   ? ' deanon' : '') + '">L' + lvl + '</span>');
+    if (gone)  parts.push('<span class="goneAt">· ' + ago(p.observedAt) + ' ago</span>');
+    return '<div class="' + cls + '">' + parts.join('') + '</div>';
   }
 
   var bodyEl = document.getElementById('body');

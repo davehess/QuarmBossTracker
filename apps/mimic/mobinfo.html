@@ -9,7 +9,11 @@
   #wrap{padding:7px 9px;}
   .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#d2a8ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
-  .title > :first-child{margin-right:auto}
+  .title > :first-child{margin-right:6px}
+  /* Level / level-range badge next to the title — surfaces "L52-54" front-
+     and-center so the user doesn't have to read the sub line. */
+  .lvlRange{font-size:11px;color:#f0b429;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.5px;margin-right:auto}
+  .lvlRange:empty{margin-right:auto}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
   .mob{padding:7px 9px;background:rgba(8,5,16,0.72);border-radius:7px;
@@ -102,6 +106,7 @@
   <div id="wrap">
     <div class="title">
       <span>🎯 Mob Info</span>
+      <span id="lvlRange" class="lvlRange"></span>
       <span class="tabs">
         <button id="tabStats" class="tab on" type="button">Stats</button>
         <button id="tabLoot"  class="tab"    type="button">Loot <span class="beta">BETA</span></button>
@@ -236,7 +241,12 @@
   }
 
   function _renderBody(mi){
-    if (!mi || !mi.target_name) { bodyEl.innerHTML = ''; emptyEl.style.display = 'block'; return; }
+    if (!mi || !mi.target_name) {
+      bodyEl.innerHTML = '';
+      var lvlElEmpty = document.getElementById('lvlRange'); if (lvlElEmpty) lvlElEmpty.textContent = '';
+      emptyEl.style.display = 'block';
+      return;
+    }
     emptyEl.style.display = 'none';
     var mob = mi.mob || null;
     var nm = mob && mob.name ? mob.name : mi.target_name;
@@ -249,8 +259,20 @@
     var sub = [];
     if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
     if (mob && mob.mindmg != null && mob.maxdmg != null) sub.push(mob.mindmg + '–' + mob.maxdmg + ' dmg');
-    if (mob && mob.level != null) sub.push('L' + mob.level);
+    // level pulled out of the sub line — surfaces in the top-right title bar
+    // as its own badge below, so it stays visible regardless of which tab is
+    // selected.
     if (hp != null) sub.push(Math.round(hp) + '%');
+    // Title-bar level/range badge
+    var lvlEl = document.getElementById('lvlRange');
+    if (lvlEl) {
+      if (mob && mob.level != null) {
+        var max = (mob.maxlevel != null && mob.maxlevel > mob.level) ? mob.maxlevel : null;
+        lvlEl.textContent = max ? ('L' + mob.level + '–' + max) : ('L' + mob.level);
+      } else {
+        lvlEl.textContent = '';
+      }
+    }
 
     var tabBody = '';
     if (_tab === 'loot') {

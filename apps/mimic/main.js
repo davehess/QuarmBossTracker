@@ -853,6 +853,16 @@ function _zealAbsorb(obj) {
   } else if (type === 3) {                            // player — zone / autoattack
     const inner = _zealParseData(obj);
     if (inner && typeof inner === 'object') {
+      // Zone change clears the current target — Zeal sometimes lags a gauge
+      // tick (type 2) behind the zone event, so without this we keep showing
+      // the pre-zone target ("General Kizuhx" in the user's repro) until the
+      // next gauge update. Same for the pet — they don't follow you zoning.
+      if (s.zone !== inner.zone) {
+        s.target_name   = null;
+        s.target_hp_pct = null;
+        s.pet_name      = null;
+        s.pet_hp_pct    = null;
+      }
       s.zone = inner.zone;
       s.autoattack = !!inner.autoattack;
       cur.dirty = true;

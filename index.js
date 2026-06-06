@@ -4669,7 +4669,7 @@ async function _handleAgentMobInfo(req, res) {
     const encPlain  = encodeURIComponent(norm);
     const encHashed = encodeURIComponent('#' + norm);
     const rows = await supabase.select('eqemu_npc_types',
-      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
+      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
     const r = Array.isArray(rows) && rows[0];
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
@@ -4777,7 +4777,8 @@ async function _handleAgentMobInfo(req, res) {
       mob = {
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
-        level:   r.level ?? null,
+        level:    r.level ?? null,
+        maxlevel: (r.maxlevel != null && r.maxlevel !== r.level) ? r.maxlevel : null,
         hp:      r.hp ?? null,
         ac:      r.ac ?? null,
         zone:    zoneLong,
