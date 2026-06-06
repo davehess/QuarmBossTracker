@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>zeal</title>
+<style>
+  /* Zeal Health overlay — diagnostic surface for the Zeal pipe. Half the
+     bug reports this session ("melody empty", "/who shows nothing", "pet
+     tracker blank") would have been instantly diagnosable from a panel
+     that says "you have type 1 + 2 flowing, no type 5 — enable raid
+     roster in Zeal settings". Reads /api/zeal_event tallies via /api/state. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;min-width:240px;}
+  .title{display:flex;align-items:center;gap:8px;
+    font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;margin-bottom:4px;}
+  .conn{font-size:11px}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .pid{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;margin-bottom:6px}
+  .pid b{color:#e6edf3;font-weight:600}
+  .types{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.5);
+    border-radius:5px;padding:5px 7px}
+  .row{display:flex;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;
+    text-shadow:0 1px 2px #000}
+  .row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
+  .row.ok    .dot{background:#56d364;box-shadow:0 0 4px rgba(86,211,100,0.7)}
+  .row.warn  .dot{background:#f0d264}
+  .row.stale .dot{background:#f87171}
+  .row.off   .dot{background:#373e47}
+  .row .lbl{color:#e6edf3;font-weight:600;flex-shrink:0;min-width:56px}
+  .row .desc{color:#9aa4ad;font-size:10px;flex:1;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .count{color:#79c0ff;font-variant-numeric:tabular-nums;font-size:10px;flex-shrink:0}
+  .row.off .lbl,.row.off .desc{color:#6e7681}
+  .hint{margin-top:6px;font-size:10px;color:#f0d264;text-shadow:0 1px 2px #000;line-height:1.4}
+  .hint.ok{color:#56d364}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:3px 0}
+  /* drag/lock/setup chrome — same pattern as the other overlays. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(126,231,199,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(45,166,138,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(45,166,138,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#2da68a;border-color:#2da68a}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
+  <button id="hide-btn" title="Hide the Zeal health overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Zeal health</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span id="conn" class="conn bad">○</span><span>📡 Zeal health</span></div>
+    <div id="pid" class="pid">no EQ process detected</div>
+    <div id="types" class="types"></div>
+    <div id="hint" class="hint"></div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+
+  // Zeal data-type catalog. Each type Mimic understands has a human label
+  // + which overlays/features it powers + an expected-during-play flag.
+  // Severity: missing types that block major overlays glow RED; nice-to-have
+  // types that nothing critical needs glow yellow.
+  var TYPES = [
+    { id: 1, label: 'Label',  desc: 'Buff slots + casting label',         powers: 'Melody, bardBuffs', critical: true  },
+    { id: 2, label: 'Gauge',  desc: 'HP bars + target name + pet',         powers: 'Charm, Mob Info, Pets', critical: true  },
+    { id: 3, label: 'Player', desc: 'Location + autoattack + zone',        powers: 'zone-aware logic',     critical: true  },
+    { id: 5, label: 'Raid',   desc: 'Raid roster',                         powers: 'wolfpack.quest /buffs grid', critical: false },
+    { id: 6, label: 'Group',  desc: 'Group composition',                   powers: '(reserved)',           critical: false },
+    { id: 0, label: 'Tick',   desc: 'Heartbeat',                           powers: 'liveness check',       critical: false },
+  ];
+
+  function _requestAutoHeight(){
+    if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
+    var w = document.getElementById('wrap'); if (!w) return;
+    try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
+  }
+
+  var typesEl = document.getElementById('types');
+  var pidEl   = document.getElementById('pid');
+  var hintEl  = document.getElementById('hint');
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      const s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      const z = s.zeal || {};
+      const byType = z.byType || {};
+      const lastEventAt = z.lastEventAt || 0;
+      const total = z.total || 0;
+      const pids = Array.isArray(z.connectedPids) ? z.connectedPids : [];
+      const ageMs = lastEventAt ? (Date.now() - lastEventAt) : null;
+      // PID summary — what EQ processes Mimic is reading from.
+      if (pids.length === 0) {
+        pidEl.innerHTML = '<b>no EQ process detected</b> — start EverQuest with Zeal loaded';
+      } else {
+        pidEl.innerHTML = pids.length + ' EQ ' + (pids.length === 1 ? 'process' : 'processes') + ' connected · pid ' + pids.map(esc).join(', ');
+      }
+      // Build per-type rows. Severity:
+      //   ok    = count > 0 AND recent traffic (within 30s)
+      //   stale = count > 0 but no traffic in 30s+ → was flowing, now silent
+      //   off   = count === 0 (never seen this type)
+      //   warn  = optional type missing (count===0 but critical=false)
+      var html = '';
+      var missingCritical = [];
+      var missingOptional = [];
+      for (var i = 0; i < TYPES.length; i++) {
+        var t = TYPES[i];
+        var c = byType[String(t.id)] || byType[t.id] || 0;
+        var sev;
+        if (c === 0) { sev = t.critical ? 'off' : 'off'; }
+        else if (ageMs != null && ageMs > 30000) { sev = 'stale'; }
+        else { sev = 'ok'; }
+        if (c === 0 && t.critical)  missingCritical.push(t);
+        if (c === 0 && !t.critical) missingOptional.push(t);
+        html += '<div class="row ' + sev + '">'
+              + '<span class="dot"></span>'
+              + '<span class="lbl">type ' + t.id + ' · ' + esc(t.label) + '</span>'
+              + '<span class="desc">' + esc(t.powers) + '</span>'
+              + '<span class="count">' + (c >= 1000 ? (c/1000).toFixed(1) + 'k' : c) + '</span>'
+              + '</div>';
+      }
+      typesEl.innerHTML = html;
+
+      // Hint: prioritize critical missing > optional missing > stale > all good.
+      var hintHtml = '';
+      var hintCls  = '';
+      if (pids.length === 0) {
+        hintHtml = 'EQ is not running (or Zeal isn`t loaded). Launch EverQuest and the panel will populate.';
+      } else if (missingCritical.length > 0) {
+        hintHtml = '⚠ Critical types missing: ' + missingCritical.map(function(t){ return t.label; }).join(', ') + '. Open Zeal → Settings → Pipes and enable them.';
+      } else if (ageMs != null && ageMs > 30000) {
+        hintHtml = '⚠ No Zeal traffic in ' + Math.round(ageMs/1000) + 's. Check the EQ window or Zeal HUD.';
+      } else if (missingOptional.length > 0) {
+        hintHtml = 'Optional types missing: ' + missingOptional.map(function(t){ return t.label; }).join(', ') + '. Some features won`t work until enabled in Zeal.';
+        hintCls  = '';
+      } else if (total > 0) {
+        hintHtml = '✓ Zeal is healthy — ' + total + ' events received this session.';
+        hintCls  = 'ok';
+      }
+      hintEl.className = 'hint' + (hintCls ? ' ' + hintCls : '');
+      hintEl.innerHTML = hintHtml;
+      _requestAutoHeight();
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+</body></html>

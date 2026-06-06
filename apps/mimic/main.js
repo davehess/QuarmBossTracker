@@ -82,6 +82,7 @@ let petsWindow    = null;
 let mobInfoWindow = null;
 let whoWindow     = null;
 let melodyWindow  = null;
+let zealWindow    = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
 // "damage-done-this-session"). One window per panel; calling
@@ -628,6 +629,8 @@ function _boundsKeyForWindow(win) {
   if (win === petsWindow)    return 'petsBounds';
   if (win === mobInfoWindow) return 'mobInfoBounds';
   if (win === whoWindow)     return 'whoBounds';
+  if (win === melodyWindow)  return 'melodyBounds';
+  if (win === zealWindow)    return 'zealBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1541,6 +1544,7 @@ function _overlayEntries() {
   if (mobInfoWindow && !mobInfoWindow.isDestroyed()) out.push(['mobinfo', mobInfoWindow]);
   if (whoWindow     && !whoWindow.isDestroyed())     out.push(['who',     whoWindow]);
   if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
+  if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1597,6 +1601,7 @@ function applySetupMode(on) {
     if (!mobInfoWindow) createMobInfoOverlay();
     if (!whoWindow)     createWhoOverlay();
     if (!melodyWindow)  createMelodyOverlay();
+    if (!zealWindow)    createZealHealthOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -1610,6 +1615,7 @@ function applySetupMode(on) {
   applyMobInfoVisibility();
   applyWhoVisibility();
   applyMelodyVisibility();
+  applyZealVisibility();
   applyAllOverlayOpacities();
   pushStatus();
 }
@@ -1958,6 +1964,42 @@ function applyMelodyVisibility() {
   if (shouldShow) melodyWindow.showInactive(); else melodyWindow.hide();
 }
 
+// Zeal health overlay — surfaces the live data-type tally from
+// /api/state.zeal so users can diagnose missing Zeal pipes (no buff
+// slot data → melody empty, no gauge data → charm tracker blank, etc.)
+// without having to read the agent log. Opt-in.
+function createZealHealthOverlay() {
+  const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
+  zealWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Zeal health overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 220, minHeight: 100,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  zealWindow.setAlwaysOnTop(true, 'screen-saver');
+  zealWindow.setVisibleOnAllWorkspaces(true);
+  zealWindow.loadFile('zealhealth.html');
+  zealWindow.on('moved',  () => _persistBounds('zealBounds', zealWindow));
+  zealWindow.on('resize', () => _persistBounds('zealBounds', zealWindow));
+  zealWindow.once('ready-to-show', () => {
+    zealWindow.webContents.send('agent-port', agentPort);
+    applyZealVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(zealWindow, 'zeal');
+  });
+}
+function applyZealVisibility() {
+  if (!zealWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — diagnostic; users only need it during setup
+  // or when something else looks broken. EQ-gated.
+  const shouldShow = unlocked || (cfg.showZeal && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) zealWindow.showInactive(); else zealWindow.hide();
+}
+
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
 // presence poller (on running ↔ not-running flips) and by config toggles.
 function applyAllVisibility() {
@@ -1968,6 +2010,7 @@ function applyAllVisibility() {
   applyMobInfoVisibility();
   applyWhoVisibility();
   applyMelodyVisibility();
+  applyZealVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -1990,6 +2033,7 @@ function toggleHideAllOverlays() {
       showMobInfo:      !!cfg.showMobInfo,
       showWho:          !!cfg.showWho,
       showMelody:       !!cfg.showMelody,
+      showZeal:         !!cfg.showZeal,
     };
     cfg.showHud = false;
     cfg.enableTriggerTts = false;
@@ -1998,6 +2042,7 @@ function toggleHideAllOverlays() {
     cfg.showMobInfo = false;
     cfg.showWho = false;
     cfg.showMelody = false;
+    cfg.showZeal = false;
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -2114,6 +2159,7 @@ function currentStatus() {
     showMobInfo: !!cfg.showMobInfo,
     showWho: !!cfg.showWho,
     showMelody: !!cfg.showMelody,
+    showZeal: !!cfg.showZeal,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -2275,6 +2321,11 @@ function buildTrayMenu() {
     { label: 'Melody (bard /melody)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
         if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
+        pushStatus();
+      } },
+    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
+        if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -2780,6 +2831,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showMelody = !cfg.showMelody; saveConfig(cfg);
       if (cfg.showMelody && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
       break;
+    case 'zeal':
+      cfg.showZeal = !cfg.showZeal; saveConfig(cfg);
+      if (cfg.showZeal && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
+      break;
     default:
       return null;
   }
@@ -3069,7 +3124,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -3211,6 +3266,7 @@ app.whenReady().then(async () => {
   createMobInfoOverlay();
   createWhoOverlay();
   createMelodyOverlay();
+  createZealHealthOverlay();
   pushStatus();
   startZealCapture();
 
