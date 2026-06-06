@@ -9301,8 +9301,24 @@ function startWebDashboard(port) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('not found');
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      // Guard against double-headers — if the inner code already wrote a
+      // response and then threw on the second writeHead, we'd crash the
+      // whole HTTP server with ERR_HTTP_HEADERS_SENT (Node 20+ throws here
+      // rather than emitting an error event). That'd take Mimic's dashboard
+      // and overlays down with it. Only attempt the 500 response when
+      // headers are still free; otherwise just close the socket.
+      try {
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err && err.message || 'internal error' }));
+        } else {
+          res.end();
+        }
+      } catch (innerErr) {
+        // Last-resort: don't crash the listener on a write-fail during error
+        // handling. Log + move on.
+        try { console.warn('[web-dashboard] error-handler write failed:', innerErr && innerErr.message); } catch {}
+      }
     }
   });
   let _bindRetries = 0;
