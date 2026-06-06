@@ -359,7 +359,7 @@ const TRANSFORMS = {
     return { ...r, zone_id: r.zoneidnumber, zoneidnumber: undefined };
   },
   items: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price']);
+    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lore: r.lore,
@@ -375,6 +375,12 @@ const TRANSFORMS = {
       str: r.astr, sta: r.asta, dex: r.adex, agi: r.aagi, intel: r.aint, wis: r.awis, cha: r.acha,
       mr: r.mr, cr: r.cr, dr: r.dr, fr: r.fr, pr: r.pr,
       price: r.price,
+      // Click effect — feeds the Mimic melody overlay's cast-time progress
+      // bar when a player triggers an item (Robe of the Spring → Skin like
+      // Nature is 12s on the item but 5s on the bare spell). Without these
+      // the bar fills at the wrong rate for every clicky.
+      casttime: r.casttime, clickeffect: r.clickeffect,
+      clicktype: r.clicktype, clicklevel: r.clicklevel,
     };
   },
   npc_types: (cols, row) => {
