@@ -18,7 +18,9 @@ const { hasOfficerRole } = require('../utils/roles');
 const { getRaids, getRaid } = require('../utils/opendkp');
 
 const DEFAULT_DAYS = 30;
-const MAX_RAIDS    = 60;          // safety cap so one slash-command call can't queue a thousand raid fetches
+const PER_RAID_DELAY_MS = 80;          // ~12 fetches/sec — friendly to OpenDKP, fast enough to walk thousands
+const DISCORD_DEFER_DEADLINE_MS = 14 * 60 * 1000;   // leave a minute of slack vs Discord's 15-min ceiling
+const PROGRESS_EVERY = 25;             // edit the reply with running progress every N raids
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -26,8 +28,8 @@ module.exports = {
     .setDescription('Officer: backfill loot observations from recent OpenDKP raid awards (official drop record).')
     .addIntegerOption(opt =>
       opt.setName('days')
-        .setDescription(`How many days of raids to walk (default ${DEFAULT_DAYS}, max 365)`)
-        .setMinValue(1).setMaxValue(365)
+        .setDescription(`How many days back to walk (0 = ALL history, default ${DEFAULT_DAYS}, max 3650)`)
+        .setMinValue(0).setMaxValue(3650)
     )
     .addBooleanOption(opt =>
       opt.setName('dry_run')
@@ -58,22 +60,33 @@ module.exports = {
     if (!Array.isArray(raids) || raids.length === 0) {
       return interaction.editReply('OpenDKP returned no raids.');
     }
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    // days=0 means "everything"; otherwise apply the cutoff. inWindow newest-
+    // first so progress updates surface the recent stuff first (officers can
+    // tell whether the walk is actually finding anything quickly).
+    const cutoff = days > 0 ? Date.now() - days * 24 * 60 * 60 * 1000 : 0;
     const inWindow = raids
       .filter(r => r && r.Timestamp && Date.parse(r.Timestamp) >= cutoff)
-      .sort((a, b) => Date.parse(b.Timestamp) - Date.parse(a.Timestamp))
-      .slice(0, MAX_RAIDS);
+      .sort((a, b) => Date.parse(b.Timestamp) - Date.parse(a.Timestamp));
     if (inWindow.length === 0) {
-      return interaction.editReply(`No OpenDKP raids in the last ${days} day(s).`);
+      return interaction.editReply(days > 0
+        ? `No OpenDKP raids in the last ${days} day(s).`
+        : 'OpenDKP returned no raids at all.');
     }
+    const windowLabel = days > 0 ? `last ${days} day(s)` : `ALL history (${inWindow.length} raid${inWindow.length===1?'':'s'})`;
 
-    // 2. Walk each raid, pull Items[], collect (item_id, item_name, character,
-    //    dkp, awarded_at). Per-raid getRaid call is the only path that returns
-    //    the awarded Items list — getRaids() doesn't include them.
+    // 2. Walk each raid, pull Items[]. Per-raid getRaid is the only path that
+    //    returns the awarded list; getRaids() is just the index. Throttle so
+    //    we don't hammer OpenDKP; bail with partial results if we approach
+    //    Discord's 15-min deferReply ceiling. Progress edits every 25 raids
+    //    surface that the loop is alive on long histories.
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const startedAt = Date.now();
     const awarded = [];
     let raidsScanned = 0;
+    let timedOut = false;
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
     for (const r of inWindow) {
+      if (Date.now() - startedAt > DISCORD_DEFER_DEADLINE_MS) { timedOut = true; break; }
       try {
         const full = await getRaid(r.RaidId);
         raidsScanned++;
@@ -93,9 +106,18 @@ module.exports = {
       } catch (err) {
         console.warn('[backfillopendkploot] getRaid', r.RaidId, 'failed:', err?.message);
       }
+      if (raidsScanned % PROGRESS_EVERY === 0 && raidsScanned > 0) {
+        try {
+          await interaction.editReply(
+            `⏳ Walking OpenDKP raids… ${raidsScanned} / ${inWindow.length} scanned, ${awarded.length} award(s) collected.`
+          );
+        } catch (e) { void e; }   // Discord edits are best-effort
+      }
+      if (PER_RAID_DELAY_MS > 0) await sleep(PER_RAID_DELAY_MS);
     }
     if (awarded.length === 0) {
-      return interaction.editReply(`Scanned ${raidsScanned} raid(s) — no awarded items found.`);
+      const tail = timedOut ? ' (hit the 14-min deferral deadline — run again to continue)' : '';
+      return interaction.editReply(`Scanned ${raidsScanned} / ${inWindow.length} raid(s) — no awarded items found${tail}.`);
     }
 
     // 3. NPC attribution from eqemu_npc_drops. For each distinct item_id, pull
@@ -201,17 +223,17 @@ module.exports = {
     }
 
     const embed = new EmbedBuilder()
-      .setTitle('🧾 OpenDKP loot backfill')
-      .setColor(0x1f6feb)
+      .setTitle('🧾 OpenDKP loot backfill' + (timedOut ? ' (partial)' : ''))
+      .setColor(timedOut ? 0xd29922 : 0x1f6feb)
       .addFields(
-        { name: 'Raids scanned',     value: String(raidsScanned),     inline: true },
+        { name: 'Raids scanned',     value: `${raidsScanned} / ${inWindow.length}`, inline: true },
         { name: 'Awards found',      value: String(awarded.length),   inline: true },
         { name: 'Inserted',          value: String(inserted),         inline: true },
         { name: 'Already present',   value: String(alreadyPresent),   inline: true },
         { name: 'Ambiguous (skip)',  value: String(ambiguousSkipped), inline: true },
         { name: 'Unknown (skip)',    value: String(unknownSkipped),   inline: true },
       )
-      .setFooter({ text: `Window: last ${days} day(s) · source='opendkp'` });
+      .setFooter({ text: `Window: ${windowLabel} · source='opendkp'` + (timedOut ? ' · re-run to continue from where this stopped' : '') });
     return interaction.editReply({ embeds: [embed] });
   },
 };
