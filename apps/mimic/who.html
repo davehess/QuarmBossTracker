@@ -44,13 +44,13 @@
   body.setup #drag-controls{top:28px}
   body.setup #wrap{margin-top:26px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
-  #hide-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
   #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
   body.setup #hide-btn{top:30px}
-  #move-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
@@ -58,7 +58,7 @@
   body.setup #move-btn{top:30px}
 </style></head>
 <body>
-  <button id="move-btn" title="Drag from this icon to move the overlay (top-right corner — same on every overlay)">✥</button>
+  <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
   <button id="hide-btn" title="Hide the /who overlay (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>

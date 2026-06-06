@@ -5632,7 +5632,7 @@ function renderOverlays(s) {
   // Stated here once so it's discoverable from the dashboard instead of having
   // to read the icons' tooltips.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
-    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-right corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-left</b> hides that overlay (turn it back on from this page or the tray).'
+    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
     + '</div>';
   h += '</div>';
 
