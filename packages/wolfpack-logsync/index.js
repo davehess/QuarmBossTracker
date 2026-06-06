@@ -267,7 +267,7 @@ const PRIORITY_KEEP_PATTERNS = [
   // /tells you,/ filter below (which catches player tells) and we lose the
   // pet → owner mapping for charm pets. parseEvent below resolves owner
   // to the uploading character (this.character) when it sees this form.
-  /\btells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i,
+  /\btells you,\s*['"]Attacking\b.+Master\.\s*['"]/,
   // Charm-LAND via pet command ack on an indefinite-article (charmed) mob:
   //   "A Fungoid Sporeling tells you, 'Attacking a bat Master.'"
   // "tells you" ONLY — never "says". The pet's "Following / Guarding, Master."
@@ -275,7 +275,15 @@ const PRIORITY_KEEP_PATTERNS = [
   // someone else's charm pet into the user's tracker. "tells you" is private
   // to the pet owner so the priority-keep can safely override the tells-drop
   // for the owner without surfacing bystander views.
-  /^\[.+?\]\s+an?\s+.+?\s+tells you\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i,
+  //
+  // Strict "Master." (capital M, literal period before close-quote) so we
+  // only match the COMMAND ACKS — pets say "Attacking X Master." /
+  // "Following you, Master." with a period. The PUBLIC flavor chatter that
+  // also fires on a charmed mob ("I will destroy all outlanders for the
+  // master!") uses lowercase + an exclamation point, and that was matching
+  // the previous /i-flagged Master pattern and tripping a phantom session
+  // re-open every time the pet ran its mouth.
+  /^\[.+?\]\s+an?\s+.+?\s+tells you\s*,?\s*['"][^'"]*Master\.\s*['"]/,
   // Charm-LAND attribution (bystander-visible). "<Mob> regards <Charmer>
   // as an ally." Required so the line survives any future broad drop
   // filter — used to attribute charmed mobs to their enchanter for
@@ -880,7 +888,14 @@ function parseEvent(line, ts) {
   // is private to the pet owner so it's reliably self-attributable. For the
   // owner's own initial-follow charm-land we still get a session opened via
   // _reconcileGaugeCharms() reading Zeal slot 16.
-  m = line.match(/\]\s+(an?\s+.+?)\s+tells you\s*,?\s*['"][^'"]*\bMaster\b[^'"]*['"]/i);
+  // Strict "Master." (capital + period, no /i flag) — matches only the pet
+  // command acks ("Attacking X Master.", "Following you, Master.",
+  // "Guarding here, Master."). The /i Master pattern previously matched the
+  // PUBLIC flavor chatter "I will destroy all outlanders for the master!"
+  // too, which (a) reaches Master's log as private "tells you" *and* (b)
+  // reaches bystanders' logs as public "says" — both forms re-opened a
+  // phantom charm session every time the pet flavor-talked.
+  m = line.match(/\]\s+(an?\s+.+?)\s+tells you\s*,?\s*['"][^'"]*Master\.\s*['"]/);
   if (m) {
     return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__', source: 'charm_land' };
   }
@@ -890,10 +905,12 @@ function parseEvent(line, ts) {
   // This line is ONLY visible to the player who controls the pet, so the
   // owner is implicitly the agent's character. Emit a sentinel owner of
   // "__SELF__" — EncounterBuilder.add() resolves it to this.character. No
-  // charm session: proper-named pets are summons, not charm cycles.
-  m = line.match(/\]\s+(.+?)\s+tells you,\s*['"]Attacking\b.+\bMaster\.?\s*['"]/i);
+  // charm session: proper-named pets are summons, not charm cycles. Also
+  // captures the TARGET so the pet-tracker overlay can show what the pet
+  // is currently attacking.
+  m = line.match(/\]\s+(.+?)\s+tells you,\s*['"]Attacking\s+(.+?)\s+Master\.\s*['"]/);
   if (m) {
-    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__' };
+    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: '__SELF__', target: m[2] };
   }
 
   // Dire Charm cast detection — flags the next charm-land as the long
@@ -1288,6 +1305,11 @@ function checkCharmPetDeath(line) {
 // counts if it matches that owner's live pet name.
 const _petHealthByOwner = new Map();   // ownerLower → { hp_pct, buffs: Map<spellLower,{name,dur_ticks,dur_formula}>, last_line_at, last_seen_at }
 const _petBuffLandings  = new Map();   // ownerLower → Map<spellLower,{name,dur_ticks,dur_formula,landed_at}>
+// Pet TARGET — what each owner's pet is currently attacking. Populated by the
+// "Attacking X Master." command ack (only visible to the controlling player).
+// TTL'd so a pet that hasn't re-ack'd recently doesn't show a stale target.
+const _petTargetByOwner = new Map();   // ownerLower → { target, at }
+const PET_TARGET_TTL_MS = 60_000;
 
 // Per-pet attack observation. Keyed by owner; tracks the CURRENT pet's combat
 // signature so we can show "Smohur · 105 max / 67 avg · 142 hits · Slashing +
@@ -2125,6 +2147,16 @@ class EncounterBuilder {
       const _pk = event.pet.toLowerCase();
       if (!knownPetOwners.has(_pk)) knownPetOwners.set(_pk, new Set());
       knownPetOwners.get(_pk).add(owner);
+      // Pet target — captured from the "Attacking X Master." command ack.
+      // Surfaces in the Pet Tracker overlay so the user can see what their
+      // summon is currently engaging. Decays if the pet doesn't re-ack
+      // within PET_TARGET_TTL_MS (idle/dead/swapped target).
+      if (event.target) {
+        _petTargetByOwner.set(String(owner).toLowerCase(), {
+          target: String(event.target),
+          at:     Date.parse(event.ts) || Date.now(),
+        });
+      }
       // Charm-land specifically also starts a charm_session record. Other
       // pet_leader sources (the pet's own "My leader is" declare line or
       // the charm-tell "Attacking X Master") don't — those are summon /
@@ -4260,13 +4292,19 @@ function _serializeForDashboard() {
           first_seen_at: ps.firstSeenAt,
           last_seen_at:  ps.lastSeenAt,
         } : null;
-        if (!petName && hp == null && buffs.length === 0 && !statsForPet) continue;   // nothing to show
+        // Pet target — populated from "Attacking X Master." command acks.
+        // TTL'd so a pet that hasn't acked recently doesn't show a stale name.
+        const tgt = _petTargetByOwner.get(owner);
+        const target = (tgt && (now - tgt.at) <= PET_TARGET_TTL_MS) ? tgt.target : null;
+        if (!petName && hp == null && buffs.length === 0 && !statsForPet && !target) continue;   // nothing to show
         out.push({
           owner,
           pet:         petName,
           hp_pct:      hp,
           buffs,
           stats:       statsForPet,
+          target,
+          target_at:   target ? tgt.at : null,
           observed_at: repFresh ? rep.last_seen_at : now,
         });
       }

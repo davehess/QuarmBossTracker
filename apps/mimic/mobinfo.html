@@ -46,8 +46,17 @@
   .loot .row.t5  {border-left-color:#f0883e}                  /* rare */
   .loot .row.t1  {border-left-color:#f85149}                  /* ultra rare */
   .loot .nm{color:#e6edf3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .loot .pct{font-variant-numeric:tabular-nums;color:#9aa4ad;font-size:9px}
+  /* Percent is the headline data point — bold + slightly larger than the chips
+     so the drop rate reads at a glance, even on the narrowest overlay width.
+     Tier-tinted by the row's border-left color so high-chance items pop. */
+  .loot .pct{font-variant-numeric:tabular-nums;color:#c9d1d9;font-size:10px;
+    font-weight:600;min-width:36px;text-align:right}
   .loot .pct.high{color:#56d364}
+  .loot .row.t100 .pct{color:#56d364}
+  .loot .row.t50  .pct{color:#3b82f6}
+  .loot .row.t20  .pct{color:#a371f7}
+  .loot .row.t5   .pct{color:#f0883e}
+  .loot .row.t1   .pct{color:#f85149}
   .loot .lore{font-size:8px;color:#d2a8ff;padding:0 3px;border-radius:2px;background:rgba(163,113,247,0.2)}
   .loot .seen{font-size:8px;color:#a371f7;padding:0 4px;border-radius:2px;background:rgba(163,113,247,0.15);
               border:1px solid rgba(163,113,247,0.35);font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:0.5px}
@@ -199,8 +208,19 @@
     return 't1';
   }
   function fmtPct(p){ if (p == null) return '?'; if (p >= 99.95) return '100%'; return p.toFixed(p < 10 ? 1 : 0) + '%'; }
-  function renderLoot(mob){
-    if (!mob || !Array.isArray(mob.loot) || !mob.loot.length) {
+  function renderLoot(mob, mi){
+    // Distinguish three empty states:
+    //   1. We haven't targeted anything yet → nothing to render at all
+    //   2. We have a target, fetch is in flight → "Loading drop table…"
+    //   3. Fetch resolved with no rows → "no published drop table for this NPC"
+    // Pre-tab versions of this code conflated 2 + 3, so a freshly-targeted
+    // mob looked permanently empty for the first 6h cache window. Now the
+    // loading state is honest.
+    if (!mob) {
+      if (mi && mi.loading) return '<div class="loot"><div class="empty">loading drop table…</div></div>';
+      return '<div class="loot"><div class="empty">no published drop table for this NPC</div></div>';
+    }
+    if (!Array.isArray(mob.loot) || !mob.loot.length) {
       return '<div class="loot"><div class="empty">no published drop table for this NPC</div></div>';
     }
     var rows = '';
@@ -276,7 +296,7 @@
 
     var tabBody = '';
     if (_tab === 'loot') {
-      tabBody = renderLoot(mob);
+      tabBody = renderLoot(mob, mi);
     } else {
       // resist grid (AC + 5 resists)
       var res = '';

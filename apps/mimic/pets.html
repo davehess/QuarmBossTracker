@@ -34,6 +34,11 @@
   .petbuff.crit .t{color:#f85149}
   .petbuff .t.q{color:#6e7681}
   .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
+  /* Pet target — "→ Lord Nagafen 5s ago". Tiny one-liner under the HP bar. */
+  .pettarget{font-size:10px;color:#9aa4ad;margin-top:3px;display:flex;
+    align-items:baseline;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pettarget .tgt{color:#f0883e;font-weight:600}
+  .pettarget .ago{color:#6e7681;font-size:9px}
   /* combat stats — running attack signature for the current pet. dual-wield
      pill highlights when ≥2 skill buckets observed. */
   .petstats{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;font-size:10px;line-height:1.2;color:#c9d1d9}
@@ -220,11 +225,26 @@
       var hasTimer = b.remaining_secs != null;
       var tone = hasTimer ? buffTone(b.remaining_secs, bo) : '';
       var t = hasTimer ? fmtRem(b.remaining_secs, bo) : '';
-      // A name with no timer = seen in /pet health but we never witnessed it
-      // land, so we can't time it. Show the name with a "?" so it's clearly
-      // "present, duration unknown" rather than silently timer-less.
-      var tDisp = hasTimer ? t : '?';
-      var title = b.name + (hasTimer ? ' · ' + t + ' left (timed from observed cast)' : ' · present (no cast seen — duration unknown)');
+      // No timer = seen in /pet health but we never witnessed it land. Fall
+      // back to a TICK-COUNT + UPTIME from the report's observed timestamp
+      // so the bar still tells the user how long this buff has been on
+      // their pet — better than a bare "?".
+      var tDisp;
+      if (hasTimer) {
+        tDisp = t;
+      } else if (bo) {
+        var upMs = Math.max(0, Date.now() - bo);
+        var upS  = Math.floor(upMs/1000);
+        var ticks = Math.floor(upS / 6);   // EQ tick = 6s
+        var mm = Math.floor(upS/60), ss = upS - mm*60;
+        tDisp = '~' + ticks + 't · ' + mm + ':' + String(ss).padStart(2,'0');
+      } else {
+        tDisp = '?';
+      }
+      var title = b.name + (hasTimer
+        ? ' · ' + t + ' left (timed from observed cast)'
+        : (bo ? ' · uptime estimate from first observation (duration unknown — landing not seen)'
+              : ' · present (no cast seen — duration unknown)'));
       chips += '<span class="petbuff ' + (hasTimer ? tone : '') + '" title="' + esc(title) + '">'
             +    '<span class="bn">' + esc(shortBuffName(b.name)) + '</span>'
             +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + tDisp + '</span>'
@@ -233,6 +253,16 @@
     if (!chips) return '';
     var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : 'observed casts';
     return '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
+  }
+  // Pet target — "Attacking X Master." captured from the command ack. TTL'd
+  // server-side so a stale target doesn't render past PET_TARGET_TTL_MS.
+  function renderTarget(p){
+    if (!p.target) return '';
+    var ago = p.target_at ? Math.max(0, Math.round((Date.now() - p.target_at) / 1000)) : null;
+    var agoStr = ago != null ? (ago < 60 ? ago + 's' : Math.round(ago/60) + 'm') + ' ago' : '';
+    return '<div class="pettarget" title="From the pet\'s \"Attacking X Master.\" ack">→ <span class="tgt">' + esc(p.target) + '</span>'
+         + (agoStr ? ' <span class="ago">' + esc(agoStr) + '</span>' : '')
+         + '</div>';
   }
 
   var listEl = document.getElementById('list');
@@ -263,6 +293,7 @@
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
           + '<div class="meta">HP' + (hp != null ? '' : ' ?') + hpStr + ageStr + '</div>'
           + hpBar
+          + renderTarget(p)
           + renderBuffs(p)
           + renderStats(p)
           + '</div>';
