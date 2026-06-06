@@ -198,14 +198,16 @@
       var tier = lootTier(it.pct);
       var pctTxt = fmtPct(it.pct);
       var lore = it.lore ? '<span class="lore" title="LORE — only one per character">LORE</span>' : '';
-      // "seen N×" — Wolf Pack's own observation count from /loot postings. 0 =
-      // we've never logged this drop here yet; ≥1 lights up the chip in purple.
+      // "won N×" — Wolf Pack's OFFICIAL award count, sourced only from OpenDKP
+      // raid records (chat-extracted is collected but not counted here — too
+      // much trash-loot crossover during raids to be reliable). 0 = we have
+      // no OpenDKP record of this dropping yet.
       var seen = +it.seen || 0;
       var seenChip = seen > 0
-        ? '<span class="seen" title="Wolf Pack has logged this drop ' + seen + ' time' + (seen === 1 ? '' : 's') + ' (from /loot)">' + seen + '×</span>'
+        ? '<span class="seen" title="OpenDKP-awarded ' + seen + ' time' + (seen === 1 ? '' : 's') + ' to Wolf Pack">' + seen + '× won</span>'
         : '';
       var title = it.name + (it.pct != null ? ' · ' + pctTxt + ' published drop rate' : '')
-                + (seen > 0 ? ' · seen ' + seen + '× by Wolf Pack' : '');
+                + (seen > 0 ? ' · OpenDKP awarded ' + seen + '× to Wolf Pack' : '');
       rows += '<div class="row ' + tier + '" title="' + esc(title) + '">'
             + '<span class="nm">' + esc(it.name) + '</span>'
             + lore
