@@ -161,7 +161,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function ago(iso){ if(!iso) return ''; var ms = Date.now() - Date.parse(iso); if(!(ms>0)) return ''; var s=Math.floor(ms/1000); if(s<60) return s+'s'; var m=Math.floor(s/60); if(m<60) return m+'m'; return Math.floor(m/60)+'h'; }

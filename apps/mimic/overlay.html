@@ -248,6 +248,7 @@
   }
   var doneBtn = document.getElementById('exitSetupBtn');
   if (doneBtn) doneBtn.addEventListener('click', function() {
+    try { document.body.classList.remove('setup'); } catch (e) {}
     try { window.mimic.setSetupMode(false); } catch (e) {}
   });
 

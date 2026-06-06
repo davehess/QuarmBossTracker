@@ -4347,15 +4347,17 @@ function _serializeForDashboard() {
               out.remaining_secs  = buff.ticks * 6;
               out.buff_name       = buff.name;
             }
+            // Per-song cast time from the spell catalog. Lets the overlay's
+            // progress bar fill at the right rate for long-cast clickies
+            // (Blood Orchid Katana → Spirit of Wolf is 8s, not the 3s bard
+            // song default). Falls back to the row-kind default when the
+            // catalog has no entry.
+            const cat = _spellByNameLower.get(String(e.name).toLowerCase());
+            if (cat && typeof cat.cast_ms === 'number' && cat.cast_ms > 0) {
+              out.cast_ms = cat.cast_ms;
+            }
             return out;
           });
-          // REVERT (3am): the v1.0.54 filter was dropping utility songs
-          // (Amplification, Harmonize, Selo`s Accelerating Chorus, Niv`s,
-          // Nature`s Melody) from the main list because they ALSO render in
-          // the bottom bardBuffs strip. If a bard's melody happens to be
-          // mostly those songs, the main list went empty → "no bard songs
-          // yet" even though the agent IS tracking them. Removed the filter
-          // so songs render in BOTH places — mildly redundant but functional.
         // Zeal label 134 = the spell name being cast RIGHT NOW. When set
         // we surface it on the melody so the overlay can show "Now casting:
         // X" verbatim — useful for non-bard /melody rotations where the
@@ -4367,11 +4369,24 @@ function _serializeForDashboard() {
         // uses Resonance. We surface whichever the buff window currently has
         // so the overlay can show a countdown or "off". Non-bard melody users
         // don't have these clickies; they'll see the strip omitted.
+        // Two-pass match: exact first (high confidence), then substring fallback
+        // for buff-slot name variants we haven't catalogued. Required because
+        // Quarm sometimes shows the LANDING buff name in the slot (e.g. Niv`s
+        // Melody of Preservation lands as "Breath of Harmony"), but on other
+        // versions the slot keeps the cast name — and we can't tell which is
+        // which without manually verifying every spell.
         const _findBuff = (names) => {
           for (const b of zealBuffs) {
             if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
             const bLow = b.name.toLowerCase();
             for (const n of names) if (bLow === n) return b;
+          }
+          for (const b of zealBuffs) {
+            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            const bLow = b.name.toLowerCase();
+            for (const n of names) {
+              if (n.length >= 6 && (bLow.includes(n) || n.includes(bLow))) return b;
+            }
           }
           return null;
         };
@@ -4408,11 +4423,16 @@ function _serializeForDashboard() {
         } : null;
         // Names that get HIDDEN from the main songs list because they have a
         // dedicated row in the bottom strip — keeps the main list focused on
-        // the actual /melody rotation rather than utility clickies.
+        // the actual /melody rotation rather than utility clickies. Bard rows
+        // (state.kind === 'song') get filtered; non-bard /melody (kind='spell')
+        // shows everything since they don't have the bottom strip.
         const stripNames = new Set(_wantedCastNames);
+        const visibleOrder = (state.kind === 'song')
+          ? enrichedOrder.filter(e => !e || !stripNames.has(String(e.name).toLowerCase()))
+          : enrichedOrder;
         out[k] = {
           character:      k,
-          order:          enrichedOrder,
+          order:          visibleOrder,
           currentPos:     state.currentPos,
           castStartedAt:  state.castStartedAt,
           cycleLength:    state.cycleLength,

@@ -208,7 +208,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
 
   function esc(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function fmtElapsed(ms){
@@ -233,15 +233,19 @@
     } catch (e) {}
   }
 
-  // Cast-time default per row kind. Bards: every song is 3.0s — flat,
-  // reliable. Non-bards: spell cast times vary wildly (Heal=2s, Complete
-  // Heal=10s, big nukes=5-6s), and we don't yet ship the per-spell catalog
-  // to the overlay. Use a 4s fallback when kind='spell' so the bar at least
-  // animates; once we wire cast-time lookup from eqemu_spells we'll swap
-  // this for a per-entry value from the agent.
+  // Cast-time defaults per row kind, used when the spell-catalog lookup
+  // hasn't given us a per-entry cast_ms. Bard songs are flat 3s by design;
+  // generic spell-default is 4s as a "bar at least animates" fallback.
+  // Long-cast clickies (Blood Orchid Katana → 8s Spirit of Wolf, Voice of
+  // the Serpent → 12s Amplification, etc.) pass through as entry.cast_ms
+  // from the agent (sourced from eqemu_spells.cast_time).
   var SONG_CAST_MS  = 3000;
   var SPELL_CAST_MS = 4000;
-  function castMsForKind(kind){ return kind === 'spell' ? SPELL_CAST_MS : SONG_CAST_MS; }
+  function castMsForEntry(entry, stateKind){
+    if (entry && typeof entry.cast_ms === 'number' && entry.cast_ms > 0) return entry.cast_ms;
+    var kind = (entry && entry.kind) || stateKind || 'song';
+    return kind === 'spell' ? SPELL_CAST_MS : SONG_CAST_MS;
+  }
   // After cast finishes, the previous slot is "done" until either the next
   // cast fires OR this much time elapses without a new cast — at which point
   // the row freezes as ⏹ so the user can see where to resume.
@@ -284,12 +288,11 @@
         var sinceCast = now - castStartedAt;
         var sinceChange = now - (st.lastChangeAt || castStartedAt);
         var currentPos = (typeof st.currentPos === 'number') ? st.currentPos : -1;
-        // Cast time picks per-row kind so a bard melody (3s) and a wizard
-        // chain (4s+) animate at the right pace. Falls back to the state-
-        // level kind ('song' default) if the row didn't carry one.
+        // Cast time uses the per-entry cast_ms when the agent supplied one
+        // (from eqemu_spells.cast_time — handles long-cast clickies like
+        // Blood Orchid Katana → 8s SoW correctly), else the row-kind default.
         var curEntry = currentPos >= 0 ? st.order[currentPos] : null;
-        var curKind  = (curEntry && curEntry.kind) || st.kind || 'song';
-        var castMs   = castMsForKind(curKind);
+        var castMs   = castMsForEntry(curEntry, st.kind);
 
         // Three states for currentPos:
         //   casting → sinceCast < castMs → bar fills 0→100%

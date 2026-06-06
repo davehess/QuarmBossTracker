@@ -179,7 +179,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
 
   // Mirror of web/lib/buffs.ts shortBuffName + charm.html — keep all three in
   // sync when a new buff surfaces.

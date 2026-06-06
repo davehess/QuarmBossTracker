@@ -4441,7 +4441,7 @@ async function _handleAgentSpellCatalog(req, res) {
       const entries = [];
       let from = 0;
       const PAGE = 1000;
-      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula';
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time';
       while (true) {
         // PostgREST paging via Range header is wrapped by Supabase's REST API
         // as offset/limit query params. We pass them as `&offset=X&limit=Y`
@@ -4453,13 +4453,14 @@ async function _handleAgentSpellCatalog(req, res) {
           entries.push({
             id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
             dur: r.buffduration, durf: r.buffdurationformula,
+            cast_ms: r.cast_time,
           });
         }
         if (data.length < PAGE) break;
         from += PAGE;
       }
       const body = JSON.stringify({
-        version: 2,   // v2 adds dur/durf per entry (buff-landing matcher + duration)
+        version: 3,   // v3 adds cast_ms per entry (long-cast clicky support)
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,

@@ -214,7 +214,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
@@ -412,6 +412,15 @@
       + manaLine
       + tabBody
       + '</div>';
+    // Grow the host window to fit the rendered content so the Loot tab can
+    // show every row without a scrollbar. Skipped when the IPC isn't wired
+    // (dev / old preload).
+    try {
+      if (window.mimic && window.mimic.overlayAutoHeight) {
+        var w = document.getElementById('wrap') || document.body;
+        window.mimic.overlayAutoHeight(w.scrollHeight + 12);
+      }
+    } catch (e) {}
   }
 
   async function tick(){
