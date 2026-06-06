@@ -253,12 +253,12 @@ module.exports = {
       .setTitle('🧾 OpenDKP loot backfill' + (timedOut ? ' (partial)' : ''))
       .setColor(timedOut ? 0xd29922 : 0x1f6feb)
       .addFields(
-        { name: 'Raids scanned',     value: `${raidsScanned} / ${inWindow.length}`, inline: true },
-        { name: 'Awards found',      value: String(awarded.length),   inline: true },
-        { name: 'Inserted',          value: String(inserted),         inline: true },
-        { name: 'Already present',   value: String(alreadyPresent),   inline: true },
-        { name: 'Ambiguous (skip)',  value: String(ambiguousSkipped), inline: true },
-        { name: 'Unknown (skip)',    value: String(unknownSkipped),   inline: true },
+        { name: 'Raids scanned',         value: `${raidsScanned} / ${inWindow.length}`,           inline: true },
+        { name: 'Awards found',          value: String(awarded.length),                          inline: true },
+        { name: 'Inserted (this run)',   value: String(inserted),                                inline: true },
+        { name: 'Already present',       value: String(alreadyPresent),                          inline: true },
+        { name: 'Ambiguous · stored',    value: `${ambiguousSkipped} (source=opendkp_ambiguous)`, inline: true },
+        { name: 'Unknown · stored',      value: `${unknownSkipped} (source=opendkp_unknown)`,    inline: true },
       )
       .setFooter({ text: `Window: ${windowLabel} · source='opendkp'` + (timedOut ? ' · re-run to continue from where this stopped' : '') });
     return interaction.editReply({ embeds: [embed] });
