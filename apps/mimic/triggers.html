@@ -156,11 +156,17 @@
         var b = document.createElement('button');
         b.textContent = s[1];
         b.style.cssText = 'background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px';
-        b.onmouseenter = function(){ b.style.background = '#1f6feb'; b.style.color = '#fff'; };
+        b.onmouseenter = function(){ b.style.background = '#1f6feb'; b.style.color = '#fff'; try { window.mimic.overlayHoverInteractive(true); } catch (e) {} };
         b.onmouseleave = function(){ b.style.background = '#21262d'; b.style.color = '#c9d1d9'; };
         b.onclick = function(){ try { window.mimic.overlayResizePreset(s[0]); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
         menu.appendChild(b);
       });
+      var setupBtn = document.createElement('button');
+      setupBtn.textContent = '🛠 Setup mode (place + opacity)';
+      setupBtn.style.cssText = 'background:#2a1d3d;color:#d2a8ff;border:1px solid #a371f7;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
+      setupBtn.onmouseenter = function(){ setupBtn.style.background='#3d2a57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
+      setupBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+      menu.insertBefore(setupBtn, menu.firstChild);
       document.body.appendChild(menu);
       try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
       setTimeout(function(){

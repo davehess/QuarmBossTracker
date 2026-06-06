@@ -1970,6 +1970,56 @@ function applyAllVisibility() {
   applyMelodyVisibility();
 }
 
+// ── Hide-all-overlays toggle ────────────────────────────────────────────────
+// Quick way to clear the screen for a screenshot / a tough fight / whatever.
+// Snapshots the user's per-overlay show prefs, flips them all OFF, then
+// restores on the next toggle so individual choices survive the round-trip.
+// Bound to a tray menu item + a global hotkey (Ctrl+Shift+H by default).
+let _hideAllActive = false;
+let _hideAllPrev = null;          // { showHud, enableTriggerTts, showCharm, ... }
+const _hideAllHotkeyLabel = process.platform === 'win32' ? 'Ctrl+Shift+H' : '';
+function toggleHideAllOverlays() {
+  const cfg = loadConfig();
+  if (!_hideAllActive) {
+    // Snapshot + flip all off.
+    _hideAllPrev = {
+      showHud:          !!cfg.showHud,
+      enableTriggerTts: !!cfg.enableTriggerTts,
+      showCharm:        !!cfg.showCharm,
+      showPets:         !!cfg.showPets,
+      showMobInfo:      !!cfg.showMobInfo,
+      showWho:          !!cfg.showWho,
+      showMelody:       !!cfg.showMelody,
+    };
+    cfg.showHud = false;
+    cfg.enableTriggerTts = false;
+    cfg.showCharm = false;
+    cfg.showPets = false;
+    cfg.showMobInfo = false;
+    cfg.showWho = false;
+    cfg.showMelody = false;
+    _hideAllActive = true;
+  } else if (_hideAllPrev) {
+    // Restore from snapshot — respects whatever individual prefs the user
+    // had when they hid. Skip restore when no snapshot exists.
+    Object.assign(cfg, _hideAllPrev);
+    _hideAllActive = false;
+    _hideAllPrev = null;
+  }
+  saveConfig(cfg);
+  applyAllVisibility();
+  pushStatus();
+}
+function registerHideAllHotkey() {
+  if (process.platform !== 'win32') return;
+  try {
+    const { globalShortcut } = require('electron');
+    if (globalShortcut.isRegistered('CommandOrControl+Shift+H')) return;
+    const ok = globalShortcut.register('CommandOrControl+Shift+H', toggleHideAllOverlays);
+    if (!ok) appendAgentLog('[mimic] failed to register Ctrl+Shift+H hide-all hotkey\n');
+  } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
+}
+
 // Autostart-with-Windows wiring. Backed by app.setLoginItemSettings — Electron
 // writes/removes the registry entry under HKCU\…\Run for us. Called from the
 // tray toggle and on startup so the registry stays consistent with the saved
@@ -2197,6 +2247,12 @@ function buildTrayMenu() {
     // user can place + dial them all in a single pass.
     { label: setupMode ? '🛠 Exit setup mode' : '🛠 Setup mode — place all overlays',
       click: () => { applySetupMode(!setupMode); } },
+    // Hide-all toggle — flips every overlay off in one shot, then back to
+    // their previous visibility on the next toggle. The "memory" lives in
+    // _hideAllPrev so the user's pref selection is preserved across the
+    // hide/show round-trip. Bindable hotkey lives in registerHideAllHotkey().
+    { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabel || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabel || 'no hotkey') + ')',
+      click: () => { toggleHideAllOverlays(); } },
   ];
 
   // My /tells — its own section now (was buried inside the overlay submenu).
@@ -3127,7 +3183,17 @@ app.whenReady().then(async () => {
   // Begin polling eqgame.exe presence so overlays auto-hide when the user
   // isn't in EverQuest. No-op on non-Windows.
   _startEqPolling();
+
+  // Hide-all overlays global hotkey (Ctrl+Shift+H on Windows). Single-shot
+  // toggle: snapshots current prefs, hides everything, restores on second
+  // press. Bindable from tray menu too.
+  registerHideAllHotkey();
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });
-app.on('before-quit', () => { quitting = true; _stopEqPolling(); if (agentProc) { try { agentProc.kill(); } catch {} } });
+app.on('before-quit', () => {
+  quitting = true;
+  _stopEqPolling();
+  try { const { globalShortcut } = require('electron'); globalShortcut.unregisterAll(); } catch {}
+  if (agentProc) { try { agentProc.kill(); } catch {} }
+});

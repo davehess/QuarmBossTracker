@@ -346,6 +346,9 @@ const KEEP_PATTERNS = [
   /\bhas been healed/i,
   /\byou begin casting/i,
   /\byou begin singing/i,                         // bard songs (incl. charm) — for the charm-tracker duration
+  /\byou begin playing a melody/i,                // /melody start (no per-song names — see Zeal label 134)
+  /\byour melody has ended/i,                     // /melody stop
+  /\byour song ends/i,                            // single-song stop / interrupt
   /\bbegins? to cast/i,
   /\byou cast /i,
   /\bresisted your/i,
@@ -811,6 +814,18 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+You begin (casting|singing)\s+(.+?)\./i);
   if (m) {
     return { ts: tsIso, type: 'cast', attacker: null /* self */, ability: m[2], singing: m[1].toLowerCase() === 'singing' };
+  }
+  // /melody start/stop markers — Quarm only logs "You begin playing a melody."
+  // (no per-song names) when a bard fires /melody # # # # #. Catching these
+  // gives the melody overlay a "playing melody…" state so the user sees their
+  // tracker is alive even before Zeal label 134 transitions in the per-song
+  // names. Stop markers ("Your melody has ended.", "Your song ends.") flip
+  // the state off.
+  if (/^\[[^\]]+\]\s+You begin playing a melody\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'melody_start' };
+  }
+  if (/^\[[^\]]+\]\s+(?:Your melody has ended|Your song ends)\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'melody_stop' };
   }
   m = line.match(/\]\s+(.+?)\s+begins? to cast\s+(.+?)\./i);
   if (m) {
@@ -2237,6 +2252,33 @@ class EncounterBuilder {
         name:   event.ability,
         tickMs: event.tickMs || 7000,
       };
+      return;
+    }
+
+    // /melody markers — stamp the character's bardMelody state so the overlay
+    // shows "playing melody…" + the start timestamp even before Zeal label 134
+    // delivers the first per-song transition. Zeal label 134 does the heavy
+    // lifting once it fires; this is purely the "we know SOMETHING is happening"
+    // baseline so the overlay isn't empty on a /melody start.
+    if (event.type === 'melody_start' && this.character) {
+      const key = String(this.character).toLowerCase();
+      let state = _bardMelody.get(key);
+      if (!state) {
+        state = { order: [], currentPos: -1, castStartedAt: Date.now(), cycleLength: 0, lastChangeAt: Date.now(), kind: 'song' };
+        _bardMelody.set(key, state);
+      }
+      state.melodyActive = true;
+      state.melodyStartedAt = Date.parse(event.ts) || Date.now();
+      state.lastChangeAt    = state.melodyStartedAt;
+      return;
+    }
+    if (event.type === 'melody_stop' && this.character) {
+      const key = String(this.character).toLowerCase();
+      const state = _bardMelody.get(key);
+      if (state) {
+        state.melodyActive = false;
+        state.melodyEndedAt = Date.parse(event.ts) || Date.now();
+      }
       return;
     }
 
@@ -4248,7 +4290,14 @@ function _serializeForDashboard() {
       for (const ch of Object.keys(_zealState || {})) zealByLower.set(ch.toLowerCase(), _zealState[ch]);
       for (const [k, state] of _bardMelody.entries()) {
         if (myChars.size > 0 && !myChars.has(k)) continue;
-        if (!state || !state.order || state.order.length === 0) continue;
+        if (!state) continue;
+        // Skip only when there is NOTHING to surface — no songs AND no
+        // active melody flag AND no currently-casting Zeal label. The
+        // melody-start log line populates melodyActive even before the
+        // first song name lands, so an empty-order state with an active
+        // melody flag is still meaningful.
+        const hasOrder = state.order && state.order.length > 0;
+        if (!hasOrder && !state.melodyActive) continue;
         if (state.lastChangeAt && (now - state.lastChangeAt) > MELODY_IDLE_MS) continue;
         // Enrich each song with its CURRENT buff-window duration when the
         // song's effect is visible in Zeal's buff slots. Match the song's
@@ -4285,6 +4334,8 @@ function _serializeForDashboard() {
           lastChangeAt:   state.lastChangeAt,
           kind:           state.kind || 'song',
           nowCasting,
+          melodyActive:   !!state.melodyActive,
+          melodyStartedAt: state.melodyStartedAt || null,
         };
       }
       return out;
