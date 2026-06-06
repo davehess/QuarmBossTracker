@@ -1,14 +1,11 @@
 // /mimic — stable redirect to whatever the latest Wolf Pack Mimic release is.
 //
-// Queries GitHub's releases API and 302s to the most recent Mimic release.
-// Mimic releases are identified channel-agnostically by their installer asset
-// name (Wolf-Pack-Mimic-Setup-*.exe). The previous filter looked at the update
-// channel manifest (mimic-beta.yml) but Mimic graduated to the stable `latest`
-// channel at 1.0.0, so the manifest is now `latest.yml`. The installer asset
-// pattern is the stable signal across both eras — every Mimic release ever cut
-// has a Setup .exe, and no other release type in this repo has one. So every
-// internal link, banner, and "share with a guinea pig" copy can point at
-// wolfpack.quest/mimic forever — no hardcoded version that goes stale.
+// Queries GitHub's releases API and 302s to the most recent NON-PRERELEASE
+// Mimic release. Mimic releases are identified channel-agnostically by their
+// installer asset name (Wolf-Pack-Mimic-Setup-*.exe). For the beta channel
+// (prereleases like v1.0.58-beta.1), use /mimic/beta — same shape, different
+// filter. Splitting the two URLs keeps the public "install Mimic" link on
+// stable even when a beta is sitting at the top of the releases list.
 //
 // Query params:
 //   ?direct=1 — instead of the release page, redirect straight to the .exe
@@ -51,7 +48,9 @@ export async function GET(req: NextRequest) {
     if (res.ok) {
       const releases = (await res.json()) as Release[];
       const mimicReleases = releases
-        .filter(r => !r.draft && r.assets.some(a => /^wolf-pack-mimic-setup-.*\.exe$/i.test(a.name)))
+        .filter(r => !r.draft
+                  && !r.prerelease
+                  && r.assets.some(a => /^wolf-pack-mimic-setup-.*\.exe$/i.test(a.name)))
         .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
 
       const latest = mimicReleases[0];
