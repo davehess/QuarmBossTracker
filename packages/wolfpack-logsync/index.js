@@ -3484,6 +3484,7 @@ function _endpointForKind(kind, botUrl) {
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
     case 'trigger':         return base + '/trigger';
+    case 'trigger_relay':   return base + '/trigger-relay';
     default:                return botUrl;
   }
 }
@@ -13157,6 +13158,146 @@ function _announceRampage(target, tsMs) {
   });
 }
 
+// ── Cross-Mimic trigger relay (fan-out) ────────────────────────────────────
+// Each local guild-trigger fire is sent up to the bot via POST
+// /api/agent/trigger-relay. Other Mimics poll GET /api/agent/recent-fires
+// every ~1.5s, dedup by (trigger name + JSON captures) inside an 8s
+// window, and run the same actions locally — catches the case where one
+// raider's log saw the line and another's didn't (zoning, partial log
+// capture, player-targeted lines like "Player X has been slain").
+//
+// Local fires AND received-relay fires both populate _localFireKeys so
+// the same logical event doesn't double-play on a Mimic that detected
+// AND received it.
+const _localFireKeys = new Map();   // key → [tsMs, ...]
+const FIRE_DEDUP_WINDOW_MS = 8_000;
+
+function _markFireSeen(key, tsMs) {
+  if (!key) return;
+  const arr = _localFireKeys.get(key) || [];
+  arr.push(tsMs || Date.now());
+  // Keep last 4 fire timestamps per key — handles same-name triggers
+  // firing in sequence (e.g., death touch every minute).
+  if (arr.length > 4) arr.shift();
+  _localFireKeys.set(key, arr);
+  // Periodic GC so the map doesn't grow unbounded over a long session.
+  if (_localFireKeys.size > 200) {
+    const cutoff = Date.now() - FIRE_DEDUP_WINDOW_MS * 4;
+    for (const [k, ts] of _localFireKeys) {
+      if (Math.max(...ts) < cutoff) _localFireKeys.delete(k);
+    }
+  }
+}
+
+function _hasRecentFire(key, tsMs) {
+  const arr = _localFireKeys.get(key);
+  if (!arr) return false;
+  const ref = tsMs || Date.now();
+  for (const t of arr) {
+    if (Math.abs(t - ref) <= FIRE_DEDUP_WINDOW_MS) return true;
+  }
+  return false;
+}
+
+// Local fire → enqueue for bot relay. Skip for personal triggers (those
+// stay on the source machine — there's no value in fanning out a private
+// alert). Test fires also skip relay.
+function _relayLocalFire(t, actions, captures, tsMs, key) {
+  if (!_isUploaderInstance) return;
+  if (!t || t._scope === 'personal') return;
+  // Strip discord/relay-only actions so receiving Mimics only run the
+  // local-effect ones (text_overlay, voice marks, etc.). Discord-channel
+  // posts are already handled by the originating agent via the existing
+  // /api/agent/trigger endpoint.
+  const localActions = (actions || []).filter(a => a && a.type !== 'discord');
+  if (localActions.length === 0 && !(t.timer_duration_sec > 0)) return;
+  enqueueUpload('trigger_relay', {
+    agent_version: AGENT_VERSION,
+    fires: [{
+      name:                t.name || 'trigger',
+      key:                 key || (t.name || 'trigger'),
+      captures:            captures && typeof captures === 'object' ? captures : {},
+      actions:             localActions,
+      timer_duration_sec:  t.timer_duration_sec || 0,
+      fired_at_ms:         tsMs || Date.now(),
+    }],
+  });
+}
+
+// Polling loop — pulls fires posted by OTHER agents, runs them locally as
+// if the source line had been in our own log. Suppressed when api base
+// is unset (no bot wired) or when no token is configured.
+let _lastRelayFireId = 0;
+let _relayPollerActive = false;
+async function _pollRelayFires() {
+  if (_relayPollerActive) return;
+  const base = _getApiBase();
+  const token = _getAgentToken();
+  if (!base || !token) return;
+  _relayPollerActive = true;
+  try {
+    const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId;
+    const res = await fetch(url, {
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (typeof data?.next_id === 'number') {
+      _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
+    }
+    for (const fire of (data?.fires || [])) {
+      const fireKey = fire.key || fire.name || '';
+      if (_hasRecentFire(fireKey, fire.fired_at_ms)) continue;
+      _markFireSeen(fireKey, fire.fired_at_ms);
+      _runRelayedFire(fire);
+    }
+  } catch (err) {
+    // Silent — relay is best-effort and the poller retries next tick.
+  } finally {
+    _relayPollerActive = false;
+  }
+}
+
+// Schedule periodic polling. 1.5s interval is fast enough that a 10s
+// warning fan-out lands within 1-2s of the originating Mimic, slow
+// enough to stay polite (a 60-raider guild = ~40 req/min total bot-side).
+// .unref() so test harnesses (scripts/check-agent-dashboard.js) can
+// exit cleanly — the live agent has its own foreground keep-alives.
+setInterval(_pollRelayFires, 1500).unref();
+
+// Execute a relayed fire — runs the same shape as a local detection,
+// but with _isRelay=true so the receiving Mimic doesn't re-relay it.
+function _runRelayedFire(fire) {
+  if (!fire || !Array.isArray(fire.actions)) return;
+  // Build a synthetic trigger-like object so the existing action handler
+  // can process it. Marked _scope='guild_relay' so logs are
+  // distinguishable from locally-detected fires.
+  const trig = {
+    name:               fire.name || 'relayed',
+    actions:            fire.actions,
+    timer_duration_sec: fire.timer_duration_sec || 0,
+    _scope:             'guild_relay',
+  };
+  _fireTriggerActions(trig, fire.captures || {}, fire.fired_at_ms || Date.now(), /*test=*/false, /*isRelay=*/true);
+}
+
+// Helpers for the relay endpoints. _queueUploadOpts is the canonical
+// runtime config — populated by startUploadQueueDrain once the agent
+// has resolved botUrl + token (from --bot-url / --token, env, or the
+// Mimic device-link flow). Falling back to env vars catches the case
+// where the queue hasn't started yet (rare for the polling loop, which
+// only fires every 1.5s well after startup).
+function _getApiBase() {
+  const fromQueue = _queueUploadOpts && _queueUploadOpts.botUrl;
+  const raw = fromQueue || process.env.WOLFPACK_BOT_URL || null;
+  if (!raw) return null;
+  // botUrl points at /api/agent/encounter — strip that to get the base.
+  return raw.replace(/\/api\/agent\/encounter(\?.*)?$/, '/api/agent');
+}
+function _getAgentToken() {
+  return (_queueUploadOpts && _queueUploadOpts.token) || process.env.WOLFPACK_AGENT_TOKEN || null;
+}
+
 // Enqueue a trigger fire for relay to a Discord channel via the bot's
 // POST /api/agent/trigger. `mode` picks the surface:
 //   • 'post'  — bot posts `message` to TRIGGER_BROADCAST_CHANNEL_ID (text).
@@ -13679,7 +13820,7 @@ function evaluateTriggersAgainstLine(line, tsMs) {
 // scheduleRender pokes the dashboard. NO database, NO upload queue, NO Discord
 // — test fires are local-only by construction. The `test` flag on the
 // emitted overlay lets the UI label test fires distinctly.
-function _fireTriggerActions(t, captures, tsMs, test) {
+function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
     if (a.type === 'text_overlay') {
@@ -13799,6 +13940,20 @@ function _fireTriggerActions(t, captures, tsMs, test) {
   // "Pacify on Vox" become two independent countdowns rather than the
   // second restarting the first.
   if (t.timer_duration_sec > 0) _startTimer(t, tsMs, test, captures);
+
+  // Fan-out — mark the local fire seen, then relay to the bot so other
+  // Mimics that missed the source line can replay it. Skip when this
+  // function is itself running a relayed fire (would loop) or for test
+  // fires (debug-only, no bot side effects). Captures are part of the
+  // dedup key so two simultaneously-detected DIFFERENT events
+  // ("RIP Hitya" and "RIP Sweenie" within the same second) both land.
+  if (!test) {
+    const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(captures || {});
+    _markFireSeen(fireKey, tsMs || Date.now());
+    if (!isRelay && t._scope !== 'personal') {
+      _relayLocalFire(t, t.actions || [], captures || {}, tsMs || Date.now(), fireKey);
+    }
+  }
 }
 
 // Transition a single backfill request via the bot's

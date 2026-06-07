@@ -2561,6 +2561,32 @@ const _triggerDedup = new Map();   // key: "guild|key" → timestamp
 const TRIGGER_RATE_WINDOW_MS = 60_000;
 const TRIGGER_RATE_MAX       = 30;  // posts per uploader per window
 const _triggerRate = new Map();    // discordId → [timestamps]
+
+// ── Cross-Mimic trigger relay (fan-out) ─────────────────────────────────────
+// When one raider's Mimic detects a guild trigger but ANOTHER raider's log
+// missed it (zoning, partial log capture, player-targeted line like a
+// debuff that lands on you only), the second Mimic doesn't fire. The
+// relay closes that gap: detecting Mimic POSTs to /api/agent/trigger-relay,
+// bot stores in this ring buffer, every other Mimic polls
+// /api/agent/recent-fires every ~1.5s and runs the same actions locally
+// (overlay + TTS + visible timer row) as if it had detected the trigger
+// itself. Cross-agent dedup is by (trigger name + captures) inside an 8s
+// window so duplicates don't echo. Buffer caps at 200 entries and prunes
+// older than 60s. In-memory only — a bot restart loses the in-flight
+// queue, which is fine because the source-of-truth is still each
+// Mimic's own log tail.
+const TRIGGER_RELAY_TTL_MS         = 60_000;
+const TRIGGER_RELAY_MAX_ENTRIES    = 200;
+const TRIGGER_RELAY_DEDUP_WINDOW_MS = 8_000;
+const _triggerRelay = {
+  nextId:  1,
+  entries: [],   // { id, name, key, captures, actions, timer_duration_sec, fired_at_ms, posted_at_ms, uploaded_by }
+};
+setInterval(() => {
+  const cutoff = Date.now() - TRIGGER_RELAY_TTL_MS;
+  _triggerRelay.entries = _triggerRelay.entries.filter(e => e.posted_at_ms >= cutoff);
+}, 15_000);
+
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
@@ -5274,6 +5300,111 @@ async function _handleAgentTrigger(req, res) {
   res.end(JSON.stringify({ ok: true, posted, spoken }));
 }
 
+// ── Cross-Mimic trigger relay handlers ────────────────────────────────────
+// Each fire is opaque to the bot — it's a {name, key, captures, actions,
+// timer_duration_sec, fired_at_ms} bundle that a receiving Mimic runs
+// through its own _fireTriggerActions as if locally detected. The bot's
+// only jobs are dedup, capping the buffer, and serving polls. Payload
+// validation is light because each field is also re-validated on the
+// receiving Mimic before action execution.
+
+async function _handleTriggerRelayPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 32 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const fires = Array.isArray(payload?.fires) ? payload.fires : [];
+  if (fires.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, accepted: 0 }));
+  }
+
+  // Per-uploader rate cap — re-use the trigger rate limit so a wedged
+  // pattern that fires 100/sec doesn't drown the relay buffer.
+  const now = Date.now();
+  const rate = _triggerRate.get(identity.discord_id) || [];
+  if (rate.filter(t => now - t < TRIGGER_RATE_WINDOW_MS).length >= TRIGGER_RATE_MAX) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'rate limited' }));
+  }
+
+  let accepted = 0;
+  for (const f of fires.slice(0, 10)) {
+    const name = String(f?.name || '').slice(0, 120);
+    const key  = String(f?.key  || name).slice(0, 200);
+    if (!name) continue;
+    const firedAt = Number(f?.fired_at_ms) || now;
+    // Cross-agent dedup: same key fired within 8s = same logical event,
+    // skip storing the duplicate so polling clients don't echo it.
+    let duplicate = false;
+    for (let i = _triggerRelay.entries.length - 1; i >= 0; i--) {
+      const e = _triggerRelay.entries[i];
+      if (now - e.posted_at_ms > TRIGGER_RELAY_DEDUP_WINDOW_MS) break;
+      if (e.key === key && Math.abs(e.fired_at_ms - firedAt) <= TRIGGER_RELAY_DEDUP_WINDOW_MS) {
+        duplicate = true; break;
+      }
+    }
+    if (duplicate) continue;
+
+    const entry = {
+      id:                  _triggerRelay.nextId++,
+      name,
+      key,
+      captures:            (f?.captures && typeof f.captures === 'object') ? f.captures : {},
+      actions:             Array.isArray(f?.actions) ? f.actions.slice(0, 5) : [],
+      timer_duration_sec:  Math.max(0, Math.min(3600, parseInt(f?.timer_duration_sec, 10) || 0)),
+      fired_at_ms:         firedAt,
+      posted_at_ms:        now,
+      uploaded_by:         identity.discord_id,
+    };
+    _triggerRelay.entries.push(entry);
+    accepted++;
+  }
+  if (_triggerRelay.entries.length > TRIGGER_RELAY_MAX_ENTRIES) {
+    _triggerRelay.entries.splice(0, _triggerRelay.entries.length - TRIGGER_RELAY_MAX_ENTRIES);
+  }
+  if (accepted > 0) _triggerRate.set(identity.discord_id, [...rate, now]);
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, accepted, next_id: _triggerRelay.nextId }));
+}
+
+async function _handleRecentFiresGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const url = new URL(req.url, 'http://x');
+  const sinceId = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
+
+  // Suppress the caller's own fires — they already played locally and
+  // would just dedup-loop. Other agents' fires (within the 60s TTL)
+  // pass through.
+  const fires = _triggerRelay.entries
+    .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
+    .map(e => ({
+      id:                  e.id,
+      name:                e.name,
+      key:                 e.key,
+      captures:            e.captures,
+      actions:             e.actions,
+      timer_duration_sec:  e.timer_duration_sec,
+      fired_at_ms:         e.fired_at_ms,
+    }));
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({
+    next_id: _triggerRelay.nextId,
+    fires,
+  }));
+}
+
 // Voice playback path. Hands off to utils/voice.js, which queues + speaks
 // via @discordjs/voice + Edge TTS. The voice module is fail-soft: missing
 // deps / kick from the channel / TTS HTTP errors log once and drop the
@@ -6754,6 +6885,28 @@ http.createServer(async (req, res) => {
       console.error('[trigger] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Fan-out POST — agent reports a local fire so other Mimics that
+  // missed the source line can replay it. Stored in _triggerRelay ring
+  // buffer; receivers fetch via GET /api/agent/recent-fires below.
+  if (req.method === 'POST' && req.url === '/api/agent/trigger-relay') {
+    try { return await _handleTriggerRelayPost(req, res); }
+    catch (err) {
+      console.error('[trigger-relay] post error:', err);
+      res.writeHead(500); return res.end();
+    }
+  }
+
+  // Fan-out GET — agent polls every ~1.5s. Returns voice/timer fires
+  // posted by OTHER agents since the caller's since_id, suppressing the
+  // caller's own fires so a relay doesn't echo back to its origin.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/recent-fires')) {
+    try { return await _handleRecentFiresGet(req, res); }
+    catch (err) {
+      console.error('[trigger-relay] get error:', err);
+      res.writeHead(500); return res.end();
     }
   }
 
