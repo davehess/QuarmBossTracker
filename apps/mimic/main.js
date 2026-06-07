@@ -1920,10 +1920,14 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
     if (raw.class)  md += '_Class:  ' + raw.class  + '_  \n';
     md += '\n';
     if (raw.description) md += raw.description + '\n\n';
+    if (raw.availability_note) {
+      md += '> **Bring what you have on the truck.** ' + raw.availability_note + '\n\n';
+    }
 
     if (Array.isArray(raw.phases)) {
+      md += '## Rotation (core — required)\n\n';
       for (const ph of raw.phases) {
-        md += '## ' + ph.name + (ph.page_label ? '  —  ' + ph.page_label : '') + '\n\n';
+        md += '### ' + ph.name + (ph.page_label ? '  —  ' + ph.page_label : '') + '\n\n';
         if (Array.isArray(ph.buttons)) {
           md += '| Slot | Label | Color | Cast | Notes |\n';
           md += '|------|-------|-------|------|-------|\n';
@@ -1944,14 +1948,21 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
       }
     }
     if (Array.isArray(raw.clickies) && raw.clickies.length) {
-      md += '## Clickies\n\n';
+      md += '## Optional clickies\n\n_All of these are gear-tier-dependent. Skip any you don\'t have on the truck — alternatives are listed where available._\n\n';
       for (const c of raw.clickies) {
-        md += '- **' + c.slot + '**: ' + (c.item || '') + (c.notes ? ' — ' + c.notes : '') + '\n';
+        const tierTag = c.tier ? '_' + c.tier + '_' : '';
+        const requiredTag = c.required ? '**REQUIRED**' : '_optional_';
+        md += '- **' + c.slot + '**: ' + (c.item || '') + '  ' + tierTag + ' · ' + requiredTag + '\n';
+        if (c.provides)              md += '    - Provides: ' + c.provides + '\n';
+        if (Array.isArray(c.alternatives) && c.alternatives.length) {
+          md += '    - If you don\'t have it: ' + c.alternatives.join(' / ') + '\n';
+        }
+        if (c.notes)                 md += '    - ' + c.notes + '\n';
       }
       md += '\n';
     }
     if (Array.isArray(raw.potions) && raw.potions.length) {
-      md += '## Potions\n\n';
+      md += '## Optional potions\n\n';
       for (const p of raw.potions) {
         md += '- **' + (p.name || '') + '**: ' + (p.use || '') + '\n';
       }

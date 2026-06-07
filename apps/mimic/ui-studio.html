@@ -430,6 +430,15 @@
     document.getElementById('pvpPreviewCredit').textContent =
       (raw.class ? raw.class + ' · ' : '') + (raw.credit ? 'by ' + raw.credit : '');
     var html = '<p style="color:#9aa4ad;margin:0 0 10px">' + escapeHtml(raw.description || '') + '</p>';
+    // Availability banner — surfaces the "bring what you have" disclaimer
+    // up front so the user knows BEFORE scrolling that optional sections
+    // are skippable.
+    if (raw.availability_note) {
+      html += '<div style="background:#1f2a3d;border-left:3px solid #f0d264;padding:6px 8px;margin-bottom:10px;color:#c9d1d9;font-size:11px;line-height:1.5">'
+            + '<strong style="color:#f0d264">Bring what you have on the truck.</strong> '
+            + escapeHtml(raw.availability_note)
+            + '</div>';
+    }
     // Phases — the meat of the set. Each phase carries a hotbar PAGE +
     // a list of button definitions; render as a card per phase with the
     // buttons in a small table.
@@ -456,16 +465,32 @@
       }
     }
     if (Array.isArray(raw.clickies) && raw.clickies.length) {
-      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Clickies</h4>';
+      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Optional clickies</h4>'
+            + '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;line-height:1.4">All gear-tier-dependent. Skip any you don\'t have on the truck.</p>';
       for (var c = 0; c < raw.clickies.length; c++) {
         var ck = raw.clickies[c];
-        html += '<div style="margin-bottom:3px"><b>' + escapeHtml(ck.slot) + '</b>: ' + escapeHtml(ck.item || '')
-              + (ck.notes ? ' <span style="color:#8b949e">— ' + escapeHtml(ck.notes) + '</span>' : '')
-              + '</div>';
+        var tierBadge = ck.tier
+          ? '<span style="background:#21262d;color:#a371f7;border:1px solid #30363d;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">' + escapeHtml(ck.tier) + '</span>'
+          : '';
+        var reqBadge = ck.required
+          ? '<span style="background:#3d1d1d;color:#ff7b72;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">REQUIRED</span>'
+          : '<span style="background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">optional</span>';
+        html += '<div style="margin-bottom:8px;padding:6px;background:#0d1117;border:1px solid #21262d;border-radius:4px">'
+              + '<div><b>' + escapeHtml(ck.slot) + '</b>: ' + escapeHtml(ck.item || '') + tierBadge + reqBadge + '</div>';
+        if (ck.provides) {
+          html += '<div style="color:#7ee787;font-size:10px;margin-top:3px">Provides: ' + escapeHtml(ck.provides) + '</div>';
+        }
+        if (Array.isArray(ck.alternatives) && ck.alternatives.length) {
+          html += '<div style="color:#79c0ff;font-size:10px;margin-top:3px">If you don\'t have it: ' + escapeHtml(ck.alternatives.join(' / ')) + '</div>';
+        }
+        if (ck.notes) {
+          html += '<div style="color:#9aa4ad;font-size:10px;margin-top:3px">' + escapeHtml(ck.notes) + '</div>';
+        }
+        html += '</div>';
       }
     }
     if (Array.isArray(raw.potions) && raw.potions.length) {
-      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Potions</h4>';
+      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Optional potions</h4>';
       for (var pi = 0; pi < raw.potions.length; pi++) {
         var po = raw.potions[pi];
         html += '<div style="margin-bottom:3px"><b>' + escapeHtml(po.name) + '</b>'
