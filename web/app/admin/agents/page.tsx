@@ -337,6 +337,28 @@ function rel(iso: string): string {
   return `${Math.floor(ms / 86400_000)}d ago`;
 }
 
+// Compare two semver-ish strings ("3.0.66" or "3.0.66-beta.3") so a sort
+// returns oldest first. Two-digit minor/patch sorts correctly (3.0.10 > 3.0.9),
+// which a lexical compare gets wrong. Pre-release tags ("-beta.N") count as
+// older than the same base, matching how the agent treats them downstream.
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [core, pre] = v.replace(/^v/, '').split('-');
+    const parts = core.split('.').map(n => parseInt(n, 10) || 0);
+    while (parts.length < 3) parts.push(0);
+    return { parts, pre: pre || null };
+  };
+  const pa = parse(a), pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa.parts[i] !== pb.parts[i]) return pa.parts[i] - pb.parts[i];
+  }
+  // Same core. A prerelease sorts BEFORE a non-prerelease of the same core.
+  if (pa.pre && !pb.pre) return -1;
+  if (!pa.pre && pb.pre) return  1;
+  if (pa.pre && pb.pre)  return pa.pre.localeCompare(pb.pre);
+  return 0;
+}
+
 function fmtTs(iso: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('en-US', {
@@ -723,9 +745,16 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
           {fam.members.length} char{fam.members.length === 1 ? '' : 's'}
         </span>
         {/* Discord-auth state: linked = at least one box runs a per-user token
-            (the going-forward world); legacy = only the old shared token. */}
+            (the going-forward world); legacy = only the old shared token. The
+            linked chip is just the Discord brand mark inside a green border —
+            the title="..." tooltip carries the meaning so the icon stays
+            self-explanatory without taking a column of text. */}
         {fam.linked ? (
-          <span className="text-[9px] uppercase tracking-widest text-green border border-green/40 rounded px-1.5 py-0.5 shrink-0" title="Uploading under a per-user Discord login">🔗 Discord</span>
+          <span className="text-green border border-green/40 rounded px-1.5 py-0.5 shrink-0 inline-flex items-center" title="Uploading under a per-user Discord login">
+            <svg viewBox="0 0 71 55" className="w-3 h-3" fill="currentColor" aria-hidden="true">
+              <path d="M60.1 4.9A58.5 58.5 0 0045.6.4l-.7 1.3a52.7 52.7 0 00-15.4 0L28.8.4a58 58 0 00-14.5 4.5C5.4 18 3 31 4.2 43.6a59 59 0 0017.9 9.1c1.4-2 2.7-4 3.8-6.3a38 38 0 01-6-2.9c.5-.4 1-.7 1.5-1.1A41.7 41.7 0 0035.5 47a41.6 41.6 0 0014-3.6c.5.4 1 .7 1.5 1.1-1.9 1.1-3.9 2.1-6 2.9 1 2.2 2.4 4.3 3.8 6.3a59 59 0 0017.9-9.1c1.3-14.6-2.5-27.5-6.6-38.7zM23.7 36c-3.4 0-6.2-3.1-6.2-7s2.8-7 6.2-7c3.4 0 6.3 3.2 6.2 7 0 3.9-2.8 7-6.2 7zm23 0c-3.4 0-6.2-3.1-6.2-7s2.8-7 6.2-7c3.4 0 6.3 3.2 6.2 7 0 3.9-2.8 7-6.2 7z"/>
+            </svg>
+          </span>
         ) : (
           <span className="text-[9px] uppercase tracking-widest text-dim border border-border rounded px-1.5 py-0.5 shrink-0" title="Still on the legacy shared token — ask them to sign in with Discord in Mimic">legacy</span>
         )}
@@ -733,7 +762,27 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
           <span className="text-gold text-sm shrink-0" title="Includes a toon being run by someone other than its owner — expand for details">*</span>
         )}
         <span className="text-dim text-xs ml-auto whitespace-nowrap">{rel(fam.latestUpload)}</span>
-        <span className="text-dim text-[10px] hidden md:inline max-w-[14rem] truncate" title={fam.versions.join(', ')}>{fam.versions.join(', ') || '—'}</span>
+        {/* Version chip — visible on every breakpoint (was hidden on mobile).
+            Picks the highest semver across the family so a 6-char family with
+            one stale box shows the up-to-date version; appends * when versions
+            disagree. Full list still surfaces via the title= tooltip. */}
+        {(() => {
+          const vs = (fam.versions || []).filter(Boolean);
+          if (vs.length === 0) {
+            return <span className="text-dim text-[10px] tabular-nums shrink-0">—</span>;
+          }
+          const sorted = [...vs].sort(compareSemver).reverse();
+          const top    = sorted[0];
+          const mixed  = vs.some(v => v !== top);
+          return (
+            <span
+              className={`text-[10px] tabular-nums shrink-0 font-mono ${mixed ? 'text-orange' : 'text-dim'}`}
+              title={mixed ? `Versions in family: ${vs.join(', ')}` : `Agent v${top}`}
+            >
+              v{top}{mixed && '*'}
+            </span>
+          );
+        })()}
         <span className="text-text text-xs hidden sm:inline tabular-nums w-16 text-right">{fam.totalUploads.toLocaleString()}</span>
         <span className="text-[10px] w-16 text-right shrink-0">{familyStatus}</span>
       </summary>
