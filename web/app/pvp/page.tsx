@@ -44,12 +44,27 @@ async function loadLeaderboard(sortKey: SortKey) {
   // (Concrete example: Malthur, 218 kills, 144 stamped 'Wolf Pack', 62 stamped
   // his prior guild Tranquility, 12 NULL — the broken filter showed 144 then
   // 73 once a partial fetch landed.) Filter by roster membership instead.
+  //
+  // We also pull main_name so each alt's kills fold up under their main on the
+  // leaderboard. Concrete case: Adiwen (Wabumkin's alt) had her 1 kill listed
+  // separately from Wabumkin's 19; we want one "Wabumkin · 20" row.
   const { data: roster } = await sb
     .from('characters')
-    .select('name')
+    .select('name, main_name')
     .eq('guild_id', 'wolfpack');
-  const rosterNames = (roster ?? []).map(r => (r as { name: string }).name);
+  const rosterRows = (roster ?? []) as { name: string; main_name: string | null }[];
+  const rosterNames = rosterRows.map(r => r.name);
   if (rosterNames.length === 0) return { rows: [] as LeaderboardRow[], error: null as string | null };
+
+  // lowercase(any name) → main display name. Falls back to itself when no
+  // main is set or when an alt's main_name doesn't resolve to a known char.
+  const nameByLower = new Map(rosterRows.map(r => [r.name.toLowerCase(), r.name] as const));
+  const mainFor = (n: string): string => {
+    const lower = n.toLowerCase();
+    const row   = rosterRows.find(r => r.name.toLowerCase() === lower);
+    if (!row?.main_name) return nameByLower.get(lower) ?? n;
+    return nameByLower.get(row.main_name.toLowerCase()) ?? row.main_name;
+  };
 
   // Two queries in parallel — kills (the existing source-of-truth ledger) and
   // assists (the new pvp_assists table populated by the agent's correlation).
@@ -78,9 +93,13 @@ async function loadLeaderboard(sortKey: SortKey) {
     last: string;
   }>();
   for (const k of (killRes.data ?? []) as KillRow[]) {
-    const key = k.killer.toLowerCase();
+    // Fold alts into their main — leaderboard row is keyed on the family head,
+    // not the individual character. mainFor() falls back to the raw name when
+    // there's no main_name, so non-alts keep their own row.
+    const display = mainFor(k.killer);
+    const key = display.toLowerCase();
     let e = byKiller.get(key);
-    if (!e) { e = { killer: k.killer, total: 0, victims: new Set(), petKills: 0, assists: 0, last: k.killed_at }; byKiller.set(key, e); }
+    if (!e) { e = { killer: display, total: 0, victims: new Set(), petKills: 0, assists: 0, last: k.killed_at }; byKiller.set(key, e); }
     e.total += 1;
     e.victims.add(k.victim.toLowerCase());
     if (k.via_pet) e.petKills += 1;
@@ -89,9 +108,10 @@ async function loadLeaderboard(sortKey: SortKey) {
   // Fold in assists. Assisters who have no kills still appear on the board
   // (set total=0 etc.) so the assists-leaders aren't hidden under a kills gate.
   for (const a of (assistRes.data ?? []) as { assister: string }[]) {
-    const key = a.assister.toLowerCase();
+    const display = mainFor(a.assister);
+    const key = display.toLowerCase();
     let e = byKiller.get(key);
-    if (!e) { e = { killer: a.assister, total: 0, victims: new Set(), petKills: 0, assists: 0, last: '' }; byKiller.set(key, e); }
+    if (!e) { e = { killer: display, total: 0, victims: new Set(), petKills: 0, assists: 0, last: '' }; byKiller.set(key, e); }
     e.assists += 1;
   }
   const rows: LeaderboardRow[] = [...byKiller.values()].map(e => ({

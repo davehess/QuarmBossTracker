@@ -10506,6 +10506,8 @@ function runOptinBackfill(files, opts = {}) {
             if (pkEvt) funEventBuffer.push(pkEvt);
             const dpEvt = parseDragonPunch(line, f.character);
             if (dpEvt) funEventBuffer.push(dpEvt);
+            const dirgeEvt = parseDirgeCast(line, f.character);
+            if (dirgeEvt) funEventBuffer.push(dirgeEvt);
             // Feral Avatar cast-begin (caster-side AND bystander-side).
             // Complementary to parseFeralAvatarReceived below — that one fires
             // on the buff land, this one on the cast begin. Both push so the
@@ -11687,6 +11689,36 @@ function parseDragonPunch(line, selfName) {
     type:     'dragon_punch',
     caster:   selfName,
     target:   m[2].trim(),
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+// ── 🎵 Dirge cast — bard dirge songs ──────────────────────────────────────────
+// Line:  "<Bard> begins singing Dirge of <Whatever>."
+// Caster-side: "You begin singing Dirge of <Whatever>."
+// Captures any dirge — Dirge of Carnage is the iconic PvP one, but Dirge of the
+// Restless / Sleepwalker etc. count too. Powers /fun's dirge counter ("killed
+// a whole guild with N dirges"). Bystander-side fires on every agent in zone,
+// so the bot's (guild_id, event_type, caster, event_ts) dedup collapses the
+// duplicates back to one row per cast.
+const DIRGE_SELF_RX  = /^\[(.+?)\]\s+You\s+begin\s+singing\s+(Dirge\s+of\s+[^.]+)\.?\s*$/i;
+const DIRGE_OTHER_RX = /^\[(.+?)\]\s+(\w[\w'`]*)\s+begins\s+singing\s+(Dirge\s+of\s+[^.]+)\.?\s*$/i;
+function parseDirgeCast(line, selfName) {
+  let m = DIRGE_SELF_RX.exec(line);
+  let caster = null;
+  let song = null;
+  if (m) { caster = selfName; song = m[2].trim(); }
+  else {
+    m = DIRGE_OTHER_RX.exec(line);
+    if (m) { caster = m[2]; song = m[3].trim(); }
+  }
+  if (!m || !caster) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'dirge_cast',
+    caster,
+    target:   song,                // store the dirge song name in `target` for analysis
     ts:       ts ? ts.toISOString() : new Date().toISOString(),
     raw_text: line.slice(0, 200),
   };
@@ -14451,6 +14483,8 @@ async function main() {
         if (pkEvt && !_sourceExcluded) funEventBuffer.push(pkEvt);
         const dpEvt = parseDragonPunch(line, b.character);
         if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
+        const dirgeEvt = parseDirgeCast(line, b.character);
+        if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
         // Feral Avatar — caster-side fires only on the BL's own log; bystander
         // form fires on anyone in zone. Both push so the bot's (guild_id,
         // event_type, caster, event_ts) dedup collapses overlap.
