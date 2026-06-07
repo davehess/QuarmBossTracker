@@ -688,6 +688,32 @@ check (gap detection, missing-parse warnings, attendance reconciliation) should
 default to this window across each raid date. Anchor: the first recorded raid in
 `raid_nights` is the historical baseline.
 
+## Guild trigger action shapes — pick the portable one
+
+When seeding or adding rows to `guild_triggers`, default to the **portable shape**
+so the trigger fires on every Mimic version without forcing a client upgrade. The
+agent has been processing this combo since well before v3.0.64:
+
+- `text_overlay` action with `tts` field — instant visual + spoken call-out.
+- `timer_duration_sec` (trigger-level) — visible countdown row in the
+  trigger overlay. Multiple concurrent timers stack as rows; the last 5s pop
+  amber. Quiet-mode (TTS-off) raiders still see the visual cue.
+- `warning_seconds` + `warning_text` — single voiced warning N seconds before
+  the timer ends.
+
+The **v3.0.64 `voice` action with `marks`** is the upgrade-required shape — only
+fires on v3.0.64+ Mimics. Use it ONLY when a trigger needs two or more timed
+call-outs (e.g., "Tank buster in 10s" + "D.A. now at 4s"). For everything else,
+the portable shape is the default. The trade-off: marks give you exact timing
+between callouts on each client, but you can't ship trigger changes through
+the existing 10-min `/api/agent/guild-triggers` poll until everyone has the
+agent version that understands the action.
+
+The four current drafts (Emperor Ssra Tank Buster, Divine Intervention,
+Death touch countdown, Death touch RIP) plus Enrage and the "AOE — dodge"
+template all use the portable shape — they're in `guild_triggers` disabled,
+ready for regex tuning + flip-on via `/admin/triggers`.
+
 ## Character Identity Scopes (read before building any roster-aware feature)
 
 Three different "who is this" questions, three different sources — don't mix them:
