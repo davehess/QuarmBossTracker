@@ -5226,7 +5226,13 @@ async function _handleAgentTrigger(req, res) {
       if (!voiceCh) {
         // No channel configured — drop silently. Caller still gets an OK.
       } else {
-        await _playVoiceTrigger({ message, voiceId: ev?.voice_id || null, channelId: voiceCh, uploadedBy: identity.discord_id });
+        await _playVoiceTrigger({
+          message,
+          voiceId:     ev?.voice_id || null,
+          channelId:   voiceCh,
+          uploadedBy:  identity.discord_id,
+          triggerName: ev?.name || null,
+        });
         spoken++;
         _triggerRate.set(identity.discord_id, [...rate, now]);
       }
@@ -5253,7 +5259,7 @@ async function _handleAgentTrigger(req, res) {
 // deps / kick from the channel / TTS HTTP errors log once and drop the
 // message rather than poisoning the trigger pipeline. The text-post path
 // is independent so officers always have a backstop.
-async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy }) {
+async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy, triggerName }) {
   try {
     const voice = require('./utils/voice');
     const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
@@ -5261,8 +5267,14 @@ async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy }) {
       console.warn('[trigger-voice] DISCORD_GUILD_ID not in cache — dropping');
       return;
     }
-    const ok = await voice.playInVoice({ guildClient: guild, channelId, text: message, voiceId });
-    if (!ok) console.warn('[trigger-voice] play returned false for', channelId);
+    const ok = await voice.playInVoice({
+      guildClient: guild,
+      channelId,
+      text:        message,
+      voiceId,
+      triggerName,    // surfaces to the /admin/voice "skip these trigger names" filter
+    });
+    if (!ok) console.log('[trigger-voice] play returned false for', channelId, '(may be ripcord or skip filter)');
   } catch (err) {
     console.warn('[trigger-voice] handler error:', err?.message);
   }
@@ -6584,6 +6596,37 @@ http.createServer(async (req, res) => {
       console.error('[guild-triggers] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Cache bust for voice_settings. The /admin/voice page calls this after
+  // saving so the ripcord takes effect without waiting out the 30s TTL.
+  // Bearer-auth gated (same token as the agent endpoints) — anyone with
+  // the token already has full data-plane access, so this is no broader.
+  if (req.method === 'POST' && req.url === '/api/admin/voice-settings/refresh') {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+    try {
+      const vs = require('./utils/voiceSettings');
+      vs.invalidate();
+      // If the admin just flipped the ripcord (enabled=false), boot the bot
+      // out of voice NOW instead of finishing the in-flight queue. Cheap —
+      // the next allowed fire reconnects. Re-fetch first so we read what was
+      // just saved, not the stale cached value.
+      const guildId = process.env.DISCORD_GUILD_ID;
+      if (guildId) {
+        const fresh = await vs.get(guildId);
+        if (!fresh.enabled) {
+          try { require('./utils/voice').leaveVoice(guildId, 'admin ripcord'); }
+          catch (err) { void err; }
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      console.warn('[voice-settings refresh] error:', err?.message);
+      res.writeHead(500);
+      return res.end();
     }
   }
 

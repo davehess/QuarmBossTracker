@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.40': [
+    '**Voice ripcord on /admin/voice** — officer page to flip the bot\'s voice triggers off, swap the default voice, adjust volume (0–200%), and add per-message or per-trigger-name skip rules. Takes effect within ~30s (bot caches the row). The text-relay surface keeps working when voice is muted. Two raid call-out drafts ship in `guild_triggers` (Emperor Ssra tank-buster countdown + Divine Intervention save) as DISABLED — verify the regex patterns on the next pull and flip them on from /admin/triggers.',
+  ],
   '3.0.39': [
     '**Bot speaks in voice now** — agent triggers marked `mode: \'voice\'` will have the bot join `RAID_VOICE_CHANNEL_ID` and read the message aloud via Microsoft Edge\'s free TTS (no API key, several US/UK voices). Connect-on-demand, idle out after 5 minutes of silence — no permanent presence in voice. Officers can verify the chain with `/voicetest`; pick the raid channel, the off-night channel (`OFFNIGHT_VOICE_CHANNEL_ID`), and a voice. Requires the bot role to have **Connect** + **Speak** on the channel.',
   ],

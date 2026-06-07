@@ -175,9 +175,24 @@ async function _drainQueue(guildClient, guildId) {
         // (ffmpeg is the safety net for both this path and any MP3 fallback;
         // installing it in the Dockerfile means we never have to think about
         // which format Edge picked today.)
-        await tts.setMetadata(job.voiceId || TTS_VOICE_DEFAULT, OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS);
+        const voiceId = job.voiceId || job.defaultVoice || TTS_VOICE_DEFAULT;
+        await tts.setMetadata(voiceId, OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS);
         const { audioStream } = tts.toStream(job.text);
-        const resource = createAudioResource(audioStream, { inputType: StreamType.WebmOpus });
+        // inlineVolume:true lets us set per-resource gain — required for the
+        // /admin/voice volume slider. Costs an opus→PCM→opus pass via
+        // prism-media; trivial vs network latency, and only when settings
+        // actually request a non-100% volume.
+        const wantsGain = job.volumePct != null && job.volumePct !== 100;
+        const resource = createAudioResource(audioStream, {
+          inputType: StreamType.WebmOpus,
+          inlineVolume: wantsGain,
+        });
+        if (wantsGain && resource.volume && resource.volume.setVolume) {
+          // 0..200% → 0.0..2.0 scalar. >2.0 hits clipping fast; raid leaders
+          // can twist past safe levels deliberately via the slider, but
+          // we don't accept anything wilder than what /admin/voice ships.
+          resource.volume.setVolume(Math.max(0, job.volumePct) / 100);
+        }
 
         if (!s.player) {
           s.player = createAudioPlayer();
@@ -211,10 +226,31 @@ async function _drainQueue(guildClient, guildId) {
 // resolves once the message has been QUEUED (not played); the caller doesn't
 // need to wait for playback. Synchronous-feeling so it can sit inside the
 // trigger handler's tight loop without serializing fires.
-async function playInVoice({ guildClient, channelId, text, voiceId }) {
+//
+// Consults voiceSettings (admin-panel ripcord) BEFORE queueing — a disabled
+// setting or a matching skip pattern means we never connect. That keeps the
+// voice channel clean during a panic mute, and matters most when the agent
+// is firing 30+ /sec on a wedged trigger.
+async function playInVoice({ guildClient, channelId, text, voiceId, triggerName }) {
   if (!guildClient || !channelId || !text) return false;
   const deps = _loadDeps();
   if (!deps) return false;
+
+  // Settings gate. Failure to load settings (no Supabase, transient
+  // network) falls open to DEFAULTS — better to play than silently swallow.
+  let settings;
+  try {
+    const vs = require('./voiceSettings');
+    settings = await vs.get(guildClient.id);
+    const { ok, reason } = vs.shouldPlay(settings, { triggerName, message: text });
+    if (!ok) {
+      console.log('[voice] skip:', reason, '— text:', String(text).slice(0, 80));
+      return false;
+    }
+  } catch (err) {
+    console.warn('[voice] settings lookup failed (falling open):', err?.message);
+    settings = null;
+  }
 
   const guildId = guildClient.id;
   const s = _getState(guildId);
@@ -224,7 +260,14 @@ async function playInVoice({ guildClient, channelId, text, voiceId }) {
   // ended.
   if (s.idleTimer) { clearTimeout(s.idleTimer); s.idleTimer = null; }
 
-  s.queue.push({ channelId, text: String(text).slice(0, 600), voiceId: voiceId || null });
+  s.queue.push({
+    channelId,
+    text:         String(text).slice(0, 600),
+    voiceId:      voiceId || null,
+    defaultVoice: settings ? settings.default_voice : null,
+    volumePct:    settings ? settings.volume_pct   : null,
+    triggerName:  triggerName || null,
+  });
   // Kick the drain; if one is already running, the queue push above is enough.
   _drainQueue(guildClient, guildId).catch(err => console.warn('[voice] drain error:', err.message));
   return true;
