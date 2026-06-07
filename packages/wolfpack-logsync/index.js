@@ -4711,7 +4711,33 @@ function _serializeForDashboard() {
     knownPets:          [...knownPetOwners.entries()].map(([pet, owners]) => ({ pet, owners: [...owners] })),
     uploadQueue:        uploadQueueSnapshot(),
     updateBlocked:      _updateBlockedReason(),
+    staleBackfills:     _staleBackfillsSummary(),
   };
+}
+
+// Summarize how many opt-in files have a stale backfill version (a newer
+// agent shipped detectors their last pass missed). Powers the dashboard's
+// home-page banner + the per-file pulse on the Opt-in Logs pane. Pure
+// derived state — no caching needed; the list is small.
+function _staleBackfillsSummary() {
+  if (typeof _optinState === 'undefined' || !_optinState || !Array.isArray(_optinState.files)) {
+    return { count: 0, labels: [], oldestVersion: null };
+  }
+  const labels = new Set();
+  let oldestVersion = null;
+  let count = 0;
+  for (const f of _optinState.files) {
+    const r = f && f.resume;
+    if (!r || !r.complete || !r.agentVersion) continue;
+    const stale = detectorsStaleSince(r.agentVersion);
+    if (stale.length === 0) continue;
+    count += 1;
+    for (const d of stale) labels.add(d.label);
+    if (!oldestVersion || isNewerVersion(oldestVersion, r.agentVersion)) {
+      oldestVersion = r.agentVersion;
+    }
+  }
+  return { count, labels: [...labels], oldestVersion };
 }
 
 // Update-gate evaluator. Returns null when an update is safe, or a short
@@ -4791,6 +4817,19 @@ tr:hover td { background:#1f242c }
 .banner { padding:8px 12px; border-radius:6px; margin:0 0 10px 0; font-size:13px; }
 .banner.update { background:#9e6a03; color:#fff }
 .banner.resumed { background:#1a7f37; color:#fff }
+/* Stale-backfill nudge — soft green so it reads as informational, not an
+   error. The pulse-dot inside it ties visually to the per-row pulse on the
+   ↻ Re-run button in the Opt-in Logs pane: same color, same rhythm. */
+.banner.stale-backfill .pulse-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#56d364; box-shadow:0 0 0 0 rgba(86,211,100,0.7); animation: wp-pulse-glow 1.8s ease-out infinite; vertical-align:middle; margin-right:6px; }
+@keyframes wp-pulse-glow {
+  0%   { box-shadow:0 0 0 0   rgba(86,211,100,0.7); transform:scale(1);    }
+  60%  { box-shadow:0 0 0 10px rgba(86,211,100,0);   transform:scale(1.12); }
+  100% { box-shadow:0 0 0 0   rgba(86,211,100,0);   transform:scale(1);    }
+}
+/* Pulse halo on a Re-run button whose backfill is stale relative to the
+   current agent. Same animation as the banner dot — visual coupling tells
+   the user the banner is naming THIS row. */
+button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-out infinite; box-shadow:0 0 0 0 rgba(86,211,100,0.7); }
 .subtle { color:var(--dim); font-size:12px; margin:4px 0 12px 0; }
 .spell-link { color:inherit; text-decoration:none; border-bottom:1px dotted var(--blue); }
 .spell-link:hover { color:var(--blue); border-bottom-color:transparent; }
@@ -5110,6 +5149,25 @@ function renderHeader(s) {
   let h = '';
   if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
+  // Stale-backfill nudge. Lives in the header (always visible across tabs)
+  // so a user who never opens the Opt-in Logs pane still sees it. Click
+  // hands off to the pane — the pulse on each affected file row tells them
+  // which to re-run. We only show it when the user has actually completed
+  // at least one backfill (count > 0); first-time users get no banner.
+  const sb = s.staleBackfills || { count: 0, labels: [], oldestVersion: null };
+  if (sb.count > 0) {
+    const fileWord  = sb.count === 1 ? 'file' : 'files';
+    const labelList = (sb.labels || []).slice(0, 3).join(', ')
+                    + ((sb.labels || []).length > 3 ? ', …' : '');
+    const tip = labelList
+      ? 'New since your last backfill: ' + esc(labelList)
+      : 'New detectors available — re-run to capture them';
+    h += '<div class="banner stale-backfill" title="' + esc(tip) + '" style="background:#1a3a1f;color:#bff5c5;border:1px solid #2ea043;display:flex;gap:10px;align-items:center;justify-content:space-between">'
+       + '<span><span class="pulse-dot" aria-hidden></span><b> ' + sb.count + ' ' + fileWord + '</b> backfilled before recent detectors landed. '
+       + 'Re-run to capture <b>' + esc(labelList || 'new fun-event counters') + '</b>.</span>'
+       + '<button id="bannerGoOptin" style="background:#fff;color:#1a3a1f;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;white-space:nowrap">Open Opt-in Logs →</button>'
+       + '</div>';
+  }
   // Setup-state banners. These are the "why is nothing flowing" causes — all
   // ride at the top of every dashboard tab (the header block is shared, so a
   // tab-switch never hides them). Stacked when more than one applies so the
@@ -5205,6 +5263,14 @@ function renderHeader(s) {
   }
   h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + alwaysBtn + resetBtn + '</div>';
   if (!setSectionHTML('header', h)) return;
+  // Stale-backfill banner has a one-click hop to the Opt-in Logs pane.
+  // Drives directly at the nav button so we reuse its tab-switching glue
+  // (active class swap + refreshOptin) without duplicating it here.
+  const goOptin = document.getElementById('bannerGoOptin');
+  if (goOptin) _bindOnce(goOptin, 'click', () => {
+    const tabBtn = document.querySelector('.nav button[data-tab="optin"]');
+    if (tabBtn) tabBtn.click();
+  });
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
   function _startRestartPoll(bannerId) {
@@ -6590,11 +6656,29 @@ function renderOptin(o) {
         const whoLabel = whoTip
           ? ' <span class="dim" style="font-size:10px" title="' + esc(whoTip) + '">↺ rescanned ' + esc(whoVer) + '</span>'
           : '';
+        // Stale-backfill nudge: the agent has shipped new detectors since
+        // this file was backfilled. We pulse the ↻ Re-run button and prefix
+        // the row with a small chip naming what would land. Matches the
+        // pulse on the header banner so the two cues are visibly tied.
+        const stale     = (f.staleDetectors || []);
+        const isStale   = stale.length > 0;
+        const staleLbls = stale.map(d => d.label).join(', ');
+        const staleTip  = isStale
+          ? 'Backfilled under v' + esc((f.resume && f.resume.agentVersion) || '?') + '. New detectors since: ' + esc(staleLbls) + '. Re-run to capture them.'
+          : '';
+        const staleChip = isStale
+          ? ' <span class="dim" style="font-size:10px;background:#1a3a1f;color:#bff5c5;border:1px solid #2ea043;border-radius:3px;padding:1px 6px;margin-left:6px" title="' + staleTip + '">★ ' + stale.length + ' new</span>'
+          : '';
+        const rerunClass = isStale ? ' class="wp-rerun-stale"' : '';
+        const rerunTip   = isStale
+          ? staleTip
+          : 'Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting.';
         resumeStr =
           '<span style="color:var(--green)" title="' + esc(tip) + '">✓ done</span>' +
           (when ? ' <span class="dim" style="font-size:10px">' + esc(when.replace(/, /, ' ')) + (ver ? ' · ' + esc(ver) : '') + '</span>' : '') +
           whoLabel +
-          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting." style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>' +
+          staleChip +
+          ' <button data-rerun="' + esc(f.path) + '"' + rerunClass + ' title="' + rerunTip + '" style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>' +
           ' <button data-rescan-who="' + esc(f.path) + '" title="Re-scan this file for /who rows only (fast — skips chat + combat which are already uploaded). Captures visible-class /who rows that a pre-v3.0.35 keep-pattern bug silently dropped." style="margin-left:4px;background:#1f6feb;border:1px solid #1f6feb;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↺ /who only</button>';
       }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
@@ -8622,20 +8706,30 @@ async function _readBody(req, max = 64 * 1024) {
 
 function _serializeOptinForWeb() {
   if (!_optinState.scanned) _scanOptInFiles();
-  const mapFile = (f) => ({
-    path:      f.path,
-    character: f.character,
-    isAlt:     f.isAlt,
-    isWatched: !!f.isWatched,  // ← was omitted; without it the UI couldn't tell
-    sizeBytes: f.sizeBytes,    //   the checkbox should render as `disabled`,
-    sizeMb:    f.sizeMb,       //   so clicks reached the server but were
-    mtime:     f.mtime ? f.mtime.getTime() : null,  // silently dropped by the
-    selected:  !!f.selected,                        // `!f.isWatched` guard
-    requested: !!f.requested,                       // in the select handler.
-    resume:    f.resume || null,
-    active:    _activeBackfills.has(f.path),
-    activeStatus: _activeBackfills.get(f.path) || null,
-  });
+  const mapFile = (f) => {
+    // A completed backfill is "stale" when newer detectors have shipped since
+    // the version stored in resume.agentVersion. Caller surfaces this as a
+    // pulse on the ↻ Re-run button + a top-of-page banner counting how many
+    // files would benefit. Empty array = nothing new to extract.
+    const resume = f.resume || null;
+    const isComplete = !!(resume && resume.complete && resume.agentVersion);
+    const stale = isComplete ? detectorsStaleSince(resume.agentVersion) : [];
+    return {
+      path:      f.path,
+      character: f.character,
+      isAlt:     f.isAlt,
+      isWatched: !!f.isWatched,  // ← was omitted; without it the UI couldn't tell
+      sizeBytes: f.sizeBytes,    //   the checkbox should render as `disabled`,
+      sizeMb:    f.sizeMb,       //   so clicks reached the server but were
+      mtime:     f.mtime ? f.mtime.getTime() : null,  // silently dropped by the
+      selected:  !!f.selected,                        // `!f.isWatched` guard
+      requested: !!f.requested,                       // in the select handler.
+      resume,
+      staleDetectors: stale.map(d => ({ version: d.version, name: d.name, label: d.label })),
+      active:    _activeBackfills.has(f.path),
+      activeStatus: _activeBackfills.get(f.path) || null,
+    };
+  };
   return {
     sortMode: _optinState.sortMode,
     pane:     _optinState.pane,
@@ -11724,6 +11818,37 @@ function parseDirgeCast(line, selfName) {
   };
 }
 
+// ── Detector history (manifest of when each detector landed) ────────────────
+// Drives the "your backfill is stale" UI. Each entry: the agent version that
+// FIRST extracted that detector. When a file's recorded backfill version is
+// older than ANY entry here, the UI surfaces a pulse on its ↻ Re-run button
+// and a top-of-page banner counts how many files would benefit from a re-run.
+//
+// Add a row whenever you ship a new detector that mines historical log lines.
+// Pure live-tail-only features (PvP ledger relays, encounter rollups already
+// dedupped server-side, etc.) don't need entries — they're auto-applied on
+// the next live event and re-running won't pull anything new.
+//
+// Format: { version: 'x.y.z', name: 'detector_id', label: 'Human-readable' }
+const DETECTOR_HISTORY = [
+  // v3.0.62 — bard Dirge of *.
+  { version: '3.0.62', name: 'dirge_cast',           label: 'Dirge of * casts' },
+  // The earlier detectors (Peopleslayer LD, Malthur provisions, Dragon Punch,
+  // Feral Avatar, etc.) shipped before this manifest existed. They're left
+  // out intentionally — a backfill from any 3.x version already covered them,
+  // and adding them retroactively would mark every old file stale on first
+  // run for no recoverable gain.
+];
+
+// Returns the detector entries that have shipped AFTER `priorVersion`. Pass
+// null / undefined to get every detector (used for "you haven't backfilled at
+// all" callers). A file recorded as v3.0.62 will report dirge_cast as already
+// covered; an older one will see it as stale.
+function detectorsStaleSince(priorVersion) {
+  if (!priorVersion) return DETECTOR_HISTORY.slice();
+  return DETECTOR_HISTORY.filter(d => isNewerVersion(d.version, priorVersion));
+}
+
 // ── 🐺 Feral Avatar cast — Beastlord epic 1.0 click ───────────────────────────
 // Two forms — caster-side ("You begin casting…") only fires on the BL's own
 // agent; bystander-side ("Fittir begins casting…") fires on any agent in
@@ -14271,6 +14396,43 @@ async function main() {
     for (const b of builders) {
       console.log(`[${b.character}] scanning ${b.logPath}`);
       await readWindow(b.logPath, since, until, line => {
+        // Fun-event detection — mirrors the opt-in backfill path so a CLI
+        // bulk replay captures the same guild-flavor counters (Peopleslayer
+        // LD, Malthur provisions, Dragon Punch, Dirges, Feral Avatar, …).
+        // The bot's (guild_id, event_type, caster, event_ts) upsert key
+        // dedups re-runs and overlap with other agents who saw the same
+        // line, so emitting freely from --since is safe.
+        const ldEvt = parsePeopleslayerLd(line);
+        if (ldEvt) funEventBuffer.push(ldEvt);
+        const provEvt = parseMalthurProvision(line, b.character);
+        if (provEvt) funEventBuffer.push(provEvt);
+        const sumProvEvt = parseSummonProvisions(line, b.character);
+        if (sumProvEvt) funEventBuffer.push(sumProvEvt);
+        const cursorEvt = parseCursorFull(line, b.character);
+        if (cursorEvt) funEventBuffer.push(cursorEvt);
+        const htEvt = parseHarmTouch(line, b.character);
+        if (htEvt) funEventBuffer.push(htEvt);
+        const lohEvt = parseLayOnHands(line, b.character);
+        if (lohEvt) funEventBuffer.push(lohEvt);
+        const pkEvt = parsePvpFlag(line, b.character);
+        if (pkEvt) funEventBuffer.push(pkEvt);
+        const dpEvt = parseDragonPunch(line, b.character);
+        if (dpEvt) funEventBuffer.push(dpEvt);
+        const dirgeEvt = parseDirgeCast(line, b.character);
+        if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+        const faCastEvt = parseFeralAvatar(line, b.character);
+        if (faCastEvt) funEventBuffer.push(faCastEvt);
+        const faEvt = parseFeralAvatarReceived(line, b.character);
+        if (faEvt) funEventBuffer.push(faEvt);
+        const savEvt = parseSavageryReceived(line, b.character);
+        if (savEvt) funEventBuffer.push(savEvt);
+        // Observed buff landings on other players — same as opt-in path.
+        // Almost always expired by the time --since runs, but the web
+        // filters expired so this costs nothing and occasionally rescues
+        // a still-active buff from a recent log replay.
+        const bcEvt = parseBuffLanding(line, b.character);
+        if (bcEvt) buffCastBuffer.push(bcEvt);
+
         const chatMsg = parseChatLine(line, b.character);
         if (chatMsg) {
           chatBatch.push({ ...chatMsg, uploadedBy: b.character });
@@ -14285,6 +14447,18 @@ async function main() {
       b.builder.flush();
     }
     await flushChat(true).catch(() => {});
+    // Drain the fun-event + buff-cast buffers. Watch mode lets the 5s
+    // startChatRelay tick handle this; --since is one-shot and exits, so we
+    // flush inline before the process returns. Otherwise everything we just
+    // detected sits in-memory and never uploads.
+    if (funEventBuffer.length > 0) {
+      await uploadFunEvents(funEventBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[fun-event backfill] ${err.message}`));
+    }
+    if (buffCastBuffer.length > 0) {
+      await uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[buff-cast backfill] ${err.message}`));
+    }
     console.log('Backfill complete.');
     return;
   }
