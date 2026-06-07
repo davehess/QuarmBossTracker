@@ -13127,6 +13127,10 @@ function _pushOverlay(o) {
 // rampage (or the same line seen across several boxed logs) doesn't
 // machine-gun the TTS. Gated downstream by the user's "Trigger alerts (TTS)"
 // toggle — the overlay only speaks recentTriggerFires when alerts are on.
+//
+// Each new target also rides the cross-Mimic fan-out relay so raiders whose
+// own log missed the rampage line (zoning, partial capture) still hear the
+// call. Receivers dedup against their own _localFireKeys map.
 const _rampageAnnounce = new Map();   // target.toLowerCase() → lastAnnounceMs
 const RAMPAGE_ANNOUNCE_COOLDOWN_MS = 6000;
 function _announceRampage(target, tsMs) {
@@ -13138,9 +13142,11 @@ function _announceRampage(target, tsMs) {
   if (_rampageAnnounce.size > 50) {
     for (const [k, v] of _rampageAnnounce) if (now - v > 60000) _rampageAnnounce.delete(k);
   }
+  const displayText = '🔥 NEW RAMPAGE: ' + target;
+  const ttsText     = 'New rampage: ' + target;
   _pushOverlay({
-    text:    '🔥 RAMPAGE → ' + target,
-    tts:     target + ' is on rampage',
+    text:    displayText,
+    tts:     ttsText,
     trigger: 'rampage',
     scope:   'guild',
     firedAt: now,
@@ -13151,11 +13157,32 @@ function _announceRampage(target, tsMs) {
   // raider's agent by the key, so the channel sees one line per rampage target.
   _broadcastTriggerToDiscord({
     name:    'rampage',
-    message: '🔥 **RAMPAGE** → ' + target,
+    message: '🔥 **NEW RAMPAGE**: ' + target,
     key:     'rampage:' + key,
     tsMs:    now,
     mode:    'post',
   });
+  // Cross-Mimic fan-out — covers raiders whose log didn't capture this
+  // rampage line. The synthetic trigger carries a text_overlay action
+  // so receivers get the same visual + TTS as a locally-detected fire.
+  // _markFireSeen is wired into _relayLocalFire's downstream check on
+  // each receiver so a raider who detected AND received the fire
+  // doesn't double-play.
+  const fireKey = 'rampage:' + JSON.stringify({ target });
+  _markFireSeen(fireKey, now);
+  _relayLocalFire(
+    { name: 'New Rampage', _scope: 'guild', timer_duration_sec: 0 },
+    [{
+      type:        'text_overlay',
+      text:        displayText,
+      tts:         ttsText,
+      color:       'red',
+      duration_ms: 5000,
+    }],
+    { target },
+    now,
+    fireKey,
+  );
 }
 
 // ── Cross-Mimic trigger relay (fan-out) ────────────────────────────────────
