@@ -640,6 +640,11 @@ Valid expansions: `Classic` (15) / `Kunark` (16) / `Velious` (35) / `Luclin` (47
 ### Git/merge convention
 Always `git merge <branch> -m "vX.Y.Z — short reason"` — never `--no-edit`. Railway uses merge commit message as deploy name.
 
+### Branch policy
+- `main` — production. Bot (Railway), web (Vercel), and agent releases ship from here. Always green.
+- `beta` — **Mimic only.** Beta-channel Mimic builds (`release-mimic.yml` auto-tags from this branch) live here. Bot / agent / web changes should NOT ride along on beta — they should branch off `main`, get reviewed, and merge straight back to `main`. If a Mimic beta commit also needs to land for the bot/agent/web, cherry-pick the relevant pieces to a separate PR off `main` rather than promoting the whole beta branch.
+- Working branches (`claude/*`, feature branches) — branch off `main`, merge back to `main` with a versioned `-m` message.
+
 ---
 
 ## First-time Setup Order
