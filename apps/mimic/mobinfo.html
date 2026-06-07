@@ -366,10 +366,13 @@
     if (_tab === 'loot') {
       tabBody = renderLoot(mob, mi);
     } else if (_tab === 'spells') {
-      // Spells & abilities tab. The eqemu spells linkage (npc_spells_id →
-      // eqemu_npc_spells) isn't synced to Supabase yet, so we surface the
-      // mob's decoded special-abilities chips as a "what we know now" view
-      // and a note about the full spell list landing once the catalog syncs.
+      // Spells & abilities tab. Two surfaces stacked:
+      //   1) Decoded special-abilities chips (rampage / triple / etc.) at top.
+      //   2) The mob's spell list — name + mana + cast time + recast,
+      //      sorted by priority (the eqemu npc_spells_entries priority field
+      //      is the cast preference). Pulled from /api/agent/mob-info's
+      //      new `spells` array; empty if the npc_spells linkage hasn't
+      //      synced to Supabase yet for this mob.
       var specChips = '';
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
         for (var sj=0; sj<mob.specials.length; sj++){
@@ -377,8 +380,39 @@
           specChips += '<span class="'+specClass(slab)+'">'+esc(slab)+'</span>';
         }
       }
-      tabBody = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>'
-              + '<div class="sub" style="margin-top:6px;color:#6e7681">spell-by-spell list pending eqemu_npc_spells sync.</div>';
+      var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>';
+      var spellsBlock = '';
+      if (mob && Array.isArray(mob.spells) && mob.spells.length > 0){
+        // Compact GINA-style table: name (left) · mana · cast · recast.
+        // Recast is in ms but displayed in seconds for readability — Quarm
+        // recasts are typically 5-60s, so seconds give the right precision.
+        var rows = '';
+        for (var spi = 0; spi < mob.spells.length; spi++){
+          var sp = mob.spells[spi];
+          var name = esc(sp.name || ('Spell #' + sp.id));
+          var mana = (sp.mana != null) ? esc(String(sp.mana)) : '—';
+          var cast = (sp.cast_ms != null) ? (sp.cast_ms >= 1000 ? (sp.cast_ms/1000).toFixed(1)+'s' : sp.cast_ms+'ms') : '—';
+          var recast = (sp.recast_ms != null) ? (sp.recast_ms >= 1000 ? Math.round(sp.recast_ms/1000)+'s' : sp.recast_ms+'ms') : '—';
+          rows += '<div style="display:grid;grid-template-columns:1fr 36px 50px 50px;gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
+                +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + '</span>'
+                +   '<span style="color:#79c0ff;text-align:right;font-variant-numeric:tabular-nums">' + mana + '</span>'
+                +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + cast + '</span>'
+                +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + recast + '</span>'
+                + '</div>';
+        }
+        spellsBlock = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
+                    +   '<div style="display:grid;grid-template-columns:1fr 36px 50px 50px;gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;padding:0 0 2px;border-bottom:1px solid rgba(110,118,129,0.12);margin-bottom:2px">'
+                    +     '<span>Spell</span>'
+                    +     '<span style="text-align:right">Mana</span>'
+                    +     '<span style="text-align:right">Cast</span>'
+                    +     '<span style="text-align:right">Recast</span>'
+                    +   '</div>'
+                    +   rows
+                    + '</div>';
+      } else {
+        spellsBlock = '<div class="sub" style="margin-top:8px;color:#6e7681">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';
+      }
+      tabBody = specBlock + spellsBlock;
     } else {
       // resist grid (AC + 5 resists)
       var res = '';

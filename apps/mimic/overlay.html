@@ -9,6 +9,15 @@
     border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px)}
   .title{font-size:10px;color:#58a6ff;letter-spacing:0.1em;text-transform:uppercase;
     display:flex;justify-content:space-between}
+  /* DPS / Tank tabs — ported from mobinfo.html so the surface reads the
+     same across overlays. Same margin-right:28px clears the ✕ hide
+     button at the top-right. */
+  .tabs{display:flex;gap:2px;margin-left:auto;margin-right:28px}
+  .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
+       border-radius:4px;padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.5px}
+  .tab:hover{color:#fff;border-color:#a371f7}
+  .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
   .boss{font-size:12px;color:#f6c365;margin:4px 0 6px}
   ul{list-style:none;margin:0;padding:0}
   /* EQLogParser-style row: rank · name · %% · Damage · DPS · Sec. Grid columns
