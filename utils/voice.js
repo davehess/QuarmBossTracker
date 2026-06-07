@@ -123,12 +123,28 @@ async function _ensureConnected(guildClient, channelId) {
   // handshake hangs (Signalling → Connecting → Ready, or Disconnected at
   // any step). Critical because the previous silent failure (broken
   // libsodium ESM entry) left no trail at all.
+  let _networkingAttached = false;
   connection.on('stateChange', (oldState, newState) => {
     if (oldState.status !== newState.status) {
       console.log(`[voice] connection state ${oldState.status} → ${newState.status} (channel ${channelId})`);
     }
+    // Attach networking-level listeners the first time we reach connecting.
+    // The connection's underlying networking instance is what actually
+    // talks to Discord's voice gateway + UDP — close codes and modes
+    // surface here, not on the VoiceConnection itself.
+    if (!_networkingAttached && newState.networking) {
+      _networkingAttached = true;
+      const nw = newState.networking;
+      nw.on('stateChange', (oldNS, newNS) => {
+        if (oldNS.code !== newNS.code) {
+          console.log(`[voice-net] networking state ${oldNS.code} → ${newNS.code}`);
+        }
+      });
+      nw.on('error', err => console.warn('[voice-net] networking error:', err?.message, err?.stack?.split('\n')[1]));
+      nw.on('close', code => console.warn('[voice-net] networking closed with code:', code));
+    }
   });
-  connection.on('error', err => console.warn('[voice] connection error:', err?.message));
+  connection.on('error', err => console.warn('[voice] connection error:', err?.message, err?.stack?.split('\n')[1]));
 
   // Wait for the connection to be Ready before we try to subscribe a player.
   // 20s catches startup hiccups (Discord WebSocket lag, region failover);
