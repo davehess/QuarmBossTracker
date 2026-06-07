@@ -10,7 +10,7 @@
 //
 // Returns ephemerally — the joke voice line is the public confirmation.
 
-const { SlashCommandBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags, PermissionsBitField, ChannelType } = require('discord.js');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
 
 const DEFAULT_MESSAGE = "Wolf Pack voice test. If you can hear this, the bot is wired through and ready for raid call-outs.";
@@ -70,6 +70,45 @@ module.exports = {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    // Preflight perm probe — the previous failure mode was a silent
+    // "signalling → destroyed" hang because Discord rejected the OP 4
+    // VoiceStateUpdate. The most common cause is a channel-level perm
+    // overwrite hiding CONNECT/SPEAK from the bot even when the role
+    // appears to grant them. Resolve and print effective perms BEFORE
+    // attempting the join so we can confirm or rule out perms in one
+    // round trip.
+    const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
+    if (!channel) {
+      return interaction.editReply({
+        content: `❌ Could not fetch channel \`${channelId}\`. It may not exist in this guild, or the bot doesn't have View Channel on it.`,
+      });
+    }
+    const channelTypeName = ChannelType[channel.type] || `unknown(${channel.type})`;
+    if (channel.type !== ChannelType.GuildVoice && channel.type !== ChannelType.GuildStageVoice) {
+      return interaction.editReply({
+        content: `❌ Channel <#${channelId}> is **${channelTypeName}**, not a voice channel. Update RAID_VOICE_CHANNEL_ID / OFFNIGHT_VOICE_CHANNEL_ID to a real voice channel.`,
+      });
+    }
+    const botMember = interaction.guild.members.me;
+    const perms = channel.permissionsFor(botMember);
+    const has = (flag) => perms?.has(flag) ?? false;
+    const need = [
+      ['ViewChannel', PermissionsBitField.Flags.ViewChannel],
+      ['Connect',     PermissionsBitField.Flags.Connect],
+      ['Speak',       PermissionsBitField.Flags.Speak],
+    ];
+    const missing = need.filter(([, f]) => !has(f)).map(([n]) => n);
+    if (missing.length > 0) {
+      const present = need.filter(([, f]) => has(f)).map(([n]) => n);
+      return interaction.editReply({
+        content:
+          `❌ Bot is missing **${missing.join(', ')}** on <#${channelId}> (${channelTypeName}).\n` +
+          `Currently has: ${present.join(', ') || 'nothing'}.\n` +
+          `Fix: open the voice channel's permissions tab and grant CONNECT + SPEAK + VIEW CHANNEL to the bot's role OR to the bot user directly. Role-level perms are overridden by channel-level perms.`,
+      });
+    }
+    console.log(`[voicetest] perms ok on ${channelId}: ${need.map(([n]) => n).join(', ')}`);
 
     let voice;
     try { voice = require('../utils/voice'); }
