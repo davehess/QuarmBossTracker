@@ -1,0 +1,79 @@
+{
+  "id": "dirge-team-6-bard",
+  "name": "Dirge Team 6™",
+  "version": 2,
+  "class": "Bard",
+  "credit": "Vann | Barb",
+  "era": "Velious",
+  "captured_at": "2026-06-08T00:00:00Z",
+  "description": "Bard PvP rotation. Pre-dirge softens the target (mez → dispel → mana drain), then Dirgin' Time stacks every buff that boosts damage + resists + casting before the Dirge of Carnage lands.",
+  "availability_note": "Spells in the phases below are the CORE of the rotation — they're the only required pieces. Everything in the Optional Clickies / Optional Potions sections is gear-tier-dependent and ANY of them are fine to skip if you don't have the item. Bring what you have on the truck.",
+  "phases": [
+    {
+      "name": "Pre-dirge",
+      "page": 4,
+      "page_label": "Shift+5",
+      "buttons": [
+        { "slot": 0, "label": "Mez",        "color": 10, "lines": ["/cast 5"], "notes": "Lock the target in place before the burn." },
+        { "slot": 1, "label": "Dispel",     "color": 11, "lines": ["/cast 6"], "notes": "Strip protective buffs (rune, shielding, etc.)." },
+        { "slot": 2, "label": "Mana drain", "color": 12, "lines": ["/cast 7"], "notes": "Cut their casts off at the knees." }
+      ]
+    },
+    {
+      "name": "Dirgin' Time",
+      "page": 5,
+      "page_label": "Shift+6",
+      "buttons": [
+        { "slot": 0, "label": "Puretone",   "color": 5,  "lines": ["/cast 1"], "notes": "Puretone Etude — resist boost." },
+        { "slot": 1, "label": "Amp",        "color": 5,  "lines": ["/cast 2"], "notes": "Amplification — can be SUNG (level-gated) or CLICKED off Voice of the Serpent." },
+        { "slot": 2, "label": "Harmonize",  "color": 5,  "lines": ["/cast 3"], "notes": "Shadowsong Cloak clicky. If you don't have the cloak, use Resonance (next slot) instead." },
+        { "slot": 3, "label": "Resonance",  "color": 5,  "lines": ["/cast 4"], "notes": "Free alternative to Harmonize — base bard song, no item required." },
+        { "slot": 4, "label": "OOS",        "color": 5,  "lines": ["/cast 5"], "notes": "Out of Spirits — songweave debuff." },
+        { "slot": 5, "label": "Fufils",     "color": 5,  "lines": ["/cast 6"], "notes": "Fufil's Curtailing Chant — final softener." },
+        { "slot": 6, "label": "Dirge!",     "color": 14, "lines": ["/cast 7"], "notes": "Dirge of Carnage — the payoff." }
+      ]
+    }
+  ],
+  "spell_sets": [
+    {
+      "name": "Dirge Team 6 Spell Set",
+      "spells": [
+        "Mez", "Dispel Magic", "Drain Spirit",
+        "Puretone Etude", "Amplification", "Harmonize / Resonance",
+        "Out of Spirits", "Fufil's Curtailing Chant", "Dirge of Carnage"
+      ]
+    }
+  ],
+  "bandolier": [],
+  "clickies": [
+    {
+      "slot": "neck",
+      "item": "Voice of the Serpent",
+      "tier": "Velious",
+      "required": false,
+      "provides": "Amplification (clicky version, no cast cost)",
+      "alternatives": ["Sing Amplification yourself once you're level-eligible — same effect, no item needed."],
+      "notes": "Nice if you have it; skip otherwise."
+    },
+    {
+      "slot": "back",
+      "item": "Shadowsong Cloak",
+      "tier": "Velious",
+      "required": false,
+      "provides": "Harmonize (replaces Resonance)",
+      "alternatives": ["Resonance (base bard song) — same row in the rotation, no item required."],
+      "notes": "If you don't have the cloak, drop the Harmonize button and sing Resonance from the bottom row instead."
+    },
+    {
+      "slot": "instrument",
+      "item": "Singing Short Sword (or any bard instrument you main)",
+      "tier": "Classic+",
+      "required": false,
+      "provides": "Stringed/percussion modifier for relevant songs",
+      "alternatives": ["Any instrument matching your active song family — Drum / Wind / Stringed / Brass."],
+      "notes": "Bring the instrument family that boosts whichever song you lead the burn with."
+    }
+  ],
+  "potions": [],
+  "_potions_note": "Quarm-available potion picks not verified yet. If you have a known-good potion in your inventory you want surfaced (HP, mana, cure-X), name it and we'll add it to the template."
+}

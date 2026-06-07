@@ -4489,6 +4489,72 @@ async function _handleAgentSpellCatalog(req, res) {
   return res.end(_spellCatalogCache.body);
 }
 
+// GET /api/agent/item-clickies
+//
+// Returns the click-effect catalog for every item that has one. Lets the
+// Mimic melody overlay show the right cast time when a player triggers an
+// item (Robe of the Spring → 12s Skin like Nature, not the spell's bare
+// 5s). Shape: { version, fetched_at, count, entries: [{ name, casttime,
+// clickeffect, clicktype, clicklevel }] }. Cached aggressively because the
+// item catalog is huge but virtually static.
+//
+// Defensively handles the case where the migration adding casttime /
+// clickeffect / clicktype columns hasn't applied yet — returns an empty
+// catalog instead of 500ing so the agent can still operate.
+let _itemClickyCache    = null;
+const _ITEM_CLICKY_TTL_MS = 6 * 60 * 60 * 1000;
+async function _handleAgentItemClickies(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const fresh = _itemClickyCache && (Date.now() - _itemClickyCache.fetchedAt) < _ITEM_CLICKY_TTL_MS;
+  if (!fresh) {
+    const entries = [];
+    try {
+      const supabase = require('./utils/supabase');
+      let from = 0;
+      const PAGE = 1000;
+      while (true) {
+        const data = await supabase.select('eqemu_items',
+          `select=id,name,casttime,clickeffect,clicktype,clicklevel&clickeffect=not.is.null&order=id.asc&offset=${from}&limit=${PAGE}`);
+        if (!Array.isArray(data) || data.length === 0) break;
+        for (const r of data) {
+          entries.push({
+            id: r.id, name: r.name,
+            casttime: r.casttime, clickeffect: r.clickeffect,
+            clicktype: r.clicktype, clicklevel: r.clicklevel,
+          });
+        }
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+    } catch (err) {
+      // Column missing (migration not applied yet) or other transient
+      // failure — keep the bot alive and return an empty catalog so the
+      // agent gracefully falls back to spell-based cast times.
+      console.warn('[item-clickies] fetch failed (returning empty):', err && err.message);
+    }
+    const body = JSON.stringify({
+      version: 1,
+      fetched_at: new Date().toISOString(),
+      count: entries.length,
+      entries,
+    });
+    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+    _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+  }
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch && ifNoneMatch === _itemClickyCache.etag) {
+    res.writeHead(304, { 'ETag': _itemClickyCache.etag, 'Cache-Control': 'max-age=21600' });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'ETag': _itemClickyCache.etag,
+    'Cache-Control': 'max-age=21600',
+  });
+  return res.end(_itemClickyCache.body);
+}
+
 // GET /api/agent/mob-info?name=<npc>
 //
 // Target-mob lookup for Mimic's Mob Info overlay. Resolves the agent's current
@@ -5160,7 +5226,13 @@ async function _handleAgentTrigger(req, res) {
       if (!voiceCh) {
         // No channel configured — drop silently. Caller still gets an OK.
       } else {
-        await _playVoiceTrigger({ message, voiceId: ev?.voice_id || null, channelId: voiceCh, uploadedBy: identity.discord_id });
+        await _playVoiceTrigger({
+          message,
+          voiceId:     ev?.voice_id || null,
+          channelId:   voiceCh,
+          uploadedBy:  identity.discord_id,
+          triggerName: ev?.name || null,
+        });
         spoken++;
         _triggerRate.set(identity.discord_id, [...rate, now]);
       }
@@ -5182,12 +5254,31 @@ async function _handleAgentTrigger(req, res) {
   res.end(JSON.stringify({ ok: true, posted, spoken }));
 }
 
-// Voice playback path. STUB until commit B wires @discordjs/voice + the TTS
-// engines (free default, ElevenLabs when ELEVENLABS_API_KEY is set). Until
-// then, every voice fire logs a single line so officers can verify the chain
-// works end-to-end without audio.
-async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy }) {
-  console.log(`[trigger-voice] would speak in <#${channelId}> (voice=${voiceId || 'default'}, by=${uploadedBy}): ${message}`);
+// Voice playback path. Hands off to utils/voice.js, which queues + speaks
+// via @discordjs/voice + Edge TTS. The voice module is fail-soft: missing
+// deps / kick from the channel / TTS HTTP errors log once and drop the
+// message rather than poisoning the trigger pipeline. The text-post path
+// is independent so officers always have a backstop.
+async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy, triggerName }) {
+  try {
+    const voice = require('./utils/voice');
+    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+    if (!guild) {
+      console.warn('[trigger-voice] DISCORD_GUILD_ID not in cache — dropping');
+      return;
+    }
+    const ok = await voice.playInVoice({
+      guildClient: guild,
+      channelId,
+      text:        message,
+      voiceId,
+      triggerName,    // surfaces to the /admin/voice "skip these trigger names" filter
+    });
+    if (!ok) console.log('[trigger-voice] play returned false for', channelId, '(may be ripcord or skip filter)');
+  } catch (err) {
+    console.warn('[trigger-voice] handler error:', err?.message);
+  }
+  void uploadedBy;   // logged upstream via _trackUpload; voice doesn't need it
 }
 
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
@@ -6508,6 +6599,37 @@ http.createServer(async (req, res) => {
     }
   }
 
+  // Cache bust for voice_settings. The /admin/voice page calls this after
+  // saving so the ripcord takes effect without waiting out the 30s TTL.
+  // Bearer-auth gated (same token as the agent endpoints) — anyone with
+  // the token already has full data-plane access, so this is no broader.
+  if (req.method === 'POST' && req.url === '/api/admin/voice-settings/refresh') {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+    try {
+      const vs = require('./utils/voiceSettings');
+      vs.invalidate();
+      // If the admin just flipped the ripcord (enabled=false), boot the bot
+      // out of voice NOW instead of finishing the in-flight queue. Cheap —
+      // the next allowed fire reconnects. Re-fetch first so we read what was
+      // just saved, not the stale cached value.
+      const guildId = process.env.DISCORD_GUILD_ID;
+      if (guildId) {
+        const fresh = await vs.get(guildId);
+        if (!fresh.enabled) {
+          try { require('./utils/voice').leaveVoice(guildId, 'admin ripcord'); }
+          catch (err) { void err; }
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      console.warn('[voice-settings refresh] error:', err?.message);
+      res.writeHead(500);
+      return res.end();
+    }
+  }
+
   // Incomplete-encounter list — agent polls this per logged-in character to
   // decide whether to show the "we need your logs" banner. Returns the set
   // of encounters flagged data_incomplete that the queried character was in.
@@ -6543,6 +6665,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentSpellCatalog(req, res); }
     catch (err) {
       console.error('[spell-catalog] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/item-clickies')) {
+    try { return await _handleAgentItemClickies(req, res); }
+    catch (err) {
+      console.error('[item-clickies] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

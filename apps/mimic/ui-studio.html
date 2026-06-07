@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>UI Studio</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
+    font-family:ui-sans-serif,system-ui,sans-serif;user-select:none;overflow:hidden}
+  /* Top toolbar — resolution pickers, character selector, save/load. */
+  #bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;
+    border-bottom:1px solid #30363d;flex-wrap:wrap}
+  #bar h1{font-size:13px;margin:0;color:#7ee7c7;letter-spacing:0.5px;font-weight:600;margin-right:6px}
+  #bar label{font-size:11px;color:#8b949e;display:flex;align-items:center;gap:4px}
+  #bar select,#bar input,#bar button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;
+    border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit}
+  #bar select:hover,#bar input:hover{border-color:#58a6ff}
+  #bar button{cursor:pointer;background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+  #bar button:hover{background:#388bfd}
+  #bar button.secondary{background:#21262d;border-color:#30363d;color:#c9d1d9;font-weight:500}
+  #bar button.secondary:hover{background:#30363d}
+  #bar button[disabled]{opacity:0.4;cursor:not-allowed}
+  #bar .sep{width:1px;height:18px;background:#30363d;margin:0 2px}
+  #status{margin-left:auto;font-size:10px;color:#8b949e}
+  #status.ok{color:#56d364} #status.err{color:#f87171}
+  /* Canvas — proportional to target resolution, scaled to fit. Black bg
+     represents the EQ screen. Window rectangles overlay. */
+  #stageWrap{display:flex;justify-content:center;align-items:center;flex:1;padding:14px;
+    background:#0a0c10;height:calc(100vh - 50px);overflow:auto}
+  #stage{position:relative;background:#000;border:1px solid #58a6ff;
+    box-shadow:0 0 12px rgba(88,166,255,0.18)}
+  /* Each window rectangle is absolutely positioned inside #stage. Color-coded
+     by kind so a glance at the canvas tells you what's a chat window vs a
+     buff bar vs a spell-gem strip without having to read every label. */
+  .win{position:absolute;background:rgba(31,111,235,0.18);
+    border:1px solid rgba(88,166,255,0.7);border-radius:2px;cursor:move;
+    overflow:hidden;transition:box-shadow .12s}
+  .win.kind-chat     {background:rgba(126,231,199,0.18);border-color:rgba(126,231,199,0.7)}
+  .win.kind-buffs    {background:rgba(212,153,255,0.18);border-color:rgba(212,153,255,0.7)}
+  .win.kind-songs    {background:rgba(255,176,217,0.18);border-color:rgba(255,176,217,0.7)}
+  .win.kind-gems     {background:rgba(214,153,34,0.20);border-color:rgba(214,153,34,0.75)}
+  .win.kind-inventory{background:rgba(187,154,121,0.18);border-color:rgba(187,154,121,0.7)}
+  .win.kind-group    {background:rgba(105,219,124,0.18);border-color:rgba(105,219,124,0.7)}
+  .win.kind-raid     {background:rgba(248,81,73,0.18);border-color:rgba(248,81,73,0.7)}
+  .win.kind-target   {background:rgba(255,123,114,0.18);border-color:rgba(255,123,114,0.7)}
+  .win.kind-player   {background:rgba(255,176,176,0.18);border-color:rgba(255,176,176,0.7)}
+  .win.kind-hotbar   {background:rgba(240,136,62,0.18);border-color:rgba(240,136,62,0.7)}
+  .win.kind-pet      {background:rgba(192,154,255,0.15);border-color:rgba(192,154,255,0.6)}
+  .win.kind-compass,.win.kind-map{background:rgba(110,155,214,0.15);border-color:rgba(110,155,214,0.6)}
+  .win:hover{filter:brightness(1.4);box-shadow:0 0 6px rgba(88,166,255,0.5)}
+  .win.selected{border-color:#7ee7c7;background:rgba(126,231,199,0.32);
+    box-shadow:0 0 10px rgba(126,231,199,0.8)}
+  .win .lbl{position:absolute;top:2px;left:4px;font-size:9px;color:#fff;
+    text-shadow:0 1px 2px #000;font-weight:600;pointer-events:none;
+    text-overflow:ellipsis;white-space:nowrap;overflow:hidden;max-width:calc(100% - 8px)}
+  .win .sz{position:absolute;bottom:2px;right:4px;font-size:8px;color:#9aa4ad;
+    text-shadow:0 1px 2px #000;pointer-events:none}
+  .win .grip{position:absolute;width:8px;height:8px;background:#7ee7c7;
+    border:1px solid #000;border-radius:1px;z-index:5}
+  .win .grip.se{right:-4px;bottom:-4px;cursor:nwse-resize}
+  /* Side panel for the selected window's properties. */
+  #side{position:fixed;top:50px;right:0;bottom:0;width:240px;background:#161b22;
+    border-left:1px solid #30363d;padding:10px;font-size:11px;overflow-y:auto;
+    display:none}
+  #side.on{display:block}
+  #side h3{margin:0 0 8px 0;color:#7ee7c7;font-size:12px}
+  #side .field{margin-bottom:6px}
+  #side .field label{display:block;color:#8b949e;font-size:10px;margin-bottom:2px}
+  #side .field input{width:100%;box-sizing:border-box;background:#0d1117;
+    color:#e6edf3;border:1px solid #30363d;border-radius:3px;padding:3px 6px;font-size:11px}
+  #side .row{display:flex;gap:6px}
+  #side .row .field{flex:1}
+  #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
+  #stageWrap.has-side #stage{margin-right:240px}
+  /* Snap edge highlight when dragging — visual feedback when a window
+     edge aligns with another window edge. */
+  .snap-x{position:absolute;width:1px;background:#7ee7c7;pointer-events:none;
+    box-shadow:0 0 4px #7ee7c7;z-index:10}
+  .snap-y{position:absolute;height:1px;background:#7ee7c7;pointer-events:none;
+    box-shadow:0 0 4px #7ee7c7;z-index:10}
+</style></head>
+<body>
+  <div id="bar">
+    <h1>🎨 UI Studio</h1>
+    <label>Character
+      <select id="charSelect"><option value="">— pick —</option></select>
+    </label>
+    <span class="sep"></span>
+    <label>Source
+      <select id="srcRes">
+        <option value="3440x1440">3440×1440</option>
+        <option value="2560x1440" selected>2560×1440</option>
+        <option value="1920x1080">1920×1080</option>
+        <option value="1680x1050">1680×1050</option>
+      </select>
+    </label>
+    <label>→ Target
+      <select id="tgtRes">
+        <option value="1920x1080" selected>1920×1080</option>
+        <option value="2560x1440">2560×1440</option>
+        <option value="1680x1050">1680×1050</option>
+        <option value="3440x1440">3440×1440</option>
+      </select>
+    </label>
+    <button id="loadBtn" class="secondary">Load + Rescale</button>
+    <span class="sep"></span>
+    <button id="snapBtn"  class="secondary" title="Toggle snap to edges (10px)">Snap: ON</button>
+    <button id="resetBtn" class="secondary" title="Undo all changes since load">Reset</button>
+    <button id="saveBtn"  title="Write back to INI with .bak backup">Save</button>
+    <span class="sep"></span>
+    <button id="inspectSocialsBtn" class="secondary" title="Open the Hotbar/Socials inspector — see what's actually in your Sock_/Socials_ INI files">Hotbar Pages…</button>
+    <button id="captureBtn"        class="secondary" title="Heuristic-parse your Sock_/Socials_ INIs into a draft PvP template JSON in your EQ folder — review + share">Capture PvP draft</button>
+    <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
+    <span id="status"></span>
+  </div>
+  <!-- PvP-set prompt — slides in from the top when the loaded character's
+       class matches a bundled template. User can dismiss or open the
+       details panel to preview + import. -->
+  <div id="pvpPrompt" style="display:none;background:#1c2330;border-bottom:1px solid #58a6ff;
+       padding:10px 16px;color:#c9d1d9;font-size:12px;display:none">
+    <strong style="color:#7ee7c7" id="pvpPromptTitle">PvP set available</strong>
+    <span id="pvpPromptCredit" style="color:#8b949e;margin-left:6px"></span>
+    <p id="pvpPromptDesc" style="margin:4px 0;color:#9aa4ad;font-size:11px"></p>
+    <button id="pvpPreviewBtn"  class="secondary">Preview</button>
+    <button id="pvpImportBtn">Import to EQ folder</button>
+    <button id="pvpDismissBtn"  class="secondary" style="margin-left:4px">Dismiss</button>
+  </div>
+  <!-- PvP-set preview panel — opened from the prompt's Preview button.
+       Renders phases, spell sets, clickies, potions for the active
+       template. Sits on top of the canvas as an overlay. -->
+  <div id="pvpPreview" style="display:none;position:fixed;top:50px;right:0;bottom:0;width:380px;
+       background:#161b22;border-left:1px solid #30363d;z-index:50;overflow-y:auto;
+       padding:14px;font-size:12px;color:#c9d1d9">
+    <button id="pvpPreviewClose" style="float:right;background:none;border:none;color:#8b949e;
+       cursor:pointer;font-size:18px">×</button>
+    <h2 id="pvpPreviewName" style="margin:0 0 4px;color:#7ee7c7;font-size:15px"></h2>
+    <div id="pvpPreviewCredit" style="color:#8b949e;font-size:10px;margin-bottom:8px"></div>
+    <div id="pvpPreviewBody"></div>
+  </div>
+  <div id="stageWrap"><div id="stage"></div></div>
+  <aside id="side">
+    <h3 id="sideTitle">Window</h3>
+    <div class="row">
+      <div class="field"><label>X</label><input id="fX" type="number" /></div>
+      <div class="field"><label>Y</label><input id="fY" type="number" /></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Width</label><input id="fW" type="number" /></div>
+      <div class="field"><label>Height</label><input id="fH" type="number" /></div>
+    </div>
+    <div class="meta" id="sideMeta"></div>
+  </aside>
+<script>
+  // ── State ────────────────────────────────────────────────────────────────
+  // bundle: { file → contents } loaded from disk. We mutate per-window
+  // positions in `windows[]` and re-emit on save.
+  // windows: parsed window list. Each entry: {
+  //   id, file, section, label, x, y, w, h, origX, origY, origW, origH,
+  //   sectionStart, sectionEnd  (line numbers in the file's contents)
+  // }
+  var STATE = {
+    character: null,
+    eqDir:     null,
+    bundle:    null,          // { filename → text }
+    windows:   [],
+    srcW:      2560, srcH: 1440,
+    tgtW:      1920, tgtH: 1080,
+    snapOn:    true,
+    selected:  -1,
+    sliceScale: 1,            // canvas → world scale for hit testing
+  };
+
+  var statusEl  = document.getElementById('status');
+  var stage     = document.getElementById('stage');
+  var stageWrap = document.getElementById('stageWrap');
+  var side      = document.getElementById('side');
+
+  function setStatus(msg, cls) {
+    statusEl.textContent = msg || '';
+    statusEl.className = cls || '';
+  }
+
+  // ── Bootstrap: list characters via existing UI Studio IPC ────────────────
+  async function bootstrap(){
+    try {
+      var chars = await window.mimic.uiStudioListCharacters();
+      var sel = document.getElementById('charSelect');
+      for (var i = 0; i < chars.length; i++) {
+        var c = chars[i];
+        var opt = document.createElement('option');
+        opt.value = c.character + '|' + c.eqDir;
+        opt.textContent = c.character + (c.ini_count ? ' (' + c.ini_count + ' ini files)' : ' (no inis)');
+        sel.appendChild(opt);
+      }
+    } catch (e) { setStatus('IPC unavailable — open via tray', 'err'); }
+  }
+  bootstrap();
+
+  // ── INI parsing ──────────────────────────────────────────────────────────
+  // EQ INI sections like:
+  //   [InventoryWindow]
+  //   XPos=100
+  //   YPos=200
+  //   Size.cx=400
+  //   Size.cy=300
+  // We extract each [SectionName] block, pull XPos/YPos/Size.cx/Size.cy.
+  // Sections without position data are still parsed (so saving rewrites
+  // verbatim), just not added to the visual list.
+  function parseIni(text){
+    var lines = text.split(/\r?\n/);
+    var sections = [];
+    var cur = null;
+    for (var i = 0; i < lines.length; i++) {
+      var L = lines[i];
+      var m = L.match(/^\s*\[([^\]]+)\]\s*$/);
+      if (m) {
+        if (cur) cur.endLine = i - 1;
+        cur = { name: m[1], startLine: i, endLine: lines.length - 1, props: {} };
+        sections.push(cur);
+        continue;
+      }
+      if (!cur) continue;
+      var kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+      if (kv) cur.props[kv[1]] = kv[2];
+    }
+    return { lines: lines, sections: sections };
+  }
+
+  // Reconstruct file with updated XPos/YPos/Size.cx/Size.cy values. Preserves
+  // line order, formatting, comments — only rewrites the four keys per section.
+  function emitIni(parsed, edits){
+    // edits: { sectionName → { XPos, YPos, "Size.cx", "Size.cy" } }
+    var lines = parsed.lines.slice();
+    for (var i = 0; i < parsed.sections.length; i++) {
+      var sec = parsed.sections[i];
+      var ed = edits[sec.name];
+      if (!ed) continue;
+      for (var ln = sec.startLine + 1; ln <= sec.endLine; ln++) {
+        var L = lines[ln];
+        var kv = L.match(/^(\s*)([\w.]+)(\s*=\s*)(.*)$/);
+        if (!kv) continue;
+        var key = kv[2];
+        if (ed[key] != null) lines[ln] = kv[1] + key + kv[3] + ed[key];
+      }
+    }
+    return lines.join('\n');
+  }
+
+  // ── Load + rescale ───────────────────────────────────────────────────────
+  // Heuristic window classifier — derives a kind + icon + extracted
+  // contents from a parsed [Section] block. The EQ INI format varies a
+  // little between client versions, so we look for several known key
+  // patterns instead of requiring exact matches.
+  function classifyWindow(section) {
+    var name  = section.name;
+    var props = section.props || {};
+    var lower = name.toLowerCase();
+    var icon  = '▢';
+    var kind  = 'generic';
+    var contents = [];
+    // Chat: explicit ChatWindow or anything starting with "CW" plus a
+    // ChatChannel/ChatFilter key as a fallback signal.
+    var hasChatHints = Object.keys(props).some(function(k){
+      var kl = k.toLowerCase();
+      return kl.indexOf('chat') >= 0 || kl.indexOf('channel') >= 0 || kl.indexOf('filter') >= 0;
+    });
+    if (/chat|^cw/i.test(name) || hasChatHints) {
+      icon = '💬'; kind = 'chat';
+      // Extract tab metadata. Try TabCount + Tab<N>Name, or Tab.<N>=, or
+      // ChatChannels.<N>=. Anything that looks like a tab name gets listed.
+      var tabs = [];
+      Object.keys(props).forEach(function(k){
+        if (/^Tab\d+Name$/i.test(k))   tabs.push(props[k]);
+        else if (/^Tab\.\d+$/i.test(k)) tabs.push(props[k]);
+        else if (/^TabName$/i.test(k))  tabs.push(props[k]);
+      });
+      if (tabs.length) contents.push({ label: 'Tabs',     value: tabs.join(', ') });
+      // Channel filter, default channel, locked state.
+      ['ChatChannels','ChatFilter','DefaultChannel','LockedDefault','Filters','WindowName']
+        .forEach(function(k){
+          if (props[k] != null && props[k] !== '') contents.push({ label: k, value: props[k] });
+        });
+      if (contents.length === 0) contents.push({ label: 'Type', value: 'chat window (no tab metadata in this version)' });
+    } else if (/inventory/i.test(name))           { icon = '🎒'; kind = 'inventory'; }
+    else  if (/buff/i.test(name))                 { icon = '✨'; kind = 'buffs'; }
+    else  if (/song|melody/i.test(name))          { icon = '🎵'; kind = 'songs'; }
+    else  if (/spell.*gem|gem.*spell|spellbar/i.test(name)) { icon = '🔮'; kind = 'gems'; }
+    else  if (/^group/i.test(name))               { icon = '👥'; kind = 'group'; }
+    else  if (/raid/i.test(name))                 { icon = '⚔️'; kind = 'raid'; }
+    else  if (/target/i.test(name))               { icon = '🎯'; kind = 'target'; }
+    else  if (/player|pdc|hp|mana/i.test(name))   { icon = '❤️'; kind = 'player'; }
+    else  if (/hot.*button|hotbar/i.test(name))   { icon = '🔥'; kind = 'hotbar'; }
+    else  if (/compass/i.test(name))              { icon = '🧭'; kind = 'compass'; }
+    else  if (/map/i.test(name))                  { icon = '🗺️'; kind = 'map'; }
+    else  if (/pet/i.test(name))                  { icon = '🐺'; kind = 'pet'; }
+    else  if (/social/i.test(name))               { icon = '💼'; kind = 'social'; }
+    // Always include WindowName when present (human-readable title).
+    if (kind !== 'chat' && props.WindowName) {
+      contents.push({ label: 'WindowName', value: props.WindowName });
+    }
+    // Pull a few common informative props as fallback contents.
+    if (contents.length === 0) {
+      ['Locked','Fades','Alpha'].forEach(function(k){
+        if (props[k] != null) contents.push({ label: k, value: props[k] });
+      });
+    }
+    return {
+      icon:  icon,
+      label: name.replace(/Window$/, '').replace(/^_+/, ''),
+      kind:  kind,
+      contents: contents,
+    };
+  }
+
+  document.getElementById('loadBtn').addEventListener('click', loadAndRescale);
+  async function loadAndRescale(){
+    var sel = document.getElementById('charSelect').value;
+    if (!sel) { setStatus('pick a character', 'err'); return; }
+    var parts = sel.split('|');
+    STATE.character = parts[0];
+    STATE.eqDir     = parts[1];
+    var srcParts = document.getElementById('srcRes').value.split('x');
+    var tgtParts = document.getElementById('tgtRes').value.split('x');
+    STATE.srcW = parseInt(srcParts[0], 10); STATE.srcH = parseInt(srcParts[1], 10);
+    STATE.tgtW = parseInt(tgtParts[0], 10); STATE.tgtH = parseInt(tgtParts[1], 10);
+    setStatus('loading ' + STATE.character + '…');
+    try {
+      STATE.bundle = await window.mimic.uiStudioReadBundle(STATE.character, STATE.eqDir);
+    } catch (e) { setStatus('read failed: ' + e.message, 'err'); return; }
+    if (!STATE.bundle || Object.keys(STATE.bundle).length === 0) {
+      setStatus('no ini files for ' + STATE.character, 'err');
+      return;
+    }
+    // Parse every ini, extract windows with position data.
+    STATE.windows = [];
+    var fxX = STATE.tgtW / STATE.srcW;
+    var fxY = STATE.tgtH / STATE.srcH;
+    var seq = 0;
+    for (var fname in STATE.bundle) {
+      var parsed = parseIni(STATE.bundle[fname]);
+      STATE.bundle[fname + '__parsed'] = parsed;
+      for (var i = 0; i < parsed.sections.length; i++) {
+        var s = parsed.sections[i];
+        var px = s.props.XPos, py = s.props.YPos;
+        var sw = s.props['Size.cx'], sh = s.props['Size.cy'];
+        if (px == null || py == null) continue;
+        var x = parseInt(px, 10), y = parseInt(py, 10);
+        var w = sw != null ? parseInt(sw, 10) : 200;
+        var h = sh != null ? parseInt(sh, 10) : 100;
+        if (isNaN(x) || isNaN(y)) continue;
+        // Rescale to target resolution.
+        x = Math.round(x * fxX);
+        y = Math.round(y * fxY);
+        w = Math.round(w * fxX);
+        h = Math.round(h * fxY);
+        // Classify the window type + extract contents-of-interest for the
+        // side panel. Most windows are self-describing by section name;
+        // chat windows are the interesting one — they carry tab + channel
+        // metadata that the user wants visible without poking through INIs.
+        var classify = classifyWindow(s);
+        STATE.windows.push({
+          id:     'w' + (seq++),
+          file:   fname,
+          section: s.name,
+          label:  classify.icon + ' ' + classify.label,
+          kind:    classify.kind,
+          contents: classify.contents,
+          props:    s.props,
+          x: x, y: y, w: w, h: h,
+          origX: x, origY: y, origW: w, origH: h,
+        });
+      }
+    }
+    setStatus('loaded ' + STATE.windows.length + ' windows · rescaled ' + STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH, 'ok');
+    renderStage();
+    maybePromptPvpSet().catch(function(){});
+  }
+
+  // After a character loads, look up their live class via the agent's
+  // /api/state and ask Mimic if any bundled PvP-set template matches.
+  // First match → render the promo bar at the top of the editor. Silent
+  // when no template matches the class (or the agent has no class data
+  // yet because EQ isn't running).
+  async function maybePromptPvpSet(){
+    var klass = null;
+    try {
+      var r = await fetch('http://127.0.0.1:7779/api/state', { cache: 'no-store' });
+      var s = await r.json();
+      var clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+      for (var i = 0; i < clients.length; i++) {
+        if (clients[i] && String(clients[i].character).toLowerCase() === STATE.character.toLowerCase()) {
+          klass = clients[i].class || null;
+          break;
+        }
+      }
+      // Fallback: bardMelody output now also carries the class.
+      if (!klass && s.bardMelody) {
+        for (var k in s.bardMelody) {
+          if (k.toLowerCase() === STATE.character.toLowerCase()) {
+            klass = s.bardMelody[k].characterClass; break;
+          }
+        }
+      }
+    } catch (e) {}
+    if (!klass) {
+      hidePvpPrompt();
+      return;
+    }
+    var sets = await window.mimic.uiStudioListPvpSets(klass).catch(function(){ return []; });
+    if (!sets || sets.length === 0) {
+      hidePvpPrompt();
+      return;
+    }
+    showPvpPrompt(sets[0], klass);
+  }
+
+  function showPvpPrompt(set, klass){
+    var p = document.getElementById('pvpPrompt');
+    if (!p) return;
+    p.style.display = 'block';
+    document.getElementById('pvpPromptTitle').textContent =
+      '⚔️ Import ' + set.name + '?  — ' + klass + ' PvP rotation';
+    var credit = set.credit ? ('contributed by ' + set.credit) : '';
+    document.getElementById('pvpPromptCredit').textContent = credit;
+    document.getElementById('pvpPromptDesc').textContent = set.description || '';
+    document.getElementById('pvpPreviewBtn').onclick = function(){ openPvpPreview(set.id); };
+    document.getElementById('pvpImportBtn').onclick = function(){ importPvpSet(set.id); };
+    document.getElementById('pvpDismissBtn').onclick = hidePvpPrompt;
+  }
+  function hidePvpPrompt(){
+    var p = document.getElementById('pvpPrompt'); if (p) p.style.display = 'none';
+  }
+
+  async function openPvpPreview(id){
+    var raw = await window.mimic.uiStudioLoadPvpSet(id);
+    if (!raw) { setStatus('preview unavailable', 'err'); return; }
+    document.getElementById('pvpPreviewName').textContent = raw.name;
+    document.getElementById('pvpPreviewCredit').textContent =
+      (raw.class ? raw.class + ' · ' : '') + (raw.credit ? 'by ' + raw.credit : '');
+    var html = '<p style="color:#9aa4ad;margin:0 0 10px">' + escapeHtml(raw.description || '') + '</p>';
+    // Availability banner — surfaces the "bring what you have" disclaimer
+    // up front so the user knows BEFORE scrolling that optional sections
+    // are skippable.
+    if (raw.availability_note) {
+      html += '<div style="background:#1f2a3d;border-left:3px solid #f0d264;padding:6px 8px;margin-bottom:10px;color:#c9d1d9;font-size:11px;line-height:1.5">'
+            + '<strong style="color:#f0d264">Bring what you have on the truck.</strong> '
+            + escapeHtml(raw.availability_note)
+            + '</div>';
+    }
+    // Phases — the meat of the set. Each phase carries a hotbar PAGE +
+    // a list of button definitions; render as a card per phase with the
+    // buttons in a small table.
+    if (Array.isArray(raw.phases)) {
+      for (var i = 0; i < raw.phases.length; i++) {
+        var ph = raw.phases[i];
+        html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:5px;padding:8px;margin-bottom:8px">'
+              + '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">' + escapeHtml(ph.name)
+              + (ph.page_label ? ' <span style="color:#8b949e;font-weight:400">— ' + escapeHtml(ph.page_label) + '</span>' : '')
+              + '</div>';
+        if (Array.isArray(ph.buttons)) {
+          html += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+          for (var b = 0; b < ph.buttons.length; b++) {
+            var btn = ph.buttons[b];
+            html += '<tr style="border-bottom:1px solid #21262d">'
+                  + '<td style="color:#8b949e;padding:3px 4px;width:24px">' + (btn.slot != null ? btn.slot + 1 : '?') + '</td>'
+                  + '<td style="color:#e6edf3;font-weight:600;padding:3px 4px">' + escapeHtml(btn.label || '') + '</td>'
+                  + '<td style="color:#9aa4ad;padding:3px 4px;font-size:10px">' + escapeHtml(btn.notes || '') + '</td>'
+                  + '</tr>';
+          }
+          html += '</table>';
+        }
+        html += '</div>';
+      }
+    }
+    if (Array.isArray(raw.clickies) && raw.clickies.length) {
+      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Optional clickies</h4>'
+            + '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;line-height:1.4">All gear-tier-dependent. Skip any you don\'t have on the truck.</p>';
+      for (var c = 0; c < raw.clickies.length; c++) {
+        var ck = raw.clickies[c];
+        var tierBadge = ck.tier
+          ? '<span style="background:#21262d;color:#a371f7;border:1px solid #30363d;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">' + escapeHtml(ck.tier) + '</span>'
+          : '';
+        var reqBadge = ck.required
+          ? '<span style="background:#3d1d1d;color:#ff7b72;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">REQUIRED</span>'
+          : '<span style="background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">optional</span>';
+        html += '<div style="margin-bottom:8px;padding:6px;background:#0d1117;border:1px solid #21262d;border-radius:4px">'
+              + '<div><b>' + escapeHtml(ck.slot) + '</b>: ' + escapeHtml(ck.item || '') + tierBadge + reqBadge + '</div>';
+        if (ck.provides) {
+          html += '<div style="color:#7ee787;font-size:10px;margin-top:3px">Provides: ' + escapeHtml(ck.provides) + '</div>';
+        }
+        if (Array.isArray(ck.alternatives) && ck.alternatives.length) {
+          html += '<div style="color:#79c0ff;font-size:10px;margin-top:3px">If you don\'t have it: ' + escapeHtml(ck.alternatives.join(' / ')) + '</div>';
+        }
+        if (ck.notes) {
+          html += '<div style="color:#9aa4ad;font-size:10px;margin-top:3px">' + escapeHtml(ck.notes) + '</div>';
+        }
+        html += '</div>';
+      }
+    }
+    if (Array.isArray(raw.potions) && raw.potions.length) {
+      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Optional potions</h4>';
+      for (var pi = 0; pi < raw.potions.length; pi++) {
+        var po = raw.potions[pi];
+        html += '<div style="margin-bottom:3px"><b>' + escapeHtml(po.name) + '</b>'
+              + (po.use ? ' <span style="color:#8b949e">— ' + escapeHtml(po.use) + '</span>' : '')
+              + '</div>';
+      }
+    }
+    document.getElementById('pvpPreviewBody').innerHTML = html;
+    document.getElementById('pvpPreview').style.display = 'block';
+  }
+  var pvpPreviewClose = document.getElementById('pvpPreviewClose');
+  if (pvpPreviewClose) pvpPreviewClose.onclick = function(){
+    document.getElementById('pvpPreview').style.display = 'none';
+  };
+
+  async function importPvpSet(id){
+    if (!STATE.eqDir || !STATE.character) { setStatus('load a character first', 'err'); return; }
+    setStatus('importing PvP set…');
+    var res = await window.mimic.uiStudioImportPvpSet({
+      id: id, eqDir: STATE.eqDir, character: STATE.character,
+    }).catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (res && res.ok) {
+      setStatus('imported → ' + res.file + ' (in your EQ folder)', 'ok');
+      hidePvpPrompt();
+    } else {
+      setStatus('import failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
+    }
+  }
+
+  // ── Stage rendering ──────────────────────────────────────────────────────
+  function renderStage(){
+    // Compute canvas size to fit the stageWrap area while preserving aspect.
+    var maxW = stageWrap.clientWidth  - 28;
+    var maxH = stageWrap.clientHeight - 28;
+    var rx = maxW / STATE.tgtW, ry = maxH / STATE.tgtH;
+    STATE.sliceScale = Math.min(rx, ry, 1);
+    var cw = Math.round(STATE.tgtW * STATE.sliceScale);
+    var ch = Math.round(STATE.tgtH * STATE.sliceScale);
+    stage.style.width  = cw + 'px';
+    stage.style.height = ch + 'px';
+    var html = '';
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var w = STATE.windows[i];
+      var sx = Math.round(w.x * STATE.sliceScale);
+      var sy = Math.round(w.y * STATE.sliceScale);
+      var sw = Math.max(8, Math.round(w.w * STATE.sliceScale));
+      var sh = Math.max(8, Math.round(w.h * STATE.sliceScale));
+      var sel = (STATE.selected === i) ? ' selected' : '';
+      var kindCls = w.kind ? ' kind-' + w.kind : '';
+      html += '<div class="win' + sel + kindCls + '" data-i="' + i + '" '
+            + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
+            + '<span class="lbl">' + escapeHtml(w.label) + '</span>'
+            + '<span class="sz">' + w.w + '×' + w.h + '</span>'
+            + (STATE.selected === i ? '<div class="grip se" data-grip="se"></div>' : '')
+            + '</div>';
+    }
+    stage.innerHTML = html;
+    updateSidePanel();
+  }
+  window.addEventListener('resize', function(){ if (STATE.windows.length) renderStage(); });
+
+  function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+
+  // ── Drag + resize ────────────────────────────────────────────────────────
+  var DRAG = null;   // { i, mode, startX, startY, origX, origY, origW, origH }
+
+  stage.addEventListener('mousedown', function(e){
+    var el = e.target.closest('.win');
+    if (!el) { STATE.selected = -1; renderStage(); return; }
+    var i = parseInt(el.dataset.i, 10);
+    STATE.selected = i;
+    var grip = e.target.dataset.grip;
+    var mode = grip ? 'resize-' + grip : 'move';
+    DRAG = {
+      i: i, mode: mode,
+      startMx: e.clientX, startMy: e.clientY,
+      origX: STATE.windows[i].x, origY: STATE.windows[i].y,
+      origW: STATE.windows[i].w, origH: STATE.windows[i].h,
+    };
+    renderStage();
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e){
+    if (!DRAG) return;
+    var dx = (e.clientX - DRAG.startMx) / STATE.sliceScale;
+    var dy = (e.clientY - DRAG.startMy) / STATE.sliceScale;
+    var w = STATE.windows[DRAG.i];
+    if (DRAG.mode === 'move') {
+      w.x = Math.round(DRAG.origX + dx);
+      w.y = Math.round(DRAG.origY + dy);
+    } else if (DRAG.mode === 'resize-se') {
+      w.w = Math.max(16, Math.round(DRAG.origW + dx));
+      w.h = Math.max(16, Math.round(DRAG.origH + dy));
+    }
+    // Snap-to-edges of other windows + screen edges (10px tolerance in
+    // world coords). Only on move, not resize.
+    if (STATE.snapOn && DRAG.mode === 'move') applySnap(w);
+    // Clamp to screen bounds.
+    if (w.x < 0) w.x = 0;
+    if (w.y < 0) w.y = 0;
+    if (w.x + w.w > STATE.tgtW) w.x = STATE.tgtW - w.w;
+    if (w.y + w.h > STATE.tgtH) w.y = STATE.tgtH - w.h;
+    renderStage();
+  });
+
+  document.addEventListener('mouseup', function(){ DRAG = null; });
+
+  function applySnap(target) {
+    var TOL = 10;  // world-pixel tolerance
+    // Screen edges
+    var edges = { x: [0, STATE.tgtW], y: [0, STATE.tgtH] };
+    for (var i = 0; i < STATE.windows.length; i++) {
+      if (i === DRAG.i) continue;
+      var o = STATE.windows[i];
+      edges.x.push(o.x, o.x + o.w);
+      edges.y.push(o.y, o.y + o.h);
+    }
+    // Snap left edge and right edge to any candidate X.
+    var bestL = TOL + 1, bestLval = null;
+    var bestR = TOL + 1, bestRval = null;
+    for (var k = 0; k < edges.x.length; k++) {
+      var ex = edges.x[k];
+      if (Math.abs(target.x - ex)               < bestL) { bestL = Math.abs(target.x - ex);               bestLval = ex; }
+      if (Math.abs(target.x + target.w - ex)    < bestR) { bestR = Math.abs(target.x + target.w - ex);    bestRval = ex; }
+    }
+    if (bestL <= TOL) target.x = bestLval;
+    else if (bestR <= TOL) target.x = bestRval - target.w;
+    var bestT = TOL + 1, bestTval = null;
+    var bestB = TOL + 1, bestBval = null;
+    for (var k2 = 0; k2 < edges.y.length; k2++) {
+      var ey = edges.y[k2];
+      if (Math.abs(target.y - ey)               < bestT) { bestT = Math.abs(target.y - ey);               bestTval = ey; }
+      if (Math.abs(target.y + target.h - ey)    < bestB) { bestB = Math.abs(target.y + target.h - ey);    bestBval = ey; }
+    }
+    if (bestT <= TOL) target.y = bestTval;
+    else if (bestB <= TOL) target.y = bestBval - target.h;
+  }
+
+  // ── Side panel ───────────────────────────────────────────────────────────
+  function updateSidePanel(){
+    if (STATE.selected < 0) { side.className = ''; stageWrap.className = ''; return; }
+    var w = STATE.windows[STATE.selected];
+    side.className = 'on'; stageWrap.className = 'has-side';
+    document.getElementById('sideTitle').textContent = w.label;
+    document.getElementById('fX').value = w.x;
+    document.getElementById('fY').value = w.y;
+    document.getElementById('fW').value = w.w;
+    document.getElementById('fH').value = w.h;
+    var meta = 'File: <b>' + escapeHtml(w.file) + '</b>'
+             + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
+             + '<br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
+    if (w.contents && w.contents.length > 0) {
+      meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
+            + '<div style="color:#7ee7c7;font-size:11px;margin-bottom:4px">Contains</div>';
+      for (var ci = 0; ci < w.contents.length; ci++) {
+        var c = w.contents[ci];
+        meta += '<div style="margin-bottom:3px"><span style="color:#8b949e">' + escapeHtml(c.label) + ':</span> '
+              + '<span style="color:#e6edf3;word-break:break-all">' + escapeHtml(c.value) + '</span></div>';
+      }
+    }
+    document.getElementById('sideMeta').innerHTML = meta;
+  }
+  ['fX','fY','fW','fH'].forEach(function(id){
+    document.getElementById(id).addEventListener('input', function(){
+      if (STATE.selected < 0) return;
+      var w = STATE.windows[STATE.selected];
+      var v = parseInt(this.value, 10) || 0;
+      if (id === 'fX') w.x = v; else if (id === 'fY') w.y = v;
+      else if (id === 'fW') w.w = v; else if (id === 'fH') w.h = v;
+      renderStage();
+    });
+  });
+
+  // ── Toolbar actions ──────────────────────────────────────────────────────
+  document.getElementById('snapBtn').addEventListener('click', function(){
+    STATE.snapOn = !STATE.snapOn;
+    this.textContent = 'Snap: ' + (STATE.snapOn ? 'ON' : 'OFF');
+  });
+  document.getElementById('resetBtn').addEventListener('click', function(){
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var w = STATE.windows[i];
+      w.x = w.origX; w.y = w.origY; w.w = w.origW; w.h = w.origH;
+    }
+    renderStage();
+    setStatus('reset to last load', 'ok');
+  });
+  document.getElementById('saveBtn').addEventListener('click', async function(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
+    // Group windows by file. Build edits map per file.
+    var edits = {};   // file → { sectionName → {XPos, YPos, "Size.cx", "Size.cy"} }
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var w = STATE.windows[i];
+      if (!edits[w.file]) edits[w.file] = {};
+      edits[w.file][w.section] = { XPos: w.x, YPos: w.y, 'Size.cx': w.w, 'Size.cy': w.h };
+    }
+    // Emit new file contents.
+    var newBundle = {};
+    for (var fname in edits) {
+      var parsed = STATE.bundle[fname + '__parsed'];
+      if (!parsed) continue;
+      newBundle[fname] = emitIni(parsed, edits[fname]);
+    }
+    setStatus('saving…');
+    try {
+      var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle);
+      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · .bak backups created', 'ok');
+      else setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
+    } catch (e) { setStatus('save failed: ' + e.message, 'err'); }
+  });
+
+  // ── Capture / Backup / Inspect Socials ───────────────────────────────────
+  // Surfaces the existing _readUiBundle + ui-studio-capture cloud-backup
+  // flow inside the visual editor (previously only reachable from the
+  // dashboard), plus a new local-only "Capture PvP draft" that
+  // heuristic-parses Sock_/Socials_ INI into a sharable template JSON.
+  document.getElementById('cloudBackupBtn').addEventListener('click', async function(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('load a character first', 'err'); return; }
+    setStatus('uploading encrypted backup…');
+    try {
+      var res = await window.mimic.uiStudioCapture({
+        character: STATE.character, eqDir: STATE.eqDir,
+        label: 'UI Studio · ' + new Date().toLocaleString(),
+      });
+      if (res && res.ok) setStatus('cloud backup OK · ' + res.file_count + ' file(s) uploaded', 'ok');
+      else setStatus('backup failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
+    } catch (e) { setStatus('backup failed: ' + e.message, 'err'); }
+  });
+
+  document.getElementById('captureBtn').addEventListener('click', async function(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('load a character first', 'err'); return; }
+    var setName = prompt('Name this PvP set (will be the template title):',
+      STATE.character + ' PvP set');
+    if (!setName) return;
+    setStatus('capturing draft…');
+    try {
+      var res = await window.mimic.uiStudioCapturePvpDraft({
+        character: STATE.character, eqDir: STATE.eqDir, setName: setName,
+      });
+      if (res && res.ok) {
+        setStatus(
+          'captured ' + res.phase_count + ' page(s) · ' + res.button_count +
+          ' button(s) → ' + res.file + ' (open + edit before sharing)',
+          'ok'
+        );
+      } else {
+        setStatus('capture failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
+      }
+    } catch (e) { setStatus('capture failed: ' + e.message, 'err'); }
+  });
+
+  document.getElementById('inspectSocialsBtn').addEventListener('click', async function(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('load a character first', 'err'); return; }
+    setStatus('reading socials…');
+    var res = await window.mimic.uiStudioInspectSocials(STATE.character, STATE.eqDir)
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!res || !res.ok) { setStatus(res && res.error || 'inspect failed', 'err'); return; }
+    setStatus('inspector open · ' + res.files.length + ' file(s) parsed', 'ok');
+    openSocialsInspector(res.files);
+  });
+
+  function openSocialsInspector(files) {
+    var dlg = document.getElementById('socialsInspector');
+    if (!dlg) {
+      dlg = document.createElement('div');
+      dlg.id = 'socialsInspector';
+      dlg.style.cssText = 'position:fixed;top:50px;right:0;bottom:0;width:480px;' +
+        'background:#161b22;border-left:1px solid #30363d;z-index:60;overflow-y:auto;' +
+        'padding:14px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
+      document.body.appendChild(dlg);
+    }
+    var html = '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
+      'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px">×</button>' +
+      '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 Hotbar / Socials inspector</h2>' +
+      '<p style="color:#8b949e;font-size:10px;margin:0 0 10px;font-family:sans-serif">' +
+      'Raw section dump from your Sock_/Socials_ INI files. Use this to ' +
+      'find the section/key shape we need to parse — paste a sample of any ' +
+      'page that looks parseable into a Discord message and we\'ll refine ' +
+      'the capture heuristic.</p>';
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      html += '<div style="margin-bottom:10px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+        escapeHtml(f.file) + ' <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
+        (f.sections ? f.sections.length : 0) + ' sections)</span></div>';
+      var sections = f.sections || [];
+      // Cap rendered sections so a 500-section file doesn't lock the DOM.
+      for (var s = 0; s < Math.min(sections.length, 60); s++) {
+        var sec = sections[s];
+        var propKeys = Object.keys(sec.props).slice(0, 8);
+        html += '<details style="margin-bottom:3px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
+          '<summary style="color:#79c0ff;cursor:pointer">[' + escapeHtml(sec.name) + '] ' +
+          '<span style="color:#8b949e;font-size:10px">(' + propKeys.length + ' keys)</span></summary>';
+        for (var p = 0; p < propKeys.length; p++) {
+          var key = propKeys[p];
+          html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
+            '<span style="color:#c9d1d9">' + escapeHtml(key) + '</span> = ' +
+            escapeHtml(sec.props[key]) + '</div>';
+        }
+        html += '</details>';
+      }
+      if (sections.length > 60) {
+        html += '<div style="color:#8b949e;font-size:10px;margin-top:4px">… and ' +
+          (sections.length - 60) + ' more sections (use a text editor to see them all).</div>';
+      }
+      html += '</div>';
+    }
+    dlg.innerHTML = html;
+  }
+</script>
+</body></html>

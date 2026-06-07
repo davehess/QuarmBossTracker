@@ -23,6 +23,7 @@
   li .dps{color:#58a6ff;text-align:right;font-variant-numeric:tabular-nums}
   li .sec{color:#6b7280;text-align:right;font-variant-numeric:tabular-nums;font-size:10px}
   li.me .n{color:#f6c365;font-weight:600}
+  .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
   .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
      text-transform:uppercase;padding:2px 0 1px;border-bottom:1px solid rgba(110,118,129,0.18);margin-bottom:2px}
@@ -113,7 +114,7 @@
       </span>
     </div>
     <div id="colhdr" class="colhdr" style="display:none">
-      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d">Damage</span><span class="dps">DPS</span><span class="sec">Sec</span>
+      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
     </div>
     <ul id="deeps"></ul>
     <div class="dim" id="empty">waiting for combat…</div>
@@ -256,6 +257,37 @@
   function fmtPct(p){ if (!isFinite(p) || p <= 0) return '—'; return p >= 10 ? p.toFixed(0)+'%' : p.toFixed(1)+'%'; }
   function esc(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
 
+  // DPS / Tank tab — same scoreboard surface, swapped data source.
+  // DPS reads perPlayer[].dmg (outgoing damage to current-fight mobs);
+  // Tank reads perPlayer[].took (incoming damage from mobs). Choice
+  // persists in localStorage so a Mimic restart keeps the user's pick.
+  var TAB_MODE_KEY = 'wp.damageTabMode';
+  var TAB_MODE = 'dps';
+  try {
+    var saved = localStorage.getItem(TAB_MODE_KEY);
+    if (saved === 'dps' || saved === 'tank') TAB_MODE = saved;
+  } catch (e) {}
+  var tabDpsBtn  = document.getElementById('tabDps');
+  var tabTankBtn = document.getElementById('tabTank');
+  function _setTab(mode) {
+    TAB_MODE = mode;
+    try { localStorage.setItem(TAB_MODE_KEY, mode); } catch (e) {}
+    if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', mode === 'dps');
+    if (tabTankBtn) tabTankBtn.classList.toggle('on', mode === 'tank');
+    var hdr = document.getElementById('boss-name');
+    // The title prefix gets a Tank flag so it's obvious you're not on DPS.
+    if (hdr && hdr.dataset) hdr.dataset.tabMode = mode;
+    tick().catch(function(){});
+  }
+  // Apply persisted mode to button .on classes on initial load (HTML defaults
+  // to DPS being .on; if the user saved Tank, swap them now).
+  if (TAB_MODE === 'tank') {
+    if (tabDpsBtn)  tabDpsBtn .classList.remove('on');
+    if (tabTankBtn) tabTankBtn.classList.add('on');
+  }
+  if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
+  if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
+
   async function tick(){
     try{
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
@@ -266,9 +298,25 @@
       // Current boss/threat → shown in the HUD title so the user knows
       // exactly what fight the damage rows are scored against. Falls back to
       // "Damage — this fight" when no encounter is active.
-      const et = s.currentEncounterThreat;
+      // Active-character gate: if the agent reports an active character
+      // (focused EQ window) AND the encounter is from a DIFFERENT character,
+      // we hide the meter. Otherwise it'd "stick" to whichever character's
+      // log most recently published, even after you alt-tab away.
+      let et = s.currentEncounterThreat;
+      var _otherCharFight = null;     // captured uploader name when filtered out
+      if (et && s.activeCharacter && et.uploader
+          && String(et.uploader).toLowerCase() !== String(s.activeCharacter).toLowerCase()) {
+        _otherCharFight = et.uploader;
+        et = null;
+      }
       const boss = (et && et.bossName) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
+      // Tell the user when an OTHER character's fight is being hidden, so the
+      // empty meter isn't mysterious. Updates the empty-state in-place.
+      var emptyHint = document.getElementById('empty');
+      if (emptyHint) emptyHint.textContent = _otherCharFight
+        ? 'fight in progress on ' + _otherCharFight
+        : 'waiting for combat…';
 
       // Per-FIGHT raw damage from currentEncounterThreat.perPlayer[].dmg — the
       // honest damage each player has done to the mob(s) THIS encounter, not
@@ -277,11 +325,15 @@
       // → now) — the agent doesn't track per-player first-hit timestamps, so
       // these are fight-relative, not active-time-relative. Close enough for
       // the in-game HUD.
+      // Each row is [name, primary_value, max_hit].
+      // DPS mode: primary = .dmg, max = 0 (no max-hit tracking for outgoing).
+      // Tank mode: primary = .took, max = .tookMax (biggest single hit absorbed).
       let rows = [];
       const pp = et && et.perPlayer;
       if (pp && typeof pp === 'object') {
+        const field = TAB_MODE === 'tank' ? 'took' : 'dmg';
         rows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t.dmg) || 0])
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0])
           .filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0))
           .slice(0,8);
@@ -296,13 +348,21 @@
 
       const ul = document.getElementById('deeps');
       ul.innerHTML = rows.map(function(row, i){
-        var n = row[0], d = row[1];
+        var n = row[0], d = row[1], mx = row[2];
         var pct = sumDmg > 0 ? (d / sumDmg) * 100 : 0;
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
+        // In Tank mode, show the biggest single hit absorbed under the
+        // row name as a small subscript — "max 4.1K" makes spike-tank
+        // damage stand out vs the running total. Suppressed in DPS mode
+        // since outbound max-hit isn't tracked (would require another
+        // per-attacker bucket).
+        var maxHitHtml = (TAB_MODE === 'tank' && mx > 0)
+          ? ' <span class="maxhit" title="biggest single hit absorbed">·' + fmt(mx) + '</span>'
+          : '';
         return '<li' + (isMe ? ' class="me"' : '') + '>'
              + '<span class="r">' + (i+1) + '.</span>'
-             + '<span class="n">' + esc(n) + '</span>'
+             + '<span class="n">' + esc(n) + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d) + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
@@ -311,6 +371,12 @@
       }).join('');
       document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
       document.getElementById('colhdr').style.display = rows.length ? 'grid' : 'none';
+      // Header labels track tab mode so the user can tell DPS vs Tank apart
+      // even without looking at the tab buttons (e.g. screenshots).
+      var colD   = document.getElementById('colD');
+      var colDps = document.getElementById('colDps');
+      if (colD)   colD  .textContent = TAB_MODE === 'tank' ? 'Taken' : 'Damage';
+      if (colDps) colDps.textContent = TAB_MODE === 'tank' ? 'DTPS'  : 'DPS';
     }catch(e){
       const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';
     }

@@ -130,17 +130,50 @@ async function load(name: string) {
   const sb = supabaseAdmin();
   const decoded = decodeURIComponent(name);
 
+  // Fold alts into the requested name. If `decoded` is a main, we want
+  // their kills + every alt's kills under one heading (e.g. Wabumkin's page
+  // should include Adiwen's 1 kill). Resolve the family up front so all
+  // four queries can use a single .in() filter.
+  const { data: famRows } = await sb
+    .from('characters')
+    .select('name, main_name')
+    .eq('guild_id', 'wolfpack')
+    .or(`name.ilike.${decoded},main_name.ilike.${decoded}`);
+  const familyNames = new Set<string>([decoded]);
+  for (const r of (famRows ?? []) as { name: string; main_name: string | null }[]) {
+    familyNames.add(r.name);
+    // If `decoded` was an alt's name, walk up to the main and pull in siblings.
+    if (r.main_name && r.main_name.toLowerCase() === decoded.toLowerCase()) {
+      // r is a sibling under the main `decoded` — already added
+    }
+    if (r.name.toLowerCase() === decoded.toLowerCase() && r.main_name) {
+      familyNames.add(r.main_name);
+    }
+  }
+  // Second pass: if we discovered a main via an alt match above, grab the
+  // rest of the siblings.
+  const mains = [...familyNames];
+  if (mains.length > 1) {
+    const { data: more } = await sb
+      .from('characters')
+      .select('name')
+      .eq('guild_id', 'wolfpack')
+      .in('main_name', mains);
+    for (const r of (more ?? []) as { name: string }[]) familyNames.add(r.name);
+  }
+  const family = [...familyNames];
+
   const [{ data: kills }, { data: deaths }, { data: assistData }] = await Promise.all([
     sb.from('pvp_kills')
       .select('id, killer, victim, victim_guild, zone, via_pet, pet_name, killed_at')
       .eq('guild_id', 'wolfpack')
-      .ilike('killer', decoded)
+      .in('killer', family)
       .order('killed_at', { ascending: false })
       .limit(10000),
     sb.from('pvp_kills')
       .select('killer, killer_guild, victim, zone, killed_at')
       .eq('guild_id', 'wolfpack')
-      .ilike('victim', decoded)
+      .in('victim', family)
       .order('killed_at', { ascending: false })
       .limit(10000),
     // Kills THIS character assisted on (someone else landed the killing blow,
@@ -148,7 +181,7 @@ async function load(name: string) {
     sb.from('pvp_assists')
       .select('pvp_kill_id, killer, killer_is_npc, victim, victim_guild, zone, killed_at')
       .eq('guild_id', 'wolfpack')
-      .ilike('assister', decoded)
+      .in('assister', family)
       .order('killed_at', { ascending: false })
       .limit(5000),
   ]);
@@ -184,7 +217,9 @@ async function load(name: string) {
       const sameId   = a.pvp_kill_id != null && r.pvp_kill_id != null && a.pvp_kill_id === r.pvp_kill_id;
       const sameTime = Math.abs(new Date(r.killed_at).getTime() - t) <= CO_WINDOW_MS;
       if (!sameId && !sameTime) continue;
-      if (lc(r.assister) !== lc(decoded)) co.add(r.assister);
+      // Treat the whole family as "this character" — alt assists in the same
+      // fight aren't shown as co-assisters with their main.
+      if (!family.some(f => lc(f) === lc(r.assister))) co.add(r.assister);
     }
     return { ...a, co: [...co] };
   });
@@ -193,9 +228,8 @@ async function load(name: string) {
     kills: (kills ?? []) as Kill[],
     deaths: (deaths ?? []) as Death[],
     assists: enrichedAssists,
-    displayName: ((kills ?? [])[0] as Kill | undefined)?.killer
-      ?? ((deaths ?? [])[0] as Death | undefined)?.victim
-      ?? decoded,   // assist-only chars: the URL name is the only cased source
+    displayName: decoded,
+    family,
   };
 }
 

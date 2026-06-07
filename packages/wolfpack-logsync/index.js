@@ -1316,14 +1316,30 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
   if (state.kind !== 'song' || kind === 'song') state.kind = kind;
   const name = String(spellName);
   const lower = name.toLowerCase();
+  // Item-clicky cast-time override. If we saw "Your <item> begins to glow"
+  // for this character within CLICKY_WINDOW_MS, the cast that's starting
+  // now is from that clicky and should use the ITEM's casttime instead of
+  // the underlying spell's. Consume the pending clicky on use so it can't
+  // attach to a later, unrelated cast.
+  let clickyCastMs = null;
+  const pending = _pendingClickies.get(key);
+  if (pending && (atMs - pending.atMs) <= CLICKY_WINDOW_MS) {
+    if (typeof pending.castMs === 'number' && pending.castMs > 0) clickyCastMs = pending.castMs;
+    _pendingClickies.delete(key);
+  } else if (pending) {
+    _pendingClickies.delete(key);   // expired, drop
+  }
   const existingIdx = state.order.findIndex(o => o && (o.name || '').toLowerCase() === lower);
   if (existingIdx >= 0) {
     if (state.cycleLength === 0) state.cycleLength = state.order.length;
     state.currentPos = existingIdx;
     state.order[existingIdx].kind = kind;
+    if (clickyCastMs) state.order[existingIdx].cast_ms = clickyCastMs;
   } else {
     if (state.order.length >= MELODY_CAP) state.order.shift();
-    state.order.push({ name, kind });
+    const entry = { name, kind };
+    if (clickyCastMs) entry.cast_ms = clickyCastMs;
+    state.order.push(entry);
     state.currentPos = state.order.length - 1;
   }
   state.castStartedAt = atMs;
@@ -1612,14 +1628,24 @@ function petBuffsForOwner(ownerLower) {
   return Array.from(byName.values());
 }
 
+// Long-term who_data registry filter — anonymous rows + level 50+. The
+// transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
+// persistent uploads only carry threat-relevant entries: low-level bank
+// alts and leveling toons aren't useful identity history.
+function _isRegistryWho(v) {
+  if (!v) return false;
+  if (v.anonymous) return true;
+  if (typeof v.level === 'number' && v.level >= 50) return true;
+  return false;
+}
+
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
-  // Threat-focused capture: L50+ only. Lower levels are noise for the PVP
-  // target-selection use case the /who registry is built for — bank alts,
-  // trade chars, low-zone leveling toons aren't who we're identifying.
-  // Anonymous rows (level === null) are explicitly KEPT — could be a hidden
-  // L60 raider, and a future de-anon may fill in the class.
-  if (ev.level !== null && ev.level !== undefined && ev.level < 50) return;
+  // Keep ALL /who rows in the transient registry so the overlay can render
+  // everyone in the zone (Quarm pickup raids include L30-60 characters).
+  // The persistence/upload paths apply _isRegistryWho to drop low-level
+  // rows before they ship — keeps the bot's who_observations focused on
+  // threat-relevant identities.
   const k   = ev.name.toLowerCase();
   const old = whoData.get(k) || {};
   // Mirror server-side mergeWhoData: don't clobber known fields with nulls
@@ -2054,6 +2080,9 @@ class EncounterBuilder {
         // distinct from the threat-weighted numbers above.
         dmg:        Math.round(t.dmg || 0),
         healRaw:    Math.round(t.healRaw || 0),
+        // Inbound damage taken (from mobs) — Tank tab on the damage overlay.
+        took:       Math.round(t.took || 0),
+        tookMax:    Math.round(t.tookMax || 0),
         procDetail: t.procDetail || {},
       };
     }
@@ -2061,6 +2090,11 @@ class EncounterBuilder {
       bossName:  this.bossName,
       startedAt: this.startedAt,
       flushedAt: null,
+      // The character whose log file this builder is reading. Lets the
+      // damage overlay clear when the active EQ window switches to a
+      // different character — without this the meter "sticks" to whichever
+      // builder published last.
+      uploader:  this.character || null,
       perPlayer,
     };
     // Mirror current DS-reflect accumulator so the dashboard can render
@@ -2679,6 +2713,36 @@ class EncounterBuilder {
       }
     }
 
+    // Tank-meter inbound damage. Sum incoming damage per player so the
+    // overlay's "Tank" tab can show who's eating the boss's melee — same
+    // perPlayer scoreboard, swapped data source (.took instead of .dmg).
+    //   Defender filter: must be a known player (own char OR /who-confirmed
+    //   OR PvP confirmed).
+    //   Attacker filter: must NOT be a known player (we only want incoming
+    //   from mobs; PvP / friendly-fire is excluded so the meter stays
+    //   "damage the tank ate from the mob").
+    if (event.type === 'damage' && event.amount > 0 && event.defender) {
+      const defRaw = event.defender;
+      const defender = /^you$/i.test(defRaw) ? (this.character || 'You') : defRaw;
+      const atkRaw  = event.attacker;
+      const attacker = (atkRaw === null || /^you$/i.test(atkRaw || ''))
+        ? (this.character || 'You')
+        : atkRaw;
+      const defenderIsPlayer = defender && (defender === this.character || isConfirmedPlayer(defender));
+      const attackerIsPlayer = attacker && (attacker === this.character || isConfirmedPlayer(attacker));
+      if (defenderIsPlayer && !attackerIsPlayer && defender !== attacker) {
+        if (!this.threatBy.has(defender)) {
+          this.threatBy.set(defender, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, took: 0, tookMax: 0, procDetail: {} });
+        }
+        const dt = this.threatBy.get(defender);
+        dt.took = (dt.took || 0) + event.amount;
+        // Biggest single hit absorbed — the dangerous one. A tank seeing
+        // a 5k crit absorbed is more useful than knowing they ate 12k
+        // across the fight in 500-damage swings.
+        if (event.amount > (dt.tookMax || 0)) dt.tookMax = event.amount;
+      }
+    }
+
     // Taunt/stun — non-damage hate credited to the uploader's character.
     // Successful taunt ("You have taunted X") places the taunter at top threat +1,
     // matching real EQ aggro mechanics. Failed attempts use a flat 500 proxy.
@@ -3143,7 +3207,9 @@ class EncounterBuilder {
         // who_data: snapshot of every /who row this agent has observed since startup.
         // Server upserts into state.whoData so class/level/guild is available for
         // /parsestats embeds and /whois lookups even for non-guildies.
-        who_data:    whoData.size > 0 ? Array.from(whoData.values()) : undefined,
+        who_data:    whoData.size > 0
+          ? Array.from(whoData.values()).filter(_isRegistryWho)
+          : undefined,
         // Per-defender stats — hits-taken, damage-taken, dodges/parries/ripostes/blocks/misses.
         // Server uses this to build tanking leaderboards and incoming-accuracy analytics
         // without having to re-aggregate the raw event stream.
@@ -4199,9 +4265,27 @@ function _serializeForDashboard() {
       targets: [...(s.targets || [])],
     };
   }
+  // Active-character signal — the watched character whose Zeal pipe most
+  // recently sent a sample (i.e. the EQ window the user is currently in).
+  // Lets overlays focus on JUST the focused character — clears pet/charm/
+  // damage when the user alt-tabs to a different EQ window. A 10s recency
+  // window keeps "active" stable across brief Zeal stutters; null when no
+  // sample has arrived recently.
+  const _activeCharacter = (() => {
+    const now = Date.now();
+    let best = null, bestTs = 0;
+    for (const ch of Object.keys(_zealState || {})) {
+      const st = _zealState[ch];
+      const ts = (st && st.updatedAt) || 0;
+      if (ts > bestTs && (now - ts) < 60_000) { bestTs = ts; best = ch; }
+    }
+    return best;
+  })();
+
   return {
     version:            AGENT_VERSION,
     startedAt:          stats.startedAt,
+    activeCharacter:    _activeCharacter,
     sessionEvents:      stats.sessionEvents,
     sessionTotalDamage: stats.sessionTotalDamage,
     sessionDamageBy:    stats.sessionDamageBy,
@@ -4347,14 +4431,20 @@ function _serializeForDashboard() {
               out.remaining_secs  = buff.ticks * 6;
               out.buff_name       = buff.name;
             }
-            // Per-song cast time from the spell catalog. Lets the overlay's
-            // progress bar fill at the right rate for long-cast clickies
-            // (Blood Orchid Katana → Spirit of Wolf is 8s, not the 3s bard
-            // song default). Falls back to the row-kind default when the
-            // catalog has no entry.
-            const cat = _spellByNameLower.get(String(e.name).toLowerCase());
-            if (cat && typeof cat.cast_ms === 'number' && cat.cast_ms > 0) {
-              out.cast_ms = cat.cast_ms;
+            // Per-song cast time. Precedence:
+            //   1. ITEM cast time attached to the entry by _bumpBardMelody
+            //      when a "Your <item> begins to glow" line preceded the cast
+            //      (Robe of the Spring → 12s Skin like Nature).
+            //   2. SPELL catalog cast time (most clickies + manual casts).
+            //   3. (Fallback handled overlay-side: 3s for songs, 4s for
+            //      generic spells.)
+            if (typeof e.cast_ms === 'number' && e.cast_ms > 0) {
+              out.cast_ms = e.cast_ms;
+            } else {
+              const cat = _spellByNameLower.get(String(e.name).toLowerCase());
+              if (cat && typeof cat.cast_ms === 'number' && cat.cast_ms > 0) {
+                out.cast_ms = cat.cast_ms;
+              }
             }
             return out;
           });
@@ -4402,7 +4492,15 @@ function _serializeForDashboard() {
           "nature`s melody", "nature's melody"];
         const nowCastingLower = nowCasting ? nowCasting.toLowerCase() : '';
         const _isCasting = (names) => names.some(n => n === nowCastingLower);
-        const bardBuffs = (state.kind === 'song') ? {
+        // bardBuffs strip is bard-only. Gate on BOTH state.kind === 'song'
+        // AND the live Zeal class string === 'Bard'. The kind gate alone
+        // could leak: state.kind is sticky ("once a song character, always
+        // a song character") so a non-bard whose first cast happened to
+        // match _isLikelyBardSong would get stuck rendering the bard strip
+        // forever, even after switching characters. The class check is the
+        // ground truth.
+        const isBardClass = !!(zealSt && /^bard$/i.test(String(zealSt.class || '')));
+        const bardBuffs = (state.kind === 'song' && isBardClass) ? {
           amplification: ampBuff ? { remaining_ticks: ampBuff.ticks, remaining_secs: ampBuff.ticks * 6 } : null,
           // Prefer Harmonize when both are present (Harmonize replaces Resonance).
           harmonize:     harBuff ? { remaining_ticks: harBuff.ticks, remaining_secs: harBuff.ticks * 6 } : null,
@@ -4430,8 +4528,19 @@ function _serializeForDashboard() {
         const visibleOrder = (state.kind === 'song')
           ? enrichedOrder.filter(e => !e || !stripNames.has(String(e.name).toLowerCase()))
           : enrichedOrder;
+        // Debug: surface the raw buff-slot names so we can see exactly what
+        // Zeal is reporting when a utility song doesn't light up its strip
+        // row. Plain array of "name (Xt)" strings — capped at 25 to keep
+        // /api/state light. Read off the dashboard or curl /api/state to
+        // tell us what to match against in _findBuff.
+        const buffSlotsDebug = zealBuffs
+          .filter(b => b && b.name && typeof b.ticks === 'number' && b.ticks > 0)
+          .slice(0, 25)
+          .map(b => `${b.name} (${b.ticks}t)`);
         out[k] = {
           character:      k,
+          characterClass: (zealSt && zealSt.class) || null,
+          isBard:         isBardClass,
           order:          visibleOrder,
           currentPos:     state.currentPos,
           castStartedAt:  state.castStartedAt,
@@ -4443,6 +4552,7 @@ function _serializeForDashboard() {
           melodyStartedAt: state.melodyStartedAt || null,
           melodyEndedAt:   state.melodyEndedAt || null,
           bardBuffs,
+          buffSlotsDebug,
         };
       }
       return out;
@@ -4601,7 +4711,33 @@ function _serializeForDashboard() {
     knownPets:          [...knownPetOwners.entries()].map(([pet, owners]) => ({ pet, owners: [...owners] })),
     uploadQueue:        uploadQueueSnapshot(),
     updateBlocked:      _updateBlockedReason(),
+    staleBackfills:     _staleBackfillsSummary(),
   };
+}
+
+// Summarize how many opt-in files have a stale backfill version (a newer
+// agent shipped detectors their last pass missed). Powers the dashboard's
+// home-page banner + the per-file pulse on the Opt-in Logs pane. Pure
+// derived state — no caching needed; the list is small.
+function _staleBackfillsSummary() {
+  if (typeof _optinState === 'undefined' || !_optinState || !Array.isArray(_optinState.files)) {
+    return { count: 0, labels: [], oldestVersion: null };
+  }
+  const labels = new Set();
+  let oldestVersion = null;
+  let count = 0;
+  for (const f of _optinState.files) {
+    const r = f && f.resume;
+    if (!r || !r.complete || !r.agentVersion) continue;
+    const stale = detectorsStaleSince(r.agentVersion);
+    if (stale.length === 0) continue;
+    count += 1;
+    for (const d of stale) labels.add(d.label);
+    if (!oldestVersion || isNewerVersion(oldestVersion, r.agentVersion)) {
+      oldestVersion = r.agentVersion;
+    }
+  }
+  return { count, labels: [...labels], oldestVersion };
 }
 
 // Update-gate evaluator. Returns null when an update is safe, or a short
@@ -4681,6 +4817,19 @@ tr:hover td { background:#1f242c }
 .banner { padding:8px 12px; border-radius:6px; margin:0 0 10px 0; font-size:13px; }
 .banner.update { background:#9e6a03; color:#fff }
 .banner.resumed { background:#1a7f37; color:#fff }
+/* Stale-backfill nudge — soft green so it reads as informational, not an
+   error. The pulse-dot inside it ties visually to the per-row pulse on the
+   ↻ Re-run button in the Opt-in Logs pane: same color, same rhythm. */
+.banner.stale-backfill .pulse-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#56d364; box-shadow:0 0 0 0 rgba(86,211,100,0.7); animation: wp-pulse-glow 1.8s ease-out infinite; vertical-align:middle; margin-right:6px; }
+@keyframes wp-pulse-glow {
+  0%   { box-shadow:0 0 0 0   rgba(86,211,100,0.7); transform:scale(1);    }
+  60%  { box-shadow:0 0 0 10px rgba(86,211,100,0);   transform:scale(1.12); }
+  100% { box-shadow:0 0 0 0   rgba(86,211,100,0);   transform:scale(1);    }
+}
+/* Pulse halo on a Re-run button whose backfill is stale relative to the
+   current agent. Same animation as the banner dot — visual coupling tells
+   the user the banner is naming THIS row. */
+button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-out infinite; box-shadow:0 0 0 0 rgba(86,211,100,0.7); }
 .subtle { color:var(--dim); font-size:12px; margin:4px 0 12px 0; }
 .spell-link { color:inherit; text-decoration:none; border-bottom:1px dotted var(--blue); }
 .spell-link:hover { color:var(--blue); border-bottom-color:transparent; }
@@ -4805,6 +4954,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="info">Info / Stats</button>
   <button data-tab="optin">Opt-in Logs</button>
+  <button id="wpUiStudioBtn" type="button"
+     style="background:transparent;border:1px solid var(--green);color:var(--green);padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit"
+     title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
   <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
      class="nav-quest"
      style="margin-left:auto;color:var(--orange);border-color:var(--orange)"
@@ -4997,6 +5149,25 @@ function renderHeader(s) {
   let h = '';
   if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
+  // Stale-backfill nudge. Lives in the header (always visible across tabs)
+  // so a user who never opens the Opt-in Logs pane still sees it. Click
+  // hands off to the pane — the pulse on each affected file row tells them
+  // which to re-run. We only show it when the user has actually completed
+  // at least one backfill (count > 0); first-time users get no banner.
+  const sb = s.staleBackfills || { count: 0, labels: [], oldestVersion: null };
+  if (sb.count > 0) {
+    const fileWord  = sb.count === 1 ? 'file' : 'files';
+    const labelList = (sb.labels || []).slice(0, 3).join(', ')
+                    + ((sb.labels || []).length > 3 ? ', …' : '');
+    const tip = labelList
+      ? 'New since your last backfill: ' + esc(labelList)
+      : 'New detectors available — re-run to capture them';
+    h += '<div class="banner stale-backfill" title="' + esc(tip) + '" style="background:#1a3a1f;color:#bff5c5;border:1px solid #2ea043;display:flex;gap:10px;align-items:center;justify-content:space-between">'
+       + '<span><span class="pulse-dot" aria-hidden></span><b> ' + sb.count + ' ' + fileWord + '</b> backfilled before recent detectors landed. '
+       + 'Re-run to capture <b>' + esc(labelList || 'new fun-event counters') + '</b>.</span>'
+       + '<button id="bannerGoOptin" style="background:#fff;color:#1a3a1f;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;white-space:nowrap">Open Opt-in Logs →</button>'
+       + '</div>';
+  }
   // Setup-state banners. These are the "why is nothing flowing" causes — all
   // ride at the top of every dashboard tab (the header block is shared, so a
   // tab-switch never hides them). Stacked when more than one applies so the
@@ -5092,6 +5263,14 @@ function renderHeader(s) {
   }
   h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + alwaysBtn + resetBtn + '</div>';
   if (!setSectionHTML('header', h)) return;
+  // Stale-backfill banner has a one-click hop to the Opt-in Logs pane.
+  // Drives directly at the nav button so we reuse its tab-switching glue
+  // (active class swap + refreshOptin) without duplicating it here.
+  const goOptin = document.getElementById('bannerGoOptin');
+  if (goOptin) _bindOnce(goOptin, 'click', () => {
+    const tabBtn = document.querySelector('.nav button[data-tab="optin"]');
+    if (tabBtn) tabBtn.click();
+  });
   // Always-visible 'Restart now / Check for update' button mirrors the install flow
   const manual = document.getElementById('manualUpdateBtn');
   function _startRestartPoll(bannerId) {
@@ -6477,11 +6656,29 @@ function renderOptin(o) {
         const whoLabel = whoTip
           ? ' <span class="dim" style="font-size:10px" title="' + esc(whoTip) + '">↺ rescanned ' + esc(whoVer) + '</span>'
           : '';
+        // Stale-backfill nudge: the agent has shipped new detectors since
+        // this file was backfilled. We pulse the ↻ Re-run button and prefix
+        // the row with a small chip naming what would land. Matches the
+        // pulse on the header banner so the two cues are visibly tied.
+        const stale     = (f.staleDetectors || []);
+        const isStale   = stale.length > 0;
+        const staleLbls = stale.map(d => d.label).join(', ');
+        const staleTip  = isStale
+          ? 'Backfilled under v' + esc((f.resume && f.resume.agentVersion) || '?') + '. New detectors since: ' + esc(staleLbls) + '. Re-run to capture them.'
+          : '';
+        const staleChip = isStale
+          ? ' <span class="dim" style="font-size:10px;background:#1a3a1f;color:#bff5c5;border:1px solid #2ea043;border-radius:3px;padding:1px 6px;margin-left:6px" title="' + staleTip + '">★ ' + stale.length + ' new</span>'
+          : '';
+        const rerunClass = isStale ? ' class="wp-rerun-stale"' : '';
+        const rerunTip   = isStale
+          ? staleTip
+          : 'Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting.';
         resumeStr =
           '<span style="color:var(--green)" title="' + esc(tip) + '">✓ done</span>' +
           (when ? ' <span class="dim" style="font-size:10px">' + esc(when.replace(/, /, ' ')) + (ver ? ' · ' + esc(ver) : '') + '</span>' : '') +
           whoLabel +
-          ' <button data-rerun="' + esc(f.path) + '" title="Re-run backfill from byte 0 — picks up PvP kills, chat, and combat events that newer agent/bot versions extract but the prior pass missed. Server-side dedup prevents double-counting." style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>' +
+          staleChip +
+          ' <button data-rerun="' + esc(f.path) + '"' + rerunClass + ' title="' + rerunTip + '" style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>' +
           ' <button data-rescan-who="' + esc(f.path) + '" title="Re-scan this file for /who rows only (fast — skips chat + combat which are already uploaded). Captures visible-class /who rows that a pre-v3.0.35 keep-pattern bug silently dropped." style="margin-left:4px;background:#1f6feb;border:1px solid #1f6feb;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↺ /who only</button>';
       }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
@@ -6714,6 +6911,27 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
 refresh(); setInterval(refresh, 2000);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
+
+// UI Studio nav button — opens the standalone editor window via Electron IPC.
+// Available only when the dashboard is running inside Mimic's main window
+// (preload exposes window.mimic). In a plain browser the button stays
+// visible but its click silently no-ops, since the IPC is the only entry
+// point. The button is OUTSIDE the [data-tab] selector above so it doesn't
+// participate in the in-page tab swap — it's a side door, not a tab body.
+var _uiStudioBtn = document.getElementById('wpUiStudioBtn');
+if (_uiStudioBtn) {
+  _uiStudioBtn.addEventListener('click', function(){
+    if (window.mimic && window.mimic.openUiStudio) {
+      try { window.mimic.openUiStudio(); } catch (e) {}
+    }
+  });
+  // Dim the button in non-Mimic browser contexts so users aren't confused
+  // by an unresponsive control.
+  if (!(window.mimic && window.mimic.openUiStudio)) {
+    _uiStudioBtn.style.opacity = '0.4';
+    _uiStudioBtn.title = 'UI Studio is only available inside Mimic — open the Mimic dashboard window';
+  }
+}
 
 // Buffs & Zone per-character hide (✕) + "show all". Stored in localStorage so a
 // machine's "don't care" choices persist; renderZealClients reads the set each
@@ -8488,20 +8706,30 @@ async function _readBody(req, max = 64 * 1024) {
 
 function _serializeOptinForWeb() {
   if (!_optinState.scanned) _scanOptInFiles();
-  const mapFile = (f) => ({
-    path:      f.path,
-    character: f.character,
-    isAlt:     f.isAlt,
-    isWatched: !!f.isWatched,  // ← was omitted; without it the UI couldn't tell
-    sizeBytes: f.sizeBytes,    //   the checkbox should render as `disabled`,
-    sizeMb:    f.sizeMb,       //   so clicks reached the server but were
-    mtime:     f.mtime ? f.mtime.getTime() : null,  // silently dropped by the
-    selected:  !!f.selected,                        // `!f.isWatched` guard
-    requested: !!f.requested,                       // in the select handler.
-    resume:    f.resume || null,
-    active:    _activeBackfills.has(f.path),
-    activeStatus: _activeBackfills.get(f.path) || null,
-  });
+  const mapFile = (f) => {
+    // A completed backfill is "stale" when newer detectors have shipped since
+    // the version stored in resume.agentVersion. Caller surfaces this as a
+    // pulse on the ↻ Re-run button + a top-of-page banner counting how many
+    // files would benefit. Empty array = nothing new to extract.
+    const resume = f.resume || null;
+    const isComplete = !!(resume && resume.complete && resume.agentVersion);
+    const stale = isComplete ? detectorsStaleSince(resume.agentVersion) : [];
+    return {
+      path:      f.path,
+      character: f.character,
+      isAlt:     f.isAlt,
+      isWatched: !!f.isWatched,  // ← was omitted; without it the UI couldn't tell
+      sizeBytes: f.sizeBytes,    //   the checkbox should render as `disabled`,
+      sizeMb:    f.sizeMb,       //   so clicks reached the server but were
+      mtime:     f.mtime ? f.mtime.getTime() : null,  // silently dropped by the
+      selected:  !!f.selected,                        // `!f.isWatched` guard
+      requested: !!f.requested,                       // in the select handler.
+      resume,
+      staleDetectors: stale.map(d => ({ version: d.version, name: d.name, label: d.label })),
+      active:    _activeBackfills.has(f.path),
+      activeStatus: _activeBackfills.get(f.path) || null,
+    };
+  };
   return {
     sortMode: _optinState.sortMode,
     pane:     _optinState.pane,
@@ -10372,6 +10600,8 @@ function runOptinBackfill(files, opts = {}) {
             if (pkEvt) funEventBuffer.push(pkEvt);
             const dpEvt = parseDragonPunch(line, f.character);
             if (dpEvt) funEventBuffer.push(dpEvt);
+            const dirgeEvt = parseDirgeCast(line, f.character);
+            if (dirgeEvt) funEventBuffer.push(dirgeEvt);
             // Feral Avatar cast-begin (caster-side AND bystander-side).
             // Complementary to parseFeralAvatarReceived below — that one fires
             // on the buff land, this one on the cast begin. Both push so the
@@ -11558,6 +11788,67 @@ function parseDragonPunch(line, selfName) {
   };
 }
 
+// ── 🎵 Dirge cast — bard dirge songs ──────────────────────────────────────────
+// Line:  "<Bard> begins singing Dirge of <Whatever>."
+// Caster-side: "You begin singing Dirge of <Whatever>."
+// Captures any dirge — Dirge of Carnage is the iconic PvP one, but Dirge of the
+// Restless / Sleepwalker etc. count too. Powers /fun's dirge counter ("killed
+// a whole guild with N dirges"). Bystander-side fires on every agent in zone,
+// so the bot's (guild_id, event_type, caster, event_ts) dedup collapses the
+// duplicates back to one row per cast.
+const DIRGE_SELF_RX  = /^\[(.+?)\]\s+You\s+begin\s+singing\s+(Dirge\s+of\s+[^.]+)\.?\s*$/i;
+const DIRGE_OTHER_RX = /^\[(.+?)\]\s+(\w[\w'`]*)\s+begins\s+singing\s+(Dirge\s+of\s+[^.]+)\.?\s*$/i;
+function parseDirgeCast(line, selfName) {
+  let m = DIRGE_SELF_RX.exec(line);
+  let caster = null;
+  let song = null;
+  if (m) { caster = selfName; song = m[2].trim(); }
+  else {
+    m = DIRGE_OTHER_RX.exec(line);
+    if (m) { caster = m[2]; song = m[3].trim(); }
+  }
+  if (!m || !caster) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type:     'dirge_cast',
+    caster,
+    target:   song,                // store the dirge song name in `target` for analysis
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
+// ── Detector history (manifest of when each detector landed) ────────────────
+// Drives the "your backfill is stale" UI. Each entry: the agent version that
+// FIRST extracted that detector. When a file's recorded backfill version is
+// older than ANY entry here, the UI surfaces a pulse on its ↻ Re-run button
+// and a top-of-page banner counts how many files would benefit from a re-run.
+//
+// Add a row whenever you ship a new detector that mines historical log lines.
+// Pure live-tail-only features (PvP ledger relays, encounter rollups already
+// dedupped server-side, etc.) don't need entries — they're auto-applied on
+// the next live event and re-running won't pull anything new.
+//
+// Format: { version: 'x.y.z', name: 'detector_id', label: 'Human-readable' }
+const DETECTOR_HISTORY = [
+  // v3.0.62 — bard Dirge of *.
+  { version: '3.0.62', name: 'dirge_cast',           label: 'Dirge of * casts' },
+  // The earlier detectors (Peopleslayer LD, Malthur provisions, Dragon Punch,
+  // Feral Avatar, etc.) shipped before this manifest existed. They're left
+  // out intentionally — a backfill from any 3.x version already covered them,
+  // and adding them retroactively would mark every old file stale on first
+  // run for no recoverable gain.
+];
+
+// Returns the detector entries that have shipped AFTER `priorVersion`. Pass
+// null / undefined to get every detector (used for "you haven't backfilled at
+// all" callers). A file recorded as v3.0.62 will report dirge_cast as already
+// covered; an older one will see it as stale.
+function detectorsStaleSince(priorVersion) {
+  if (!priorVersion) return DETECTOR_HISTORY.slice();
+  return DETECTOR_HISTORY.filter(d => isNewerVersion(d.version, priorVersion));
+}
+
 // ── 🐺 Feral Avatar cast — Beastlord epic 1.0 click ───────────────────────────
 // Two forms — caster-side ("You begin casting…") only fires on the BL's own
 // agent; bystander-side ("Fittir begins casting…") fires on any agent in
@@ -11904,6 +12195,21 @@ let _spellByNameLower = new Map();
 let _spellCatalogMeta = null;
 const SPELL_CATALOG_FILE = path.join(__dirname, 'logsync.spell-catalog.json');
 
+// Item-clicky catalog — item name (lowercased) → { casttime, clickeffect,
+// clicktype, clicklevel }. Lets the melody overlay use the ITEM's cast
+// time instead of the underlying spell's when a player triggers a clicky
+// (Robe of the Spring → 12s Skin like Nature, not the bare spell's 5s).
+let _itemClickyByNameLower = new Map();
+let _itemClickyMeta = null;
+const ITEM_CLICKY_FILE = path.join(__dirname, 'logsync.item-clickies.json');
+
+// Pending clicky cast — set when we see "Your <item> begins to glow."
+// in the log. When Zeal label 134 transitions within CLICKY_WINDOW_MS,
+// the resulting cast inherits the item's cast time. Cleared after use
+// or after the window expires.
+const CLICKY_WINDOW_MS = 3000;
+const _pendingClickies = new Map();   // character → { itemName, castMs, atMs }
+
 function _loadSpellCatalogFromDisk() {
   try {
     if (!fs.existsSync(SPELL_CATALOG_FILE)) return;
@@ -11991,6 +12297,77 @@ function fetchSpellCatalog({ botUrl, token }) {
       req.on('timeout', () => { req.destroy(); resolve(); });
       req.end();
     } catch (err) { console.warn('[spell-catalog] setup error:', err && err.message); resolve(); }
+  });
+}
+
+function _loadItemClickiesFromDisk() {
+  try {
+    if (!fs.existsSync(ITEM_CLICKY_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(ITEM_CLICKY_FILE, 'utf8'));
+    if (!Array.isArray(raw.entries)) return;
+    _itemClickyByNameLower = new Map();
+    for (const e of raw.entries) {
+      if (e && e.name) _itemClickyByNameLower.set(String(e.name).toLowerCase(), e);
+    }
+    _itemClickyMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    console.log(`[item-clickies] loaded ${raw.entries.length} clicky items from disk (cached ${raw.fetched_at || '?'})`);
+  } catch (err) {
+    console.warn('[item-clickies] disk load failed:', err && err.message);
+  }
+}
+
+function fetchItemClickies({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/item-clickies');
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      };
+      if (_itemClickyMeta && _itemClickyMeta.etag) headers['If-None-Match'] = _itemClickyMeta.etag;
+      const req = mod.request({
+        method: 'GET', hostname: u.hostname, port: u.port,
+        path: u.pathname + u.search, headers, timeout: 30000,
+      }, (res) => {
+        if (res.statusCode === 304) { res.resume(); return resolve(); }
+        if (res.statusCode !== 200) {
+          res.resume();
+          // Older bots without the route fall through to the health check
+          // (200 OK plain text). Don't spam warnings — just stop trying.
+          return resolve();
+        }
+        const etag = res.headers && res.headers.etag;
+        const ctype = (res.headers && res.headers['content-type']) || '';
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          const looksJson = /json/i.test(ctype) || /^\s*[{[]/.test(body);
+          if (!looksJson) return resolve();
+          try {
+            const data = JSON.parse(body);
+            if (!Array.isArray(data.entries)) { resolve(); return; }
+            _itemClickyByNameLower = new Map();
+            for (const e of data.entries) {
+              if (e && e.name) _itemClickyByNameLower.set(String(e.name).toLowerCase(), e);
+            }
+            _itemClickyMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            try {
+              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
+              fs.writeFileSync(ITEM_CLICKY_FILE + '.tmp', JSON.stringify(out));
+              fs.renameSync(ITEM_CLICKY_FILE + '.tmp', ITEM_CLICKY_FILE);
+            } catch (e) { /* disk cache best-effort */ }
+            console.log(`[item-clickies] fetched ${data.entries.length} clicky items from bot`);
+          } catch (err) { console.warn('[item-clickies] parse failed:', err && err.message); }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch (err) { console.warn('[item-clickies] setup error:', err && err.message); resolve(); }
   });
 }
 
@@ -13790,6 +14167,7 @@ async function main() {
   // to refresh from the bot. We don't await — a slow fetch must not delay
   // boot, and the resisted-spell card just shows plain names until it lands.
   _loadSpellCatalogFromDisk();
+  _loadItemClickiesFromDisk();
   // Restore the Pet tracker's in-memory state (last /pet health, observed buff
   // landings, running combat stats) so a Mimic restart or LD reconnect brings
   // the existing pet timers + stats back instead of starting blank. TTLs in
@@ -13797,11 +14175,13 @@ async function main() {
   _loadPetStateFromDisk();
   if (!dryRun && token) {
     fetchSpellCatalog({ botUrl, token }).catch(() => {});
+    fetchItemClickies({ botUrl, token }).catch(() => {});
     // Re-fetch daily — the catalog only changes on the weekly upstream sync,
     // but a daily check is cheap (the bot serves a 304 if nothing changed)
     // and stops a long-running agent from drifting indefinitely.
     setInterval(() => {
       fetchSpellCatalog({ botUrl, token }).catch(() => {});
+      fetchItemClickies({ botUrl, token }).catch(() => {});
     }, 24 * 60 * 60 * 1000).unref();
   }
   // Operator's declared main (if the launcher passed --character) — used to
@@ -13988,7 +14368,7 @@ async function main() {
           ended_at:   iso,
           boss_name:  null,
           events:     [],
-          who_data:   Array.from(whoData.values()),
+          who_data:   Array.from(whoData.values()).filter(_isRegistryWho),
         },
       }, { botUrl, token, dryRun }).catch(err => {
         if (!_dashboardEnabled) console.warn(`[who flush] ${err.message}`);
@@ -14016,6 +14396,43 @@ async function main() {
     for (const b of builders) {
       console.log(`[${b.character}] scanning ${b.logPath}`);
       await readWindow(b.logPath, since, until, line => {
+        // Fun-event detection — mirrors the opt-in backfill path so a CLI
+        // bulk replay captures the same guild-flavor counters (Peopleslayer
+        // LD, Malthur provisions, Dragon Punch, Dirges, Feral Avatar, …).
+        // The bot's (guild_id, event_type, caster, event_ts) upsert key
+        // dedups re-runs and overlap with other agents who saw the same
+        // line, so emitting freely from --since is safe.
+        const ldEvt = parsePeopleslayerLd(line);
+        if (ldEvt) funEventBuffer.push(ldEvt);
+        const provEvt = parseMalthurProvision(line, b.character);
+        if (provEvt) funEventBuffer.push(provEvt);
+        const sumProvEvt = parseSummonProvisions(line, b.character);
+        if (sumProvEvt) funEventBuffer.push(sumProvEvt);
+        const cursorEvt = parseCursorFull(line, b.character);
+        if (cursorEvt) funEventBuffer.push(cursorEvt);
+        const htEvt = parseHarmTouch(line, b.character);
+        if (htEvt) funEventBuffer.push(htEvt);
+        const lohEvt = parseLayOnHands(line, b.character);
+        if (lohEvt) funEventBuffer.push(lohEvt);
+        const pkEvt = parsePvpFlag(line, b.character);
+        if (pkEvt) funEventBuffer.push(pkEvt);
+        const dpEvt = parseDragonPunch(line, b.character);
+        if (dpEvt) funEventBuffer.push(dpEvt);
+        const dirgeEvt = parseDirgeCast(line, b.character);
+        if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+        const faCastEvt = parseFeralAvatar(line, b.character);
+        if (faCastEvt) funEventBuffer.push(faCastEvt);
+        const faEvt = parseFeralAvatarReceived(line, b.character);
+        if (faEvt) funEventBuffer.push(faEvt);
+        const savEvt = parseSavageryReceived(line, b.character);
+        if (savEvt) funEventBuffer.push(savEvt);
+        // Observed buff landings on other players — same as opt-in path.
+        // Almost always expired by the time --since runs, but the web
+        // filters expired so this costs nothing and occasionally rescues
+        // a still-active buff from a recent log replay.
+        const bcEvt = parseBuffLanding(line, b.character);
+        if (bcEvt) buffCastBuffer.push(bcEvt);
+
         const chatMsg = parseChatLine(line, b.character);
         if (chatMsg) {
           chatBatch.push({ ...chatMsg, uploadedBy: b.character });
@@ -14030,6 +14447,18 @@ async function main() {
       b.builder.flush();
     }
     await flushChat(true).catch(() => {});
+    // Drain the fun-event + buff-cast buffers. Watch mode lets the 5s
+    // startChatRelay tick handle this; --since is one-shot and exits, so we
+    // flush inline before the process returns. Otherwise everything we just
+    // detected sits in-memory and never uploads.
+    if (funEventBuffer.length > 0) {
+      await uploadFunEvents(funEventBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[fun-event backfill] ${err.message}`));
+    }
+    if (buffCastBuffer.length > 0) {
+      await uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[buff-cast backfill] ${err.message}`));
+    }
     console.log('Backfill complete.');
     return;
   }
@@ -14099,6 +14528,27 @@ async function main() {
               try { if (stats.castCounts && stats.castCounts[old])  delete stats.castCounts[old]; } catch {}
               try { if (stats.sessionDeeps && stats.sessionDeeps[old]) delete stats.sessionDeeps[old]; } catch {}
               try { if (stats.sessionMends && stats.sessionMends[old]) delete stats.sessionMends[old]; } catch {}
+            }
+          }
+        }
+
+        // ── Item clicky detection ──────────────────────────────────────────
+        // "Your <Item> begins to glow." fires for any equipped/inventory
+        // clicky use (Robe of the Spring, Voice of the Serpent, Blood Orchid
+        // Katana, etc). The underlying spell starts casting immediately
+        // after, so we stash the item's cast time keyed by character and let
+        // _bumpBardMelody pick it up when Zeal label 134 changes within
+        // CLICKY_WINDOW_MS. Without this the overlay defaults to the bare
+        // spell's cast time, which is wrong for any item that overrides it.
+        {
+          const m = line.match(/\]\s+Your\s+(.+?)\s+begins\s+to\s+(?:glow|sparkle|hum|smoke|burn)\b/i);
+          if (m) {
+            const itemName = m[1];
+            const cat = _itemClickyByNameLower.get(itemName.toLowerCase());
+            const castMs = (cat && typeof cat.casttime === 'number' && cat.casttime > 0) ? cat.casttime : null;
+            if (b.character) {
+              _pendingClickies.set(b.character.toLowerCase(),
+                { itemName, castMs, atMs: Date.now() });
             }
           }
         }
@@ -14207,6 +14657,8 @@ async function main() {
         if (pkEvt && !_sourceExcluded) funEventBuffer.push(pkEvt);
         const dpEvt = parseDragonPunch(line, b.character);
         if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
+        const dirgeEvt = parseDirgeCast(line, b.character);
+        if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
         // Feral Avatar — caster-side fires only on the BL's own log; bystander
         // form fires on anyone in zone. Both push so the bot's (guild_id,
         // event_type, caster, event_ts) dedup collapses overlap.

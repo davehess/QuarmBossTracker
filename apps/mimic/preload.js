@@ -70,6 +70,25 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
   uiStudioRestore:        (params)  => ipcRenderer.invoke('ui-studio-restore', params),
+  // Visual UI Studio editor — read/write per-character ini bundles for the
+  // graphical resolution-rescaling editor. Read returns a raw filename →
+  // text map; write takes the edited map and persists with .bak backups.
+  uiStudioReadBundle:     (character, eqDir) => ipcRenderer.invoke('ui-studio-read-bundle', character, eqDir),
+  uiStudioWriteBundle:    (eqDir, bundle)    => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle),
+  // Open the standalone UI Studio editor window from the dashboard's nav.
+  openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
+  // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
+  // load full content, and import = write a markdown summary alongside
+  // the EQ folder so the user can build their hotkey pages by reference
+  // without risking the live socials INI.
+  uiStudioListPvpSets:    (characterClass)   => ipcRenderer.invoke('ui-studio-list-pvp-sets', characterClass),
+  uiStudioLoadPvpSet:     (id)               => ipcRenderer.invoke('ui-studio-load-pvp-set', id),
+  uiStudioImportPvpSet:   (params)           => ipcRenderer.invoke('ui-studio-import-pvp-set', params),
+  // Backup + capture flow — surface the existing cloud-backup IPC from
+  // the visual editor + add a heuristic local capture for Sock_/Socials_
+  // files so users can share their PvP setups as draft templates.
+  uiStudioInspectSocials: (character, eqDir) => ipcRenderer.invoke('ui-studio-inspect-socials', character, eqDir),
+  uiStudioCapturePvpDraft:(params)           => ipcRenderer.invoke('ui-studio-capture-pvp-draft', params),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns
   // { ok, user_code, verification_url, verification_url_complete, expires_at }

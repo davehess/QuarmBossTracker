@@ -82,6 +82,8 @@ let petsWindow    = null;
 let mobInfoWindow = null;
 let whoWindow     = null;
 let melodyWindow  = null;
+let zealWindow    = null;
+let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
 // "damage-done-this-session"). One window per panel; calling
@@ -628,6 +630,8 @@ function _boundsKeyForWindow(win) {
   if (win === petsWindow)    return 'petsBounds';
   if (win === mobInfoWindow) return 'mobInfoBounds';
   if (win === whoWindow)     return 'whoBounds';
+  if (win === melodyWindow)  return 'melodyBounds';
+  if (win === zealWindow)    return 'zealBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1115,13 +1119,23 @@ function startZealCapture() {
     const cfg = loadConfig();
     if (cfg.zealPipe === false) { appendAgentLog('[zeal] capture disabled (cfg.zealPipe=false)\n'); return; }
     const seenTypes = new Set();          // "pid:type" we've already log-sampled
+    // Just-in-time Zeal-setup hint. If EQ is running for 60s but the pipe is
+    // silent, we surface a one-time toast suggesting the user enable Zeal's
+    // pipe output. Solves the "melody is empty" / "charm tracker blank" class
+    // of bug reports caused by Zeal pipe being off in the user's EQ config.
+    let _zealFirstEqAt   = 0;
+    let _zealHintFired   = false;
+    let _zealAnyEventYet = false;
     zealWatch = startZealWatch({
       log: appendAgentLog,
       onStatus: (s) => {
         zealLastConnectedPids = s.connectedPids || [];
+        if (zealLastConnectedPids.length > 0 && !_zealFirstEqAt) _zealFirstEqAt = Date.now();
+        if (zealLastConnectedPids.length === 0) _zealFirstEqAt = 0;   // EQ closed — reset window
         _flushZealToAgent();              // push connection change immediately
       },
       onEvent: (pid, obj) => {
+        _zealAnyEventYet = true;
         const type = (obj && (obj.type !== undefined ? String(obj.type) : 'noType'));
         const key = pid + ':' + type;
         // Log one full sample per (pid,type) the first time — keeps the agent
@@ -1148,6 +1162,36 @@ function startZealCapture() {
     });
     setInterval(_flushZealToAgent, 2000);
     setInterval(_flushZealStateToAgent, 300);   // gauge-condition snapshots
+    // Hint check: every 15s, look at the EQ-running window vs zeal traffic.
+    // Suppressed after the first fire (a single user session shouldn't get
+    // nagged repeatedly) AND after any zeal event has arrived (proves pipe
+    // is wired). Also honors cfg.zealHintShown so a once-acknowledged user
+    // doesn't get re-prompted across launches.
+    setInterval(() => {
+      if (_zealHintFired || _zealAnyEventYet) return;
+      if (!_zealFirstEqAt || (Date.now() - _zealFirstEqAt) < 60_000) return;
+      const cfgNow = loadConfig();
+      if (cfgNow.zealHintShown) return;
+      _zealHintFired = true;
+      try { cfgNow.zealHintShown = true; saveConfig(cfgNow); } catch {}
+      appendAgentLog('[zeal] no traffic detected after EQ has been running 60s — prompting user\n');
+      try {
+        if (Notification.isSupported()) {
+          const n = new Notification({
+            title: 'Wolf Pack Mimic — Zeal pipes look off',
+            body:  'EQ is running but no Zeal data is flowing. Open Zeal in-game → Settings → Pipes and enable all data types. Need to verify? Tray → Overlays → Zeal health (diagnostic).',
+          });
+          n.on('click', () => {
+            const cfg2 = loadConfig();
+            cfg2.showZeal = true;
+            saveConfig(cfg2);
+            if (!zealWindow) createZealHealthOverlay(); else applyZealVisibility();
+            pushStatus();
+          });
+          n.show();
+        }
+      } catch {}
+    }, 15_000);
     appendAgentLog('[zeal] capture started — watching for eqgame.exe + Zeal pipes\n');
   } catch (e) {
     appendAgentLog(`[zeal] capture failed to start: ${e && e.message}\n`);
@@ -1541,6 +1585,7 @@ function _overlayEntries() {
   if (mobInfoWindow && !mobInfoWindow.isDestroyed()) out.push(['mobinfo', mobInfoWindow]);
   if (whoWindow     && !whoWindow.isDestroyed())     out.push(['who',     whoWindow]);
   if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
+  if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1597,6 +1642,7 @@ function applySetupMode(on) {
     if (!mobInfoWindow) createMobInfoOverlay();
     if (!whoWindow)     createWhoOverlay();
     if (!melodyWindow)  createMelodyOverlay();
+    if (!zealWindow)    createZealHealthOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -1610,6 +1656,7 @@ function applySetupMode(on) {
   applyMobInfoVisibility();
   applyWhoVisibility();
   applyMelodyVisibility();
+  applyZealVisibility();
   applyAllOverlayOpacities();
   pushStatus();
 }
@@ -1727,6 +1774,433 @@ function openSettings() {
   settingsWindow.loadFile('settings.html');
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
+
+// UI Studio — graphical EQ-window editor. Loads per-character ini files
+// from the user's EQ folder, parses XPos/YPos/Size.cx/Size.cy from each
+// section, rescales 1440 → 1080 (or any source→target res), lets the user
+// drag/resize windows with snap-to-edges, then writes back with .bak
+// backups. Lets users prep a UI for a new monitor without launching EQ.
+function openUiStudio() {
+  if (uiStudioWindow) { uiStudioWindow.focus(); return; }
+  uiStudioWindow = new BrowserWindow({
+    width: 1200, height: 780, title: 'Wolf Pack Mimic — UI Studio',
+    backgroundColor: '#0d1117',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  uiStudioWindow.setMenu(null);
+  uiStudioWindow.loadFile('ui-studio.html');
+  uiStudioWindow.on('closed', () => { uiStudioWindow = null; });
+}
+
+// Read a character's full ini bundle (existing UI Studio capture helper
+// gives us this) and return raw text contents per file so the renderer
+// can parse + edit + save in one round-trip.
+ipcMain.handle('ui-studio-read-bundle', (_e, character, eqDir) => {
+  try {
+    const c = String(character || '').trim();
+    const d = String(eqDir || '').trim();
+    if (!c || !d) return null;
+    return _readUiBundle(d, c);
+  } catch { return null; }
+});
+
+// Write the edited bundle back to disk with .bak backups (via
+// _backupAndWriteFile). Only writes files explicitly present in the
+// bundle map — unchanged INIs are left alone, never accidentally cleared.
+ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
+  try {
+    const d = String(eqDir || '').trim();
+    if (!d || !bundle || typeof bundle !== 'object') {
+      return { ok: false, error: 'eqDir + bundle required' };
+    }
+    if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) {
+      return { ok: false, error: 'eqDir does not exist: ' + d };
+    }
+    const written = [];
+    for (const [name, contents] of Object.entries(bundle)) {
+      if (typeof contents !== 'string' || contents.length === 0) continue;
+      // Sanity: only allow plain ini filenames in the EQ dir — no path
+      // traversal, no overwriting files outside the directory.
+      if (!/^[\w.-]+\.ini$/i.test(name)) continue;
+      const target = path.join(d, name);
+      _backupAndWriteFile(target, contents);
+      written.push(name);
+    }
+    return { ok: true, written, count: written.length };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Open UI Studio from the dashboard nav button. Same entry point as the
+// tray menu item — openUiStudio focuses the existing window if one is
+// already open instead of stacking duplicates.
+ipcMain.handle('open-ui-studio', () => { openUiStudio(); return true; });
+
+// ── PvP Sets (bundled in apps/mimic/pvp-sets/) ─────────────────────────────
+// Shared rotations contributed by guildies — pre-built hotkey pages,
+// spell-set notes, clicky lineups, potion picks. First template: the
+// bard "Dirge Team 6™" PvP rotation (credit: Vann | Barb). UI Studio
+// shows a class-matched picker; the agent never writes back to the EQ
+// socials INI yet — we drop a plain-markdown summary alongside the user's
+// UI files so they can configure in-game without risk to existing data.
+function _pvpSetsDir() {
+  // In dev, the templates ship next to main.js. In packaged builds they're
+  // baked into the asar — fs.readFileSync from process.resourcesPath/app
+  // works for both since Electron mounts asar transparently.
+  return path.join(__dirname, 'pvp-sets');
+}
+
+ipcMain.handle('ui-studio-list-pvp-sets', (_e, characterClass) => {
+  try {
+    const dir = _pvpSetsDir();
+    if (!fs.existsSync(dir)) return [];
+    const out = [];
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!raw || !raw.id) continue;
+        // Class filter — if the caller passes a class, only return templates
+        // whose `class` field matches (case-insensitive). Always include
+        // templates with no `class` field (universal sets).
+        if (characterClass && raw.class
+            && String(raw.class).toLowerCase() !== String(characterClass).toLowerCase()) continue;
+        out.push({
+          id:          raw.id,
+          name:        raw.name,
+          class:       raw.class || null,
+          credit:      raw.credit || null,
+          description: raw.description || '',
+          phase_count: Array.isArray(raw.phases) ? raw.phases.length : 0,
+        });
+      } catch (err) {
+        appendAgentLog(`[pvp-sets] skipping ${f}: ${err && err.message}\n`);
+      }
+    }
+    return out;
+  } catch { return []; }
+});
+
+ipcMain.handle('ui-studio-load-pvp-set', (_e, id) => {
+  try {
+    const dir = _pvpSetsDir();
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (raw && raw.id === id) return raw;
+    }
+    return null;
+  } catch { return null; }
+});
+
+ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
+  try {
+    const id     = String(params?.id || '').trim();
+    const eqDir  = String(params?.eqDir || '').trim();
+    const character = String(params?.character || '').trim();
+    if (!id || !eqDir) return { ok: false, error: 'id + eqDir required' };
+    const dir = _pvpSetsDir();
+    let raw = null;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (j && j.id === id) { raw = j; break; }
+    }
+    if (!raw) return { ok: false, error: 'template not found: ' + id };
+
+    let md = '# ' + raw.name + '\n\n';
+    if (raw.credit) md += '_Credit: ' + raw.credit + '_  \n';
+    if (raw.class)  md += '_Class:  ' + raw.class  + '_  \n';
+    md += '\n';
+    if (raw.description) md += raw.description + '\n\n';
+    if (raw.availability_note) {
+      md += '> **Bring what you have on the truck.** ' + raw.availability_note + '\n\n';
+    }
+
+    if (Array.isArray(raw.phases)) {
+      md += '## Rotation (core — required)\n\n';
+      for (const ph of raw.phases) {
+        md += '### ' + ph.name + (ph.page_label ? '  —  ' + ph.page_label : '') + '\n\n';
+        if (Array.isArray(ph.buttons)) {
+          md += '| Slot | Label | Color | Cast | Notes |\n';
+          md += '|------|-------|-------|------|-------|\n';
+          for (const b of ph.buttons) {
+            md += '| ' + (b.slot != null ? b.slot + 1 : '?') + ' | ' + (b.label || '') + ' | ' + (b.color != null ? b.color : '') + ' | `' + (Array.isArray(b.lines) ? b.lines.join(' ; ') : '') + '` | ' + (b.notes || '') + ' |\n';
+          }
+          md += '\n';
+        }
+      }
+    }
+
+    if (Array.isArray(raw.spell_sets) && raw.spell_sets.length) {
+      md += '## Spell Sets\n\n';
+      for (const ss of raw.spell_sets) {
+        md += '**' + ss.name + '**:\n';
+        for (const sp of (ss.spells || [])) md += '- ' + sp + '\n';
+        md += '\n';
+      }
+    }
+    if (Array.isArray(raw.clickies) && raw.clickies.length) {
+      md += '## Optional clickies\n\n_All of these are gear-tier-dependent. Skip any you don\'t have on the truck — alternatives are listed where available._\n\n';
+      for (const c of raw.clickies) {
+        const tierTag = c.tier ? '_' + c.tier + '_' : '';
+        const requiredTag = c.required ? '**REQUIRED**' : '_optional_';
+        md += '- **' + c.slot + '**: ' + (c.item || '') + '  ' + tierTag + ' · ' + requiredTag + '\n';
+        if (c.provides)              md += '    - Provides: ' + c.provides + '\n';
+        if (Array.isArray(c.alternatives) && c.alternatives.length) {
+          md += '    - If you don\'t have it: ' + c.alternatives.join(' / ') + '\n';
+        }
+        if (c.notes)                 md += '    - ' + c.notes + '\n';
+      }
+      md += '\n';
+    }
+    if (Array.isArray(raw.potions) && raw.potions.length) {
+      md += '## Optional potions\n\n';
+      for (const p of raw.potions) {
+        md += '- **' + (p.name || '') + '**: ' + (p.use || '') + '\n';
+      }
+      md += '\n';
+    }
+    md += '---\n*Generated by Wolf Pack Mimic — UI Studio*\n';
+
+    const safeId   = id.replace(/[^\w.-]/g, '_');
+    const safeChar = character ? character.replace(/[^\w]/g, '') : 'all';
+    const targetName = `WolfPack_PvPSet_${safeId}_${safeChar}.md`;
+    const targetPath = path.join(eqDir, targetName);
+    fs.writeFileSync(targetPath, md, 'utf8');
+    return { ok: true, file: targetName, path: targetPath };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Inspect socials INI files for the loaded character. Returns the parsed
+// sections (raw section name + key/value props) so the UI Studio can render
+// a "Hotbar Pages" inspector. Helps the user see what's actually in their
+// INI and gives us format samples to refine the parser against.
+ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
+  try {
+    const c = String(character || '').trim();
+    const d = String(eqDir || '').trim();
+    if (!c || !d) return { ok: false, error: 'character + eqDir required' };
+    const candidates = [
+      `Sock_${c}_pq.proj.ini`,
+      `Socials_${c}_pq.proj.ini`,
+      `${c}_pq.proj.ini`,
+    ];
+    const files = [];
+    for (const name of candidates) {
+      const fp = path.join(d, name);
+      if (!fs.existsSync(fp)) continue;
+      try {
+        const text = fs.readFileSync(fp, 'utf8');
+        // Quick section parse — same algorithm the ui-studio renderer uses.
+        // Output a section list with the first 8 props each so the inspector
+        // panel stays readable on big socials files (some users have 200+
+        // sections across all pages).
+        const sections = [];
+        const lines = text.split(/\r?\n/);
+        let cur = null;
+        for (const L of lines) {
+          const m = L.match(/^\s*\[([^\]]+)\]\s*$/);
+          if (m) {
+            cur = { name: m[1], props: {} };
+            sections.push(cur);
+            continue;
+          }
+          if (!cur) continue;
+          const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (kv) cur.props[kv[1]] = kv[2];
+        }
+        files.push({ file: name, section_count: sections.length, sections });
+      } catch (err) {
+        files.push({ file: name, error: err && err.message });
+      }
+    }
+    if (files.length === 0) return { ok: false, error: 'no socials INI found for ' + c };
+    return { ok: true, files };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Capture a heuristic PvP-set draft from the user's Socials/Sock_ INI
+// files. Writes a JSON file the user can review, annotate (notes,
+// required, tier, alternatives) and share. The parser tolerates several
+// section-naming conventions because Quarm/EQ clients use a few
+// different shapes — anything that looks like a button row gets
+// extracted, the rest is preserved as a `raw_props` blob.
+ipcMain.handle('ui-studio-capture-pvp-draft', (_e, params) => {
+  try {
+    const character = String(params?.character || '').trim();
+    const eqDir     = String(params?.eqDir || '').trim();
+    const setName   = String(params?.setName || `${character} draft`).trim();
+    if (!character || !eqDir) return { ok: false, error: 'character + eqDir required' };
+
+    const candidates = [
+      `Sock_${character}_pq.proj.ini`,
+      `Socials_${character}_pq.proj.ini`,
+    ];
+    let combinedText = '';
+    let foundFile = null;
+    const sourceMtimes = {};       // file → ISO timestamp of last write
+    let newestMtimeMs = 0;
+    for (const name of candidates) {
+      const fp = path.join(eqDir, name);
+      if (!fs.existsSync(fp)) continue;
+      try {
+        const st = fs.statSync(fp);
+        sourceMtimes[name] = new Date(st.mtimeMs).toISOString();
+        if (st.mtimeMs > newestMtimeMs) newestMtimeMs = st.mtimeMs;
+      } catch {}
+      combinedText += `\n; ── ${name} ──\n` + fs.readFileSync(fp, 'utf8');
+      foundFile = foundFile || name;
+    }
+    if (!combinedText) return { ok: false, error: 'no Sock_*/Socials_* INI files for ' + character };
+
+    // Era detection — knowing WHEN the user last edited their socials
+    // tells us roughly what Quarm expansion was current at the time, which
+    // hints at what spells/songs/items they had access to. Wrong-era setups
+    // are easy traps ("this rotation needs Cassindra's Chorale of Clarity
+    // which won't drop until Velious"). Hard-coded lock dates from Quarm's
+    // public schedule; update as new expansions unlock.
+    const QUARM_EXPANSIONS = [
+      { name: 'Classic',           start: '2024-01-01' },
+      { name: 'Kunark',            start: '2024-08-01' },
+      { name: 'Velious',           start: '2025-04-01' },
+      { name: 'Luclin',            start: '2025-11-01' },
+      { name: 'Planes of Power',   start: '2026-10-01' },   // matches isPopLocked()
+    ];
+    let eraGuess = null;
+    if (newestMtimeMs > 0) {
+      const editedAt = new Date(newestMtimeMs);
+      for (let i = QUARM_EXPANSIONS.length - 1; i >= 0; i--) {
+        if (editedAt >= new Date(QUARM_EXPANSIONS[i].start)) {
+          eraGuess = QUARM_EXPANSIONS[i].name;
+          break;
+        }
+      }
+    }
+
+    // Heuristic parse: walk all sections. For each section, look for
+    // common button-shape patterns and emit a `buttons` array. If we
+    // can't recognize the shape, preserve raw_props so the user can
+    // hand-edit.
+    const phases = [];
+    const lines = combinedText.split(/\r?\n/);
+    let cur = null;
+    for (const L of lines) {
+      const m = L.match(/^\s*\[([^\]]+)\]\s*$/);
+      if (m) { cur = { name: m[1], props: {} }; phases.push(cur); continue; }
+      if (!cur) continue;
+      const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+      if (kv) cur.props[kv[1]] = kv[2];
+    }
+    // Convert each parsed section into a "phase or button". Two known
+    // patterns:
+    //   A) [PageN] with ButtonM=Name|Color|...|Line0|Line1|... entries
+    //   B) [SocialsN] with Name + Line0..LineN props
+    const draftPhases = [];
+    for (const sec of phases) {
+      // Pattern A: section name like Page0, Page1, ...
+      const isPage = /^Page\d+$/i.test(sec.name);
+      // Pattern B: section name like Socials0, Socials1, ...
+      const isSocial = /^Socials?\d+$/i.test(sec.name);
+      if (isPage) {
+        const buttons = [];
+        for (const [k, v] of Object.entries(sec.props)) {
+          const bm = k.match(/^Button(\d+)$/i) || k.match(/^HotButton(\d+)$/i);
+          if (!bm) continue;
+          // Naive pipe-delimited button: Name|Color|...|Line0|Line1|...
+          const parts = String(v).split('|');
+          buttons.push({
+            slot:  parseInt(bm[1], 10),
+            label: parts[0] || '',
+            color: parseInt(parts[1], 10) || 0,
+            lines: parts.slice(4).filter(s => s && s.length),
+            _raw:  v,
+          });
+        }
+        if (buttons.length) {
+          buttons.sort((a, b) => a.slot - b.slot);
+          draftPhases.push({
+            name:       sec.name,
+            page:       parseInt(sec.name.replace(/^Page/i, ''), 10),
+            page_label: 'Shift+' + (parseInt(sec.name.replace(/^Page/i, ''), 10) + 1),
+            buttons,
+          });
+        }
+      } else if (isSocial) {
+        // Single-button section. Group adjacent socials into a page later
+        // if we can; for now, emit each as its own slot.
+        const name = sec.props.Name || sec.props.WindowName || sec.name;
+        const lines = [];
+        for (let i = 0; i < 5; i++) {
+          const ln = sec.props['Line' + i] || sec.props['Line_' + i];
+          if (ln) lines.push(ln);
+        }
+        draftPhases.push({
+          name:       'Social: ' + name,
+          page:       parseInt(sec.props.Page, 10) || 0,
+          page_label: sec.props.Page != null ? 'Shift+' + (parseInt(sec.props.Page, 10) + 1) : null,
+          buttons: [{
+            slot:  parseInt(sec.props.HotKeyButtonNum || sec.props.HotButtonNum || 0, 10),
+            label: name,
+            color: parseInt(sec.props.Color, 10) || 0,
+            lines,
+            _raw:  null,
+          }],
+        });
+      }
+    }
+
+    const slug = setName.replace(/[^\w]+/g, '-').toLowerCase().slice(0, 40);
+    const draft = {
+      id:                slug + '-' + character.toLowerCase(),
+      name:              setName,
+      version:           1,
+      class:             null,
+      credit:            character,
+      description:       '(Add a description before sharing this set.)',
+      availability_note: '(Tag required vs optional items before publishing.)',
+      phases:            draftPhases,
+      spell_sets:        [],
+      bandolier:         [],
+      clickies:          [],
+      potions:           [],
+      _captured:         true,
+      _captured_at:      new Date().toISOString(),
+      _source_files:     candidates.filter(f => fs.existsSync(path.join(eqDir, f))),
+      _source_mtimes:    sourceMtimes,
+      _era_guess:        eraGuess,
+      _era_basis:        newestMtimeMs > 0 ? 'last-edit of source INI file' : null,
+      _needs_review:     [
+        'Add `class` (Bard / Druid / etc.) if class-specific.',
+        'Per-clicky: add tier, set required:false, list alternatives.',
+        'Per-phase: rename "PageN" to a meaningful label (Pre-dirge, Burn, etc.).',
+        'Strip any /tells, /pet, character-specific keys you don\'t want to share.',
+        'Confirm the heuristic parsed every button correctly (compare against in-game).',
+        '_era_guess is HEURISTIC (based on file mtime vs Quarm expansion dates) — verify before publishing.',
+      ],
+    };
+
+    const safeChar = character.replace(/[^\w]/g, '');
+    const targetName = `WolfPack_Capture_${slug}_${safeChar}.json`;
+    const targetPath = path.join(eqDir, targetName);
+    fs.writeFileSync(targetPath, JSON.stringify(draft, null, 2), 'utf8');
+    return {
+      ok: true,
+      file: targetName,
+      path: targetPath,
+      phase_count:  draftPhases.length,
+      button_count: draftPhases.reduce((n, p) => n + (p.buttons || []).length, 0),
+      source_file:  foundFile,
+    };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
 
 // ── EQ-presence detection ───────────────────────────────────────────────────
 // Poll Windows tasklist for eqgame.exe so overlays can hide themselves when
@@ -1958,6 +2432,42 @@ function applyMelodyVisibility() {
   if (shouldShow) melodyWindow.showInactive(); else melodyWindow.hide();
 }
 
+// Zeal health overlay — surfaces the live data-type tally from
+// /api/state.zeal so users can diagnose missing Zeal pipes (no buff
+// slot data → melody empty, no gauge data → charm tracker blank, etc.)
+// without having to read the agent log. Opt-in.
+function createZealHealthOverlay() {
+  const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
+  zealWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Zeal health overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 220, minHeight: 100,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  zealWindow.setAlwaysOnTop(true, 'screen-saver');
+  zealWindow.setVisibleOnAllWorkspaces(true);
+  zealWindow.loadFile('zealhealth.html');
+  zealWindow.on('moved',  () => _persistBounds('zealBounds', zealWindow));
+  zealWindow.on('resize', () => _persistBounds('zealBounds', zealWindow));
+  zealWindow.once('ready-to-show', () => {
+    zealWindow.webContents.send('agent-port', agentPort);
+    applyZealVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(zealWindow, 'zeal');
+  });
+}
+function applyZealVisibility() {
+  if (!zealWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — diagnostic; users only need it during setup
+  // or when something else looks broken. EQ-gated.
+  const shouldShow = unlocked || (cfg.showZeal && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) zealWindow.showInactive(); else zealWindow.hide();
+}
+
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
 // presence poller (on running ↔ not-running flips) and by config toggles.
 function applyAllVisibility() {
@@ -1968,6 +2478,7 @@ function applyAllVisibility() {
   applyMobInfoVisibility();
   applyWhoVisibility();
   applyMelodyVisibility();
+  applyZealVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -1990,6 +2501,7 @@ function toggleHideAllOverlays() {
       showMobInfo:      !!cfg.showMobInfo,
       showWho:          !!cfg.showWho,
       showMelody:       !!cfg.showMelody,
+      showZeal:         !!cfg.showZeal,
     };
     cfg.showHud = false;
     cfg.enableTriggerTts = false;
@@ -1998,6 +2510,7 @@ function toggleHideAllOverlays() {
     cfg.showMobInfo = false;
     cfg.showWho = false;
     cfg.showMelody = false;
+    cfg.showZeal = false;
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -2114,6 +2627,8 @@ function currentStatus() {
     showMobInfo: !!cfg.showMobInfo,
     showWho: !!cfg.showWho,
     showMelody: !!cfg.showMelody,
+    melodyBardOnly: !!cfg.melodyBardOnly,
+    showZeal: !!cfg.showZeal,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -2277,6 +2792,15 @@ function buildTrayMenu() {
         if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
         pushStatus();
       } },
+    { label: '  ↳ Bard only (hide for non-bards)', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
+        const cfg = loadConfig(); cfg.melodyBardOnly = mi.checked; saveConfig(cfg);
+        pushStatus();
+      } },
+    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
+        if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
+        pushStatus();
+      } },
     { type: 'separator' },
     // Panel overlays — surface the most-wanted dashboard panels as named
     // toggles (the same windows the card "🪟 overlay" buttons open). Checked =
@@ -2420,6 +2944,7 @@ function buildTrayMenu() {
     connectItem,
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
+    { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
     updateItem,
     updatePopupItem,
     betaChannelItem,
@@ -2503,6 +3028,13 @@ function _httpsGetBuffer(url) {
 
 async function checkAgentUpdate() {
   if (_agentUpdateInFlight) return;
+  // Beta Mimic builds ship their own agent and should NOT hot-swap from
+  // main — main's `/api/agent/latest-version` could be on an older agent
+  // than the one bundled in this beta build, or worse, on a stable release
+  // that's missing beta-only changes. Detect prerelease via the build's own
+  // version (presence of `-` per semver) and skip the swap entirely.
+  // Stable Mimic installs keep their existing 30-min hot-swap cadence.
+  if (/-/.test(String(app.getVersion() || ''))) return;
   _agentUpdateInFlight = true;
   try {
     const cfg = loadConfig();
@@ -2772,6 +3304,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
     case 'melody':
       cfg.showMelody = !cfg.showMelody; saveConfig(cfg);
       if (cfg.showMelody && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
+      break;
+    case 'zeal':
+      cfg.showZeal = !cfg.showZeal; saveConfig(cfg);
+      if (cfg.showZeal && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
       break;
     default:
       return null;
@@ -3062,7 +3598,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -3204,6 +3740,7 @@ app.whenReady().then(async () => {
   createMobInfoOverlay();
   createWhoOverlay();
   createMelodyOverlay();
+  createZealHealthOverlay();
   pushStatus();
   startZealCapture();
 

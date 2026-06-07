@@ -310,7 +310,14 @@
       const now = Date.now();
       const warnAt = parseInt((warnAtEl && warnAtEl.value) || '0', 10) || 0;
       const LINGER_MS = 5 * 60 * 1000;
-      const pets = (s.charmPets || []);
+      // Show only charms owned by the active EQ window's character so the
+      // tracker doesn't display every alt's pet at once after a window
+      // switch. No active signal yet → show all (initial boot).
+      const active = s.activeCharacter ? String(s.activeCharacter).toLowerCase() : null;
+      const allPets = (s.charmPets || []);
+      const pets = active
+        ? allPets.filter(function(p){ return p && p.owner && String(p.owner).toLowerCase() === active; })
+        : allPets;
       // Charmed pets PLUS recently-broken ones we keep showing so the mob tick
       // counter stays up after a break — until the pet dies (dropped server-side)
       // or 5 min pass.

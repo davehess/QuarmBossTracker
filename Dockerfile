@@ -2,6 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# ffmpeg powers @discordjs/voice transcoding for the TTS pipeline (utils/voice.js).
+# msedge-tts emits 24kHz mono Opus; Discord wants 48kHz stereo, and we feed ffmpeg
+# the stream rather than wedge in a JS resampler. Cheap (~30MB) on alpine.
+RUN apk add --no-cache ffmpeg
+
 # Install dependencies first (better layer caching)
 COPY package.json ./
 RUN npm install --omit=dev
