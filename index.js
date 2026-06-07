@@ -5248,12 +5248,25 @@ async function _handleAgentTrigger(req, res) {
   res.end(JSON.stringify({ ok: true, posted, spoken }));
 }
 
-// Voice playback path. STUB until commit B wires @discordjs/voice + the TTS
-// engines (free default, ElevenLabs when ELEVENLABS_API_KEY is set). Until
-// then, every voice fire logs a single line so officers can verify the chain
-// works end-to-end without audio.
+// Voice playback path. Hands off to utils/voice.js, which queues + speaks
+// via @discordjs/voice + Edge TTS. The voice module is fail-soft: missing
+// deps / kick from the channel / TTS HTTP errors log once and drop the
+// message rather than poisoning the trigger pipeline. The text-post path
+// is independent so officers always have a backstop.
 async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy }) {
-  console.log(`[trigger-voice] would speak in <#${channelId}> (voice=${voiceId || 'default'}, by=${uploadedBy}): ${message}`);
+  try {
+    const voice = require('./utils/voice');
+    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+    if (!guild) {
+      console.warn('[trigger-voice] DISCORD_GUILD_ID not in cache — dropping');
+      return;
+    }
+    const ok = await voice.playInVoice({ guildClient: guild, channelId, text: message, voiceId });
+    if (!ok) console.warn('[trigger-voice] play returned false for', channelId);
+  } catch (err) {
+    console.warn('[trigger-voice] handler error:', err?.message);
+  }
+  void uploadedBy;   // logged upstream via _trackUpload; voice doesn't need it
 }
 
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback

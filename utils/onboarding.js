@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.39': [
+    '**Bot speaks in voice now** — agent triggers marked `mode: \'voice\'` will have the bot join `RAID_VOICE_CHANNEL_ID` and read the message aloud via Microsoft Edge\'s free TTS (no API key, several US/UK voices). Connect-on-demand, idle out after 5 minutes of silence — no permanent presence in voice. Officers can verify the chain with `/voicetest`; pick the raid channel, the off-night channel (`OFFNIGHT_VOICE_CHANNEL_ID`), and a voice. Requires the bot role to have **Connect** + **Speak** on the channel.',
+  ],
   '3.0.14': [
     '**Triggers can now pipe into Discord** — boss **rampage callouts** (and any trigger with a Discord action) post straight to a channel, so the whole raid sees "🔥 RAMPAGE → \\<target>" without everyone needing the overlay. Every raider\'s agent fires it, but the bot collapses the duplicates so the channel only shows one line per rampage. Officers: set `TRIGGER_BROADCAST_CHANNEL_ID` to turn it on (it\'s off until a channel is configured). This is the first piece of a bigger event-driven trigger system coming to Mimic.',
   ],
