@@ -13733,13 +13733,28 @@ function _fireTriggerActions(t, captures, tsMs, test) {
       //       { at_ms: 30000, text: 'tankbuster' },
       //   ] }
       //
-      // The bot speaks each mark into RAID_VOICE_CHANNEL_ID. Marks more than
-      // 60s old at fire time are dropped (covers historical replays + the
-      // case where the live log catches up after a pause). Per-mark key
-      // includes its offset so 30→10→5→0 don't dedup to a single line.
+      // Each mark pushes a local overlay+TTS event on THIS Mimic client.
+      // Mimic's renderer reads the `tts` field via the browser
+      // SpeechSynthesis API, so every raider running Mimic hears the
+      // call-out through their own speakers on their own machine — no
+      // Discord voice gateway needed, no bot connection, no single point
+      // of failure. Every raider who's running Mimic gets the audio +
+      // visual independently from their own log tail.
+      //
+      // Marks more than 60s old at fire time are dropped (covers
+      // historical replays + the case where the live log catches up
+      // after a pause). Per-mark key includes its offset so 30→10→5→0
+      // don't dedup to a single overlay.
+      //
+      // Opt-in Discord broadcast: pass `discord: true` on the action to
+      // ALSO route through the bot's voice channel surface (currently
+      // unreliable on Railway; kept as an option for when that's fixed).
       const baseKey  = a.key ? _expandTemplate(a.key, captures || {}) : t.name;
       const voiceId  = a.voice_id || null;
-      const sendAt   = (text, offsetMs) => {
+      const color    = a.color || 'red';
+      const durMs    = a.duration_ms || 5000;
+      const broadcastDiscord = !!a.discord;
+      const speakAt  = (text, offsetMs) => {
         const msg = _expandTemplate(text || '', captures || {}).trim();
         if (!msg) return;
         const fireMs = (tsMs || Date.now()) + Math.max(0, offsetMs || 0);
@@ -13747,16 +13762,33 @@ function _fireTriggerActions(t, captures, tsMs, test) {
         const delay  = Math.max(0, fireMs - Date.now());
         const key    = baseKey + ':' + Math.round(offsetMs || 0);
         setTimeout(() => {
-          _broadcastTriggerToDiscord({
-            name: t.name, message: msg, key, tsMs: Date.now(),
-            mode: 'voice', voiceId,
+          // Local overlay+TTS — Mimic shows the line AND speaks it.
+          _pushOverlay({
+            text:        msg,
+            tts:         msg,
+            color,
+            duration_ms: durMs,
+            shownAt:     Date.now(),
+            firedAt:     Date.now(),
+            trigger:     t.name,
+            scope:       t._scope || 'personal',
+            test:        false,
           });
+          scheduleRender();
+          console.log('[trigger:voice:' + (t._scope || '?') + '] ' + t.name + ' → ' + msg);
+          // Optional Discord broadcast — bot routes to voice channel.
+          if (broadcastDiscord) {
+            _broadcastTriggerToDiscord({
+              name: t.name, message: msg, key, tsMs: Date.now(),
+              mode: 'voice', voiceId,
+            });
+          }
         }, delay);
       };
       if (Array.isArray(a.marks) && a.marks.length > 0) {
-        for (const m of a.marks) sendAt(m && (m.text || m.message), m && m.at_ms);
+        for (const m of a.marks) speakAt(m && (m.text || m.message), m && m.at_ms);
       } else if (a.message || a.text) {
-        sendAt(a.message || a.text, 0);
+        speakAt(a.message || a.text, 0);
       }
     }
     // sound / emit_event beyond the overlay's own audio remain no-ops in v1.
