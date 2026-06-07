@@ -1,14 +1,19 @@
 // commands/voicetest.js — officer-only voice playback test.
 //
-// Speaks a test message into a voice channel using utils/voice. Defaults to
-// RAID_VOICE_CHANNEL_ID; officers can target the off-night channel by name
-// (the `channel` option's autocomplete shows what's wired in env). Useful
-// for verifying TTS + Discord voice perms before a real raid:
-//   1. CONNECT + SPEAK permissions in the role
-//   2. ffmpeg installed in the bot's container (Docker `apk add ffmpeg`)
-//   3. @discordjs/voice + opusscript + libsodium-wrappers in package.json
-//
-// Returns ephemerally — the joke voice line is the public confirmation.
+// Two surfaces, depending on the `surface` option:
+//   - voice (default): Bot JOINS a voice channel via @discordjs/voice and
+//     plays Edge TTS audio. Highest quality, plays for anyone in voice
+//     whether they have Discord focused or not. Requires the voice
+//     gateway to work end-to-end (Railway → discord.media UDP/WSS,
+//     plus encryption + opus + ffmpeg in the container).
+//   - tts (Discord native): Bot POSTS a text message with the tts:true
+//     flag to a text channel. Discord's client renders the message AND
+//     reads it aloud locally on each user's machine (Windows SAPI / macOS
+//     / Linux espeak), but only if the user has TTS enabled in
+//     Settings → Accessibility → "Allow playback and usage of /tts" AND
+//     has the channel currently focused. Useful fallback when the voice
+//     gateway is broken; trade-off is per-listener configuration + only
+//     fires when Discord is foregrounded.
 
 const { SlashCommandBuilder, MessageFlags, PermissionsBitField, ChannelType } = require('discord.js');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
@@ -18,15 +23,23 @@ const DEFAULT_MESSAGE = "Wolf Pack voice test. If you can hear this, the bot is 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('voicetest')
-    .setDescription('Officer: speak a test message in a voice channel (verifies TTS + connection)')
+    .setDescription('Officer: speak a test message (voice channel via Edge TTS or Discord native TTS in text)')
     .addStringOption(opt =>
       opt.setName('message')
         .setDescription('What to say (defaults to a confirmation line)')
         .setMaxLength(300)
         .setRequired(false))
     .addStringOption(opt =>
+      opt.setName('surface')
+        .setDescription('How to deliver — voice channel audio or Discord native TTS text message')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Voice channel (Edge TTS, default)',     value: 'voice' },
+          { name: 'Discord TTS message (in text channel)', value: 'tts' },
+        ))
+    .addStringOption(opt =>
       opt.setName('channel')
-        .setDescription('Where to speak — defaults to RAID_VOICE_CHANNEL_ID')
+        .setDescription('Voice: raid/offnight. TTS: posts to the channel you run the command in.')
         .setRequired(false)
         .addChoices(
           { name: 'Raid voice',        value: 'raid' },
@@ -34,7 +47,7 @@ module.exports = {
         ))
     .addStringOption(opt =>
       opt.setName('voice')
-        .setDescription('Edge TTS voice (default: en-US-AriaNeural)')
+        .setDescription('Edge TTS voice (default: en-US-AriaNeural). Ignored for native TTS surface.')
         .setRequired(false)
         .addChoices(
           { name: 'Aria (US female, default)', value: 'en-US-AriaNeural' },
@@ -53,10 +66,50 @@ module.exports = {
       });
     }
 
-    const message = interaction.options.getString('message') || DEFAULT_MESSAGE;
+    const message    = interaction.options.getString('message') || DEFAULT_MESSAGE;
+    const surface    = interaction.options.getString('surface') || 'voice';
     const channelKey = interaction.options.getString('channel') || 'raid';
-    const voiceId = interaction.options.getString('voice') || null;
+    const voiceId    = interaction.options.getString('voice') || null;
 
+    // ── Surface 2: Discord native TTS message ───────────────────────────
+    // Sends `tts: true` to the CURRENT channel (where the command was
+    // invoked). Officers can re-run this from any channel they want the
+    // call-out to land in — usually a dedicated raid-chat channel. No
+    // voice gateway involvement; the message renders for everyone, and
+    // anyone with TTS enabled hears their local OS voice read it.
+    if (surface === 'tts') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const ch = interaction.channel;
+      const botMember = interaction.guild.members.me;
+      const perms = ch?.permissionsFor(botMember);
+      const needFlags = [
+        ['SendMessages',    PermissionsBitField.Flags.SendMessages],
+        ['SendTTSMessages', PermissionsBitField.Flags.SendTTSMessages],
+      ];
+      const missing = needFlags.filter(([, f]) => !perms?.has(f)).map(([n]) => n);
+      if (missing.length > 0) {
+        return interaction.editReply({
+          content:
+            `❌ Bot is missing **${missing.join(', ')}** on <#${ch.id}>.\n` +
+            `Native TTS needs both. Grant **Send TTS Messages** on this channel (channel settings → Permissions).`,
+        });
+      }
+      try {
+        await ch.send({ content: message, tts: true, allowedMentions: { parse: [] } });
+        return interaction.editReply({
+          content:
+            `✅ Posted TTS-flagged message in <#${ch.id}>: _"${message.slice(0, 120)}${message.length > 120 ? '…' : ''}"_\n` +
+            `Listeners hear it ONLY if they have **Settings → Accessibility → Allow playback and usage of /tts command** turned on AND are currently focused on this channel. ` +
+            `Voice used is each listener's local OS TTS (not Edge neural).`,
+        });
+      } catch (err) {
+        return interaction.editReply({
+          content: `❌ Could not post TTS message: \`${err.message}\`.`,
+        });
+      }
+    }
+
+    // ── Surface 1: Voice channel via @discordjs/voice (Edge TTS) ────────
     const channelId = channelKey === 'offnight'
       ? process.env.OFFNIGHT_VOICE_CHANNEL_ID
       : process.env.RAID_VOICE_CHANNEL_ID;
@@ -136,7 +189,7 @@ module.exports = {
       content:
         `✅ Queued for <#${channelId}>: _"${message.slice(0, 120)}${message.length > 120 ? '…' : ''}"_\n` +
         `Voice: \`${voiceId || voice.TTS_VOICE_DEFAULT}\` · Status: ${status.connected ? `connected (${status.queueLen} queued)` : 'connecting'}.\n` +
-        `If you don't hear it: check the bot has Connect+Speak in the channel, ffmpeg is in the container, and the Railway logs for \`[voice]\` warnings.`,
+        `If you don't hear it: try \`surface:Discord TTS message\` for a native fallback while the voice gateway is being fixed.`,
     });
   },
 };
