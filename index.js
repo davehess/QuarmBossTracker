@@ -107,7 +107,11 @@ function getBosses() {
 }
 
 // ── Client ─────────────────────────────────────────────────────────────────
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages] });
+// GuildVoiceStates is required for @discordjs/voice — without it the
+// voiceAdapterCreator never receives VOICE_STATE_UPDATE / VOICE_SERVER_UPDATE
+// from Discord and joinVoiceChannel hangs in "Connecting" forever. Symptom
+// was /voicetest queueing fine but the bot never appearing in the channel.
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates] });
 
 // ── Load commands ──────────────────────────────────────────────────────────
 client.commands = new Collection();
