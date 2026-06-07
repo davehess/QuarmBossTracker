@@ -1,0 +1,56 @@
+{
+  "id": "dirge-team-6-bard",
+  "name": "Dirge Team 6™",
+  "version": 1,
+  "class": "Bard",
+  "credit": "Vann | Barb",
+  "description": "Bard PvP rotation. Pre-dirge softens the target (mez → dispel → mana drain), then Dirgin' Time stacks every buff that boosts damage + resists + casting before the Dirge of Carnage lands.",
+  "phases": [
+    {
+      "name": "Pre-dirge",
+      "page": 4,
+      "page_label": "Shift+5",
+      "buttons": [
+        { "slot": 0, "label": "Mez",        "color": 10, "lines": ["/cast 5"], "notes": "Lock the target in place before the burn." },
+        { "slot": 1, "label": "Dispel",     "color": 11, "lines": ["/cast 6"], "notes": "Strip protective buffs (rune, shielding, etc.)." },
+        { "slot": 2, "label": "Mana drain", "color": 12, "lines": ["/cast 7"], "notes": "Cut their casts off at the knees." }
+      ]
+    },
+    {
+      "name": "Dirgin' Time",
+      "page": 5,
+      "page_label": "Shift+6",
+      "buttons": [
+        { "slot": 0, "label": "Puretone",   "color": 5,  "lines": ["/cast 1"], "notes": "Puretone Etude — songbook resist boost." },
+        { "slot": 1, "label": "Amp",        "color": 5,  "lines": ["/cast 2"], "notes": "Amplification (Voice of the Serpent clicky)." },
+        { "slot": 2, "label": "Harmonize",  "color": 5,  "lines": ["/cast 3"], "notes": "Shadowsong Cloak clicky — replaces Resonance if you have both." },
+        { "slot": 3, "label": "Resonance",  "color": 5,  "lines": ["/cast 4"], "notes": "Pre-Harmonize alternative." },
+        { "slot": 4, "label": "OOS",        "color": 5,  "lines": ["/cast 5"], "notes": "Out of Spirits — songweave debuff." },
+        { "slot": 5, "label": "Fufils",     "color": 5,  "lines": ["/cast 6"], "notes": "Fufil's Curtailing Chant — final softener." },
+        { "slot": 6, "label": "Dirge!",     "color": 14, "lines": ["/cast 7"], "notes": "Dirge of Carnage — the payoff." }
+      ]
+    }
+  ],
+  "spell_sets": [
+    {
+      "name": "Dirge Team 6 Spell Set",
+      "spells": [
+        "Mez", "Dispel Magic", "Drain Spirit",
+        "Puretone Etude", "Amplification", "Harmonize / Resonance",
+        "Out of Spirits", "Fufil's Curtailing Chant", "Dirge of Carnage"
+      ]
+    }
+  ],
+  "bandolier": [],
+  "clickies": [
+    { "slot": "primary",   "item": "Singing Short Sword (instrument)", "notes": "Stringed/percussion focus for the lineup." },
+    { "slot": "secondary", "item": "Drum or Pipes",                    "notes": "Wind/percussion as needed for Niv's/Selo's." },
+    { "slot": "neck",      "item": "Voice of the Serpent",             "notes": "Amplification clicky." },
+    { "slot": "back",      "item": "Shadowsong Cloak",                 "notes": "Harmonize clicky." }
+  ],
+  "potions": [
+    { "name": "Greater Healing Potion", "use": "Spike absorption after Dirge gets you focused." },
+    { "name": "Mana Potion",            "use": "Top off between dirges." },
+    { "name": "Cure-curse / cleanse",   "use": "Pre-dirge if you ate a slow / DoT." }
+  ]
+}

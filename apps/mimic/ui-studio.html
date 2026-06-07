@@ -105,6 +105,30 @@
     <button id="saveBtn"  title="Write back to INI with .bak backup">Save</button>
     <span id="status"></span>
   </div>
+  <!-- PvP-set prompt — slides in from the top when the loaded character's
+       class matches a bundled template. User can dismiss or open the
+       details panel to preview + import. -->
+  <div id="pvpPrompt" style="display:none;background:#1c2330;border-bottom:1px solid #58a6ff;
+       padding:10px 16px;color:#c9d1d9;font-size:12px;display:none">
+    <strong style="color:#7ee7c7" id="pvpPromptTitle">PvP set available</strong>
+    <span id="pvpPromptCredit" style="color:#8b949e;margin-left:6px"></span>
+    <p id="pvpPromptDesc" style="margin:4px 0;color:#9aa4ad;font-size:11px"></p>
+    <button id="pvpPreviewBtn"  class="secondary">Preview</button>
+    <button id="pvpImportBtn">Import to EQ folder</button>
+    <button id="pvpDismissBtn"  class="secondary" style="margin-left:4px">Dismiss</button>
+  </div>
+  <!-- PvP-set preview panel — opened from the prompt's Preview button.
+       Renders phases, spell sets, clickies, potions for the active
+       template. Sits on top of the canvas as an overlay. -->
+  <div id="pvpPreview" style="display:none;position:fixed;top:50px;right:0;bottom:0;width:380px;
+       background:#161b22;border-left:1px solid #30363d;z-index:50;overflow-y:auto;
+       padding:14px;font-size:12px;color:#c9d1d9">
+    <button id="pvpPreviewClose" style="float:right;background:none;border:none;color:#8b949e;
+       cursor:pointer;font-size:18px">×</button>
+    <h2 id="pvpPreviewName" style="margin:0 0 4px;color:#7ee7c7;font-size:15px"></h2>
+    <div id="pvpPreviewCredit" style="color:#8b949e;font-size:10px;margin-bottom:8px"></div>
+    <div id="pvpPreviewBody"></div>
+  </div>
   <div id="stageWrap"><div id="stage"></div></div>
   <aside id="side">
     <h3 id="sideTitle">Window</h3>
@@ -341,6 +365,134 @@
     }
     setStatus('loaded ' + STATE.windows.length + ' windows · rescaled ' + STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH, 'ok');
     renderStage();
+    maybePromptPvpSet().catch(function(){});
+  }
+
+  // After a character loads, look up their live class via the agent's
+  // /api/state and ask Mimic if any bundled PvP-set template matches.
+  // First match → render the promo bar at the top of the editor. Silent
+  // when no template matches the class (or the agent has no class data
+  // yet because EQ isn't running).
+  async function maybePromptPvpSet(){
+    var klass = null;
+    try {
+      var r = await fetch('http://127.0.0.1:7779/api/state', { cache: 'no-store' });
+      var s = await r.json();
+      var clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+      for (var i = 0; i < clients.length; i++) {
+        if (clients[i] && String(clients[i].character).toLowerCase() === STATE.character.toLowerCase()) {
+          klass = clients[i].class || null;
+          break;
+        }
+      }
+      // Fallback: bardMelody output now also carries the class.
+      if (!klass && s.bardMelody) {
+        for (var k in s.bardMelody) {
+          if (k.toLowerCase() === STATE.character.toLowerCase()) {
+            klass = s.bardMelody[k].characterClass; break;
+          }
+        }
+      }
+    } catch (e) {}
+    if (!klass) {
+      hidePvpPrompt();
+      return;
+    }
+    var sets = await window.mimic.uiStudioListPvpSets(klass).catch(function(){ return []; });
+    if (!sets || sets.length === 0) {
+      hidePvpPrompt();
+      return;
+    }
+    showPvpPrompt(sets[0], klass);
+  }
+
+  function showPvpPrompt(set, klass){
+    var p = document.getElementById('pvpPrompt');
+    if (!p) return;
+    p.style.display = 'block';
+    document.getElementById('pvpPromptTitle').textContent =
+      '⚔️ Import ' + set.name + '?  — ' + klass + ' PvP rotation';
+    var credit = set.credit ? ('contributed by ' + set.credit) : '';
+    document.getElementById('pvpPromptCredit').textContent = credit;
+    document.getElementById('pvpPromptDesc').textContent = set.description || '';
+    document.getElementById('pvpPreviewBtn').onclick = function(){ openPvpPreview(set.id); };
+    document.getElementById('pvpImportBtn').onclick = function(){ importPvpSet(set.id); };
+    document.getElementById('pvpDismissBtn').onclick = hidePvpPrompt;
+  }
+  function hidePvpPrompt(){
+    var p = document.getElementById('pvpPrompt'); if (p) p.style.display = 'none';
+  }
+
+  async function openPvpPreview(id){
+    var raw = await window.mimic.uiStudioLoadPvpSet(id);
+    if (!raw) { setStatus('preview unavailable', 'err'); return; }
+    document.getElementById('pvpPreviewName').textContent = raw.name;
+    document.getElementById('pvpPreviewCredit').textContent =
+      (raw.class ? raw.class + ' · ' : '') + (raw.credit ? 'by ' + raw.credit : '');
+    var html = '<p style="color:#9aa4ad;margin:0 0 10px">' + escapeHtml(raw.description || '') + '</p>';
+    // Phases — the meat of the set. Each phase carries a hotbar PAGE +
+    // a list of button definitions; render as a card per phase with the
+    // buttons in a small table.
+    if (Array.isArray(raw.phases)) {
+      for (var i = 0; i < raw.phases.length; i++) {
+        var ph = raw.phases[i];
+        html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:5px;padding:8px;margin-bottom:8px">'
+              + '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">' + escapeHtml(ph.name)
+              + (ph.page_label ? ' <span style="color:#8b949e;font-weight:400">— ' + escapeHtml(ph.page_label) + '</span>' : '')
+              + '</div>';
+        if (Array.isArray(ph.buttons)) {
+          html += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+          for (var b = 0; b < ph.buttons.length; b++) {
+            var btn = ph.buttons[b];
+            html += '<tr style="border-bottom:1px solid #21262d">'
+                  + '<td style="color:#8b949e;padding:3px 4px;width:24px">' + (btn.slot != null ? btn.slot + 1 : '?') + '</td>'
+                  + '<td style="color:#e6edf3;font-weight:600;padding:3px 4px">' + escapeHtml(btn.label || '') + '</td>'
+                  + '<td style="color:#9aa4ad;padding:3px 4px;font-size:10px">' + escapeHtml(btn.notes || '') + '</td>'
+                  + '</tr>';
+          }
+          html += '</table>';
+        }
+        html += '</div>';
+      }
+    }
+    if (Array.isArray(raw.clickies) && raw.clickies.length) {
+      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Clickies</h4>';
+      for (var c = 0; c < raw.clickies.length; c++) {
+        var ck = raw.clickies[c];
+        html += '<div style="margin-bottom:3px"><b>' + escapeHtml(ck.slot) + '</b>: ' + escapeHtml(ck.item || '')
+              + (ck.notes ? ' <span style="color:#8b949e">— ' + escapeHtml(ck.notes) + '</span>' : '')
+              + '</div>';
+      }
+    }
+    if (Array.isArray(raw.potions) && raw.potions.length) {
+      html += '<h4 style="color:#7ee7c7;margin:10px 0 4px;font-size:12px">Potions</h4>';
+      for (var pi = 0; pi < raw.potions.length; pi++) {
+        var po = raw.potions[pi];
+        html += '<div style="margin-bottom:3px"><b>' + escapeHtml(po.name) + '</b>'
+              + (po.use ? ' <span style="color:#8b949e">— ' + escapeHtml(po.use) + '</span>' : '')
+              + '</div>';
+      }
+    }
+    document.getElementById('pvpPreviewBody').innerHTML = html;
+    document.getElementById('pvpPreview').style.display = 'block';
+  }
+  var pvpPreviewClose = document.getElementById('pvpPreviewClose');
+  if (pvpPreviewClose) pvpPreviewClose.onclick = function(){
+    document.getElementById('pvpPreview').style.display = 'none';
+  };
+
+  async function importPvpSet(id){
+    if (!STATE.eqDir || !STATE.character) { setStatus('load a character first', 'err'); return; }
+    setStatus('importing PvP set…');
+    var res = await window.mimic.uiStudioImportPvpSet({
+      id: id, eqDir: STATE.eqDir, character: STATE.character,
+    }).catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (res && res.ok) {
+      setStatus('imported → ' + res.file + ' (in your EQ folder)', 'ok');
+      hidePvpPrompt();
+    } else {
+      setStatus('import failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
+    }
   }
 
   // ── Stage rendering ──────────────────────────────────────────────────────

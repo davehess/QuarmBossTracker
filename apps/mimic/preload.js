@@ -77,6 +77,13 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioWriteBundle:    (eqDir, bundle)    => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle),
   // Open the standalone UI Studio editor window from the dashboard's nav.
   openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
+  // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
+  // load full content, and import = write a markdown summary alongside
+  // the EQ folder so the user can build their hotkey pages by reference
+  // without risking the live socials INI.
+  uiStudioListPvpSets:    (characterClass)   => ipcRenderer.invoke('ui-studio-list-pvp-sets', characterClass),
+  uiStudioLoadPvpSet:     (id)               => ipcRenderer.invoke('ui-studio-load-pvp-set', id),
+  uiStudioImportPvpSet:   (params)           => ipcRenderer.invoke('ui-studio-import-pvp-set', params),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns
   // { ok, user_code, verification_url, verification_url_complete, expires_at }

@@ -1837,6 +1837,139 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
 // already open instead of stacking duplicates.
 ipcMain.handle('open-ui-studio', () => { openUiStudio(); return true; });
 
+// ── PvP Sets (bundled in apps/mimic/pvp-sets/) ─────────────────────────────
+// Shared rotations contributed by guildies — pre-built hotkey pages,
+// spell-set notes, clicky lineups, potion picks. First template: the
+// bard "Dirge Team 6™" PvP rotation (credit: Vann | Barb). UI Studio
+// shows a class-matched picker; the agent never writes back to the EQ
+// socials INI yet — we drop a plain-markdown summary alongside the user's
+// UI files so they can configure in-game without risk to existing data.
+function _pvpSetsDir() {
+  // In dev, the templates ship next to main.js. In packaged builds they're
+  // baked into the asar — fs.readFileSync from process.resourcesPath/app
+  // works for both since Electron mounts asar transparently.
+  return path.join(__dirname, 'pvp-sets');
+}
+
+ipcMain.handle('ui-studio-list-pvp-sets', (_e, characterClass) => {
+  try {
+    const dir = _pvpSetsDir();
+    if (!fs.existsSync(dir)) return [];
+    const out = [];
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!raw || !raw.id) continue;
+        // Class filter — if the caller passes a class, only return templates
+        // whose `class` field matches (case-insensitive). Always include
+        // templates with no `class` field (universal sets).
+        if (characterClass && raw.class
+            && String(raw.class).toLowerCase() !== String(characterClass).toLowerCase()) continue;
+        out.push({
+          id:          raw.id,
+          name:        raw.name,
+          class:       raw.class || null,
+          credit:      raw.credit || null,
+          description: raw.description || '',
+          phase_count: Array.isArray(raw.phases) ? raw.phases.length : 0,
+        });
+      } catch (err) {
+        appendAgentLog(`[pvp-sets] skipping ${f}: ${err && err.message}\n`);
+      }
+    }
+    return out;
+  } catch { return []; }
+});
+
+ipcMain.handle('ui-studio-load-pvp-set', (_e, id) => {
+  try {
+    const dir = _pvpSetsDir();
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (raw && raw.id === id) return raw;
+    }
+    return null;
+  } catch { return null; }
+});
+
+// "Import" writes a human-readable markdown summary alongside the user's
+// EQ folder. Deliberately conservative — does NOT yet edit the live
+// Socials_<Char>_pq.proj.ini because the format varies across Quarm
+// client builds and a wrong write would scramble the player's hotkeys.
+// The markdown gives them a copy-paste-ready button-by-button list to
+// configure in-game manually. Real INI merge is a follow-up.
+ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
+  try {
+    const id     = String(params?.id || '').trim();
+    const eqDir  = String(params?.eqDir || '').trim();
+    const character = String(params?.character || '').trim();
+    if (!id || !eqDir) return { ok: false, error: 'id + eqDir required' };
+    const dir = _pvpSetsDir();
+    let raw = null;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (j && j.id === id) { raw = j; break; }
+    }
+    if (!raw) return { ok: false, error: 'template not found: ' + id };
+
+    let md = '# ' + raw.name + '\n\n';
+    if (raw.credit) md += '_Credit: ' + raw.credit + '_  \n';
+    if (raw.class)  md += '_Class:  ' + raw.class  + '_  \n';
+    md += '\n';
+    if (raw.description) md += raw.description + '\n\n';
+
+    if (Array.isArray(raw.phases)) {
+      for (const ph of raw.phases) {
+        md += '## ' + ph.name + (ph.page_label ? '  —  ' + ph.page_label : '') + '\n\n';
+        if (Array.isArray(ph.buttons)) {
+          md += '| Slot | Label | Color | Cast | Notes |\n';
+          md += '|------|-------|-------|------|-------|\n';
+          for (const b of ph.buttons) {
+            md += '| ' + (b.slot != null ? b.slot + 1 : '?') + ' | ' + (b.label || '') + ' | ' + (b.color != null ? b.color : '') + ' | `' + (Array.isArray(b.lines) ? b.lines.join(' ; ') : '') + '` | ' + (b.notes || '') + ' |\n';
+          }
+          md += '\n';
+        }
+      }
+    }
+
+    if (Array.isArray(raw.spell_sets) && raw.spell_sets.length) {
+      md += '## Spell Sets\n\n';
+      for (const ss of raw.spell_sets) {
+        md += '**' + ss.name + '**:\n';
+        for (const sp of (ss.spells || [])) md += '- ' + sp + '\n';
+        md += '\n';
+      }
+    }
+    if (Array.isArray(raw.clickies) && raw.clickies.length) {
+      md += '## Clickies\n\n';
+      for (const c of raw.clickies) {
+        md += '- **' + c.slot + '**: ' + (c.item || '') + (c.notes ? ' — ' + c.notes : '') + '\n';
+      }
+      md += '\n';
+    }
+    if (Array.isArray(raw.potions) && raw.potions.length) {
+      md += '## Potions\n\n';
+      for (const p of raw.potions) {
+        md += '- **' + (p.name || '') + '**: ' + (p.use || '') + '\n';
+      }
+      md += '\n';
+    }
+    md += '---\n*Generated by Wolf Pack Mimic — UI Studio*\n';
+
+    const safeId   = id.replace(/[^\w.-]/g, '_');
+    const safeChar = character ? character.replace(/[^\w]/g, '') : 'all';
+    const targetName = `WolfPack_PvPSet_${safeId}_${safeChar}.md`;
+    const targetPath = path.join(eqDir, targetName);
+    fs.writeFileSync(targetPath, md, 'utf8');
+    return { ok: true, file: targetName, path: targetPath };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
 // ── EQ-presence detection ───────────────────────────────────────────────────
 // Poll Windows tasklist for eqgame.exe so overlays can hide themselves when
 // the user isn't actually playing. The poll is cheap (one tasklist call every
