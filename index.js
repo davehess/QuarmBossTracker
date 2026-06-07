@@ -4785,7 +4785,7 @@ async function _handleAgentMobInfo(req, res) {
     const encPlain  = encodeURIComponent(norm);
     const encHashed = encodeURIComponent('#' + norm);
     const rows = await supabase.select('eqemu_npc_types',
-      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
+      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id&limit=1`);
     const r = Array.isArray(rows) && rows[0];
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
@@ -4890,6 +4890,45 @@ async function _handleAgentMobInfo(req, res) {
         } catch (err) { console.warn('[mob-info] zone long_name resolve failed:', err?.message); }
       }
 
+      // Spell list — join eqemu_npc_spells_entries (per-spell metadata for
+      // the npc_spells_id list) against eqemu_spells (catalog) to surface
+      // each spell's name + mana + cast time on the mob-info Spells tab.
+      // Currently empty in prod because the weekly sync hasn't been
+      // pulling npc_spells / npc_spells_entries — the code path here is
+      // ready so once that's resolved, the tab populates automatically.
+      let spells = [];
+      if (r.npc_spells_id && r.npc_spells_id > 0) {
+        try {
+          const entries = await supabase.select('eqemu_npc_spells_entries',
+            `npc_spells_id=eq.${r.npc_spells_id}&select=spellid,manacost,recast_delay,priority,minlevel,maxlevel,type,min_hp,max_hp&order=priority.desc&limit=40`);
+          if (Array.isArray(entries) && entries.length > 0) {
+            const ids = entries.map(e => e.spellid).filter(Boolean);
+            if (ids.length > 0) {
+              const catRows = await supabase.select('eqemu_spells',
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time&limit=40`);
+              const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
+              spells = entries.map(e => {
+                const c = cat.get(e.spellid) || {};
+                return {
+                  id:           e.spellid,
+                  name:         c.name || ('Spell #' + e.spellid),
+                  mana:         e.manacost ?? c.mana ?? null,
+                  cast_ms:      c.cast_time ?? null,
+                  recast_ms:    e.recast_delay ?? null,
+                  priority:     e.priority ?? null,
+                  type:         e.type ?? null,
+                  minlevel:     e.minlevel ?? null,
+                  maxlevel:     e.maxlevel ?? null,
+                  hp_window: (e.min_hp != null || e.max_hp != null)
+                    ? { min: e.min_hp ?? null, max: e.max_hp ?? null }
+                    : null,
+                };
+              });
+            }
+          }
+        } catch (err) { console.warn('[mob-info] spells fetch failed:', err?.message); }
+      }
+
       mob = {
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
@@ -4904,6 +4943,7 @@ async function _handleAgentMobInfo(req, res) {
         maxdmg:  r.maxdmg ?? null,
         raid_target: !!r.raid_target,
         specials: _decodeMobSpecials(r.special_abilities, r.npcspecialattks),
+        spells,
         loot,
       };
     }
