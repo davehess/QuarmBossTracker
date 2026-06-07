@@ -113,6 +113,22 @@ function getBosses() {
 // was /voicetest queueing fine but the bot never appearing in the channel.
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates] });
 
+// Voice gateway diagnostic. discord.js emits `[VOICE]` debug lines whenever
+// Discord pushes VOICE_STATE_UPDATE or VOICE_SERVER_UPDATE for our bot.
+// When a join fails at the `signalling → ?` step (state never advances
+// past signalling), the truth lives in whether Discord ever sent these
+// events back. If we see VOICE_STATE_UPDATE+VOICE_SERVER_UPDATE but the
+// connection still didn't advance, it's an @discordjs/voice / adapter
+// bug. If we see NEITHER, Discord rejected the join (perms on the
+// channel, channel full, bot already routed elsewhere, etc).
+client.on('debug', msg => {
+  if (msg && msg.includes('[VOICE]')) console.log('[discord.js voice]', msg);
+});
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  if (newState.member?.user?.id !== client.user?.id) return;   // only OUR voice state
+  console.log(`[voice-state-update] bot moved: channel=${oldState.channelId} → ${newState.channelId} (session=${newState.sessionId})`);
+});
+
 // ── Load commands ──────────────────────────────────────────────────────────
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
