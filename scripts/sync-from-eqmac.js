@@ -674,6 +674,11 @@ if (require.main !== module) return;
   _dropOrphans('eqemu_spawnentry',        'npc_id',       'eqemu_npc_types',   'id');
   _dropOrphans('eqemu_spawn2',            'spawngroup_id','eqemu_spawngroup',  'id');
   _dropOrphans('eqemu_spawn2',            'zone_short',   'eqemu_zone',        'short_name');
+  // npc_spells_entries.npc_spells_id → eqemu_npc_spells.id (the list) and
+  // npc_spells_entries.spellid → eqemu_spells.id (the catalog). Drop entries
+  // whose parent is missing so one orphan doesn't poison the whole upsert.
+  _dropOrphans('eqemu_npc_spells_entries','npc_spells_id','eqemu_npc_spells',  'id');
+  _dropOrphans('eqemu_npc_spells_entries','spellid',      'eqemu_spells',      'id');
 
   const counts = {};
   // Upsert in dependency order (parents before children)
@@ -682,6 +687,13 @@ if (require.main !== module) return;
     'eqemu_loottable', 'eqemu_lootdrop', 'eqemu_loottable_entries', 'eqemu_lootdrop_entries',
     'eqemu_spawngroup', 'eqemu_spawnentry', 'eqemu_spawn2',
     'eqemu_spells',
+    // NPC spell lists ride after eqemu_spells because the entries table's
+    // spellid column references eqemu_spells.id. npc_spells before
+    // npc_spells_entries because entries.npc_spells_id FK's into the list.
+    // Previously these were parsed (WHITELIST + TRANSFORMS + PK_MAP all
+    // configured) but never reached Supabase because they weren't listed
+    // here — silently dropped after the buffer fill.
+    'eqemu_npc_spells', 'eqemu_npc_spells_entries',
     'eqemu_altadv_vars', 'eqemu_aa_effects',
   ];
   for (const dest of ORDER) {
