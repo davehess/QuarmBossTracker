@@ -2044,13 +2044,44 @@ ipcMain.handle('ui-studio-capture-pvp-draft', (_e, params) => {
     ];
     let combinedText = '';
     let foundFile = null;
+    const sourceMtimes = {};       // file → ISO timestamp of last write
+    let newestMtimeMs = 0;
     for (const name of candidates) {
       const fp = path.join(eqDir, name);
       if (!fs.existsSync(fp)) continue;
+      try {
+        const st = fs.statSync(fp);
+        sourceMtimes[name] = new Date(st.mtimeMs).toISOString();
+        if (st.mtimeMs > newestMtimeMs) newestMtimeMs = st.mtimeMs;
+      } catch {}
       combinedText += `\n; ── ${name} ──\n` + fs.readFileSync(fp, 'utf8');
       foundFile = foundFile || name;
     }
     if (!combinedText) return { ok: false, error: 'no Sock_*/Socials_* INI files for ' + character };
+
+    // Era detection — knowing WHEN the user last edited their socials
+    // tells us roughly what Quarm expansion was current at the time, which
+    // hints at what spells/songs/items they had access to. Wrong-era setups
+    // are easy traps ("this rotation needs Cassindra's Chorale of Clarity
+    // which won't drop until Velious"). Hard-coded lock dates from Quarm's
+    // public schedule; update as new expansions unlock.
+    const QUARM_EXPANSIONS = [
+      { name: 'Classic',           start: '2024-01-01' },
+      { name: 'Kunark',            start: '2024-08-01' },
+      { name: 'Velious',           start: '2025-04-01' },
+      { name: 'Luclin',            start: '2025-11-01' },
+      { name: 'Planes of Power',   start: '2026-10-01' },   // matches isPopLocked()
+    ];
+    let eraGuess = null;
+    if (newestMtimeMs > 0) {
+      const editedAt = new Date(newestMtimeMs);
+      for (let i = QUARM_EXPANSIONS.length - 1; i >= 0; i--) {
+        if (editedAt >= new Date(QUARM_EXPANSIONS[i].start)) {
+          eraGuess = QUARM_EXPANSIONS[i].name;
+          break;
+        }
+      }
+    }
 
     // Heuristic parse: walk all sections. For each section, look for
     // common button-shape patterns and emit a `buttons` array. If we
@@ -2139,13 +2170,18 @@ ipcMain.handle('ui-studio-capture-pvp-draft', (_e, params) => {
       clickies:          [],
       potions:           [],
       _captured:         true,
+      _captured_at:      new Date().toISOString(),
       _source_files:     candidates.filter(f => fs.existsSync(path.join(eqDir, f))),
+      _source_mtimes:    sourceMtimes,
+      _era_guess:        eraGuess,
+      _era_basis:        newestMtimeMs > 0 ? 'last-edit of source INI file' : null,
       _needs_review:     [
         'Add `class` (Bard / Druid / etc.) if class-specific.',
         'Per-clicky: add tier, set required:false, list alternatives.',
         'Per-phase: rename "PageN" to a meaningful label (Pre-dirge, Burn, etc.).',
         'Strip any /tells, /pet, character-specific keys you don\'t want to share.',
         'Confirm the heuristic parsed every button correctly (compare against in-game).',
+        '_era_guess is HEURISTIC (based on file mtime vs Quarm expansion dates) — verify before publishing.',
       ],
     };
 

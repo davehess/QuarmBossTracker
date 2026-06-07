@@ -9,6 +9,7 @@
 // (later) historical log backfill.
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -349,6 +350,51 @@ export default async function PvpPage({
           </div>
         </section>
       )}
+
+      {/* Trophy wall — bottom of the page on purpose. Stats answer "who's
+          winning the season"; these answer "what does winning look like."
+          The full battlefield panorama gets pride of place; the close-up
+          GIF (Dread + Owl standing over Meatyocre) sits beside it as the
+          single-frame summary of the same outcome. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold flex items-center gap-3">
+          <span aria-hidden>🏆</span>
+          <span>For the Pack</span>
+        </h2>
+        <p className="text-sm text-dim mt-2">
+          A field of corpses, courtesy of the Pack. Pinned here because the
+          numbers above don&apos;t do it justice on their own.
+        </p>
+        <div className="mt-4 grid gap-4 md:grid-cols-[2fr_1fr]">
+          <figure className="m-0">
+            <Image
+              src="/pvp/wolf-pack-victory.png"
+              alt="Wolf Pack members standing over a field of enemy corpses after a PvP fight"
+              width={1280}
+              height={720}
+              className="w-full h-auto rounded border border-border"
+              sizes="(min-width: 768px) 66vw, 100vw"
+            />
+            <figcaption className="text-xs text-dim mt-2">
+              After the dust settled. Corpses include Tweeder, Mestyocre, Stratus, Jaggs, Celone, and friends.
+            </figcaption>
+          </figure>
+          <figure className="m-0">
+            {/* GIFs are not optimized through next/image — use a plain <img> so
+                the animation plays. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/pvp/dread-and-owl.gif"
+              alt="Duke Malthur Dreadscale the Damned and Venerable Timbber Owl of the Wolf Pack, with Meatyocre dead at their feet"
+              className="w-full h-auto rounded border border-border"
+              loading="lazy"
+            />
+            <figcaption className="text-xs text-dim mt-2">
+              Dread &amp; Owl, Meatyocre at their feet.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
     </div>
   );
 }

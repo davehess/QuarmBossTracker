@@ -1,0 +1,9 @@
+{
+  "sets": [
+    {
+      "file": "dirge-team-6-bard.json",
+      "featured": true
+    }
+  ],
+  "_note": "When a new template lands in apps/mimic/pvp-sets/, mirror it here AND add it to this list. Future: auto-sync via a build script."
+}
