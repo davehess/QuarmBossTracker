@@ -52,6 +52,8 @@
   .row .timer{font-variant-numeric:tabular-nums;font-size:10px;
     color:#7ee787;background:rgba(126,231,135,0.10);padding:0 5px;
     border-radius:3px;border:1px solid rgba(126,231,135,0.22)}
+  .row .cnt{font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums;
+    margin-right:4px;letter-spacing:0.02em}
   .row .timer.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
   .row .timer.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .row .icon{display:flex;align-items:center;justify-content:center;
@@ -117,13 +119,30 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>🎶 Melody</span></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="titleLbl">🎶 Melody</span></div>
     <div id="list"></div>
     <div class="empty" id="empty">no bard songs yet — start singing.</div>
   </div>
 <script>
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  // Subscribe to Mimic status pushes so the tray's "Bard only" toggle
+  // takes effect in real time without needing an overlay reload. Falls
+  // back to the localStorage value when no status has arrived yet.
+  var _mimicMelodyBardOnly = null;
+  if (window.mimic && window.mimic.onStatus) {
+    window.mimic.onStatus(function(s){
+      if (s && typeof s.melodyBardOnly === 'boolean') {
+        _mimicMelodyBardOnly = s.melodyBardOnly;
+        try { localStorage.setItem('wp.melodyBardOnly', s.melodyBardOnly ? '1' : '0'); } catch (e) {}
+      }
+    });
+  }
+  if (window.mimic && window.mimic.getStatus) {
+    window.mimic.getStatus().then(function(s){
+      if (s && typeof s.melodyBardOnly === 'boolean') _mimicMelodyBardOnly = s.melodyBardOnly;
+    }).catch(function(){});
+  }
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
 
   // Lock + drag wiring — same handshake as the other overlays.
@@ -266,9 +285,39 @@
       // doesn't pile up rotations from every alt at once. When the agent
       // doesn't have an active signal yet, show everything (initial boot).
       const active = s.activeCharacter ? String(s.activeCharacter).toLowerCase() : null;
-      const keys = active
+      var keys = active
         ? Object.keys(melodyByChar).filter(function(k){ return k.toLowerCase() === active; })
         : Object.keys(melodyByChar);
+      // "Melody on bard only" — when the user has enabled the bard-only
+      // toggle (persisted in localStorage), suppress the entire overlay
+      // payload when no rendered character is actually a Bard. Druid /
+      // mage / etc. melodies are still tracked by the agent, just hidden
+      // here so a non-bard player doesn't get a spell-cast HUD they
+      // didn't ask for. Mirrors the per-overlay opt-in pattern.
+      var bardOnly = false;
+      try { bardOnly = localStorage.getItem('wp.melodyBardOnly') === '1'; } catch (e) {}
+      if (typeof _mimicMelodyBardOnly === 'boolean') bardOnly = _mimicMelodyBardOnly;
+      if (bardOnly) {
+        keys = keys.filter(function(k){
+          var st = melodyByChar[k];
+          return st && st.isBard;
+        });
+      }
+      // Title swap: when none of the rendered characters are bards, the
+      // overlay is a generic spell-casting tracker. Update the header so
+      // the user isn't told "Melody" when no melody is running.
+      var anyBard = keys.some(function(k){ return melodyByChar[k] && melodyByChar[k].isBard; });
+      var titleEl = document.getElementById('titleLbl');
+      if (titleEl) {
+        titleEl.textContent = anyBard ? '🎶 Melody' : '🔮 Spell Casting';
+      }
+      // Empty-state copy follows the same swap.
+      var emptyEl0 = document.getElementById('empty');
+      if (emptyEl0) {
+        emptyEl0.textContent = anyBard
+          ? 'no bard songs yet — start singing.'
+          : 'no casts yet — start a spell to populate the tracker.';
+      }
       var html = '';
       for (var ki = 0; ki < keys.length; ki++) {
         var k = keys[ki];
@@ -358,9 +407,28 @@
               ? ' · landed as "' + entry.buff_name + '"' : '';
             timerHtml = '<span class="timer ' + tier + '" title="Buff window: ' + esc(t) + ' remaining' + esc(titleExtra) + '">' + t + '</span>';
           }
+          // Cast-count badge: how many times this character has cast this
+          // particular song/spell THIS SESSION. Surfaces rotation depth
+          // without forcing the user into the Info tab. Pulled from the
+          // top-level stats.castCounts map, character-scoped.
+          var castN = (s.castCounts && k && s.castCounts[String(k)] && s.castCounts[String(k)][name]) || 0;
+          // castCounts keys are case-sensitive — also try the original
+          // character casing from melodyByChar (we lower-cased it for the
+          // active filter, but castCounts may have either).
+          if (!castN && s.castCounts) {
+            for (var cck in s.castCounts) {
+              if (cck.toLowerCase() === k && s.castCounts[cck][name]) {
+                castN = s.castCounts[cck][name]; break;
+              }
+            }
+          }
+          var countHtml = castN > 0
+            ? '<span class="cnt" title="Cast ' + castN + ' time(s) this session">×' + castN + '</span>'
+            : '';
           rowsHtml += '<div class="' + rowClass + '"' + styleAttr + ' title="' + esc(name) + '">'
                     +   '<span class="icon">' + icon + '</span>'
                     +   '<span class="name">' + esc(shortSongName(name)) + '</span>'
+                    +   countHtml
                     +   timerHtml
                     + '</div>';
         }

@@ -2262,6 +2262,7 @@ function currentStatus() {
     showMobInfo: !!cfg.showMobInfo,
     showWho: !!cfg.showWho,
     showMelody: !!cfg.showMelody,
+    melodyBardOnly: !!cfg.melodyBardOnly,
     showZeal: !!cfg.showZeal,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
@@ -2424,6 +2425,10 @@ function buildTrayMenu() {
     { label: 'Melody (bard /melody)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
         if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
+        pushStatus();
+      } },
+    { label: '  ↳ Bard only (hide for non-bards)', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
+        const cfg = loadConfig(); cfg.melodyBardOnly = mi.checked; saveConfig(cfg);
         pushStatus();
       } },
     { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode, click: (mi) => {

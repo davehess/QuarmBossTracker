@@ -4492,7 +4492,15 @@ function _serializeForDashboard() {
           "nature`s melody", "nature's melody"];
         const nowCastingLower = nowCasting ? nowCasting.toLowerCase() : '';
         const _isCasting = (names) => names.some(n => n === nowCastingLower);
-        const bardBuffs = (state.kind === 'song') ? {
+        // bardBuffs strip is bard-only. Gate on BOTH state.kind === 'song'
+        // AND the live Zeal class string === 'Bard'. The kind gate alone
+        // could leak: state.kind is sticky ("once a song character, always
+        // a song character") so a non-bard whose first cast happened to
+        // match _isLikelyBardSong would get stuck rendering the bard strip
+        // forever, even after switching characters. The class check is the
+        // ground truth.
+        const isBardClass = !!(zealSt && /^bard$/i.test(String(zealSt.class || '')));
+        const bardBuffs = (state.kind === 'song' && isBardClass) ? {
           amplification: ampBuff ? { remaining_ticks: ampBuff.ticks, remaining_secs: ampBuff.ticks * 6 } : null,
           // Prefer Harmonize when both are present (Harmonize replaces Resonance).
           harmonize:     harBuff ? { remaining_ticks: harBuff.ticks, remaining_secs: harBuff.ticks * 6 } : null,
@@ -4531,6 +4539,8 @@ function _serializeForDashboard() {
           .map(b => `${b.name} (${b.ticks}t)`);
         out[k] = {
           character:      k,
+          characterClass: (zealSt && zealSt.class) || null,
+          isBard:         isBardClass,
           order:          visibleOrder,
           currentPos:     state.currentPos,
           castStartedAt:  state.castStartedAt,
