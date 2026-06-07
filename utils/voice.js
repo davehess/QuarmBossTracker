@@ -16,10 +16,15 @@
 // path (TRIGGER_BROADCAST_CHANNEL_ID) is independent and still works — voice
 // is a parallel surface, not a replacement.
 //
-// Native-deps note: package.json pins libsodium-wrappers (WASM crypto, no
-// compile) and opusscript (pure-JS opus, no compile) so this runs on the
-// node:20-alpine image without build-tools. ffmpeg is installed via apk in
-// the Dockerfile.
+// Native-deps note: package.json pins @noble/ciphers (pure-JS xchacha20poly1305
+// for Discord's required encryption modes) and opusscript (pure-JS opus). We
+// previously shipped libsodium-wrappers but its broken ESM entry caused
+// @discordjs/voice's `await import('libsodium-wrappers')` to throw
+// ERR_MODULE_NOT_FOUND, silently fall through every other lib, and leave the
+// encryption methods stubbed with a fallback that throws on first audio packet —
+// resulting in the bot opening a connection and immediately failing silently.
+// ffmpeg is installed via apk in the Dockerfile as the safety net for any
+// audio-format mismatch; the WebM-Opus path doesn't currently use it.
 
 'use strict';
 
@@ -37,6 +42,16 @@ function _loadDeps() {
     const voice = require('@discordjs/voice');
     const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
     _deps = { voice, MsEdgeTTS, OUTPUT_FORMAT };
+    // One-shot dependency report at first load. Tells us in Railway logs
+    // exactly which opus + encryption libs @discordjs/voice resolved. If
+    // any of these say "not found", THAT'S the silent-failure root cause —
+    // the connection will open but audio packets will throw on encrypt.
+    try {
+      const report = voice.generateDependencyReport();
+      console.log('[voice] @discordjs/voice dependency report:\n' + report);
+    } catch (err) {
+      console.warn('[voice] could not generate dependency report:', err?.message);
+    }
     return _deps;
   } catch (err) {
     console.warn('[voice] dependencies not available — voice triggers will drop:', err.message);
@@ -95,6 +110,7 @@ async function _ensureConnected(guildClient, channelId) {
     s.connection = null;
   }
 
+  console.log('[voice] joining channel', channelId, 'in guild', guildId);
   const connection = joinVoiceChannel({
     channelId,
     guildId,
@@ -103,13 +119,25 @@ async function _ensureConnected(guildClient, channelId) {
     selfMute: false,
   });
 
+  // Stream every state transition so we can see exactly where a stalled
+  // handshake hangs (Signalling → Connecting → Ready, or Disconnected at
+  // any step). Critical because the previous silent failure (broken
+  // libsodium ESM entry) left no trail at all.
+  connection.on('stateChange', (oldState, newState) => {
+    if (oldState.status !== newState.status) {
+      console.log(`[voice] connection state ${oldState.status} → ${newState.status} (channel ${channelId})`);
+    }
+  });
+  connection.on('error', err => console.warn('[voice] connection error:', err?.message));
+
   // Wait for the connection to be Ready before we try to subscribe a player.
   // 20s catches startup hiccups (Discord WebSocket lag, region failover);
   // beyond that something's wrong and we drop with a warning.
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    console.log('[voice] Ready in channel', channelId);
   } catch (err) {
-    console.warn('[voice] join failed for channel', channelId, ':', err.message);
+    console.warn('[voice] join failed for channel', channelId, '— last state:', connection.state?.status, ':', err.message);
     try { connection.destroy(); } catch { /* already gone */ }
     return null;
   }
@@ -205,6 +233,7 @@ async function _drainQueue(guildClient, guildId) {
           connection.subscribe(s.player);
         }
 
+        console.log('[voice] starting playback in', job.channelId, '— text:', String(job.text).slice(0, 80));
         s.player.play(resource);
         // Wait for the message to finish before pulling the next one off the
         // queue. 30s ceiling covers reasonable raid call-out lengths; longer
@@ -212,6 +241,7 @@ async function _drainQueue(guildClient, guildId) {
         await entersState(s.player, AudioPlayerStatus.Idle, 30_000).catch(err => {
           console.warn('[voice] play timed out:', err.message);
         });
+        console.log('[voice] playback finished in', job.channelId);
       } catch (err) {
         console.warn('[voice] TTS failed for', job.text.slice(0, 60), ':', err.message);
       }
