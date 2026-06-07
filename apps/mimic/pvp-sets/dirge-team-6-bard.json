@@ -48,9 +48,6 @@
     { "slot": "neck",      "item": "Voice of the Serpent",             "notes": "Amplification clicky." },
     { "slot": "back",      "item": "Shadowsong Cloak",                 "notes": "Harmonize clicky." }
   ],
-  "potions": [
-    { "name": "Greater Healing Potion", "use": "Spike absorption after Dirge gets you focused." },
-    { "name": "Mana Potion",            "use": "Top off between dirges." },
-    { "name": "Cure-curse / cleanse",   "use": "Pre-dirge if you ate a slow / DoT." }
-  ]
+  "potions": [],
+  "_potions_note": "Quarm-available potion picks not verified yet. If you have a known-good potion in your inventory you want surfaced (HP, mana, cure-X), name it and we'll add it to the template."
 }
