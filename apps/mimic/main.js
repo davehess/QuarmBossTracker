@@ -1894,12 +1894,6 @@ ipcMain.handle('ui-studio-load-pvp-set', (_e, id) => {
   } catch { return null; }
 });
 
-// "Import" writes a human-readable markdown summary alongside the user's
-// EQ folder. Deliberately conservative — does NOT yet edit the live
-// Socials_<Char>_pq.proj.ini because the format varies across Quarm
-// client builds and a wrong write would scramble the player's hotkeys.
-// The markdown gives them a copy-paste-ready button-by-button list to
-// configure in-game manually. Real INI merge is a follow-up.
 ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
   try {
     const id     = String(params?.id || '').trim();
@@ -1976,6 +1970,197 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
     const targetPath = path.join(eqDir, targetName);
     fs.writeFileSync(targetPath, md, 'utf8');
     return { ok: true, file: targetName, path: targetPath };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Inspect socials INI files for the loaded character. Returns the parsed
+// sections (raw section name + key/value props) so the UI Studio can render
+// a "Hotbar Pages" inspector. Helps the user see what's actually in their
+// INI and gives us format samples to refine the parser against.
+ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
+  try {
+    const c = String(character || '').trim();
+    const d = String(eqDir || '').trim();
+    if (!c || !d) return { ok: false, error: 'character + eqDir required' };
+    const candidates = [
+      `Sock_${c}_pq.proj.ini`,
+      `Socials_${c}_pq.proj.ini`,
+      `${c}_pq.proj.ini`,
+    ];
+    const files = [];
+    for (const name of candidates) {
+      const fp = path.join(d, name);
+      if (!fs.existsSync(fp)) continue;
+      try {
+        const text = fs.readFileSync(fp, 'utf8');
+        // Quick section parse — same algorithm the ui-studio renderer uses.
+        // Output a section list with the first 8 props each so the inspector
+        // panel stays readable on big socials files (some users have 200+
+        // sections across all pages).
+        const sections = [];
+        const lines = text.split(/\r?\n/);
+        let cur = null;
+        for (const L of lines) {
+          const m = L.match(/^\s*\[([^\]]+)\]\s*$/);
+          if (m) {
+            cur = { name: m[1], props: {} };
+            sections.push(cur);
+            continue;
+          }
+          if (!cur) continue;
+          const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (kv) cur.props[kv[1]] = kv[2];
+        }
+        files.push({ file: name, section_count: sections.length, sections });
+      } catch (err) {
+        files.push({ file: name, error: err && err.message });
+      }
+    }
+    if (files.length === 0) return { ok: false, error: 'no socials INI found for ' + c };
+    return { ok: true, files };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Capture a heuristic PvP-set draft from the user's Socials/Sock_ INI
+// files. Writes a JSON file the user can review, annotate (notes,
+// required, tier, alternatives) and share. The parser tolerates several
+// section-naming conventions because Quarm/EQ clients use a few
+// different shapes — anything that looks like a button row gets
+// extracted, the rest is preserved as a `raw_props` blob.
+ipcMain.handle('ui-studio-capture-pvp-draft', (_e, params) => {
+  try {
+    const character = String(params?.character || '').trim();
+    const eqDir     = String(params?.eqDir || '').trim();
+    const setName   = String(params?.setName || `${character} draft`).trim();
+    if (!character || !eqDir) return { ok: false, error: 'character + eqDir required' };
+
+    const candidates = [
+      `Sock_${character}_pq.proj.ini`,
+      `Socials_${character}_pq.proj.ini`,
+    ];
+    let combinedText = '';
+    let foundFile = null;
+    for (const name of candidates) {
+      const fp = path.join(eqDir, name);
+      if (!fs.existsSync(fp)) continue;
+      combinedText += `\n; ── ${name} ──\n` + fs.readFileSync(fp, 'utf8');
+      foundFile = foundFile || name;
+    }
+    if (!combinedText) return { ok: false, error: 'no Sock_*/Socials_* INI files for ' + character };
+
+    // Heuristic parse: walk all sections. For each section, look for
+    // common button-shape patterns and emit a `buttons` array. If we
+    // can't recognize the shape, preserve raw_props so the user can
+    // hand-edit.
+    const phases = [];
+    const lines = combinedText.split(/\r?\n/);
+    let cur = null;
+    for (const L of lines) {
+      const m = L.match(/^\s*\[([^\]]+)\]\s*$/);
+      if (m) { cur = { name: m[1], props: {} }; phases.push(cur); continue; }
+      if (!cur) continue;
+      const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+      if (kv) cur.props[kv[1]] = kv[2];
+    }
+    // Convert each parsed section into a "phase or button". Two known
+    // patterns:
+    //   A) [PageN] with ButtonM=Name|Color|...|Line0|Line1|... entries
+    //   B) [SocialsN] with Name + Line0..LineN props
+    const draftPhases = [];
+    for (const sec of phases) {
+      // Pattern A: section name like Page0, Page1, ...
+      const isPage = /^Page\d+$/i.test(sec.name);
+      // Pattern B: section name like Socials0, Socials1, ...
+      const isSocial = /^Socials?\d+$/i.test(sec.name);
+      if (isPage) {
+        const buttons = [];
+        for (const [k, v] of Object.entries(sec.props)) {
+          const bm = k.match(/^Button(\d+)$/i) || k.match(/^HotButton(\d+)$/i);
+          if (!bm) continue;
+          // Naive pipe-delimited button: Name|Color|...|Line0|Line1|...
+          const parts = String(v).split('|');
+          buttons.push({
+            slot:  parseInt(bm[1], 10),
+            label: parts[0] || '',
+            color: parseInt(parts[1], 10) || 0,
+            lines: parts.slice(4).filter(s => s && s.length),
+            _raw:  v,
+          });
+        }
+        if (buttons.length) {
+          buttons.sort((a, b) => a.slot - b.slot);
+          draftPhases.push({
+            name:       sec.name,
+            page:       parseInt(sec.name.replace(/^Page/i, ''), 10),
+            page_label: 'Shift+' + (parseInt(sec.name.replace(/^Page/i, ''), 10) + 1),
+            buttons,
+          });
+        }
+      } else if (isSocial) {
+        // Single-button section. Group adjacent socials into a page later
+        // if we can; for now, emit each as its own slot.
+        const name = sec.props.Name || sec.props.WindowName || sec.name;
+        const lines = [];
+        for (let i = 0; i < 5; i++) {
+          const ln = sec.props['Line' + i] || sec.props['Line_' + i];
+          if (ln) lines.push(ln);
+        }
+        draftPhases.push({
+          name:       'Social: ' + name,
+          page:       parseInt(sec.props.Page, 10) || 0,
+          page_label: sec.props.Page != null ? 'Shift+' + (parseInt(sec.props.Page, 10) + 1) : null,
+          buttons: [{
+            slot:  parseInt(sec.props.HotKeyButtonNum || sec.props.HotButtonNum || 0, 10),
+            label: name,
+            color: parseInt(sec.props.Color, 10) || 0,
+            lines,
+            _raw:  null,
+          }],
+        });
+      }
+    }
+
+    const slug = setName.replace(/[^\w]+/g, '-').toLowerCase().slice(0, 40);
+    const draft = {
+      id:                slug + '-' + character.toLowerCase(),
+      name:              setName,
+      version:           1,
+      class:             null,
+      credit:            character,
+      description:       '(Add a description before sharing this set.)',
+      availability_note: '(Tag required vs optional items before publishing.)',
+      phases:            draftPhases,
+      spell_sets:        [],
+      bandolier:         [],
+      clickies:          [],
+      potions:           [],
+      _captured:         true,
+      _source_files:     candidates.filter(f => fs.existsSync(path.join(eqDir, f))),
+      _needs_review:     [
+        'Add `class` (Bard / Druid / etc.) if class-specific.',
+        'Per-clicky: add tier, set required:false, list alternatives.',
+        'Per-phase: rename "PageN" to a meaningful label (Pre-dirge, Burn, etc.).',
+        'Strip any /tells, /pet, character-specific keys you don\'t want to share.',
+        'Confirm the heuristic parsed every button correctly (compare against in-game).',
+      ],
+    };
+
+    const safeChar = character.replace(/[^\w]/g, '');
+    const targetName = `WolfPack_Capture_${slug}_${safeChar}.json`;
+    const targetPath = path.join(eqDir, targetName);
+    fs.writeFileSync(targetPath, JSON.stringify(draft, null, 2), 'utf8');
+    return {
+      ok: true,
+      file: targetName,
+      path: targetPath,
+      phase_count:  draftPhases.length,
+      button_count: draftPhases.reduce((n, p) => n + (p.buttons || []).length, 0),
+      source_file:  foundFile,
+    };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }

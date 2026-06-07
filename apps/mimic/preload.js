@@ -84,6 +84,11 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioListPvpSets:    (characterClass)   => ipcRenderer.invoke('ui-studio-list-pvp-sets', characterClass),
   uiStudioLoadPvpSet:     (id)               => ipcRenderer.invoke('ui-studio-load-pvp-set', id),
   uiStudioImportPvpSet:   (params)           => ipcRenderer.invoke('ui-studio-import-pvp-set', params),
+  // Backup + capture flow — surface the existing cloud-backup IPC from
+  // the visual editor + add a heuristic local capture for Sock_/Socials_
+  // files so users can share their PvP setups as draft templates.
+  uiStudioInspectSocials: (character, eqDir) => ipcRenderer.invoke('ui-studio-inspect-socials', character, eqDir),
+  uiStudioCapturePvpDraft:(params)           => ipcRenderer.invoke('ui-studio-capture-pvp-draft', params),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns
   // { ok, user_code, verification_url, verification_url_complete, expires_at }
