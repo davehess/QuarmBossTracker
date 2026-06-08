@@ -272,6 +272,34 @@
     var suffix = (mi && mi.target_is_pc) ? '(live)' : '(observed)';
     return _tbuffSection('debuffs '+suffix, debuffs) + _tbuffSection('buffs '+suffix, goods);
   }
+  // Cross-client "Casting" section — who is casting what on this target, right
+  // now, with a live countdown. Fed by the bot's casting relay; only raiders
+  // running Mimic can be named (EQ hides others' spell/target).
+  function renderTargetCasting(mi){
+    var casts = (mi && Array.isArray(mi.target_casting)) ? mi.target_casting.slice() : null;
+    if (!casts || !casts.length) return '';
+    var now = Date.now();
+    var remOf = function(c){
+      if (c && c.ends_at_ms != null) return Math.max(0, (c.ends_at_ms - now) / 1000);
+      return (c && c.remaining_secs != null) ? c.remaining_secs : 0;
+    };
+    casts.sort(function(a,b){ return remOf(a) - remOf(b); });   // finishing soonest first
+    var rows = '';
+    for (var i=0;i<casts.length;i++){
+      var c = casts[i]; if (!c || !c.caster || !c.spell) continue;
+      var rem = remOf(c);
+      var tot = c.cast_secs || rem || 1;
+      var pct = Math.max(0, Math.min(100, (rem / tot) * 100));
+      var lbl = rem >= 0.1 ? rem.toFixed(1) + 's' : '✓';
+      rows += '<div class="tbuff" title="'+esc(c.caster+' casting '+c.spell)+'">'
+           +    '<span class="bn">'+esc(c.caster)+' · '+esc(c.spell)+'</span>'
+           +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:#58a6ff"></div></div>'
+           +    '<span class="bt">'+lbl+'</span>'
+           +  '</div>';
+    }
+    if (!rows) return '';
+    return '<div class="tbuffs"><div class="hdr">casting</div>'+rows+'</div>';
+  }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
@@ -533,6 +561,7 @@
       + hpBar
       + manaBar
       + manaLine
+      + renderTargetCasting(mi)
       + renderTargetBuffs(mi)
       + tabBody
       + lastFight

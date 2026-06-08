@@ -69,6 +69,7 @@ function loadState() {
   if (raw.pvpKills)           s.pvpKills           = raw.pvpKills;
   if (raw.liveKills)          s.liveKills          = raw.liveKills;
   if (raw.quake !== undefined) s.quake             = raw.quake;
+  if (raw.serverQuake !== undefined) s.serverQuake = raw.serverQuake;
   if (raw.pvpAlerts)          s.pvpAlerts          = raw.pvpAlerts;
   if (raw.pvpNight)           s.pvpNight           = raw.pvpNight;
   if (raw.seenWelcome)        s.seenWelcome        = raw.seenWelcome;
@@ -373,6 +374,12 @@ function setPvpNightBoardMsg(msgId)   { const s = loadState(); _pvpNight(s).boar
 function getQuake()              { return loadState().quake || null; }
 function saveQuake(data)         { const s = loadState(); s.quake = data; saveState(s); }
 function clearQuake()            { const s = loadState(); s.quake = null; saveState(s); }
+
+// Server-wide PvP EARTHQUAKE (distinct from the officer /quake reset above).
+// { next_quake_at, detected_at, source_text, messageId } — parsed from the
+// in-game "The next earthquake will begin in…" line by the agent.
+function getServerQuake()       { return loadState().serverQuake || null; }
+function saveServerQuake(data)  { const s = loadState(); s.serverQuake = data; saveState(s); }
 
 // ── Welcome card seen tracking ────────────────────────────────────────────────────────────────────
 function hasSeenWelcome(userId) { return (loadState().seenWelcome || []).includes(userId); }
@@ -943,6 +950,7 @@ module.exports = {
   setAllLiveKills, setAllPvpKills,
   setLiveKillTimerUnknown, setPvpKillTimerUnknown,
   getQuake, saveQuake, clearQuake,
+  getServerQuake, saveServerQuake,
   getPvpAlertHowlers, addPvpAlertHowler, clearPvpAlert,
   getPvpNight, getActivePvpNightUserIds, addPvpNightTonight, addPvpNightPermanent,
   removePvpNight, getPvpNightBoardMsg, setPvpNightBoardMsg,
