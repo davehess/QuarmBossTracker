@@ -22,6 +22,12 @@
     margin-bottom:2px;display:flex;align-items:baseline;gap:5px}
   .sec.buffs .hdr .lab{color:#7ee787}
   .sec.debuffs .hdr .lab{color:#f87171}
+  .sec.burst .hdr .lab{color:#f0b429}
+  /* Burst queue (Feral Avatar / Savagery) — amber/gold border on each row so
+     it reads as "the burst-buff target list" without colliding with buff
+     severity tiers. */
+  .row.burst{border-left-color:#f0b429;background:rgba(40,28,8,0.55)}
+  .row.burst .miss{color:#fde68a;font-variant-numeric:tabular-nums}
   .sec .hdr .ct{color:#6e7681;font-variant-numeric:tabular-nums}
   .sec .hdr .hint{color:#6e7681;font-size:9px;text-transform:none;letter-spacing:0;font-style:italic}
   .row{position:relative;display:flex;align-items:baseline;gap:5px;padding:2px 5px;
@@ -206,7 +212,7 @@
   }
   function renderRow(r, kind){
     var groupLbl = r.group != null ? ('G' + r.group) : '';
-    var cls = (kind === 'd' ? 'd' : tierClass(r.tier));
+    var cls = kind === 'd' ? 'd' : kind === 'burst' ? 'burst' : tierClass(r.tier);
     var line = '<div class="row '+cls+'">'
              +    '<span class="nm">'+esc(r.name)+'</span>'
              +    (groupLbl ? '<span class="grp">'+esc(groupLbl)+'</span>' : '')
@@ -219,6 +225,13 @@
         chips += '<span class="ch">'+esc(c.name)+t+'</span>';
       }
       line += '<span class="curse">'+chips+'</span>';
+    } else if (kind === 'burst') {
+      var dmg = (r.damage || 0);
+      var dmgTxt = dmg >= 1e6 ? (dmg/1e6).toFixed(1)+'M'
+                : dmg >= 1e3 ? (dmg/1e3).toFixed(0)+'k'
+                : dmg > 0    ? String(dmg)
+                :             'no data';
+      line += '<span class="miss">'+esc(dmgTxt)+'</span>';
     } else {
       line += '<span class="miss">'+esc((r.missing || []).join(' · '))+'</span>';
     }
@@ -229,9 +242,13 @@
   function render(payload){
     var bq = (payload && payload.buff_queue) || [];
     var dq = (payload && payload.debuff_queue) || [];
+    // Shaman → feral_queue, Beastlord → savagery_queue. burst_label drives the
+    // section header so the bot can pick the right ability name.
+    var burst = (payload && (payload.feral_queue || payload.savagery_queue)) || [];
+    var burstLabel = (payload && payload.burst_label) || null;
     var body = document.getElementById('body');
     var empty = document.getElementById('empty');
-    if (bq.length === 0 && dq.length === 0) {
+    if (bq.length === 0 && dq.length === 0 && burst.length === 0) {
       body.innerHTML = '';
       empty.style.display = '';
       empty.textContent = bufferClass
@@ -250,6 +267,11 @@
     if (dq.length) {
       html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dq.length+'</span><span class="hint">cures needed</span></div>';
       for (var i = 0; i < dq.length; i++) html += renderRow(dq[i], 'd');
+      html += '</div>';
+    }
+    if (burst.length && burstLabel) {
+      html += '<div class="sec burst"><div class="hdr"><span class="lab">⚡ '+esc(burstLabel)+' queue</span><span class="ct">'+burst.length+'</span><span class="hint">damage descending · tonight\'s session</span></div>';
+      for (var i = 0; i < burst.length; i++) html += renderRow(burst[i], 'burst');
       html += '</div>';
     }
     body.innerHTML = html;

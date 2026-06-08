@@ -4937,8 +4937,69 @@ async function _handleAgentRaidBuffQueue(req, res) {
     buffQueue.sort((a, b) => (sev[a.tier] - sev[b.tier]) || ((a.group || 99) - (b.group || 99)) || a.name.localeCompare(b.name));
     debuffQueue.sort((a, b) => ((a.group || 99) - (b.group || 99)) || a.name.localeCompare(b.name));
 
+    // Single-target burst-buff queues — Shaman Feral Avatar + Beastlord
+    // Savagery. Both go on the highest-damage melee/tank, then on cooldown the
+    // shaman/BL recasts on the next-highest. Queue is melee + tank role,
+    // ordered by tonight's damage descending, with raiders already carrying
+    // the buff omitted. We only build the queue that matches bufferClass so the
+    // payload stays small.
+    const burstSpec =
+      bufferClass.toLowerCase() === 'shaman'    ? { key: 'feral_queue',    label: 'Feral Avatar',
+          carriesRx: /feral avatar|^avatar\b/i } :
+      bufferClass.toLowerCase() === 'beastlord' ? { key: 'savagery_queue', label: 'Savagery',
+          carriesRx: /savagery|blood boils/i } : null;
+    let burstQueue = [];
+    if (burstSpec) {
+      // Tonight's per-character damage from encounter_players ⨯ encounters
+      // (filter to the last 6h — covers a 4h raid + warmup without needing a
+      // raid_nights lookup). PostgREST inner-resource query with select on
+      // both, then sum in JS.
+      const sinceIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
+      const dmgByName = new Map();
+      try {
+        const dmg = await supabase.select('encounter_players',
+          `encounters.guild_id=eq.${encodeURIComponent(guildId)}&encounters.started_at=gte.${encodeURIComponent(sinceIso)}` +
+          `&select=character_name,total_damage,encounters!inner(guild_id,started_at)&limit=5000`);
+        for (const r of (dmg || [])) {
+          const nm = r && r.character_name;
+          const td = r && Number(r.total_damage);
+          if (!nm || !Number.isFinite(td) || td <= 0) continue;
+          dmgByName.set(nm.toLowerCase(), (dmgByName.get(nm.toLowerCase()) || 0) + td);
+        }
+      } catch (e) {
+        console.warn('[raid-buff-queue] damage fetch failed:', e && e.message);
+      }
+      // Candidates: every in-raid raider with a melee role (warrior/paladin/SK
+      // = tank; monk/rogue/ranger/beastlord/berserker = melee). Skip those
+      // already carrying the burst buff. Family fold-up of damage isn't done
+      // here on purpose — the buff lands on the active character, not the main.
+      for (const k of allKeys) {
+        const live = liveByName.get(k);
+        const rr   = rosterByName.get(k);
+        const name = (rr && rr.name) || (live && live.character) || k;
+        const cls  = classFor(name);
+        const role = rb.classToRole(cls);
+        if (role !== 'tank' && role !== 'melee') continue;
+        const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : [];
+        const alreadyBuffed = buffs.some(b => b && b.name && burstSpec.carriesRx.test(b.name));
+        if (alreadyBuffed) continue;
+        const damage = dmgByName.get(name.toLowerCase()) || 0;
+        burstQueue.push({
+          name, class: cls, group: rr ? rr.group_num : null,
+          damage,
+          casting: _castingOnTarget(name),
+        });
+      }
+      // Highest damage first; raiders with no damage signal yet sink (they may
+      // be new arrivals, but a buffer shouldn't rank them above proven DPS).
+      burstQueue.sort((a, b) => (b.damage || 0) - (a.damage || 0) || a.name.localeCompare(b.name));
+      burstQueue = burstQueue.slice(0, 20);
+    }
+
+    const out = { buff_queue: buffQueue.slice(0, 40), debuff_queue: debuffQueue.slice(0, 40) };
+    if (burstSpec) { out[burstSpec.key] = burstQueue; out.burst_label = burstSpec.label; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ buff_queue: buffQueue.slice(0, 40), debuff_queue: debuffQueue.slice(0, 40) }));
+    return res.end(JSON.stringify(out));
   } catch (err) {
     console.warn('[raid-buff-queue] failed:', err && err.message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
