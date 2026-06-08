@@ -679,6 +679,7 @@
     buildFilterPanel();
     renderStage();
     maybePromptPvpSet().catch(function(){});
+    _showDeferBanner().catch(function(){});   // reflect any background pending save for this char
   }
 
   // ── Category filter ──────────────────────────────────────────────────────
@@ -1173,40 +1174,41 @@
 
   // Deferred save: hold the edits and apply them automatically once the
   // character leaves the Zeal pipe (logged out) — at which point EQ has written
-  // its final layout and won't clobber ours. Requires UI Studio to stay open.
-  var _deferTimer = null;
-  function _cancelDefer(silent){
-    if (_deferTimer) { clearInterval(_deferTimer); _deferTimer = null; }
-    STATE._deferred = null;
+  // its final layout and won't clobber ours. The watcher runs in Mimic's
+  // BACKGROUND process, so it works even after UI Studio is closed (and across
+  // a Mimic restart). The renderer just queues/cancels and reflects status.
+  async function _cancelDefer(silent){
+    try { await window.mimic.uiStudioCancelDefer({ character: STATE.character, eqDir: STATE.eqDir }); } catch (e) {}
     var b = document.getElementById('deferBanner'); if (b) b.style.display = 'none';
     if (!silent) setStatus('scheduled save cancelled', 'ok');
   }
-  function _queueDefer(newBundle, tgtSuffix){
-    _cancelDefer(true);
-    STATE._deferred = { character: STATE.character, eqDir: STATE.eqDir, newBundle: newBundle, tgtSuffix: tgtSuffix, charLower: STATE.character.toLowerCase() };
-    var b = document.getElementById('deferBanner');
-    if (b) {
-      b.style.display = 'flex';
-      b.querySelector('.txt').textContent = '⏳ Scheduled: your layout will apply automatically when ' +
-        STATE.character + ' logs out of EverQuest. Keep UI Studio open.';
-    }
-    setStatus('scheduled — will apply when ' + STATE.character + ' logs out (keep UI Studio open)', 'ok');
-    var sawActive = false;
-    _deferTimer = setInterval(async function(){
-      var d = STATE._deferred; if (!d) { _cancelDefer(true); return; }
-      var active = await _isCharActiveInZeal(d.charLower);
-      if (active === null) return;            // agent unreachable — keep waiting
-      if (active) { sawActive = true; return; } // still logged in
-      if (!sawActive) return;                 // never confirmed in-game yet; wait
-      // Logged out after being seen in-game → EQ wrote its final layout; apply
-      // ours over it now (give EQ a beat to finish its logout write first).
-      var pending = STATE._deferred; _cancelDefer(true);
-      setTimeout(function(){
-        STATE.character = pending.character; STATE.eqDir = pending.eqDir;
-        _writeBundle(pending.newBundle, pending.tgtSuffix, { deferred: true });
-      }, 4000);
-    }, 8000);
+  async function _queueDefer(newBundle, tgtSuffix){
+    var res = await window.mimic.uiStudioDeferSave({
+      character: STATE.character, eqDir: STATE.eqDir, bundle: newBundle, tgtSuffix: tgtSuffix,
+    }).catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!res || !res.ok) { setStatus('could not schedule: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
+    _showDeferBanner();
+    setStatus('scheduled — applies automatically when ' + STATE.character + ' logs out (you can close UI Studio)', 'ok');
   }
+  // Reflect the background queue in the banner: show it if THIS character has a
+  // pending save. Polled lightly + after actions so an applied/closed save
+  // clears the banner.
+  async function _showDeferBanner(){
+    var b = document.getElementById('deferBanner'); if (!b) return;
+    var list = [];
+    try { list = await window.mimic.uiStudioPendingList(); } catch (e) {}
+    var mine = (list || []).find(function(e){
+      return STATE.character && String(e.character).toLowerCase() === STATE.character.toLowerCase() && e.eqDir === STATE.eqDir;
+    });
+    if (mine) {
+      b.style.display = 'flex';
+      b.querySelector('.txt').textContent = '⏳ Scheduled: your layout applies automatically when ' +
+        STATE.character + ' logs out of EverQuest. (Background — safe to close UI Studio.)';
+    } else {
+      b.style.display = 'none';
+    }
+  }
+  setInterval(function(){ _showDeferBanner().catch(function(){}); }, 10000);
 
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
@@ -1222,7 +1224,7 @@
         'when the character camps / zones / quits — so saving now usually won\'t\n' +
         'stick, and a skin reload won\'t re-read it.\n\n' +
         'OK  = schedule it: apply automatically when ' + STATE.character + ' logs out\n' +
-        '         (recommended — keep UI Studio open)\n' +
+        '         (recommended — runs in the background; you can close UI Studio)\n' +
         'Cancel = save right now anyway');
       if (schedule) { _queueDefer(built.newBundle, built.tgtSuffix); return; }
     }

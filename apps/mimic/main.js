@@ -756,6 +756,76 @@ function _backupAndWriteFile(targetPath, contents, backupTag) {
   fs.renameSync(tmp, targetPath);
   return bakPath;
 }
+
+// ── UI Studio deferred saves (apply on logout) ──────────────────────────────
+// A save made while the character is logged in can't take effect: EQ keeps the
+// UI layout in memory and overwrites the file on the next camp/zone/quit. So
+// instead of requiring UI Studio to stay open, we persist the pending edits in
+// the MAIN process and apply them automatically once the character leaves the
+// Zeal pipe (= logged out → EQ has written its final layout). Survives closing
+// UI Studio and a Mimic restart.
+function _uiDeferFile() { return path.join(app.getPath('userData'), 'ui-studio-pending.json'); }
+let _uiDeferred = [];   // [{ character, eqDir, bundle:{name:text}, tgtSuffix, queuedAt, sawActive }]
+function _loadUiDeferred() {
+  try {
+    const fp = _uiDeferFile();
+    if (fs.existsSync(fp)) { const raw = JSON.parse(fs.readFileSync(fp, 'utf8')); if (Array.isArray(raw)) _uiDeferred = raw; }
+  } catch { _uiDeferred = []; }
+}
+function _saveUiDeferred() {
+  try { fs.writeFileSync(_uiDeferFile(), JSON.stringify(_uiDeferred), 'utf8'); } catch {}
+}
+function _uiCharActiveInZeal(charLower) {
+  for (const [name, cur] of _zealLiveByChar.entries()) {
+    if (String(name).toLowerCase() !== charLower) continue;
+    if (cur && cur.lastSeen && (Date.now() - cur.lastSeen) < 30000) return true;
+  }
+  return false;
+}
+function _applyDeferredEntry(entry) {
+  let written = 0;
+  try {
+    for (const [name, contents] of Object.entries(entry.bundle || {})) {
+      if (typeof contents !== 'string' || !contents.length) continue;
+      if (!/^[\w.-]+\.ini$/i.test(name)) continue;
+      _backupAndWriteFile(path.join(entry.eqDir, name), contents, 'eq');  // EQ's copy → .bak-eq
+      written++;
+    }
+  } catch (err) { appendAgentLog(`[ui-studio] deferred apply failed for ${entry.character}: ${err && err.message}\n`); return false; }
+  appendAgentLog(`[ui-studio] applied deferred save for ${entry.character} (${written} file(s)) after logout\n`);
+  try {
+    if (Notification.isSupported()) new Notification({
+      title: 'UI Studio — layout applied',
+      body: `${entry.character} logged out, so your saved UI layout was applied (${written} file(s)). Log back in to see it.`,
+      silent: true,
+    }).show();
+  } catch {}
+  return true;
+}
+let _uiDeferTickBusy = false;
+async function _tickUiDeferred() {
+  if (_uiDeferTickBusy || !_uiDeferred.length) return;
+  _uiDeferTickBusy = true;
+  try {
+    let eqUp = null;   // resolved lazily, once, only if needed
+    const keep = [];
+    for (const entry of _uiDeferred) {
+      const charLower = String(entry.character || '').toLowerCase();
+      if (_uiCharActiveInZeal(charLower)) { entry.sawActive = true; keep.push(entry); continue; }
+      // Not in Zeal. Apply when we previously saw it in-game (logged out now),
+      // or it was never in-game AND no EverQuest is running (nothing to clobber).
+      if (!entry.sawActive) {
+        if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
+        if (eqUp) { keep.push(entry); continue; }   // EQ up, char not seen → wait
+      }
+      // Stabilization: let EQ finish its logout write before we overwrite.
+      if (Date.now() - (entry.queuedAt || 0) < 6000) { keep.push(entry); continue; }
+      _applyDeferredEntry(entry);   // drop on success or failure (don't loop forever)
+    }
+    if (keep.length !== _uiDeferred.length) { _uiDeferred = keep; _saveUiDeferred(); }
+  } finally { _uiDeferTickBusy = false; }
+}
+
 function _clampUiIni(contents, screenW, screenH) {
   // Walk every line; when we see XPos/YPos = N, clamp to (0, screenW - minW)
   // / (0, screenH - minH). minW/minH unknown without parsing XSize/YSize, so
@@ -857,6 +927,7 @@ function _zealAbsorb(obj) {
   const type = obj.type;
   let cur = _zealLiveByChar.get(character);
   if (!cur) { cur = { snapshot: {}, dirty: false }; _zealLiveByChar.set(character, cur); }
+  cur.lastSeen = Date.now();   // liveness for UI Studio's "apply on logout" watcher
   const s = cur.snapshot;
   if (type === 2) {                                   // gauge — HP per-mille (0..1000)
     const inner = _zealParseData(obj);
@@ -3587,6 +3658,39 @@ ipcMain.handle('ui-studio-eq-running', async () => {
   try { return await _isEqRunning(); } catch { return false; }
 });
 
+// Queue a deferred save — applied by the background watcher once the character
+// leaves the Zeal pipe (logged out). Replaces any prior pending save for the
+// same character+folder so re-saving just updates the pending edits.
+ipcMain.handle('ui-studio-defer-save', (_e, params) => {
+  try {
+    const character = String(params?.character || '').trim();
+    const eqDir     = String(params?.eqDir || '').trim();
+    const bundle    = params?.bundle;
+    if (!character || !eqDir || !bundle || typeof bundle !== 'object') return { ok: false, error: 'character + eqDir + bundle required' };
+    const charLower = character.toLowerCase();
+    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir));
+    _uiDeferred.push({
+      character, eqDir, bundle,
+      tgtSuffix: params?.tgtSuffix || null,
+      queuedAt: Date.now(),
+      sawActive: _uiCharActiveInZeal(charLower),   // seed from current liveness
+    });
+    _saveUiDeferred();
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
+ipcMain.handle('ui-studio-pending-list', () => {
+  return _uiDeferred.map(e => ({ character: e.character, eqDir: e.eqDir, tgtSuffix: e.tgtSuffix, queuedAt: e.queuedAt, sawActive: !!e.sawActive }));
+});
+ipcMain.handle('ui-studio-cancel-defer', (_e, params) => {
+  const character = String(params?.character || '').trim().toLowerCase();
+  const eqDir     = String(params?.eqDir || '').trim();
+  const before = _uiDeferred.length;
+  _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === character && (!eqDir || e.eqDir === eqDir)));
+  if (_uiDeferred.length !== before) _saveUiDeferred();
+  return { ok: true, removed: before - _uiDeferred.length };
+});
+
 ipcMain.handle('ui-studio-list-displays', () => {
   try {
     const primary = screen.getPrimaryDisplay();
@@ -4012,6 +4116,11 @@ app.whenReady().then(async () => {
   createZealHealthOverlay();
   pushStatus();
   startZealCapture();
+
+  // UI Studio deferred saves — load any pending from a prior session and start
+  // the background watcher that applies them once the character logs out.
+  _loadUiDeferred();
+  setInterval(() => { _tickUiDeferred().catch(() => {}); }, 8000);
 
   // First-launch + every-launch nudge: if setup is incomplete, fire a Windows
   // toast notification so the user knows something needs their attention even

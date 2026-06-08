@@ -68,6 +68,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // identical install on a different machine.
   uiStudioListDisplays:   ()        => ipcRenderer.invoke('ui-studio-list-displays'),
   uiStudioIsEqRunning:    ()        => ipcRenderer.invoke('ui-studio-eq-running'),
+  // Background deferred save — applied by the main process when the character
+  // logs out (survives closing UI Studio + a Mimic restart).
+  uiStudioDeferSave:      (params)  => ipcRenderer.invoke('ui-studio-defer-save', params),
+  uiStudioPendingList:    ()        => ipcRenderer.invoke('ui-studio-pending-list'),
+  uiStudioCancelDefer:    (params)  => ipcRenderer.invoke('ui-studio-cancel-defer', params),
   uiStudioListCharacters: ()        => ipcRenderer.invoke('ui-studio-list-characters'),
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
