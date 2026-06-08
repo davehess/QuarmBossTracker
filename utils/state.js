@@ -728,6 +728,8 @@ function mergeWhoData(rows) {
       guild:      r.guild ?? old.guild ?? null,
       anonymous:  !!r.anonymous,
       gm:         !!r.gm || !!old.gm,
+      // Zone only comes from /who all — preserve last known when absent.
+      zone:       r.zone ?? old.zone ?? null,
       is_zek:     old.is_zek || autoZek,
       // Guild rank (Member / Officer / Leader) from /guildstatus — survives
       // /anon and persists once seen (a later plain /who row carries no rank).

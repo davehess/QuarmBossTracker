@@ -1023,6 +1023,10 @@ function parseEvent(line, ts) {
   // "Storm Warden" / "Master Wizard" parse correctly and ranks are dropped.
   m = line.match(/\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:(\d+)\s+([^\]\(]+?)(?:\s*\([^)]+\))?|(ANONYMOUS)|(GM))\s*\]\s+(\w+)(?:\s+\(([^)]+)\))?(?:\s+<([^>]+)>)?/i);
   if (m) {
+    // `/who all` appends the player's current zone SHORT name after the guild:
+    //   "[60 Storm Warden] Alice (Wood Elf) <Wolf Pack> ZONE: oasis"
+    // A plain in-zone `/who` has no ZONE clause, so this is null there.
+    const zm = line.match(/\bZONE:\s*([A-Za-z0-9_'-]+)/i);
     return {
       ts:        tsIso,
       type:      'who',
@@ -1033,6 +1037,7 @@ function parseEvent(line, ts) {
       gm:        !!m[4],
       race:      m[6] || null,
       guild:     m[7] || null,
+      zone:      zm ? zm[1].toLowerCase() : null,
     };
   }
 
@@ -1061,7 +1066,7 @@ function characterFromFilename(filepath) {
 
 // Module-level /who observation buffer. Lives for the agent's process lifetime
 // so /who output captured between encounters still ships with the next upload.
-const whoData = new Map(); // lowercaseName → { name, class, level, race, guild, anonymous, gm, observedAt }
+const whoData = new Map(); // lowercaseName → { name, class, level, race, guild, anonymous, gm, zone, observedAt }
 
 // Names confirmed to be players (not NPCs). Built from multiple positive
 // sources — once a name lands here, all downstream player-only trackers
@@ -1935,6 +1940,9 @@ function recordWhoEvent(ev) {
     guildRank: old.guildRank || null,   // /who never carries rank — preserve any /guildstatus value
     anonymous: !!ev.anonymous,
     gm:        !!ev.gm || !!old.gm,
+    // Zone only comes from `/who all`; a plain in-zone /who has none, so keep
+    // the last known zone rather than clobbering it with null.
+    zone:      ev.zone || old.zone || null,
     observedAt: ev.ts || new Date().toISOString(),
   });
   // Anyone we /who'd is a player — whitelist for downstream tank/death tracking
@@ -14048,11 +14056,16 @@ function flushLiveStateToBot(opts) {
   const url  = base + '/live-state';
   const now  = Date.now();
   const uploader = _primaryCharacter();
+  const livePet  = _livePetHpByOwner();        // ownerLower → { name, hp_pct }
   const states = [];
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || (now - (st.updatedAt || 0)) > ZEAL_STALE_MS) continue;  // live chars only
     const buffs = Array.isArray(st.buffs) ? st.buffs : [];
+    // Pet snapshot: name + HP from the live Zeal pet gauge, buffs from the
+    // agent's pet-buff tracker (timed, persisted). Owners with no pet send null.
+    const pet      = livePet.get(String(ch).toLowerCase()) || null;
+    const petBuffs = pet ? petBuffsForOwner(String(ch).toLowerCase()) : [];
     const rec = {
       character:   ch,
       zone_id:     st.zone != null ? st.zone : null,
@@ -14060,11 +14073,19 @@ function flushLiveStateToBot(opts) {
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
       buffs,
       buff_count:  buffs.length,
+      pet_name:    pet ? pet.name : null,
+      pet_hp_pct:  pet && pet.hp_pct != null ? pet.hp_pct : null,
+      pet_buffs:   petBuffs.length ? petBuffs : null,
     };
     // Signature excludes HP% + buff ticks (which churn constantly) — we only
-    // re-send on a zone change, a change to the SET of buff names, or first
-    // sight of this character.
-    const sig = JSON.stringify([rec.zone_id, buffs.map(b => b && b.name)]);
+    // re-send on a zone change, a change to the SET of (own or pet) buff names,
+    // the pet appearing/vanishing, or first sight of this character.
+    const sig = JSON.stringify([
+      rec.zone_id,
+      buffs.map(b => b && b.name),
+      rec.pet_name,
+      petBuffs.map(b => b && b.name),
+    ]);
     if (_liveStateLastSig.get(ch) === sig) continue;
     _liveStateLastSig.set(ch, sig);
     states.push(rec);
