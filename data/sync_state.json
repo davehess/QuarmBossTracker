@@ -1,7 +1,7 @@
 {
-  "last_run": "2026-06-07T21:58:45.496Z",
+  "last_run": "2026-06-08T17:37:29.159Z",
   "last_dump": "quarm_2026-03-20-09_37.tar.gz",
-  "last_dump_sha": null,
+  "last_dump_sha": "db13431511c90c3b5cbe084d2a15e1b94c2e0eb1",
   "counts": {
     "eqemu_zone": 192,
     "eqemu_items": 26971,
