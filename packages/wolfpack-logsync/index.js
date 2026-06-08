@@ -1870,6 +1870,33 @@ function noteSelfCast(line, character) {
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
   if (arr.length > 8) arr.splice(0, arr.length - 8);
 }
+// Cross-client casting relay: when WE begin a cast with a target, tell the bot
+// so anyone with that target up sees it in Mob Info's "Casting" section. Only
+// our own casts are nameable (EQ hides others' spell/target), so coverage scales
+// with Mimic adoption. LIVE path only (never backfill — stale casts are useless).
+const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
+const _lastCastRelay = new Map();   // charLower → { sig, at }
+function relaySelfCastForCasting(line, character) {
+  if (!line || !character) return;
+  const m = line.match(_CAST_BEGIN_RX);
+  if (!m) return;
+  const cl = String(character).toLowerCase();
+  const target = _zealTargetForChar(cl);
+  if (!target) return;                       // can't attribute without a target
+  const spell = m[1].trim();
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // Dedup a duplicated log line for the same cast within 2s.
+  const sig = cl + '|' + spell.toLowerCase() + '|' + String(target).toLowerCase();
+  const prev = _lastCastRelay.get(cl);
+  if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
+  _lastCastRelay.set(cl, { sig, at: atMs });
+  enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
+    caster: character, spell, target,
+    started_at: new Date(atMs).toISOString(),
+    cast_secs: _spellCastSecs(spell),
+  }] });
+}
 // If the observer recently cast a spell whose catalog cast_on_other matches
 // THIS landing line, return an authoritative buff-cast event for it (correct
 // spell + duration, even for spells the tracked-buff index doesn't carry, and
@@ -1950,6 +1977,33 @@ function notePetBuffWornOff(line, character) {
     if (tm && tm.has(spellLower)) tm.get(spellLower).worn_off_at = wornAt;
   }
   _savePetStateSoon();
+}
+
+// Server-wide PvP earthquake announcement → the next-quake time. EQ logs, e.g.:
+//   "The next earthquake will begin in 8 Days, 12 Hours, 23 Minutes, and 30 Seconds."
+// Any of Days/Hours/Minutes/Seconds may be absent. Returns
+// { next_quake_at, detected_at, source_text } or null.
+const _EARTHQUAKE_RX = /the next earthquake will begin in\s+(.+?)\.?\s*$/i;
+let _lastQuakeSig = null;
+function parseEarthquake(line) {
+  if (!line || line.toLowerCase().indexOf('earthquake') === -1) return null;
+  const m = line.match(_EARTHQUAKE_RX);
+  if (!m) return null;
+  const spec = m[1];
+  const num = (rx) => { const mm = spec.match(rx); return mm ? parseInt(mm[1], 10) : 0; };
+  const d  = num(/(\d+)\s+days?/i);
+  const h  = num(/(\d+)\s+hours?/i);
+  const mi = num(/(\d+)\s+minutes?/i);
+  const s  = num(/(\d+)\s+seconds?/i);
+  const totalSecs = d * 86400 + h * 3600 + mi * 60 + s;
+  if (totalSecs <= 0) return null;
+  const ts = parseEqTimestamp(line);
+  const baseMs = ts ? ts.getTime() : Date.now();
+  return {
+    next_quake_at: new Date(baseMs + totalSecs * 1000).toISOString(),
+    detected_at:   new Date(baseMs).toISOString(),
+    source_text:   line.replace(/^\[.+?\]\s+/, '').slice(0, 200),
+  };
 }
 
 // Long-term who_data registry filter — anonymous rows + level 50+. The
@@ -3839,6 +3893,8 @@ function _endpointForKind(kind, botUrl) {
     case 'raid_roster':     return base + '/raid-roster';
     case 'trigger':         return base + '/trigger';
     case 'trigger_relay':   return base + '/trigger-relay';
+    case 'quake':           return base + '/quake';
+    case 'casting':         return base + '/casting';
     default:                return botUrl;
   }
 }
@@ -14008,6 +14064,50 @@ function fetchMobInfo(name) {
     req.end();
   } catch { _mobInfoInflight.delete(norm); }
 }
+// Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
+// the catalog doesn't carry it — a "You begin casting" line implies a real cast.
+function _spellCastSecs(name) {
+  const e = _spellByNameLower.get(String(name || '').toLowerCase());
+  const ms = (e && e.cast_ms != null) ? Number(e.cast_ms) : null;
+  return (ms != null && ms >= 0) ? Math.round(ms / 100) / 10 : 4;
+}
+// Cross-client casts on the current target — fetched from the bot's relay with a
+// short TTL so the Mob Info "Casting" section stays near-real-time without
+// hammering the endpoint. Cached per normalized target name.
+const _targetCastsByName  = new Map();   // nameLower → { at, casts }
+const _targetCastsInflight = new Set();
+const TARGET_CASTS_TTL_MS = 2000;
+function fetchTargetCasts(name) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(name || '').trim().toLowerCase();
+  if (!key || _targetCastsInflight.has(key)) return;
+  const cached = _targetCastsByName.get(key);
+  if (cached && (Date.now() - cached.at) < TARGET_CASTS_TTL_MS) return;
+  _targetCastsInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 6000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _targetCastsInflight.delete(key);
+        try { const j = JSON.parse(body); _targetCastsByName.set(key, { at: Date.now(), casts: (j && j.casts) || [] }); }
+        catch { _targetCastsByName.set(key, { at: Date.now(), casts: [] }); }
+      });
+    });
+    req.on('error',   () => { _targetCastsInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _targetCastsInflight.delete(key); });
+    req.end();
+  } catch { _targetCastsInflight.delete(key); }
+}
+
 // The freshest watched character's Zeal target (name + live HP%).
 function _currentTargetState() {
   let best = null;
@@ -14052,13 +14152,18 @@ function buildMobInfo() {
   // the buffs we observed landing on the target (mobs, other players).
   const tnameLower = String(st.target_name).toLowerCase();
   const zealBuffs = _zealBuffsForName(tnameLower);
+  // Cross-client casting on this target (who's casting what on it, with a
+  // countdown). Refresh on a short TTL; bystanders we can't name are absent.
+  const ctc = _targetCastsByName.get(tnameLower);
+  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name);
   return {
-    target_name:   st.target_name,
-    target_hp_pct: st.target_hp_pct != null ? st.target_hp_pct : null,
-    mob:           cached ? cached.mob : null,   // null until the lookup returns
-    loading:       !cached,
-    target_buffs:  zealBuffs !== null ? zealBuffs : targetBuffsFor(tnameLower),
-    target_is_pc:  zealBuffs !== null,
+    target_name:    st.target_name,
+    target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+    mob:            cached ? cached.mob : null,   // null until the lookup returns
+    loading:        !cached,
+    target_buffs:   zealBuffs !== null ? zealBuffs : targetBuffsFor(tnameLower),
+    target_is_pc:   zealBuffs !== null,
+    target_casting: ctc ? ctc.casts : [],
   };
 }
 
@@ -15510,6 +15615,9 @@ async function main() {
         // (authoritative — disambiguates shared landing messages + catches
         // spells the tracked-buff index doesn't carry).
         if (!_sourceExcluded) noteSelfCast(line, b.character);
+        // Relay our own cast → bot, so anyone targeting the same mob/player sees
+        // it in Mob Info's Casting section (cross-client; only our casts nameable).
+        if (!_sourceExcluded) relaySelfCastForCasting(line, b.character);
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the
@@ -15525,6 +15633,17 @@ async function main() {
           // Also stamp it under the target name so Mob Info can show buffs on
           // whatever we're targeting (mob or player).
           recordTargetBuffLanding(bcEvt);
+        }
+
+        // Server-wide PvP earthquake announcement → register the next-quake
+        // time so the bot can show a countdown above the PvP timers (Discord +
+        // web). Visible to everyone in zone; the bot dedups across agents.
+        if (!_sourceExcluded) {
+          const quakeEvt = parseEarthquake(line);
+          if (quakeEvt && quakeEvt.next_quake_at !== _lastQuakeSig) {
+            _lastQuakeSig = quakeEvt.next_quake_at;
+            enqueueUpload('quake', { agent_version: AGENT_VERSION, quake: quakeEvt });
+          }
         }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
