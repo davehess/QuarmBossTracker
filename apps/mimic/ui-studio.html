@@ -22,7 +22,7 @@
   /* Canvas — proportional to target resolution, scaled to fit. Black bg
      represents the EQ screen. Window rectangles overlay. */
   #stageWrap{display:flex;justify-content:center;align-items:center;flex:1;padding:14px;
-    background:#0a0c10;height:calc(100vh - 50px);overflow:auto}
+    background:#0a0c10;height:calc(100vh - 50px);overflow:auto;margin-left:186px}
   #stage{position:relative;background:#000;border:1px solid #58a6ff;
     box-shadow:0 0 12px rgba(88,166,255,0.18)}
   /* Each window rectangle is absolutely positioned inside #stage. Color-coded
@@ -68,6 +68,24 @@
   #side .row .field{flex:1}
   #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
   #stageWrap.has-side #stage{margin-right:240px}
+  /* Left filter panel — category toggles so the canvas isn't an unreadable
+     pile of all 130 windows at once. View-only (Save still writes every
+     window). */
+  #filterPanel{position:fixed;top:50px;left:0;bottom:0;width:186px;box-sizing:border-box;
+    background:#161b22;border-right:1px solid #30363d;padding:10px;font-size:11px;
+    overflow-y:auto;z-index:20}
+  #filterPanel h3{margin:0 0 6px;color:#7ee7c7;font-size:12px}
+  #filterPanel .hint{color:#6e7681;font-size:9px;margin:0 0 8px;line-height:1.4}
+  #filterPanel .fbtns{display:flex;gap:6px;margin-bottom:8px}
+  #filterPanel .fbtns button{flex:1;font-size:10px;padding:3px 0;background:#21262d;
+    border:1px solid #30363d;color:#c9d1d9;border-radius:4px;cursor:pointer;font-family:inherit}
+  #filterPanel .fbtns button:hover{background:#30363d;border-color:#58a6ff}
+  #filterPanel label{display:flex;align-items:center;gap:6px;padding:3px 3px;cursor:pointer;
+    color:#c9d1d9;border-radius:3px;user-select:none}
+  #filterPanel label:hover{background:#0d1117}
+  #filterPanel label input{margin:0}
+  #filterPanel label .cnt{margin-left:auto;color:#6e7681;font-size:10px}
+  #filterPanel label.empty{opacity:0.4;cursor:default}
   /* Snap edge highlight when dragging — visual feedback when a window
      edge aligns with another window edge. */
   .snap-x{position:absolute;width:1px;background:#7ee7c7;pointer-events:none;
@@ -149,6 +167,15 @@
     <div id="pvpPreviewCredit" style="color:#8b949e;font-size:10px;margin-bottom:8px"></div>
     <div id="pvpPreviewBody"></div>
   </div>
+  <aside id="filterPanel">
+    <h3>👁 Show</h3>
+    <p class="hint">Toggle window groups. View-only — Save still writes every window.</p>
+    <div class="fbtns">
+      <button id="filterAll">All</button>
+      <button id="filterNone">None</button>
+    </div>
+    <div id="filterList"></div>
+  </aside>
   <div id="stageWrap"><div id="stage"></div></div>
   <aside id="side">
     <h3 id="sideTitle">Window</h3>
@@ -566,6 +593,7 @@
           section: s.name,
           label:  classify.icon + ' ' + classify.label,
           kind:    classify.kind,
+          category: _categoryOf(s.name),
           contents: classify.contents,
           props:    s.props,
           hasWH:    hasWH,
@@ -612,9 +640,88 @@
       }
       setStatus(msg, 'ok');
     }
+    buildFilterPanel();
     renderStage();
     maybePromptPvpSet().catch(function(){});
   }
+
+  // ── Category filter ──────────────────────────────────────────────────────
+  // 130 windows at once is unreadable, so we bucket each into a broad group and
+  // let the user toggle groups on/off on the left. First-match-wins order, so
+  // e.g. ZealMap groups under Zeal (not Map) and BagBank under Bags. Defaults
+  // hide the high-count clutter (the ~50 bag windows + transient popups) and
+  // show the persistent HUD + chat. `on` is the default-visible flag.
+  var FILTER_CATEGORIES = [
+    { key:'zeal',    label:'🐺 Zeal',          on:true,  test:function(n){ return /^zeal/i.test(n); } },
+    { key:'chat',    label:'💬 Chat',          on:true,  test:function(n){ return /chat/i.test(n); } },
+    { key:'group',   label:'👥 Group',         on:true,  test:function(n){ return /^group/i.test(n); } },
+    { key:'raid',    label:'⚔️ Raid',          on:true,  test:function(n){ return /^raid/i.test(n); } },
+    { key:'player',  label:'❤️ Player / Pet',  on:true,  test:function(n){ return /^player|^pet/i.test(n); } },
+    { key:'target',  label:'🎯 Target',        on:true,  test:function(n){ return /target/i.test(n); } },
+    { key:'hotbars', label:'🔥 Hotbar / Cast', on:true,  test:function(n){ return /hotbutton|hotbar|^actions|castspell|gemsgame|spellgem|casting/i.test(n); } },
+    { key:'buffs',   label:'✨ Buffs / Songs',  on:true,  test:function(n){ return /buff|song|melody|shortduration/i.test(n); } },
+    { key:'nav',     label:'🧭 Map / Compass',  on:true,  test:function(n){ return /map|compass|tracking/i.test(n); } },
+    { key:'spells',  label:'📖 Spells / Skills',on:false, test:function(n){ return /spellbook|^skills|aawindow/i.test(n); } },
+    { key:'bags',    label:'🎒 Bags / Inv',    on:false, test:function(n){ return /^bag|inventory|^bank/i.test(n); } },
+    { key:'vendor',  label:'💰 Vendor / Trade', on:false, test:function(n){ return /merchant|bazaar|^trade|^give|loot/i.test(n); } },
+    { key:'other',   label:'▢ Other',          on:false, test:function(){ return true; } },   // fallback (must be last)
+  ];
+  function _categoryMeta(key) {
+    for (var i = 0; i < FILTER_CATEGORIES.length; i++) if (FILTER_CATEGORIES[i].key === key) return FILTER_CATEGORIES[i];
+    return FILTER_CATEGORIES[FILTER_CATEGORIES.length - 1];
+  }
+  function _categoryOf(section) {
+    var n = String(section || '');
+    for (var i = 0; i < FILTER_CATEGORIES.length; i++) {
+      if (FILTER_CATEGORIES[i].test(n)) return FILTER_CATEGORIES[i].key;
+    }
+    return 'other';
+  }
+  function _catVisible(key) {
+    if (STATE.catVisible && key in STATE.catVisible) return STATE.catVisible[key];
+    return _categoryMeta(key).on;   // default before the panel is built
+  }
+  function buildFilterPanel() {
+    // Count windows per category from the loaded set.
+    var counts = {};
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var c = STATE.windows[i].category || 'other';
+      counts[c] = (counts[c] || 0) + 1;
+    }
+    // Seed visibility from defaults on first build; preserve user choices after.
+    if (!STATE.catVisible) {
+      STATE.catVisible = {};
+      for (var j = 0; j < FILTER_CATEGORIES.length; j++) STATE.catVisible[FILTER_CATEGORIES[j].key] = FILTER_CATEGORIES[j].on;
+    }
+    var html = '';
+    for (var k = 0; k < FILTER_CATEGORIES.length; k++) {
+      var cat = FILTER_CATEGORIES[k];
+      var n = counts[cat.key] || 0;
+      var checked = STATE.catVisible[cat.key] ? ' checked' : '';
+      var emptyCls = n === 0 ? ' class="empty"' : '';
+      html += '<label' + emptyCls + '><input type="checkbox" data-cat="' + cat.key + '"' + checked + (n === 0 ? ' disabled' : '') + '>'
+            + '<span>' + cat.label + '</span><span class="cnt">' + n + '</span></label>';
+    }
+    var list = document.getElementById('filterList');
+    list.innerHTML = html;
+    list.querySelectorAll('input[data-cat]').forEach(function(cb){
+      cb.addEventListener('change', function(){
+        STATE.catVisible[this.dataset.cat] = this.checked;
+        if (STATE.selected >= 0 && STATE.windows[STATE.selected] &&
+            !_catVisible(STATE.windows[STATE.selected].category)) STATE.selected = -1;
+        renderStage();
+      });
+    });
+  }
+  function _setAllFilters(on) {
+    if (!STATE.catVisible) STATE.catVisible = {};
+    for (var i = 0; i < FILTER_CATEGORIES.length; i++) STATE.catVisible[FILTER_CATEGORIES[i].key] = on;
+    document.querySelectorAll('#filterList input[data-cat]').forEach(function(cb){ if (!cb.disabled) cb.checked = on; });
+    if (!on) STATE.selected = -1;
+    renderStage();
+  }
+  document.getElementById('filterAll').addEventListener('click', function(){ _setAllFilters(true); });
+  document.getElementById('filterNone').addEventListener('click', function(){ _setAllFilters(false); });
 
   // After a character loads, look up their live class via the agent's
   // /api/state and ask Mimic if any bundled PvP-set template matches.
@@ -780,8 +887,13 @@
     stage.style.width  = cw + 'px';
     stage.style.height = ch + 'px';
     var html = '';
+    var shown = 0;
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
+      // Category filter — hidden groups are skipped on the canvas (Save still
+      // writes them; this is view-only).
+      if (!_catVisible(w.category)) continue;
+      shown++;
       var sx = Math.round(w.x * STATE.sliceScale);
       var sy = Math.round(w.y * STATE.sliceScale);
       var sw = Math.max(8, Math.round(w.w * STATE.sliceScale));
