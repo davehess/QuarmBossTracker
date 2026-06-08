@@ -4516,17 +4516,42 @@ function _serializeForDashboard() {
         // Melody of Preservation lands as "Breath of Harmony"), but on other
         // versions the slot keeps the cast name — and we can't tell which is
         // which without manually verifying every spell.
+        // Strip everything that isn't [a-z0-9] so 'Niv\`s Melody of Preservation'
+        // (with backtick) and "Niv's Melody of Preservation" (with apostrophe)
+        // both reduce to 'nivsmelodyofpreservation' and match each other.
+        // Unicode curly apostrophe (’) gets the same treatment. This was the
+        // exact failure mode user hit on Breath of Harmony / Niv's — buff was
+        // sitting in their buff slots, alias list contained the right phrase,
+        // but the punctuation between the two didn't agree.
+        const _slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
         const _findBuff = (names) => {
+          // Pass 1: exact match (punctuation-insensitive via _slug). Trim
+          // handles trailing-space noise sometimes seen in Zeal's pipe.
           for (const b of zealBuffs) {
             if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
-            const bLow = b.name.toLowerCase();
-            for (const n of names) if (bLow === n) return b;
+            const bSlug = _slug(b.name.trim());
+            for (const n of names) if (bSlug === _slug(n)) return b;
           }
+          // Pass 2: substring either direction. Threshold 4 chars (was 6) so
+          // short aliases ('amp', 'niv') resolve when the buff label uses
+          // a shortened form.
           for (const b of zealBuffs) {
             if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
-            const bLow = b.name.toLowerCase();
+            const bSlug = _slug(b.name.trim());
             for (const n of names) {
-              if (n.length >= 6 && (bLow.includes(n) || n.includes(bLow))) return b;
+              const nSlug = _slug(n);
+              if (nSlug.length >= 4 && (bSlug.includes(nSlug) || nSlug.includes(bSlug))) return b;
+            }
+          }
+          // Pass 3: first significant word of each alias. Catches the case
+          // where EQ's buff window strips the bardic suffix — e.g. spell is
+          // "Niv\`s Melody of Preservation" but slot label is just "Niv\`s".
+          for (const b of zealBuffs) {
+            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            const bSlug = _slug(b.name.trim());
+            for (const n of names) {
+              const firstWord = _slug(n.split(/\s+/)[0]);
+              if (firstWord && firstWord.length >= 4 && bSlug.startsWith(firstWord)) return b;
             }
           }
           return null;
@@ -13970,20 +13995,27 @@ function _raidRosterHas(name) {
 }
 
 function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
-  for (const a of (t.actions || [])) {
-    if (!a || !a.type) continue;
-    // Roster filter — if this action specifies a capture field that must be
-    // a live raid member, skip the action when the captured value isn't.
-    // Bypassed entirely when the raid roster is empty (haven't seen Type 5
-    // yet) so non-raid triggers and out-of-raid testing still fire.
-    if (a.require_raid_member && _raidRosterMembers.size > 0) {
-      const field = String(a.require_raid_member);
-      const val   = captures && captures[field];
+  // Trigger-level roster gate. The require_raid_member field lives on
+  // individual actions (so a single trigger can have one filtered + one
+  // unfiltered action), but the trigger-level countdown timer is a single
+  // shared concept — it'd be wrong to render a Death Touch countdown bar
+  // for a pet who took 20k non-melee damage and then suppress just the
+  // overlay text. So: if ANY action sets require_raid_member AND that
+  // capture isn't in the roster, treat the whole trigger as suppressed
+  // (no actions, no timer). Falls open when roster is empty (haven't
+  // seen Type 5 yet) so out-of-raid testing still fires.
+  if (_raidRosterMembers.size > 0) {
+    for (const a of (t.actions || [])) {
+      if (!a || !a.require_raid_member) continue;
+      const val = captures && captures[String(a.require_raid_member)];
       if (!val || !_raidRosterHas(val)) {
-        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' skipped — ' + field + '=' + val + ' not a raid member');
-        continue;
+        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + ' not a raid member');
+        return;
       }
     }
+  }
+  for (const a of (t.actions || [])) {
+    if (!a || !a.type) continue;
     if (a.type === 'text_overlay') {
       const text = _expandTemplate(a.text || '', captures || {});
       // Spoken text: an explicit per-action `tts` wins (lets a trigger say
