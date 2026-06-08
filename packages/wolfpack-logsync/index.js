@@ -9339,6 +9339,19 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeForDashboard()));
       }
+      // Mimic's buff-queue overlay polls this — we proxy the bot's
+      // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
+      // hammer Supabase. ?class=<bufferClass> filters the buff list to what
+      // the buffer can fix; the debuff list is class-agnostic.
+      if (req.url && req.url.indexOf('/api/buff-queue') === 0) {
+        let bufferClass = '';
+        try { bufferClass = new URL(req.url, 'http://x').searchParams.get('class') || ''; } catch { /* */ }
+        fetchRaidBuffQueue(bufferClass);
+        const cached = _buffQueueCache.get(String(bufferClass || '').toLowerCase());
+        const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(payload));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -14106,6 +14119,44 @@ function fetchTargetCasts(name) {
     req.on('timeout', () => { req.destroy(); _targetCastsInflight.delete(key); });
     req.end();
   } catch { _targetCastsInflight.delete(key); }
+}
+
+// Buff queue cache (per buffer-class). Mimic's buff-queue overlay polls the
+// local agent which proxies to the bot's /api/agent/raid-buff-queue. The TTL is
+// tuned so a roomful of Mimics doesn't hammer Supabase but the overlay still
+// feels live (~3-5s between full refreshes).
+const _buffQueueCache = new Map();   // classLower → { at, payload }
+const _buffQueueInflight = new Set();
+const BUFF_QUEUE_TTL_MS = 3000;
+function fetchRaidBuffQueue(bufferClass) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(bufferClass || '').trim().toLowerCase();
+  if (_buffQueueInflight.has(key)) return;
+  const cached = _buffQueueCache.get(key);
+  if (cached && (Date.now() - cached.at) < BUFF_QUEUE_TTL_MS) return;
+  _buffQueueInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-buff-queue') + (bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '');
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _buffQueueInflight.delete(key);
+        try { const j = JSON.parse(body); _buffQueueCache.set(key, { at: Date.now(), payload: j }); }
+        catch { _buffQueueCache.set(key, { at: Date.now(), payload: { buff_queue: [], debuff_queue: [] } }); }
+      });
+    });
+    req.on('error',   () => { _buffQueueInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
+    req.end();
+  } catch { _buffQueueInflight.delete(key); }
 }
 
 // The freshest watched character's Zeal target (name + live HP%).

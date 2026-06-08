@@ -80,6 +80,7 @@ let triggerWindow = null;
 let charmWindow   = null;
 let petsWindow    = null;
 let mobInfoWindow = null;
+let buffQueueWindow = null;
 let whoWindow     = null;
 let melodyWindow  = null;
 let zealWindow    = null;
@@ -632,6 +633,7 @@ function _boundsKeyForWindow(win) {
   if (win === charmWindow)   return 'charmBounds';
   if (win === petsWindow)    return 'petsBounds';
   if (win === mobInfoWindow) return 'mobInfoBounds';
+  if (win === buffQueueWindow) return 'buffQueueBounds';
   if (win === whoWindow)     return 'whoBounds';
   if (win === melodyWindow)  return 'melodyBounds';
   if (win === zealWindow)    return 'zealBounds';
@@ -1704,6 +1706,7 @@ function _overlayEntries() {
   if (charmWindow   && !charmWindow.isDestroyed())   out.push(['charm',   charmWindow]);
   if (petsWindow    && !petsWindow.isDestroyed())    out.push(['pets',    petsWindow]);
   if (mobInfoWindow && !mobInfoWindow.isDestroyed()) out.push(['mobinfo', mobInfoWindow]);
+  if (buffQueueWindow && !buffQueueWindow.isDestroyed()) out.push(['buffQueue', buffQueueWindow]);
   if (whoWindow     && !whoWindow.isDestroyed())     out.push(['who',     whoWindow]);
   if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
   if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
@@ -1761,6 +1764,7 @@ function applySetupMode(on) {
     if (!charmWindow)   createCharmOverlay();
     if (!petsWindow)    createPetsOverlay();
     if (!mobInfoWindow) createMobInfoOverlay();
+    if (!buffQueueWindow) createBuffQueueOverlay();
     if (!whoWindow)     createWhoOverlay();
     if (!melodyWindow)  createMelodyOverlay();
     if (!zealWindow)    createZealHealthOverlay();
@@ -1775,6 +1779,7 @@ function applySetupMode(on) {
   applyCharmVisibility();
   applyPetsVisibility();
   applyMobInfoVisibility();
+  applyBuffQueueVisibility();
   applyWhoVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
@@ -2606,6 +2611,41 @@ function applyPetsVisibility() {
   if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
 }
 
+// Buff Queue — buff + debuff/cure queue (same data the web /raid page shows),
+// pinned in-game so a buffer can work the list without alt-tabbing. Polls the
+// agent which proxies the bot's /api/agent/raid-buff-queue with a 3s cache.
+function createBuffQueueOverlay() {
+  const b = _resolveBounds('buffQueueBounds', 'buffQueueBoundsSig', { x: 1020, y: 60, width: 330, height: 260 });
+  buffQueueWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Buff queue overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 240, minHeight: 100,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  buffQueueWindow.setAlwaysOnTop(true, 'screen-saver');
+  buffQueueWindow.setVisibleOnAllWorkspaces(true);
+  buffQueueWindow.loadFile('buffqueue.html');
+  buffQueueWindow.on('moved',  () => _persistBounds('buffQueueBounds', buffQueueWindow));
+  buffQueueWindow.on('resize', () => _persistBounds('buffQueueBounds', buffQueueWindow));
+  buffQueueWindow.once('ready-to-show', () => {
+    buffQueueWindow.webContents.send('agent-port', agentPort);
+    applyBuffQueueVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(buffQueueWindow, 'buffQueue');
+  });
+}
+function applyBuffQueueVisibility() {
+  if (!buffQueueWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — most useful to support classes (clerics, druids,
+  // shaman, enchanters, bards). EQ-gated.
+  const shouldShow = unlocked || (cfg.showBuffQueue && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) buffQueueWindow.showInactive(); else buffQueueWindow.hide();
+}
+
 // Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
 function createMobInfoOverlay() {
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
@@ -2745,6 +2785,7 @@ function applyAllVisibility() {
   applyCharmVisibility();
   applyPetsVisibility();
   applyMobInfoVisibility();
+  applyBuffQueueVisibility();
   applyWhoVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
@@ -2776,6 +2817,7 @@ function toggleHideAllOverlays() {
       showCharm:        !!cfg.showCharm,
       showPets:         !!cfg.showPets,
       showMobInfo:      !!cfg.showMobInfo,
+      showBuffQueue:    !!cfg.showBuffQueue,
       showWho:          !!cfg.showWho,
       showMelody:       !!cfg.showMelody,
       showZeal:         !!cfg.showZeal,
@@ -2785,6 +2827,7 @@ function toggleHideAllOverlays() {
     cfg.showCharm = false;
     cfg.showPets = false;
     cfg.showMobInfo = false;
+    cfg.showBuffQueue = false;
     cfg.showWho = false;
     cfg.showMelody = false;
     cfg.showZeal = false;
@@ -2800,7 +2843,7 @@ function toggleHideAllOverlays() {
     // older build): SHOW the core overlays so the hotkey can never get stuck
     // unable to unhide.
     cfg.showHud = true; cfg.showCharm = true; cfg.showPets = true;
-    cfg.showMobInfo = true; cfg.showWho = true; cfg.showMelody = true; cfg.showZeal = true;
+    cfg.showMobInfo = true; cfg.showBuffQueue = true; cfg.showWho = true; cfg.showMelody = true; cfg.showZeal = true;
     _hideAllActive = false;
   }
   // Persist the toggle state so a restart-while-hidden still knows it's hidden
@@ -2920,6 +2963,7 @@ function currentStatus() {
     showCharm: !!cfg.showCharm,
     showPets: !!cfg.showPets,
     showMobInfo: !!cfg.showMobInfo,
+    showBuffQueue: !!cfg.showBuffQueue,
     showWho: !!cfg.showWho,
     showMelody: !!cfg.showMelody,
     melodyBardOnly: !!cfg.melodyBardOnly,
@@ -3075,6 +3119,11 @@ function buildTrayMenu() {
     { label: 'Mob Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
         if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
+        pushStatus();
+      } },
+    { label: 'Buff queue (raid gaps + cures)', type: 'checkbox', checked: s.showBuffQueue, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showBuffQueue = mi.checked; saveConfig(cfg);
+        if (mi.checked && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility();
         pushStatus();
       } },
     { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.quietMode, click: (mi) => {
@@ -4001,7 +4050,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
     try { registerHideAllHotkey(); } catch {}
   }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -4026,7 +4075,7 @@ ipcMain.handle('relaunch-agent', async () => { if (agentProc) { try { agentProc.
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility();
   pushStatus();
   return currentStatus();
 });

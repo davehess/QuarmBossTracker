@@ -4817,6 +4817,152 @@ async function _handleAgentTargetCasts(req, res) {
   return res.end(JSON.stringify({ casts }));
 }
 
+// GET /api/agent/raid-buff-queue?class=<class>
+// Powers the Mimic buff-queue overlay. Returns two lists:
+//   buff_queue   — raiders missing buffs the buffer's class can provide,
+//                  sorted severity-first (red → orange → yellow)
+//   debuff_queue — raiders carrying a known curse (Gravel Rain etc.) plus
+//                  a `casting` field per row: who is currently casting on
+//                  that raider (from the cross-client casting relay), so a
+//                  second cleric doesn't double-up Cure Disease etc.
+// Same auth + small payload as /api/agent/target-casts.
+async function _handleAgentRaidBuffQueue(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  let bufferClass = '';
+  try { bufferClass = (new URL(req.url, 'http://x').searchParams.get('class') || '').trim(); } catch { /* */ }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ buff_queue: [], debuff_queue: [], note: 'supabase disabled' }));
+  }
+  const rb = require('./utils/raidBuffs');
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const ROSTER_FRESH_MS = 15 * 60 * 1000;
+  const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
+
+  try {
+    const [liveRows, rosterRows, charRows] = await Promise.all([
+      supabase.select('character_live_state',
+        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,updated_at`),
+      supabase.select('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank`),
+      supabase.select('characters',
+        `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
+    ]);
+
+    // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
+    const classByName = new Map();
+    for (const c of (charRows || [])) if (c && c.name && c.class) classByName.set(c.name.toLowerCase(), c.class);
+    const rosterByName = new Map();
+    for (const r of (rosterRows || [])) if (r && r.name && !rb.isCorpse(r.name)) rosterByName.set(r.name.toLowerCase(), r);
+    const classFor = (n) => classByName.get(String(n).toLowerCase()) || (rosterByName.get(String(n).toLowerCase()) || {}).class || null;
+
+    const liveByName = new Map();
+    for (const r of (liveRows || [])) if (r && r.character && !rb.isCorpse(r.character)) liveByName.set(r.character.toLowerCase(), r);
+
+    // Build a row per in-raid raider (live state OR roster). Categorize buffs,
+    // figure HP slots, decide if they have a curse.
+    const provides = rb.classProvides(bufferClass);
+    const buffQueue = [];
+    const debuffQueue = [];
+
+    const seen = new Set();
+    const allKeys = new Set([...rosterByName.keys(), ...liveByName.keys()]);
+    for (const k of allKeys) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const live = liveByName.get(k);
+      const rr   = rosterByName.get(k);
+      const name = (rr && rr.name) || (live && live.character) || k;
+      const cls  = classFor(name);
+      const role = rb.classToRole(cls);
+      const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : [];
+      const noAgent = !live;
+
+      // Curses → debuff queue. Each curse line carries the buffer's casting
+      // status from _castingByTarget so a second cure caster sees "Carol
+      // already casting Remove Curse on Bob, 2s".
+      const curses = [];
+      for (const b of buffs) if (b && b.name && rb.isCurseBuff(b.name)) {
+        curses.push({ name: b.name, remaining_secs: (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks < 6000) ? Math.round(b.ticks * 6) : null });
+      }
+      if (curses.length > 0) {
+        debuffQueue.push({
+          name, class: cls, group: rr ? rr.group_num : null,
+          curses,
+          casting: _castingOnTarget(name),
+        });
+      }
+
+      // Skip buff queue when (a) no buffer class is specified, (b) raider
+      // isn't running the agent (gaps are unknown), or (c) we can't categorize
+      // their role. Otherwise: missing categories the buffer class provides +
+      // HP slot gaps when the class provides HP.
+      if (provides.length === 0 || noAgent) continue;
+      const expected = rb.ROLE_TARGETS[role] || [];
+      const byCategory = {};
+      for (const b of buffs) if (b && b.name) {
+        const cat = rb.categorizeBuff(b.name);
+        if (cat) (byCategory[cat] = byCategory[cat] || []).push(b.name);
+      }
+      const missing = provides.filter(cat => expected.includes(cat) && !(byCategory[cat] || []).length);
+      const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
+      const missingHp = provides.includes('hp') ? rb.HP_SLOTS.filter(s => !hpSlots[s]) : [];
+
+      if (missing.length === 0 && missingHp.length === 0) continue;
+
+      // Severity tier — same intent as /raid: any HP gap or caster/priest no
+      // mana/regen → orange; otherwise yellow.
+      const totalBuffs = buffs.filter(b => b && b.name).length;
+      let tier;
+      if (totalBuffs === 0) tier = 'red';
+      else if (missingHp.length > 0) tier = 'orange';
+      else if ((role === 'caster' || role === 'priest') && (missing.includes('mana') || missing.includes('manaRegen'))) tier = 'orange';
+      else tier = 'yellow';
+
+      buffQueue.push({
+        name, class: cls, group: rr ? rr.group_num : null,
+        tier,
+        missing: missing.map(c => rb.CATEGORY_LABELS[c]).concat(missingHp.map(s => 'HP ' + s)),
+        casting: _castingOnTarget(name),
+      });
+    }
+
+    // Sort: red first, then orange, then yellow; within tier by group then name.
+    const sev = { red: 0, orange: 1, yellow: 2 };
+    buffQueue.sort((a, b) => (sev[a.tier] - sev[b.tier]) || ((a.group || 99) - (b.group || 99)) || a.name.localeCompare(b.name));
+    debuffQueue.sort((a, b) => ((a.group || 99) - (b.group || 99)) || a.name.localeCompare(b.name));
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ buff_queue: buffQueue.slice(0, 40), debuff_queue: debuffQueue.slice(0, 40) }));
+  } catch (err) {
+    console.warn('[raid-buff-queue] failed:', err && err.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'internal error' }));
+  }
+}
+// Casting status on a single target, for the queue rows (compact — first 2
+// in-flight casts, sorted soonest-finishing). Returns [] when nobody's casting.
+function _castingOnTarget(name) {
+  const tk = String(name || '').trim().toLowerCase();
+  if (!tk) return [];
+  const mp = _castingByTarget.get(tk);
+  if (!mp) return [];
+  const now = Date.now();
+  const out = [];
+  for (const c of mp.values()) {
+    const rem = Math.max(0, Math.round((c.started_at_ms + c.cast_secs * 1000 - now) / 1000));
+    if (rem <= 0 && now > c.started_at_ms + c.cast_secs * 1000 + 3000) continue;
+    out.push({ caster: c.caster, spell: c.spell, remaining_secs: rem, ends_at_ms: c.started_at_ms + c.cast_secs * 1000 });
+  }
+  out.sort((a, b) => a.remaining_secs - b.remaining_secs);
+  return out.slice(0, 2);
+}
+
 async function _handleAgentMobInfo(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7086,6 +7232,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentTargetCasts(req, res); }
     catch (err) {
       console.error('[target-casts] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/raid-buff-queue')) {
+    try { return await _handleAgentRaidBuffQueue(req, res); }
+    catch (err) {
+      console.error('[raid-buff-queue] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
