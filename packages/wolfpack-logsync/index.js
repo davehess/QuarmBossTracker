@@ -1562,9 +1562,10 @@ function _loadPetStateFromDisk() {
       for (const [k, arr] of raw.petBuffLandings) {
         const mp = new Map();
         for (const [bk, bv] of (arr || [])) {
-          // Drop landings whose catalog duration has fully elapsed + a 60s grace.
+          // Drop landings past their duration + the 5-min fell-off linger, so a
+          // just-expired buff still shows its purple rebuff cue after a restart.
           const durSecs = (Number(bv.dur_ticks) || 0) * 6;
-          if (durSecs > 0 && (now - (bv.landed_at || 0)) > (durSecs + 60) * 1000) continue;
+          if (durSecs > 0 && (now - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
           mp.set(bk, bv);
         }
         if (mp.size) _petBuffLandings.set(k, mp);
@@ -1574,10 +1575,11 @@ function _loadPetStateFromDisk() {
       for (const [k, arr] of raw.buffLandingsByTarget) {
         const mp = new Map();
         for (const [bk, bv] of (arr || [])) {
-          // Same prune as pet landings: drop anything whose catalog duration has
-          // fully elapsed (+60s grace) so Mob Info never shows a stale countdown.
+          // Same prune as pet landings: duration + the 5-min fell-off linger, so
+          // Mob Info keeps the purple rebuff cue across a restart but never shows
+          // a stale countdown beyond that.
           const durSecs = (Number(bv.dur_ticks) || 0) * 6;
-          if (durSecs > 0 && (now - (bv.landed_at || 0)) > (durSecs + 60) * 1000) continue;
+          if (durSecs > 0 && (now - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
           mp.set(bk, bv);
         }
         if (mp.size) _buffLandingsByTarget.set(k, mp);
@@ -1657,6 +1659,18 @@ function _petOwnerByName(petLower) {
 // dominates anyway, and an unknown level falls back to the cap (= spell max,
 // the accepted fallback). Capping means any formula we get slightly wrong
 // degrades to "max", never to an over-long timer beyond the spell's own cap.
+// Assumed caster level for duration estimates when the real caster level is
+// unknown (raider-cast debuffs especially). PoP era (unlocks 2026-10-01) raises
+// the cap to 65; before that the cap is 60. Gives a realistic FLOOR duration via
+// the spell formula instead of falling back to the spell's absolute max.
+const _POP_UNLOCK_MS = Date.parse('2026-10-01T00:00:00Z');
+function _assumedCasterLevel() {
+  return (Date.now() >= _POP_UNLOCK_MS) ? 65 : 60;
+}
+// After a tracked buff/debuff falls off (timer expired OR an explicit "worn off"
+// line), keep showing it this long with a purple "fell off" highlight as a
+// rebuff cue, then drop it. Applies to the Pet tracker + Mob Info overlays.
+const FELL_OFF_LINGER_MS = 5 * 60 * 1000;
 function _durTicksForLevel(formula, capTicks, level) {
   const cap = Number(capTicks) || 0;
   const lvl = Number(level) || 0;
@@ -1730,12 +1744,20 @@ function petBuffsForOwner(ownerLower) {
   if (lm) {
     for (const [k, b] of lm) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
-      const rem = durSecs - (now - (b.landed_at || now)) / 1000;
-      if (rem < -60) continue;                              // long expired → drop
+      let rem = durSecs - (now - (b.landed_at || now)) / 1000;
+      let fellOff = false;
+      if (b.worn_off_at) {                                   // explicit "worn off"
+        if (now - b.worn_off_at > FELL_OFF_LINGER_MS) { lm.delete(k); continue; }
+        fellOff = true; rem = 0;
+      } else if (rem <= 0) {                                 // natural expiry
+        if (rem < -(FELL_OFF_LINGER_MS / 1000)) { lm.delete(k); continue; }
+        fellOff = true; rem = 0;
+      }
       // total_secs lets the overlay draw a proportional countdown BAR (not just
-      // a chip); remaining_secs is the live number on it.
+      // a chip); remaining_secs is the live number on it. fell_off drives the
+      // 5-min purple rebuff cue.
       byName.set(k, { name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-        total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now, good: _spellGood(b.name) });
+        total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now, good: _spellGood(b.name), fell_off: fellOff });
     }
   }
   return Array.from(byName.values());
@@ -1754,11 +1776,23 @@ function recordTargetBuffLanding(bcEvt) {
   const k = String(bcEvt.target).toLowerCase();
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
-  // Best-effort caster level: our pet → the pet's owner cast it; otherwise
-  // assume a self-buff and use the target's own observed level. Unknown → cap.
-  const petOwner = _petOwnerByName(k);
-  const lvl = petOwner ? ((whoData.get(petOwner) || {}).level || null)
-                       : ((whoData.get(k) || {}).level || null);
+  // Best-effort caster level for the duration estimate:
+  //   • DEBUFF (good===0) on a target — cast by a raider whose level we don't
+  //     track at land time. Assume the era level cap (_assumedCasterLevel:
+  //     60 now, 65 once PoP unlocks) so we show a realistic FLOOR duration
+  //     instead of the spell's absolute max.
+  //   • BUFF — our pet → the owner cast it; else a self-buff → the target's own
+  //     observed level. Fall back to the assumed cap when we have no level.
+  const good = _spellGood(bcEvt.spell_name);
+  let lvl;
+  if (good === 0) {
+    lvl = _assumedCasterLevel();
+  } else {
+    const petOwner = _petOwnerByName(k);
+    lvl = petOwner ? ((whoData.get(petOwner) || {}).level || null)
+                   : ((whoData.get(k) || {}).level || null);
+    if (!lvl) lvl = _assumedCasterLevel();
+  }
   mp.set(String(bcEvt.spell_name).toLowerCase(), {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
@@ -1783,10 +1817,17 @@ function targetBuffsFor(targetLower) {
   const out = [];
   for (const [k, b] of mp) {
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
-    const rem = durSecs - (now - (b.landed_at || now)) / 1000;
-    if (rem < -60) { mp.delete(k); continue; }
+    let rem = durSecs - (now - (b.landed_at || now)) / 1000;
+    let fellOff = false;
+    if (b.worn_off_at) {                                     // explicit "worn off"
+      if (now - b.worn_off_at > FELL_OFF_LINGER_MS) { mp.delete(k); continue; }
+      fellOff = true; rem = 0;
+    } else if (rem <= 0) {                                   // natural expiry
+      if (rem < -(FELL_OFF_LINGER_MS / 1000)) { mp.delete(k); continue; }
+      fellOff = true; rem = 0;
+    }
     out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at, good: _spellGood(b.name) });
+      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at, good: _spellGood(b.name), fell_off: fellOff });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -1895,14 +1936,18 @@ function notePetBuffWornOff(line, character) {
   if (!m) return;
   const spellLower = m[1].trim().toLowerCase();
   const owner = String(character).toLowerCase();
+  const wornAt = Date.now();
+  // Mark the timed landing as worn-off (not delete) so it lingers 5 min with the
+  // purple "fell off" cue. The presence-only /pet-health entry has no countdown,
+  // so just drop it — the timed landing carries the linger.
   const lm = _petBuffLandings.get(owner);
-  if (lm) { lm.delete(spellLower); if (lm.size === 0) _petBuffLandings.delete(owner); }
+  if (lm && lm.has(spellLower)) lm.get(spellLower).worn_off_at = wornAt;
   const rep = _petHealthByOwner.get(owner);
   if (rep && rep.buffs) rep.buffs.delete(spellLower);
   const petName = _petNameForOwner(owner);
   if (petName) {
     const tm = _buffLandingsByTarget.get(petName.toLowerCase());
-    if (tm) { tm.delete(spellLower); if (tm.size === 0) _buffLandingsByTarget.delete(petName.toLowerCase()); }
+    if (tm && tm.has(spellLower)) tm.get(spellLower).worn_off_at = wornAt;
   }
   _savePetStateSoon();
 }

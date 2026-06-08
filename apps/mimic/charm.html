@@ -314,7 +314,9 @@
       var pct = (hasTimer && total) ? Math.max(0, Math.min(100, (b.remaining_secs / total) * 100)) : (hasTimer ? 100 : 0);
       // Buff = green, debuff (good===0) = red; unknown timer = gray.
       var col = (b.good === 0) ? '#f85149' : (!hasTimer ? '#6e7681' : '#56d364');
-      var title = b.name + (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)');
+      // Fell off in the last 5 min → solid purple rebuff cue.
+      if (b.fell_off) { col = '#a371f7'; pct = 100; tk = ' (fell off — rebuff)'; }
+      var title = b.name + (b.fell_off ? ' · fell off (rebuff)' : (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)'));
       rows += '<div class="bufb" title="' + esc(title) + '">'
            +    '<div class="lbl"><span class="nm">' + esc(shortBuffName(b.name)) + '</span><span class="tk">' + esc(tk) + '</span></div>'
            +    '<div class="bar"><div style="width:' + pct.toFixed(0) + '%;background:' + col + '"></div></div>'

@@ -230,36 +230,47 @@
   // Buffs on the current target. For our own characters these are live Zeal
   // buffs (real remaining time, no original duration → full bar). For mobs /
   // other players they're observed cast-landings (proportional bar).
-  function renderTargetBuffs(mi){
-    var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
-    if (!buffs || !buffs.length) return '';
-    // Sort by time-left ascending (lowest at top); untimed sink to the bottom.
-    buffs.sort(function(a, b){
+  // One buff/debuff row.
+  function _tbuffRow(b){
+    var hasRem   = b.remaining_secs != null;
+    var hasTotal = hasRem && b.total_secs;
+    var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
+    // Buff = green, debuff (good===0) = red; unknown remaining = gray.
+    var col = (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
+    // Right-side label: "cur/max · M:SS" when we know the full duration, else M:SS.
+    var bt;
+    if (hasTotal) bt = Math.max(0, Math.ceil(b.remaining_secs/6)) + '/' + Math.max(1, Math.round(b.total_secs/6)) + ' · ' + fmtSecs(b.remaining_secs);
+    else bt = hasRem ? fmtSecs(b.remaining_secs) : '?';
+    // Fell off in the last 5 min → solid purple rebuff cue.
+    if (b.fell_off) { col = '#a371f7'; pct = 100; bt = 'fell off'; }
+    return '<div class="tbuff" title="'+esc(b.name)+(b.fell_off?' · fell off (rebuff)':(hasRem?(' · '+fmtSecs(b.remaining_secs)+' left'):' · present'))+'">'
+         +    '<span class="bn">'+esc(b.name)+'</span>'
+         +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
+         +    '<span class="bt">'+bt+'</span>'
+         +  '</div>';
+  }
+  // Render a titled section for a buff list, sorted by time-left ascending
+  // (lowest at top; untimed sink to the bottom). Returns '' if the list is empty.
+  function _tbuffSection(hdr, list){
+    if (!list || !list.length) return '';
+    list.sort(function(a, b){
       var ar = (a && a.remaining_secs != null) ? a.remaining_secs : Infinity;
       var br = (b && b.remaining_secs != null) ? b.remaining_secs : Infinity;
       return ar - br;
     });
     var rows = '';
-    for (var i=0;i<buffs.length;i++){
-      var b = buffs[i]; if (!b || !b.name) continue;
-      var hasRem   = b.remaining_secs != null;
-      var hasTotal = hasRem && b.total_secs;
-      var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
-      // Buff = green, debuff (good===0) = red; unknown remaining = gray.
-      var col = (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
-      // Right-side label: "cur/max · M:SS" when we know the full duration, else M:SS.
-      var bt;
-      if (hasTotal) bt = Math.max(0, Math.ceil(b.remaining_secs/6)) + '/' + Math.max(1, Math.round(b.total_secs/6)) + ' · ' + fmtSecs(b.remaining_secs);
-      else bt = hasRem ? fmtSecs(b.remaining_secs) : '?';
-      rows += '<div class="tbuff" title="'+esc(b.name)+(hasRem?(' · '+fmtSecs(b.remaining_secs)+' left'):' · present')+'">'
-           +    '<span class="bn">'+esc(b.name)+'</span>'
-           +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
-           +    '<span class="bt">'+bt+'</span>'
-           +  '</div>';
-    }
+    for (var i=0;i<list.length;i++){ var b = list[i]; if (b && b.name) rows += _tbuffRow(b); }
     if (!rows) return '';
-    var hdr = (mi && mi.target_is_pc) ? 'buffs (live)' : 'observed buffs';
     return '<div class="tbuffs"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
+  }
+  function renderTargetBuffs(mi){
+    var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
+    if (!buffs || !buffs.length) return '';
+    // Split into Debuffs (good===0) and Buffs (everything else), debuffs first.
+    var debuffs = [], goods = [];
+    for (var i=0;i<buffs.length;i++){ var b = buffs[i]; if (!b || !b.name) continue; if (b.good === 0) debuffs.push(b); else goods.push(b); }
+    var suffix = (mi && mi.target_is_pc) ? '(live)' : '(observed)';
+    return _tbuffSection('debuffs '+suffix, debuffs) + _tbuffSection('buffs '+suffix, goods);
   }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
