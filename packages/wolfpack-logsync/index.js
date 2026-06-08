@@ -1147,16 +1147,15 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     // The overlay fires the recharm alert immediately on this transition, then
     // keeps showing the pet until it dies or PET_LINGER_MS passes.
     broke_at: eventKind === 'break' ? ts : null,
-    // started_at anchors elapsed/duration in the charm overlay. Set on land;
-    // carried forward on break so the closed entry still reports how long the
-    // charm lasted.
-    // Keep the original land time while the charm stays active, so a second
-    // 'land' for the SAME session (e.g. gauge land then the later "…Master" log
-    // ack) doesn't reset the duration/tick bars. A re-charm after a break
-    // (prev.is_active=false) starts a fresh clock.
-    started_at: eventKind === 'land'
-      ? ((prev && prev.is_active) ? prev.started_at : ts)
-      : (prev ? prev.started_at : ts),
+    // started_at anchors elapsed/duration in the charm overlay. Always reset
+    // on land — every land event reaching _bumpCharmTick is a real cast (the
+    // caller already filters duplicate pet-acks; see the source:'charm_land'
+    // handler in the encounter builder, which only calls _bumpCharmTick again
+    // when _pendingCharmSpell was consumed by the cast). Preserving across a
+    // re-cast made bards cycling on the same mob see 'up 3:15 · tick 32/10'
+    // instead of resetting to 0:00 each cycle. On break, preserve so the
+    // closed entry still reports how long the LAST charm lasted.
+    started_at: eventKind === 'land' ? ts : (prev ? prev.started_at : ts),
     // Dire Charm (AA) is permanent until a resist break — the overlay shows
     // no duration countdown for it, only the break alarm. Regular charm is
     // timed. Sticky across the session for this pet.
@@ -2683,11 +2682,24 @@ class EncounterBuilder {
       if (event.source === 'charm_land') {
         const petKey = _pk;
         const startTs = this.lastEvent || Date.now();
-        // De-dupe: if there's already an open session on this pet (same
-        // owner), don't overwrite it. EQ sometimes fires the regards line
-        // twice as the charm refreshes.
         const existing = (this._activeCharms ||= new Map()).get(petKey);
-        if (existing && existing.owner === owner) return;
+        // Same pet + same owner = either a REAL recast (bard cycle, or
+        // enchanter re-charm to refresh duration) OR a redundant pet-ack
+        // ("Attacking X Master") which also tags source:'charm_land'.
+        // Distinguish via _pendingCharmSpell: a real recast consumes one
+        // (the spell-cast event populated it within the last 12s); an ack
+        // alone gets nothing back. Recast → refresh the tick tracker so
+        // the overlay's 'up' timer + duration bar reset for the new
+        // cycle. Ack → leave the tracker alone. Either way the
+        // _activeCharms session continues (one mob = one DPS attribution
+        // session from charm to break).
+        if (existing && existing.owner === owner) {
+          const pcSpell = _consumePendingCharmSpell(owner, startTs);
+          if (pcSpell && (pcSpell.dur || pcSpell.cls)) {
+            _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: !!existing.is_dire_charm, ...pcSpell });
+          }
+          return;
+        }
         // If the existing session is with a different owner, the previous
         // charm broke (we may not have caught the break line). Close it.
         if (existing) {
