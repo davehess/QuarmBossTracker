@@ -13259,17 +13259,32 @@ function _pushOverlay(o) {
 // Each new target also rides the cross-Mimic fan-out relay so raiders whose
 // own log missed the rampage line (zoning, partial capture) still hear the
 // call. Receivers dedup against their own _localFireKeys map.
-const _rampageAnnounce = new Map();   // target.toLowerCase() → lastAnnounceMs
-const RAMPAGE_ANNOUNCE_COOLDOWN_MS = 6000;
+// Single-slot tracker for "who's currently being rampaged." User feedback:
+// the previous per-target cooldown announced again every 6s on the SAME
+// target, which read as a constant "New rampage: Hitya. New rampage: Hitya.
+// New rampage: Hitya." Now we hold the current target in place and only
+// announce when the SWITCHES — same target → silent. Idle reset after
+// 60s of no rampage line so the next rampage on the same person counts
+// as new.
+let _rampageCurrentTarget = null;   // lowercased name of who's being rampaged
+let _rampageLastSeenMs    = 0;      // wall-clock of the most recent rampage line
+const RAMPAGE_IDLE_RESET_MS = 60000;
 function _announceRampage(target, tsMs) {
   if (!target) return;
   const key = target.toLowerCase();
   const now = tsMs || Date.now();
-  if (now - (_rampageAnnounce.get(key) || 0) < RAMPAGE_ANNOUNCE_COOLDOWN_MS) return;
-  _rampageAnnounce.set(key, now);
-  if (_rampageAnnounce.size > 50) {
-    for (const [k, v] of _rampageAnnounce) if (now - v > 60000) _rampageAnnounce.delete(k);
+  // Idle reset — if the previous rampage went quiet for 60s, the next
+  // line (even on the same name) counts as a fresh rampage. Without this,
+  // a re-pull or quick re-engage would never re-announce.
+  if (_rampageLastSeenMs && (now - _rampageLastSeenMs) > RAMPAGE_IDLE_RESET_MS) {
+    _rampageCurrentTarget = null;
   }
+  _rampageLastSeenMs = now;
+  // Same target as current rampage → suppress. The user already heard the
+  // initial "New rampage: Hitya"; subsequent hits on Hitya are noise until
+  // the boss switches.
+  if (_rampageCurrentTarget === key) return;
+  _rampageCurrentTarget = key;
   const displayText = '🔥 NEW RAMPAGE: ' + target;
   const ttsText     = 'New rampage: ' + target;
   _pushOverlay({
