@@ -3,8 +3,15 @@
 <style>
   html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
     font-family:ui-sans-serif,system-ui,sans-serif;user-select:none;overflow:hidden}
+  /* Page is a flex column: toolbar takes its NATURAL height (it wraps to 2+
+     rows when there are many buttons) and #content fills the rest. This is why
+     the panels below are flex items, not position:fixed with a hardcoded 50px
+     toolbar offset — that offset broke (panel overlapped the toolbar's wrapped
+     second row) the moment the bar grew past one line. */
+  body{display:flex;flex-direction:column}
+  #content{flex:1 1 auto;display:flex;min-height:0}
   /* Top toolbar — resolution pickers, character selector, save/load. */
-  #bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;
+  #bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;
     border-bottom:1px solid #30363d;flex-wrap:wrap}
   #bar h1{font-size:13px;margin:0;color:#7ee7c7;letter-spacing:0.5px;font-weight:600;margin-right:6px}
   #bar label{font-size:11px;color:#8b949e;display:flex;align-items:center;gap:4px}
@@ -21,8 +28,8 @@
   #status.ok{color:#56d364} #status.err{color:#f87171}
   /* Canvas — proportional to target resolution, scaled to fit. Black bg
      represents the EQ screen. Window rectangles overlay. */
-  #stageWrap{display:flex;justify-content:center;align-items:center;flex:1;padding:14px;
-    background:#0a0c10;height:calc(100vh - 50px);overflow:auto}
+  #stageWrap{display:flex;justify-content:center;align-items:center;flex:1 1 auto;min-width:0;
+    padding:14px;background:#0a0c10;overflow:auto}
   #stage{position:relative;background:#000;border:1px solid #58a6ff;
     box-shadow:0 0 12px rgba(88,166,255,0.18)}
   /* Each window rectangle is absolutely positioned inside #stage. Color-coded
@@ -54,8 +61,9 @@
   .win .grip{position:absolute;width:8px;height:8px;background:#7ee7c7;
     border:1px solid #000;border-radius:1px;z-index:5}
   .win .grip.se{right:-4px;bottom:-4px;cursor:nwse-resize}
-  /* Side panel for the selected window's properties. */
-  #side{position:fixed;top:50px;right:0;bottom:0;width:240px;background:#161b22;
+  /* Side panel for the selected window's properties. Flex item (not fixed) so
+     it sits beside the canvas under the natural-height toolbar. */
+  #side{flex:0 0 240px;box-sizing:border-box;background:#161b22;
     border-left:1px solid #30363d;padding:10px;font-size:11px;overflow-y:auto;
     display:none}
   #side.on{display:block}
@@ -67,7 +75,24 @@
   #side .row{display:flex;gap:6px}
   #side .row .field{flex:1}
   #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
-  #stageWrap.has-side #stage{margin-right:240px}
+  /* Left filter panel — category toggles so the canvas isn't an unreadable
+     pile of all 130 windows at once. Flex item beside the canvas. View-only
+     (Save still writes every window). */
+  #filterPanel{flex:0 0 186px;box-sizing:border-box;
+    background:#161b22;border-right:1px solid #30363d;padding:10px;font-size:11px;
+    overflow-y:auto}
+  #filterPanel h3{margin:0 0 6px;color:#7ee7c7;font-size:12px}
+  #filterPanel .hint{color:#6e7681;font-size:9px;margin:0 0 8px;line-height:1.4}
+  #filterPanel .fbtns{display:flex;gap:6px;margin-bottom:8px}
+  #filterPanel .fbtns button{flex:1;font-size:10px;padding:3px 0;background:#21262d;
+    border:1px solid #30363d;color:#c9d1d9;border-radius:4px;cursor:pointer;font-family:inherit}
+  #filterPanel .fbtns button:hover{background:#30363d;border-color:#58a6ff}
+  #filterPanel label{display:flex;align-items:center;gap:6px;padding:3px 3px;cursor:pointer;
+    color:#c9d1d9;border-radius:3px;user-select:none}
+  #filterPanel label:hover{background:#0d1117}
+  #filterPanel label input{margin:0}
+  #filterPanel label .cnt{margin-left:auto;color:#6e7681;font-size:10px}
+  #filterPanel label.empty{opacity:0.4;cursor:default}
   /* Snap edge highlight when dragging — visual feedback when a window
      edge aligns with another window edge. */
   .snap-x{position:absolute;width:1px;background:#7ee7c7;pointer-events:none;
@@ -81,6 +106,8 @@
     <label>Character
       <select id="charSelect"><option value="">— pick —</option></select>
     </label>
+    <span id="eqDirLabel" style="font-size:10px;color:#6e7681;max-width:240px;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap" title=""></span>
     <span class="sep"></span>
     <!-- Source/Target use a preset <select> + freeform W×H inputs. The
          dropdown's "Custom…" sentinel keeps the four most-common values one
@@ -125,6 +152,14 @@
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <span id="status"></span>
   </div>
+  <!-- Deferred-save banner — shown while a save is scheduled to apply when the
+       character logs out. -->
+  <div id="deferBanner" style="display:none;align-items:center;gap:10px;padding:6px 12px;
+       background:#1c2330;border-bottom:1px solid #d6a922;color:#f0d264;font-size:11px">
+    <span class="txt"></span>
+    <button id="deferCancel" style="margin-left:auto;background:#21262d;color:#c9d1d9;
+       border:1px solid #30363d;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Cancel</button>
+  </div>
   <!-- PvP-set prompt — slides in from the top when the loaded character's
        class matches a bundled template. User can dismiss or open the
        details panel to preview + import. -->
@@ -149,19 +184,30 @@
     <div id="pvpPreviewCredit" style="color:#8b949e;font-size:10px;margin-bottom:8px"></div>
     <div id="pvpPreviewBody"></div>
   </div>
-  <div id="stageWrap"><div id="stage"></div></div>
-  <aside id="side">
-    <h3 id="sideTitle">Window</h3>
-    <div class="row">
-      <div class="field"><label>X</label><input id="fX" type="number" /></div>
-      <div class="field"><label>Y</label><input id="fY" type="number" /></div>
-    </div>
-    <div class="row">
-      <div class="field"><label>Width</label><input id="fW" type="number" /></div>
-      <div class="field"><label>Height</label><input id="fH" type="number" /></div>
-    </div>
-    <div class="meta" id="sideMeta"></div>
-  </aside>
+  <div id="content">
+    <aside id="filterPanel">
+      <h3>👁 Show</h3>
+      <p class="hint">Toggle window groups. View-only — Save still writes every window.</p>
+      <div class="fbtns">
+        <button id="filterAll">All</button>
+        <button id="filterNone">None</button>
+      </div>
+      <div id="filterList"></div>
+    </aside>
+    <div id="stageWrap"><div id="stage"></div></div>
+    <aside id="side">
+      <h3 id="sideTitle">Window</h3>
+      <div class="row">
+        <div class="field"><label>X</label><input id="fX" type="number" /></div>
+        <div class="field"><label>Y</label><input id="fY" type="number" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Width</label><input id="fW" type="number" /></div>
+        <div class="field"><label>Height</label><input id="fH" type="number" /></div>
+      </div>
+      <div class="meta" id="sideMeta"></div>
+    </aside>
+  </div>
 <script>
   // ── State ────────────────────────────────────────────────────────────────
   // bundle: { file → contents } loaded from disk. We mutate per-window
@@ -207,6 +253,21 @@
     } catch (e) { setStatus('IPC unavailable — open via tray', 'err'); }
   }
   bootstrap();
+
+  // Show the active EQ folder for the picked character — so a multi-folder user
+  // can see which install they're editing (the dropdown only shows the name).
+  function _showEqDir(dir){
+    var el = document.getElementById('eqDirLabel');
+    if (!el) return;
+    if (!dir) { el.textContent = ''; el.title = ''; return; }
+    var parts = String(dir).split(/[\\/]/).filter(Boolean);
+    var tail = parts.slice(-2).join('\\');     // last two path segments
+    el.textContent = '📁 …\\' + tail;
+    el.title = dir;
+  }
+  document.getElementById('charSelect').addEventListener('change', function(){
+    var v = this.value; _showEqDir(v ? v.split('|')[1] : '');
+  });
 
   // ── INI parsing ──────────────────────────────────────────────────────────
   // EQ INI sections like:
@@ -476,6 +537,7 @@
     var parts = sel.split('|');
     STATE.character = parts[0];
     STATE.eqDir     = parts[1];
+    _showEqDir(STATE.eqDir);
     // Read the W/H inputs (source of truth — preset dropdown is just a picker).
     var sW = parseInt(document.getElementById('srcW').value, 10);
     var sH = parseInt(document.getElementById('srcH').value, 10);
@@ -534,6 +596,7 @@
       var fname = fnames[fi];
       var parsed = parseIni(STATE.bundle[fname]);
       STATE.bundle[fname + '__parsed'] = parsed;
+      var chatMeta = _buildChatMeta(parsed);   // per-file chat-window routing
       for (var i = 0; i < parsed.sections.length; i++) {
         var s = parsed.sections[i];
         var pos = _readPos(s.props, srcSuffix);
@@ -566,6 +629,7 @@
           section: s.name,
           label:  classify.icon + ' ' + classify.label,
           kind:    classify.kind,
+          category: _categoryOf(s.name, chatMeta),
           contents: classify.contents,
           props:    s.props,
           hasWH:    hasWH,
@@ -612,9 +676,127 @@
       }
       setStatus(msg, 'ok');
     }
+    buildFilterPanel();
     renderStage();
     maybePromptPvpSet().catch(function(){});
+    _showDeferBanner().catch(function(){});   // reflect any background pending save for this char
   }
+
+  // ── Category filter ──────────────────────────────────────────────────────
+  // 130 windows at once is unreadable, so we bucket each into a broad group and
+  // let the user toggle groups on/off on the left. First-match-wins order, so
+  // e.g. ZealMap groups under Zeal (not Map) and BagBank under Bags. Defaults
+  // hide the high-count clutter (the ~50 bag windows + transient popups) and
+  // show the persistent HUD + chat. `on` is the default-visible flag.
+  var FILTER_CATEGORIES = [
+    { key:'zeal',    label:'🐺 Zeal',          on:true,  test:function(n){ return /^zeal/i.test(n); } },
+    { key:'chat',    label:'💬 Chat',          on:true,  test:function(n){ return /chat/i.test(n); } },
+    // Per-sender Tell windows — assigned via ChatManager (DefaultChannel 3),
+    // NOT by name (they're named "Chat 11" etc. like real chats). test:false
+    // so the name-matcher never grabs them; _categoryOf routes them here.
+    // Default OFF — these are the big chat-window clutter the user doesn't
+    // arrange (one per person who's ever /tell'd them).
+    { key:'tells',   label:'🗨 Tell windows',  on:false, test:function(){ return false; } },
+    { key:'group',   label:'👥 Group',         on:true,  test:function(n){ return /^group/i.test(n); } },
+    { key:'raid',    label:'⚔️ Raid',          on:true,  test:function(n){ return /^raid/i.test(n); } },
+    { key:'player',  label:'❤️ Player / Pet',  on:true,  test:function(n){ return /^player|^pet/i.test(n); } },
+    { key:'target',  label:'🎯 Target',        on:true,  test:function(n){ return /target/i.test(n); } },
+    { key:'hotbars', label:'🔥 Hotbar / Cast', on:true,  test:function(n){ return /hotbutton|hotbar|^actions|castspell|gemsgame|spellgem|casting/i.test(n); } },
+    { key:'buffs',   label:'✨ Buffs / Songs',  on:true,  test:function(n){ return /buff|song|melody|shortduration/i.test(n); } },
+    { key:'nav',     label:'🧭 Map / Compass',  on:true,  test:function(n){ return /map|compass|tracking/i.test(n); } },
+    { key:'spells',  label:'📖 Spells / Skills',on:false, test:function(n){ return /spellbook|^skills|aawindow/i.test(n); } },
+    { key:'bags',    label:'🎒 Bags / Inv',    on:false, test:function(n){ return /^bag|inventory|^bank/i.test(n); } },
+    { key:'vendor',  label:'💰 Vendor / Trade', on:false, test:function(n){ return /merchant|bazaar|^trade|^give|loot/i.test(n); } },
+    { key:'other',   label:'▢ Other',          on:false, test:function(){ return true; } },   // fallback (must be last)
+  ];
+  function _categoryMeta(key) {
+    for (var i = 0; i < FILTER_CATEGORIES.length; i++) if (FILTER_CATEGORIES[i].key === key) return FILTER_CATEGORIES[i];
+    return FILTER_CATEGORIES[FILTER_CATEGORIES.length - 1];
+  }
+  // Build a chat-window index → { defaultChannel } map from a parsed ini's
+  // [ChatManager] section. EQ stores per-window routing as flat keys:
+  //   ChatWindow<N>_DefaultChannel = <int>   (3 = tell → per-sender tell window)
+  //   ChatWindow<N>_Name           = <label>
+  // Position sections map by ordinal: MainChat = window 0, "Chat <N>" = N.
+  function _buildChatMeta(parsed) {
+    var meta = {};
+    for (var i = 0; i < parsed.sections.length; i++) {
+      if (parsed.sections[i].name !== 'ChatManager') continue;
+      var props = parsed.sections[i].props || {};
+      for (var key in props) {
+        var m = key.match(/^ChatWindow(\d+)_DefaultChannel$/i);
+        if (m) {
+          var idx = parseInt(m[1], 10);
+          if (!meta[idx]) meta[idx] = {};
+          meta[idx].defaultChannel = parseInt(props[key], 10);
+        }
+      }
+    }
+    return meta;
+  }
+  function _categoryOf(section, chatMeta) {
+    var n = String(section || '');
+    // Chat windows split into real chat vs per-sender Tell windows via the
+    // ChatManager routing. Position sections: MainChat = window 0, "Chat <N>"
+    // = window N. DefaultChannel 3 = tell → Tell window.
+    var idx = null;
+    if (/^mainchat$/i.test(n)) idx = 0;
+    else { var cm = n.match(/^chat\s*(\d+)$/i); if (cm) idx = parseInt(cm[1], 10); }
+    if (idx != null || /^chatwindow$/i.test(n)) {
+      var info = (chatMeta && idx != null) ? chatMeta[idx] : null;
+      return (info && info.defaultChannel === 3) ? 'tells' : 'chat';
+    }
+    for (var i = 0; i < FILTER_CATEGORIES.length; i++) {
+      if (FILTER_CATEGORIES[i].key === 'chat' || FILTER_CATEGORIES[i].key === 'tells') continue;
+      if (FILTER_CATEGORIES[i].test(n)) return FILTER_CATEGORIES[i].key;
+    }
+    return 'other';
+  }
+  function _catVisible(key) {
+    if (STATE.catVisible && key in STATE.catVisible) return STATE.catVisible[key];
+    return _categoryMeta(key).on;   // default before the panel is built
+  }
+  function buildFilterPanel() {
+    // Count windows per category from the loaded set.
+    var counts = {};
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var c = STATE.windows[i].category || 'other';
+      counts[c] = (counts[c] || 0) + 1;
+    }
+    // Seed visibility from defaults on first build; preserve user choices after.
+    if (!STATE.catVisible) {
+      STATE.catVisible = {};
+      for (var j = 0; j < FILTER_CATEGORIES.length; j++) STATE.catVisible[FILTER_CATEGORIES[j].key] = FILTER_CATEGORIES[j].on;
+    }
+    var html = '';
+    for (var k = 0; k < FILTER_CATEGORIES.length; k++) {
+      var cat = FILTER_CATEGORIES[k];
+      var n = counts[cat.key] || 0;
+      var checked = STATE.catVisible[cat.key] ? ' checked' : '';
+      var emptyCls = n === 0 ? ' class="empty"' : '';
+      html += '<label' + emptyCls + '><input type="checkbox" data-cat="' + cat.key + '"' + checked + (n === 0 ? ' disabled' : '') + '>'
+            + '<span>' + cat.label + '</span><span class="cnt">' + n + '</span></label>';
+    }
+    var list = document.getElementById('filterList');
+    list.innerHTML = html;
+    list.querySelectorAll('input[data-cat]').forEach(function(cb){
+      cb.addEventListener('change', function(){
+        STATE.catVisible[this.dataset.cat] = this.checked;
+        if (STATE.selected >= 0 && STATE.windows[STATE.selected] &&
+            !_catVisible(STATE.windows[STATE.selected].category)) STATE.selected = -1;
+        renderStage();
+      });
+    });
+  }
+  function _setAllFilters(on) {
+    if (!STATE.catVisible) STATE.catVisible = {};
+    for (var i = 0; i < FILTER_CATEGORIES.length; i++) STATE.catVisible[FILTER_CATEGORIES[i].key] = on;
+    document.querySelectorAll('#filterList input[data-cat]').forEach(function(cb){ if (!cb.disabled) cb.checked = on; });
+    if (!on) STATE.selected = -1;
+    renderStage();
+  }
+  document.getElementById('filterAll').addEventListener('click', function(){ _setAllFilters(true); });
+  document.getElementById('filterNone').addEventListener('click', function(){ _setAllFilters(false); });
 
   // After a character loads, look up their live class via the agent's
   // /api/state and ask Mimic if any bundled PvP-set template matches.
@@ -780,8 +962,13 @@
     stage.style.width  = cw + 'px';
     stage.style.height = ch + 'px';
     var html = '';
+    var shown = 0;
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
+      // Category filter — hidden groups are skipped on the canvas (Save still
+      // writes them; this is view-only).
+      if (!_catVisible(w.category)) continue;
+      shown++;
       var sx = Math.round(w.x * STATE.sliceScale);
       var sy = Math.round(w.y * STATE.sliceScale);
       var sw = Math.max(8, Math.round(w.w * STATE.sliceScale));
@@ -928,40 +1115,124 @@
     renderStage();
     setStatus('reset to last load', 'ok');
   });
-  document.getElementById('saveBtn').addEventListener('click', async function(){
-    if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
-    // Write rescaled coords into the TARGET resolution's suffix block
-    // (XPos<tgtW>x<tgtH> / YPos<tgtW>x<tgtH>). If that block doesn't exist
-    // yet, emitIni inserts it — leaving the original source-resolution block
-    // intact. EQ then reads whichever block matches the resolution you launch
-    // at, so one INI can carry layouts for several monitors.
+  // Build the { filename → new text } bundle for the current edits, writing
+  // into the TARGET resolution's suffix block (XPos<W>x<H>); emitIni inserts
+  // the block if absent, leaving other-resolution blocks intact.
+  function _buildSaveBundle(){
     var tgtSuffix = STATE.tgtW + 'x' + STATE.tgtH;
-    var edits = {};   // file → { sectionName → { XPos<res>, YPos<res>, Width, Height } }
+    var edits = {};
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       if (!edits[w.file]) edits[w.file] = {};
       var e = {};
       e['XPos' + tgtSuffix] = w.x;
       e['YPos' + tgtSuffix] = w.y;
-      // Only (re)write Width/Height for windows that already carried a size —
-      // never fabricate one for an auto-sizing window.
-      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }
+      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }   // never fabricate a size
       edits[w.file][w.section] = e;
     }
-    // Emit new file contents.
     var newBundle = {};
     for (var fname in edits) {
       var parsed = STATE.bundle[fname + '__parsed'];
       if (!parsed) continue;
       newBundle[fname] = emitIni(parsed, edits[fname]);
     }
-    setStatus('saving…');
+    return { newBundle: newBundle, tgtSuffix: tgtSuffix };
+  }
+
+  // Is this character currently logged in? We ask the agent's Zeal state — a
+  // character with a live Zeal pipe is in-game right now.
+  async function _isCharActiveInZeal(charLower){
     try {
-      var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle);
-      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix + ' block · .bak backups created', 'ok');
-      else setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
-    } catch (e) { setStatus('save failed: ' + e.message, 'err'); }
+      var r = await fetch('http://127.0.0.1:7779/api/state', { cache: 'no-store' });
+      var s = await r.json();
+      var clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+      return clients.some(function(c){ return c && String(c.character).toLowerCase() === charLower; });
+    } catch (e) { return null; }   // null = unknown (agent not reachable)
+  }
+
+  async function _writeBundle(newBundle, tgtSuffix, opts){
+    var deferred = opts && opts.deferred;
+    var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle, deferred ? { backupTag: 'eq' } : null);
+    if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
+    var resWarn = '';
+    try {
+      var disp = await window.mimic.uiStudioListDisplays();
+      if (disp && disp.primary && (disp.primary.w !== STATE.tgtW || disp.primary.h !== STATE.tgtH)) {
+        resWarn = ' · ⚠ your monitor is ' + disp.primary.w + '×' + disp.primary.h +
+          ' — set Target to that (🖥 Detect) or EQ reads a different block';
+      }
+    } catch (e2) {}
+    if (deferred) {
+      setStatus('✅ applied ' + Object.keys(newBundle).length + ' file(s) now that ' + STATE.character +
+        ' logged out — EQ\'s last copy backed up as .bak-eq. Log back in to see it.' + resWarn, resWarn ? 'err' : 'ok');
+    } else {
+      setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix +
+        ' block · log the character in to apply (EQ reads positions at login)' + resWarn, resWarn ? 'err' : 'ok');
+    }
+    return true;
+  }
+
+  // Deferred save: hold the edits and apply them automatically once the
+  // character leaves the Zeal pipe (logged out) — at which point EQ has written
+  // its final layout and won't clobber ours. The watcher runs in Mimic's
+  // BACKGROUND process, so it works even after UI Studio is closed (and across
+  // a Mimic restart). The renderer just queues/cancels and reflects status.
+  async function _cancelDefer(silent){
+    try { await window.mimic.uiStudioCancelDefer({ character: STATE.character, eqDir: STATE.eqDir }); } catch (e) {}
+    var b = document.getElementById('deferBanner'); if (b) b.style.display = 'none';
+    if (!silent) setStatus('scheduled save cancelled', 'ok');
+  }
+  async function _queueDefer(newBundle, tgtSuffix){
+    var res = await window.mimic.uiStudioDeferSave({
+      character: STATE.character, eqDir: STATE.eqDir, bundle: newBundle, tgtSuffix: tgtSuffix,
+    }).catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!res || !res.ok) { setStatus('could not schedule: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
+    _showDeferBanner();
+    setStatus('scheduled — applies automatically when ' + STATE.character + ' logs out (you can close UI Studio)', 'ok');
+  }
+  // Reflect the background queue in the banner: show it if THIS character has a
+  // pending save. Polled lightly + after actions so an applied/closed save
+  // clears the banner.
+  async function _showDeferBanner(){
+    var b = document.getElementById('deferBanner'); if (!b) return;
+    var list = [];
+    try { list = await window.mimic.uiStudioPendingList(); } catch (e) {}
+    var mine = (list || []).find(function(e){
+      return STATE.character && String(e.character).toLowerCase() === STATE.character.toLowerCase() && e.eqDir === STATE.eqDir;
+    });
+    if (mine) {
+      b.style.display = 'flex';
+      b.querySelector('.txt').textContent = '⏳ Scheduled: your layout applies automatically when ' +
+        STATE.character + ' logs out of EverQuest. (Background — safe to close UI Studio.)';
+    } else {
+      b.style.display = 'none';
+    }
+  }
+  setInterval(function(){ _showDeferBanner().catch(function(){}); }, 10000);
+
+  document.getElementById('saveBtn').addEventListener('click', async function(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
+    var built = _buildSaveBundle();
+    // Is the character logged in right now? If so, a plain Save won't apply
+    // (EQ keeps the layout in memory, ignores it on a skin reload, and
+    // overwrites the file on the next camp/zone/quit). Offer to schedule.
+    var active = await _isCharActiveInZeal(STATE.character.toLowerCase());
+    if (active) {
+      var schedule = window.confirm(
+        STATE.character + ' is logged into EverQuest right now.\n\n' +
+        'EQ keeps the UI layout in memory while in-game and OVERWRITES this file\n' +
+        'when the character camps / zones / quits — so saving now usually won\'t\n' +
+        'stick, and a skin reload won\'t re-read it.\n\n' +
+        'OK  = schedule it: apply automatically when ' + STATE.character + ' logs out\n' +
+        '         (recommended — runs in the background; you can close UI Studio)\n' +
+        'Cancel = save right now anyway');
+      if (schedule) { _queueDefer(built.newBundle, built.tgtSuffix); return; }
+    }
+    setStatus('saving…');
+    try { await _writeBundle(built.newBundle, built.tgtSuffix, { deferred: false }); }
+    catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
+  document.getElementById('deferCancel').addEventListener('click', function(){ _cancelDefer(false); });
 
   // ── Capture / Backup / Inspect Socials ───────────────────────────────────
   // Surfaces the existing _readUiBundle + ui-studio-capture cloud-backup

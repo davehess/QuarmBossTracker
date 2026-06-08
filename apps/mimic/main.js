@@ -690,37 +690,38 @@ function _uiStudioFilesFor(character) {
 function _readUiBundle(eqDir, character) {
   const files = {};
   if (!eqDir || !character) return files;
-  for (const name of [...UI_STUDIO_GLOBAL, ..._uiStudioFilesFor(character)]) {
+  // CRITICAL: key the bundle by the REAL on-disk filename (exact case), never a
+  // reconstructed name. EQ reads UI_<Char>_pq.proj.ini with the character's
+  // canonical case at login; if Save writes back a different case (because the
+  // dropdown character case differs from the file), EQ keeps reading the old
+  // file and the edits silently never apply. User-confirmed: fixing the case
+  // made the changes load. So we resolve each wanted name to its real entry.
+  let entries = [];
+  try { entries = fs.readdirSync(eqDir); } catch { return files; }
+  const realByLower = new Map();          // lowercased name → real on-disk name
+  for (const f of entries) realByLower.set(f.toLowerCase(), f);
+
+  const want = [...UI_STUDIO_GLOBAL, ..._uiStudioFilesFor(character)];
+  // Also pick up UI_<char>*.ini variants at any server suffix (a user who
+  // swapped servers or /loadskin'd under a different suffix), by their REAL
+  // name so read+write stay case-exact.
+  const cLower = String(character).toLowerCase();
+  for (const f of entries) {
+    const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
+    if (m && m[1].toLowerCase() === cLower) want.push(f);
+  }
+
+  for (const wanted of want) {
+    const real = realByLower.get(String(wanted).toLowerCase());
+    if (!real || files[real]) continue;
     try {
-      const fp = path.join(eqDir, name);
-      if (fs.existsSync(fp)) {
-        const stat = fs.statSync(fp);
-        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
-          files[name] = fs.readFileSync(fp, 'utf8');
-        }
+      const fp = path.join(eqDir, real);
+      const stat = fs.statSync(fp);
+      if (stat.isFile() && stat.size > 0 && stat.size < 4 * 1024 * 1024) {
+        files[real] = fs.readFileSync(fp, 'utf8');   // key = exact on-disk name
       }
     } catch {}
   }
-  // Also glob: pick up UI_<char>*.ini variants (any server suffix). The
-  // canonical Quarm name is UI_<C>_pq.proj.ini, but a user who swapped
-  // servers or used /loadskin under a different suffix would otherwise have
-  // their window-layout file silently skipped — leaving "0 windows" loaded
-  // even though the data is right there in the EQ folder.
-  try {
-    const cLower = String(character).toLowerCase();
-    for (const f of fs.readdirSync(eqDir)) {
-      if (files[f]) continue;
-      const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
-      if (!m || m[1].toLowerCase() !== cLower) continue;
-      try {
-        const fp = path.join(eqDir, f);
-        const stat = fs.statSync(fp);
-        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
-          files[f] = fs.readFileSync(fp, 'utf8');
-        }
-      } catch {}
-    }
-  } catch {}
   return files;
 }
 async function _isEqRunning() {
@@ -737,20 +738,94 @@ async function _isEqRunning() {
     } catch { resolve(false); }
   });
 }
-function _backupAndWriteFile(targetPath, contents) {
+function _backupAndWriteFile(targetPath, contents, backupTag) {
   // Atomic-ish: backup existing first (so a partial write can be reverted),
   // then write to <target>.tmp + rename. Renaming a same-filesystem path is
   // atomic on Windows when the destination doesn't exist + via MoveFileEx
-  // otherwise (Node handles it).
+  // otherwise (Node handles it). backupTag labels the .bak so the user can tell
+  // a UI-Studio save (no tag) from EQ's own last-written copy (tag 'eq') that a
+  // deferred save replaced after logout.
   const ts = Date.now();
+  const tag = backupTag ? `bak-${backupTag}` : 'bak';
+  const bakPath = `${targetPath}.${tag}-${ts}`;
   if (fs.existsSync(targetPath)) {
-    fs.copyFileSync(targetPath, targetPath + `.bak-${ts}`);
+    fs.copyFileSync(targetPath, bakPath);
   }
   const tmp = targetPath + `.tmp-${ts}`;
   fs.writeFileSync(tmp, contents, 'utf8');
   fs.renameSync(tmp, targetPath);
-  return targetPath + `.bak-${ts}`;
+  return bakPath;
 }
+
+// ── UI Studio deferred saves (apply on logout) ──────────────────────────────
+// A save made while the character is logged in can't take effect: EQ keeps the
+// UI layout in memory and overwrites the file on the next camp/zone/quit. So
+// instead of requiring UI Studio to stay open, we persist the pending edits in
+// the MAIN process and apply them automatically once the character leaves the
+// Zeal pipe (= logged out → EQ has written its final layout). Survives closing
+// UI Studio and a Mimic restart.
+function _uiDeferFile() { return path.join(app.getPath('userData'), 'ui-studio-pending.json'); }
+let _uiDeferred = [];   // [{ character, eqDir, bundle:{name:text}, tgtSuffix, queuedAt, sawActive }]
+function _loadUiDeferred() {
+  try {
+    const fp = _uiDeferFile();
+    if (fs.existsSync(fp)) { const raw = JSON.parse(fs.readFileSync(fp, 'utf8')); if (Array.isArray(raw)) _uiDeferred = raw; }
+  } catch { _uiDeferred = []; }
+}
+function _saveUiDeferred() {
+  try { fs.writeFileSync(_uiDeferFile(), JSON.stringify(_uiDeferred), 'utf8'); } catch {}
+}
+function _uiCharActiveInZeal(charLower) {
+  for (const [name, cur] of _zealLiveByChar.entries()) {
+    if (String(name).toLowerCase() !== charLower) continue;
+    if (cur && cur.lastSeen && (Date.now() - cur.lastSeen) < 30000) return true;
+  }
+  return false;
+}
+function _applyDeferredEntry(entry) {
+  let written = 0;
+  try {
+    for (const [name, contents] of Object.entries(entry.bundle || {})) {
+      if (typeof contents !== 'string' || !contents.length) continue;
+      if (!/^[\w.-]+\.ini$/i.test(name)) continue;
+      _backupAndWriteFile(path.join(entry.eqDir, name), contents, 'eq');  // EQ's copy → .bak-eq
+      written++;
+    }
+  } catch (err) { appendAgentLog(`[ui-studio] deferred apply failed for ${entry.character}: ${err && err.message}\n`); return false; }
+  appendAgentLog(`[ui-studio] applied deferred save for ${entry.character} (${written} file(s)) after logout\n`);
+  try {
+    if (Notification.isSupported()) new Notification({
+      title: 'UI Studio — layout applied',
+      body: `${entry.character} logged out, so your saved UI layout was applied (${written} file(s)). Log back in to see it.`,
+      silent: true,
+    }).show();
+  } catch {}
+  return true;
+}
+let _uiDeferTickBusy = false;
+async function _tickUiDeferred() {
+  if (_uiDeferTickBusy || !_uiDeferred.length) return;
+  _uiDeferTickBusy = true;
+  try {
+    let eqUp = null;   // resolved lazily, once, only if needed
+    const keep = [];
+    for (const entry of _uiDeferred) {
+      const charLower = String(entry.character || '').toLowerCase();
+      if (_uiCharActiveInZeal(charLower)) { entry.sawActive = true; keep.push(entry); continue; }
+      // Not in Zeal. Apply when we previously saw it in-game (logged out now),
+      // or it was never in-game AND no EverQuest is running (nothing to clobber).
+      if (!entry.sawActive) {
+        if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
+        if (eqUp) { keep.push(entry); continue; }   // EQ up, char not seen → wait
+      }
+      // Stabilization: let EQ finish its logout write before we overwrite.
+      if (Date.now() - (entry.queuedAt || 0) < 6000) { keep.push(entry); continue; }
+      _applyDeferredEntry(entry);   // drop on success or failure (don't loop forever)
+    }
+    if (keep.length !== _uiDeferred.length) { _uiDeferred = keep; _saveUiDeferred(); }
+  } finally { _uiDeferTickBusy = false; }
+}
+
 function _clampUiIni(contents, screenW, screenH) {
   // Walk every line; when we see XPos/YPos = N, clamp to (0, screenW - minW)
   // / (0, screenH - minH). minW/minH unknown without parsing XSize/YSize, so
@@ -852,6 +927,7 @@ function _zealAbsorb(obj) {
   const type = obj.type;
   let cur = _zealLiveByChar.get(character);
   if (!cur) { cur = { snapshot: {}, dirty: false }; _zealLiveByChar.set(character, cur); }
+  cur.lastSeen = Date.now();   // liveness for UI Studio's "apply on logout" watcher
   const s = cur.snapshot;
   if (type === 2) {                                   // gauge — HP per-mille (0..1000)
     const inner = _zealParseData(obj);
@@ -1852,7 +1928,7 @@ ipcMain.handle('ui-studio-read-bundle', (_e, character, eqDir) => {
 // Write the edited bundle back to disk with .bak backups (via
 // _backupAndWriteFile). Only writes files explicitly present in the
 // bundle map — unchanged INIs are left alone, never accidentally cleared.
-ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
+ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
   try {
     const d = String(eqDir || '').trim();
     if (!d || !bundle || typeof bundle !== 'object') {
@@ -1861,6 +1937,10 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
     if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) {
       return { ok: false, error: 'eqDir does not exist: ' + d };
     }
+    // backupTag distinguishes the .bak — a deferred save (applied after the
+    // character logged out) tags it 'eq' so the user sees that the replaced
+    // copy was EQ's own last-written layout, not a prior UI Studio save.
+    const backupTag = (opts && /^[\w-]{1,16}$/.test(String(opts.backupTag || ''))) ? String(opts.backupTag) : null;
     const written = [];
     for (const [name, contents] of Object.entries(bundle)) {
       if (typeof contents !== 'string' || contents.length === 0) continue;
@@ -1868,7 +1948,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
       // traversal, no overwriting files outside the directory.
       if (!/^[\w.-]+\.ini$/i.test(name)) continue;
       const target = path.join(d, name);
-      _backupAndWriteFile(target, contents);
+      _backupAndWriteFile(target, contents, backupTag);
       written.push(name);
     }
     return { ok: true, written, count: written.length };
@@ -2677,7 +2757,15 @@ function applyAllVisibility() {
 // Bound to a tray menu item + a global hotkey (Ctrl+Shift+H by default).
 let _hideAllActive = false;
 let _hideAllPrev = null;          // { showHud, enableTriggerTts, showCharm, ... }
-const _hideAllHotkeyLabel = process.platform === 'win32' ? 'Ctrl+Shift+H' : '';
+const _DEFAULT_HIDE_HOTKEY = 'CommandOrControl+Shift+H';
+let _registeredHideAccel = null;  // the accelerator currently registered
+function _hideAllAccelerator() {
+  const cfg = loadConfig();
+  const h = (cfg && typeof cfg.hideAllHotkey === 'string' && cfg.hideAllHotkey.trim()) ? cfg.hideAllHotkey.trim() : _DEFAULT_HIDE_HOTKEY;
+  return h;
+}
+function _fmtAccel(accel) { return String(accel || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+function _hideAllHotkeyLabelNow() { const a = _hideAllAccelerator(); return a ? _fmtAccel(a) : ''; }
 function toggleHideAllOverlays() {
   const cfg = loadConfig();
   if (!_hideAllActive) {
@@ -2707,18 +2795,36 @@ function toggleHideAllOverlays() {
     Object.assign(cfg, _hideAllPrev);
     _hideAllActive = false;
     _hideAllPrev = null;
+  } else {
+    // Active but no snapshot (e.g. restarted while hidden, snapshot lost in an
+    // older build): SHOW the core overlays so the hotkey can never get stuck
+    // unable to unhide.
+    cfg.showHud = true; cfg.showCharm = true; cfg.showPets = true;
+    cfg.showMobInfo = true; cfg.showWho = true; cfg.showMelody = true; cfg.showZeal = true;
+    _hideAllActive = false;
   }
+  // Persist the toggle state so a restart-while-hidden still knows it's hidden
+  // and the hotkey restores correctly next launch (the bug: in-memory only).
+  cfg.hideAllActive = _hideAllActive;
+  cfg.hideAllPrev   = _hideAllPrev;
   saveConfig(cfg);
   applyAllVisibility();
   pushStatus();
 }
 function registerHideAllHotkey() {
-  if (process.platform !== 'win32') return;
   try {
     const { globalShortcut } = require('electron');
-    if (globalShortcut.isRegistered('CommandOrControl+Shift+H')) return;
-    const ok = globalShortcut.register('CommandOrControl+Shift+H', toggleHideAllOverlays);
-    if (!ok) appendAgentLog('[mimic] failed to register Ctrl+Shift+H hide-all hotkey\n');
+    // Restore persisted hide state so the toggle is correct across restarts.
+    const cfg = loadConfig();
+    if (typeof cfg.hideAllActive === 'boolean') _hideAllActive = cfg.hideAllActive;
+    if (cfg.hideAllPrev && typeof cfg.hideAllPrev === 'object') _hideAllPrev = cfg.hideAllPrev;
+    // (Re)register the configured accelerator, dropping any prior binding.
+    if (_registeredHideAccel) { try { globalShortcut.unregister(_registeredHideAccel); } catch {} _registeredHideAccel = null; }
+    const accel = _hideAllAccelerator();
+    if (!accel) return;
+    const ok = globalShortcut.register(accel, toggleHideAllOverlays);
+    if (ok) _registeredHideAccel = accel;
+    else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
 
@@ -3022,7 +3128,7 @@ function buildTrayMenu() {
     // their previous visibility on the next toggle. The "memory" lives in
     // _hideAllPrev so the user's pref selection is preserved across the
     // hide/show round-trip. Bindable hotkey lives in registerHideAllHotkey().
-    { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabel || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabel || 'no hotkey') + ')',
+    { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')',
       click: () => { toggleHideAllOverlays(); } },
   ];
 
@@ -3570,6 +3676,47 @@ ipcMain.handle('find-eq-installs', () => {
 // Returns { primary: {w,h}, displays: [{ id, label, w, h, primary, scaleFactor }] }.
 // Widescreen/ultrawide users (3840×1600, 5120×1440, etc.) weren't covered by
 // the dropdown — this lets them pick exact values without typing.
+// Is EverQuest running right now? UI Studio uses this to warn at Save time:
+// a running client keeps the window layout in memory, ignores on-disk edits on
+// a skin reload, and OVERWRITES UI_<char>.ini on the next camp/zone/quit — so
+// edits only stick if EQ is fully closed when you Save, then relaunched.
+ipcMain.handle('ui-studio-eq-running', async () => {
+  try { return await _isEqRunning(); } catch { return false; }
+});
+
+// Queue a deferred save — applied by the background watcher once the character
+// leaves the Zeal pipe (logged out). Replaces any prior pending save for the
+// same character+folder so re-saving just updates the pending edits.
+ipcMain.handle('ui-studio-defer-save', (_e, params) => {
+  try {
+    const character = String(params?.character || '').trim();
+    const eqDir     = String(params?.eqDir || '').trim();
+    const bundle    = params?.bundle;
+    if (!character || !eqDir || !bundle || typeof bundle !== 'object') return { ok: false, error: 'character + eqDir + bundle required' };
+    const charLower = character.toLowerCase();
+    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir));
+    _uiDeferred.push({
+      character, eqDir, bundle,
+      tgtSuffix: params?.tgtSuffix || null,
+      queuedAt: Date.now(),
+      sawActive: _uiCharActiveInZeal(charLower),   // seed from current liveness
+    });
+    _saveUiDeferred();
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
+ipcMain.handle('ui-studio-pending-list', () => {
+  return _uiDeferred.map(e => ({ character: e.character, eqDir: e.eqDir, tgtSuffix: e.tgtSuffix, queuedAt: e.queuedAt, sawActive: !!e.sawActive }));
+});
+ipcMain.handle('ui-studio-cancel-defer', (_e, params) => {
+  const character = String(params?.character || '').trim().toLowerCase();
+  const eqDir     = String(params?.eqDir || '').trim();
+  const before = _uiDeferred.length;
+  _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === character && (!eqDir || e.eqDir === eqDir)));
+  if (_uiDeferred.length !== before) _saveUiDeferred();
+  return { ok: true, removed: before - _uiDeferred.length };
+});
+
 ipcMain.handle('ui-studio-list-displays', () => {
   try {
     const primary = screen.getPrimaryDisplay();
@@ -3850,6 +3997,10 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
+  // Re-bind the hide-all hotkey if the user changed it in settings.
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
+    try { registerHideAllHotkey(); } catch {}
+  }
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
@@ -3995,6 +4146,11 @@ app.whenReady().then(async () => {
   createZealHealthOverlay();
   pushStatus();
   startZealCapture();
+
+  // UI Studio deferred saves — load any pending from a prior session and start
+  // the background watcher that applies them once the character logs out.
+  _loadUiDeferred();
+  setInterval(() => { _tickUiDeferred().catch(() => {}); }, 8000);
 
   // First-launch + every-launch nudge: if setup is incomplete, fire a Windows
   // toast notification so the user knows something needs their attention even

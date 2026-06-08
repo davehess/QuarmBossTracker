@@ -67,6 +67,12 @@ contextBridge.exposeInMainWorld('mimic', {
   // tabs, bandolier, socials, eqclient.ini) so a user can set up an
   // identical install on a different machine.
   uiStudioListDisplays:   ()        => ipcRenderer.invoke('ui-studio-list-displays'),
+  uiStudioIsEqRunning:    ()        => ipcRenderer.invoke('ui-studio-eq-running'),
+  // Background deferred save — applied by the main process when the character
+  // logs out (survives closing UI Studio + a Mimic restart).
+  uiStudioDeferSave:      (params)  => ipcRenderer.invoke('ui-studio-defer-save', params),
+  uiStudioPendingList:    ()        => ipcRenderer.invoke('ui-studio-pending-list'),
+  uiStudioCancelDefer:    (params)  => ipcRenderer.invoke('ui-studio-cancel-defer', params),
   uiStudioListCharacters: ()        => ipcRenderer.invoke('ui-studio-list-characters'),
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
@@ -76,7 +82,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // graphical resolution-rescaling editor. Read returns a raw filename →
   // text map; write takes the edited map and persists with .bak backups.
   uiStudioReadBundle:     (character, eqDir) => ipcRenderer.invoke('ui-studio-read-bundle', character, eqDir),
-  uiStudioWriteBundle:    (eqDir, bundle)    => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle),
+  uiStudioWriteBundle:    (eqDir, bundle, opts) => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle, opts),
   // Open the standalone UI Studio editor window from the dashboard's nav.
   openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
   // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
