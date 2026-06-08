@@ -5298,19 +5298,47 @@ async function _handleAgentMobInfo(req, res) {
               if (seen.has(e.spellid)) continue;
               seen.add(e.spellid); dedup.push(e);
             }
-            const ids = dedup.map(e => e.spellid).filter(Boolean);
+            // Filter to spells the mob can ACTUALLY cast at its level — entries
+          // with minlevel > mob.level (haven't grown into it) or maxlevel <
+          // mob.level (outgrown it; 0 = no upper bound) are excluded so the
+          // overlay matches PQDI's "Can cast these spells" list instead of the
+          // entire class spellbook.
+          const mobLvl = Number(r.level) || 0;
+          const inWindow = dedup.filter(e => {
+            const lo = Number(e.minlevel) || 0;
+            const hi = Number(e.maxlevel) || 0;
+            if (mobLvl <= 0) return true;
+            if (lo > 0 && mobLvl < lo) return false;
+            if (hi > 0 && mobLvl > hi) return false;
+            return true;
+          });
+          const ids = inWindow.map(e => e.spellid).filter(Boolean);
             if (ids.length > 0) {
               const catRows = await supabase.select('eqemu_spells',
-                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time&limit=80`);
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff&limit=80`);
               const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
-              spells = dedup.slice(0, 40).map(e => {
+              // npc_spells_entries.manacost = -1 means "use the spell's catalog
+              // mana cost"; same convention for recast_delay (-1 = spell default).
+              // Without this, the overlay rendered every spell at -1 because the
+              // entry's manacost happens to be -1 in the EQEmu data.
+              const _resolveNum = (entryVal, catVal) => {
+                if (entryVal != null && Number(entryVal) >= 0) return entryVal;
+                if (catVal   != null && Number(catVal)   >= 0) return catVal;
+                return null;
+              };
+              spells = inWindow.slice(0, 40).map(e => {
                 const c = cat.get(e.spellid) || {};
                 return {
                   id:           e.spellid,
                   name:         c.name || ('Spell #' + e.spellid),
-                  mana:         e.manacost ?? c.mana ?? null,
-                  cast_ms:      c.cast_time ?? null,
-                  recast_ms:    e.recast_delay ?? null,
+                  mana:         _resolveNum(e.manacost, c.mana),
+                  cast_ms:      _resolveNum(c.cast_time, null),
+                  recast_ms:    _resolveNum(e.recast_delay, null),
+                  // Resist family — 0/null = unresistable; resist_diff < 0 means
+                  // "lure" (harder to resist by that amount). Negative values
+                  // are rendered as "-200 lure"; positive as a plain modifier.
+                  resist_type:  c.resist_type ?? null,
+                  resist_diff:  c.resist_diff ?? null,
                   priority:     e.priority ?? null,
                   type:         e.type ?? null,
                   minlevel:     e.minlevel ?? null,
