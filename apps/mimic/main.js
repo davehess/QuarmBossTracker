@@ -127,7 +127,10 @@ function defaultConfig() {
     // installs keep whatever they had: loadConfig does Object.assign over the
     // saved config, and onboarded users have these persisted already.)
     showHud: false,          // DPS HUD overlay user pref
-    enableTriggerTts: false, // Trigger TTS overlay user pref
+    enableTriggerTts: true,  // Trigger TTS overlay user pref — default ON
+                             // so fresh installs see countdown timer rows
+                             // during a raid without an extra opt-in.
+                             // Existing installs keep whatever they saved.
     quietMode: false,        // master "I use EQLogParser" — hides all local UI
     // Quiet updates (default ON): a downloaded update applies silently on the
     // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just

@@ -3538,6 +3538,12 @@ function _maybeUploadRaidRoster(sample) {
         };
       });
     if (compact.length === 0) return;
+    // Refresh the local raid-member lookup that trigger actions consult via
+    // require_raid_member. Lowercased names only — matched against captured
+    // values like victim/target. Replaces (not merges) so a raider leaving
+    // the raid clears them out of the set on the next Zeal Type 5 fire.
+    _raidRosterMembers.clear();
+    for (const m of compact) _raidRosterMembers.add(String(m.name).toLowerCase());
     // Hash composition only — NOT HP. HP changes constantly in combat and we
     // don't want every 1% drop to fire an upload. Heartbeat (10s) refreshes HP
     // on a cadence the /raid page can show "live-ish" without spam.
@@ -13853,9 +13859,34 @@ function evaluateTriggersAgainstLine(line, tsMs) {
 // scheduleRender pokes the dashboard. NO database, NO upload queue, NO Discord
 // — test fires are local-only by construction. The `test` flag on the
 // emitted overlay lets the UI label test fires distinctly.
+// Lowercased set of names from the current Zeal raid roster. Re-populated by
+// _maybeUploadRaidRoster on every raid-window change; trigger actions can opt
+// in to "only fire when capture X is in this set" via require_raid_member
+// (covers: pet names, hammer pets, mob substrings that backtrack-match a
+// player-shaped pattern). Empty when no raid window has been seen — in that
+// case the filter falls open (any captured name is allowed) so non-raid
+// triggers still work.
+const _raidRosterMembers = new Set();
+function _raidRosterHas(name) {
+  if (!name || _raidRosterMembers.size === 0) return false;
+  return _raidRosterMembers.has(String(name).toLowerCase());
+}
+
 function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
+    // Roster filter — if this action specifies a capture field that must be
+    // a live raid member, skip the action when the captured value isn't.
+    // Bypassed entirely when the raid roster is empty (haven't seen Type 5
+    // yet) so non-raid triggers and out-of-raid testing still fire.
+    if (a.require_raid_member && _raidRosterMembers.size > 0) {
+      const field = String(a.require_raid_member);
+      const val   = captures && captures[field];
+      if (!val || !_raidRosterHas(val)) {
+        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' skipped — ' + field + '=' + val + ' not a raid member');
+        continue;
+      }
+    }
     if (a.type === 'text_overlay') {
       const text = _expandTemplate(a.text || '', captures || {});
       // Spoken text: an explicit per-action `tts` wins (lets a trigger say
