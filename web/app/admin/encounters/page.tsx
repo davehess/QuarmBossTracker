@@ -47,6 +47,12 @@ type EncounterRow = {
   data_incomplete_reason: string | null;
   contribs: number;
   players: number;
+  // Characters likely to have useful log coverage for THIS encounter that
+  // aren't already in encounter_players — i.e., who could fill the gap if
+  // they re-run the agent over their old logs. Computed from raid_roster +
+  // who_observations within ±15 min of started_at. Excludes characters
+  // already in encounter_players and any flagged exclude_from_stats.
+  backfill_candidates: string[];
 };
 
 type DuplicatePair = {
@@ -58,13 +64,17 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
   // PostgREST can't do the LEFT JOIN to eqemu_npc_types cleanly without a
   // foreign-key relationship; one execute_sql round-trip is simpler here.
   // But we don't have a server-side raw SQL helper in web/lib, so two queries.
+  // Cap raised to 5000 (was 200) — at 200 the audit silently hid everything
+  // older than ~the last week of activity, so users couldn't see issues older
+  // than that. PostgREST's default 1000-row cap requires an explicit range
+  // to lift, so we set it here.
   const admin = supabaseAdmin();
   const { data: encs } = await admin
     .from('encounters')
     .select('id, npc_id, zone_short, started_at, duration_sec, total_damage, total_dps, data_incomplete, data_incomplete_reason')
     .gte('started_at', sinceIso)
     .order('started_at', { ascending: false })
-    .limit(200);
+    .range(0, 4999);
 
   // eqemu_npc_types has ~14k rows and Supabase caps unfiltered selects at 1000
   // by default, so a plain .select('id,name,hp') silently dropped every NPC
@@ -84,23 +94,85 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
     npcById.set(n.id, { name: n.name, hp: n.hp });
   }
 
-  // Pull contrib/player counts in bulk
+  // Pull contrib/player counts AND the actual player rosters in bulk so we
+  // can both render counts AND compute the gap (= candidates not in
+  // encounter_players for each encounter).
   const ids = (encs ?? []).map((e: any) => e.id);
-  const [contribCounts, playerCounts] = await Promise.all([
-    admin.from('contributions').select('encounter_id').in('encounter_id', ids),
-    admin.from('encounter_players').select('encounter_id').in('encounter_id', ids),
+  // Explicit range — PostgREST's default 1000-row cap would silently truncate
+  // contributions / encounter_players counts when many encounters are loaded.
+  const [contribCounts, playerRows] = await Promise.all([
+    admin.from('contributions').select('encounter_id').in('encounter_id', ids).range(0, 49999),
+    admin.from('encounter_players').select('encounter_id, character_name').in('encounter_id', ids).range(0, 99999),
   ]);
   const contribByEnc = new Map<string, number>();
   for (const r of (contribCounts.data ?? []) as { encounter_id: string }[]) {
     contribByEnc.set(r.encounter_id, (contribByEnc.get(r.encounter_id) ?? 0) + 1);
   }
-  const playerByEnc = new Map<string, number>();
-  for (const r of (playerCounts.data ?? []) as { encounter_id: string }[]) {
-    playerByEnc.set(r.encounter_id, (playerByEnc.get(r.encounter_id) ?? 0) + 1);
+  const playersByEnc = new Map<string, Set<string>>();
+  for (const r of (playerRows.data ?? []) as { encounter_id: string; character_name: string }[]) {
+    const set = playersByEnc.get(r.encounter_id) ?? new Set<string>();
+    set.add(r.character_name);
+    playersByEnc.set(r.encounter_id, set);
+  }
+
+  // ── Backfill candidates ───────────────────────────────────────────────
+  // For each encounter we want a list of characters who were likely THERE
+  // (so re-running the agent over their old logs could fill the gap) but
+  // who aren't already in encounter_players. Sources:
+  //   - raid_roster.captured_at within ±15 min of started_at (strongest)
+  //   - who_observations.observed_at within ±15 min of started_at (broader)
+  // Minus encounter_players, minus characters.exclude_from_stats.
+  const candByEnc = new Map<string, Set<string>>();
+  if ((encs ?? []).length > 0) {
+    const starts = (encs ?? []).map((e: any) => e.started_at).filter((s: string | null) => !!s);
+    if (starts.length > 0) {
+      const minStart = new Date(Math.min(...starts.map((s: string) => new Date(s).getTime())) - 15 * 60 * 1000).toISOString();
+      const maxStart = new Date(Math.max(...starts.map((s: string) => new Date(s).getTime())) + 15 * 60 * 1000).toISOString();
+      // PostgREST will silently cap selects — explicit range to be safe.
+      const [rosterRes, whoRes, excludedRes] = await Promise.all([
+        admin
+          .from('raid_roster')
+          .select('name, captured_at')
+          .gte('captured_at', minStart)
+          .lte('captured_at', maxStart)
+          .range(0, 9999),
+        admin
+          .from('who_observations')
+          .select('character, observed_at')
+          .gte('observed_at', minStart)
+          .lte('observed_at', maxStart)
+          .range(0, 9999),
+        admin.from('characters').select('name').eq('exclude_from_stats', true).range(0, 999),
+      ]);
+      const excludedSet = new Set((excludedRes.data ?? []).map((r: any) => String(r.name)));
+      // Bucket roster + who sightings into 15-min windows around each encounter.
+      const WINDOW_MS = 15 * 60 * 1000;
+      const sightings: Array<{ name: string; at: number }> = [];
+      for (const r of (rosterRes.data ?? []) as any[]) {
+        if (r.name && r.captured_at) sightings.push({ name: r.name, at: new Date(r.captured_at).getTime() });
+      }
+      for (const r of (whoRes.data ?? []) as any[]) {
+        if (r.character && r.observed_at) sightings.push({ name: r.character, at: new Date(r.observed_at).getTime() });
+      }
+      for (const e of (encs ?? []) as any[]) {
+        if (!e.started_at) continue;
+        const t0 = new Date(e.started_at).getTime();
+        const present = playersByEnc.get(e.id) ?? new Set<string>();
+        const cands = new Set<string>();
+        for (const s of sightings) {
+          if (Math.abs(s.at - t0) > WINDOW_MS) continue;
+          if (present.has(s.name)) continue;
+          if (excludedSet.has(s.name)) continue;
+          cands.add(s.name);
+        }
+        candByEnc.set(e.id, cands);
+      }
+    }
   }
 
   return (encs ?? []).map((e: any) => {
     const npc = e.npc_id != null ? npcById.get(e.npc_id) : null;
+    const cands = candByEnc.get(e.id);
     return {
       id: e.id,
       npc_id: e.npc_id,
@@ -114,7 +186,8 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
       data_incomplete: e.data_incomplete ?? false,
       data_incomplete_reason: e.data_incomplete_reason,
       contribs: contribByEnc.get(e.id) ?? 0,
-      players: playerByEnc.get(e.id) ?? 0,
+      players: (playersByEnc.get(e.id) ?? new Set()).size,
+      backfill_candidates: cands ? Array.from(cands).sort() : [],
     };
   });
 }
@@ -277,23 +350,55 @@ async function fileBackfillRequest(formData: FormData) {
   'use server';
   const u = await actionAssertOfficer();
   if (!u) redirect('/?error=admin_required');
-  const character    = String(formData.get('character') || '').trim();
+  // Accept either one explicit `character` field (legacy / manual entry) or
+  // multiple `characters` checkbox values from the candidate list. Empty
+  // selection is a no-op.
+  const single = String(formData.get('character') || '').trim();
+  const multi  = formData.getAll('characters').map(v => String(v).trim()).filter(Boolean);
+  const characters = Array.from(new Set([...(single ? [single] : []), ...multi]));
   const encounterId  = String(formData.get('encounter_id') || '');
   const startIso     = String(formData.get('start_iso') || '');
   const endIso       = String(formData.get('end_iso') || '');
   const reason       = String(formData.get('reason') || '').slice(0, 300);
-  if (!character || !startIso || !endIso) return;
+  if (characters.length === 0 || !startIso || !endIso) return;
   const admin = supabaseAdmin();
-  await admin.from('agent_backfill_requests').insert({
-    guild_id: 'wolfpack',
-    character,
-    requested_by_discord_id: u!.id,
-    requested_by_name: u!.email || null,
-    reason: reason || `data gap on encounter ${encounterId}`,
-    scope: { start_iso: startIso, end_iso: endIso, types: ['encounter'] },
-  }).then(({ error }) => {
-    if (error && !/duplicate key|unique/i.test(error.message)) throw error;
-  });
+  // Insert one request per character. Duplicate-key (unique index per
+  // guild/character/scope) is benign — that character already has a pending
+  // request for this window.
+  await Promise.all(characters.map(async (character) => {
+    await admin.from('agent_backfill_requests').insert({
+      guild_id: 'wolfpack',
+      character,
+      requested_by_discord_id: u!.id,
+      requested_by_name: u!.email || null,
+      reason: reason || `data gap on encounter ${encounterId}`,
+      scope: { start_iso: startIso, end_iso: endIso, types: ['encounter'] },
+    }).then(({ error }) => {
+      if (error && !/duplicate key|unique/i.test(error.message)) throw error;
+    });
+  }));
+  revalidatePath('/admin/encounters');
+}
+
+// Hard-delete an encounter and all child rows. Used to remove ghost
+// encounters: a trash mob mis-classified as a boss, an aborted pull that
+// never resolved, etc. We delete children first (contributions,
+// encounter_players, encounter_combat_rollup) and then the encounter row.
+// combat_events isn't populated yet so we don't bother. Idempotent.
+async function deleteEncounter(formData: FormData) {
+  'use server';
+  const u = await actionAssertOfficer();
+  if (!u) redirect('/?error=admin_required');
+  const id = String(formData.get('id') || '');
+  if (!id) return;
+  const admin = supabaseAdmin();
+  await admin.from('encounter_players').delete().eq('encounter_id', id);
+  await admin.from('contributions').delete().eq('encounter_id', id);
+  // Best-effort on optional child tables — table may not exist in older
+  // deployments; the catch swallows the error so the encounter still goes.
+  try { await admin.from('encounter_combat_rollup').delete().eq('encounter_id', id); } catch {}
+  try { await admin.from('combat_events').delete().eq('encounter_id', id); } catch {}
+  await admin.from('encounters').delete().eq('id', id);
   revalidatePath('/admin/encounters');
 }
 
@@ -344,7 +449,11 @@ export default async function AdminEncountersPage({
           detection, and merge / mark-incomplete / request-backfill actions.
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-7 gap-3 mt-4 text-xs">
-          <Stat label="Encounters"     value={stats.total} />
+          <Stat
+            label={stats.total >= 5000 ? 'Encounters (cap hit)' : 'Encounters'}
+            value={stats.total}
+            color={stats.total >= 5000 ? 'text-orange' : 'text-text'}
+          />
           <Stat label="Reviewable"     value={stats.reviewable} color="text-purple" />
           <Stat label="Zero damage"    value={stats.zero}  color="text-red-400" />
           <Stat label="Low HP (<75%)"  value={stats.low}   color="text-orange" />
@@ -499,10 +608,49 @@ export default async function AdminEncountersPage({
                           <input type="hidden" name="encounter_id" value={r.id} />
                           <input type="hidden" name="start_iso" value={r.started_at || ''} />
                           <input type="hidden" name="end_iso"   value={new Date(new Date(r.started_at || Date.now()).getTime() + 10 * 60 * 1000).toISOString()} />
-                          <input name="character" placeholder="character to ping" className="bg-bg border border-border rounded px-2 py-0.5 text-xs w-full" required />
+                          {r.backfill_candidates.length > 0 ? (
+                            <div className="space-y-1">
+                              <div className="text-dim text-[10px] uppercase tracking-wide">
+                                Likely there ({r.backfill_candidates.length}) — ping all that should re-run their logs
+                              </div>
+                              <div className="max-h-32 overflow-y-auto bg-bg border border-border rounded p-1 flex flex-wrap gap-1">
+                                {r.backfill_candidates.map((name) => (
+                                  <label key={name} className="inline-flex items-center gap-1 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-panel">
+                                    <input
+                                      type="checkbox"
+                                      name="characters"
+                                      value={name}
+                                      defaultChecked
+                                      className="accent-blue"
+                                    />
+                                    <span>{name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <input
+                              name="character"
+                              placeholder="character to ping (no candidates found)"
+                              className="bg-bg border border-border rounded px-2 py-0.5 text-xs w-full"
+                            />
+                          )}
                           <input name="reason" placeholder="reason (optional)" className="bg-bg border border-border rounded px-2 py-0.5 text-xs w-full" />
                           <button type="submit" className="px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white text-xs">
-                            Request backfill
+                            Request backfill from selected
+                          </button>
+                        </form>
+                        <form
+                          action={deleteEncounter}
+                          className="pt-2 border-t border-border"
+                        >
+                          <input type="hidden" name="id" value={r.id} />
+                          <button
+                            type="submit"
+                            className="px-2 py-0.5 rounded border border-red-700 bg-red-900/40 text-red-200 text-xs hover:bg-red-900/60"
+                            title="Hard-delete this encounter + its contributions + encounter_players. Use for ghost rows (trash mob mis-classified, aborted pull). Cannot be undone."
+                          >
+                            Delete encounter
                           </button>
                         </form>
                       </div>
