@@ -334,6 +334,15 @@
   // pet's started_at changes (re-charm = new session). Used to fire the warn
   // once and to detect breaks (was active, now gone/broken).
   var prevActive = new Map();
+  // key → setTimeout handle; entries while a recharm callout is scheduled but
+  // not yet spoken. Suppresses a speech if the pet's tracker entry vanishes in
+  // the defer window (intentional kill of an already-broken pet).
+  var pendingRecharm = new Map();
+  // Snapshot of the tracker key set from the most recent poll — read by
+  // deferred recharm timers so they see the latest data, not the stale set
+  // from the poll that scheduled them.
+  var _trackedKeysSnapshot = new Set();
+  function trackedKeysNow(){ return _trackedKeysSnapshot; }
   var listEl = document.getElementById('list');
   var emptyEl = document.getElementById('empty');
 
@@ -363,16 +372,35 @@
         return p.broke_at && (now - p.broke_at) < LINGER_MS;
       });
 
-      // Recharm alert fires the INSTANT a pet stops being charmed — independent
-      // of the linger above. Track charmed keys; a key that was charmed last poll
-      // and isn't now → speak once.
+      // Recharm alert fires when a pet stops being charmed — but DEFERRED 3.5s
+      // so a charm-cycler who promptly kills the now-broken mob doesn't get a
+      // false-alarm "recharm pet" call: if the pet vanishes from the tracker
+      // within the defer window (death detection's killer-guard removes it on
+      // a player kill) we cancel the pending speech. Unexpected breaks still
+      // fire after the window.
       var charmedKeys = new Set(pets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
+      // Currently-tracked keys (active OR lingering broken) — used to decide
+      // whether a pending recharm got "intentionally killed" (vanishes from
+      // tracker entirely) vs just broke (still in tracker as broken).
+      var trackedKeys = new Set((s.charmPets || []).map(function(p){ return p && p.key; }).filter(Boolean));
       for (const [key, mem] of prevActive) {
-        if (!charmedKeys.has(key)) {
-          speak('recharm pet');
+        if (!charmedKeys.has(key) && !pendingRecharm.has(key)) {
+          // Defer speech; if the pet's tracker entry disappears in this window
+          // (i.e. the charmer killed it intentionally), we cancel.
+          var t = setTimeout(function(){
+            // If the pet is GONE from the tracker by now → intentional kill,
+            // stay silent. Otherwise → real unexpected break, speak.
+            if (trackedKeysNow().has(key)) speak('recharm pet');
+            pendingRecharm.delete(key);
+          }, 3500);
+          pendingRecharm.set(key, t);
           prevActive.delete(key);
         }
       }
+      // Snapshot for any pending recharm timers that fire after this poll —
+      // they consult trackedKeysNow() (the LATEST poll's tracker), not the
+      // stale set from this iteration.
+      _trackedKeysSnapshot = trackedKeys;
 
       var html = '';
       var anyImminent = false;
