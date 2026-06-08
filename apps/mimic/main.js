@@ -2109,6 +2109,111 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
 // sections (raw section name + key/value props) so the UI Studio can render
 // a "Hotbar Pages" inspector. Helps the user see what's actually in their
 // INI and gives us format samples to refine the parser against.
+// Surgical INI writer — preserves comments, blank lines, key order, and any
+// sections we don't touch. Edits are { file, section, key, value | null } —
+// when value === null the key is REMOVED (used to drop Socials lines when the
+// user clears them). Adds the key at the end of its section if it doesn't
+// exist yet. Writes a .bak alongside (suffix matches uiStudioWriteBundle's
+// pattern) before writing the new content.
+ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
+  try {
+    const d = String(eqDir || '').trim();
+    if (!d || !Array.isArray(edits) || edits.length === 0) {
+      return { ok: false, error: 'eqDir + edits required' };
+    }
+    if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) {
+      return { ok: false, error: 'eqDir does not exist: ' + d };
+    }
+    // Group edits by file → section → key.
+    const byFile = new Map();
+    for (const e of edits) {
+      if (!e || !e.file || !e.section || !e.key) continue;
+      const fp = path.join(d, String(e.file));
+      // Path-traversal guard: must resolve inside eqDir.
+      const resolved = path.resolve(fp);
+      if (!resolved.startsWith(path.resolve(d) + path.sep)) continue;
+      if (!fs.existsSync(resolved)) continue;
+      if (!byFile.has(resolved)) byFile.set(resolved, []);
+      byFile.get(resolved).push({
+        section: String(e.section),
+        key:     String(e.key),
+        value:   e.value == null ? null : String(e.value),
+      });
+    }
+    const written = [];
+    for (const [fp, eds] of byFile) {
+      const orig = fs.readFileSync(fp, 'utf8');
+      const eol  = /\r\n/.test(orig) ? '\r\n' : '\n';
+      const lines = orig.split(/\r?\n/);
+      // Build (section, key) → desired value map; null means delete.
+      const want = new Map();
+      for (const e of eds) want.set(e.section + '' + e.key, e.value);
+      // Pass 1: walk the file, applying in-place updates / deletions. Track
+      // which section ends each section starts/ends at so we can append new
+      // keys to the right section in pass 2.
+      const sectionEnds = new Map();   // sectionName → index AFTER last line of that section
+      let curSec = null, curStart = -1;
+      const out = [];
+      for (let i = 0; i < lines.length; i++) {
+        const L = lines[i];
+        const ms = L.match(/^\s*\[([^\]]+)\]\s*$/);
+        if (ms) {
+          // Close the previous section before opening the new one.
+          if (curSec) sectionEnds.set(curSec, out.length);
+          curSec = ms[1]; curStart = out.length;
+          out.push(L);
+          continue;
+        }
+        if (curSec) {
+          const mk = L.match(/^(\s*)([\w.]+)\s*=\s*(.*?)(\s*)$/);
+          if (mk) {
+            const k = mk[2];
+            const sig = curSec + '' + k;
+            if (want.has(sig)) {
+              const newVal = want.get(sig);
+              want.delete(sig);
+              if (newVal === null) continue;   // delete line entirely
+              out.push(mk[1] + k + '=' + newVal + mk[4]);
+              continue;
+            }
+          }
+        }
+        out.push(L);
+      }
+      if (curSec) sectionEnds.set(curSec, out.length);
+      // Pass 2: append remaining (still-wanted) keys at the end of their
+      // section. Walk in reverse so we don't invalidate later indices.
+      const remaining = [...want.entries()].map(([sig, value]) => {
+        const [section, key] = sig.split('');
+        return { section, key, value };
+      }).filter(e => e.value !== null);
+      remaining.sort((a, b) => (sectionEnds.get(b.section) ?? -1) - (sectionEnds.get(a.section) ?? -1));
+      for (const e of remaining) {
+        const idx = sectionEnds.get(e.section);
+        if (idx == null) {
+          // Section doesn't exist — append a fresh one at end of file.
+          out.push('[' + e.section + ']');
+          out.push(e.key + '=' + e.value);
+        } else {
+          out.splice(idx, 0, e.key + '=' + e.value);
+          // Shift any later section ends.
+          for (const [s, n] of sectionEnds) if (n > idx) sectionEnds.set(s, n + 1);
+        }
+      }
+      const next = out.join(eol);
+      if (next === orig) { written.push({ file: path.basename(fp), unchanged: true }); continue; }
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const bakPath = fp + '.studio-' + ts + '.bak';
+      try { fs.writeFileSync(bakPath, orig); } catch {}
+      fs.writeFileSync(fp, next);
+      written.push({ file: path.basename(fp), bak: path.basename(bakPath) });
+    }
+    return { ok: true, written };
+  } catch (err) {
+    return { ok: false, error: err && err.message };
+  }
+});
+
 ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
   try {
     const c = String(character || '').trim();
