@@ -474,6 +474,46 @@ const CHARM_SPELLS = new Map([
   ['dominate undead',   { cls: 'enchanter', dur: 720 }],
 ]);
 
+// ── EQ class-title → base class ───────────────────────────────────────────────
+// A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
+// Enchanter reads "[55 Phantasmist]", a level-60 Ranger "[60 Warder]"), not the
+// base class. We normalize titles back to the base class so the /who overlay
+// shows "Enchanter", not "Phantasmist", and so class-gated logic (e.g. bard
+// detection, which checks class === 'Bard') works for titled high-levels too.
+// Classic/Titanium-era titles at 51/55/60; the base name (sub-51) passes
+// through unchanged, as does anything we don't recognize.
+const CLASS_TITLES = (() => {
+  const byClass = {
+    Warrior:       ['Champion', 'Myrmidon', 'Warlord'],
+    Cleric:        ['Vicar', 'Templar', 'High Priest'],
+    Paladin:       ['Cavalier', 'Knight', 'Crusader'],
+    Ranger:        ['Pathfinder', 'Outrider', 'Warder'],
+    'Shadow Knight': ['Reaver', 'Revenant', 'Grave Lord'],
+    Druid:         ['Wanderer', 'Preserver', 'Hierophant'],
+    Monk:          ['Disciple', 'Master', 'Grandmaster'],
+    Bard:          ['Minstrel', 'Troubadour', 'Virtuoso'],
+    Rogue:         ['Rake', 'Blackguard', 'Assassin'],
+    Shaman:        ['Mystic', 'Luminary', 'Oracle'],
+    Necromancer:   ['Heretic', 'Defiler', 'Warlock'],
+    Wizard:        ['Channeler', 'Evoker', 'Sorcerer'],
+    Magician:      ['Elementalist', 'Conjurer', 'Arch Mage'],
+    Enchanter:     ['Illusionist', 'Phantasmist', 'Coercer'],
+  };
+  const map = new Map();
+  for (const [base, titles] of Object.entries(byClass)) {
+    map.set(base.toLowerCase(), base);             // base name → itself
+    for (const t of titles) map.set(t.toLowerCase(), base);
+  }
+  // Common spelling variant.
+  map.set('shadowknight', 'Shadow Knight');
+  return map;
+})();
+function normalizeClass(raw) {
+  if (!raw) return raw;
+  const key = String(raw).trim().toLowerCase();
+  return CLASS_TITLES.get(key) || String(raw).trim();
+}
+
 // ── Event parser ────────────────────────────────────────────────────────────
 // Turn a kept line into a structured event. Returns null if we can't parse it.
 // This is intentionally conservative — unparseable lines are dropped silently
@@ -984,7 +1024,7 @@ function parseEvent(line, ts) {
       type:      'who',
       name:      m[5],
       level:     m[1] ? parseInt(m[1], 10) : null,
-      class:     m[2] ? m[2].trim() : null,
+      class:     m[2] ? normalizeClass(m[2].trim()) : null,
       anonymous: !!m[3],
       gm:        !!m[4],
       race:      m[6] || null,
