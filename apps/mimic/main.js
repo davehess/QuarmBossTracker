@@ -2757,7 +2757,15 @@ function applyAllVisibility() {
 // Bound to a tray menu item + a global hotkey (Ctrl+Shift+H by default).
 let _hideAllActive = false;
 let _hideAllPrev = null;          // { showHud, enableTriggerTts, showCharm, ... }
-const _hideAllHotkeyLabel = process.platform === 'win32' ? 'Ctrl+Shift+H' : '';
+const _DEFAULT_HIDE_HOTKEY = 'CommandOrControl+Shift+H';
+let _registeredHideAccel = null;  // the accelerator currently registered
+function _hideAllAccelerator() {
+  const cfg = loadConfig();
+  const h = (cfg && typeof cfg.hideAllHotkey === 'string' && cfg.hideAllHotkey.trim()) ? cfg.hideAllHotkey.trim() : _DEFAULT_HIDE_HOTKEY;
+  return h;
+}
+function _fmtAccel(accel) { return String(accel || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+function _hideAllHotkeyLabelNow() { const a = _hideAllAccelerator(); return a ? _fmtAccel(a) : ''; }
 function toggleHideAllOverlays() {
   const cfg = loadConfig();
   if (!_hideAllActive) {
@@ -2787,18 +2795,36 @@ function toggleHideAllOverlays() {
     Object.assign(cfg, _hideAllPrev);
     _hideAllActive = false;
     _hideAllPrev = null;
+  } else {
+    // Active but no snapshot (e.g. restarted while hidden, snapshot lost in an
+    // older build): SHOW the core overlays so the hotkey can never get stuck
+    // unable to unhide.
+    cfg.showHud = true; cfg.showCharm = true; cfg.showPets = true;
+    cfg.showMobInfo = true; cfg.showWho = true; cfg.showMelody = true; cfg.showZeal = true;
+    _hideAllActive = false;
   }
+  // Persist the toggle state so a restart-while-hidden still knows it's hidden
+  // and the hotkey restores correctly next launch (the bug: in-memory only).
+  cfg.hideAllActive = _hideAllActive;
+  cfg.hideAllPrev   = _hideAllPrev;
   saveConfig(cfg);
   applyAllVisibility();
   pushStatus();
 }
 function registerHideAllHotkey() {
-  if (process.platform !== 'win32') return;
   try {
     const { globalShortcut } = require('electron');
-    if (globalShortcut.isRegistered('CommandOrControl+Shift+H')) return;
-    const ok = globalShortcut.register('CommandOrControl+Shift+H', toggleHideAllOverlays);
-    if (!ok) appendAgentLog('[mimic] failed to register Ctrl+Shift+H hide-all hotkey\n');
+    // Restore persisted hide state so the toggle is correct across restarts.
+    const cfg = loadConfig();
+    if (typeof cfg.hideAllActive === 'boolean') _hideAllActive = cfg.hideAllActive;
+    if (cfg.hideAllPrev && typeof cfg.hideAllPrev === 'object') _hideAllPrev = cfg.hideAllPrev;
+    // (Re)register the configured accelerator, dropping any prior binding.
+    if (_registeredHideAccel) { try { globalShortcut.unregister(_registeredHideAccel); } catch {} _registeredHideAccel = null; }
+    const accel = _hideAllAccelerator();
+    if (!accel) return;
+    const ok = globalShortcut.register(accel, toggleHideAllOverlays);
+    if (ok) _registeredHideAccel = accel;
+    else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
 
@@ -3102,7 +3128,7 @@ function buildTrayMenu() {
     // their previous visibility on the next toggle. The "memory" lives in
     // _hideAllPrev so the user's pref selection is preserved across the
     // hide/show round-trip. Bindable hotkey lives in registerHideAllHotkey().
-    { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabel || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabel || 'no hotkey') + ')',
+    { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')',
       click: () => { toggleHideAllOverlays(); } },
   ];
 
@@ -3971,6 +3997,10 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
+  // Re-bind the hide-all hotkey if the user changed it in settings.
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
+    try { registerHideAllHotkey(); } catch {}
+  }
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via

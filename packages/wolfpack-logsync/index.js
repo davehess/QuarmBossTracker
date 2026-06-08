@@ -1762,6 +1762,121 @@ function targetBuffsFor(targetLower) {
   return out;
 }
 
+// ── Caster cast-correlation for buff landings ───────────────────────────────
+// Many spells SHARE a landing message — e.g. "X is surrounded by a barrier of
+// blades." is BOTH Shield of Blades (single-target) and Ancient: Legacy of
+// Blades (group). The landing text alone can't tell them apart, and the
+// tracked-buff index can resolve to the wrong one (or miss untracked spells
+// entirely). But the CASTER runs Mimic, so their own log says exactly what
+// they cast ("You begin casting Shield of Blades."). We use that to name the
+// buff that lands on their target authoritatively, and never put a group spell
+// on an NPC (a group buff simply never lands on a pet/mob, so it won't appear).
+const _recentSelfCast = new Map();   // charLower → [{ spellLower, name, atMs, target }] (newest last)
+const SELF_CAST_WINDOW_MS = 12000;
+function _zealTargetForChar(charLower) {
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== charLower) continue;
+    const st = _zealState[ch];
+    return (st && st.target_name) ? String(st.target_name) : null;
+  }
+  return null;
+}
+function noteSelfCast(line, character) {
+  if (!line || !character) return;
+  const m = line.match(/\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i);
+  if (!m) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const cl = String(character).toLowerCase();
+  // Keep a short LIST of recent casts (not just the last) — you can cast e.g.
+  // Strength then Focus of Spirit and both land in order, so a landing must be
+  // able to match any recent cast, not only the most recent.
+  let arr = _recentSelfCast.get(cl);
+  if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
+  arr.push({ spellLower: m[1].trim().toLowerCase(), name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  // Prune old / cap length.
+  const cutoff = atMs - SELF_CAST_WINDOW_MS;
+  while (arr.length && arr[0].atMs < cutoff) arr.shift();
+  if (arr.length > 8) arr.splice(0, arr.length - 8);
+}
+// If the observer recently cast a spell whose catalog cast_on_other matches
+// THIS landing line, return an authoritative buff-cast event for it (correct
+// spell + duration, even for spells the tracked-buff index doesn't carry, and
+// disambiguating spells that share a landing message). Otherwise null — the
+// caller falls back to parseBuffLanding's index match.
+function resolveSelfCastLanding(line, observer) {
+  if (!observer) return null;
+  const arr = _recentSelfCast.get(String(observer).toLowerCase());
+  if (!arr || !arr.length) return null;
+  const ts = parseEqTimestamp(line);
+  const nowMs = ts ? ts.getTime() : Date.now();
+  const m = line.match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2];
+  // Same target/suffix split as parseBuffLanding (possessive OR first space).
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);
+  const sp = body.indexOf(' ');
+  if (sp > 0) candidates.push([body.slice(0, sp), body.slice(sp + 1)]);
+  if (!candidates.length) return null;
+  // Newest cast first so the most recent matching spell wins.
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const rc = arr[i];
+    if (nowMs - rc.atMs > SELF_CAST_WINDOW_MS) continue;
+    const e = _spellByNameLower.get(rc.spellLower);
+    if (!e || !e.other) continue;
+    const expected = String(e.other).trim().toLowerCase();
+    for (const [name, suffixRaw] of candidates) {
+      if (suffixRaw.trim().toLowerCase() !== expected) continue;
+      // Attribute only to the target we were casting at (when known) so we
+      // don't mis-name a bystander's same-message buff.
+      if (rc.target && String(rc.target).toLowerCase() !== String(name).toLowerCase()) continue;
+      return {
+        target:      name,
+        spell_id:    e.id || 0,
+        spell_name:  e.name,
+        landing_text: suffixRaw.trim().slice(0, 200),
+        dur_ticks:   e.dur,
+        dur_formula: e.durf,
+        cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
+        observer:    observer,
+        _selfCast:   true,
+      };
+    }
+  }
+  return null;
+}
+// "Your pet's <Spell> spell has worn off." → drop that buff from the pet's
+// registration immediately (both the Pet tracker store and the Mob Info
+// by-target store) instead of waiting out the countdown.
+function _petNameForOwner(ownerLower) {
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== ownerLower) continue;
+    const st = _zealState[ch];
+    if (st && Array.isArray(st.gauges)) { const p = st.gauges.find(g => g && g.slot === 16 && g.text); if (p) return String(p.text); }
+    if (st && st.pet_name) return String(st.pet_name);
+  }
+  return null;
+}
+function notePetBuffWornOff(line, character) {
+  if (!line || !character) return;
+  const m = line.match(/\]\s+Your pet's\s+(.+?)\s+spell has worn off\.\s*$/i);
+  if (!m) return;
+  const spellLower = m[1].trim().toLowerCase();
+  const owner = String(character).toLowerCase();
+  const lm = _petBuffLandings.get(owner);
+  if (lm) { lm.delete(spellLower); if (lm.size === 0) _petBuffLandings.delete(owner); }
+  const rep = _petHealthByOwner.get(owner);
+  if (rep && rep.buffs) rep.buffs.delete(spellLower);
+  const petName = _petNameForOwner(owner);
+  if (petName) {
+    const tm = _buffLandingsByTarget.get(petName.toLowerCase());
+    if (tm) { tm.delete(spellLower); if (tm.size === 0) _buffLandingsByTarget.delete(petName.toLowerCase()); }
+  }
+  _savePetStateSoon();
+}
+
 // Long-term who_data registry filter — anonymous rows + level 50+. The
 // transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
 // persistent uploads only carry threat-relevant entries: low-level bank
@@ -13825,20 +13940,46 @@ function _currentTargetState() {
   }
   return best;
 }
+// Buffs for a target that is itself a watched (Mimic-running) character —
+// taken straight from their live Zeal buff slots (authoritative: real remaining
+// time). Returns null when the target isn't one of our characters, so the
+// caller falls back to observed cast-landings. Zeal gives remaining ticks only
+// (no original duration), so total_secs is null → the overlay shows the time
+// without a proportional fill.
+function _zealBuffsForName(nameLower) {
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== nameLower) continue;
+    const st = _zealState[ch];
+    const buffs = (st && Array.isArray(st.buffs)) ? st.buffs : [];
+    return buffs.filter(b => b && b.name).map(b => ({
+      name: b.name,
+      remaining_secs: (typeof b.ticks === 'number' && b.ticks > 0) ? b.ticks * 6 : null,
+      total_secs: null,
+      observed_at_ms: Date.now(),
+      source: 'zeal',
+    }));
+  }
+  return null;
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
   const norm = _normMobNameAgent(st.target_name);
   const cached = _mobInfoByName.get(norm);
   if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name);
+  // Prefer authoritative Zeal buffs when the target is one of our own
+  // characters (covers self + group members running Mimic — Mask of the
+  // Stalker, Spirit of Wolf, etc., with real remaining time). Otherwise show
+  // the buffs we observed landing on the target (mobs, other players).
+  const tnameLower = String(st.target_name).toLowerCase();
+  const zealBuffs = _zealBuffsForName(tnameLower);
   return {
     target_name:   st.target_name,
     target_hp_pct: st.target_hp_pct != null ? st.target_hp_pct : null,
     mob:           cached ? cached.mob : null,   // null until the lookup returns
     loading:       !cached,
-    // Buffs we've observed land on this exact target (mob or player), timed
-    // from the cast. Empty for targets we've never seen buffed.
-    target_buffs:  targetBuffsFor(String(st.target_name).toLowerCase()),
+    target_buffs:  zealBuffs !== null ? zealBuffs : targetBuffsFor(tnameLower),
+    target_is_pc:  zealBuffs !== null,
   };
 }
 
@@ -15273,7 +15414,16 @@ async function main() {
         // not running the agent). Cross-log dedup so a buff seen in main + alt
         // logs of one install isn't double-counted; the bot dedups across
         // separate installs by (target, spell, cast_at).
-        const bcEvt = parseBuffLanding(line, b.character);
+        // Track our own casts so a landing can be named from what WE cast
+        // (authoritative — disambiguates shared landing messages + catches
+        // spells the tracked-buff index doesn't carry).
+        if (!_sourceExcluded) noteSelfCast(line, b.character);
+        // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
+        if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
+        // Prefer the cast-correlated resolution (our own cast); fall back to the
+        // tracked-buff index match for buffs we only witnessed as a bystander.
+        const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding(line, b.character) : null)
+                   || parseBuffLanding(line, b.character);
         if (bcEvt && !_sourceExcluded) {
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
           if (!_crossLogDupe(_bcFp)) buffCastBuffer.push(bcEvt);

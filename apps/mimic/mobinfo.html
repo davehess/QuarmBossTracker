@@ -227,24 +227,30 @@
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
   function fmtSecs(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m=Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
-  // Buffs observed on the current target (mob or player), timed from the cast.
+  // Buffs on the current target. For our own characters these are live Zeal
+  // buffs (real remaining time, no original duration → full bar). For mobs /
+  // other players they're observed cast-landings (proportional bar).
   function renderTargetBuffs(mi){
     var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs : null;
     if (!buffs || !buffs.length) return '';
     var rows = '';
     for (var i=0;i<buffs.length;i++){
       var b = buffs[i]; if (!b || !b.name) continue;
-      var hasTimer = b.remaining_secs != null && b.total_secs;
-      var pct = hasTimer ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : 0;
-      var col = !hasTimer ? '#6e7681' : (b.remaining_secs > 30 ? '#a371f7' : (b.remaining_secs > 10 ? '#f0883e' : '#f85149'));
-      rows += '<div class="tbuff" title="'+esc(b.name)+(hasTimer?(' · '+fmtSecs(b.remaining_secs)+' left (timed from the cast)'):' · present')+'">'
+      var hasRem   = b.remaining_secs != null;
+      var hasTotal = hasRem && b.total_secs;
+      // Proportional when we know the original duration; otherwise a full bar
+      // (we know it's up + how long is left, just not the % elapsed).
+      var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
+      var col = !hasRem ? '#6e7681' : (b.remaining_secs > 30 ? '#a371f7' : (b.remaining_secs > 10 ? '#f0883e' : '#f85149'));
+      rows += '<div class="tbuff" title="'+esc(b.name)+(hasRem?(' · '+fmtSecs(b.remaining_secs)+' left'):' · present')+'">'
            +    '<span class="bn">'+esc(b.name)+'</span>'
            +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
-           +    '<span class="bt">'+(hasTimer?fmtSecs(b.remaining_secs):'?')+'</span>'
+           +    '<span class="bt">'+(hasRem?fmtSecs(b.remaining_secs):'?')+'</span>'
            +  '</div>';
     }
     if (!rows) return '';
-    return '<div class="tbuffs"><div class="hdr">observed buffs</div>'+rows+'</div>';
+    var hdr = (mi && mi.target_is_pc) ? 'buffs (live)' : 'observed buffs';
+    return '<div class="tbuffs"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
   }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
