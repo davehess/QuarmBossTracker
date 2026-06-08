@@ -106,6 +106,8 @@
     <label>Character
       <select id="charSelect"><option value="">— pick —</option></select>
     </label>
+    <span id="eqDirLabel" style="font-size:10px;color:#6e7681;max-width:240px;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap" title=""></span>
     <span class="sep"></span>
     <!-- Source/Target use a preset <select> + freeform W×H inputs. The
          dropdown's "Custom…" sentinel keeps the four most-common values one
@@ -149,6 +151,14 @@
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <span id="status"></span>
+  </div>
+  <!-- Deferred-save banner — shown while a save is scheduled to apply when the
+       character logs out. -->
+  <div id="deferBanner" style="display:none;align-items:center;gap:10px;padding:6px 12px;
+       background:#1c2330;border-bottom:1px solid #d6a922;color:#f0d264;font-size:11px">
+    <span class="txt"></span>
+    <button id="deferCancel" style="margin-left:auto;background:#21262d;color:#c9d1d9;
+       border:1px solid #30363d;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Cancel</button>
   </div>
   <!-- PvP-set prompt — slides in from the top when the loaded character's
        class matches a bundled template. User can dismiss or open the
@@ -243,6 +253,21 @@
     } catch (e) { setStatus('IPC unavailable — open via tray', 'err'); }
   }
   bootstrap();
+
+  // Show the active EQ folder for the picked character — so a multi-folder user
+  // can see which install they're editing (the dropdown only shows the name).
+  function _showEqDir(dir){
+    var el = document.getElementById('eqDirLabel');
+    if (!el) return;
+    if (!dir) { el.textContent = ''; el.title = ''; return; }
+    var parts = String(dir).split(/[\\/]/).filter(Boolean);
+    var tail = parts.slice(-2).join('\\');     // last two path segments
+    el.textContent = '📁 …\\' + tail;
+    el.title = dir;
+  }
+  document.getElementById('charSelect').addEventListener('change', function(){
+    var v = this.value; _showEqDir(v ? v.split('|')[1] : '');
+  });
 
   // ── INI parsing ──────────────────────────────────────────────────────────
   // EQ INI sections like:
@@ -512,6 +537,7 @@
     var parts = sel.split('|');
     STATE.character = parts[0];
     STATE.eqDir     = parts[1];
+    _showEqDir(STATE.eqDir);
     // Read the W/H inputs (source of truth — preset dropdown is just a picker).
     var sW = parseInt(document.getElementById('srcW').value, 10);
     var sH = parseInt(document.getElementById('srcH').value, 10);
@@ -1088,74 +1114,123 @@
     renderStage();
     setStatus('reset to last load', 'ok');
   });
-  document.getElementById('saveBtn').addEventListener('click', async function(){
-    if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
-    // EQ keeps the UI layout in memory while running: "Load UI Skin → Keep Your
-    // Layout" does NOT re-read this file, and EQ overwrites it on the next camp/
-    // zone/quit. So a save while EQ is open silently won't apply (and gets
-    // clobbered). Warn + let the user bail before we touch the file.
-    var eqRunning = false;
-    try { eqRunning = await window.mimic.uiStudioIsEqRunning(); } catch (e) {}
-    if (eqRunning) {
-      var go = window.confirm(
-        'EverQuest is running.\n\n' +
-        'EQ keeps your window layout in memory while it runs:\n' +
-        '  • "Load UI Skin → Keep Your Layout" will NOT re-read this file.\n' +
-        '  • EQ overwrites it on the next camp / zone / quit.\n\n' +
-        'To make changes stick: fully EXIT EverQuest, then Save, then log the\n' +
-        'character back in (EQ reads window positions at login).\n\n' +
-        'Save anyway?');
-      if (!go) { setStatus('Save cancelled — fully exit EQ, then Save, then log back in.', 'err'); return; }
-    }
-    // Write rescaled coords into the TARGET resolution's suffix block
-    // (XPos<tgtW>x<tgtH> / YPos<tgtW>x<tgtH>). If that block doesn't exist
-    // yet, emitIni inserts it — leaving the original source-resolution block
-    // intact. EQ then reads whichever block matches the resolution you launch
-    // at, so one INI can carry layouts for several monitors.
+  // Build the { filename → new text } bundle for the current edits, writing
+  // into the TARGET resolution's suffix block (XPos<W>x<H>); emitIni inserts
+  // the block if absent, leaving other-resolution blocks intact.
+  function _buildSaveBundle(){
     var tgtSuffix = STATE.tgtW + 'x' + STATE.tgtH;
-    var edits = {};   // file → { sectionName → { XPos<res>, YPos<res>, Width, Height } }
+    var edits = {};
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       if (!edits[w.file]) edits[w.file] = {};
       var e = {};
       e['XPos' + tgtSuffix] = w.x;
       e['YPos' + tgtSuffix] = w.y;
-      // Only (re)write Width/Height for windows that already carried a size —
-      // never fabricate one for an auto-sizing window.
-      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }
+      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }   // never fabricate a size
       edits[w.file][w.section] = e;
     }
-    // Emit new file contents.
     var newBundle = {};
     for (var fname in edits) {
       var parsed = STATE.bundle[fname + '__parsed'];
       if (!parsed) continue;
       newBundle[fname] = emitIni(parsed, edits[fname]);
     }
-    setStatus('saving…');
+    return { newBundle: newBundle, tgtSuffix: tgtSuffix };
+  }
+
+  // Is this character currently logged in? We ask the agent's Zeal state — a
+  // character with a live Zeal pipe is in-game right now.
+  async function _isCharActiveInZeal(charLower){
     try {
-      var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle);
-      if (res && res.ok) {
-        // EQ only loads window positions when the character ENTERS THE WORLD,
-        // and it reads the block matching its actual resolution. Surface both
-        // so a save doesn't look like it "did nothing".
-        var resWarn = '';
-        try {
-          var disp = await window.mimic.uiStudioListDisplays();
-          if (disp && disp.primary && (disp.primary.w !== STATE.tgtW || disp.primary.h !== STATE.tgtH)) {
-            resWarn = ' · ⚠ your monitor is ' + disp.primary.w + '×' + disp.primary.h +
-              ' — set Target to that (🖥 Detect) or EQ reads a different block';
-          }
-        } catch (e2) {}
-        var tail = eqRunning
-          ? ' · ⚠ EQ is running — fully exit it, then log back in, or it overwrites this on camp/zone/quit'
-          : ' · log the character in to apply (EQ reads window positions at login, not on a skin reload)';
-        setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix + ' block' + tail + resWarn,
-          (eqRunning || resWarn) ? 'err' : 'ok');
+      var r = await fetch('http://127.0.0.1:7779/api/state', { cache: 'no-store' });
+      var s = await r.json();
+      var clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+      return clients.some(function(c){ return c && String(c.character).toLowerCase() === charLower; });
+    } catch (e) { return null; }   // null = unknown (agent not reachable)
+  }
+
+  async function _writeBundle(newBundle, tgtSuffix, opts){
+    var deferred = opts && opts.deferred;
+    var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle, deferred ? { backupTag: 'eq' } : null);
+    if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
+    var resWarn = '';
+    try {
+      var disp = await window.mimic.uiStudioListDisplays();
+      if (disp && disp.primary && (disp.primary.w !== STATE.tgtW || disp.primary.h !== STATE.tgtH)) {
+        resWarn = ' · ⚠ your monitor is ' + disp.primary.w + '×' + disp.primary.h +
+          ' — set Target to that (🖥 Detect) or EQ reads a different block';
       }
-      else setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
-    } catch (e) { setStatus('save failed: ' + e.message, 'err'); }
+    } catch (e2) {}
+    if (deferred) {
+      setStatus('✅ applied ' + Object.keys(newBundle).length + ' file(s) now that ' + STATE.character +
+        ' logged out — EQ\'s last copy backed up as .bak-eq. Log back in to see it.' + resWarn, resWarn ? 'err' : 'ok');
+    } else {
+      setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix +
+        ' block · log the character in to apply (EQ reads positions at login)' + resWarn, resWarn ? 'err' : 'ok');
+    }
+    return true;
+  }
+
+  // Deferred save: hold the edits and apply them automatically once the
+  // character leaves the Zeal pipe (logged out) — at which point EQ has written
+  // its final layout and won't clobber ours. Requires UI Studio to stay open.
+  var _deferTimer = null;
+  function _cancelDefer(silent){
+    if (_deferTimer) { clearInterval(_deferTimer); _deferTimer = null; }
+    STATE._deferred = null;
+    var b = document.getElementById('deferBanner'); if (b) b.style.display = 'none';
+    if (!silent) setStatus('scheduled save cancelled', 'ok');
+  }
+  function _queueDefer(newBundle, tgtSuffix){
+    _cancelDefer(true);
+    STATE._deferred = { character: STATE.character, eqDir: STATE.eqDir, newBundle: newBundle, tgtSuffix: tgtSuffix, charLower: STATE.character.toLowerCase() };
+    var b = document.getElementById('deferBanner');
+    if (b) {
+      b.style.display = 'flex';
+      b.querySelector('.txt').textContent = '⏳ Scheduled: your layout will apply automatically when ' +
+        STATE.character + ' logs out of EverQuest. Keep UI Studio open.';
+    }
+    setStatus('scheduled — will apply when ' + STATE.character + ' logs out (keep UI Studio open)', 'ok');
+    var sawActive = false;
+    _deferTimer = setInterval(async function(){
+      var d = STATE._deferred; if (!d) { _cancelDefer(true); return; }
+      var active = await _isCharActiveInZeal(d.charLower);
+      if (active === null) return;            // agent unreachable — keep waiting
+      if (active) { sawActive = true; return; } // still logged in
+      if (!sawActive) return;                 // never confirmed in-game yet; wait
+      // Logged out after being seen in-game → EQ wrote its final layout; apply
+      // ours over it now (give EQ a beat to finish its logout write first).
+      var pending = STATE._deferred; _cancelDefer(true);
+      setTimeout(function(){
+        STATE.character = pending.character; STATE.eqDir = pending.eqDir;
+        _writeBundle(pending.newBundle, pending.tgtSuffix, { deferred: true });
+      }, 4000);
+    }, 8000);
+  }
+
+  document.getElementById('saveBtn').addEventListener('click', async function(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
+    var built = _buildSaveBundle();
+    // Is the character logged in right now? If so, a plain Save won't apply
+    // (EQ keeps the layout in memory, ignores it on a skin reload, and
+    // overwrites the file on the next camp/zone/quit). Offer to schedule.
+    var active = await _isCharActiveInZeal(STATE.character.toLowerCase());
+    if (active) {
+      var schedule = window.confirm(
+        STATE.character + ' is logged into EverQuest right now.\n\n' +
+        'EQ keeps the UI layout in memory while in-game and OVERWRITES this file\n' +
+        'when the character camps / zones / quits — so saving now usually won\'t\n' +
+        'stick, and a skin reload won\'t re-read it.\n\n' +
+        'OK  = schedule it: apply automatically when ' + STATE.character + ' logs out\n' +
+        '         (recommended — keep UI Studio open)\n' +
+        'Cancel = save right now anyway');
+      if (schedule) { _queueDefer(built.newBundle, built.tgtSuffix); return; }
+    }
+    setStatus('saving…');
+    try { await _writeBundle(built.newBundle, built.tgtSuffix, { deferred: false }); }
+    catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
+  document.getElementById('deferCancel').addEventListener('click', function(){ _cancelDefer(false); });
 
   // ── Capture / Backup / Inspect Socials ───────────────────────────────────
   // Surfaces the existing _readUiBundle + ui-studio-capture cloud-backup

@@ -738,19 +738,23 @@ async function _isEqRunning() {
     } catch { resolve(false); }
   });
 }
-function _backupAndWriteFile(targetPath, contents) {
+function _backupAndWriteFile(targetPath, contents, backupTag) {
   // Atomic-ish: backup existing first (so a partial write can be reverted),
   // then write to <target>.tmp + rename. Renaming a same-filesystem path is
   // atomic on Windows when the destination doesn't exist + via MoveFileEx
-  // otherwise (Node handles it).
+  // otherwise (Node handles it). backupTag labels the .bak so the user can tell
+  // a UI-Studio save (no tag) from EQ's own last-written copy (tag 'eq') that a
+  // deferred save replaced after logout.
   const ts = Date.now();
+  const tag = backupTag ? `bak-${backupTag}` : 'bak';
+  const bakPath = `${targetPath}.${tag}-${ts}`;
   if (fs.existsSync(targetPath)) {
-    fs.copyFileSync(targetPath, targetPath + `.bak-${ts}`);
+    fs.copyFileSync(targetPath, bakPath);
   }
   const tmp = targetPath + `.tmp-${ts}`;
   fs.writeFileSync(tmp, contents, 'utf8');
   fs.renameSync(tmp, targetPath);
-  return targetPath + `.bak-${ts}`;
+  return bakPath;
 }
 function _clampUiIni(contents, screenW, screenH) {
   // Walk every line; when we see XPos/YPos = N, clamp to (0, screenW - minW)
@@ -1853,7 +1857,7 @@ ipcMain.handle('ui-studio-read-bundle', (_e, character, eqDir) => {
 // Write the edited bundle back to disk with .bak backups (via
 // _backupAndWriteFile). Only writes files explicitly present in the
 // bundle map — unchanged INIs are left alone, never accidentally cleared.
-ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
+ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
   try {
     const d = String(eqDir || '').trim();
     if (!d || !bundle || typeof bundle !== 'object') {
@@ -1862,6 +1866,10 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
     if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) {
       return { ok: false, error: 'eqDir does not exist: ' + d };
     }
+    // backupTag distinguishes the .bak — a deferred save (applied after the
+    // character logged out) tags it 'eq' so the user sees that the replaced
+    // copy was EQ's own last-written layout, not a prior UI Studio save.
+    const backupTag = (opts && /^[\w-]{1,16}$/.test(String(opts.backupTag || ''))) ? String(opts.backupTag) : null;
     const written = [];
     for (const [name, contents] of Object.entries(bundle)) {
       if (typeof contents !== 'string' || contents.length === 0) continue;
@@ -1869,7 +1877,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle) => {
       // traversal, no overwriting files outside the directory.
       if (!/^[\w.-]+\.ini$/i.test(name)) continue;
       const target = path.join(d, name);
-      _backupAndWriteFile(target, contents);
+      _backupAndWriteFile(target, contents, backupTag);
       written.push(name);
     }
     return { ok: true, written, count: written.length };

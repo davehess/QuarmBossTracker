@@ -77,7 +77,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // graphical resolution-rescaling editor. Read returns a raw filename →
   // text map; write takes the edited map and persists with .bak backups.
   uiStudioReadBundle:     (character, eqDir) => ipcRenderer.invoke('ui-studio-read-bundle', character, eqDir),
-  uiStudioWriteBundle:    (eqDir, bundle)    => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle),
+  uiStudioWriteBundle:    (eqDir, bundle, opts) => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle, opts),
   // Open the standalone UI Studio editor window from the dashboard's nav.
   openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
   // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
