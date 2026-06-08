@@ -453,6 +453,15 @@
             mem.durWarned = true; warnHit = true;
             speak(isBard ? 'charm breaking' : 'charm breaking in 30 seconds');
           }
+          // Bard-only "recharm NOW" — fires when ≤ 3.1s remain in the current
+          // charm. Selo's Consonant Chain (the canonical Quarm bard charm song)
+          // casts in ~3s, so 3.1s left is exactly the "start the recast now or
+          // miss the cycle" mark. Strictly bard-class (not durEst guess) so an
+          // enchanter on an estimated duration doesn't get a mistimed alert.
+          if (p.charm_class === 'bard' && !durEst && !p.is_dire_charm && !mem.recharmNowWarned && durRemMs <= 3100 && durRemMs > 0) {
+            mem.recharmNowWarned = true; warnHit = true;
+            speak('recharm now');
+          }
         }
 
         var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (broke ? ' broke' : '') + (warnHit ? ' warn' : '') + (imminent ? ' imminent' : '');
