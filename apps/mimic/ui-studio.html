@@ -367,7 +367,21 @@
         });
       }
     }
-    setStatus('loaded ' + STATE.windows.length + ' windows · rescaled ' + STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH, 'ok');
+    if (STATE.windows.length === 0) {
+      // Window-position data lives in EQ's UI_<char>_<server>.ini, which is
+      // only written when the character has run `/saveui` in-game. Other ini
+      // files (per-char settings, sockets/socials) carry hotbars/keybinds
+      // but NOT window XPos/YPos — so loading "0 windows" almost always
+      // means /saveui hasn't been done yet for this character.
+      setStatus(
+        'No saved window layout for ' + STATE.character + '. In EQ, type ' +
+        '/saveui to generate the UI_' + STATE.character + '_pq.proj.ini file, ' +
+        'then click Load + Rescale. (Hotbar Pages still works without this.)',
+        'err'
+      );
+    } else {
+      setStatus('loaded ' + STATE.windows.length + ' windows · rescaled ' + STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH, 'ok');
+    }
     renderStage();
     maybePromptPvpSet().catch(function(){});
   }
@@ -770,28 +784,84 @@
       'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px">×</button>' +
       '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 Hotbar / Socials inspector</h2>' +
       '<p style="color:#8b949e;font-size:10px;margin:0 0 10px;font-family:sans-serif">' +
-      'Raw section dump from your Sock_/Socials_ INI files. Use this to ' +
-      'find the section/key shape we need to parse — paste a sample of any ' +
-      'page that looks parseable into a Discord message and we\'ll refine ' +
-      'the capture heuristic.</p>';
+      'Per-page Hotbar + Socials view, parsed from your character INI. ' +
+      'Raw section dump is at the bottom for reference.</p>';
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
-      html += '<div style="margin-bottom:10px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+      html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
         escapeHtml(f.file) + ' <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
         (f.sections ? f.sections.length : 0) + ' sections)</span></div>';
+      // Per-page friendly view — HotButtons + Socials grouped by page.
+      var pgs = f.pages || { hotbuttons: {}, socials: {} };
+      var hotPages = Object.keys(pgs.hotbuttons || {}).map(function(n){ return parseInt(n,10); }).sort(function(a,b){return a-b;});
+      var socPages = Object.keys(pgs.socials   || {}).map(function(n){ return parseInt(n,10); }).sort(function(a,b){return a-b;});
+      var allPages = Array.from(new Set(hotPages.concat(socPages))).sort(function(a,b){return a-b;});
+      if (allPages.length === 0) {
+        html += '<div style="color:#8b949e;font-size:10px;margin:4px 0">no [HotButtons] or [Socials] page data in this file.</div>';
+      } else {
+        html += '<div style="margin:4px 0 6px;color:#7ee7c7;font-size:10px;font-family:sans-serif">' +
+          allPages.length + ' page' + (allPages.length === 1 ? '' : 's') + ' with data — Shift+' + (allPages[0]+1) + ' through Shift+' + (allPages[allPages.length-1]+1) + ' for the in-game shortcut</div>';
+        for (var ap = 0; ap < allPages.length; ap++) {
+          var P = allPages[ap];
+          var hots = (pgs.hotbuttons || {})[P] || {};
+          var socs = (pgs.socials || {})[P] || {};
+          var hotBtns = Object.keys(hots).map(function(n){return parseInt(n,10);}).sort(function(a,b){return a-b;});
+          var socBtns = Object.keys(socs).map(function(n){return parseInt(n,10);}).sort(function(a,b){return a-b;});
+          html += '<details ' + (ap === 0 ? 'open ' : '') + 'style="margin-bottom:6px;background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
+            '<summary style="color:#79c0ff;cursor:pointer;font-family:sans-serif">Page ' + P +
+            ' <span style="color:#8b949e;font-size:10px">(Shift+' + (P+1) + ')</span>' +
+            ' <span style="color:#8b949e;font-size:10px">— ' + hotBtns.length + ' hotbutton' + (hotBtns.length===1?'':'s') +
+            ', ' + socBtns.length + ' social' + (socBtns.length===1?'':'s') + '</span></summary>';
+          if (hotBtns.length > 0) {
+            html += '<div style="margin:6px 0 3px;color:#a371f7;font-size:10px;font-weight:600;font-family:sans-serif">HotButtons</div>';
+            for (var hb = 0; hb < hotBtns.length; hb++) {
+              var B = hotBtns[hb];
+              html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
+                '<span style="color:#c9d1d9">Button ' + B + '</span> = ' +
+                '<span style="color:#f6c365">' + escapeHtml(hots[B]) + '</span></div>';
+            }
+          }
+          if (socBtns.length > 0) {
+            html += '<div style="margin:8px 0 3px;color:#56d364;font-size:10px;font-weight:600;font-family:sans-serif">Socials</div>';
+            for (var sb = 0; sb < socBtns.length; sb++) {
+              var SB = socBtns[sb];
+              var cell = socs[SB] || { name: null, color: null, lines: [] };
+              html += '<div style="margin:4px 0;padding:4px 6px;background:#161b22;border:1px solid #21262d;border-radius:3px">' +
+                '<div style="color:#c9d1d9;font-size:11px">Button ' + SB + ': ' +
+                '<b style="color:#56d364">' + escapeHtml(cell.name || '(unnamed)') + '</b>' +
+                (cell.color != null ? ' <span style="color:#8b949e;font-size:9px">color=' + cell.color + '</span>' : '') +
+                '</div>';
+              for (var ln = 0; ln < cell.lines.length; ln++) {
+                html += '<div style="padding-left:8px;color:#9aa4ad;font-size:10px">' +
+                  '<span style="color:#8b949e">L' + (ln+1) + ':</span> ' + escapeHtml(cell.lines[ln]) + '</div>';
+              }
+              html += '</div>';
+            }
+          }
+          html += '</details>';
+        }
+      }
+      // Raw section dump (for shapes we don't yet group). All keys now —
+      // the old 8-key truncation hid Quarm's flat-key HotButtons / Socials
+      // sections, which is what made the inspector look "incomplete".
       var sections = f.sections || [];
-      // Cap rendered sections so a 500-section file doesn't lock the DOM.
+      html += '<details style="margin-top:8px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
+        '<summary style="color:#8b949e;cursor:pointer;font-family:sans-serif;font-size:10px">▸ raw section dump (' + sections.length + ' sections)</summary>';
       for (var s = 0; s < Math.min(sections.length, 60); s++) {
         var sec = sections[s];
-        var propKeys = Object.keys(sec.props).slice(0, 8);
-        html += '<details style="margin-bottom:3px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
+        var propKeys = Object.keys(sec.props);
+        html += '<details style="margin:3px 0 3px 6px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
           '<summary style="color:#79c0ff;cursor:pointer">[' + escapeHtml(sec.name) + '] ' +
           '<span style="color:#8b949e;font-size:10px">(' + propKeys.length + ' keys)</span></summary>';
-        for (var p = 0; p < propKeys.length; p++) {
+        for (var p = 0; p < Math.min(propKeys.length, 300); p++) {
           var key = propKeys[p];
           html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
             '<span style="color:#c9d1d9">' + escapeHtml(key) + '</span> = ' +
             escapeHtml(sec.props[key]) + '</div>';
+        }
+        if (propKeys.length > 300) {
+          html += '<div style="color:#8b949e;font-size:10px;padding-left:6px">… and ' +
+            (propKeys.length - 300) + ' more keys.</div>';
         }
         html += '</details>';
       }
@@ -799,6 +869,7 @@
         html += '<div style="color:#8b949e;font-size:10px;margin-top:4px">… and ' +
           (sections.length - 60) + ' more sections (use a text editor to see them all).</div>';
       }
+      html += '</details>';
       html += '</div>';
     }
     dlg.innerHTML = html;

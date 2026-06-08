@@ -701,6 +701,26 @@ function _readUiBundle(eqDir, character) {
       }
     } catch {}
   }
+  // Also glob: pick up UI_<char>*.ini variants (any server suffix). The
+  // canonical Quarm name is UI_<C>_pq.proj.ini, but a user who swapped
+  // servers or used /loadskin under a different suffix would otherwise have
+  // their window-layout file silently skipped — leaving "0 windows" loaded
+  // even though the data is right there in the EQ folder.
+  try {
+    const cLower = String(character).toLowerCase();
+    for (const f of fs.readdirSync(eqDir)) {
+      if (files[f]) continue;
+      const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
+      if (!m || m[1].toLowerCase() !== cLower) continue;
+      try {
+        const fp = path.join(eqDir, f);
+        const stat = fs.statSync(fp);
+        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
+          files[f] = fs.readFileSync(fp, 'utf8');
+        }
+      } catch {}
+    }
+  } catch {}
   return files;
 }
 async function _isEqRunning() {
@@ -2021,9 +2041,10 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
       try {
         const text = fs.readFileSync(fp, 'utf8');
         // Quick section parse — same algorithm the ui-studio renderer uses.
-        // Output a section list with the first 8 props each so the inspector
-        // panel stays readable on big socials files (some users have 200+
-        // sections across all pages).
+        // We keep ALL keys per section now (was capped at 8) because [HotButtons]
+        // and [Socials] are flat-key sections that can carry hundreds of
+        // Page<P>Button<N>… entries; truncating made the inspector look
+        // "incomplete" and hid most of the user's actual hotbars.
         const sections = [];
         const lines = text.split(/\r?\n/);
         let cur = null;
@@ -2038,7 +2059,44 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
           const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
           if (kv) cur.props[kv[1]] = kv[2];
         }
-        files.push({ file: name, section_count: sections.length, sections });
+        // Structured view: group [HotButtons] + [Socials] flat keys by
+        // (page, button) so the renderer can show a hotbar-per-page grid.
+        // Quarm's per-char ini uses the flattened shape:
+        //   [HotButtons] Page<P>Button<N> = <hotkey>        (e.g. E18)
+        //   [Socials]    Page<P>Button<N>Name  = <label>
+        //                Page<P>Button<N>Color = <int>
+        //                Page<P>Button<N>Line<M> = <command>
+        const pages = { hotbuttons: {}, socials: {} };
+        for (const sec of sections) {
+          if (sec.name === 'HotButtons') {
+            for (const [k, v] of Object.entries(sec.props)) {
+              const mk = k.match(/^Page(\d+)Button(\d+)$/i);
+              if (!mk) continue;
+              const [, P, B] = mk;
+              if (!pages.hotbuttons[P]) pages.hotbuttons[P] = {};
+              pages.hotbuttons[P][B] = v;
+            }
+          } else if (sec.name === 'Socials') {
+            for (const [k, v] of Object.entries(sec.props)) {
+              const mk = k.match(/^Page(\d+)Button(\d+)(Name|Color|Line(\d+))$/i);
+              if (!mk) continue;
+              const [, P, B, field, lineNo] = mk;
+              if (!pages.socials[P]) pages.socials[P] = {};
+              if (!pages.socials[P][B]) pages.socials[P][B] = { name: null, color: null, lines: [] };
+              const cell = pages.socials[P][B];
+              if (/^Name$/i.test(field))  cell.name  = String(v);
+              else if (/^Color$/i.test(field)) cell.color = parseInt(v, 10) || 0;
+              else if (lineNo)            cell.lines[parseInt(lineNo, 10) - 1] = String(v);
+            }
+            // Compact sparse lines arrays so undefined slots don't show.
+            for (const P of Object.keys(pages.socials)) {
+              for (const B of Object.keys(pages.socials[P])) {
+                pages.socials[P][B].lines = pages.socials[P][B].lines.filter(x => x != null && x !== '');
+              }
+            }
+          }
+        }
+        files.push({ file: name, section_count: sections.length, sections, pages });
       } catch (err) {
         files.push({ file: name, error: err && err.message });
       }
