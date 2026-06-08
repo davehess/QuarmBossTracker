@@ -1245,6 +1245,10 @@ function _reconcileGaugeCharms() {
       // Already active — clear any stale pending entry so a re-charm after
       // a break still requires its own two-frame debounce.
       _pendingGaugeCharms.get(ownerLower)?.delete(k);
+      // Refresh last_tick_at as a "still alive" signal from the gauge — keeps
+      // the break detector below from firing during a long gap between actual
+      // 6s mob ticks (e.g. between encounters).
+      cur.last_tick_at = now;
     }
   }
   // Drop pending entries whose pet is no longer in slot 16 (transient pulse).
@@ -1260,7 +1264,13 @@ function _reconcileGaugeCharms() {
     const ol = String(info.owner).toLowerCase();
     if (!gaugeOwners.has(ol)) continue;                       // bystander → log-managed
     const set = gaugePets.get(ol);
-    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 3000) {
+    // Grace 10s: an enchanter re-charming the SAME pet removes it from slot
+    // 16 for the duration of the charm spell (3.5-4s) plus reconciler lag —
+    // the previous 3s threshold fired a false 'break' during normal cycling,
+    // which made the overlay speak 'recharm pet' even though the same mob got
+    // re-charmed seconds later. 10s easily covers a normal re-cast while a
+    // real break (gauge never returns) still fires promptly.
+    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 10000) {
       _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break (alert fires now)
     }
   }
