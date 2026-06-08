@@ -509,9 +509,9 @@
           }
           var harmonizeOrResonance = st.bardBuffs.harmonize
             ? _utilRow('Harmonize',   st.bardBuffs.harmonize, !!casting.harmonize_resonance, 'From Shadowsong Cloak — replaces Resonance')
-            : _utilRow('Resonance',   st.bardBuffs.resonance, !!casting.harmonize_resonance, 'From Shadowsong Cloak');
+            : _utilRow('Resonance',   st.bardBuffs.resonance, !!casting.harmonize_resonance, 'From Voice of the Serpent');
           bardBuffsHtml = '<div class="bardbuffs">'
-                        + _utilRow('Amplification',          st.bardBuffs.amplification,        !!casting.amplification,       'From Voice of the Serpent')
+                        + _utilRow('Amplification',          st.bardBuffs.amplification,        !!casting.amplification,       'Bard self-buff')
                         + harmonizeOrResonance
                         + _utilRow("Selo`s Accel. Chorus",   st.bardBuffs.accelerating_chorus,  !!casting.accelerating_chorus, 'Group-wide haste utility')
                         + _utilRow("Niv`s Melody",           st.bardBuffs.nivs,                 !!casting.nivs,                'Niv`s Melody of Preservation → Breath of Harmony')
