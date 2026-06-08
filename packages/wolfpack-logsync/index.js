@@ -6803,6 +6803,7 @@ var WP_OVERLAY_ROWS = [
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
   ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks, drop table.'],
+  ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
 ];
@@ -6867,7 +6868,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, who: !!st.showWho };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
