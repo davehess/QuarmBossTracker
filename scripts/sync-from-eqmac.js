@@ -464,6 +464,7 @@ const TRANSFORMS = {
       'effect_id_1', 'effect_base_value_1', 'effect_id_2', 'effect_base_value_2', 'effect_id_3', 'effect_base_value_3',
       'cast_time', 'recast_time', 'pushback', 'zonetype',
       'cast_on_you', 'cast_on_other', 'spell_fades',
+      'goodEffect', 'good_effect',
     ]);
     if (!r.id || !r.name) return null;
     // EQEmu has historically used both `effectid1` and `effect_id_1` styles
@@ -484,6 +485,9 @@ const TRANSFORMS = {
       cast_on_you: r.cast_on_you || null,
       cast_on_other: r.cast_on_other || null,
       spell_fades: r.spell_fades || null,
+      // 1 = beneficial (buff), 0 = detrimental (debuff). Drives buff/debuff
+      // coloring in the overlays. EQEmu column is `goodEffect`; accept snake too.
+      good_effect: eff('good_effect', 'goodEffect'),
     };
   },
   // NPC spell-list metadata. id = the list (referenced by eqemu_npc_types.

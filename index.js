@@ -4509,7 +4509,7 @@ async function _handleAgentSpellCatalog(req, res) {
       const entries = [];
       let from = 0;
       const PAGE = 1000;
-      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time';
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect';
       while (true) {
         // PostgREST paging via Range header is wrapped by Supabase's REST API
         // as offset/limit query params. We pass them as `&offset=X&limit=Y`
@@ -4522,13 +4522,16 @@ async function _handleAgentSpellCatalog(req, res) {
             id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
             dur: r.buffduration, durf: r.buffdurationformula,
             cast_ms: r.cast_time,
+            // 1 = beneficial (buff), 0 = detrimental (debuff); null until the
+            // eqemu sync populates good_effect. Lets overlays color buff/debuff.
+            good: (r.good_effect == null ? null : (Number(r.good_effect) ? 1 : 0)),
           });
         }
         if (data.length < PAGE) break;
         from += PAGE;
       }
       const body = JSON.stringify({
-        version: 3,   // v3 adds cast_ms per entry (long-cast clicky support)
+        version: 4,   // v4 adds `good` (beneficial flag) per entry
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
