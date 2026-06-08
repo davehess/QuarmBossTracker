@@ -35,6 +35,13 @@
   .bardbuffs .util-t.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
   .bardbuffs .util-t.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .bardbuffs .util-t.off{color:#6b7280;background:rgba(110,118,129,0.10);border-color:rgba(110,118,129,0.25);font-style:italic}
+  /* Cast-progress bar for a utility row. Same left-to-right fill as the top
+     song row's .row.casting, just sized for the compact strip. Painted only
+     when this utility is the currently-cast spell (Zeal label 134 match). */
+  .bardbuffs .util-row.casting{background:linear-gradient(to right,
+    rgba(163,113,247,0.45) 0%, rgba(163,113,247,0.45) var(--p,0%),
+    rgba(163,113,247,0.10) var(--p,0%), rgba(163,113,247,0.10) 100%);
+    border-radius:3px;padding:1px 4px;margin:0 -4px}
   /* Per-character melody block. */
   .mel{margin-top:6px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)}
   .mel:first-of-type{border-top:none;padding-top:0;margin-top:4px}
@@ -380,13 +387,27 @@
           var icon = '▶';
           var styleAttr = '';
           if (i === currentPos) {
-            if (isCasting) {
+            // If the live Zeal cast label is a UTILITY song (Amp / Niv\`s /
+            // Selo\`s etc.) then THIS top-row rotation entry isn't the song
+            // actually in flight — the cast bar belongs on the bardBuffs
+            // strip below. Compare the slugged names so backtick vs
+            // apostrophe vs spacing don't fight us.
+            var _topSlug = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+            var _castSlug = String(st.nowCasting || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+            var topIsTheCast = !_castSlug || _topSlug === _castSlug
+              || _topSlug.indexOf(_castSlug) >= 0 || _castSlug.indexOf(_topSlug) >= 0;
+            if (isCasting && topIsTheCast) {
               rowClass += ' casting';
               icon = '▶';
               styleAttr = ' style="--p:' + castPct.toFixed(1) + '%"';
             } else if (isStopped) {
               rowClass += ' stopped';
               icon = '⏹';
+            } else if (isCasting) {
+              // Cast in progress but the cast label points at a utility,
+              // not this rotation entry → render this row as queued so the
+              // bar doesn't fight the strip below.
+              rowClass += ' queued';
             } else {
               rowClass += ' done';
               icon = '✓';
@@ -472,7 +493,17 @@
             var hint = info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0
               ? clickyHint
               : clickyHint + rawSlotsHint;
-            return '<div class="util-row" title="' + esc(hint) + '">'
+            // When this utility row IS the current cast (▶ active), paint a
+            // left-to-right progress bar across it — mirrors the top song
+            // row's cast-fill behavior. User feedback: the progress bar
+            // was previously stuck on the top row even when a utility from
+            // the bottom strip was being cast.
+            var classes = 'util-row' + (isCasting ? ' casting' : '');
+            var styleAttr = '';
+            if (isCasting && typeof castPct === 'number') {
+              styleAttr = ' style="--p:' + castPct.toFixed(1) + '%"';
+            }
+            return '<div class="' + classes + '" title="' + esc(hint) + '"' + styleAttr + '>'
                  + castIcon
                  + '<span class="util-lbl">' + label + '</span>' + t + '</div>';
           }

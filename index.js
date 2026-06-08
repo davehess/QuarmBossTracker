@@ -4792,7 +4792,7 @@ async function _handleAgentMobInfo(req, res) {
     const encPlain  = encodeURIComponent(norm);
     const encHashed = encodeURIComponent('#' + norm);
     const rows = await supabase.select('eqemu_npc_types',
-      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id&limit=1`);
+      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide&limit=1`);
     const r = Array.isArray(rows) && rows[0];
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
@@ -4949,6 +4949,14 @@ async function _handleAgentMobInfo(req, res) {
         mindmg:  r.mindmg ?? null,
         maxdmg:  r.maxdmg ?? null,
         raid_target: !!r.raid_target,
+        // Sight flags — drive Mob Info chips so the player can tell whether
+        // a regular invis OR invis vs undead will hide them from this NPC.
+        // see_hide / see_improved_hide piped through for rogues too. EQEmu
+        // stores these as 0/1 ints; cast to boolean for a clean JSON payload.
+        see_invis:           !!r.see_invis,
+        see_invis_undead:    !!r.see_invis_undead,
+        see_hide:            !!r.see_hide,
+        see_improved_hide:   !!r.see_improved_hide,
         specials: _decodeMobSpecials(r.special_abilities, r.npcspecialattks),
         spells,
         loot,
