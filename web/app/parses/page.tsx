@@ -99,10 +99,18 @@ async function loadAll(): Promise<{
     const { data: raidRows } = await sb
       .from('opendkp_raids')
       .select('raid_id, ts')
-      .gte('ts', since);
-    const { data: tickRows } = await sb
+      .gte('ts', since)
+      .range(0, 19999);
+    // opendkp_ticks has no per-window filter, so it must carry an explicit
+    // range — PostgREST's default 1000-row cap was silently dropping ~28% of
+    // attendance ticks (table is 1396 rows and growing). Bound to the raids
+    // we actually loaded AND add a generous range so future growth is safe.
+    const raidIdSet = new Set((raidRows ?? []).map((r: any) => r.raid_id));
+    const { data: tickRowsRaw } = await sb
       .from('opendkp_ticks')
-      .select('raid_id, attendees');
+      .select('raid_id, attendees')
+      .range(0, 99999);
+    const tickRows = (tickRowsRaw ?? []).filter((t: any) => raidIdSet.has(t.raid_id));
 
     const attendance = new Map<string, AttendanceRollup>();
     if (raidRows && tickRows) {
