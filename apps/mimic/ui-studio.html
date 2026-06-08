@@ -82,22 +82,37 @@
       <select id="charSelect"><option value="">— pick —</option></select>
     </label>
     <span class="sep"></span>
+    <!-- Source/Target use a preset <select> + freeform W×H inputs. The
+         dropdown's "Custom…" sentinel keeps the four most-common values one
+         click away; the inputs cover widescreen / ultrawide (3840×1600,
+         5120×1440) without forcing us to hard-code every monitor on Earth.
+         "🖥 Detect" lists every attached display so a user with mixed
+         monitors can pick the right one instead of typing. -->
     <label>Source
-      <select id="srcRes">
-        <option value="3440x1440">3440×1440</option>
+      <select id="srcPreset" title="Picks of common Quarm/EQ resolutions">
+        <option value="3440x1440">3440×1440 (UW)</option>
         <option value="2560x1440" selected>2560×1440</option>
         <option value="1920x1080">1920×1080</option>
         <option value="1680x1050">1680×1050</option>
+        <option value="__custom__">Custom…</option>
       </select>
+      <input id="srcW" type="number" min="640"  max="10240" step="1" style="width:64px" title="Source width"  />
+      ×
+      <input id="srcH" type="number" min="480"  max="6000"  step="1" style="width:54px" title="Source height" />
     </label>
     <label>→ Target
-      <select id="tgtRes">
-        <option value="1920x1080" selected>1920×1080</option>
+      <select id="tgtPreset" title="Picks of common Quarm/EQ resolutions">
+        <option value="3440x1440">3440×1440 (UW)</option>
         <option value="2560x1440">2560×1440</option>
+        <option value="1920x1080" selected>1920×1080</option>
         <option value="1680x1050">1680×1050</option>
-        <option value="3440x1440">3440×1440</option>
+        <option value="__custom__">Custom…</option>
       </select>
+      <input id="tgtW" type="number" min="640"  max="10240" step="1" style="width:64px" title="Target width"  />
+      ×
+      <input id="tgtH" type="number" min="480"  max="6000"  step="1" style="width:54px" title="Target height" />
     </label>
+    <button id="detectBtn" class="secondary" title="Show attached monitors and pick one as Target">🖥 Detect</button>
     <button id="loadBtn" class="secondary">Load + Rescale</button>
     <span class="sep"></span>
     <button id="snapBtn"  class="secondary" title="Toggle snap to edges (10px)">Snap: ON</button>
@@ -308,6 +323,92 @@
     };
   }
 
+  // ── Resolution preset ↔ W/H input wiring ─────────────────────────────────
+  // The preset dropdown is just a convenience picker — the W/H inputs are
+  // the source of truth (we read them at Load time). A custom value typed
+  // into the inputs flips the preset to "Custom…" so the UI stays honest.
+  function _syncPresetFromInputs(side) {
+    var w = parseInt(document.getElementById(side + 'W').value, 10);
+    var h = parseInt(document.getElementById(side + 'H').value, 10);
+    var sel = document.getElementById(side + 'Preset');
+    var match = '__custom__';
+    for (var i = 0; i < sel.options.length; i++) {
+      var v = sel.options[i].value;
+      if (v === '__custom__') continue;
+      var p = v.split('x');
+      if (parseInt(p[0], 10) === w && parseInt(p[1], 10) === h) { match = v; break; }
+    }
+    sel.value = match;
+  }
+  function _syncInputsFromPreset(side) {
+    var sel = document.getElementById(side + 'Preset');
+    if (sel.value === '__custom__') return;     // leave inputs alone
+    var p = sel.value.split('x');
+    document.getElementById(side + 'W').value = p[0];
+    document.getElementById(side + 'H').value = p[1];
+  }
+  ['src', 'tgt'].forEach(function(side){
+    document.getElementById(side + 'Preset').addEventListener('change', function(){ _syncInputsFromPreset(side); });
+    document.getElementById(side + 'W').addEventListener('input', function(){ _syncPresetFromInputs(side); });
+    document.getElementById(side + 'H').addEventListener('input', function(){ _syncPresetFromInputs(side); });
+    _syncInputsFromPreset(side);     // initial fill from default-selected preset
+  });
+
+  // ── Display detector ─────────────────────────────────────────────────────
+  // Enumerate the user's monitors via Electron's `screen` API and pop a
+  // floating picker. Selecting a display sets the TARGET resolution to that
+  // monitor's full pixel size (EQ runs fullscreen → not workAreaSize).
+  // Clicking the body dismisses; Esc dismisses. No-op if the IPC bridge
+  // isn't there (file:// dev harness etc.).
+  document.getElementById('detectBtn').addEventListener('click', async function(){
+    if (!window.mimic || !window.mimic.uiStudioListDisplays) {
+      setStatus('display detection unavailable', 'err'); return;
+    }
+    var r = await window.mimic.uiStudioListDisplays().catch(function(){ return null; });
+    if (!r || !Array.isArray(r.displays) || r.displays.length === 0) {
+      setStatus('no displays detected', 'err'); return;
+    }
+    _showDisplayPicker(r.displays);
+  });
+  function _showDisplayPicker(displays) {
+    var old = document.getElementById('displayPicker');
+    if (old) old.remove();
+    var dlg = document.createElement('div');
+    dlg.id = 'displayPicker';
+    dlg.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);' +
+      'background:#161b22;border:1px solid #58a6ff;border-radius:6px;z-index:100;' +
+      'padding:10px;font-size:12px;color:#c9d1d9;min-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+    var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:6px">Pick a display for Target</div>' +
+      '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">EQ runs fullscreen at the monitor\'s full pixel size — pick the screen you play on.</div>';
+    for (var i = 0; i < displays.length; i++) {
+      var d = displays[i];
+      html += '<button data-w="' + d.w + '" data-h="' + d.h + '" ' +
+        'style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;' +
+        'border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
+        'cursor:pointer;font-size:11px;font-family:inherit">' + escapeHtml(d.label) +
+        (d.scaleFactor !== 1 ? ' <span style="color:#8b949e">@ ' + d.scaleFactor + 'x DPI</span>' : '') +
+        '</button>';
+    }
+    html += '<div style="margin-top:6px;text-align:right">' +
+      '<button id="displayPickerCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
+      '</div>';
+    dlg.innerHTML = html;
+    document.body.appendChild(dlg);
+    dlg.querySelectorAll('button[data-w]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var w = parseInt(this.dataset.w, 10), h = parseInt(this.dataset.h, 10);
+        document.getElementById('tgtW').value = w;
+        document.getElementById('tgtH').value = h;
+        _syncPresetFromInputs('tgt');
+        dlg.remove();
+        setStatus('target set to ' + w + '×' + h + ' — click Load + Rescale to apply', 'ok');
+      });
+    });
+    document.getElementById('displayPickerCancel').addEventListener('click', function(){ dlg.remove(); });
+    var esc = function(e){ if (e.key === 'Escape') { dlg.remove(); document.removeEventListener('keydown', esc); } };
+    document.addEventListener('keydown', esc);
+  }
+
   document.getElementById('loadBtn').addEventListener('click', loadAndRescale);
   async function loadAndRescale(){
     var sel = document.getElementById('charSelect').value;
@@ -315,10 +416,16 @@
     var parts = sel.split('|');
     STATE.character = parts[0];
     STATE.eqDir     = parts[1];
-    var srcParts = document.getElementById('srcRes').value.split('x');
-    var tgtParts = document.getElementById('tgtRes').value.split('x');
-    STATE.srcW = parseInt(srcParts[0], 10); STATE.srcH = parseInt(srcParts[1], 10);
-    STATE.tgtW = parseInt(tgtParts[0], 10); STATE.tgtH = parseInt(tgtParts[1], 10);
+    // Read the W/H inputs (source of truth — preset dropdown is just a picker).
+    var sW = parseInt(document.getElementById('srcW').value, 10);
+    var sH = parseInt(document.getElementById('srcH').value, 10);
+    var tW = parseInt(document.getElementById('tgtW').value, 10);
+    var tH = parseInt(document.getElementById('tgtH').value, 10);
+    if (!sW || !sH || !tW || !tH || sW < 640 || sH < 480 || tW < 640 || tH < 480) {
+      setStatus('enter valid Source/Target sizes (≥ 640×480)', 'err'); return;
+    }
+    STATE.srcW = sW; STATE.srcH = sH;
+    STATE.tgtW = tW; STATE.tgtH = tH;
     setStatus('loading ' + STATE.character + '…');
     try {
       STATE.bundle = await window.mimic.uiStudioReadBundle(STATE.character, STATE.eqDir);

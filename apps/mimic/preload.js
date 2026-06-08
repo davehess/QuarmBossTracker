@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // UI Studio — capture / restore EQ ini files (windows, hotkeys, chat
   // tabs, bandolier, socials, eqclient.ini) so a user can set up an
   // identical install on a different machine.
+  uiStudioListDisplays:   ()        => ipcRenderer.invoke('ui-studio-list-displays'),
   uiStudioListCharacters: ()        => ipcRenderer.invoke('ui-studio-list-characters'),
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),

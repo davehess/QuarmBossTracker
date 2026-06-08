@@ -3459,6 +3459,38 @@ ipcMain.handle('find-eq-installs', () => {
   return merged;
 });
 
+// UI Studio — detected displays so the user can pick a custom resolution
+// that matches their actual monitor instead of the four preset dropdowns.
+// Returns { primary: {w,h}, displays: [{ id, label, w, h, primary, scaleFactor }] }.
+// Widescreen/ultrawide users (3840×1600, 5120×1440, etc.) weren't covered by
+// the dropdown — this lets them pick exact values without typing.
+ipcMain.handle('ui-studio-list-displays', () => {
+  try {
+    const primary = screen.getPrimaryDisplay();
+    const all = screen.getAllDisplays();
+    const displays = all.map((d, i) => {
+      const isPrimary = d.id === primary.id;
+      // size = full pixel resolution; workAreaSize subtracts taskbar etc.
+      // EQ renders fullscreen → use `size`, not `workAreaSize`.
+      const w = (d.size && d.size.width)  || d.workAreaSize.width;
+      const h = (d.size && d.size.height) || d.workAreaSize.height;
+      return {
+        id: d.id,
+        label: `Display ${i + 1}${isPrimary ? ' (primary)' : ''} — ${w}×${h}`,
+        w, h,
+        primary: isPrimary,
+        scaleFactor: d.scaleFactor || 1,
+      };
+    });
+    return {
+      primary: { w: primary.size.width, h: primary.size.height },
+      displays,
+    };
+  } catch (err) {
+    return { primary: null, displays: [], error: err && err.message };
+  }
+});
+
 // UI Studio — list characters available for capture across configured EQ
 // folders. Returns [{ character, eqDir, ini_count, has_eqclient }, ...].
 ipcMain.handle('ui-studio-list-characters', () => {
