@@ -570,6 +570,7 @@
       var fname = fnames[fi];
       var parsed = parseIni(STATE.bundle[fname]);
       STATE.bundle[fname + '__parsed'] = parsed;
+      var chatMeta = _buildChatMeta(parsed);   // per-file chat-window routing
       for (var i = 0; i < parsed.sections.length; i++) {
         var s = parsed.sections[i];
         var pos = _readPos(s.props, srcSuffix);
@@ -602,7 +603,7 @@
           section: s.name,
           label:  classify.icon + ' ' + classify.label,
           kind:    classify.kind,
-          category: _categoryOf(s.name),
+          category: _categoryOf(s.name, chatMeta),
           contents: classify.contents,
           props:    s.props,
           hasWH:    hasWH,
@@ -663,6 +664,12 @@
   var FILTER_CATEGORIES = [
     { key:'zeal',    label:'🐺 Zeal',          on:true,  test:function(n){ return /^zeal/i.test(n); } },
     { key:'chat',    label:'💬 Chat',          on:true,  test:function(n){ return /chat/i.test(n); } },
+    // Per-sender Tell windows — assigned via ChatManager (DefaultChannel 3),
+    // NOT by name (they're named "Chat 11" etc. like real chats). test:false
+    // so the name-matcher never grabs them; _categoryOf routes them here.
+    // Default OFF — these are the big chat-window clutter the user doesn't
+    // arrange (one per person who's ever /tell'd them).
+    { key:'tells',   label:'🗨 Tell windows',  on:false, test:function(){ return false; } },
     { key:'group',   label:'👥 Group',         on:true,  test:function(n){ return /^group/i.test(n); } },
     { key:'raid',    label:'⚔️ Raid',          on:true,  test:function(n){ return /^raid/i.test(n); } },
     { key:'player',  label:'❤️ Player / Pet',  on:true,  test:function(n){ return /^player|^pet/i.test(n); } },
@@ -679,9 +686,41 @@
     for (var i = 0; i < FILTER_CATEGORIES.length; i++) if (FILTER_CATEGORIES[i].key === key) return FILTER_CATEGORIES[i];
     return FILTER_CATEGORIES[FILTER_CATEGORIES.length - 1];
   }
-  function _categoryOf(section) {
+  // Build a chat-window index → { defaultChannel } map from a parsed ini's
+  // [ChatManager] section. EQ stores per-window routing as flat keys:
+  //   ChatWindow<N>_DefaultChannel = <int>   (3 = tell → per-sender tell window)
+  //   ChatWindow<N>_Name           = <label>
+  // Position sections map by ordinal: MainChat = window 0, "Chat <N>" = N.
+  function _buildChatMeta(parsed) {
+    var meta = {};
+    for (var i = 0; i < parsed.sections.length; i++) {
+      if (parsed.sections[i].name !== 'ChatManager') continue;
+      var props = parsed.sections[i].props || {};
+      for (var key in props) {
+        var m = key.match(/^ChatWindow(\d+)_DefaultChannel$/i);
+        if (m) {
+          var idx = parseInt(m[1], 10);
+          if (!meta[idx]) meta[idx] = {};
+          meta[idx].defaultChannel = parseInt(props[key], 10);
+        }
+      }
+    }
+    return meta;
+  }
+  function _categoryOf(section, chatMeta) {
     var n = String(section || '');
+    // Chat windows split into real chat vs per-sender Tell windows via the
+    // ChatManager routing. Position sections: MainChat = window 0, "Chat <N>"
+    // = window N. DefaultChannel 3 = tell → Tell window.
+    var idx = null;
+    if (/^mainchat$/i.test(n)) idx = 0;
+    else { var cm = n.match(/^chat\s*(\d+)$/i); if (cm) idx = parseInt(cm[1], 10); }
+    if (idx != null || /^chatwindow$/i.test(n)) {
+      var info = (chatMeta && idx != null) ? chatMeta[idx] : null;
+      return (info && info.defaultChannel === 3) ? 'tells' : 'chat';
+    }
     for (var i = 0; i < FILTER_CATEGORIES.length; i++) {
+      if (FILTER_CATEGORIES[i].key === 'chat' || FILTER_CATEGORIES[i].key === 'tells') continue;
       if (FILTER_CATEGORIES[i].test(n)) return FILTER_CATEGORIES[i].key;
     }
     return 'other';
