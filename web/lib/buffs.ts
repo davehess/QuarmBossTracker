@@ -53,9 +53,14 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   ],
   // Attack-speed haste. ("Speed of the Shissar"/"Swift like the Wind" are
   // haste — they don't collide with SoW, which matches "spirit of wolf".)
+  // Visions of Grandeur is the Velious-era enchanter group buff whose slot
+  // 1 is +58% attack speed; users were seeing it land in "Other" because
+  // none of the older patterns hit. Listed by full name rather than just
+  // "visions" so we don't accidentally grab unrelated visions-of-X buffs.
   haste: [
     'haste', 'celerity', 'quickness', 'swift', 'speed of', 'augmentation',
     'alacrity', 'aanya', 'battle cry', 'warsong', 'verses of victory',
+    'visions of grandeur',
   ],
   // Movement / run speed (SoW family + bard travel songs).
   runSpeed: [
