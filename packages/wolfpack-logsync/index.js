@@ -1400,17 +1400,34 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
 // dies or 5 minutes pass"). Charm pets keep their mob name, so a slain line
 // names them: "You have slain a fungoid sporeling!" / "A fungoid sporeling has
 // been slain by Xxch." Returns true if a tracked pet was removed.
-const _PET_SLAIN_RX = /\bhas been slain\b|\bYou have slain\b/i;
-function checkCharmPetDeath(line) {
-  if (!line || !_PET_SLAIN_RX.test(line)) return false;
-  const low = line.toLowerCase();
-  for (const [k, info] of _charmTickTracker) {
-    // Match the pet's name appearing in the slain line. Pet names are mob names
-    // ("a fungoid sporeling") so a substring check on the lowercased line is
-    // safe and catches both "You have slain <pet>" and "<pet> has been slain".
-    if (k && low.includes(k)) { _charmTickTracker.delete(k); return true; }
+//
+// EXACT NAME MATCH (not substring): two same-named NPCs in zone (e.g. "An
+// Enthralled Razorfiend" in Sebilis — multiples coexist) used to false-positive
+// because the slain line for the OTHER mob contained the pet name as a
+// substring, removing the still-charmed pet from the tracker. Now we capture
+// the slain name + killer explicitly.
+//
+// KILLER GUARD: we don't kill our own charmed pet — they're friendly to us. If
+// the killer is a watched character / known player, the slain mob is a
+// DIFFERENT same-named NPC, NOT our pet. (If charm had actually broken first,
+// the charm_break event would have removed the pet BEFORE we got here.)
+const _SLAIN_BY_RX  = /\]\s+(.+?)\s+has been slain by\s+(.+?)\.?\s*$/i;
+const _SLAIN_YOU_RX = /\]\s+You have slain\s+(.+?)\.?\s*$/i;
+function checkCharmPetDeath(line, character) {
+  if (!line) return false;
+  let slainName = null, killerName = null;
+  let m = line.match(_SLAIN_BY_RX);
+  if (m) { slainName = m[1].trim(); killerName = m[2].trim(); }
+  else {
+    m = line.match(_SLAIN_YOU_RX);
+    if (m) { slainName = m[1].trim(); killerName = character || 'you'; }
   }
-  return false;
+  if (!slainName) return false;
+  const slainKey = slainName.toLowerCase();
+  if (!_charmTickTracker.has(slainKey)) return false;
+  if (killerName && isConfirmedPlayer(killerName)) return false;
+  _charmTickTracker.delete(slainKey);
+  return true;
 }
 
 // ── /pet health report state (Quarm format) ─────────────────────────────────
@@ -15704,8 +15721,10 @@ async function main() {
         applyPetHealthLine(line, b.character);
 
         // Charm pet death → drop it from the tracker right away (don't wait out
-        // the 5-min linger window).
-        checkCharmPetDeath(line);
+        // the 5-min linger window). Pass the local character so "You have slain"
+        // is correctly attributed for the killer-guard (we don't kill our own
+        // pet — same-named different mob).
+        checkCharmPetDeath(line, b.character);
 
         // /who block boundaries (header/footer) → demarcate the current /who run
         // for the /who overlay. Rows themselves are attributed in recordWhoEvent.
