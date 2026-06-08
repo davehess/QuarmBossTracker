@@ -237,24 +237,83 @@
     return { lines: lines, sections: sections };
   }
 
-  // Reconstruct file with updated XPos/YPos/Size.cx/Size.cy values. Preserves
-  // line order, formatting, comments — only rewrites the four keys per section.
+  // Reconstruct file with updated position keys. Preserves line order,
+  // formatting, comments. Keys present in the section are rewritten in place;
+  // keys NOT present (e.g. a brand-new XPos<targetRes> block) are INSERTED
+  // right after the section header. Inserting is what lets us add a widescreen
+  // resolution block without disturbing the user's original-resolution layout.
   function emitIni(parsed, edits){
-    // edits: { sectionName → { XPos, YPos, "Size.cx", "Size.cy" } }
+    // edits: { sectionName → { "XPos3840x1600": N, "YPos3840x1600": N, Width, Height } }
     var lines = parsed.lines.slice();
-    for (var i = 0; i < parsed.sections.length; i++) {
-      var sec = parsed.sections[i];
+    // Process sections bottom-to-top so inserted lines don't shift the
+    // startLine indices of sections we haven't handled yet.
+    var secs = parsed.sections.slice().sort(function(a, b){ return b.startLine - a.startLine; });
+    for (var i = 0; i < secs.length; i++) {
+      var sec = secs[i];
       var ed = edits[sec.name];
       if (!ed) continue;
+      var remaining = {};
+      for (var ek in ed) remaining[ek] = ed[ek];
       for (var ln = sec.startLine + 1; ln <= sec.endLine; ln++) {
         var L = lines[ln];
         var kv = L.match(/^(\s*)([\w.]+)(\s*=\s*)(.*)$/);
         if (!kv) continue;
         var key = kv[2];
-        if (ed[key] != null) lines[ln] = kv[1] + key + kv[3] + ed[key];
+        if (remaining[key] != null) {
+          lines[ln] = kv[1] + key + kv[3] + remaining[key];
+          delete remaining[key];
+        }
+      }
+      // Insert any keys that weren't already in the section.
+      var toInsert = [];
+      for (var rk in remaining) toInsert.push(rk + '=' + remaining[rk]);
+      if (toInsert.length) {
+        var args = [sec.startLine + 1, 0].concat(toInsert);
+        Array.prototype.splice.apply(lines, args);
       }
     }
     return lines.join('\n');
+  }
+
+  // ── Resolution-aware position helpers ────────────────────────────────────
+  // EQ stores window geometry per-resolution: XPos<W>x<H> / YPos<W>x<H>
+  // (e.g. XPos2560x1440). Dimensions are bare Width/Height (NOT resolution-
+  // suffixed). Older pre-/saveui files used bare XPos/YPos. Quarm's NillipussUI
+  // and friends ALWAYS write the suffixed form — which is why the old parser
+  // (looking for bare XPos/Size.cx) found nothing and reported "0 windows".
+
+  // Count how many position keys exist per resolution across the whole bundle,
+  // so Load can auto-select a resolution block that actually exists.
+  function _detectResolutions(bundle){
+    var counts = {};
+    Object.keys(bundle).forEach(function(fn){
+      if (fn.indexOf('__parsed') >= 0) return;
+      var txt = bundle[fn];
+      if (typeof txt !== 'string') return;
+      var re = /^XPos(\d+)x(\d+)\s*=/gmi, m;
+      while ((m = re.exec(txt))) {
+        var key = m[1] + 'x' + m[2];
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+    return counts;   // { "2560x1440": 130, ... }
+  }
+
+  // Read a section's position at the requested resolution suffix. Falls back to
+  // any other resolution block present, then to bare XPos/YPos. Returns the
+  // suffix actually used so the UI can note when it had to substitute.
+  function _readPos(props, suffix){
+    var x = props['XPos' + suffix], y = props['YPos' + suffix], used = suffix;
+    if (x == null || y == null) {
+      var alt = null;
+      for (var k in props) {
+        var mm = k.match(/^XPos(\d+x\d+)$/i);
+        if (mm && props['YPos' + mm[1]] != null) { alt = mm[1]; break; }
+      }
+      if (alt) { x = props['XPos' + alt]; y = props['YPos' + alt]; used = alt; }
+      else if (props.XPos != null) { x = props.XPos; y = props.YPos; used = ''; }
+    }
+    return { x: x, y: y, used: used };
   }
 
   // ── Load + rescale ───────────────────────────────────────────────────────
@@ -436,21 +495,50 @@
     }
     // Parse every ini, extract windows with position data.
     STATE.windows = [];
+    // Detect which resolution blocks the file actually contains. If the chosen
+    // Source resolution has no matching XPos<res> anywhere, fall back to the
+    // dominant resolution that IS present so we don't report "0 windows" for a
+    // file that's simply saved at a different resolution than the dropdown.
+    var resCounts = _detectResolutions(STATE.bundle);
+    var srcSuffix = STATE.srcW + 'x' + STATE.srcH;
+    var autoSwitched = false;
+    if (!resCounts[srcSuffix]) {
+      var dom = null, domN = 0;
+      for (var rk in resCounts) { if (resCounts[rk] > domN) { domN = resCounts[rk]; dom = rk; } }
+      if (dom) {
+        var dp = dom.split('x');
+        STATE.srcW = parseInt(dp[0], 10); STATE.srcH = parseInt(dp[1], 10);
+        srcSuffix = dom; autoSwitched = true;
+        document.getElementById('srcW').value = STATE.srcW;
+        document.getElementById('srcH').value = STATE.srcH;
+        _syncPresetFromInputs('src');
+      }
+    }
+    STATE.srcSuffix = srcSuffix;
     var fxX = STATE.tgtW / STATE.srcW;
     var fxY = STATE.tgtH / STATE.srcH;
     var seq = 0;
-    for (var fname in STATE.bundle) {
+    var fnames = Object.keys(STATE.bundle).filter(function(k){ return k.indexOf('__parsed') < 0; });
+    for (var fi = 0; fi < fnames.length; fi++) {
+      var fname = fnames[fi];
       var parsed = parseIni(STATE.bundle[fname]);
       STATE.bundle[fname + '__parsed'] = parsed;
       for (var i = 0; i < parsed.sections.length; i++) {
         var s = parsed.sections[i];
-        var px = s.props.XPos, py = s.props.YPos;
-        var sw = s.props['Size.cx'], sh = s.props['Size.cy'];
-        if (px == null || py == null) continue;
-        var x = parseInt(px, 10), y = parseInt(py, 10);
-        var w = sw != null ? parseInt(sw, 10) : 200;
-        var h = sh != null ? parseInt(sh, 10) : 100;
+        var pos = _readPos(s.props, srcSuffix);
+        if (pos.x == null || pos.y == null) continue;
+        var x = parseInt(pos.x, 10), y = parseInt(pos.y, 10);
         if (isNaN(x) || isNaN(y)) continue;
+        // Dimensions: bare Width/Height (real Quarm key), then legacy Size.cx/cy.
+        // Windows with no size entry use EQ's default size — we DON'T fabricate
+        // a Width/Height for them on save (could pin an auto-sizing window).
+        var rawW = s.props.Width  != null ? s.props.Width  : s.props['Size.cx'];
+        var rawH = s.props.Height != null ? s.props.Height : s.props['Size.cy'];
+        var hasWH = (rawW != null && rawH != null);
+        var w = hasWH ? parseInt(rawW, 10) : 200;
+        var h = hasWH ? parseInt(rawH, 10) : 100;
+        if (isNaN(w)) { w = 200; hasWH = false; }
+        if (isNaN(h)) { h = 100; hasWH = false; }
         // Rescale to target resolution.
         x = Math.round(x * fxX);
         y = Math.round(y * fxY);
@@ -469,16 +557,19 @@
           kind:    classify.kind,
           contents: classify.contents,
           props:    s.props,
+          hasWH:    hasWH,
+          srcSuffix: pos.used,
           x: x, y: y, w: w, h: h,
           origX: x, origY: y, origW: w, origH: h,
         });
       }
     }
+    STATE.autoSwitched = autoSwitched;
     if (STATE.windows.length === 0) {
       // Window-position data lives in EQ's UI_<char>_<server>.ini, which is
       // only written when the character has run `/saveui` in-game. Other ini
       // files (per-char settings, sockets/socials) carry hotbars/keybinds
-      // but NOT window XPos/YPos — so loading "0 windows" almost always
+      // but NOT window positions — so loading "0 windows" almost always
       // means /saveui hasn't been done yet for this character.
       setStatus(
         'No saved window layout for ' + STATE.character + '. In EQ, type ' +
@@ -487,7 +578,13 @@
         'err'
       );
     } else {
-      setStatus('loaded ' + STATE.windows.length + ' windows · rescaled ' + STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH, 'ok');
+      var msg = 'loaded ' + STATE.windows.length + ' windows · ' +
+        STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH +
+        ' · Save writes a ' + STATE.tgtW + '×' + STATE.tgtH + ' block (keeps your original)';
+      if (STATE.autoSwitched) {
+        msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
+      }
+      setStatus(msg, 'ok');
     }
     renderStage();
     maybePromptPvpSet().catch(function(){});
@@ -767,6 +864,8 @@
     document.getElementById('fH').value = w.h;
     var meta = 'File: <b>' + escapeHtml(w.file) + '</b>'
              + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
+             + '<br>Read from: <b>' + escapeHtml(w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos') + '</b>'
+             + (w.hasWH ? '' : '<br><span style="color:#8b949e">auto-size (no Width/Height written)</span>')
              + '<br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
     if (w.contents && w.contents.length > 0) {
       meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
@@ -805,12 +904,23 @@
   });
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
-    // Group windows by file. Build edits map per file.
-    var edits = {};   // file → { sectionName → {XPos, YPos, "Size.cx", "Size.cy"} }
+    // Write rescaled coords into the TARGET resolution's suffix block
+    // (XPos<tgtW>x<tgtH> / YPos<tgtW>x<tgtH>). If that block doesn't exist
+    // yet, emitIni inserts it — leaving the original source-resolution block
+    // intact. EQ then reads whichever block matches the resolution you launch
+    // at, so one INI can carry layouts for several monitors.
+    var tgtSuffix = STATE.tgtW + 'x' + STATE.tgtH;
+    var edits = {};   // file → { sectionName → { XPos<res>, YPos<res>, Width, Height } }
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       if (!edits[w.file]) edits[w.file] = {};
-      edits[w.file][w.section] = { XPos: w.x, YPos: w.y, 'Size.cx': w.w, 'Size.cy': w.h };
+      var e = {};
+      e['XPos' + tgtSuffix] = w.x;
+      e['YPos' + tgtSuffix] = w.y;
+      // Only (re)write Width/Height for windows that already carried a size —
+      // never fabricate one for an auto-sizing window.
+      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }
+      edits[w.file][w.section] = e;
     }
     // Emit new file contents.
     var newBundle = {};
@@ -822,7 +932,7 @@
     setStatus('saving…');
     try {
       var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle);
-      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · .bak backups created', 'ok');
+      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix + ' block · .bak backups created', 'ok');
       else setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
     } catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
@@ -873,11 +983,14 @@
     var res = await window.mimic.uiStudioInspectSocials(STATE.character, STATE.eqDir)
       .catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!res || !res.ok) { setStatus(res && res.error || 'inspect failed', 'err'); return; }
-    setStatus('inspector open · ' + res.files.length + ' file(s) parsed', 'ok');
-    openSocialsInspector(res.files);
+    setStatus('inspector open · ' + (res.files ? res.files.length : 0) + ' file(s) parsed', 'ok');
+    openSocialsInspector(res);
   });
 
-  function openSocialsInspector(files) {
+  function openSocialsInspector(res) {
+    var files = (res && res.files) || [];
+    var chat  = res && res.chat;
+    var tells = res && res.tells;
     var dlg = document.getElementById('socialsInspector');
     if (!dlg) {
       dlg = document.createElement('div');
@@ -889,10 +1002,59 @@
     }
     var html = '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
       'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px">×</button>' +
-      '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 Hotbar / Socials inspector</h2>' +
+      '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 UI Inspector</h2>' +
       '<p style="color:#8b949e;font-size:10px;margin:0 0 10px;font-family:sans-serif">' +
-      'Per-page Hotbar + Socials view, parsed from your character INI. ' +
-      'Raw section dump is at the bottom for reference.</p>';
+      'Chat routing, tell windows, and per-page Hotbar + Socials — parsed from ' +
+      'your character INI. Raw section dump is at the bottom for reference.</p>';
+
+    // ── Chat windows & routing (from UI_<char> [ChatManager]) ─────────────
+    if (chat && Array.isArray(chat.windows) && chat.windows.length) {
+      html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+        '💬 Chat windows & routing <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
+        escapeHtml(chat.file) + ' · ' + chat.num_windows + ' windows)</span></div>' +
+        '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;font-family:sans-serif">' +
+        'Which named window each EQ channel feeds. Read-only for now — this is the map a ' +
+        'future drag-drop "raid chat here, tells there" editor will write back to.</p>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:10px">' +
+        '<tr style="color:#8b949e;text-align:left"><th style="padding:2px 4px">#</th>' +
+        '<th style="padding:2px 4px">Name</th><th style="padding:2px 4px">Default ch</th>' +
+        '<th style="padding:2px 4px">Routed</th></tr>';
+      for (var ci = 0; ci < chat.windows.length; ci++) {
+        var cwn = chat.windows[ci];
+        var routed = (chat.routed_filters && chat.routed_filters[cwn.index]) || [];
+        html += '<tr style="border-bottom:1px solid #21262d">' +
+          '<td style="padding:2px 4px;color:#8b949e">' + cwn.index + '</td>' +
+          '<td style="padding:2px 4px;color:#56d364;font-weight:600">' + escapeHtml(cwn.name || '(unnamed)') + '</td>' +
+          '<td style="padding:2px 4px;color:#9aa4ad">' + (cwn.default_channel != null ? cwn.default_channel : '—') + '</td>' +
+          '<td style="padding:2px 4px;color:#9aa4ad">' + (routed.length ? routed.length + ' filter' + (routed.length === 1 ? '' : 's') : '—') + '</td>' +
+          '</tr>';
+      }
+      html += '</table></div>';
+    }
+
+    // ── Tell windows (Zeal) ───────────────────────────────────────────────
+    if (tells) {
+      var onOff = function(v){ return v ? '<span style="color:#56d364">ON</span>' : '<span style="color:#8b949e">off</span>'; };
+      html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+        '🗨 Tell windows <span style="color:#8b949e;font-weight:400;font-size:10px">(Zeal · ' + escapeHtml(tells.file) + ')</span></div>';
+      html += '<div style="background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px;font-size:11px">' +
+        '<div style="color:#c9d1d9"><b>' + escapeHtml(tells.character) + '</b>: tell windows ' + onOff(tells.enabled) +
+        ' · history ' + onOff(tells.history) + '</div>';
+      if (tells.enabled) {
+        html += '<div style="color:#9aa4ad;font-size:10px;margin-top:4px">' +
+          'Per-sender tell windows are placed by Zeal as tells arrive — open a few in-game and ' +
+          'drag them where you want; Zeal remembers. (Mimic can\'t pre-place them yet — there are ' +
+          'no saved per-sender positions in the INI to edit.)</div>';
+      } else {
+        html += '<div style="color:#9aa4ad;font-size:10px;margin-top:4px">' +
+          'Turn on with <code>/tell windows on</code> in-game (Zeal) to get a separate window per sender.</div>';
+      }
+      if (Array.isArray(tells.enabled_for_characters) && tells.enabled_for_characters.length) {
+        html += '<div style="color:#8b949e;font-size:10px;margin-top:6px">Other characters with tell windows on: ' +
+          escapeHtml(tells.enabled_for_characters.filter(function(n){ return n !== tells.character; }).join(', ') || '—') + '</div>';
+      }
+      html += '</div></div>';
+    }
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +

@@ -2101,8 +2101,114 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
         files.push({ file: name, error: err && err.message });
       }
     }
-    if (files.length === 0) return { ok: false, error: 'no socials INI found for ' + c };
-    return { ok: true, files };
+    // ── Chat routing (read-only) ─────────────────────────────────────────
+    // The UI_<char>_pq.proj.ini [ChatManager] section holds the real chat
+    // wiring: per-window names + which EQ channel each defaults to, plus the
+    // ChannelMap<N>=<windowIndex> table that routes each message category to a
+    // window. We surface it so the user can SEE "Guild → window 1, Tells →
+    // window 4" without spelunking the INI. (Editing/drag-drop is a follow-up
+    // — the ChannelMap filter-index semantics need confirming before we write.)
+    let chat = null;
+    try {
+      const uiName = `UI_${c}_pq.proj.ini`;
+      let uiPath = path.join(d, uiName);
+      if (!fs.existsSync(uiPath)) {
+        // glob for UI_<char>*.ini at any server suffix
+        const cl = c.toLowerCase();
+        for (const f of fs.readdirSync(d)) {
+          const mm = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
+          if (mm && mm[1].toLowerCase() === cl) { uiPath = path.join(d, f); break; }
+        }
+      }
+      if (fs.existsSync(uiPath)) {
+        const uiText = fs.readFileSync(uiPath, 'utf8');
+        const cm = {};
+        let inCM = false;
+        for (const L of uiText.split(/\r?\n/)) {
+          const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
+          if (sm) { inCM = (sm[1] === 'ChatManager'); continue; }
+          if (!inCM) continue;
+          const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (kv) cm[kv[1]] = kv[2];
+        }
+        if (Object.keys(cm).length) {
+          const windows = [];
+          for (let i = 0; i <= 30; i++) {
+            const name = cm[`ChatWindow${i}_Name`];
+            const def  = cm[`ChatWindow${i}_DefaultChannel`];
+            const chn  = cm[`ChatWindow${i}_ChatChannel`];
+            const tt   = cm[`ChatWindow${i}_TellTarget`];
+            if (name == null && def == null && chn == null) continue;
+            windows.push({
+              index: i,
+              name: name != null ? String(name).trim() : null,
+              default_channel: def != null ? parseInt(def, 10) : null,
+              chat_channel: chn != null ? parseInt(chn, 10) : null,
+              tell_target: tt || null,
+            });
+          }
+          // ChannelMap<filter> = <windowIndex> → invert to windowIndex → [filters]
+          const routed = {};
+          for (const [k, v] of Object.entries(cm)) {
+            const mk = k.match(/^ChannelMap(\d+)$/);
+            if (!mk) continue;
+            const win = parseInt(v, 10);
+            if (!routed[win]) routed[win] = [];
+            routed[win].push(parseInt(mk[1], 10));
+          }
+          chat = {
+            file: path.basename(uiPath),
+            num_windows: parseInt(cm.NumWindows, 10) || windows.length,
+            windows,
+            routed_filters: routed,
+          };
+        }
+      }
+    } catch {}
+
+    // ── Tell windows (Zeal, read-only) ───────────────────────────────────
+    // Zeal stores tell-window enablement in zeal.ini, keyed by character:
+    //   [<Character>] TellWindows=TRUE / TellWindowsHist=TRUE
+    //   [TellWindows_<Character>] Enabled=TRUE / HistoryEnabled=FALSE
+    // The individual per-sender tell windows are placed by Zeal at runtime —
+    // there are no per-sender position sections to manage here. We report the
+    // on/off state for the loaded character and which other chars have them on.
+    let tells = null;
+    try {
+      const zp = path.join(d, 'zeal.ini');
+      if (fs.existsSync(zp)) {
+        const ztext = fs.readFileSync(zp, 'utf8');
+        const zsec = {};
+        let curz = null;
+        for (const L of ztext.split(/\r?\n/)) {
+          const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
+          if (sm) { curz = sm[1]; zsec[curz] = zsec[curz] || {}; continue; }
+          if (!curz) continue;
+          const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (kv) zsec[curz][kv[1]] = kv[2];
+        }
+        const truthy = (v) => /^(true|1|yes|on)$/i.test(String(v || '').trim());
+        const self = zsec[c] || {};
+        const selfTW = zsec[`TellWindows_${c}`] || {};
+        const enabledFor = [];
+        for (const [sec, props] of Object.entries(zsec)) {
+          if (/^(TellWindows_|TargetRing_|FloatingDamage_|Zeal_)/.test(sec)) continue;
+          if (props.TellWindows != null && truthy(props.TellWindows)) enabledFor.push(sec);
+        }
+        tells = {
+          file: 'zeal.ini',
+          character: c,
+          enabled: truthy(self.TellWindows),
+          history: truthy(self.TellWindowsHist),
+          detail_enabled: selfTW.Enabled != null ? truthy(selfTW.Enabled) : null,
+          detail_history: selfTW.HistoryEnabled != null ? truthy(selfTW.HistoryEnabled) : null,
+          enabled_for_characters: enabledFor.sort(),
+        };
+      }
+    } catch {}
+
+    if (files.length === 0 && !chat && !tells) return { ok: false, error: 'no socials/UI/zeal INI found for ' + c };
+    return { ok: true, files, chat, tells };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
