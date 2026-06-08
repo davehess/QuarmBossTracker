@@ -893,11 +893,26 @@ function _zealAbsorb(obj) {
       // each value=buff name, meta.ticks=remaining 6s ticks. Label 134 =
       // the spell currently being cast. (Char info lives in IDs 1-13 — we
       // ignore those here.) See CoastalRedwood/Zeal named_pipe.cpp.
+      // Bard short-duration songs may land in different label IDs depending
+      // on Zeal build, so we ALSO capture a raw diagnostic dump of every
+      // labeled entry (id + value + ticks) and forward it — the agent
+      // surfaces it on /api/state.buffsRawDebug so OFF-chip tooltips can
+      // show what Zeal is actually sending when a row fails to match.
       const buffs = [];
+      const rawDebug = [];
       let casting = null;
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
+        // Skip well-known char-info IDs (1-13 are char fields like name,
+        // class, level, etc.) so the diagnostic stays focused on buff-ish
+        // payloads. Capture everything else with a non-empty value.
+        if (id >= 1 && id <= 13) continue;
+        const v = it.value;
+        if (v !== undefined && v !== null && v !== '' && String(v).toLowerCase() !== 'none') {
+          const ticks = it.meta && typeof it.meta.ticks === 'number' ? it.meta.ticks : null;
+          rawDebug.push({ id, value: String(v), ticks });
+        }
         if ((id >= 45 && id <= 59) || (id >= 135 && id <= 140)) {
           const name = it.value;
           if (name && name !== '' && String(name).toLowerCase() !== 'none') {
@@ -913,6 +928,13 @@ function _zealAbsorb(obj) {
       if (buffs.length > 0 || casting !== null) {
         s.buffs = buffs;
         s.casting = casting;
+        cur.dirty = true;
+      }
+      // Always refresh the raw debug dump — it's the diagnostic channel and
+      // should reflect the latest Type 1 message even if no recognized buff
+      // slot changed.
+      if (rawDebug.length > 0) {
+        s.buffsRawDebug = rawDebug.slice(0, 30);
         cur.dirty = true;
       }
     }

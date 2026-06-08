@@ -474,12 +474,23 @@
           // in the tooltip so we can see exactly what Zeal is reporting and
           // fix the alias list if a label changed. Limited to 8 names so the
           // tooltip stays readable; full list is on /api/state.bardMelody.
+          // Two debug streams: `buffSlotsDebug` is the recognized buff-window
+          // names (slots 45-59 / 135-140), `buffsRawDebug` is every labeled
+          // Type-1 payload Zeal sends (#id:value(ticks)) — useful when a buff
+          // lands in a slot ID Mimic doesn't currently promote into `buffs[]`.
           var rawSlotsHint = '';
           if (Array.isArray(st.buffSlotsDebug) && st.buffSlotsDebug.length) {
             rawSlotsHint = '\n\nZeal buff slots seen: ' + st.buffSlotsDebug.slice(0, 8).join(' · ');
           }
+          if (Array.isArray(st.buffsRawDebug) && st.buffsRawDebug.length) {
+            rawSlotsHint += '\n\nRaw Zeal labels: ' + st.buffsRawDebug.slice(0, 12).join(' · ');
+          }
           function _utilRow(label, info, isCasting, clickyHint) {
             var castIcon = isCasting ? '<span class="util-cast">▶</span>' : '<span class="util-cast off">▶</span>';
+            // Three states for the time chip:
+            //   off    — no buff observed (info null)
+            //   on     — buff observed but no tick count (info.observed, no remaining_secs)
+            //   M:SS   — full countdown (info.remaining_secs > 0)
             var t = '<span class="util-t off">off</span>';
             if (info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0) {
               var rs = info.remaining_secs;
@@ -487,6 +498,10 @@
               var tStr = mm + ':' + String(ss).padStart(2,'0');
               var tier = rs <= 30 ? 'crit' : (rs <= 120 ? 'low' : '');
               t = '<span class="util-t ' + tier + '">' + tStr + '</span>';
+            } else if (info && info.observed) {
+              // Buff matched but tick count missing — render "on" so the
+              // user knows it's up, no countdown available.
+              t = '<span class="util-t">on</span>';
             }
             // OFF rows get the raw Zeal-slot dump appended so a misnamed
             // buff is diagnosable on hover. Active rows keep the clean hint.

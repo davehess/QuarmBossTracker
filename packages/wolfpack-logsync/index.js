@@ -4524,11 +4524,19 @@ function _serializeForDashboard() {
         // sitting in their buff slots, alias list contained the right phrase,
         // but the punctuation between the two didn't agree.
         const _slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+        // Buff candidate filter — name required, but tick value is OPTIONAL.
+        // Zeal sometimes ships a slot with name+null ticks (e.g. when the
+        // buff just landed or is in a short song-window slot that doesn't
+        // carry tick metadata). We still want to surface "buff is present"
+        // even when we can't render a countdown, so the row reads "on" or
+        // "??" instead of "off". Caller checks `ticks > 0` before computing
+        // remaining_secs.
+        const _candidate = (b) => !!(b && b.name);
         const _findBuff = (names) => {
           // Pass 1: exact match (punctuation-insensitive via _slug). Trim
           // handles trailing-space noise sometimes seen in Zeal's pipe.
           for (const b of zealBuffs) {
-            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            if (!_candidate(b)) continue;
             const bSlug = _slug(b.name.trim());
             for (const n of names) if (bSlug === _slug(n)) return b;
           }
@@ -4536,7 +4544,7 @@ function _serializeForDashboard() {
           // short aliases ('amp', 'niv') resolve when the buff label uses
           // a shortened form.
           for (const b of zealBuffs) {
-            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            if (!_candidate(b)) continue;
             const bSlug = _slug(b.name.trim());
             for (const n of names) {
               const nSlug = _slug(n);
@@ -4549,7 +4557,7 @@ function _serializeForDashboard() {
           // Checks BOTH directions so an alias of 'amplification' matches a
           // Zeal slot named just 'amp', and vice versa.
           for (const b of zealBuffs) {
-            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            if (!_candidate(b)) continue;
             const bSlug = _slug(b.name.trim());
             for (const n of names) {
               const firstWord = _slug(n.split(/\s+/)[0]);
@@ -4561,12 +4569,33 @@ function _serializeForDashboard() {
           }
           return null;
         };
-        const ampBuff = _findBuff(['amplification']);
-        const harBuff = _findBuff(['harmonize']);
-        const resBuff = _findBuff(['resonance']);
-        const accBuff = _findBuff(['accelerating chorus', "selo`s accelerating chorus", "selo's accelerating chorus"]);
-        const nivBuff = _findBuff(['breath of harmony', "niv`s melody of preservation", "niv's melody of preservation"]);
-        const natBuff = _findBuff(["nature`s melody", "nature's melody"]);
+        // Raw debug slots (from Mimic's broader Type-1 dump) — searched as a
+        // FALLBACK after zealBuffs misses. Bard short-duration songs may land
+        // in label IDs outside the 45-59 / 135-140 ranges Mimic currently
+        // promotes into `buffs[]`, so we also scan the raw debug dump using
+        // the same matcher to catch them. Same name+ticks shape so _findBuff
+        // / candidacy logic transfers.
+        const rawDebugBuffs = (zealSt && Array.isArray(zealSt.buffsRawDebug))
+          ? zealSt.buffsRawDebug.map(r => ({ name: r.value, ticks: r.ticks, _fromRaw: true, _slotId: r.id }))
+          : [];
+        const _findBuffFallback = (names) => {
+          for (const b of rawDebugBuffs) {
+            if (!_candidate(b)) continue;
+            const bSlug = _slug(b.name.trim());
+            for (const n of names) {
+              const nSlug = _slug(n);
+              if (nSlug.length >= 4 && (bSlug === nSlug || bSlug.includes(nSlug) || nSlug.includes(bSlug))) return b;
+            }
+          }
+          return null;
+        };
+        const _resolveBuff = (names) => _findBuff(names) || _findBuffFallback(names);
+        const ampBuff = _resolveBuff(['amplification']);
+        const harBuff = _resolveBuff(['harmonize']);
+        const resBuff = _resolveBuff(['resonance']);
+        const accBuff = _resolveBuff(['accelerating chorus', "selo`s accelerating chorus", "selo's accelerating chorus"]);
+        const nivBuff = _resolveBuff(['breath of harmony', "niv`s melody of preservation", "niv's melody of preservation"]);
+        const natBuff = _resolveBuff(["nature`s melody", "nature's melody"]);
         const _wantedCastNames = ['amplification', 'harmonize', 'resonance',
           "selo`s accelerating chorus", "selo's accelerating chorus", 'accelerating chorus',
           "niv`s melody of preservation", "niv's melody of preservation",
@@ -4597,14 +4626,30 @@ function _serializeForDashboard() {
         const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
                          || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
                          ||   state.kind === 'song';
+        // Buff → info shape. When ticks is unknown (null/0) we still emit
+        // `observed:true` so the overlay can render "on" instead of "off" —
+        // surfacing buff presence even without a countdown. Source flag
+        // distinguishes a primary buff-slot hit from a raw-debug fallback
+        // (helpful when reading the dashboard JSON).
+        const _info = (b) => {
+          if (!b) return null;
+          const hasTicks = typeof b.ticks === 'number' && b.ticks > 0;
+          return {
+            remaining_ticks: hasTicks ? b.ticks : null,
+            remaining_secs:  hasTicks ? b.ticks * 6 : null,
+            observed: true,
+            from_raw_debug: !!b._fromRaw,
+            slot_id: b._slotId != null ? b._slotId : null,
+          };
+        };
         const bardBuffs = (state.kind === 'song' && isBardClass) ? {
-          amplification: ampBuff ? { remaining_ticks: ampBuff.ticks, remaining_secs: ampBuff.ticks * 6 } : null,
+          amplification: _info(ampBuff),
           // Prefer Harmonize when both are present (Harmonize replaces Resonance).
-          harmonize:     harBuff ? { remaining_ticks: harBuff.ticks, remaining_secs: harBuff.ticks * 6 } : null,
-          resonance:     (!harBuff && resBuff) ? { remaining_ticks: resBuff.ticks, remaining_secs: resBuff.ticks * 6 } : null,
-          accelerating_chorus: accBuff ? { remaining_ticks: accBuff.ticks, remaining_secs: accBuff.ticks * 6 } : null,
-          nivs:          nivBuff ? { remaining_ticks: nivBuff.ticks, remaining_secs: nivBuff.ticks * 6 } : null,
-          natures:       natBuff ? { remaining_ticks: natBuff.ticks, remaining_secs: natBuff.ticks * 6 } : null,
+          harmonize:     _info(harBuff),
+          resonance:     harBuff ? null : _info(resBuff),
+          accelerating_chorus: _info(accBuff),
+          nivs:          _info(nivBuff),
+          natures:       _info(natBuff),
           // Per-row cast indicators — true when the Zeal currentCasting label
           // matches this buff's spell name. Drives a pulsing ▶ next to the
           // row in the overlay so the bard sees which utility is in flight.
@@ -4628,12 +4673,22 @@ function _serializeForDashboard() {
         // Debug: surface the raw buff-slot names so we can see exactly what
         // Zeal is reporting when a utility song doesn't light up its strip
         // row. Plain array of "name (Xt)" strings — capped at 25 to keep
-        // /api/state light. Read off the dashboard or curl /api/state to
-        // tell us what to match against in _findBuff.
+        // /api/state light. Include slots with null/0 ticks (rendered as "?t")
+        // so a buff arriving without a tick count is still visible to the
+        // diagnostic instead of being silently filtered out.
         const buffSlotsDebug = zealBuffs
-          .filter(b => b && b.name && typeof b.ticks === 'number' && b.ticks > 0)
+          .filter(b => b && b.name)
           .slice(0, 25)
-          .map(b => `${b.name} (${b.ticks}t)`);
+          .map(b => `${b.name} (${typeof b.ticks === 'number' && b.ticks > 0 ? b.ticks + 't' : '?t'})`);
+        // Raw Type-1 label dump from Mimic — every labeled entry id+value+ticks
+        // that came through the Zeal pipe. Used to diagnose buffs landing in
+        // label IDs we don't currently capture as buff slots (e.g. Quarm's
+        // bard song window may use a different range than the 45-59/135-140
+        // we read). Rendered in OFF chip tooltips so the user can hover and
+        // tell us where Amplification/Niv's actually lives.
+        const rawDebug = (zealSt && Array.isArray(zealSt.buffsRawDebug))
+          ? zealSt.buffsRawDebug.slice(0, 30).map(r => `#${r.id}:${r.value}${typeof r.ticks === 'number' && r.ticks > 0 ? '(' + r.ticks + 't)' : ''}`)
+          : [];
         out[k] = {
           character:      k,
           characterClass: (zealSt && zealSt.class) || null,
@@ -4650,6 +4705,7 @@ function _serializeForDashboard() {
           melodyEndedAt:   state.melodyEndedAt || null,
           bardBuffs,
           buffSlotsDebug,
+          buffsRawDebug: rawDebug,
         };
       }
       // Bard placeholder — if the active character's Zeal class is Bard but
