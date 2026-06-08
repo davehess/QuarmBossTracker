@@ -60,6 +60,15 @@
   .buffrow.low .bt{color:#f0883e} .buffrow.crit .bt{color:#f85149}
   .buffrow .bbar{flex:1 1 60px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden}
   .buffrow .bbar > div{height:100%;background:#56d364;transition:width 200ms linear}
+  /* Mob-Info-style buff rows: "Name (cur/max · time)" label over a bar. */
+  .bufrows{margin-top:4px;display:flex;flex-direction:column;gap:3px}
+  .bufrows.stale{opacity:0.55}
+  .bufrows .src{font-size:9px;color:#6e7681}
+  .bufb .lbl{font-size:10px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bufb .lbl .nm{color:#7ee787}
+  .bufb .lbl .tk{color:#8b949e;font-variant-numeric:tabular-nums}
+  .bufb .bar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:1px}
+  .bufb .bar > div{height:100%;transition:width 250ms linear}
   /* /pet health buff chips — each pet buff with its remaining time from the
      last /pet health report. Same tone tiers as the web BuffChip: dim → low
      (orange ≤6m) → crit (red ≤2m). Stale (no fresh report in N min) is faded. */
@@ -276,48 +285,43 @@
     return '';
   }
   function renderPetBuffs(p){
-    var buffs = Array.isArray(p.pet_buffs) ? p.pet_buffs : null;
+    var buffs = Array.isArray(p.pet_buffs) ? p.pet_buffs.slice() : null;
     if (!buffs || !buffs.length) return '';
     var obs = p.pet_health_observed_at || null;
-    // After 5 min from the last /pet health, the numbers are old enough to
-    // flag the row as stale — the buffs probably still exist, but the time
-    // remaining is more guess than fact.
     var staleMs = obs ? (Date.now() - obs) : null;
     var staleClass = (staleMs != null && staleMs > 5*60*1000) ? ' stale' : '';
-    // Timed buffs (we saw the cast land → know the duration) render as a
-    // countdown BAR under the charm bar. Untimed buffs (name only, from
-    // /pet health with no observed cast) stay as small chips below.
-    var bars = '', chips = '';
+    // Sort by time-left ascending (lowest at top); untimed sink to the bottom.
+    buffs.sort(function(a, b){
+      var ar = (a && a.remaining_secs != null) ? a.remaining_secs : Infinity;
+      var br = (b && b.remaining_secs != null) ? b.remaining_secs : Infinity;
+      return ar - br;
+    });
+    var rows = '';
     for (var i=0;i<buffs.length;i++){
       var b = buffs[i]; if (!b || !b.name) continue;
       var bo = b.observed_at_ms || obs;
       var hasTimer = b.remaining_secs != null;
-      if (hasTimer && b.total_secs) {
-        var tone = buffTone(b.remaining_secs, bo);
-        var pct  = Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100));
-        var col  = b.remaining_secs > 30 ? '#56d364' : (b.remaining_secs > 12 ? '#f0883e' : '#f85149');
-        bars += '<div class="buffrow ' + tone + '" title="' + esc(b.name + ' · ' + fmtRem(b.remaining_secs, bo) + ' left (timed from the cast that landed)') + '">'
-             +    '<span class="bn">' + esc(shortBuffName(b.name)) + '</span>'
-             +    '<div class="bbar"><div style="width:' + pct.toFixed(1) + '%;background:' + col + '"></div></div>'
-             +    '<span class="bt">' + fmtRem(b.remaining_secs, bo) + '</span>'
-             +  '</div>';
-      } else {
-        var t2 = hasTimer ? fmtRem(b.remaining_secs, bo) : '?';
-        var tone2 = hasTimer ? buffTone(b.remaining_secs, bo) : '';
-        var title = b.name + (hasTimer ? ' · ' + t2 + ' left' : ' · present (no cast seen — duration unknown)');
-        chips += '<span class="petbuff ' + tone2 + '" title="' + esc(title) + '">'
-              +    '<span class="nm">' + esc(shortBuffName(b.name)) + '</span>'
-              +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + t2 + '</span>'
-              +  '</span>';
-      }
+      var total = b.total_secs || null;
+      // "Name (curTick/maxTick · M:SS)" — same as the Pet tracker + Mob Info.
+      var tk = '';
+      if (hasTimer && total) {
+        var curT = Math.max(0, Math.ceil(b.remaining_secs / 6));
+        var maxT = Math.max(1, Math.round(total / 6));
+        tk = ' (' + curT + '/' + maxT + ' · ' + fmtRem(b.remaining_secs, bo) + ')';
+      } else if (hasTimer) {
+        tk = ' (' + fmtRem(b.remaining_secs, bo) + ')';
+      } else { tk = ' (?)'; }
+      var pct = (hasTimer && total) ? Math.max(0, Math.min(100, (b.remaining_secs / total) * 100)) : (hasTimer ? 100 : 0);
+      var col = !hasTimer ? '#6e7681' : (b.remaining_secs > 30 ? '#56d364' : (b.remaining_secs > 12 ? '#f0883e' : '#f85149'));
+      var title = b.name + (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)');
+      rows += '<div class="bufb" title="' + esc(title) + '">'
+           +    '<div class="lbl"><span class="nm">' + esc(shortBuffName(b.name)) + '</span><span class="tk">' + esc(tk) + '</span></div>'
+           +    '<div class="bar"><div style="width:' + pct.toFixed(0) + '%;background:' + col + '"></div></div>'
+           +  '</div>';
     }
-    var out = '';
-    if (bars)  out += '<div class="buffbars">' + bars + '</div>';
-    if (chips) {
-      var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : '/pet health';
-      out += '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
-    }
-    return out;
+    if (!rows) return '';
+    var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : 'observed casts';
+    return '<div class="bufrows' + staleClass + '">' + rows + '<div class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳ stale' : 'ⓘ') + '</div></div>';
   }
 
   // Per-charm session memory: key → { started_at, warned }. Re-armed when a
