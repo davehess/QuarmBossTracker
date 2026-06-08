@@ -35,6 +35,13 @@
   .bardbuffs .util-t.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
   .bardbuffs .util-t.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .bardbuffs .util-t.off{color:#6b7280;background:rgba(110,118,129,0.10);border-color:rgba(110,118,129,0.25);font-style:italic}
+  /* Cast-progress bar for a utility row. Same left-to-right fill as the top
+     song row's .row.casting, just sized for the compact strip. Painted only
+     when this utility is the currently-cast spell (Zeal label 134 match). */
+  .bardbuffs .util-row.casting{background:linear-gradient(to right,
+    rgba(163,113,247,0.45) 0%, rgba(163,113,247,0.45) var(--p,0%),
+    rgba(163,113,247,0.10) var(--p,0%), rgba(163,113,247,0.10) 100%);
+    border-radius:3px;padding:1px 4px;margin:0 -4px}
   /* Per-character melody block. */
   .mel{margin-top:6px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)}
   .mel:first-of-type{border-top:none;padding-top:0;margin-top:4px}
@@ -380,13 +387,27 @@
           var icon = '▶';
           var styleAttr = '';
           if (i === currentPos) {
-            if (isCasting) {
+            // If the live Zeal cast label is a UTILITY song (Amp / Niv\`s /
+            // Selo\`s etc.) then THIS top-row rotation entry isn't the song
+            // actually in flight — the cast bar belongs on the bardBuffs
+            // strip below. Compare the slugged names so backtick vs
+            // apostrophe vs spacing don't fight us.
+            var _topSlug = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+            var _castSlug = String(st.nowCasting || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+            var topIsTheCast = !_castSlug || _topSlug === _castSlug
+              || _topSlug.indexOf(_castSlug) >= 0 || _castSlug.indexOf(_topSlug) >= 0;
+            if (isCasting && topIsTheCast) {
               rowClass += ' casting';
               icon = '▶';
               styleAttr = ' style="--p:' + castPct.toFixed(1) + '%"';
             } else if (isStopped) {
               rowClass += ' stopped';
               icon = '⏹';
+            } else if (isCasting) {
+              // Cast in progress but the cast label points at a utility,
+              // not this rotation entry → render this row as queued so the
+              // bar doesn't fight the strip below.
+              rowClass += ' queued';
             } else {
               rowClass += ' done';
               icon = '✓';
@@ -449,8 +470,27 @@
         var bardBuffsHtml = '';
         if (st.bardBuffs) {
           var casting = st.bardBuffs.casting || {};
+          // When a strip row shows OFF, surface the raw Zeal buff-slot names
+          // in the tooltip so we can see exactly what Zeal is reporting and
+          // fix the alias list if a label changed. Limited to 8 names so the
+          // tooltip stays readable; full list is on /api/state.bardMelody.
+          // Two debug streams: `buffSlotsDebug` is the recognized buff-window
+          // names (slots 45-59 / 135-140), `buffsRawDebug` is every labeled
+          // Type-1 payload Zeal sends (#id:value(ticks)) — useful when a buff
+          // lands in a slot ID Mimic doesn't currently promote into `buffs[]`.
+          var rawSlotsHint = '';
+          if (Array.isArray(st.buffSlotsDebug) && st.buffSlotsDebug.length) {
+            rawSlotsHint = '\n\nZeal buff slots seen: ' + st.buffSlotsDebug.slice(0, 8).join(' · ');
+          }
+          if (Array.isArray(st.buffsRawDebug) && st.buffsRawDebug.length) {
+            rawSlotsHint += '\n\nRaw Zeal labels: ' + st.buffsRawDebug.slice(0, 12).join(' · ');
+          }
           function _utilRow(label, info, isCasting, clickyHint) {
             var castIcon = isCasting ? '<span class="util-cast">▶</span>' : '<span class="util-cast off">▶</span>';
+            // Three states for the time chip:
+            //   off    — no buff observed (info null)
+            //   on     — buff observed but no tick count (info.observed, no remaining_secs)
+            //   M:SS   — full countdown (info.remaining_secs > 0)
             var t = '<span class="util-t off">off</span>';
             if (info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0) {
               var rs = info.remaining_secs;
@@ -458,16 +498,35 @@
               var tStr = mm + ':' + String(ss).padStart(2,'0');
               var tier = rs <= 30 ? 'crit' : (rs <= 120 ? 'low' : '');
               t = '<span class="util-t ' + tier + '">' + tStr + '</span>';
+            } else if (info && info.observed) {
+              // Buff matched but tick count missing — render "on" so the
+              // user knows it's up, no countdown available.
+              t = '<span class="util-t">on</span>';
             }
-            return '<div class="util-row" title="' + esc(clickyHint) + '">'
+            // OFF rows get the raw Zeal-slot dump appended so a misnamed
+            // buff is diagnosable on hover. Active rows keep the clean hint.
+            var hint = info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0
+              ? clickyHint
+              : clickyHint + rawSlotsHint;
+            // When this utility row IS the current cast (▶ active), paint a
+            // left-to-right progress bar across it — mirrors the top song
+            // row's cast-fill behavior. User feedback: the progress bar
+            // was previously stuck on the top row even when a utility from
+            // the bottom strip was being cast.
+            var classes = 'util-row' + (isCasting ? ' casting' : '');
+            var styleAttr = '';
+            if (isCasting && typeof castPct === 'number') {
+              styleAttr = ' style="--p:' + castPct.toFixed(1) + '%"';
+            }
+            return '<div class="' + classes + '" title="' + esc(hint) + '"' + styleAttr + '>'
                  + castIcon
                  + '<span class="util-lbl">' + label + '</span>' + t + '</div>';
           }
           var harmonizeOrResonance = st.bardBuffs.harmonize
             ? _utilRow('Harmonize',   st.bardBuffs.harmonize, !!casting.harmonize_resonance, 'From Shadowsong Cloak — replaces Resonance')
-            : _utilRow('Resonance',   st.bardBuffs.resonance, !!casting.harmonize_resonance, 'From Shadowsong Cloak');
+            : _utilRow('Resonance',   st.bardBuffs.resonance, !!casting.harmonize_resonance, 'From Voice of the Serpent');
           bardBuffsHtml = '<div class="bardbuffs">'
-                        + _utilRow('Amplification',          st.bardBuffs.amplification,        !!casting.amplification,       'From Voice of the Serpent')
+                        + _utilRow('Amplification',          st.bardBuffs.amplification,        !!casting.amplification,       'Bard self-buff')
                         + harmonizeOrResonance
                         + _utilRow("Selo`s Accel. Chorus",   st.bardBuffs.accelerating_chorus,  !!casting.accelerating_chorus, 'Group-wide haste utility')
                         + _utilRow("Niv`s Melody",           st.bardBuffs.nivs,                 !!casting.nivs,                'Niv`s Melody of Preservation → Breath of Harmony')

@@ -36,6 +36,21 @@ module.exports = {
     const isZek = interaction.options.getBoolean('is_zek', true);
     const entry = setZekFlag(name, isZek);
 
+    // Dual-write to who_overrides so the web /admin/who directory reflects the
+    // same flag (and a periodic reload won't revert it). Best-effort — the
+    // local state flag above is the operational source either way.
+    try {
+      const sb = require('../utils/supabase');
+      if (sb.isEnabled()) {
+        await sb.upsertWhoOverride({
+          character:  entry.name || name,
+          isZek,
+          setBy:      interaction.user.id,
+          setByName:  interaction.member?.displayName || interaction.user.username,
+        });
+      }
+    } catch (err) { console.warn('[markzek] who_overrides upsert failed:', err?.message); }
+
     const verb = isZek ? '🚩 flagged as **Zek**' : '↩️ cleared Zek flag for';
     const cls  = entry.class ? ` *(${entry.class}${entry.level ? ` ${entry.level}` : ''})*` : '';
     return interaction.reply({

@@ -285,12 +285,17 @@ function clearPvpKill(key) {
 }
 function getAllPvpKills() { return loadState().pvpKills || {}; }
 
-// Update all PVP respawn times to a specific future moment (quake reset)
+// Quake reset. A quake repops every PVP mob, so its spawn window opens
+// immediately: set the EARLIEST spawn (nextSpawn) to the quake time — for an
+// immediate quake that reads "available now". We deliberately PRESERVE killedAt
+// and nextSpawnLatest so each row's kill date + latest-spawn window stay intact
+// ("timers can still stay there"); only the early edge moves. (Previously this
+// also rewrote killedAt, which shifted the whole window and lost the original
+// latest spawn.)
 function applyQuakeToAllPvpKills(quakeTimeMs) {
   const s = loadState();
   for (const key of Object.keys(s.pvpKills)) {
     s.pvpKills[key].nextSpawn = quakeTimeMs;
-    s.pvpKills[key].killedAt  = quakeTimeMs - s.pvpKills[key].timerHours * 3600000;
   }
   saveState(s);
 }
@@ -660,6 +665,42 @@ function getWhoEntry(name) {
   if (!name) return null;
   return loadState().whoData?.[String(name).toLowerCase()] || null;
 }
+
+// In-memory mirror of who_overrides (officer-curated class + Zek edited on the
+// web /admin/who page). Overrides WIN over fresh /who observations so a curated
+// class/Zek isn't clobbered by the next anon sighting. Populated at startup +
+// on a periodic refresh from Supabase (see index.js) and kept in sync locally
+// when /markzek flips a flag.
+const _whoOverrides = new Map();   // lower(name) → { name, class|null, is_zek|null }
+
+// Replace the override cache from a batch of who_overrides rows and stamp them
+// onto state.whoData so /whois reflects them immediately (creating a minimal
+// entry for an overridden character we've never seen in a /who). Returns the
+// count applied.
+function applyWhoOverrides(rows) {
+  if (!Array.isArray(rows)) return 0;
+  _whoOverrides.clear();
+  for (const r of rows) {
+    if (!r || !r.character) continue;
+    _whoOverrides.set(String(r.character).toLowerCase(), {
+      name:   r.character,
+      class:  (r.class != null && r.class !== '') ? r.class : null,
+      is_zek: (r.is_zek === true || r.is_zek === false) ? r.is_zek : null,
+    });
+  }
+  const s = loadState();
+  if (!s.whoData) s.whoData = {};
+  const now = new Date().toISOString();
+  for (const [k, ov] of _whoOverrides) {
+    const e = s.whoData[k] || { name: ov.name, firstSeen: now, lastSeen: now };
+    if (ov.class  != null) e.class  = ov.class;
+    if (ov.is_zek != null) e.is_zek = ov.is_zek;
+    if (!e.name) e.name = ov.name;
+    s.whoData[k] = e;
+  }
+  saveState(s);
+  return _whoOverrides.size;
+}
 function mergeWhoData(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const s = loadState();
@@ -695,6 +736,13 @@ function mergeWhoData(rows) {
       firstSeen:  old.firstSeen || r.observedAt || now,
       lastSeen:   r.observedAt || now,
     };
+    // Officer-curated override wins over the fresh observation so a manually
+    // set class / Zek flag (web /admin/who or /markzek) survives the next /who.
+    const ov = _whoOverrides.get(k);
+    if (ov) {
+      if (ov.class  != null) s.whoData[k].class  = ov.class;
+      if (ov.is_zek != null) s.whoData[k].is_zek = ov.is_zek;
+    }
   }
   saveState(s);
 }
@@ -705,6 +753,11 @@ function setZekFlag(name, isZek) {
   if (!s.whoData[k]) s.whoData[k] = { name, firstSeen: new Date().toISOString() };
   s.whoData[k].is_zek = !!isZek;
   s.whoData[k].lastSeen = s.whoData[k].lastSeen || new Date().toISOString();
+  // Keep the in-memory override cache in lockstep so a subsequent /who merge
+  // doesn't immediately revert the flag before the next Supabase refresh.
+  const cur = _whoOverrides.get(k) || { name: s.whoData[k].name || name };
+  cur.is_zek = !!isZek;
+  _whoOverrides.set(k, cur);
   saveState(s);
   return s.whoData[k];
 }
@@ -905,7 +958,7 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
   getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
-  applyKnownZekTips,
+  applyKnownZekTips, applyWhoOverrides,
   getPendingLoot, getAllPendingLoot, setPendingLoot, removePendingLootItem,
   clearPendingLoot, clearAllPendingLoot,
 };

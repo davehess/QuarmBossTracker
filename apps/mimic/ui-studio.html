@@ -82,22 +82,37 @@
       <select id="charSelect"><option value="">— pick —</option></select>
     </label>
     <span class="sep"></span>
+    <!-- Source/Target use a preset <select> + freeform W×H inputs. The
+         dropdown's "Custom…" sentinel keeps the four most-common values one
+         click away; the inputs cover widescreen / ultrawide (3840×1600,
+         5120×1440) without forcing us to hard-code every monitor on Earth.
+         "🖥 Detect" lists every attached display so a user with mixed
+         monitors can pick the right one instead of typing. -->
     <label>Source
-      <select id="srcRes">
-        <option value="3440x1440">3440×1440</option>
+      <select id="srcPreset" title="Picks of common Quarm/EQ resolutions">
+        <option value="3440x1440">3440×1440 (UW)</option>
         <option value="2560x1440" selected>2560×1440</option>
         <option value="1920x1080">1920×1080</option>
         <option value="1680x1050">1680×1050</option>
+        <option value="__custom__">Custom…</option>
       </select>
+      <input id="srcW" type="number" min="640"  max="10240" step="1" style="width:64px" title="Source width"  />
+      ×
+      <input id="srcH" type="number" min="480"  max="6000"  step="1" style="width:54px" title="Source height" />
     </label>
     <label>→ Target
-      <select id="tgtRes">
-        <option value="1920x1080" selected>1920×1080</option>
+      <select id="tgtPreset" title="Picks of common Quarm/EQ resolutions">
+        <option value="3440x1440">3440×1440 (UW)</option>
         <option value="2560x1440">2560×1440</option>
+        <option value="1920x1080" selected>1920×1080</option>
         <option value="1680x1050">1680×1050</option>
-        <option value="3440x1440">3440×1440</option>
+        <option value="__custom__">Custom…</option>
       </select>
+      <input id="tgtW" type="number" min="640"  max="10240" step="1" style="width:64px" title="Target width"  />
+      ×
+      <input id="tgtH" type="number" min="480"  max="6000"  step="1" style="width:54px" title="Target height" />
     </label>
+    <button id="detectBtn" class="secondary" title="Show attached monitors and pick one as Target">🖥 Detect</button>
     <button id="loadBtn" class="secondary">Load + Rescale</button>
     <span class="sep"></span>
     <button id="snapBtn"  class="secondary" title="Toggle snap to edges (10px)">Snap: ON</button>
@@ -107,6 +122,7 @@
     <button id="inspectSocialsBtn" class="secondary" title="Open the Hotbar/Socials inspector — see what's actually in your Sock_/Socials_ INI files">Hotbar Pages…</button>
     <button id="captureBtn"        class="secondary" title="Heuristic-parse your Sock_/Socials_ INIs into a draft PvP template JSON in your EQ folder — review + share">Capture PvP draft</button>
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
+    <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <span id="status"></span>
   </div>
   <!-- PvP-set prompt — slides in from the top when the loaded character's
@@ -222,24 +238,83 @@
     return { lines: lines, sections: sections };
   }
 
-  // Reconstruct file with updated XPos/YPos/Size.cx/Size.cy values. Preserves
-  // line order, formatting, comments — only rewrites the four keys per section.
+  // Reconstruct file with updated position keys. Preserves line order,
+  // formatting, comments. Keys present in the section are rewritten in place;
+  // keys NOT present (e.g. a brand-new XPos<targetRes> block) are INSERTED
+  // right after the section header. Inserting is what lets us add a widescreen
+  // resolution block without disturbing the user's original-resolution layout.
   function emitIni(parsed, edits){
-    // edits: { sectionName → { XPos, YPos, "Size.cx", "Size.cy" } }
+    // edits: { sectionName → { "XPos3840x1600": N, "YPos3840x1600": N, Width, Height } }
     var lines = parsed.lines.slice();
-    for (var i = 0; i < parsed.sections.length; i++) {
-      var sec = parsed.sections[i];
+    // Process sections bottom-to-top so inserted lines don't shift the
+    // startLine indices of sections we haven't handled yet.
+    var secs = parsed.sections.slice().sort(function(a, b){ return b.startLine - a.startLine; });
+    for (var i = 0; i < secs.length; i++) {
+      var sec = secs[i];
       var ed = edits[sec.name];
       if (!ed) continue;
+      var remaining = {};
+      for (var ek in ed) remaining[ek] = ed[ek];
       for (var ln = sec.startLine + 1; ln <= sec.endLine; ln++) {
         var L = lines[ln];
         var kv = L.match(/^(\s*)([\w.]+)(\s*=\s*)(.*)$/);
         if (!kv) continue;
         var key = kv[2];
-        if (ed[key] != null) lines[ln] = kv[1] + key + kv[3] + ed[key];
+        if (remaining[key] != null) {
+          lines[ln] = kv[1] + key + kv[3] + remaining[key];
+          delete remaining[key];
+        }
+      }
+      // Insert any keys that weren't already in the section.
+      var toInsert = [];
+      for (var rk in remaining) toInsert.push(rk + '=' + remaining[rk]);
+      if (toInsert.length) {
+        var args = [sec.startLine + 1, 0].concat(toInsert);
+        Array.prototype.splice.apply(lines, args);
       }
     }
     return lines.join('\n');
+  }
+
+  // ── Resolution-aware position helpers ────────────────────────────────────
+  // EQ stores window geometry per-resolution: XPos<W>x<H> / YPos<W>x<H>
+  // (e.g. XPos2560x1440). Dimensions are bare Width/Height (NOT resolution-
+  // suffixed). Older pre-/saveui files used bare XPos/YPos. Quarm's NillipussUI
+  // and friends ALWAYS write the suffixed form — which is why the old parser
+  // (looking for bare XPos/Size.cx) found nothing and reported "0 windows".
+
+  // Count how many position keys exist per resolution across the whole bundle,
+  // so Load can auto-select a resolution block that actually exists.
+  function _detectResolutions(bundle){
+    var counts = {};
+    Object.keys(bundle).forEach(function(fn){
+      if (fn.indexOf('__parsed') >= 0) return;
+      var txt = bundle[fn];
+      if (typeof txt !== 'string') return;
+      var re = /^XPos(\d+)x(\d+)\s*=/gmi, m;
+      while ((m = re.exec(txt))) {
+        var key = m[1] + 'x' + m[2];
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+    return counts;   // { "2560x1440": 130, ... }
+  }
+
+  // Read a section's position at the requested resolution suffix. Falls back to
+  // any other resolution block present, then to bare XPos/YPos. Returns the
+  // suffix actually used so the UI can note when it had to substitute.
+  function _readPos(props, suffix){
+    var x = props['XPos' + suffix], y = props['YPos' + suffix], used = suffix;
+    if (x == null || y == null) {
+      var alt = null;
+      for (var k in props) {
+        var mm = k.match(/^XPos(\d+x\d+)$/i);
+        if (mm && props['YPos' + mm[1]] != null) { alt = mm[1]; break; }
+      }
+      if (alt) { x = props['XPos' + alt]; y = props['YPos' + alt]; used = alt; }
+      else if (props.XPos != null) { x = props.XPos; y = props.YPos; used = ''; }
+    }
+    return { x: x, y: y, used: used };
   }
 
   // ── Load + rescale ───────────────────────────────────────────────────────
@@ -308,6 +383,92 @@
     };
   }
 
+  // ── Resolution preset ↔ W/H input wiring ─────────────────────────────────
+  // The preset dropdown is just a convenience picker — the W/H inputs are
+  // the source of truth (we read them at Load time). A custom value typed
+  // into the inputs flips the preset to "Custom…" so the UI stays honest.
+  function _syncPresetFromInputs(side) {
+    var w = parseInt(document.getElementById(side + 'W').value, 10);
+    var h = parseInt(document.getElementById(side + 'H').value, 10);
+    var sel = document.getElementById(side + 'Preset');
+    var match = '__custom__';
+    for (var i = 0; i < sel.options.length; i++) {
+      var v = sel.options[i].value;
+      if (v === '__custom__') continue;
+      var p = v.split('x');
+      if (parseInt(p[0], 10) === w && parseInt(p[1], 10) === h) { match = v; break; }
+    }
+    sel.value = match;
+  }
+  function _syncInputsFromPreset(side) {
+    var sel = document.getElementById(side + 'Preset');
+    if (sel.value === '__custom__') return;     // leave inputs alone
+    var p = sel.value.split('x');
+    document.getElementById(side + 'W').value = p[0];
+    document.getElementById(side + 'H').value = p[1];
+  }
+  ['src', 'tgt'].forEach(function(side){
+    document.getElementById(side + 'Preset').addEventListener('change', function(){ _syncInputsFromPreset(side); });
+    document.getElementById(side + 'W').addEventListener('input', function(){ _syncPresetFromInputs(side); });
+    document.getElementById(side + 'H').addEventListener('input', function(){ _syncPresetFromInputs(side); });
+    _syncInputsFromPreset(side);     // initial fill from default-selected preset
+  });
+
+  // ── Display detector ─────────────────────────────────────────────────────
+  // Enumerate the user's monitors via Electron's `screen` API and pop a
+  // floating picker. Selecting a display sets the TARGET resolution to that
+  // monitor's full pixel size (EQ runs fullscreen → not workAreaSize).
+  // Clicking the body dismisses; Esc dismisses. No-op if the IPC bridge
+  // isn't there (file:// dev harness etc.).
+  document.getElementById('detectBtn').addEventListener('click', async function(){
+    if (!window.mimic || !window.mimic.uiStudioListDisplays) {
+      setStatus('display detection unavailable', 'err'); return;
+    }
+    var r = await window.mimic.uiStudioListDisplays().catch(function(){ return null; });
+    if (!r || !Array.isArray(r.displays) || r.displays.length === 0) {
+      setStatus('no displays detected', 'err'); return;
+    }
+    _showDisplayPicker(r.displays);
+  });
+  function _showDisplayPicker(displays) {
+    var old = document.getElementById('displayPicker');
+    if (old) old.remove();
+    var dlg = document.createElement('div');
+    dlg.id = 'displayPicker';
+    dlg.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);' +
+      'background:#161b22;border:1px solid #58a6ff;border-radius:6px;z-index:100;' +
+      'padding:10px;font-size:12px;color:#c9d1d9;min-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+    var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:6px">Pick a display for Target</div>' +
+      '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">EQ runs fullscreen at the monitor\'s full pixel size — pick the screen you play on.</div>';
+    for (var i = 0; i < displays.length; i++) {
+      var d = displays[i];
+      html += '<button data-w="' + d.w + '" data-h="' + d.h + '" ' +
+        'style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;' +
+        'border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
+        'cursor:pointer;font-size:11px;font-family:inherit">' + escapeHtml(d.label) +
+        (d.scaleFactor !== 1 ? ' <span style="color:#8b949e">@ ' + d.scaleFactor + 'x DPI</span>' : '') +
+        '</button>';
+    }
+    html += '<div style="margin-top:6px;text-align:right">' +
+      '<button id="displayPickerCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
+      '</div>';
+    dlg.innerHTML = html;
+    document.body.appendChild(dlg);
+    dlg.querySelectorAll('button[data-w]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var w = parseInt(this.dataset.w, 10), h = parseInt(this.dataset.h, 10);
+        document.getElementById('tgtW').value = w;
+        document.getElementById('tgtH').value = h;
+        _syncPresetFromInputs('tgt');
+        dlg.remove();
+        setStatus('target set to ' + w + '×' + h + ' — click Load + Rescale to apply', 'ok');
+      });
+    });
+    document.getElementById('displayPickerCancel').addEventListener('click', function(){ dlg.remove(); });
+    var esc = function(e){ if (e.key === 'Escape') { dlg.remove(); document.removeEventListener('keydown', esc); } };
+    document.addEventListener('keydown', esc);
+  }
+
   document.getElementById('loadBtn').addEventListener('click', loadAndRescale);
   async function loadAndRescale(){
     var sel = document.getElementById('charSelect').value;
@@ -315,10 +476,16 @@
     var parts = sel.split('|');
     STATE.character = parts[0];
     STATE.eqDir     = parts[1];
-    var srcParts = document.getElementById('srcRes').value.split('x');
-    var tgtParts = document.getElementById('tgtRes').value.split('x');
-    STATE.srcW = parseInt(srcParts[0], 10); STATE.srcH = parseInt(srcParts[1], 10);
-    STATE.tgtW = parseInt(tgtParts[0], 10); STATE.tgtH = parseInt(tgtParts[1], 10);
+    // Read the W/H inputs (source of truth — preset dropdown is just a picker).
+    var sW = parseInt(document.getElementById('srcW').value, 10);
+    var sH = parseInt(document.getElementById('srcH').value, 10);
+    var tW = parseInt(document.getElementById('tgtW').value, 10);
+    var tH = parseInt(document.getElementById('tgtH').value, 10);
+    if (!sW || !sH || !tW || !tH || sW < 640 || sH < 480 || tW < 640 || tH < 480) {
+      setStatus('enter valid Source/Target sizes (≥ 640×480)', 'err'); return;
+    }
+    STATE.srcW = sW; STATE.srcH = sH;
+    STATE.tgtW = tW; STATE.tgtH = tH;
     setStatus('loading ' + STATE.character + '…');
     try {
       STATE.bundle = await window.mimic.uiStudioReadBundle(STATE.character, STATE.eqDir);
@@ -327,23 +494,62 @@
       setStatus('no ini files for ' + STATE.character, 'err');
       return;
     }
+    STATE.fromCloud = false;
+    _renderLoadedBundle();
+  }
+
+  // Parse + rescale + render whatever is currently in STATE.bundle. Shared by
+  // the local "Load + Rescale" path and the cloud "Restore from backup" path —
+  // both end up with a { filename → text } bundle, so the only difference is
+  // where the bytes came from. Reads Source/Target from STATE (already set by
+  // the caller).
+  function _renderLoadedBundle(){
     // Parse every ini, extract windows with position data.
     STATE.windows = [];
+    // Detect which resolution blocks the file actually contains. If the chosen
+    // Source resolution has no matching XPos<res> anywhere, fall back to the
+    // dominant resolution that IS present so we don't report "0 windows" for a
+    // file that's simply saved at a different resolution than the dropdown.
+    var resCounts = _detectResolutions(STATE.bundle);
+    var srcSuffix = STATE.srcW + 'x' + STATE.srcH;
+    var autoSwitched = false;
+    if (!resCounts[srcSuffix]) {
+      var dom = null, domN = 0;
+      for (var rk in resCounts) { if (resCounts[rk] > domN) { domN = resCounts[rk]; dom = rk; } }
+      if (dom) {
+        var dp = dom.split('x');
+        STATE.srcW = parseInt(dp[0], 10); STATE.srcH = parseInt(dp[1], 10);
+        srcSuffix = dom; autoSwitched = true;
+        document.getElementById('srcW').value = STATE.srcW;
+        document.getElementById('srcH').value = STATE.srcH;
+        _syncPresetFromInputs('src');
+      }
+    }
+    STATE.srcSuffix = srcSuffix;
     var fxX = STATE.tgtW / STATE.srcW;
     var fxY = STATE.tgtH / STATE.srcH;
     var seq = 0;
-    for (var fname in STATE.bundle) {
+    var fnames = Object.keys(STATE.bundle).filter(function(k){ return k.indexOf('__parsed') < 0; });
+    for (var fi = 0; fi < fnames.length; fi++) {
+      var fname = fnames[fi];
       var parsed = parseIni(STATE.bundle[fname]);
       STATE.bundle[fname + '__parsed'] = parsed;
       for (var i = 0; i < parsed.sections.length; i++) {
         var s = parsed.sections[i];
-        var px = s.props.XPos, py = s.props.YPos;
-        var sw = s.props['Size.cx'], sh = s.props['Size.cy'];
-        if (px == null || py == null) continue;
-        var x = parseInt(px, 10), y = parseInt(py, 10);
-        var w = sw != null ? parseInt(sw, 10) : 200;
-        var h = sh != null ? parseInt(sh, 10) : 100;
+        var pos = _readPos(s.props, srcSuffix);
+        if (pos.x == null || pos.y == null) continue;
+        var x = parseInt(pos.x, 10), y = parseInt(pos.y, 10);
         if (isNaN(x) || isNaN(y)) continue;
+        // Dimensions: bare Width/Height (real Quarm key), then legacy Size.cx/cy.
+        // Windows with no size entry use EQ's default size — we DON'T fabricate
+        // a Width/Height for them on save (could pin an auto-sizing window).
+        var rawW = s.props.Width  != null ? s.props.Width  : s.props['Size.cx'];
+        var rawH = s.props.Height != null ? s.props.Height : s.props['Size.cy'];
+        var hasWH = (rawW != null && rawH != null);
+        var w = hasWH ? parseInt(rawW, 10) : 200;
+        var h = hasWH ? parseInt(rawH, 10) : 100;
+        if (isNaN(w)) { w = 200; hasWH = false; }
+        if (isNaN(h)) { h = 100; hasWH = false; }
         // Rescale to target resolution.
         x = Math.round(x * fxX);
         y = Math.round(y * fxY);
@@ -362,12 +568,50 @@
           kind:    classify.kind,
           contents: classify.contents,
           props:    s.props,
+          hasWH:    hasWH,
+          srcSuffix: pos.used,
           x: x, y: y, w: w, h: h,
           origX: x, origY: y, origW: w, origH: h,
         });
       }
     }
-    setStatus('loaded ' + STATE.windows.length + ' windows · rescaled ' + STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH, 'ok');
+    STATE.autoSwitched = autoSwitched;
+    if (STATE.windows.length === 0) {
+      // Window-position data lives in EQ's UI_<char>_pq.proj.ini. Quarm has no
+      // /saveui command — the client writes this file automatically when you
+      // /camp, /quit, or zone. So "0 windows" means either the file isn't
+      // there yet (brand-new character who hasn't camped) or it exists but we
+      // couldn't parse a position out of it (send us the file so we can fix it).
+      var hadUiFile = false;
+      try {
+        hadUiFile = Object.keys(STATE.bundle || {}).some(function(k){
+          return /^UI_/i.test(k) && k.indexOf('__parsed') < 0;
+        });
+      } catch (e) {}
+      setStatus(
+        hadUiFile
+          ? 'Found UI_' + STATE.character + '_pq.proj.ini but read 0 window positions. ' +
+            'If this looks wrong, use ☁ Backup to send it to us so we can fix the parser. (Hotbar Pages still works.)'
+          : 'No saved layout for ' + STATE.character + ' yet. Quarm writes UI_' + STATE.character +
+            '_pq.proj.ini automatically when you /camp, /quit, or zone — do that once, then Load again. ' +
+            '(There is no /saveui on Quarm. Hotbar Pages still works without it.)',
+        'err'
+      );
+    } else {
+      var msg;
+      if (STATE.fromCloud) {
+        msg = '☁ restored ' + STATE.windows.length + ' windows from cloud backup · set Target to ' +
+          'this machine\'s resolution, then Save to write ' + STATE.tgtW + '×' + STATE.tgtH + ' to ' + STATE.character + '\'s EQ folder';
+      } else {
+        msg = 'loaded ' + STATE.windows.length + ' windows · ' +
+          STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH +
+          ' · Save writes a ' + STATE.tgtW + '×' + STATE.tgtH + ' block (keeps your original)';
+        if (STATE.autoSwitched) {
+          msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
+        }
+      }
+      setStatus(msg, 'ok');
+    }
     renderStage();
     maybePromptPvpSet().catch(function(){});
   }
@@ -646,6 +890,8 @@
     document.getElementById('fH').value = w.h;
     var meta = 'File: <b>' + escapeHtml(w.file) + '</b>'
              + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
+             + '<br>Read from: <b>' + escapeHtml(w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos') + '</b>'
+             + (w.hasWH ? '' : '<br><span style="color:#8b949e">auto-size (no Width/Height written)</span>')
              + '<br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
     if (w.contents && w.contents.length > 0) {
       meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
@@ -684,12 +930,23 @@
   });
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
-    // Group windows by file. Build edits map per file.
-    var edits = {};   // file → { sectionName → {XPos, YPos, "Size.cx", "Size.cy"} }
+    // Write rescaled coords into the TARGET resolution's suffix block
+    // (XPos<tgtW>x<tgtH> / YPos<tgtW>x<tgtH>). If that block doesn't exist
+    // yet, emitIni inserts it — leaving the original source-resolution block
+    // intact. EQ then reads whichever block matches the resolution you launch
+    // at, so one INI can carry layouts for several monitors.
+    var tgtSuffix = STATE.tgtW + 'x' + STATE.tgtH;
+    var edits = {};   // file → { sectionName → { XPos<res>, YPos<res>, Width, Height } }
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       if (!edits[w.file]) edits[w.file] = {};
-      edits[w.file][w.section] = { XPos: w.x, YPos: w.y, 'Size.cx': w.w, 'Size.cy': w.h };
+      var e = {};
+      e['XPos' + tgtSuffix] = w.x;
+      e['YPos' + tgtSuffix] = w.y;
+      // Only (re)write Width/Height for windows that already carried a size —
+      // never fabricate one for an auto-sizing window.
+      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }
+      edits[w.file][w.section] = e;
     }
     // Emit new file contents.
     var newBundle = {};
@@ -701,7 +958,7 @@
     setStatus('saving…');
     try {
       var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle);
-      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · .bak backups created', 'ok');
+      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix + ' block · .bak backups created', 'ok');
       else setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
     } catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
@@ -723,6 +980,106 @@
       else setStatus('backup failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
     } catch (e) { setStatus('backup failed: ' + e.message, 'err'); }
   });
+
+  // ── Cloud restore — deploy a backup on a new machine ─────────────────────
+  // Pulls a snapshot INTO the editor (not straight to disk), so the same
+  // rescale-and-save path runs against the cloud bundle. New-machine flow:
+  // pick the character (its EQ folder is the write target) → 📥 Restore →
+  // pick a backup → 🖥 Detect the new monitor as Target → Save.
+  function _selectedCharEqDir(){
+    var sel = document.getElementById('charSelect').value;
+    if (!sel) return null;
+    var parts = sel.split('|');
+    return { character: parts[0], eqDir: parts[1] };
+  }
+  document.getElementById('cloudRestoreBtn').addEventListener('click', async function(){
+    var who = _selectedCharEqDir();
+    if (!who) { setStatus('pick a character first — its EQ folder is where the backup gets written', 'err'); return; }
+    if (!window.mimic || !window.mimic.uiStudioListSnapshots) { setStatus('cloud restore unavailable', 'err'); return; }
+    setStatus('fetching cloud backups for ' + who.character + '…');
+    var r = await window.mimic.uiStudioListSnapshots(who.character)
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { setStatus('restore failed: ' + (r && r.error ? r.error : 'unknown'), 'err'); return; }
+    var snaps = r.snapshots || [];
+    if (snaps.length === 0) {
+      setStatus('no cloud backups for ' + who.character + ' — run ☁ Backup on the source machine first', 'err');
+      return;
+    }
+    _showSnapshotPicker(who, snaps);
+  });
+
+  function _showSnapshotPicker(who, snaps){
+    var old = document.getElementById('snapPicker'); if (old) old.remove();
+    var dlg = document.createElement('div');
+    dlg.id = 'snapPicker';
+    dlg.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);' +
+      'background:#161b22;border:1px solid #58a6ff;border-radius:6px;z-index:100;' +
+      'padding:10px;font-size:12px;color:#c9d1d9;min-width:340px;max-width:480px;' +
+      'max-height:70vh;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+    var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">Restore a backup for ' +
+      escapeHtml(who.character) + '</div>' +
+      '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">Loads into the editor — nothing is ' +
+      'written until you Save. Rescale to this monitor first with 🖥 Detect.</div>';
+    for (var i = 0; i < snaps.length; i++) {
+      var s = snaps[i];
+      var when = s.created_at ? new Date(s.created_at).toLocaleString() : '';
+      var srcRes = (s.source_width && s.source_height) ? (s.source_width + '×' + s.source_height) : 'unknown res';
+      var label = s.label || ('Backup ' + (i + 1));
+      html += '<button data-id="' + escapeHtml(s.id) + '" ' +
+        'data-w="' + (s.source_width || '') + '" data-h="' + (s.source_height || '') + '" ' +
+        'style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;' +
+        'border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
+        'cursor:pointer;font-size:11px;font-family:inherit">' +
+        '<div style="color:#e6edf3;font-weight:600">' + escapeHtml(label) + '</div>' +
+        '<div style="color:#8b949e;font-size:10px">' + escapeHtml(when) + ' · ' + escapeHtml(srcRes) +
+        ' · ' + (s.file_count || '?') + ' file(s)</div>' +
+        '</button>';
+    }
+    html += '<div style="margin-top:6px;text-align:right">' +
+      '<button id="snapPickerCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
+      '</div>';
+    dlg.innerHTML = html;
+    document.body.appendChild(dlg);
+    dlg.querySelectorAll('button[data-id]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = this.dataset.id;
+        var sw = parseInt(this.dataset.w, 10) || null;
+        var sh = parseInt(this.dataset.h, 10) || null;
+        dlg.remove();
+        _doCloudRestore(who, id, sw, sh);
+      });
+    });
+    document.getElementById('snapPickerCancel').addEventListener('click', function(){ dlg.remove(); });
+    var esc = function(e){ if (e.key === 'Escape') { dlg.remove(); document.removeEventListener('keydown', esc); } };
+    document.addEventListener('keydown', esc);
+  }
+
+  async function _doCloudRestore(who, id, snapSrcW, snapSrcH){
+    setStatus('downloading backup…');
+    var r = await window.mimic.uiStudioGetSnapshot({ character: who.character, id: id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok || !r.files) { setStatus('download failed: ' + (r && r.error ? r.error : 'unknown'), 'err'); return; }
+    // Establish editor context from the snapshot + the picked character.
+    STATE.character = who.character;
+    STATE.eqDir     = who.eqDir;
+    STATE.bundle    = r.files;
+    // Source resolution: prefer the snapshot's captured display size, then the
+    // value already in the Source inputs. _renderLoadedBundle's resolution
+    // auto-detect will still correct this to whatever block the INI actually
+    // contains, so it's just a starting hint.
+    var sW = snapSrcW || r.source_width  || parseInt(document.getElementById('srcW').value, 10) || 2560;
+    var sH = snapSrcH || r.source_height || parseInt(document.getElementById('srcH').value, 10) || 1440;
+    STATE.srcW = sW; STATE.srcH = sH;
+    document.getElementById('srcW').value = sW;
+    document.getElementById('srcH').value = sH;
+    _syncPresetFromInputs('src');
+    // Target stays whatever the user set (they should 🖥 Detect their new monitor).
+    STATE.tgtW = parseInt(document.getElementById('tgtW').value, 10) || sW;
+    STATE.tgtH = parseInt(document.getElementById('tgtH').value, 10) || sH;
+    STATE.fromCloud = true;
+    STATE.selected = -1;
+    _renderLoadedBundle();
+  }
 
   document.getElementById('captureBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('load a character first', 'err'); return; }
@@ -752,11 +1109,14 @@
     var res = await window.mimic.uiStudioInspectSocials(STATE.character, STATE.eqDir)
       .catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!res || !res.ok) { setStatus(res && res.error || 'inspect failed', 'err'); return; }
-    setStatus('inspector open · ' + res.files.length + ' file(s) parsed', 'ok');
-    openSocialsInspector(res.files);
+    setStatus('inspector open · ' + (res.files ? res.files.length : 0) + ' file(s) parsed', 'ok');
+    openSocialsInspector(res);
   });
 
-  function openSocialsInspector(files) {
+  function openSocialsInspector(res) {
+    var files = (res && res.files) || [];
+    var chat  = res && res.chat;
+    var tells = res && res.tells;
     var dlg = document.getElementById('socialsInspector');
     if (!dlg) {
       dlg = document.createElement('div');
@@ -768,30 +1128,135 @@
     }
     var html = '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
       'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px">×</button>' +
-      '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 Hotbar / Socials inspector</h2>' +
+      '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 UI Inspector</h2>' +
       '<p style="color:#8b949e;font-size:10px;margin:0 0 10px;font-family:sans-serif">' +
-      'Raw section dump from your Sock_/Socials_ INI files. Use this to ' +
-      'find the section/key shape we need to parse — paste a sample of any ' +
-      'page that looks parseable into a Discord message and we\'ll refine ' +
-      'the capture heuristic.</p>';
+      'Chat routing, tell windows, and per-page Hotbar + Socials — parsed from ' +
+      'your character INI. Raw section dump is at the bottom for reference.</p>';
+
+    // ── Chat windows & routing (from UI_<char> [ChatManager]) ─────────────
+    if (chat && Array.isArray(chat.windows) && chat.windows.length) {
+      html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+        '💬 Chat windows & routing <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
+        escapeHtml(chat.file) + ' · ' + chat.num_windows + ' windows)</span></div>' +
+        '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;font-family:sans-serif">' +
+        'Which named window each EQ channel feeds. Read-only for now — this is the map a ' +
+        'future drag-drop "raid chat here, tells there" editor will write back to.</p>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:10px">' +
+        '<tr style="color:#8b949e;text-align:left"><th style="padding:2px 4px">#</th>' +
+        '<th style="padding:2px 4px">Name</th><th style="padding:2px 4px">Default ch</th>' +
+        '<th style="padding:2px 4px">Routed</th></tr>';
+      for (var ci = 0; ci < chat.windows.length; ci++) {
+        var cwn = chat.windows[ci];
+        var routed = (chat.routed_filters && chat.routed_filters[cwn.index]) || [];
+        html += '<tr style="border-bottom:1px solid #21262d">' +
+          '<td style="padding:2px 4px;color:#8b949e">' + cwn.index + '</td>' +
+          '<td style="padding:2px 4px;color:#56d364;font-weight:600">' + escapeHtml(cwn.name || '(unnamed)') + '</td>' +
+          '<td style="padding:2px 4px;color:#9aa4ad">' + (cwn.default_channel != null ? cwn.default_channel : '—') + '</td>' +
+          '<td style="padding:2px 4px;color:#9aa4ad">' + (routed.length ? routed.length + ' filter' + (routed.length === 1 ? '' : 's') : '—') + '</td>' +
+          '</tr>';
+      }
+      html += '</table></div>';
+    }
+
+    // ── Tell windows (Zeal) ───────────────────────────────────────────────
+    if (tells) {
+      var onOff = function(v){ return v ? '<span style="color:#56d364">ON</span>' : '<span style="color:#8b949e">off</span>'; };
+      html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+        '🗨 Tell windows <span style="color:#8b949e;font-weight:400;font-size:10px">(Zeal · ' + escapeHtml(tells.file) + ')</span></div>';
+      html += '<div style="background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px;font-size:11px">' +
+        '<div style="color:#c9d1d9"><b>' + escapeHtml(tells.character) + '</b>: tell windows ' + onOff(tells.enabled) +
+        ' · history ' + onOff(tells.history) + '</div>';
+      if (tells.enabled) {
+        html += '<div style="color:#9aa4ad;font-size:10px;margin-top:4px">' +
+          'Per-sender tell windows are placed by Zeal as tells arrive — open a few in-game and ' +
+          'drag them where you want; Zeal remembers. (Mimic can\'t pre-place them yet — there are ' +
+          'no saved per-sender positions in the INI to edit.)</div>';
+      } else {
+        html += '<div style="color:#9aa4ad;font-size:10px;margin-top:4px">' +
+          'Turn on with <code>/tell windows on</code> in-game (Zeal) to get a separate window per sender.</div>';
+      }
+      if (Array.isArray(tells.enabled_for_characters) && tells.enabled_for_characters.length) {
+        html += '<div style="color:#8b949e;font-size:10px;margin-top:6px">Other characters with tell windows on: ' +
+          escapeHtml(tells.enabled_for_characters.filter(function(n){ return n !== tells.character; }).join(', ') || '—') + '</div>';
+      }
+      html += '</div></div>';
+    }
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
-      html += '<div style="margin-bottom:10px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+      html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
         escapeHtml(f.file) + ' <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
         (f.sections ? f.sections.length : 0) + ' sections)</span></div>';
+      // Per-page friendly view — HotButtons + Socials grouped by page.
+      var pgs = f.pages || { hotbuttons: {}, socials: {} };
+      var hotPages = Object.keys(pgs.hotbuttons || {}).map(function(n){ return parseInt(n,10); }).sort(function(a,b){return a-b;});
+      var socPages = Object.keys(pgs.socials   || {}).map(function(n){ return parseInt(n,10); }).sort(function(a,b){return a-b;});
+      var allPages = Array.from(new Set(hotPages.concat(socPages))).sort(function(a,b){return a-b;});
+      if (allPages.length === 0) {
+        html += '<div style="color:#8b949e;font-size:10px;margin:4px 0">no [HotButtons] or [Socials] page data in this file.</div>';
+      } else {
+        html += '<div style="margin:4px 0 6px;color:#7ee7c7;font-size:10px;font-family:sans-serif">' +
+          allPages.length + ' page' + (allPages.length === 1 ? '' : 's') + ' with data — Shift+' + (allPages[0]+1) + ' through Shift+' + (allPages[allPages.length-1]+1) + ' for the in-game shortcut</div>';
+        for (var ap = 0; ap < allPages.length; ap++) {
+          var P = allPages[ap];
+          var hots = (pgs.hotbuttons || {})[P] || {};
+          var socs = (pgs.socials || {})[P] || {};
+          var hotBtns = Object.keys(hots).map(function(n){return parseInt(n,10);}).sort(function(a,b){return a-b;});
+          var socBtns = Object.keys(socs).map(function(n){return parseInt(n,10);}).sort(function(a,b){return a-b;});
+          html += '<details ' + (ap === 0 ? 'open ' : '') + 'style="margin-bottom:6px;background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
+            '<summary style="color:#79c0ff;cursor:pointer;font-family:sans-serif">Page ' + P +
+            ' <span style="color:#8b949e;font-size:10px">(Shift+' + (P+1) + ')</span>' +
+            ' <span style="color:#8b949e;font-size:10px">— ' + hotBtns.length + ' hotbutton' + (hotBtns.length===1?'':'s') +
+            ', ' + socBtns.length + ' social' + (socBtns.length===1?'':'s') + '</span></summary>';
+          if (hotBtns.length > 0) {
+            html += '<div style="margin:6px 0 3px;color:#a371f7;font-size:10px;font-weight:600;font-family:sans-serif">HotButtons</div>';
+            for (var hb = 0; hb < hotBtns.length; hb++) {
+              var B = hotBtns[hb];
+              html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
+                '<span style="color:#c9d1d9">Button ' + B + '</span> = ' +
+                '<span style="color:#f6c365">' + escapeHtml(hots[B]) + '</span></div>';
+            }
+          }
+          if (socBtns.length > 0) {
+            html += '<div style="margin:8px 0 3px;color:#56d364;font-size:10px;font-weight:600;font-family:sans-serif">Socials</div>';
+            for (var sb = 0; sb < socBtns.length; sb++) {
+              var SB = socBtns[sb];
+              var cell = socs[SB] || { name: null, color: null, lines: [] };
+              html += '<div style="margin:4px 0;padding:4px 6px;background:#161b22;border:1px solid #21262d;border-radius:3px">' +
+                '<div style="color:#c9d1d9;font-size:11px">Button ' + SB + ': ' +
+                '<b style="color:#56d364">' + escapeHtml(cell.name || '(unnamed)') + '</b>' +
+                (cell.color != null ? ' <span style="color:#8b949e;font-size:9px">color=' + cell.color + '</span>' : '') +
+                '</div>';
+              for (var ln = 0; ln < cell.lines.length; ln++) {
+                html += '<div style="padding-left:8px;color:#9aa4ad;font-size:10px">' +
+                  '<span style="color:#8b949e">L' + (ln+1) + ':</span> ' + escapeHtml(cell.lines[ln]) + '</div>';
+              }
+              html += '</div>';
+            }
+          }
+          html += '</details>';
+        }
+      }
+      // Raw section dump (for shapes we don't yet group). All keys now —
+      // the old 8-key truncation hid Quarm's flat-key HotButtons / Socials
+      // sections, which is what made the inspector look "incomplete".
       var sections = f.sections || [];
-      // Cap rendered sections so a 500-section file doesn't lock the DOM.
+      html += '<details style="margin-top:8px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
+        '<summary style="color:#8b949e;cursor:pointer;font-family:sans-serif;font-size:10px">▸ raw section dump (' + sections.length + ' sections)</summary>';
       for (var s = 0; s < Math.min(sections.length, 60); s++) {
         var sec = sections[s];
-        var propKeys = Object.keys(sec.props).slice(0, 8);
-        html += '<details style="margin-bottom:3px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
+        var propKeys = Object.keys(sec.props);
+        html += '<details style="margin:3px 0 3px 6px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
           '<summary style="color:#79c0ff;cursor:pointer">[' + escapeHtml(sec.name) + '] ' +
           '<span style="color:#8b949e;font-size:10px">(' + propKeys.length + ' keys)</span></summary>';
-        for (var p = 0; p < propKeys.length; p++) {
+        for (var p = 0; p < Math.min(propKeys.length, 300); p++) {
           var key = propKeys[p];
           html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
             '<span style="color:#c9d1d9">' + escapeHtml(key) + '</span> = ' +
             escapeHtml(sec.props[key]) + '</div>';
+        }
+        if (propKeys.length > 300) {
+          html += '<div style="color:#8b949e;font-size:10px;padding-left:6px">… and ' +
+            (propKeys.length - 300) + ' more keys.</div>';
         }
         html += '</details>';
       }
@@ -799,6 +1264,7 @@
         html += '<div style="color:#8b949e;font-size:10px;margin-top:4px">… and ' +
           (sections.length - 60) + ' more sections (use a text editor to see them all).</div>';
       }
+      html += '</details>';
       html += '</div>';
     }
     dlg.innerHTML = html;

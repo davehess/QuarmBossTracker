@@ -39,8 +39,18 @@ module.exports = {
     const mobCount    = Object.keys(kills).length;
 
     // ── Apply quake to all existing PVP kills ─────────────────────────────
+    // Opens every PVP window's EARLIEST spawn to the quake time while keeping
+    // kill dates + latest spawns. Local state.json drives the Discord boards;
+    // the Supabase override mirror drives wolfpack.quest/pvp.
     if (mobCount > 0) {
       applyQuakeToAllPvpKills(quakeTimeMs);
+      try {
+        const supabase = require('../utils/supabase');
+        if (supabase.isEnabled()) {
+          await supabase.applyQuakeToPvpBoardMirror(quakeTimeMs)
+            .catch(err => console.warn('[quake] pvp board override failed:', err?.message));
+        }
+      } catch (err) { console.warn('[quake] pvp board override wrap failed:', err?.message); }
     }
 
     // ── Create Discord event ──────────────────────────────────────────────

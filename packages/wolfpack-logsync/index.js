@@ -474,6 +474,46 @@ const CHARM_SPELLS = new Map([
   ['dominate undead',   { cls: 'enchanter', dur: 720 }],
 ]);
 
+// ── EQ class-title → base class ───────────────────────────────────────────────
+// A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
+// Enchanter reads "[55 Phantasmist]", a level-60 Ranger "[60 Warder]"), not the
+// base class. We normalize titles back to the base class so the /who overlay
+// shows "Enchanter", not "Phantasmist", and so class-gated logic (e.g. bard
+// detection, which checks class === 'Bard') works for titled high-levels too.
+// Classic/Titanium-era titles at 51/55/60; the base name (sub-51) passes
+// through unchanged, as does anything we don't recognize.
+const CLASS_TITLES = (() => {
+  const byClass = {
+    Warrior:       ['Champion', 'Myrmidon', 'Warlord'],
+    Cleric:        ['Vicar', 'Templar', 'High Priest'],
+    Paladin:       ['Cavalier', 'Knight', 'Crusader'],
+    Ranger:        ['Pathfinder', 'Outrider', 'Warder'],
+    'Shadow Knight': ['Reaver', 'Revenant', 'Grave Lord'],
+    Druid:         ['Wanderer', 'Preserver', 'Hierophant'],
+    Monk:          ['Disciple', 'Master', 'Grandmaster'],
+    Bard:          ['Minstrel', 'Troubadour', 'Virtuoso'],
+    Rogue:         ['Rake', 'Blackguard', 'Assassin'],
+    Shaman:        ['Mystic', 'Luminary', 'Oracle'],
+    Necromancer:   ['Heretic', 'Defiler', 'Warlock'],
+    Wizard:        ['Channeler', 'Evoker', 'Sorcerer'],
+    Magician:      ['Elementalist', 'Conjurer', 'Arch Mage'],
+    Enchanter:     ['Illusionist', 'Phantasmist', 'Coercer'],
+  };
+  const map = new Map();
+  for (const [base, titles] of Object.entries(byClass)) {
+    map.set(base.toLowerCase(), base);             // base name → itself
+    for (const t of titles) map.set(t.toLowerCase(), base);
+  }
+  // Common spelling variant.
+  map.set('shadowknight', 'Shadow Knight');
+  return map;
+})();
+function normalizeClass(raw) {
+  if (!raw) return raw;
+  const key = String(raw).trim().toLowerCase();
+  return CLASS_TITLES.get(key) || String(raw).trim();
+}
+
 // ── Event parser ────────────────────────────────────────────────────────────
 // Turn a kept line into a structured event. Returns null if we can't parse it.
 // This is intentionally conservative — unparseable lines are dropped silently
@@ -984,7 +1024,7 @@ function parseEvent(line, ts) {
       type:      'who',
       name:      m[5],
       level:     m[1] ? parseInt(m[1], 10) : null,
-      class:     m[2] ? m[2].trim() : null,
+      class:     m[2] ? normalizeClass(m[2].trim()) : null,
       anonymous: !!m[3],
       gm:        !!m[4],
       race:      m[6] || null,
@@ -4524,11 +4564,19 @@ function _serializeForDashboard() {
         // sitting in their buff slots, alias list contained the right phrase,
         // but the punctuation between the two didn't agree.
         const _slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+        // Buff candidate filter — name required, but tick value is OPTIONAL.
+        // Zeal sometimes ships a slot with name+null ticks (e.g. when the
+        // buff just landed or is in a short song-window slot that doesn't
+        // carry tick metadata). We still want to surface "buff is present"
+        // even when we can't render a countdown, so the row reads "on" or
+        // "??" instead of "off". Caller checks `ticks > 0` before computing
+        // remaining_secs.
+        const _candidate = (b) => !!(b && b.name);
         const _findBuff = (names) => {
           // Pass 1: exact match (punctuation-insensitive via _slug). Trim
           // handles trailing-space noise sometimes seen in Zeal's pipe.
           for (const b of zealBuffs) {
-            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            if (!_candidate(b)) continue;
             const bSlug = _slug(b.name.trim());
             for (const n of names) if (bSlug === _slug(n)) return b;
           }
@@ -4536,7 +4584,7 @@ function _serializeForDashboard() {
           // short aliases ('amp', 'niv') resolve when the buff label uses
           // a shortened form.
           for (const b of zealBuffs) {
-            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            if (!_candidate(b)) continue;
             const bSlug = _slug(b.name.trim());
             for (const n of names) {
               const nSlug = _slug(n);
@@ -4546,22 +4594,48 @@ function _serializeForDashboard() {
           // Pass 3: first significant word of each alias. Catches the case
           // where EQ's buff window strips the bardic suffix — e.g. spell is
           // "Niv\`s Melody of Preservation" but slot label is just "Niv\`s".
+          // Checks BOTH directions so an alias of 'amplification' matches a
+          // Zeal slot named just 'amp', and vice versa.
           for (const b of zealBuffs) {
-            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            if (!_candidate(b)) continue;
             const bSlug = _slug(b.name.trim());
             for (const n of names) {
               const firstWord = _slug(n.split(/\s+/)[0]);
-              if (firstWord && firstWord.length >= 4 && bSlug.startsWith(firstWord)) return b;
+              if (!firstWord || firstWord.length < 3) continue;
+              // Either direction wins so a shorter-than-alias slot label
+              // (Amped/Amp for Amplification) still resolves.
+              if (bSlug.startsWith(firstWord) || firstWord.startsWith(bSlug)) return b;
             }
           }
           return null;
         };
-        const ampBuff = _findBuff(['amplification']);
-        const harBuff = _findBuff(['harmonize']);
-        const resBuff = _findBuff(['resonance']);
-        const accBuff = _findBuff(['accelerating chorus', "selo`s accelerating chorus", "selo's accelerating chorus"]);
-        const nivBuff = _findBuff(['breath of harmony', "niv`s melody of preservation", "niv's melody of preservation"]);
-        const natBuff = _findBuff(["nature`s melody", "nature's melody"]);
+        // Raw debug slots (from Mimic's broader Type-1 dump) — searched as a
+        // FALLBACK after zealBuffs misses. Bard short-duration songs may land
+        // in label IDs outside the 45-59 / 135-140 ranges Mimic currently
+        // promotes into `buffs[]`, so we also scan the raw debug dump using
+        // the same matcher to catch them. Same name+ticks shape so _findBuff
+        // / candidacy logic transfers.
+        const rawDebugBuffs = (zealSt && Array.isArray(zealSt.buffsRawDebug))
+          ? zealSt.buffsRawDebug.map(r => ({ name: r.value, ticks: r.ticks, _fromRaw: true, _slotId: r.id }))
+          : [];
+        const _findBuffFallback = (names) => {
+          for (const b of rawDebugBuffs) {
+            if (!_candidate(b)) continue;
+            const bSlug = _slug(b.name.trim());
+            for (const n of names) {
+              const nSlug = _slug(n);
+              if (nSlug.length >= 4 && (bSlug === nSlug || bSlug.includes(nSlug) || nSlug.includes(bSlug))) return b;
+            }
+          }
+          return null;
+        };
+        const _resolveBuff = (names) => _findBuff(names) || _findBuffFallback(names);
+        const ampBuff = _resolveBuff(['amplification']);
+        const harBuff = _resolveBuff(['harmonize']);
+        const resBuff = _resolveBuff(['resonance']);
+        const accBuff = _resolveBuff(['accelerating chorus', "selo`s accelerating chorus", "selo's accelerating chorus"]);
+        const nivBuff = _resolveBuff(['breath of harmony', "niv`s melody of preservation", "niv's melody of preservation"]);
+        const natBuff = _resolveBuff(["nature`s melody", "nature's melody"]);
         const _wantedCastNames = ['amplification', 'harmonize', 'resonance',
           "selo`s accelerating chorus", "selo's accelerating chorus", 'accelerating chorus',
           "niv`s melody of preservation", "niv's melody of preservation",
@@ -4592,14 +4666,30 @@ function _serializeForDashboard() {
         const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
                          || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
                          ||   state.kind === 'song';
+        // Buff → info shape. When ticks is unknown (null/0) we still emit
+        // `observed:true` so the overlay can render "on" instead of "off" —
+        // surfacing buff presence even without a countdown. Source flag
+        // distinguishes a primary buff-slot hit from a raw-debug fallback
+        // (helpful when reading the dashboard JSON).
+        const _info = (b) => {
+          if (!b) return null;
+          const hasTicks = typeof b.ticks === 'number' && b.ticks > 0;
+          return {
+            remaining_ticks: hasTicks ? b.ticks : null,
+            remaining_secs:  hasTicks ? b.ticks * 6 : null,
+            observed: true,
+            from_raw_debug: !!b._fromRaw,
+            slot_id: b._slotId != null ? b._slotId : null,
+          };
+        };
         const bardBuffs = (state.kind === 'song' && isBardClass) ? {
-          amplification: ampBuff ? { remaining_ticks: ampBuff.ticks, remaining_secs: ampBuff.ticks * 6 } : null,
+          amplification: _info(ampBuff),
           // Prefer Harmonize when both are present (Harmonize replaces Resonance).
-          harmonize:     harBuff ? { remaining_ticks: harBuff.ticks, remaining_secs: harBuff.ticks * 6 } : null,
-          resonance:     (!harBuff && resBuff) ? { remaining_ticks: resBuff.ticks, remaining_secs: resBuff.ticks * 6 } : null,
-          accelerating_chorus: accBuff ? { remaining_ticks: accBuff.ticks, remaining_secs: accBuff.ticks * 6 } : null,
-          nivs:          nivBuff ? { remaining_ticks: nivBuff.ticks, remaining_secs: nivBuff.ticks * 6 } : null,
-          natures:       natBuff ? { remaining_ticks: natBuff.ticks, remaining_secs: natBuff.ticks * 6 } : null,
+          harmonize:     _info(harBuff),
+          resonance:     harBuff ? null : _info(resBuff),
+          accelerating_chorus: _info(accBuff),
+          nivs:          _info(nivBuff),
+          natures:       _info(natBuff),
           // Per-row cast indicators — true when the Zeal currentCasting label
           // matches this buff's spell name. Drives a pulsing ▶ next to the
           // row in the overlay so the bard sees which utility is in flight.
@@ -4623,12 +4713,22 @@ function _serializeForDashboard() {
         // Debug: surface the raw buff-slot names so we can see exactly what
         // Zeal is reporting when a utility song doesn't light up its strip
         // row. Plain array of "name (Xt)" strings — capped at 25 to keep
-        // /api/state light. Read off the dashboard or curl /api/state to
-        // tell us what to match against in _findBuff.
+        // /api/state light. Include slots with null/0 ticks (rendered as "?t")
+        // so a buff arriving without a tick count is still visible to the
+        // diagnostic instead of being silently filtered out.
         const buffSlotsDebug = zealBuffs
-          .filter(b => b && b.name && typeof b.ticks === 'number' && b.ticks > 0)
+          .filter(b => b && b.name)
           .slice(0, 25)
-          .map(b => `${b.name} (${b.ticks}t)`);
+          .map(b => `${b.name} (${typeof b.ticks === 'number' && b.ticks > 0 ? b.ticks + 't' : '?t'})`);
+        // Raw Type-1 label dump from Mimic — every labeled entry id+value+ticks
+        // that came through the Zeal pipe. Used to diagnose buffs landing in
+        // label IDs we don't currently capture as buff slots (e.g. Quarm's
+        // bard song window may use a different range than the 45-59/135-140
+        // we read). Rendered in OFF chip tooltips so the user can hover and
+        // tell us where Amplification/Niv's actually lives.
+        const rawDebug = (zealSt && Array.isArray(zealSt.buffsRawDebug))
+          ? zealSt.buffsRawDebug.slice(0, 30).map(r => `#${r.id}:${r.value}${typeof r.ticks === 'number' && r.ticks > 0 ? '(' + r.ticks + 't)' : ''}`)
+          : [];
         out[k] = {
           character:      k,
           characterClass: (zealSt && zealSt.class) || null,
@@ -4645,6 +4745,7 @@ function _serializeForDashboard() {
           melodyEndedAt:   state.melodyEndedAt || null,
           bardBuffs,
           buffSlotsDebug,
+          buffsRawDebug: rawDebug,
         };
       }
       // Bard placeholder — if the active character's Zeal class is Bard but
@@ -11478,12 +11579,19 @@ function parsePvpBroadcast(line) {
     // active matcher above must win when both could match. Recorded as PvP so
     // the kill credits to the Wolf Pack killer on /pvp/server.
     const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
-    if (bossA) return {
-      ts: tsOf(), text, killType: 'pvp',
-      killer: bossA[1], killerGuild: bossA[2],
-      victim: bossA[3], victimGuild: null,
-      zone:   bossA[4] || null,
-    };
+    if (bossA) {
+      // A guild PvE INSTANCE kill ("...in <Zone> (Instanced)!") is NOT a
+      // PvP-server boss kill — it's the Druzzil-Ro guild broadcast that the
+      // /bosskill path already turns into a normal instance timer. Skip it so
+      // it doesn't ALSO record a ±20% PvP timer + fire a PvP ping.
+      if (/\(Instanced\)/i.test(text)) return null;
+      return {
+        ts: tsOf(), text, killType: 'pvp',
+        killer: bossA[1], killerGuild: bossA[2],
+        victim: bossA[3], victimGuild: null,
+        zone:   bossA[4] || null,
+      };
+    }
 
     // Wrapper matched but no inner pattern fit. Return null instead of a
     // partially-filled row (the pre-2.4.32 fallthrough emitted killType='npc'
@@ -11525,14 +11633,18 @@ function parsePvpBroadcast(line) {
   };
 
   const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
-  if (bossBareA) return {
-    ts: tsOf(),
-    text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
-    killType:    'pvp',
-    killer:      bossBareA[2], killerGuild: bossBareA[3],
-    victim:      bossBareA[4], victimGuild: null,
-    zone:        bossBareA[5] || null,
-  };
+  if (bossBareA) {
+    // Guild PvE instance kill echoed in the [PVP] channel — skip (see Path A).
+    if (/\(Instanced\)/i.test(line)) return null;
+    return {
+      ts: tsOf(),
+      text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
+      killType:    'pvp',
+      killer:      bossBareA[2], killerGuild: bossBareA[3],
+      victim:      bossBareA[4], victimGuild: null,
+      zone:        bossBareA[5] || null,
+    };
+  }
 
   return null;
 }
@@ -13259,17 +13371,32 @@ function _pushOverlay(o) {
 // Each new target also rides the cross-Mimic fan-out relay so raiders whose
 // own log missed the rampage line (zoning, partial capture) still hear the
 // call. Receivers dedup against their own _localFireKeys map.
-const _rampageAnnounce = new Map();   // target.toLowerCase() → lastAnnounceMs
-const RAMPAGE_ANNOUNCE_COOLDOWN_MS = 6000;
+// Single-slot tracker for "who's currently being rampaged." User feedback:
+// the previous per-target cooldown announced again every 6s on the SAME
+// target, which read as a constant "New rampage: Hitya. New rampage: Hitya.
+// New rampage: Hitya." Now we hold the current target in place and only
+// announce when the SWITCHES — same target → silent. Idle reset after
+// 60s of no rampage line so the next rampage on the same person counts
+// as new.
+let _rampageCurrentTarget = null;   // lowercased name of who's being rampaged
+let _rampageLastSeenMs    = 0;      // wall-clock of the most recent rampage line
+const RAMPAGE_IDLE_RESET_MS = 60000;
 function _announceRampage(target, tsMs) {
   if (!target) return;
   const key = target.toLowerCase();
   const now = tsMs || Date.now();
-  if (now - (_rampageAnnounce.get(key) || 0) < RAMPAGE_ANNOUNCE_COOLDOWN_MS) return;
-  _rampageAnnounce.set(key, now);
-  if (_rampageAnnounce.size > 50) {
-    for (const [k, v] of _rampageAnnounce) if (now - v > 60000) _rampageAnnounce.delete(k);
+  // Idle reset — if the previous rampage went quiet for 60s, the next
+  // line (even on the same name) counts as a fresh rampage. Without this,
+  // a re-pull or quick re-engage would never re-announce.
+  if (_rampageLastSeenMs && (now - _rampageLastSeenMs) > RAMPAGE_IDLE_RESET_MS) {
+    _rampageCurrentTarget = null;
   }
+  _rampageLastSeenMs = now;
+  // Same target as current rampage → suppress. The user already heard the
+  // initial "New rampage: Hitya"; subsequent hits on Hitya are noise until
+  // the boss switches.
+  if (_rampageCurrentTarget === key) return;
+  _rampageCurrentTarget = key;
   const displayText = '🔥 NEW RAMPAGE: ' + target;
   const ttsText     = 'New rampage: ' + target;
   _pushOverlay({

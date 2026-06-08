@@ -25,6 +25,11 @@ export default function AdminPage() {
           href="/admin/members"
         />
         <Card
+          title="👁 /who directory"
+          body="Every character ever seen in a /who — sortable, filterable. Set a class for /anon rows that never reported one, and flag Zek for PvP-guild affiliates. Edits persist to who_overrides."
+          href="/admin/who"
+        />
+        <Card
           title="💬 Guild chat log"
           body="Searchable /gu + /rs history from chat_messages. Filter by date, channel, speaker. Mirrors what the bot pulls from agent uploads."
           href="/admin/chat"

@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.51': [
+    '**/who directory on wolfpack.quest** (officers) — every character ever seen in a `/who`, sortable + filterable, with inline class fill-in for `/anon` rows and a Zek flag toggle. Web-set class/Zek now flows back to the bot (and `/markzek` writes to the web), so `/whois` + PvP auto-zek stay in sync.',
+    '**PvP fixes** — a guild **instance** Lord of Ire kill no longer mis-fires the PvP announce or double-records a PvP timer (only the real PvE instance timer is set). And a **quake** now keeps every PvP boss\'s kill date + latest spawn but opens the **earliest spawn to "available now"** instead of wiping the window.',
+  ],
   '3.0.40': [
     '**Voice ripcord on /admin/voice** — officer page to flip the bot\'s voice triggers off, swap the default voice, adjust volume (0–200%), and add per-message or per-trigger-name skip rules. Takes effect within ~30s (bot caches the row). The text-relay surface keeps working when voice is muted. Two raid call-out drafts ship in `guild_triggers` (Emperor Ssra tank-buster countdown + Divine Intervention save) as DISABLED — verify the regex patterns on the next pull and flip them on from /admin/triggers.',
   ],

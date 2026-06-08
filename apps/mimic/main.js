@@ -701,6 +701,26 @@ function _readUiBundle(eqDir, character) {
       }
     } catch {}
   }
+  // Also glob: pick up UI_<char>*.ini variants (any server suffix). The
+  // canonical Quarm name is UI_<C>_pq.proj.ini, but a user who swapped
+  // servers or used /loadskin under a different suffix would otherwise have
+  // their window-layout file silently skipped — leaving "0 windows" loaded
+  // even though the data is right there in the EQ folder.
+  try {
+    const cLower = String(character).toLowerCase();
+    for (const f of fs.readdirSync(eqDir)) {
+      if (files[f]) continue;
+      const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
+      if (!m || m[1].toLowerCase() !== cLower) continue;
+      try {
+        const fp = path.join(eqDir, f);
+        const stat = fs.statSync(fp);
+        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
+          files[f] = fs.readFileSync(fp, 'utf8');
+        }
+      } catch {}
+    }
+  } catch {}
   return files;
 }
 async function _isEqRunning() {
@@ -893,11 +913,26 @@ function _zealAbsorb(obj) {
       // each value=buff name, meta.ticks=remaining 6s ticks. Label 134 =
       // the spell currently being cast. (Char info lives in IDs 1-13 — we
       // ignore those here.) See CoastalRedwood/Zeal named_pipe.cpp.
+      // Bard short-duration songs may land in different label IDs depending
+      // on Zeal build, so we ALSO capture a raw diagnostic dump of every
+      // labeled entry (id + value + ticks) and forward it — the agent
+      // surfaces it on /api/state.buffsRawDebug so OFF-chip tooltips can
+      // show what Zeal is actually sending when a row fails to match.
       const buffs = [];
+      const rawDebug = [];
       let casting = null;
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
+        // Skip well-known char-info IDs (1-13 are char fields like name,
+        // class, level, etc.) so the diagnostic stays focused on buff-ish
+        // payloads. Capture everything else with a non-empty value.
+        if (id >= 1 && id <= 13) continue;
+        const v = it.value;
+        if (v !== undefined && v !== null && v !== '' && String(v).toLowerCase() !== 'none') {
+          const ticks = it.meta && typeof it.meta.ticks === 'number' ? it.meta.ticks : null;
+          rawDebug.push({ id, value: String(v), ticks });
+        }
         if ((id >= 45 && id <= 59) || (id >= 135 && id <= 140)) {
           const name = it.value;
           if (name && name !== '' && String(name).toLowerCase() !== 'none') {
@@ -913,6 +948,13 @@ function _zealAbsorb(obj) {
       if (buffs.length > 0 || casting !== null) {
         s.buffs = buffs;
         s.casting = casting;
+        cur.dirty = true;
+      }
+      // Always refresh the raw debug dump — it's the diagnostic channel and
+      // should reflect the latest Type 1 message even if no recognized buff
+      // slot changed.
+      if (rawDebug.length > 0) {
+        s.buffsRawDebug = rawDebug.slice(0, 30);
         cur.dirty = true;
       }
     }
@@ -1999,9 +2041,10 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
       try {
         const text = fs.readFileSync(fp, 'utf8');
         // Quick section parse — same algorithm the ui-studio renderer uses.
-        // Output a section list with the first 8 props each so the inspector
-        // panel stays readable on big socials files (some users have 200+
-        // sections across all pages).
+        // We keep ALL keys per section now (was capped at 8) because [HotButtons]
+        // and [Socials] are flat-key sections that can carry hundreds of
+        // Page<P>Button<N>… entries; truncating made the inspector look
+        // "incomplete" and hid most of the user's actual hotbars.
         const sections = [];
         const lines = text.split(/\r?\n/);
         let cur = null;
@@ -2016,13 +2059,156 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
           const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
           if (kv) cur.props[kv[1]] = kv[2];
         }
-        files.push({ file: name, section_count: sections.length, sections });
+        // Structured view: group [HotButtons] + [Socials] flat keys by
+        // (page, button) so the renderer can show a hotbar-per-page grid.
+        // Quarm's per-char ini uses the flattened shape:
+        //   [HotButtons] Page<P>Button<N> = <hotkey>        (e.g. E18)
+        //   [Socials]    Page<P>Button<N>Name  = <label>
+        //                Page<P>Button<N>Color = <int>
+        //                Page<P>Button<N>Line<M> = <command>
+        const pages = { hotbuttons: {}, socials: {} };
+        for (const sec of sections) {
+          if (sec.name === 'HotButtons') {
+            for (const [k, v] of Object.entries(sec.props)) {
+              const mk = k.match(/^Page(\d+)Button(\d+)$/i);
+              if (!mk) continue;
+              const [, P, B] = mk;
+              if (!pages.hotbuttons[P]) pages.hotbuttons[P] = {};
+              pages.hotbuttons[P][B] = v;
+            }
+          } else if (sec.name === 'Socials') {
+            for (const [k, v] of Object.entries(sec.props)) {
+              const mk = k.match(/^Page(\d+)Button(\d+)(Name|Color|Line(\d+))$/i);
+              if (!mk) continue;
+              const [, P, B, field, lineNo] = mk;
+              if (!pages.socials[P]) pages.socials[P] = {};
+              if (!pages.socials[P][B]) pages.socials[P][B] = { name: null, color: null, lines: [] };
+              const cell = pages.socials[P][B];
+              if (/^Name$/i.test(field))  cell.name  = String(v);
+              else if (/^Color$/i.test(field)) cell.color = parseInt(v, 10) || 0;
+              else if (lineNo)            cell.lines[parseInt(lineNo, 10) - 1] = String(v);
+            }
+            // Compact sparse lines arrays so undefined slots don't show.
+            for (const P of Object.keys(pages.socials)) {
+              for (const B of Object.keys(pages.socials[P])) {
+                pages.socials[P][B].lines = pages.socials[P][B].lines.filter(x => x != null && x !== '');
+              }
+            }
+          }
+        }
+        files.push({ file: name, section_count: sections.length, sections, pages });
       } catch (err) {
         files.push({ file: name, error: err && err.message });
       }
     }
-    if (files.length === 0) return { ok: false, error: 'no socials INI found for ' + c };
-    return { ok: true, files };
+    // ── Chat routing (read-only) ─────────────────────────────────────────
+    // The UI_<char>_pq.proj.ini [ChatManager] section holds the real chat
+    // wiring: per-window names + which EQ channel each defaults to, plus the
+    // ChannelMap<N>=<windowIndex> table that routes each message category to a
+    // window. We surface it so the user can SEE "Guild → window 1, Tells →
+    // window 4" without spelunking the INI. (Editing/drag-drop is a follow-up
+    // — the ChannelMap filter-index semantics need confirming before we write.)
+    let chat = null;
+    try {
+      const uiName = `UI_${c}_pq.proj.ini`;
+      let uiPath = path.join(d, uiName);
+      if (!fs.existsSync(uiPath)) {
+        // glob for UI_<char>*.ini at any server suffix
+        const cl = c.toLowerCase();
+        for (const f of fs.readdirSync(d)) {
+          const mm = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
+          if (mm && mm[1].toLowerCase() === cl) { uiPath = path.join(d, f); break; }
+        }
+      }
+      if (fs.existsSync(uiPath)) {
+        const uiText = fs.readFileSync(uiPath, 'utf8');
+        const cm = {};
+        let inCM = false;
+        for (const L of uiText.split(/\r?\n/)) {
+          const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
+          if (sm) { inCM = (sm[1] === 'ChatManager'); continue; }
+          if (!inCM) continue;
+          const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (kv) cm[kv[1]] = kv[2];
+        }
+        if (Object.keys(cm).length) {
+          const windows = [];
+          for (let i = 0; i <= 30; i++) {
+            const name = cm[`ChatWindow${i}_Name`];
+            const def  = cm[`ChatWindow${i}_DefaultChannel`];
+            const chn  = cm[`ChatWindow${i}_ChatChannel`];
+            const tt   = cm[`ChatWindow${i}_TellTarget`];
+            if (name == null && def == null && chn == null) continue;
+            windows.push({
+              index: i,
+              name: name != null ? String(name).trim() : null,
+              default_channel: def != null ? parseInt(def, 10) : null,
+              chat_channel: chn != null ? parseInt(chn, 10) : null,
+              tell_target: tt || null,
+            });
+          }
+          // ChannelMap<filter> = <windowIndex> → invert to windowIndex → [filters]
+          const routed = {};
+          for (const [k, v] of Object.entries(cm)) {
+            const mk = k.match(/^ChannelMap(\d+)$/);
+            if (!mk) continue;
+            const win = parseInt(v, 10);
+            if (!routed[win]) routed[win] = [];
+            routed[win].push(parseInt(mk[1], 10));
+          }
+          chat = {
+            file: path.basename(uiPath),
+            num_windows: parseInt(cm.NumWindows, 10) || windows.length,
+            windows,
+            routed_filters: routed,
+          };
+        }
+      }
+    } catch {}
+
+    // ── Tell windows (Zeal, read-only) ───────────────────────────────────
+    // Zeal stores tell-window enablement in zeal.ini, keyed by character:
+    //   [<Character>] TellWindows=TRUE / TellWindowsHist=TRUE
+    //   [TellWindows_<Character>] Enabled=TRUE / HistoryEnabled=FALSE
+    // The individual per-sender tell windows are placed by Zeal at runtime —
+    // there are no per-sender position sections to manage here. We report the
+    // on/off state for the loaded character and which other chars have them on.
+    let tells = null;
+    try {
+      const zp = path.join(d, 'zeal.ini');
+      if (fs.existsSync(zp)) {
+        const ztext = fs.readFileSync(zp, 'utf8');
+        const zsec = {};
+        let curz = null;
+        for (const L of ztext.split(/\r?\n/)) {
+          const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
+          if (sm) { curz = sm[1]; zsec[curz] = zsec[curz] || {}; continue; }
+          if (!curz) continue;
+          const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (kv) zsec[curz][kv[1]] = kv[2];
+        }
+        const truthy = (v) => /^(true|1|yes|on)$/i.test(String(v || '').trim());
+        const self = zsec[c] || {};
+        const selfTW = zsec[`TellWindows_${c}`] || {};
+        const enabledFor = [];
+        for (const [sec, props] of Object.entries(zsec)) {
+          if (/^(TellWindows_|TargetRing_|FloatingDamage_|Zeal_)/.test(sec)) continue;
+          if (props.TellWindows != null && truthy(props.TellWindows)) enabledFor.push(sec);
+        }
+        tells = {
+          file: 'zeal.ini',
+          character: c,
+          enabled: truthy(self.TellWindows),
+          history: truthy(self.TellWindowsHist),
+          detail_enabled: selfTW.Enabled != null ? truthy(selfTW.Enabled) : null,
+          detail_history: selfTW.HistoryEnabled != null ? truthy(selfTW.HistoryEnabled) : null,
+          enabled_for_characters: enabledFor.sort(),
+        };
+      }
+    } catch {}
+
+    if (files.length === 0 && !chat && !tells) return { ok: false, error: 'no socials/UI/zeal INI found for ' + c };
+    return { ok: true, files, chat, tells };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
@@ -3379,6 +3565,38 @@ ipcMain.handle('find-eq-installs', () => {
   return merged;
 });
 
+// UI Studio — detected displays so the user can pick a custom resolution
+// that matches their actual monitor instead of the four preset dropdowns.
+// Returns { primary: {w,h}, displays: [{ id, label, w, h, primary, scaleFactor }] }.
+// Widescreen/ultrawide users (3840×1600, 5120×1440, etc.) weren't covered by
+// the dropdown — this lets them pick exact values without typing.
+ipcMain.handle('ui-studio-list-displays', () => {
+  try {
+    const primary = screen.getPrimaryDisplay();
+    const all = screen.getAllDisplays();
+    const displays = all.map((d, i) => {
+      const isPrimary = d.id === primary.id;
+      // size = full pixel resolution; workAreaSize subtracts taskbar etc.
+      // EQ renders fullscreen → use `size`, not `workAreaSize`.
+      const w = (d.size && d.size.width)  || d.workAreaSize.width;
+      const h = (d.size && d.size.height) || d.workAreaSize.height;
+      return {
+        id: d.id,
+        label: `Display ${i + 1}${isPrimary ? ' (primary)' : ''} — ${w}×${h}`,
+        w, h,
+        primary: isPrimary,
+        scaleFactor: d.scaleFactor || 1,
+      };
+    });
+    return {
+      primary: { w: primary.size.width, h: primary.size.height },
+      displays,
+    };
+  } catch (err) {
+    return { primary: null, displays: [], error: err && err.message };
+  }
+});
+
 // UI Studio — list characters available for capture across configured EQ
 // folders. Returns [{ character, eqDir, ini_count, has_eqclient }, ...].
 ipcMain.handle('ui-studio-list-characters', () => {
@@ -3510,6 +3728,37 @@ ipcMain.handle('ui-studio-list-snapshots', async (_e, character) => {
       headers: { 'Authorization': `Bearer ${_uiToken}` },
     });
     return { ok: true, snapshots: r?.snapshots || [] };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Download a snapshot's raw { filename → text } file map WITHOUT writing it to
+// disk. Powers UI Studio's "📥 Restore" button: the editor loads the cloud
+// bundle into memory, lets the user rescale it to this machine's monitor, then
+// Save writes it locally — the deploy-on-a-new-computer flow. (The older
+// ui-studio-restore handler below writes straight to disk, bypassing rescale;
+// this one keeps the user in the visual editor.)
+ipcMain.handle('ui-studio-get-snapshot', async (_e, params) => {
+  const character = String(params?.character || '').trim();
+  const snapId    = String(params?.id || '').trim();
+  if (!character || !snapId) return { ok: false, error: 'character + id required' };
+  const cfg = loadConfig();
+  const _uiToken = resolveUploadToken(cfg);
+  if (!_uiToken) return { ok: false, error: 'no token configured' };
+  try {
+    const snap = await _httpsJson(
+      `${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(snapId)}?character=${encodeURIComponent(character)}`,
+      { headers: { 'Authorization': `Bearer ${_uiToken}` } },
+    );
+    if (!snap || !snap.files) return { ok: false, error: 'snapshot empty' };
+    return {
+      ok: true,
+      files: snap.files,
+      source_width:  snap.source_width  || null,
+      source_height: snap.source_height || null,
+      label: snap.label || null,
+    };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }

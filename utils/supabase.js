@@ -367,6 +367,9 @@ async function mirrorPvpBossKill(row) {
     raw_text:        row.raw_text        ? String(row.raw_text).slice(0, 500) : null,
     spawn_earliest:  spawnEarly,
     spawn_latest:    spawnLate,
+    // A fresh kill resets the window, so it clears any prior quake override
+    // (null) unless the caller is explicitly setting one.
+    spawn_earliest_override: row.spawn_earliest_override || null,
     dedup_key:       dedupKey,
   }], 'dedup_key').catch(err => {
     console.warn('[pvp_boss_kills] upsert failed:', err?.message);
@@ -374,9 +377,56 @@ async function mirrorPvpBossKill(row) {
   });
 }
 
+// Quake → PvP board. Set spawn_earliest_override on every tracked boss so the
+// web /pvp board reads the window open "now" while keeping killed_at +
+// spawn_latest. Blanket update is correct: a quake repops ALL pvp mobs. Scoped
+// to recent rows (the board only shows the latest kill per boss within 90d).
+async function applyQuakeToPvpBoardMirror(quakeTimeMs) {
+  if (!isEnabled()) return null;
+  const overrideIso = new Date(quakeTimeMs).toISOString();
+  const sinceIso    = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+  return update(
+    'pvp_boss_kills',
+    `guild_id=eq.${encodeURIComponent(_guildId())}&killed_at=gte.${encodeURIComponent(sinceIso)}`,
+    { spawn_earliest_override: overrideIso },
+  );
+}
+
+// ── /who overrides (officer-curated class + Zek, edited on the web /admin/who) ──
+// Read by the bot at startup + on a periodic refresh so web-set class/Zek flow
+// into state.whoData (→ /whois, PvP auto-zek). /markzek dual-writes here so the
+// Discord and web sides converge on one source of truth.
+async function getWhoOverrides() {
+  if (!isEnabled()) return [];
+  const rows = await select(
+    'who_overrides',
+    `guild_id=eq.${encodeURIComponent(_guildId())}&select=character,class,is_zek`,
+  );
+  return Array.isArray(rows) ? rows : [];
+}
+// Upsert one override. Only the fields you pass are written, so setting Zek
+// from /markzek won't blank a class set on the web (merge-duplicates updates
+// just the columns present in the payload).
+async function upsertWhoOverride({ character, klass, isZek, setBy, setByName, note }) {
+  if (!isEnabled() || !character) return null;
+  const row = {
+    guild_id:    _guildId(),
+    character,
+    set_by:      setBy || null,
+    set_by_name: setByName || null,
+    updated_at:  new Date().toISOString(),
+  };
+  if (klass !== undefined) row.class  = klass;
+  if (isZek !== undefined) row.is_zek = isZek;
+  if (note  !== undefined) row.note   = note;
+  return upsert('who_overrides', [row], 'guild_id,character');
+}
+
 module.exports = {
   isEnabled,
   select, insert, update, upsert, del, rpc,
+  getWhoOverrides, upsertWhoOverride,
+  applyQuakeToPvpBoardMirror,
   getNpcIdForInternalId,
   findOrCreateEncounter,
   recordContribution,
