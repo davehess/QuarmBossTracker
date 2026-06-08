@@ -449,6 +449,14 @@
         var bardBuffsHtml = '';
         if (st.bardBuffs) {
           var casting = st.bardBuffs.casting || {};
+          // When a strip row shows OFF, surface the raw Zeal buff-slot names
+          // in the tooltip so we can see exactly what Zeal is reporting and
+          // fix the alias list if a label changed. Limited to 8 names so the
+          // tooltip stays readable; full list is on /api/state.bardMelody.
+          var rawSlotsHint = '';
+          if (Array.isArray(st.buffSlotsDebug) && st.buffSlotsDebug.length) {
+            rawSlotsHint = '\n\nZeal buff slots seen: ' + st.buffSlotsDebug.slice(0, 8).join(' · ');
+          }
           function _utilRow(label, info, isCasting, clickyHint) {
             var castIcon = isCasting ? '<span class="util-cast">▶</span>' : '<span class="util-cast off">▶</span>';
             var t = '<span class="util-t off">off</span>';
@@ -459,7 +467,12 @@
               var tier = rs <= 30 ? 'crit' : (rs <= 120 ? 'low' : '');
               t = '<span class="util-t ' + tier + '">' + tStr + '</span>';
             }
-            return '<div class="util-row" title="' + esc(clickyHint) + '">'
+            // OFF rows get the raw Zeal-slot dump appended so a misnamed
+            // buff is diagnosable on hover. Active rows keep the clean hint.
+            var hint = info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0
+              ? clickyHint
+              : clickyHint + rawSlotsHint;
+            return '<div class="util-row" title="' + esc(hint) + '">'
                  + castIcon
                  + '<span class="util-lbl">' + label + '</span>' + t + '</div>';
           }

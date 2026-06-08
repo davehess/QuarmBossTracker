@@ -4517,16 +4517,34 @@ function _serializeForDashboard() {
         // versions the slot keeps the cast name — and we can't tell which is
         // which without manually verifying every spell.
         const _findBuff = (names) => {
+          // Pass 1: exact lowercase match (trim handles trailing-space noise
+          // sometimes seen in Zeal's pipe output).
           for (const b of zealBuffs) {
             if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
-            const bLow = b.name.toLowerCase();
+            const bLow = b.name.trim().toLowerCase();
             for (const n of names) if (bLow === n) return b;
           }
+          // Pass 2: substring match either direction. Threshold dropped from
+          // 6 → 4 so short song names ('amp', 'niv') still resolve when the
+          // buff label uses a shortened form. False-positive risk is tiny
+          // because we're matching against a curated alias list, not the
+          // wild EQ spell catalog.
           for (const b of zealBuffs) {
             if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
-            const bLow = b.name.toLowerCase();
+            const bLow = b.name.trim().toLowerCase();
             for (const n of names) {
-              if (n.length >= 6 && (bLow.includes(n) || n.includes(bLow))) return b;
+              if (n.length >= 4 && (bLow.includes(n) || n.includes(bLow))) return b;
+            }
+          }
+          // Pass 3: first significant word of each alias. Catches cases where
+          // EQ's buff window strips the bardic suffix (e.g. spell is
+          // "Niv's Melody of Preservation" but slot label is just "Niv's").
+          for (const b of zealBuffs) {
+            if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
+            const bLow = b.name.trim().toLowerCase();
+            for (const n of names) {
+              const firstWord = n.split(/\s+/)[0];
+              if (firstWord && firstWord.length >= 4 && bLow.startsWith(firstWord)) return b;
             }
           }
           return null;
