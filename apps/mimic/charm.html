@@ -312,7 +312,8 @@
         tk = ' (' + fmtRem(b.remaining_secs, bo) + ')';
       } else { tk = ' (?)'; }
       var pct = (hasTimer && total) ? Math.max(0, Math.min(100, (b.remaining_secs / total) * 100)) : (hasTimer ? 100 : 0);
-      var col = !hasTimer ? '#6e7681' : (b.remaining_secs > 30 ? '#56d364' : (b.remaining_secs > 12 ? '#f0883e' : '#f85149'));
+      // Buff = green, debuff (good===0) = red; unknown timer = gray.
+      var col = (b.good === 0) ? '#f85149' : (!hasTimer ? '#6e7681' : '#56d364');
       var title = b.name + (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)');
       rows += '<div class="bufb" title="' + esc(title) + '">'
            +    '<div class="lbl"><span class="nm">' + esc(shortBuffName(b.name)) + '</span><span class="tk">' + esc(tk) + '</span></div>'
