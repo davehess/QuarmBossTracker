@@ -4562,6 +4562,38 @@ function _serializeForDashboard() {
           buffSlotsDebug,
         };
       }
+      // Bard placeholder — if the active character's Zeal class is Bard but
+      // we haven't seen them sing anything yet, emit a stub entry so the
+      // overlay can title itself "MELODY" (not "SPELL CASTING") and show
+      // the empty "no bard songs yet — start singing" copy. Without this
+      // the overlay falls back to the generic spell-cast title because
+      // nothing in bardMelody flags the character as a bard.
+      try {
+        const active = _activeCharacter;
+        if (active && !out[active.toLowerCase()]) {
+          const zSt = zealByLower.get(active.toLowerCase());
+          const cls = zSt && zSt.class ? String(zSt.class) : null;
+          if (cls && /^bard$/i.test(cls)) {
+            out[active.toLowerCase()] = {
+              character:      active,
+              characterClass: cls,
+              isBard:         true,
+              order:          [],
+              currentPos:     0,
+              castStartedAt:  null,
+              cycleLength:    0,
+              lastChangeAt:   Date.now(),
+              kind:           'song',
+              nowCasting:     null,
+              melodyActive:   false,
+              melodyStartedAt: null,
+              melodyEndedAt:   null,
+              bardBuffs:      null,
+              buffSlotsDebug: [],
+            };
+          }
+        }
+      } catch (err) { void err; }
       return out;
     })(),
     // SUMMONED-pet view for the Pet tracker overlay (mage/necro/beastlord),
