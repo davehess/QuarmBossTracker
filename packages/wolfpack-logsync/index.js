@@ -1629,18 +1629,57 @@ function _petOwnerByName(petLower) {
   return null;
 }
 
+// EQ buff-duration formula → ticks for a given caster level, capped at the
+// spell's buffduration. Mirrors EQEmu's CalcBuffDuration_formula. Confirmed
+// in-game: formula 7 = level (Boon of the Garou 60 ticks @ L60), formula 8 =
+// level+10 (Boltran's Agacerie 70 ticks @ L60). For long/odd formulas the cap
+// dominates anyway, and an unknown level falls back to the cap (= spell max,
+// the accepted fallback). Capping means any formula we get slightly wrong
+// degrades to "max", never to an over-long timer beyond the spell's own cap.
+function _durTicksForLevel(formula, capTicks, level) {
+  const cap = Number(capTicks) || 0;
+  const lvl = Number(level) || 0;
+  const f   = Number(formula) || 0;
+  if (f === 50 || f === 51) return cap || 72000;   // permanent / until-fade
+  if (!lvl || !f) return cap;                       // no level → spell max
+  let t;
+  switch (f) {
+    case 1:  t = Math.ceil(lvl / 2);      break;
+    case 2:  t = Math.ceil(lvl / 2) + 5;  break;
+    case 3:  t = lvl * 30;                break;
+    case 4:  t = cap || 50;               break;
+    case 5:  t = 2;                        break;
+    case 6:  t = Math.ceil(lvl / 2);      break;
+    case 7:  t = lvl;                      break;
+    case 8:  t = lvl + 10;                break;
+    case 9:  t = lvl * 2 + 10;            break;
+    case 10: t = lvl * 3 + 10;            break;
+    case 11: t = (lvl + 3) * 30;          break;
+    case 12: t = Math.ceil(lvl / 4);      break;
+    default: return cap;
+  }
+  if (!(t > 0)) return cap;
+  if (cap > 0 && t > cap) t = cap;        // never exceed the spell's own cap
+  return t;
+}
+
 // A buff landing we already detected (parseBuffLanding) — if its target is one
 // of our pets, stamp landed_at so the Pet tracker can count it down from the
-// spell's catalog duration. Re-cast refreshes landed_at.
+// spell's duration. The caster of a buff on YOUR pet is you (the owner), so we
+// scale the spell's formula by the owner's known level for an accurate
+// countdown (falling back to the spell's max when we don't know it yet).
+// Re-cast refreshes landed_at.
 function recordPetBuffLanding(bcEvt) {
   if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
   const owner = _petOwnerByName(String(bcEvt.target).toLowerCase());
   if (!owner) return;
   let mp = _petBuffLandings.get(owner);
   if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
+  const ownerLevel = (whoData.get(owner) || {}).level || null;
+  const durTicks   = _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, ownerLevel);
   mp.set(String(bcEvt.spell_name).toLowerCase(), {
     name: bcEvt.spell_name,
-    dur_ticks: bcEvt.dur_ticks,
+    dur_ticks: durTicks,
     dur_formula: bcEvt.dur_formula,
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
   });
@@ -1666,7 +1705,10 @@ function petBuffsForOwner(ownerLower) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
       const rem = durSecs - (now - (b.landed_at || now)) / 1000;
       if (rem < -60) continue;                              // long expired → drop
-      byName.set(k, { name: b.name, remaining_secs: Math.max(0, Math.round(rem)), observed_at_ms: now });
+      // total_secs lets the overlay draw a proportional countdown BAR (not just
+      // a chip); remaining_secs is the live number on it.
+      byName.set(k, { name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
+        total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now });
     }
   }
   return Array.from(byName.values());

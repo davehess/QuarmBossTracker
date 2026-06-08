@@ -51,6 +51,15 @@
   .petbuff .t.q{color:#6e7681}
   .hpbar{height:5px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .hpbar > div{height:100%;transition:width 200ms linear,background 200ms linear}
+  /* Buff countdown bars — one per timed buff observed on the pet (from the
+     cast-land message), drawn under the charm-duration bar. */
+  .buffbars{margin-top:4px;display:flex;flex-direction:column;gap:3px}
+  .buffrow{display:flex;align-items:center;gap:5px;font-size:10px;line-height:1.2}
+  .buffrow .bn{color:#7ee787;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+  .buffrow .bt{font-variant-numeric:tabular-nums;color:#8b949e;margin-left:auto}
+  .buffrow.low .bt{color:#f0883e} .buffrow.crit .bt{color:#f85149}
+  .buffrow .bbar{flex:1 1 60px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden}
+  .buffrow .bbar > div{height:100%;background:#56d364;transition:width 200ms linear}
   /* /pet health buff chips — each pet buff with its remaining time from the
      last /pet health report. Same tone tiers as the web BuffChip: dim → low
      (orange ≤6m) → crit (red ≤2m). Stale (no fresh report in N min) is faded. */
@@ -275,23 +284,40 @@
     // remaining is more guess than fact.
     var staleMs = obs ? (Date.now() - obs) : null;
     var staleClass = (staleMs != null && staleMs > 5*60*1000) ? ' stale' : '';
-    var chips = '';
+    // Timed buffs (we saw the cast land → know the duration) render as a
+    // countdown BAR under the charm bar. Untimed buffs (name only, from
+    // /pet health with no observed cast) stay as small chips below.
+    var bars = '', chips = '';
     for (var i=0;i<buffs.length;i++){
       var b = buffs[i]; if (!b || !b.name) continue;
       var bo = b.observed_at_ms || obs;
       var hasTimer = b.remaining_secs != null;
-      var tone = hasTimer ? buffTone(b.remaining_secs, bo) : '';
-      var t = hasTimer ? fmtRem(b.remaining_secs, bo) : '';
-      var tDisp = hasTimer ? t : '?';
-      var title = b.name + (hasTimer ? ' · ' + t + ' left (timed from observed cast)' : ' · present (no cast seen — duration unknown)');
-      chips += '<span class="petbuff ' + (hasTimer ? tone : '') + '" title="' + esc(title) + '">'
-            +    '<span class="nm">' + esc(shortBuffName(b.name)) + '</span>'
-            +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + tDisp + '</span>'
-            +  '</span>';
+      if (hasTimer && b.total_secs) {
+        var tone = buffTone(b.remaining_secs, bo);
+        var pct  = Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100));
+        var col  = b.remaining_secs > 30 ? '#56d364' : (b.remaining_secs > 12 ? '#f0883e' : '#f85149');
+        bars += '<div class="buffrow ' + tone + '" title="' + esc(b.name + ' · ' + fmtRem(b.remaining_secs, bo) + ' left (timed from the cast that landed)') + '">'
+             +    '<span class="bn">' + esc(shortBuffName(b.name)) + '</span>'
+             +    '<div class="bbar"><div style="width:' + pct.toFixed(1) + '%;background:' + col + '"></div></div>'
+             +    '<span class="bt">' + fmtRem(b.remaining_secs, bo) + '</span>'
+             +  '</div>';
+      } else {
+        var t2 = hasTimer ? fmtRem(b.remaining_secs, bo) : '?';
+        var tone2 = hasTimer ? buffTone(b.remaining_secs, bo) : '';
+        var title = b.name + (hasTimer ? ' · ' + t2 + ' left' : ' · present (no cast seen — duration unknown)');
+        chips += '<span class="petbuff ' + tone2 + '" title="' + esc(title) + '">'
+              +    '<span class="nm">' + esc(shortBuffName(b.name)) + '</span>'
+              +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + t2 + '</span>'
+              +  '</span>';
+      }
     }
-    if (!chips) return '';
-    var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : '/pet health';
-    return '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
+    var out = '';
+    if (bars)  out += '<div class="buffbars">' + bars + '</div>';
+    if (chips) {
+      var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : '/pet health';
+      out += '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
+    }
+    return out;
   }
 
   // Per-charm session memory: key → { started_at, warned }. Re-armed when a
