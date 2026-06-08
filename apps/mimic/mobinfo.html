@@ -468,10 +468,9 @@
       var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>';
       var spellsBlock = '';
       if (mob && Array.isArray(mob.spells) && mob.spells.length > 0){
-        // Compact GINA-style table: name · resist · mana · cast · recast.
-        // Resist column = "Magic -200 lure" — the resist type abbreviated, with
-        // ResistDiff appended ("lure" suffix for negative; positive = easier).
-        // Recast displayed in seconds (Quarm recasts are 5-60s).
+        // Split offensive (good===0 or unknown) from buff (good===1). Buffs
+        // are always 'Unresist.' (you can't resist yourself); hide the column
+        // entirely there. Offensive keeps the column — 'Magic -200 lure' etc.
         var RESIST_NAME = { 0:'—', 1:'Magic', 2:'Fire', 3:'Cold', 4:'Poison', 5:'Disease', 6:'Chromatic', 7:'Prismatic' };
         function fmtResist(sp){
           var t = (sp.resist_type == null) ? null : Number(sp.resist_type);
@@ -481,31 +480,43 @@
           if (d != null && d !== 0) lbl += ' ' + (d < 0 ? d + ' lure' : '+' + d);
           return lbl;
         }
-        var rows = '';
-        for (var spi = 0; spi < mob.spells.length; spi++){
-          var sp = mob.spells[spi];
-          var name = esc(sp.name || ('Spell #' + sp.id));
-          var resi = esc(fmtResist(sp));
-          var mana = (sp.mana != null) ? esc(String(sp.mana)) : '—';
-          var cast = (sp.cast_ms != null) ? (sp.cast_ms >= 1000 ? (sp.cast_ms/1000).toFixed(1)+'s' : sp.cast_ms+'ms') : '—';
-          var recast = (sp.recast_ms != null) ? (sp.recast_ms >= 1000 ? Math.round(sp.recast_ms/1000)+'s' : sp.recast_ms+'ms') : '—';
-          rows += '<div style="display:grid;grid-template-columns:1fr 80px 36px 50px 50px;gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
-                +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + '</span>'
-                +   '<span style="color:#f0b429;text-align:right;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + resi + '</span>'
-                +   '<span style="color:#79c0ff;text-align:right;font-variant-numeric:tabular-nums">' + mana + '</span>'
-                +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + cast + '</span>'
-                +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + recast + '</span>'
-                + '</div>';
+        function fmtMana(v){   return (v != null) ? esc(String(v)) : '—'; }
+        function fmtCast(v){   return (v != null) ? (v >= 1000 ? (v/1000).toFixed(1)+'s' : v+'ms') : '—'; }
+        function fmtRecast(v){ return (v != null) ? (v >= 1000 ? Math.round(v/1000)+'s' : v+'ms') : '—'; }
+        // Render a sectioned table. withResist=false drops the Resist column
+        // and uses a wider name column.
+        function spellTable(label, list, withResist){
+          if (!list.length) return '';
+          var cols = withResist ? '1fr 80px 36px 50px 50px' : '1fr 36px 50px 50px';
+          var hdr = '<div style="display:grid;grid-template-columns:'+cols+';gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;padding:0 0 2px;border-bottom:1px solid rgba(110,118,129,0.12);margin-bottom:2px">'
+                  +   '<span>'+esc(label)+'</span>'
+                  +   (withResist ? '<span style="text-align:right">Resist</span>' : '')
+                  +   '<span style="text-align:right">Mana</span>'
+                  +   '<span style="text-align:right">Cast</span>'
+                  +   '<span style="text-align:right">Recast</span>'
+                  + '</div>';
+          var rows = '';
+          for (var spi = 0; spi < list.length; spi++){
+            var sp = list[spi];
+            var name = esc(sp.name || ('Spell #' + sp.id));
+            rows += '<div style="display:grid;grid-template-columns:'+cols+';gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
+                  +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + '</span>'
+                  +   (withResist ? '<span style="color:#f0b429;text-align:right;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(fmtResist(sp)) + '</span>' : '')
+                  +   '<span style="color:#79c0ff;text-align:right;font-variant-numeric:tabular-nums">' + fmtMana(sp.mana) + '</span>'
+                  +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + fmtCast(sp.cast_ms) + '</span>'
+                  +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + fmtRecast(sp.recast_ms) + '</span>'
+                  + '</div>';
+          }
+          return '<div style="margin-top:8px">'+hdr+rows+'</div>';
+        }
+        var offensive = [], buffs = [];
+        for (var spj = 0; spj < mob.spells.length; spj++) {
+          var sp2 = mob.spells[spj];
+          if (sp2 && sp2.good === 1) buffs.push(sp2); else offensive.push(sp2);
         }
         spellsBlock = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
-                    +   '<div style="display:grid;grid-template-columns:1fr 80px 36px 50px 50px;gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;padding:0 0 2px;border-bottom:1px solid rgba(110,118,129,0.12);margin-bottom:2px">'
-                    +     '<span>Spell</span>'
-                    +     '<span style="text-align:right">Resist</span>'
-                    +     '<span style="text-align:right">Mana</span>'
-                    +     '<span style="text-align:right">Cast</span>'
-                    +     '<span style="text-align:right">Recast</span>'
-                    +   '</div>'
-                    +   rows
+                    + spellTable(offensive.length ? 'Offensive (' + offensive.length + ')' : 'Offensive', offensive, true)
+                    + spellTable(buffs.length     ? 'Buffs ('     + buffs.length     + ')' : 'Buffs',     buffs,     false)
                     + '</div>';
       } else {
         spellsBlock = '<div class="sub" style="margin-top:8px;color:#6e7681">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';

@@ -5315,7 +5315,7 @@ async function _handleAgentMobInfo(req, res) {
           const ids = inWindow.map(e => e.spellid).filter(Boolean);
             if (ids.length > 0) {
               const catRows = await supabase.select('eqemu_spells',
-                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff&limit=80`);
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff,good_effect&limit=80`);
               const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
               // npc_spells_entries.manacost = -1 means "use the spell's catalog
               // mana cost"; same convention for recast_delay (-1 = spell default).
@@ -5339,6 +5339,11 @@ async function _handleAgentMobInfo(req, res) {
                   // are rendered as "-200 lure"; positive as a plain modifier.
                   resist_type:  c.resist_type ?? null,
                   resist_diff:  c.resist_diff ?? null,
+                  // 1 = beneficial (buff) / 0 = detrimental (offensive).
+                  // Drives the offensive vs buff split in the Mob Info Spells
+                  // tab — buffs render without the (always 'Unresist.') resist
+                  // column. Null when the catalog isn't enriched yet.
+                  good:         (c.good_effect == null ? null : (Number(c.good_effect) ? 1 : 0)),
                   priority:     e.priority ?? null,
                   type:         e.type ?? null,
                   minlevel:     e.minlevel ?? null,
