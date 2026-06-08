@@ -337,6 +337,28 @@ function rel(iso: string): string {
   return `${Math.floor(ms / 86400_000)}d ago`;
 }
 
+// Compare two semver-ish strings ("3.0.66" or "3.0.66-beta.3") so a sort
+// returns oldest first. Two-digit minor/patch sorts correctly (3.0.10 > 3.0.9),
+// which a lexical compare gets wrong. Pre-release tags ("-beta.N") count as
+// older than the same base, matching how the agent treats them downstream.
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [core, pre] = v.replace(/^v/, '').split('-');
+    const parts = core.split('.').map(n => parseInt(n, 10) || 0);
+    while (parts.length < 3) parts.push(0);
+    return { parts, pre: pre || null };
+  };
+  const pa = parse(a), pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa.parts[i] !== pb.parts[i]) return pa.parts[i] - pb.parts[i];
+  }
+  // Same core. A prerelease sorts BEFORE a non-prerelease of the same core.
+  if (pa.pre && !pb.pre) return -1;
+  if (!pa.pre && pb.pre) return  1;
+  if (pa.pre && pb.pre)  return pa.pre.localeCompare(pb.pre);
+  return 0;
+}
+
 function fmtTs(iso: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('en-US', {
@@ -465,32 +487,68 @@ export default async function AdminAgentsPage() {
             Couldn&apos;t reach the GitHub API to list Mimic releases (rate limit or transient).
             The download link still works.
           </EmptyHint>
-        ) : (
+        ) : (() => {
+          // Split by GitHub's prerelease flag — release-mimic.yml marks every
+          // x.y.z-beta.N build prerelease and every stable cut as not. The two
+          // heads (stable + beta) are what officers need to see at a glance.
+          const stable = mimicReleases.filter(r => !r.prerelease);
+          const betas  = mimicReleases.filter(r =>  r.prerelease);
+          const latestStable = stable[0] ?? null;
+          const latestBeta   = betas[0]  ?? null;
+          // "Installer (MB)" stays anchored to whatever's at the very top of
+          // the list (newest publish date across both channels) since that
+          // matches how Downloads (latest) is read below.
+          const newest = mimicReleases[0];
+          const newestExe = newest?.assets?.find(a => /\.exe$/i.test(a.name));
+          return (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
-              <Stat label="Latest beta" value={1} color="text-blue" />
-              <Stat label="Total betas cut" value={mimicReleases.length} />
               <Stat
-                label="Installer size (MB)"
-                value={Math.round((mimicReleases[0]?.assets?.find(a => /\.exe$/i.test(a.name))?.size ?? 0) / (1024 * 1024))}
+                label="Latest stable"
+                value={latestStable ? latestStable.tag_name.replace(/^v/, '') : '—'}
+                color="text-green"
               />
               <Stat
+                label="Latest beta"
+                value={latestBeta ? latestBeta.tag_name.replace(/^v/, '') : '—'}
+                color="text-blue"
+              />
+              <Stat label="Releases (stable / beta)" value={`${stable.length} / ${betas.length}`} />
+              <Stat
                 label="Downloads (latest)"
-                value={mimicReleases[0]?.assets?.find(a => /\.exe$/i.test(a.name))?.download_count ?? 0}
+                value={newestExe?.download_count ?? 0}
                 color="text-green"
               />
             </div>
+            {newestExe && (
+              <div className="mt-1 text-[10px] text-dim">
+                Installer: {Math.round((newestExe.size ?? 0) / (1024 * 1024))}MB ({newestExe.name})
+              </div>
+            )}
 
             <div className="mt-5">
               <div className="text-xs text-dim uppercase tracking-widest mb-2">Recent releases</div>
               <div className="space-y-2">
-                {mimicReleases.slice(0, 6).map((r, i) => {
-                  const exe   = r.assets.find(a => /\.exe$/i.test(a.name));
-                  const isLatest = i === 0;
+                {mimicReleases.slice(0, 8).map(r => {
+                  const exe = r.assets.find(a => /\.exe$/i.test(a.name));
+                  const isLatestStable = r === latestStable;
+                  const isLatestBeta   = r === latestBeta;
+                  const isPrerelease   = r.prerelease;
                   return (
-                    <div key={r.tag_name} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs border-l-2 border-border pl-3 py-1 hover:border-blue/60">
-                      <span className={isLatest ? 'text-text font-semibold' : 'text-text'}>{r.tag_name}</span>
-                      {isLatest && <span className="text-[9px] uppercase tracking-widest text-green border border-green/50 rounded px-1.5 py-0.5">latest</span>}
+                    <div key={r.tag_name} className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs border-l-2 pl-3 py-1 ${isLatestStable ? 'border-green/60' : isPrerelease ? 'border-blue/40' : 'border-border'} hover:border-blue/60`}>
+                      <span className={(isLatestStable || isLatestBeta) ? 'text-text font-semibold' : 'text-text'}>{r.tag_name}</span>
+                      {isLatestStable && (
+                        <span className="text-[9px] uppercase tracking-widest text-green border border-green/50 rounded px-1.5 py-0.5">latest</span>
+                      )}
+                      {isLatestBeta && (
+                        <span className="text-[9px] uppercase tracking-widest text-blue border border-blue/50 rounded px-1.5 py-0.5">latest beta</span>
+                      )}
+                      {isPrerelease && !isLatestBeta && (
+                        <span className="text-[9px] uppercase tracking-widest text-dim border border-border rounded px-1.5 py-0.5">beta</span>
+                      )}
+                      {!isPrerelease && !isLatestStable && (
+                        <span className="text-[9px] uppercase tracking-widest text-dim border border-border rounded px-1.5 py-0.5">stable</span>
+                      )}
                       <span className="text-dim">{fmtTs(r.published_at)}</span>
                       {exe ? (
                         <>
@@ -506,7 +564,8 @@ export default async function AdminAgentsPage() {
               </div>
             </div>
           </>
-        )}
+          );
+        })()}
 
         <div className="mt-5 text-xs text-dim leading-6 border-t border-border/60 pt-4">
           <div className="text-text mb-1">Officer ops cheat-sheet</div>
@@ -686,9 +745,16 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
           {fam.members.length} char{fam.members.length === 1 ? '' : 's'}
         </span>
         {/* Discord-auth state: linked = at least one box runs a per-user token
-            (the going-forward world); legacy = only the old shared token. */}
+            (the going-forward world); legacy = only the old shared token. The
+            linked chip is just the Discord brand mark inside a green border —
+            the title="..." tooltip carries the meaning so the icon stays
+            self-explanatory without taking a column of text. */}
         {fam.linked ? (
-          <span className="text-[9px] uppercase tracking-widest text-green border border-green/40 rounded px-1.5 py-0.5 shrink-0" title="Uploading under a per-user Discord login">🔗 Discord</span>
+          <span className="text-green border border-green/40 rounded px-1.5 py-0.5 shrink-0 inline-flex items-center" title="Uploading under a per-user Discord login">
+            <svg viewBox="0 0 71 55" className="w-3 h-3" fill="currentColor" aria-hidden="true">
+              <path d="M60.1 4.9A58.5 58.5 0 0045.6.4l-.7 1.3a52.7 52.7 0 00-15.4 0L28.8.4a58 58 0 00-14.5 4.5C5.4 18 3 31 4.2 43.6a59 59 0 0017.9 9.1c1.4-2 2.7-4 3.8-6.3a38 38 0 01-6-2.9c.5-.4 1-.7 1.5-1.1A41.7 41.7 0 0035.5 47a41.6 41.6 0 0014-3.6c.5.4 1 .7 1.5 1.1-1.9 1.1-3.9 2.1-6 2.9 1 2.2 2.4 4.3 3.8 6.3a59 59 0 0017.9-9.1c1.3-14.6-2.5-27.5-6.6-38.7zM23.7 36c-3.4 0-6.2-3.1-6.2-7s2.8-7 6.2-7c3.4 0 6.3 3.2 6.2 7 0 3.9-2.8 7-6.2 7zm23 0c-3.4 0-6.2-3.1-6.2-7s2.8-7 6.2-7c3.4 0 6.3 3.2 6.2 7 0 3.9-2.8 7-6.2 7z"/>
+            </svg>
+          </span>
         ) : (
           <span className="text-[9px] uppercase tracking-widest text-dim border border-border rounded px-1.5 py-0.5 shrink-0" title="Still on the legacy shared token — ask them to sign in with Discord in Mimic">legacy</span>
         )}
@@ -696,7 +762,27 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
           <span className="text-gold text-sm shrink-0" title="Includes a toon being run by someone other than its owner — expand for details">*</span>
         )}
         <span className="text-dim text-xs ml-auto whitespace-nowrap">{rel(fam.latestUpload)}</span>
-        <span className="text-dim text-[10px] hidden md:inline max-w-[14rem] truncate" title={fam.versions.join(', ')}>{fam.versions.join(', ') || '—'}</span>
+        {/* Version chip — visible on every breakpoint (was hidden on mobile).
+            Picks the highest semver across the family so a 6-char family with
+            one stale box shows the up-to-date version; appends * when versions
+            disagree. Full list still surfaces via the title= tooltip. */}
+        {(() => {
+          const vs = (fam.versions || []).filter(Boolean);
+          if (vs.length === 0) {
+            return <span className="text-dim text-[10px] tabular-nums shrink-0">—</span>;
+          }
+          const sorted = [...vs].sort(compareSemver).reverse();
+          const top    = sorted[0];
+          const mixed  = vs.some(v => v !== top);
+          return (
+            <span
+              className={`text-[10px] tabular-nums shrink-0 font-mono ${mixed ? 'text-orange' : 'text-dim'}`}
+              title={mixed ? `Versions in family: ${vs.join(', ')}` : `Agent v${top}`}
+            >
+              v{top}{mixed && '*'}
+            </span>
+          );
+        })()}
         <span className="text-text text-xs hidden sm:inline tabular-nums w-16 text-right">{fam.totalUploads.toLocaleString()}</span>
         <span className="text-[10px] w-16 text-right shrink-0">{familyStatus}</span>
       </summary>
@@ -758,10 +844,15 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
   );
 }
 
-function Stat({ label, value, color = 'text-text' }: { label: string; value: number; color?: string }) {
+function Stat({ label, value, color = 'text-text' }: { label: string; value: number | string; color?: string }) {
+  const display = typeof value === 'number' ? value.toLocaleString() : value;
+  // String values (version strings, "x / y" splits) need to size down so a
+  // long beta tag like "1.0.58-beta.10" doesn't break the card; numbers keep
+  // the big-2xl headline treatment.
+  const sizeClass = typeof value === 'number' ? 'text-2xl' : 'text-lg';
   return (
     <div className="bg-bg border border-border rounded p-3">
-      <div className={`text-2xl ${color}`}>{value.toLocaleString()}</div>
+      <div className={`${sizeClass} ${color}`}>{display}</div>
       <div className="text-dim text-xs">{label}</div>
     </div>
   );

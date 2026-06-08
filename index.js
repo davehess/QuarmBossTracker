@@ -107,7 +107,27 @@ function getBosses() {
 }
 
 // ── Client ─────────────────────────────────────────────────────────────────
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages] });
+// GuildVoiceStates is required for @discordjs/voice — without it the
+// voiceAdapterCreator never receives VOICE_STATE_UPDATE / VOICE_SERVER_UPDATE
+// from Discord and joinVoiceChannel hangs in "Connecting" forever. Symptom
+// was /voicetest queueing fine but the bot never appearing in the channel.
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates] });
+
+// Voice gateway diagnostic. discord.js emits `[VOICE]` debug lines whenever
+// Discord pushes VOICE_STATE_UPDATE or VOICE_SERVER_UPDATE for our bot.
+// When a join fails at the `signalling → ?` step (state never advances
+// past signalling), the truth lives in whether Discord ever sent these
+// events back. If we see VOICE_STATE_UPDATE+VOICE_SERVER_UPDATE but the
+// connection still didn't advance, it's an @discordjs/voice / adapter
+// bug. If we see NEITHER, Discord rejected the join (perms on the
+// channel, channel full, bot already routed elsewhere, etc).
+client.on('debug', msg => {
+  if (msg && msg.includes('[VOICE]')) console.log('[discord.js voice]', msg);
+});
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  if (newState.member?.user?.id !== client.user?.id) return;   // only OUR voice state
+  console.log(`[voice-state-update] bot moved: channel=${oldState.channelId} → ${newState.channelId} (session=${newState.sessionId})`);
+});
 
 // ── Load commands ──────────────────────────────────────────────────────────
 client.commands = new Collection();
@@ -2541,6 +2561,32 @@ const _triggerDedup = new Map();   // key: "guild|key" → timestamp
 const TRIGGER_RATE_WINDOW_MS = 60_000;
 const TRIGGER_RATE_MAX       = 30;  // posts per uploader per window
 const _triggerRate = new Map();    // discordId → [timestamps]
+
+// ── Cross-Mimic trigger relay (fan-out) ─────────────────────────────────────
+// When one raider's Mimic detects a guild trigger but ANOTHER raider's log
+// missed it (zoning, partial log capture, player-targeted line like a
+// debuff that lands on you only), the second Mimic doesn't fire. The
+// relay closes that gap: detecting Mimic POSTs to /api/agent/trigger-relay,
+// bot stores in this ring buffer, every other Mimic polls
+// /api/agent/recent-fires every ~1.5s and runs the same actions locally
+// (overlay + TTS + visible timer row) as if it had detected the trigger
+// itself. Cross-agent dedup is by (trigger name + captures) inside an 8s
+// window so duplicates don't echo. Buffer caps at 200 entries and prunes
+// older than 60s. In-memory only — a bot restart loses the in-flight
+// queue, which is fine because the source-of-truth is still each
+// Mimic's own log tail.
+const TRIGGER_RELAY_TTL_MS         = 60_000;
+const TRIGGER_RELAY_MAX_ENTRIES    = 200;
+const TRIGGER_RELAY_DEDUP_WINDOW_MS = 8_000;
+const _triggerRelay = {
+  nextId:  1,
+  entries: [],   // { id, name, key, captures, actions, timer_duration_sec, fired_at_ms, posted_at_ms, uploaded_by }
+};
+setInterval(() => {
+  const cutoff = Date.now() - TRIGGER_RELAY_TTL_MS;
+  _triggerRelay.entries = _triggerRelay.entries.filter(e => e.posted_at_ms >= cutoff);
+}, 15_000);
+
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
@@ -4594,7 +4640,14 @@ function _decodeMobSpecials(special_abilities, npcspecialattks) {
   return out;
 }
 function _normMobName(n) {
-  return String(n || '').trim().toLowerCase().replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+  // Strip the "'s corpse" suffix BEFORE normalizing punctuation so a target
+  // like "Vyzh`dra the Exiled's corpse" still resolves to the live NPC row
+  // in eqemu_npc_types (otherwise the underscore-collapsed form ends in
+  // "_s_corpse" and never matches). Lets the Mob Info overlay keep showing
+  // stats + loot for a freshly-killed mob you're looting from.
+  return String(n || '').trim().toLowerCase()
+    .replace(/'s\s+corpse$/, '')
+    .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
 const _mobInfoCache = new Map();   // normName → { at, row|null }
 const _MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;   // static catalog data — cache hard
@@ -4739,7 +4792,7 @@ async function _handleAgentMobInfo(req, res) {
     const encPlain  = encodeURIComponent(norm);
     const encHashed = encodeURIComponent('#' + norm);
     const rows = await supabase.select('eqemu_npc_types',
-      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype&limit=1`);
+      `or=(name.ilike.${encPlain},name.ilike.${encHashed})&select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id&limit=1`);
     const r = Array.isArray(rows) && rows[0];
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
@@ -4844,6 +4897,45 @@ async function _handleAgentMobInfo(req, res) {
         } catch (err) { console.warn('[mob-info] zone long_name resolve failed:', err?.message); }
       }
 
+      // Spell list — join eqemu_npc_spells_entries (per-spell metadata for
+      // the npc_spells_id list) against eqemu_spells (catalog) to surface
+      // each spell's name + mana + cast time on the mob-info Spells tab.
+      // Currently empty in prod because the weekly sync hasn't been
+      // pulling npc_spells / npc_spells_entries — the code path here is
+      // ready so once that's resolved, the tab populates automatically.
+      let spells = [];
+      if (r.npc_spells_id && r.npc_spells_id > 0) {
+        try {
+          const entries = await supabase.select('eqemu_npc_spells_entries',
+            `npc_spells_id=eq.${r.npc_spells_id}&select=spellid,manacost,recast_delay,priority,minlevel,maxlevel,type,min_hp,max_hp&order=priority.desc&limit=40`);
+          if (Array.isArray(entries) && entries.length > 0) {
+            const ids = entries.map(e => e.spellid).filter(Boolean);
+            if (ids.length > 0) {
+              const catRows = await supabase.select('eqemu_spells',
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time&limit=40`);
+              const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
+              spells = entries.map(e => {
+                const c = cat.get(e.spellid) || {};
+                return {
+                  id:           e.spellid,
+                  name:         c.name || ('Spell #' + e.spellid),
+                  mana:         e.manacost ?? c.mana ?? null,
+                  cast_ms:      c.cast_time ?? null,
+                  recast_ms:    e.recast_delay ?? null,
+                  priority:     e.priority ?? null,
+                  type:         e.type ?? null,
+                  minlevel:     e.minlevel ?? null,
+                  maxlevel:     e.maxlevel ?? null,
+                  hp_window: (e.min_hp != null || e.max_hp != null)
+                    ? { min: e.min_hp ?? null, max: e.max_hp ?? null }
+                    : null,
+                };
+              });
+            }
+          }
+        } catch (err) { console.warn('[mob-info] spells fetch failed:', err?.message); }
+      }
+
       mob = {
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
@@ -4858,6 +4950,7 @@ async function _handleAgentMobInfo(req, res) {
         maxdmg:  r.maxdmg ?? null,
         raid_target: !!r.raid_target,
         specials: _decodeMobSpecials(r.special_abilities, r.npcspecialattks),
+        spells,
         loot,
       };
     }
@@ -5226,7 +5319,13 @@ async function _handleAgentTrigger(req, res) {
       if (!voiceCh) {
         // No channel configured — drop silently. Caller still gets an OK.
       } else {
-        await _playVoiceTrigger({ message, voiceId: ev?.voice_id || null, channelId: voiceCh, uploadedBy: identity.discord_id });
+        await _playVoiceTrigger({
+          message,
+          voiceId:     ev?.voice_id || null,
+          channelId:   voiceCh,
+          uploadedBy:  identity.discord_id,
+          triggerName: ev?.name || null,
+        });
         spoken++;
         _triggerRate.set(identity.discord_id, [...rate, now]);
       }
@@ -5248,12 +5347,136 @@ async function _handleAgentTrigger(req, res) {
   res.end(JSON.stringify({ ok: true, posted, spoken }));
 }
 
-// Voice playback path. STUB until commit B wires @discordjs/voice + the TTS
-// engines (free default, ElevenLabs when ELEVENLABS_API_KEY is set). Until
-// then, every voice fire logs a single line so officers can verify the chain
-// works end-to-end without audio.
-async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy }) {
-  console.log(`[trigger-voice] would speak in <#${channelId}> (voice=${voiceId || 'default'}, by=${uploadedBy}): ${message}`);
+// ── Cross-Mimic trigger relay handlers ────────────────────────────────────
+// Each fire is opaque to the bot — it's a {name, key, captures, actions,
+// timer_duration_sec, fired_at_ms} bundle that a receiving Mimic runs
+// through its own _fireTriggerActions as if locally detected. The bot's
+// only jobs are dedup, capping the buffer, and serving polls. Payload
+// validation is light because each field is also re-validated on the
+// receiving Mimic before action execution.
+
+async function _handleTriggerRelayPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 32 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const fires = Array.isArray(payload?.fires) ? payload.fires : [];
+  if (fires.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, accepted: 0 }));
+  }
+
+  // Per-uploader rate cap — re-use the trigger rate limit so a wedged
+  // pattern that fires 100/sec doesn't drown the relay buffer.
+  const now = Date.now();
+  const rate = _triggerRate.get(identity.discord_id) || [];
+  if (rate.filter(t => now - t < TRIGGER_RATE_WINDOW_MS).length >= TRIGGER_RATE_MAX) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'rate limited' }));
+  }
+
+  let accepted = 0;
+  for (const f of fires.slice(0, 10)) {
+    const name = String(f?.name || '').slice(0, 120);
+    const key  = String(f?.key  || name).slice(0, 200);
+    if (!name) continue;
+    const firedAt = Number(f?.fired_at_ms) || now;
+    // Cross-agent dedup: same key fired within 8s = same logical event,
+    // skip storing the duplicate so polling clients don't echo it.
+    let duplicate = false;
+    for (let i = _triggerRelay.entries.length - 1; i >= 0; i--) {
+      const e = _triggerRelay.entries[i];
+      if (now - e.posted_at_ms > TRIGGER_RELAY_DEDUP_WINDOW_MS) break;
+      if (e.key === key && Math.abs(e.fired_at_ms - firedAt) <= TRIGGER_RELAY_DEDUP_WINDOW_MS) {
+        duplicate = true; break;
+      }
+    }
+    if (duplicate) continue;
+
+    const entry = {
+      id:                  _triggerRelay.nextId++,
+      name,
+      key,
+      captures:            (f?.captures && typeof f.captures === 'object') ? f.captures : {},
+      actions:             Array.isArray(f?.actions) ? f.actions.slice(0, 5) : [],
+      timer_duration_sec:  Math.max(0, Math.min(3600, parseInt(f?.timer_duration_sec, 10) || 0)),
+      fired_at_ms:         firedAt,
+      posted_at_ms:        now,
+      uploaded_by:         identity.discord_id,
+    };
+    _triggerRelay.entries.push(entry);
+    accepted++;
+  }
+  if (_triggerRelay.entries.length > TRIGGER_RELAY_MAX_ENTRIES) {
+    _triggerRelay.entries.splice(0, _triggerRelay.entries.length - TRIGGER_RELAY_MAX_ENTRIES);
+  }
+  if (accepted > 0) _triggerRate.set(identity.discord_id, [...rate, now]);
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, accepted, next_id: _triggerRelay.nextId }));
+}
+
+async function _handleRecentFiresGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const url = new URL(req.url, 'http://x');
+  const sinceId = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
+
+  // Suppress the caller's own fires — they already played locally and
+  // would just dedup-loop. Other agents' fires (within the 60s TTL)
+  // pass through.
+  const fires = _triggerRelay.entries
+    .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
+    .map(e => ({
+      id:                  e.id,
+      name:                e.name,
+      key:                 e.key,
+      captures:            e.captures,
+      actions:             e.actions,
+      timer_duration_sec:  e.timer_duration_sec,
+      fired_at_ms:         e.fired_at_ms,
+    }));
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({
+    next_id: _triggerRelay.nextId,
+    fires,
+  }));
+}
+
+// Voice playback path. Hands off to utils/voice.js, which queues + speaks
+// via @discordjs/voice + Edge TTS. The voice module is fail-soft: missing
+// deps / kick from the channel / TTS HTTP errors log once and drop the
+// message rather than poisoning the trigger pipeline. The text-post path
+// is independent so officers always have a backstop.
+async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy, triggerName }) {
+  try {
+    const voice = require('./utils/voice');
+    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+    if (!guild) {
+      console.warn('[trigger-voice] DISCORD_GUILD_ID not in cache — dropping');
+      return;
+    }
+    const ok = await voice.playInVoice({
+      guildClient: guild,
+      channelId,
+      text:        message,
+      voiceId,
+      triggerName,    // surfaces to the /admin/voice "skip these trigger names" filter
+    });
+    if (!ok) console.log('[trigger-voice] play returned false for', channelId, '(may be ripcord or skip filter)');
+  } catch (err) {
+    console.warn('[trigger-voice] handler error:', err?.message);
+  }
+  void uploadedBy;   // logged upstream via _trackUpload; voice doesn't need it
 }
 
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
@@ -6574,6 +6797,37 @@ http.createServer(async (req, res) => {
     }
   }
 
+  // Cache bust for voice_settings. The /admin/voice page calls this after
+  // saving so the ripcord takes effect without waiting out the 30s TTL.
+  // Bearer-auth gated (same token as the agent endpoints) — anyone with
+  // the token already has full data-plane access, so this is no broader.
+  if (req.method === 'POST' && req.url === '/api/admin/voice-settings/refresh') {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+    try {
+      const vs = require('./utils/voiceSettings');
+      vs.invalidate();
+      // If the admin just flipped the ripcord (enabled=false), boot the bot
+      // out of voice NOW instead of finishing the in-flight queue. Cheap —
+      // the next allowed fire reconnects. Re-fetch first so we read what was
+      // just saved, not the stale cached value.
+      const guildId = process.env.DISCORD_GUILD_ID;
+      if (guildId) {
+        const fresh = await vs.get(guildId);
+        if (!fresh.enabled) {
+          try { require('./utils/voice').leaveVoice(guildId, 'admin ripcord'); }
+          catch (err) { void err; }
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      console.warn('[voice-settings refresh] error:', err?.message);
+      res.writeHead(500);
+      return res.end();
+    }
+  }
+
   // Incomplete-encounter list — agent polls this per logged-in character to
   // decide whether to show the "we need your logs" banner. Returns the set
   // of encounters flagged data_incomplete that the queried character was in.
@@ -6678,6 +6932,28 @@ http.createServer(async (req, res) => {
       console.error('[trigger] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Fan-out POST — agent reports a local fire so other Mimics that
+  // missed the source line can replay it. Stored in _triggerRelay ring
+  // buffer; receivers fetch via GET /api/agent/recent-fires below.
+  if (req.method === 'POST' && req.url === '/api/agent/trigger-relay') {
+    try { return await _handleTriggerRelayPost(req, res); }
+    catch (err) {
+      console.error('[trigger-relay] post error:', err);
+      res.writeHead(500); return res.end();
+    }
+  }
+
+  // Fan-out GET — agent polls every ~1.5s. Returns voice/timer fires
+  // posted by OTHER agents since the caller's since_id, suppressing the
+  // caller's own fires so a relay doesn't echo back to its origin.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/recent-fires')) {
+    try { return await _handleRecentFiresGet(req, res); }
+    catch (err) {
+      console.error('[trigger-relay] get error:', err);
+      res.writeHead(500); return res.end();
     }
   }
 

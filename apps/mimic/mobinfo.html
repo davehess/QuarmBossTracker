@@ -437,6 +437,41 @@
                        : (!mob ? '<div class="sub">no catalog stats for this target</div>' : '');
       tabBody = res + spec + loadingNote;
     }
+    // Corpse target → splice in the just-finished fight's top-damage
+    // scoreboard from /api/state.stats.currentEncounterThreat.perPlayer.
+    // Reads the agent's local encounter snapshot (already on the wire for
+    // the DPS overlay), so no server round-trip and no version bump
+    // needed elsewhere. Top 5 players by total damage; tank bar gets a
+    // taken-damage flag.
+    var isCorpse = (mi.target_name || '').toLowerCase().match(/'s\s+corpse$/);
+    var lastFight = '';
+    if (isCorpse && mi._enc && mi._enc.perPlayer) {
+      var pp = mi._enc.perPlayer;
+      var names = Object.keys(pp);
+      var rows = names
+        .map(function(n){ var v = pp[n] || {}; return { n: n, dmg: (v.swing||0)+(v.proc||0)+(v.spell||0), took: v.took||0 }; })
+        .filter(function(r){ return r.dmg > 0 || r.took > 0; })
+        .sort(function(a,b){ return b.dmg - a.dmg; })
+        .slice(0, 5);
+      if (rows.length) {
+        var max = rows[0].dmg || 1;
+        var rowsHtml = rows.map(function(r){
+          var pct = Math.min(100, Math.round(r.dmg / max * 100));
+          var dmgTxt = r.dmg >= 1000000 ? (r.dmg/1000000).toFixed(1)+'M' : r.dmg >= 1000 ? (r.dmg/1000).toFixed(1)+'k' : String(r.dmg);
+          return '<div style="display:grid;grid-template-columns:1fr 52px;gap:6px;font-size:10px;padding:1px 0;align-items:baseline">'
+               +   '<span style="position:relative;color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+               +     '<span style="position:absolute;left:0;top:0;bottom:0;width:'+pct+'%;background:rgba(86,211,100,0.18);border-radius:2px;"></span>'
+               +     '<span style="position:relative;padding-left:4px">'+esc(r.n)+'</span>'
+               +   '</span>'
+               +   '<span style="color:#56d364;text-align:right;font-variant-numeric:tabular-nums">'+dmgTxt+'</span>'
+               + '</div>';
+        }).join('');
+        lastFight = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
+                  +   '<div style="font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:3px">last fight (top 5)</div>'
+                  +   rowsHtml
+                  + '</div>';
+      }
+    }
     bodyEl.innerHTML = '<div class="mob">'
       + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
@@ -445,6 +480,7 @@
       + manaBar
       + manaLine
       + tabBody
+      + lastFight
       + '</div>';
     // Grow the host window to fit the rendered content so the Loot tab can
     // show every row without a scrollbar. Skipped when the IPC isn't wired
@@ -463,7 +499,16 @@
       const s = await r.json();
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
-      _lastMi = s.mobInfo;
+      // Splice the local /api/state.stats.currentEncounterThreat onto the
+      // mobInfo blob so corpse-targets can render "Last fight" damage
+      // without a server change. The renderer only surfaces it when the
+      // target_name ends in "'s corpse" (i.e., the just-killed mob you're
+      // now standing on for loot).
+      var mi = s.mobInfo;
+      if (mi && s.stats && s.stats.currentEncounterThreat) {
+        mi = Object.assign({}, mi, { _enc: s.stats.currentEncounterThreat });
+      }
+      _lastMi = mi;
       _renderBody(_lastMi);
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';

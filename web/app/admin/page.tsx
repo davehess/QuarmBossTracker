@@ -70,6 +70,11 @@ export default function AdminPage() {
           href="/admin/triggers"
         />
         <Card
+          title="🎙️ Voice triggers"
+          body="Ripcord + tunables for the bot speaking in raid voice. Master enable, default voice, volume slider, skip patterns (for muting noisy callouts mid-fight). Settings propagate in ~30s."
+          href="/admin/voice"
+        />
+        <Card
           title="🗡️ Loadouts"
           body="Every tank's bandolier sets — who's running what weapons + procs, click through to PQDI. Parked here while not in active use."
           href="/loadouts"

@@ -2,10 +2,10 @@
 
 | Component | Version | Source |
 |---|---|---|
-| **Bot** | 3.0.38 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 3.0.61 | `packages/wolfpack-logsync/package.json` |
-| **Web** (`wolfpack.quest`) | 1.0.32 | `web/package.json` |
-| **Mimic** (Electron desktop) | 1.0.58-beta.6 (beta channel) / 1.0.57 (main) | `apps/mimic/package.json` |
+| **Bot** | 3.0.48 | `package.json` |
+| **Agent** (`wolfpack-logsync`) | 3.0.67 | `packages/wolfpack-logsync/package.json` |
+| **Web** (`wolfpack.quest`) | 1.0.38 | `web/package.json` |
+| **Mimic** (Electron desktop) | 1.0.61 (stable, main) / 1.0.58-beta.7 (beta channel) | `apps/mimic/package.json` |
 
 **Runtime:** Node.js 20, discord.js v14
 **Deployment:** Railway (bot) + Supabase (DB) + Vercel (web at wolfpack.quest)
@@ -640,6 +640,11 @@ Valid expansions: `Classic` (15) / `Kunark` (16) / `Velious` (35) / `Luclin` (47
 ### Git/merge convention
 Always `git merge <branch> -m "vX.Y.Z — short reason"` — never `--no-edit`. Railway uses merge commit message as deploy name.
 
+### Branch policy
+- `main` — production. Bot (Railway), web (Vercel), and agent releases ship from here. Always green.
+- `beta` — **Mimic only.** Beta-channel Mimic builds (`release-mimic.yml` auto-tags from this branch) live here. Bot / agent / web changes should NOT ride along on beta — they should branch off `main`, get reviewed, and merge straight back to `main`. If a Mimic beta commit also needs to land for the bot/agent/web, cherry-pick the relevant pieces to a separate PR off `main` rather than promoting the whole beta branch.
+- Working branches (`claude/*`, feature branches) — branch off `main`, merge back to `main` with a versioned `-m` message.
+
 ---
 
 ## First-time Setup Order
@@ -682,6 +687,32 @@ Guild raids: **Sun / Wed / Thu, 8pm–midnight Eastern.** Any "should have been 
 check (gap detection, missing-parse warnings, attendance reconciliation) should
 default to this window across each raid date. Anchor: the first recorded raid in
 `raid_nights` is the historical baseline.
+
+## Guild trigger action shapes — pick the portable one
+
+When seeding or adding rows to `guild_triggers`, default to the **portable shape**
+so the trigger fires on every Mimic version without forcing a client upgrade. The
+agent has been processing this combo since well before v3.0.64:
+
+- `text_overlay` action with `tts` field — instant visual + spoken call-out.
+- `timer_duration_sec` (trigger-level) — visible countdown row in the
+  trigger overlay. Multiple concurrent timers stack as rows; the last 5s pop
+  amber. Quiet-mode (TTS-off) raiders still see the visual cue.
+- `warning_seconds` + `warning_text` — single voiced warning N seconds before
+  the timer ends.
+
+The **v3.0.64 `voice` action with `marks`** is the upgrade-required shape — only
+fires on v3.0.64+ Mimics. Use it ONLY when a trigger needs two or more timed
+call-outs (e.g., "Tank buster in 10s" + "D.A. now at 4s"). For everything else,
+the portable shape is the default. The trade-off: marks give you exact timing
+between callouts on each client, but you can't ship trigger changes through
+the existing 10-min `/api/agent/guild-triggers` poll until everyone has the
+agent version that understands the action.
+
+The four current drafts (Emperor Ssra Tank Buster, Divine Intervention,
+Death touch countdown, Death touch RIP) plus Enrage and the "AOE — dodge"
+template all use the portable shape — they're in `guild_triggers` disabled,
+ready for regex tuning + flip-on via `/admin/triggers`.
 
 ## Character Identity Scopes (read before building any roster-aware feature)
 

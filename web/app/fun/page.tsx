@@ -265,6 +265,131 @@ async function loadCounters() {
     }
   } catch (err) { void err; }
 
+  // ── 🎵 Dirges sung — bard "Dirge of *" cast counter ──────────────────────
+  // Each cast lands as a `dirge_cast` fun_event (target = song name). Damage
+  // total is best-effort: we sum across encounter_combat_rollup.by_skill keys
+  // whose name contains "dirge" (the agent stores damage events keyed on the
+  // ability name from the log). by_skill is upload-side only — bards who
+  // never ran the agent contribute 0 damage; the cast count still counts
+  // them since the bystander-side detector catches their casts on any
+  // raider's log.
+  try {
+    const [castRes, rollupRes] = await Promise.all([
+      sb.from('fun_events')
+        .select('caster, event_ts', { count: 'exact' })
+        .eq('event_type', 'dirge_cast'),
+      sb.from('encounter_combat_rollup')
+        .select('character_name, by_skill')
+        .limit(20000),
+    ]);
+    const castCount = castRes.count ?? 0;
+    const byTopCaster = new Map<string, number>();
+    for (const r of (castRes.data ?? []) as { caster: string | null }[]) {
+      const k = r.caster || 'unknown';
+      byTopCaster.set(k, (byTopCaster.get(k) ?? 0) + 1);
+    }
+    const topCaster = [...byTopCaster.entries()].sort((a, b) => b[1] - a[1])[0];
+
+    // Sum dirge damage across every uploader's per-skill rollup. Match the
+    // ability key (case-insensitive contains "dirge"), so any "Dirge of *"
+    // (Carnage, Restless, Sleepwalker, …) folds together. DS-prefixed keys
+    // ('ds:dirge of …') still count; melee + chant DoT damage are the same
+    // pool for the joke.
+    let dirgeDamage = 0;
+    type RollupRow = { character_name: string; by_skill: Record<string, { hits?: number; dmg?: number }> | null };
+    for (const r of (rollupRes.data ?? []) as RollupRow[]) {
+      const bs = r.by_skill || {};
+      for (const k of Object.keys(bs)) {
+        if (k.toLowerCase().includes('dirge')) {
+          dirgeDamage += Number(bs[k]?.dmg) || 0;
+        }
+      }
+    }
+
+    if (castCount > 0) {
+      const sub = topCaster
+        ? (dirgeDamage > 0
+            ? `${dirgeDamage.toLocaleString()} damage attributed · top dirger: ${topCaster[0]} ×${topCaster[1]}`
+            : `top dirger: ${topCaster[0]} ×${topCaster[1]} (damage rolls in once bards upload with agent v3.0.62+)`)
+        : `${dirgeDamage.toLocaleString()} damage attributed`;
+      counters.push({
+        label: 'Dirges sung — killed a whole guild',
+        emoji: '🎵',
+        value: castCount,
+        sub,
+      });
+    } else {
+      counters.push({
+        label: 'Dirges sung — killed a whole guild',
+        emoji: '🎵',
+        value: 0,
+        sub: 'no dirges captured yet — agent v3.0.62+ ticks this up on every "begins singing Dirge of …" line',
+      });
+    }
+  } catch (err) {
+    void err;
+  }
+
+  // ── 🐎 Average haste % — mains with both VoG and a Warsong active ─────────
+  // Pulls character_live_state (Zeal-reported current buff set), filters to
+  // mains (characters.main_name is itself or null), and counts the ones who
+  // have BOTH a Visions of Grandeur buff (chanter spell haste, slot 1) AND a
+  // bard Warsong (haste song, slot 2). Spell + song stack additively in EQ
+  // Classic→Luclin, so each qualifying main is the same combined %; reporting
+  // it as "average" is just future-proofing — when we map more haste sources
+  // by name → %, the average will actually vary across mains.
+  try {
+    const [{ data: liveRows }, { data: charRows }] = await Promise.all([
+      sb.from('character_live_state')
+        .select('character, buffs')
+        .eq('guild_id', 'wolfpack'),
+      sb.from('characters')
+        .select('name, main_name')
+        .eq('guild_id', 'wolfpack'),
+    ]);
+    type LiveRow = { character: string; buffs: { name: string; ticks: number | null }[] | null };
+    type CharRow = { name: string; main_name: string | null };
+    const mains = new Set(
+      ((charRows ?? []) as CharRow[])
+        .filter(c => !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase())
+        .map(c => c.name.toLowerCase()),
+    );
+
+    const VOG_PCT     = 51;   // Visions of Grandeur — chanter group spell haste (Velious)
+    const WARSONG_PCT = 25;   // Bard Warsong / war march — song slot, conservative
+
+    let qualifying = 0;
+    let totalPct   = 0;
+    for (const r of (liveRows ?? []) as LiveRow[]) {
+      if (!mains.has(r.character.toLowerCase())) continue;
+      const buffNames = (r.buffs ?? []).map(b => (b?.name || '').toLowerCase());
+      const hasVog     = buffNames.some(n => n.includes('visions of grandeur'));
+      const hasWarsong = buffNames.some(n => n.includes('warsong') || n.includes('war march'));
+      if (hasVog && hasWarsong) {
+        qualifying += 1;
+        totalPct   += VOG_PCT + WARSONG_PCT;
+      }
+    }
+    if (qualifying > 0) {
+      const avg = Math.round(totalPct / qualifying);
+      counters.push({
+        label: 'Avg haste — mains w/ VoG + Warsong',
+        emoji: '🐎',
+        value: `${avg}%`,
+        sub: `${qualifying} main${qualifying === 1 ? '' : 's'} sporting the full ${VOG_PCT}% VoG + ${WARSONG_PCT}% Warsong stack right now`,
+      });
+    } else {
+      counters.push({
+        label: 'Avg haste — mains w/ VoG + Warsong',
+        emoji: '🐎',
+        value: '—',
+        sub: 'no mains currently have both VoG and a Warsong buffed (Zeal reports per-character buff lists)',
+      });
+    }
+  } catch (err) {
+    void err;
+  }
+
   // by a Wolf Pack member. Sub-text shows the top killer + their tally so the
   // bragging rights are explicit. Source: fun_events emitted from the bot's
   // PvP relay when a Wolf-Pack-attributed broadcast names "Lord of Ire" as the
