@@ -13428,7 +13428,13 @@ const _mobInfoByName  = new Map();   // normName → { at, mob|null }
 const _mobInfoInflight = new Set();
 const MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;
 function _normMobNameAgent(n) {
-  return String(n || '').trim().toLowerCase().replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+  // Strip the "'s corpse" suffix so the Mob Info cache key matches the live
+  // NPC row for a freshly-killed mob you're looting from. Without this,
+  // Vyzh`dra's corpse normalizes to vyzh_dra_the_exiled_s_corpse and the
+  // bot's catalog lookup never hits the actual npc_types row.
+  return String(n || '').trim().toLowerCase()
+    .replace(/'s\s+corpse$/, '')
+    .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
 function fetchMobInfo(name) {
   const opts = _uploadOpts;

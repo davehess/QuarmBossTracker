@@ -4640,7 +4640,14 @@ function _decodeMobSpecials(special_abilities, npcspecialattks) {
   return out;
 }
 function _normMobName(n) {
-  return String(n || '').trim().toLowerCase().replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+  // Strip the "'s corpse" suffix BEFORE normalizing punctuation so a target
+  // like "Vyzh`dra the Exiled's corpse" still resolves to the live NPC row
+  // in eqemu_npc_types (otherwise the underscore-collapsed form ends in
+  // "_s_corpse" and never matches). Lets the Mob Info overlay keep showing
+  // stats + loot for a freshly-killed mob you're looting from.
+  return String(n || '').trim().toLowerCase()
+    .replace(/'s\s+corpse$/, '')
+    .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
 const _mobInfoCache = new Map();   // normName → { at, row|null }
 const _MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;   // static catalog data — cache hard
