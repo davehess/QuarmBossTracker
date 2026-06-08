@@ -495,7 +495,7 @@
           + '<button class="dismiss" data-dismiss="' + esc(p.key || '') + '" title="Dismiss — remove this pet from the tracker">&times;</button>'
           + '<div class="head"><span class="pet">' + esc(p.pet || '?') + badge + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
-          + '<div class="meta">tick ' + ticks + '/' + maxTicks + (durEst ? '~' : '') + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · <span class="up' + (elapsed >= RECHARM_RED_AT_MS ? ' danger' : '') + '">up ' + fmtElapsed(elapsed) + '</span>' + durStr + hpStr + warnLine + '</div>'
+          + '<div class="meta">tick ' + Math.min(ticks, maxTicks) + '/' + maxTicks + (durEst ? '~' : '') + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · <span class="up' + (elapsed >= RECHARM_RED_AT_MS ? ' danger' : '') + '">up ' + fmtElapsed(elapsed) + '</span>' + durStr + hpStr + warnLine + '</div>'
           + hpBar
           + '<div class="tickbar"><div style="width:' + tickPct.toFixed(0) + '%"></div></div>'
           + durBar
