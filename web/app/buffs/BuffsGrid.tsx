@@ -27,7 +27,20 @@ export type BuffRow = {
   // In the raid roster but no live buff data (not running the agent) → buffs
   // are unknown rather than missing.
   noAgent?: boolean;
+  // Live charm/summoned pet snapshot (Zeal). Null for non-pet classes / no pet.
+  pet?: {
+    name: string;
+    hpPct: number | null;
+    buffs: { name: string; remaining_secs: number | null; total_secs: number | null; good: number | null }[];
+  } | null;
 };
+
+// Pet HP% color — same thresholds as the overlays (green > 50 / amber > 20 / red).
+function petHpClass(p: number): string {
+  if (p > 50) return 'text-green';
+  if (p > 20) return 'text-orange';
+  return 'text-red-400';
+}
 
 const STALE_MS = 30 * 60 * 1000;
 
@@ -284,6 +297,18 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                           <div className="text-dim text-[10px]">
                             {[r.className || 'Unknown', ROLE_LABELS[r.role]].join(' · ')}
                           </div>
+                          {r.pet && (
+                            <div className="text-[10px] mt-0.5 flex items-center gap-1" title={r.pet.buffs.map(b => b.name).join(', ')}>
+                              <span className="text-orange shrink-0">🐾</span>
+                              <span className="text-text/80 truncate max-w-[8rem]" title={r.pet.name}>{r.pet.name}</span>
+                              {r.pet.hpPct != null && (
+                                <span className={[petHpClass(r.pet.hpPct), 'tabular-nums shrink-0'].join(' ')}>{Math.round(r.pet.hpPct)}%</span>
+                              )}
+                              {r.pet.buffs.length > 0 && (
+                                <span className="text-dim shrink-0">· {r.pet.buffs.length} buff{r.pet.buffs.length === 1 ? '' : 's'}</span>
+                              )}
+                            </div>
+                          )}
                         </td>
                         {r.noAgent ? (
                           <td colSpan={HP_SLOTS.length + categories.length + 1} className="p-2 text-center text-dim/60 italic text-[11px]">

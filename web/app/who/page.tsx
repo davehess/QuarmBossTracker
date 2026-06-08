@@ -27,6 +27,7 @@ type DirRow = {
   first_seen: string | null;
   obs_count: number | null;
   ever_zek_guild: boolean | null;
+  zone: string | null;
 };
 
 type OverrideRow = {
@@ -70,6 +71,16 @@ async function loadRows(): Promise<WhoRow[]> {
     if (c.name && c.class) rosterClassByName.set(c.name.toLowerCase(), c.class);
   }
 
+  // Zone short → long display name (e.g. "oasis" → "The Oasis of Marr"). Fall
+  // back to the short name if the catalog doesn't have it.
+  const { data: zones } = await admin
+    .from('eqemu_zone')
+    .select('short_name, long_name');
+  const zoneLongByShort = new Map<string, string>();
+  for (const z of (zones ?? []) as { short_name: string | null; long_name: string | null }[]) {
+    if (z.short_name && z.long_name) zoneLongByShort.set(z.short_name.toLowerCase(), z.long_name);
+  }
+
   return rows.map((r): WhoRow => {
     const o = overrides.get(r.character_key);
     const observedClass = r.observed_class || null;
@@ -87,6 +98,8 @@ async function loadRows(): Promise<WhoRow[]> {
       effectiveClass: classOverride ?? observedClass ?? rosterClass,
       guild: r.guild_name,
       guildRank: r.guild_rank,
+      zone: r.zone,
+      zoneName: r.zone ? (zoneLongByShort.get(r.zone.toLowerCase()) ?? r.zone) : null,
       anonymous: !!r.anonymous,
       gm: !!r.gm,
       lastSeen: r.last_seen,

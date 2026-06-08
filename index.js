@@ -5202,6 +5202,20 @@ async function _handleAgentLiveState(req, res) {
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
+    // Pet snapshot (charm or summoned) — name + HP% + the buffs we've timed on
+    // it. Same sanitize/caps as the owner's buffs.
+    const petName   = st?.pet_name ? String(st.pet_name).slice(0, 80) : null;
+    const petHp     = (st?.pet_hp_pct != null && Number.isFinite(Number(st.pet_hp_pct))) ? Number(st.pet_hp_pct) : null;
+    let petBuffs    = Array.isArray(st?.pet_buffs) ? st.pet_buffs : null;
+    if (petBuffs) {
+      petBuffs = petBuffs.slice(0, 40).map(b => ({
+        name:           String(b?.name || '').slice(0, 80),
+        remaining_secs: (b && typeof b.remaining_secs === 'number') ? b.remaining_secs : null,
+        total_secs:     (b && typeof b.total_secs === 'number') ? b.total_secs : null,
+        good:           (b && (b.good === 0 || b.good === 1)) ? b.good : null,
+      })).filter(b => b.name);
+      if (petBuffs.length === 0) petBuffs = null;
+    }
     rows.push({
       guild_id:    guildId,
       character,
@@ -5210,6 +5224,9 @@ async function _handleAgentLiveState(req, res) {
       self_hp_pct: selfHp,
       buffs,
       buff_count:  Number.isFinite(Number(st?.buff_count)) ? Math.trunc(Number(st.buff_count)) : buffs.length,
+      pet_name:    petName,
+      pet_hp_pct:  petHp,
+      pet_buffs:   petBuffs,
       uploaded_by: uploadedBy,
       updated_at:  nowIso,
     });
@@ -6017,6 +6034,7 @@ async function _handleAgentUpload(req, res) {
             guild_rank:  w.guildRank || null,   // from /guildstatus — survives /anon
             anonymous:   !!w.anonymous,
             gm:          !!w.gm,
+            zone:        w.zone || null,         // from /who all — short zone name
             observed_at: w.observedAt ? new Date(w.observedAt).toISOString() : new Date().toISOString(),
             uploaded_by: character || '',
           }));

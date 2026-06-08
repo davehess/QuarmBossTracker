@@ -29,12 +29,16 @@ import RaidView, { type RaidRow } from './RaidView';
 
 export const dynamic = 'force-dynamic';
 
+type PetBuff = { name: string; remaining_secs: number | null; total_secs: number | null; good: number | null };
 type LiveStateRow = {
   character: string;
   zone_name: string | null;
   self_hp_pct: number | null;
   buffs: { name: string; ticks: number | null }[] | null;
   buff_count: number | null;
+  pet_name: string | null;
+  pet_hp_pct: number | null;
+  pet_buffs: PetBuff[] | null;
   updated_at: string | null;
 };
 
@@ -92,7 +96,7 @@ export default async function RaidHubPage() {
   const admin = supabaseAdmin();
   const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }] = await Promise.all([
     admin.from('character_live_state')
-      .select('character, zone_name, self_hp_pct, buffs, buff_count, updated_at')
+      .select('character, zone_name, self_hp_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, updated_at')
       .eq('guild_id', 'wolfpack')
       .order('updated_at', { ascending: false }),
     admin.from('characters')
@@ -139,6 +143,17 @@ export default async function RaidHubPage() {
     if (e.main_name) return charByName.get(e.main_name.toLowerCase())?.discord_id ?? null;
     return null;
   };
+
+  // Build the pet snapshot a RaidRow carries, from a live-state row. Null when
+  // the owner has no pet (non-pet class, or pet not up).
+  function petFor(live: LiveStateRow | undefined) {
+    if (!live || !live.pet_name) return null;
+    return {
+      name: live.pet_name,
+      hpPct: live.pet_hp_pct ?? null,
+      buffs: (live.pet_buffs ?? []).filter(b => b && b.name),
+    };
+  }
 
   function bucketBuffs(buffs: { name: string; ticks: number | null }[] | null) {
     const byCategory: Record<string, string[]> = {};
@@ -193,6 +208,7 @@ export default async function RaidHubPage() {
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, live?.buffs ?? null, noAgent),
       buffs: live?.buffs ?? [],
+      pet: petFor(live),
       isMe: !!(meDiscordId && discordIdFor(rr.name) === meDiscordId),
     });
   }
@@ -224,6 +240,7 @@ export default async function RaidHubPage() {
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, r.buffs, false),
       buffs: r.buffs ?? [],
+      pet: petFor(r),
       isMe: !!(meDiscordId && discordIdFor(r.character) === meDiscordId),
     });
   }
