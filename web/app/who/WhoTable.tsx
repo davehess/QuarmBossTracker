@@ -20,6 +20,8 @@ export type WhoRow = {
   effectiveClass: string | null;
   guild: string | null;
   guildRank: string | null;
+  zone: string | null;        // short name (e.g. "oasis")
+  zoneName: string | null;    // long display name, falls back to short
   anonymous: boolean;
   gm: boolean;
   lastSeen: string | null;
@@ -31,7 +33,7 @@ export type WhoRow = {
   setByName: string | null;
 };
 
-type SortKey = 'character' | 'level' | 'class' | 'guild' | 'rank' | 'lastSeen' | 'obsCount' | 'zek';
+type SortKey = 'character' | 'level' | 'class' | 'guild' | 'rank' | 'lastSeen' | 'obsCount' | 'zek' | 'zone';
 type ZekFilter = 'all' | 'zek' | 'notzek';
 
 function ago(iso: string | null): string {
@@ -66,14 +68,14 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
 
   function toggleSort(k: SortKey) {
     if (k === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortKey(k); setSortDir(k === 'character' || k === 'class' || k === 'guild' ? 'asc' : 'desc'); }
+    else { setSortKey(k); setSortDir(k === 'character' || k === 'class' || k === 'guild' || k === 'zone' ? 'asc' : 'desc'); }
   }
 
   const view = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let out = rows.filter(r => {
       if (needle) {
-        const hay = (r.character + ' ' + (r.guild || '') + ' ' + (r.effectiveClass || '')).toLowerCase();
+        const hay = (r.character + ' ' + (r.guild || '') + ' ' + (r.effectiveClass || '') + ' ' + (r.zoneName || '') + ' ' + (r.zone || '')).toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       if (classFilter === '__none__') { if (r.effectiveClass) return false; }
@@ -92,6 +94,16 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
         case 'class':     return (a.effectiveClass || '').localeCompare(b.effectiveClass || '') * dir;
         case 'guild':     return (a.guild || '').localeCompare(b.guild || '') * dir;
         case 'rank':      return (a.guildRank || '').localeCompare(b.guildRank || '') * dir;
+        case 'zone': {
+          // Sort by zone, then by level (highest first) within a zone. Rows with
+          // no known zone always sink to the bottom regardless of direction.
+          const az = a.zoneName, bz = b.zoneName;
+          if (!az && !bz) return (b.level ?? -1) - (a.level ?? -1);
+          if (!az) return 1;
+          if (!bz) return -1;
+          const c = az.localeCompare(bz) * dir;
+          return c !== 0 ? c : (b.level ?? -1) - (a.level ?? -1);
+        }
         case 'obsCount':  return (a.obsCount - b.obsCount) * dir;
         case 'zek':       return ((a.effectiveZek ? 1 : 0) - (b.effectiveZek ? 1 : 0)) * dir;
         case 'lastSeen':
@@ -181,6 +193,7 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
               <Th k="class" label="Class" />
               <Th k="guild" label="Guild" />
               <Th k="rank" label="Rank" />
+              <Th k="zone" label="Zone" />
               <Th k="zek" label="Zek" />
               <Th k="obsCount" label="Seen #" />
               <Th k="lastSeen" label="Last" />
@@ -223,6 +236,7 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
                 </td>
                 <td className="px-2 py-1 text-dim whitespace-nowrap">{r.guild || '—'}</td>
                 <td className="px-2 py-1 text-dim">{r.guildRank || '—'}</td>
+                <td className="px-2 py-1 text-dim whitespace-nowrap" title={r.zone || ''}>{r.zoneName || '—'}</td>
                 <td className="px-2 py-1">
                   {canEdit ? (
                     <select
@@ -250,7 +264,7 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
               </tr>
             ))}
             {view.length === 0 && (
-              <tr><td colSpan={8} className="px-2 py-6 text-center text-dim">no characters match these filters</td></tr>
+              <tr><td colSpan={9} className="px-2 py-6 text-center text-dim">no characters match these filters</td></tr>
             )}
           </tbody>
         </table>

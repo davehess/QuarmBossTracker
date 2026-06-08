@@ -20,11 +20,15 @@ import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
+type PetBuff = { name: string; remaining_secs: number | null; total_secs: number | null; good: number | null };
 type LiveStateRow = {
   character: string;
   zone_name: string | null;
   buffs: { name: string; ticks: number | null }[] | null;
   buff_count: number | null;
+  pet_name: string | null;
+  pet_hp_pct: number | null;
+  pet_buffs: PetBuff[] | null;
   updated_at: string | null;
 };
 
@@ -42,7 +46,7 @@ export default async function BuffsPage() {
   const [{ data: liveRows }, { data: charRows }, { data: rosterRows }] = await Promise.all([
     admin
       .from('character_live_state')
-      .select('character, zone_name, buffs, buff_count, updated_at')
+      .select('character, zone_name, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, updated_at')
       .eq('guild_id', 'wolfpack')
       .order('updated_at', { ascending: false }),
     admin
@@ -113,6 +117,9 @@ export default async function BuffsPage() {
       buffTicks,
       raidGroup: rosterByName.get(r.character.toLowerCase())?.group_num ?? null,
       inRaid: rosterByName.has(r.character.toLowerCase()),
+      pet: r.pet_name
+        ? { name: r.pet_name, hpPct: r.pet_hp_pct ?? null, buffs: (r.pet_buffs ?? []).filter(b => b && b.name) }
+        : null,
     };
   });
 

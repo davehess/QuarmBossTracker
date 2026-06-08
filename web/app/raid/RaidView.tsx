@@ -46,7 +46,14 @@ export type RaidRow = {
   hpSlots: HpSlotState;
   tier: 'green' | 'yellow' | 'orange' | 'red' | 'unknown';
   buffs: { name: string; ticks: number | null }[];
+  pet: PetState | null;          // live charm/summoned pet snapshot (Zeal)
   isMe: boolean;                 // the signed-in user's character
+};
+
+export type PetState = {
+  name: string;
+  hpPct: number | null;
+  buffs: { name: string; remaining_secs: number | null; total_secs: number | null; good: number | null }[];
 };
 
 const TIER_STYLE: Record<RaidRow['tier'], { bg: string; bar: string; label: string }> = {
@@ -97,8 +104,15 @@ function ago(iso: string | null): string {
   return h + 'h ago';
 }
 
-// The classes we offer in Buffer-mode. Order matters — used by the chip strip.
-const BUFFER_CLASSES = ['Cleric', 'Druid', 'Shaman', 'Enchanter', 'Bard'] as const;
+// The classes we offer in Buffer-mode. ALL classes are pickable so anyone can
+// flip to "buffing as" their own (or whatever they're covering); support
+// classes lead the strip since they're the common case. Classes with no group
+// buffs simply produce an empty buff queue.
+const BUFFER_CLASSES = [
+  'Cleric', 'Druid', 'Shaman', 'Enchanter', 'Bard',
+  'Paladin', 'Ranger', 'Beastlord', 'Magician',
+  'Necromancer', 'Wizard', 'Shadow Knight', 'Warrior', 'Monk', 'Rogue',
+] as const;
 type BufferClass = typeof BUFFER_CLASSES[number];
 
 // Normalize an arbitrary class string to one of our Buffer-mode classes (or
@@ -272,9 +286,10 @@ export default function RaidView({
         bufferQueueLen={bufferQueue.length}
       />
       {focused && (
-        <BufferQueue
+        <BufferQueues
           bufferClass={bufferClass as BufferClass}
-          queue={bufferQueue}
+          buffQueue={bufferQueue}
+          debuffQueue={cursedRows}
           onSelect={(n) => setSelectedName(n)}
         />
       )}
@@ -320,9 +335,10 @@ export default function RaidView({
                     return (
                       <li
                         key={r.name}
-                        className={['relative flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-[#1a212c] transition-colors', style.bg, r.isMe ? 'ring-1 ring-blue/60' : ''].join(' ')}
+                        className={['relative px-3 py-1.5 text-xs cursor-pointer hover:bg-[#1a212c] transition-colors', style.bg, r.isMe ? 'ring-1 ring-blue/60' : ''].join(' ')}
                         onClick={() => setSelectedName(r.name)}
                       >
+                        <div className="flex items-center gap-2">
                         <span className={['inline-block w-1 h-5 rounded-sm shrink-0', style.bar].join(' ')} />
                         <span className="text-text font-medium min-w-0 truncate">
                           {isLeader && <span title="Raid leader" className="text-gold">👑 </span>}
@@ -357,6 +373,8 @@ export default function RaidView({
                                 <span className="text-dim text-[10px] w-16 text-right">{ago(r.updatedAt)}</span>
                               </>
                             )}
+                        </div>
+                        {r.pet && <PetLine pet={r.pet} />}
                         {r.hpPct != null && (
                           // 2px HP strip absolutely positioned at row bottom — doesn't
                           // affect row height. Green > 50% → amber > 20% → red. Null
@@ -524,44 +542,98 @@ function BufferModeBar({
   );
 }
 
-// The focused buffer queue — only shown when a class is picked.
-function BufferQueue({
-  bufferClass, queue, onSelect,
+// The focused buffer work — two columns when a class is picked: BUFFS to apply
+// (raiders missing a buff this class provides) on the left, DEBUFFS to cure
+// (raiders carrying a known curse/debuff) on the right. A support caster's two
+// jobs side by side: top up the missing buffs, clear the incoming debuffs.
+function BufferQueues({
+  bufferClass, buffQueue, debuffQueue, onSelect,
 }: {
   bufferClass: BufferClass;
-  queue: { row: RaidRow; missing: BuffCategory[] }[];
+  buffQueue: { row: RaidRow; missing: BuffCategory[] }[];
+  debuffQueue: { row: RaidRow; curses: { name: string; ticks: number | null }[] }[];
   onSelect: (name: string) => void;
 }) {
-  if (queue.length === 0) {
-    return (
-      <div className="bg-panel border border-border rounded-lg p-3 text-xs text-dim">
-        No gaps for a {bufferClass} to fill right now — every Mimic-running raider is covered. Untracked raiders still need eyes.
-      </div>
-    );
-  }
   return (
-    <div className="bg-panel border border-border rounded-lg p-3">
-      <div className="text-[10px] uppercase tracking-widest text-dim mb-2">Buff queue · severity-first</div>
-      <ul className="text-xs space-y-1.5">
-        {queue.map(({ row, missing }) => (
-          <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1.5 last:border-0">
-            <span className={['inline-block w-1.5 h-5 rounded-sm', TIER_STYLE[row.tier].bar].join(' ')} />
-            <button
-              onClick={() => onSelect(row.name)}
-              className="text-text hover:text-blue underline-offset-2 hover:underline"
-            >
-              {row.name}
-            </button>
-            {!row.noAgent && (
-              <span className="text-[9px] leading-none px-1 py-0.5 rounded bg-blue/15 text-blue border border-blue/30">🐺</span>
-            )}
-            <span className="text-dim text-[11px]">{row.className} · Grp {row.raidGroup ?? '?'}</span>
-            <span className="text-dim ml-auto text-[11px]">
-              {missing.map(c => CATEGORY_LABELS[c]).join(' · ') || 'HP slot missing'}
-            </span>
-          </li>
-        ))}
-      </ul>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {/* Buff queue */}
+      <div className="bg-panel border border-border rounded-lg p-3">
+        <div className="text-[10px] uppercase tracking-widest text-dim mb-2 flex items-center gap-1.5">
+          <span className="text-green">🛡️ Buff queue</span>
+          <span className="text-dim/70">· severity-first</span>
+          {buffQueue.length > 0 && <span className="ml-auto text-dim normal-case tracking-normal">{buffQueue.length}</span>}
+        </div>
+        {buffQueue.length === 0 ? (
+          <div className="text-xs text-dim">
+            No gaps for a {bufferClass} to fill right now — every Mimic-running raider is covered. Untracked raiders still need eyes.
+          </div>
+        ) : (
+          <ul className="text-xs space-y-1.5">
+            {buffQueue.map(({ row, missing }) => (
+              <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1.5 last:border-0">
+                <span className={['inline-block w-1.5 h-5 rounded-sm shrink-0', TIER_STYLE[row.tier].bar].join(' ')} />
+                <button
+                  onClick={() => onSelect(row.name)}
+                  className="text-text hover:text-blue underline-offset-2 hover:underline"
+                >
+                  {row.name}
+                </button>
+                {!row.noAgent && (
+                  <span className="text-[9px] leading-none px-1 py-0.5 rounded bg-blue/15 text-blue border border-blue/30 shrink-0">🐺</span>
+                )}
+                <span className="text-dim text-[11px]">{row.className} · Grp {row.raidGroup ?? '?'}</span>
+                <span className="text-dim ml-auto text-[11px] text-right">
+                  {missing.map(c => CATEGORY_LABELS[c]).join(' · ') || 'HP slot missing'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Debuff / cure queue */}
+      <div className="bg-panel border border-border rounded-lg p-3">
+        <div className="text-[10px] uppercase tracking-widest text-dim mb-2 flex items-center gap-1.5">
+          <span className="text-red-300">🩸 Debuff queue</span>
+          <span className="text-dim/70">· cures needed</span>
+          {debuffQueue.length > 0 && <span className="ml-auto text-dim normal-case tracking-normal">{debuffQueue.length}</span>}
+        </div>
+        {debuffQueue.length === 0 ? (
+          <div className="text-xs text-dim">
+            No active curses/debuffs across the raid. Curse-cure casters: this lights up the moment a Mimic raider reports one.
+          </div>
+        ) : (
+          <ul className="text-xs space-y-1.5">
+            {debuffQueue.map(({ row, curses }) => (
+              <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1.5 last:border-0">
+                <button
+                  onClick={() => onSelect(row.name)}
+                  className="text-text hover:text-red-300 underline-offset-2 hover:underline shrink-0"
+                >
+                  {row.name}
+                </button>
+                <span className="text-dim text-[11px] shrink-0">Grp {row.raidGroup ?? '?'}</span>
+                <span className="ml-auto flex flex-wrap gap-1 justify-end">
+                  {curses.map((c, i) => {
+                    const tone = buffTimeTone(c.ticks);
+                    const remain = fmtBuffRemaining(c.ticks);
+                    return (
+                      <span
+                        key={c.name + ':' + i}
+                        className={`text-[10px] px-1 py-0.5 rounded border ${tone === 'crit' ? 'bg-red-500/20 text-red-200 border-red-400/60' : tone === 'low' ? 'bg-orange/20 text-orange border-orange/50' : 'bg-[#2a1010]/50 text-red-300 border-red-400/30'}`}
+                        title={`${c.name} · ${remain}`}
+                      >
+                        {shortBuffName(c.name)}
+                        {remain && <span className={`ml-1 ${TIME_TONE_CLASS[tone] || 'text-dim'}`}>{remain}</span>}
+                      </span>
+                    );
+                  })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -605,6 +677,42 @@ function TierLegend({ rows }: { rows: RaidRow[] }) {
               <span className="text-dim">{counts[t]}</span>
             </span>
           : null
+      )}
+    </div>
+  );
+}
+
+// M:SS from a remaining-seconds count (pet buffs carry seconds, not ticks).
+function fmtPetSecs(s: number | null): string {
+  if (s == null) return '';
+  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+// Compact pet stats line shown under a pet owner: name + HP% + buff chips
+// (green buff / red debuff, with time-left). Drives "pet stats lines" on /raid.
+function PetLine({ pet }: { pet: PetState }) {
+  return (
+    <div className="flex items-center gap-1.5 pl-3 mt-0.5 text-[10px] text-dim">
+      <span className="text-orange shrink-0">🐾</span>
+      <span className="text-text/90 truncate max-w-[10rem] shrink-0" title={pet.name}>{pet.name}</span>
+      {pet.hpPct != null && (
+        <span className={[hpTextClass(pet.hpPct), 'tabular-nums shrink-0'].join(' ')}>{Math.round(pet.hpPct)}%</span>
+      )}
+      {pet.buffs.length === 0 ? (
+        <span className="text-dim/60 italic">no tracked buffs</span>
+      ) : (
+        <span className="flex flex-wrap gap-1">
+          {pet.buffs.slice(0, 8).map((b, i) => {
+            const col = b.good === 0 ? 'text-red-400 border-red-400/40' : 'text-green border-green/30';
+            const rem = b.remaining_secs != null ? fmtPetSecs(b.remaining_secs) : '';
+            return (
+              <span key={b.name + ':' + i} className={`px-1 rounded border ${col}`} title={b.name + (rem ? ' · ' + rem + ' left' : '')}>
+                {shortBuffName(b.name)}{rem && <span className="ml-1 opacity-80 tabular-nums">{rem}</span>}
+              </span>
+            );
+          })}
+        </span>
       )}
     </div>
   );
@@ -724,6 +832,35 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
             <div>
               <div className="text-[10px] uppercase tracking-widest text-dim mb-1">Other ({row.other.length})</div>
               <div className="text-[11px] text-dim leading-5">{row.other.join(' · ')}</div>
+            </div>
+          )}
+
+          {row.pet && (
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-dim mb-1 flex items-center gap-1">
+                <span className="text-orange">🐾 Pet</span>
+                <span className="text-text normal-case tracking-normal">{row.pet.name}</span>
+                {row.pet.hpPct != null && (
+                  <span className={[hpTextClass(row.pet.hpPct), 'tabular-nums normal-case tracking-normal'].join(' ')}>
+                    {Math.round(row.pet.hpPct)}%
+                  </span>
+                )}
+              </div>
+              {row.pet.buffs.length === 0 ? (
+                <div className="text-[11px] text-dim italic">No tracked pet buffs. /pet health + a Mimic-running buffer nearby fills this in.</div>
+              ) : (
+                <ul className="space-y-1">
+                  {row.pet.buffs.map((b, i) => {
+                    const rem = b.remaining_secs != null ? fmtPetSecs(b.remaining_secs) : '';
+                    return (
+                      <li key={b.name + ':' + i} className="flex items-center gap-2 text-[11px]">
+                        <span className={b.good === 0 ? 'text-red-400' : 'text-green'}>{shortBuffName(b.name)}</span>
+                        {rem && <span className="text-dim tabular-nums ml-auto">{rem}</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
           )}
         </>
