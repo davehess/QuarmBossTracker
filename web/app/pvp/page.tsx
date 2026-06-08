@@ -142,13 +142,14 @@ type BossKill = {
   killed_by_guild: string | null;
   spawn_earliest: string;
   spawn_latest: string;
+  spawn_earliest_override: string | null;
 };
 async function loadBossTimers(): Promise<BossKill[]> {
   const sb = supabaseAdmin();
   const since = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
   const { data } = await sb
     .from('pvp_boss_kills')
-    .select('boss_id, boss_name, zone, timer_hours, killed_at, killed_by, killed_by_guild, spawn_earliest, spawn_latest')
+    .select('boss_id, boss_name, zone, timer_hours, killed_at, killed_by, killed_by_guild, spawn_earliest, spawn_latest, spawn_earliest_override')
     .eq('guild_id', 'wolfpack')
     .gte('killed_at', since)
     .order('killed_at', { ascending: false })
@@ -167,7 +168,10 @@ async function loadBossTimers(): Promise<BossKill[]> {
     const aOpen = new Date(a.spawn_latest).getTime() < now;
     const bOpen = new Date(b.spawn_latest).getTime() < now;
     if (aOpen !== bOpen) return aOpen ? 1 : -1;
-    return new Date(a.spawn_earliest).getTime() - new Date(b.spawn_earliest).getTime();
+    // A quake override (window opened "now") makes earliest = override.
+    const aE = new Date(a.spawn_earliest_override ?? a.spawn_earliest).getTime();
+    const bE = new Date(b.spawn_earliest_override ?? b.spawn_earliest).getTime();
+    return aE - bE;
   });
   return out;
 }
@@ -335,7 +339,9 @@ export default async function PvpPage({
               <tbody>
                 {bossTimers.map(b => {
                   const now = Date.now();
-                  const earliestMs = new Date(b.spawn_earliest).getTime();
+                  // Quake override opens the early edge to "now" while keeping latest.
+                  const earliestIso = b.spawn_earliest_override ?? b.spawn_earliest;
+                  const earliestMs = new Date(earliestIso).getTime();
                   const latestMs   = new Date(b.spawn_latest).getTime();
                   const isOpen    = latestMs   < now;          // window already passed → mob is up
                   const inWindow  = earliestMs <= now && !isOpen; // spawning now-ish
@@ -349,9 +355,9 @@ export default async function PvpPage({
                         {isOpen ? (
                           <span title="Spawn window already opened — mob may be up">camp now</span>
                         ) : inWindow ? (
-                          <span title={`window opened ${fmtCountdown(b.spawn_earliest)} ago`}>open · {fmtCountdown(b.spawn_earliest)}</span>
+                          <span title={`window opened ${fmtCountdown(earliestIso)} ago`}>open · {fmtCountdown(earliestIso)}</span>
                         ) : (
-                          <span title={new Date(b.spawn_earliest).toLocaleString()}>in {fmtCountdown(b.spawn_earliest)}</span>
+                          <span title={new Date(earliestIso).toLocaleString()}>in {fmtCountdown(earliestIso)}</span>
                         )}
                       </td>
                       <td className="py-1 pr-2 text-right text-dim" title={new Date(b.spawn_latest).toLocaleString()}>

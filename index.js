@@ -204,6 +204,23 @@ client.once(Events.ClientReady, async (readyClient) => {
     } catch (err) { console.warn('[reconcile] interval init failed:', err?.message); }
   }, 6 * 60 * 60 * 1000);
 
+  // who_overrides → state.whoData. Officers curate class + Zek on the web
+  // (/admin/who) and via /markzek; pull those overrides in at startup and
+  // refresh every 30 min so a web-set flag flows into /whois + PvP auto-zek
+  // without a redeploy. Override-wins is enforced in mergeWhoData.
+  const _loadWhoOverrides = () => {
+    try {
+      const sb = require('./utils/supabase');
+      if (!sb.isEnabled()) return;
+      const { applyWhoOverrides } = require('./utils/state');
+      sb.getWhoOverrides()
+        .then(rows => { const n = applyWhoOverrides(rows); if (n) console.log(`[who] applied ${n} override(s) from who_overrides`); })
+        .catch(err => console.warn('[who] override load failed:', err?.message));
+    } catch (err) { console.warn('[who] override load init failed:', err?.message); }
+  };
+  setTimeout(_loadWhoOverrides, 8_000);
+  setInterval(_loadWhoOverrides, 30 * 60 * 1000);
+
   // Web-feedback relay: submissions from wolfpack.quest/feedback land in the
   // `feedback` table with discord_msg_id NULL. Post each into the #feedback
   // thread (same as the /feedback command) and stamp the id/link so it isn't
@@ -3022,6 +3039,11 @@ async function _handleAgentPvp(req, res) {
   for (const b of broadcasts) {
     if (_isPvpDupe(b)) { deduped++; continue; }
     const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
+    // Defense-in-depth (for agents pre-dating the agent-side guard): a guild
+    // PvE INSTANCE kill ("...in <Zone> (Instanced)!") is not a PvP-server boss
+    // kill. It arrives via the /bosskill path as a normal instance timer — so
+    // skip it here entirely (no PvP ping, no ±20% PvP timer, no ledger row).
+    if (/\(Instanced\)/i.test(zone || '') || /\(Instanced\)/i.test(text || '')) { deduped++; continue; }
     try {
       const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
       if (!ch) continue;

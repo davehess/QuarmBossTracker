@@ -11579,12 +11579,19 @@ function parsePvpBroadcast(line) {
     // active matcher above must win when both could match. Recorded as PvP so
     // the kill credits to the Wolf Pack killer on /pvp/server.
     const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
-    if (bossA) return {
-      ts: tsOf(), text, killType: 'pvp',
-      killer: bossA[1], killerGuild: bossA[2],
-      victim: bossA[3], victimGuild: null,
-      zone:   bossA[4] || null,
-    };
+    if (bossA) {
+      // A guild PvE INSTANCE kill ("...in <Zone> (Instanced)!") is NOT a
+      // PvP-server boss kill — it's the Druzzil-Ro guild broadcast that the
+      // /bosskill path already turns into a normal instance timer. Skip it so
+      // it doesn't ALSO record a ±20% PvP timer + fire a PvP ping.
+      if (/\(Instanced\)/i.test(text)) return null;
+      return {
+        ts: tsOf(), text, killType: 'pvp',
+        killer: bossA[1], killerGuild: bossA[2],
+        victim: bossA[3], victimGuild: null,
+        zone:   bossA[4] || null,
+      };
+    }
 
     // Wrapper matched but no inner pattern fit. Return null instead of a
     // partially-filled row (the pre-2.4.32 fallthrough emitted killType='npc'
@@ -11626,14 +11633,18 @@ function parsePvpBroadcast(line) {
   };
 
   const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
-  if (bossBareA) return {
-    ts: tsOf(),
-    text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
-    killType:    'pvp',
-    killer:      bossBareA[2], killerGuild: bossBareA[3],
-    victim:      bossBareA[4], victimGuild: null,
-    zone:        bossBareA[5] || null,
-  };
+  if (bossBareA) {
+    // Guild PvE instance kill echoed in the [PVP] channel — skip (see Path A).
+    if (/\(Instanced\)/i.test(line)) return null;
+    return {
+      ts: tsOf(),
+      text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
+      killType:    'pvp',
+      killer:      bossBareA[2], killerGuild: bossBareA[3],
+      victim:      bossBareA[4], victimGuild: null,
+      zone:        bossBareA[5] || null,
+    };
+  }
 
   return null;
 }
