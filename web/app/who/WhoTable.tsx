@@ -46,7 +46,7 @@ function ago(iso: string | null): string {
   return Math.floor(mo / 12) + 'y';
 }
 
-export default function WhoTable({ rows: initial }: { rows: WhoRow[] }) {
+export default function WhoTable({ rows: initial, canEdit = false }: { rows: WhoRow[]; canEdit?: boolean }) {
   const router = useRouter();
   const [rows, setRows] = useState<WhoRow[]>(initial);
   const [pending, startTransition] = useTransition();
@@ -196,36 +196,49 @@ export default function WhoTable({ rows: initial }: { rows: WhoRow[] }) {
                 </td>
                 <td className="px-2 py-1 text-dim">{r.level ?? '—'}</td>
                 <td className="px-2 py-1">
-                  <select
-                    value={r.classOverride ?? ''}
-                    disabled={pending}
-                    onChange={e => onClassChange(r, e.target.value)}
-                    title={r.classOverride
-                      ? `override (observed: ${r.observedClass || 'none'})`
-                      : (r.observedClass ? 'observed' : 'no class observed')}
-                    className={`bg-bg border rounded px-1 py-0.5 ${
-                      r.classOverride ? 'border-gold text-gold'
-                        : r.effectiveClass ? 'border-border text-text' : 'border-red/60 text-red'}`}
-                  >
-                    <option value="">{r.observedClass ? `(obs: ${r.observedClass})` : '— set —'}</option>
-                    {BASE_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  {canEdit ? (
+                    <select
+                      value={r.classOverride ?? ''}
+                      disabled={pending}
+                      onChange={e => onClassChange(r, e.target.value)}
+                      title={r.classOverride
+                        ? `override (observed: ${r.observedClass || 'none'})`
+                        : (r.observedClass ? 'observed' : 'no class observed')}
+                      className={`bg-bg border rounded px-1 py-0.5 ${
+                        r.classOverride ? 'border-gold text-gold'
+                          : r.effectiveClass ? 'border-border text-text' : 'border-red/60 text-red'}`}
+                    >
+                      <option value="">{r.observedClass ? `(obs: ${r.observedClass})` : '— set —'}</option>
+                      {BASE_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  ) : (
+                    <span className={r.classOverride ? 'text-gold' : r.effectiveClass ? 'text-text' : 'text-dim'}
+                      title={r.classOverride ? `officer-set (observed: ${r.observedClass || 'none'})` : 'observed'}>
+                      {r.effectiveClass || '—'}
+                    </span>
+                  )}
                 </td>
                 <td className="px-2 py-1 text-dim whitespace-nowrap">{r.guild || '—'}</td>
                 <td className="px-2 py-1 text-dim">{r.guildRank || '—'}</td>
                 <td className="px-2 py-1">
-                  <select
-                    value={r.zekOverride === true ? 'zek' : r.zekOverride === false ? 'no' : 'auto'}
-                    disabled={pending}
-                    onChange={e => onZekChange(r, e.target.value)}
-                    title={r.zekOverride != null ? 'manual override' : `auto (${r.autoZek ? 'seen in Zek' : 'no Zek guild'})`}
-                    className={`bg-bg border rounded px-1 py-0.5 ${
-                      r.effectiveZek ? 'border-red text-red' : 'border-border text-dim'}`}
-                  >
-                    <option value="auto">{`Auto${r.autoZek ? ' (Zek)' : ''}`}</option>
-                    <option value="zek">Zek</option>
-                    <option value="no">Not Zek</option>
-                  </select>
+                  {canEdit ? (
+                    <select
+                      value={r.zekOverride === true ? 'zek' : r.zekOverride === false ? 'no' : 'auto'}
+                      disabled={pending}
+                      onChange={e => onZekChange(r, e.target.value)}
+                      title={r.zekOverride != null ? 'manual override' : `auto (${r.autoZek ? 'seen in Zek' : 'no Zek guild'})`}
+                      className={`bg-bg border rounded px-1 py-0.5 ${
+                        r.effectiveZek ? 'border-red text-red' : 'border-border text-dim'}`}
+                    >
+                      <option value="auto">{`Auto${r.autoZek ? ' (Zek)' : ''}`}</option>
+                      <option value="zek">Zek</option>
+                      <option value="no">Not Zek</option>
+                    </select>
+                  ) : (
+                    r.effectiveZek
+                      ? <span className="text-red font-semibold" title={r.zekOverride != null ? 'officer-flagged' : 'seen in a Zek guild'}>Zek</span>
+                      : <span className="text-dim">—</span>
+                  )}
                 </td>
                 <td className="px-2 py-1 text-dim">{r.obsCount.toLocaleString()}</td>
                 <td className="px-2 py-1 text-dim whitespace-nowrap" title={r.lastSeen || ''}>{ago(r.lastSeen)}</td>

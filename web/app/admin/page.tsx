@@ -26,8 +26,8 @@ export default function AdminPage() {
         />
         <Card
           title="👁 /who directory"
-          body="Every character ever seen in a /who — sortable, filterable. Set a class for /anon rows that never reported one, and flag Zek for PvP-guild affiliates. Edits persist to who_overrides."
-          href="/admin/who"
+          body="Every character ever seen in a /who — sortable, filterable. Now a member-readable page; officers get inline class fill-in for /anon rows + Zek flagging. Edits persist to who_overrides."
+          href="/who"
         />
         <Card
           title="💬 Guild chat log"

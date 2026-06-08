@@ -65,7 +65,7 @@ async function upsertOverride(
     .upsert(row, { onConflict: 'guild_id,character' });
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath('/admin/who');
+  revalidatePath('/who');
   return { ok: true };
 }
 
