@@ -29,6 +29,14 @@
   .manabar{height:5px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:2px}
   .manabar > div{height:100%;background:#5a8af0;transition:width 250ms linear}
   .mob .mana{font-size:9px;color:#79c0ff;margin-top:2px;font-variant-numeric:tabular-nums}
+  /* observed buffs on the current target (timed from the cast that landed) */
+  .tbuffs{margin-top:6px;display:flex;flex-direction:column;gap:3px}
+  .tbuffs .hdr{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase}
+  .tbuff{display:flex;align-items:center;gap:5px;font-size:10px;line-height:1.2}
+  .tbuff .bn{color:#d2a8ff;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
+  .tbuff .bt{font-variant-numeric:tabular-nums;color:#8b949e;margin-left:auto}
+  .tbuff .bbar{flex:1 1 50px;height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden}
+  .tbuff .bbar > div{height:100%;background:#a371f7;transition:width 250ms linear}
   /* resist grid */
   .res{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:7px}
   .res .cell{text-align:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:3px 0}
@@ -218,6 +226,26 @@
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
+  function fmtSecs(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m=Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
+  // Buffs observed on the current target (mob or player), timed from the cast.
+  function renderTargetBuffs(mi){
+    var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs : null;
+    if (!buffs || !buffs.length) return '';
+    var rows = '';
+    for (var i=0;i<buffs.length;i++){
+      var b = buffs[i]; if (!b || !b.name) continue;
+      var hasTimer = b.remaining_secs != null && b.total_secs;
+      var pct = hasTimer ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : 0;
+      var col = !hasTimer ? '#6e7681' : (b.remaining_secs > 30 ? '#a371f7' : (b.remaining_secs > 10 ? '#f0883e' : '#f85149'));
+      rows += '<div class="tbuff" title="'+esc(b.name)+(hasTimer?(' · '+fmtSecs(b.remaining_secs)+' left (timed from the cast)'):' · present')+'">'
+           +    '<span class="bn">'+esc(b.name)+'</span>'
+           +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
+           +    '<span class="bt">'+(hasTimer?fmtSecs(b.remaining_secs):'?')+'</span>'
+           +  '</div>';
+    }
+    if (!rows) return '';
+    return '<div class="tbuffs"><div class="hdr">observed buffs</div>'+rows+'</div>';
+  }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
@@ -479,6 +507,7 @@
       + hpBar
       + manaBar
       + manaLine
+      + renderTargetBuffs(mi)
       + tabBody
       + lastFight
       + '</div>';

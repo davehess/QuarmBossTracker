@@ -1714,6 +1714,54 @@ function petBuffsForOwner(ownerLower) {
   return Array.from(byName.values());
 }
 
+// Observed buff landings keyed by the TARGET name (any mob OR player), for the
+// Mob Info / target overlay's "buffs on this target" view. Same idea as
+// _petBuffLandings but not restricted to our pets — when we (or anyone we can
+// see) land a tracked buff on a target, we time it from the cast. Caster level
+// is unknown for arbitrary targets, so we scale by the target's own level when
+// we know it (covers self-buffs / our pet, the common cases) and fall back to
+// the spell's max otherwise.
+const _buffLandingsByTarget = new Map();   // targetLower → Map<spellLower,{name,dur_ticks,landed_at}>
+function recordTargetBuffLanding(bcEvt) {
+  if (!bcEvt || !bcEvt.spell_name || !bcEvt.target) return;
+  const k = String(bcEvt.target).toLowerCase();
+  let mp = _buffLandingsByTarget.get(k);
+  if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
+  // Best-effort caster level: our pet → the pet's owner cast it; otherwise
+  // assume a self-buff and use the target's own observed level. Unknown → cap.
+  const petOwner = _petOwnerByName(k);
+  const lvl = petOwner ? ((whoData.get(petOwner) || {}).level || null)
+                       : ((whoData.get(k) || {}).level || null);
+  mp.set(String(bcEvt.spell_name).toLowerCase(), {
+    name: bcEvt.spell_name,
+    dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
+    landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
+  });
+  // Bound memory: keep the 400 most-recently-touched targets.
+  if (_buffLandingsByTarget.size > 400) {
+    const oldest = _buffLandingsByTarget.keys().next().value;
+    if (oldest && oldest !== k) _buffLandingsByTarget.delete(oldest);
+  }
+}
+// Live observed buffs for a target → [{ name, remaining_secs, total_secs }],
+// pruning expired. Drives the Mob Info overlay's buff list.
+function targetBuffsFor(targetLower) {
+  if (!targetLower) return [];
+  const mp = _buffLandingsByTarget.get(targetLower);
+  if (!mp) return [];
+  const now = Date.now();
+  const out = [];
+  for (const [k, b] of mp) {
+    const durSecs = (Number(b.dur_ticks) || 0) * 6;
+    const rem = durSecs - (now - (b.landed_at || now)) / 1000;
+    if (rem < -60) { mp.delete(k); continue; }
+    out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
+      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at });
+  }
+  if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
+  return out;
+}
+
 // Long-term who_data registry filter — anonymous rows + level 50+. The
 // transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
 // persistent uploads only carry threat-relevant entries: low-level bank
@@ -13788,6 +13836,9 @@ function buildMobInfo() {
     target_hp_pct: st.target_hp_pct != null ? st.target_hp_pct : null,
     mob:           cached ? cached.mob : null,   // null until the lookup returns
     loading:       !cached,
+    // Buffs we've observed land on this exact target (mob or player), timed
+    // from the cast. Empty for targets we've never seen buffed.
+    target_buffs:  targetBuffsFor(String(st.target_name).toLowerCase()),
   };
 }
 
@@ -15229,6 +15280,9 @@ async function main() {
           // If the buff landed on one of OUR pets, stamp it for the Pet tracker's
           // countdown (catalog duration anchored to this land). Local UI only.
           recordPetBuffLanding(bcEvt);
+          // Also stamp it under the target name so Mob Info can show buffs on
+          // whatever we're targeting (mob or player).
+          recordTargetBuffLanding(bcEvt);
         }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
