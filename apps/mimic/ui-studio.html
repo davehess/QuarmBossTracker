@@ -1389,20 +1389,60 @@
     var chat  = res && res.chat;
     var tells = res && res.tells;
     var dlg = document.getElementById('socialsInspector');
+    // Persisted width — drag the left edge to resize. Restored across opens.
+    var savedW = parseInt(localStorage.getItem('uiInspectorWidth') || '480', 10);
+    if (!(savedW >= 320 && savedW <= window.innerWidth - 200)) savedW = 480;
     if (!dlg) {
       dlg = document.createElement('div');
       dlg.id = 'socialsInspector';
-      dlg.style.cssText = 'position:fixed;top:50px;right:0;bottom:0;width:480px;' +
+      dlg.style.cssText = 'position:fixed;top:50px;right:0;bottom:0;width:' + savedW + 'px;' +
         'background:#161b22;border-left:1px solid #30363d;z-index:60;overflow-y:auto;' +
-        'padding:14px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
+        'padding:14px 14px 14px 22px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
       document.body.appendChild(dlg);
+      // Resize handle pinned to the left edge — drag to resize between 320px
+      // and viewport-200px. cursor:ew-resize; persists to localStorage on
+      // release. Persistent across opens since the dialog div is reused.
+      var grip = document.createElement('div');
+      grip.id = 'uiInspectorResize';
+      grip.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:6px;' +
+        'cursor:ew-resize;background:transparent;z-index:5';
+      grip.title = 'Drag to resize';
+      grip.addEventListener('mousedown', function(e){
+        e.preventDefault();
+        var startX = e.clientX, startW = dlg.getBoundingClientRect().width;
+        var min = 320, max = Math.max(min, window.innerWidth - 200);
+        function onMove(ev){
+          var w = startW + (startX - ev.clientX);
+          if (w < min) w = min;
+          if (w > max) w = max;
+          dlg.style.width = w + 'px';
+        }
+        function onUp(){
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          try { localStorage.setItem('uiInspectorWidth', String(parseInt(dlg.style.width, 10) || 480)); } catch (e) {}
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      dlg.appendChild(grip);
+    } else {
+      dlg.style.width = savedW + 'px';
     }
-    var html = '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
-      'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px">×</button>' +
+    // Header bar — resize hint + Save button (enables when any input is dirty).
+    var html = '<div style="position:relative">' +
+      '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
+      'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px;line-height:1;padding:0 0 0 6px">×</button>' +
+      '<button id="uiInspectorSave" disabled ' +
+      'style="float:right;background:#21262d;border:1px solid #30363d;color:#6e7681;border-radius:4px;' +
+      'padding:3px 10px;font-family:sans-serif;font-size:11px;cursor:not-allowed;margin-right:8px">Save changes</button>' +
       '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 UI Inspector</h2>' +
       '<p style="color:#8b949e;font-size:10px;margin:0 0 10px;font-family:sans-serif">' +
       'Chat routing, tell windows, and per-page Hotbar + Socials — parsed from ' +
-      'your character INI. Raw section dump is at the bottom for reference.</p>';
+      'your character INI. HotButton hotkeys and Social name / color / lines are <b>editable</b> — ' +
+      'change a field and click <b>Save changes</b>. ' +
+      'Drag the left edge to resize.</p>' +
+      '</div>';
 
     // ── Chat windows & routing (from UI_<char> [ChatManager]) ─────────────
     if (chat && Array.isArray(chat.windows) && chat.windows.length) {
@@ -1478,13 +1518,21 @@
             ' <span style="color:#8b949e;font-size:10px">(Shift+' + (P+1) + ')</span>' +
             ' <span style="color:#8b949e;font-size:10px">— ' + hotBtns.length + ' hotbutton' + (hotBtns.length===1?'':'s') +
             ', ' + socBtns.length + ' social' + (socBtns.length===1?'':'s') + '</span></summary>';
+          // Editable rows — every input carries data-file/section/key so the
+          // Save handler can collect dirty fields surgically. Original value
+          // is preserved on data-orig so we know what's actually changed.
           if (hotBtns.length > 0) {
             html += '<div style="margin:6px 0 3px;color:#a371f7;font-size:10px;font-weight:600;font-family:sans-serif">HotButtons</div>';
             for (var hb = 0; hb < hotBtns.length; hb++) {
               var B = hotBtns[hb];
-              html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
-                '<span style="color:#c9d1d9">Button ' + B + '</span> = ' +
-                '<span style="color:#f6c365">' + escapeHtml(hots[B]) + '</span></div>';
+              var hotVal = hots[B] == null ? '' : String(hots[B]);
+              html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px;display:flex;align-items:center;gap:6px">' +
+                '<span style="color:#c9d1d9;min-width:62px">Button ' + B + '</span> = ' +
+                '<input class="uiEdit" type="text" ' +
+                ' data-file="' + escapeHtml(f.file) + '" data-section="HotButtons"' +
+                ' data-key="Page' + P + 'Button' + B + '" data-orig="' + escapeHtml(hotVal) + '"' +
+                ' value="' + escapeHtml(hotVal) + '"' +
+                ' style="flex:1;background:#0d1117;color:#f6c365;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
             }
           }
           if (socBtns.length > 0) {
@@ -1492,14 +1540,38 @@
             for (var sb = 0; sb < socBtns.length; sb++) {
               var SB = socBtns[sb];
               var cell = socs[SB] || { name: null, color: null, lines: [] };
+              var nameVal  = cell.name  == null ? '' : String(cell.name);
+              var colorVal = cell.color == null ? '' : String(cell.color);
+              var keyBase  = 'Page' + P + 'Button' + SB;
               html += '<div style="margin:4px 0;padding:4px 6px;background:#161b22;border:1px solid #21262d;border-radius:3px">' +
-                '<div style="color:#c9d1d9;font-size:11px">Button ' + SB + ': ' +
-                '<b style="color:#56d364">' + escapeHtml(cell.name || '(unnamed)') + '</b>' +
-                (cell.color != null ? ' <span style="color:#8b949e;font-size:9px">color=' + cell.color + '</span>' : '') +
+                '<div style="display:flex;align-items:center;gap:6px;font-size:11px">' +
+                  '<span style="color:#c9d1d9;min-width:62px">Button ' + SB + '</span>' +
+                  '<input class="uiEdit" type="text" placeholder="(unnamed)"' +
+                  ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
+                  ' data-key="' + keyBase + 'Name" data-orig="' + escapeHtml(nameVal) + '"' +
+                  ' value="' + escapeHtml(nameVal) + '"' +
+                  ' style="flex:1;background:#0d1117;color:#56d364;font-weight:600;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:11px">' +
+                  '<span style="color:#8b949e;font-size:9px">color</span>' +
+                  '<input class="uiEdit" type="number" min="0" max="255"' +
+                  ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
+                  ' data-key="' + keyBase + 'Color" data-orig="' + escapeHtml(colorVal) + '"' +
+                  ' value="' + escapeHtml(colorVal) + '"' +
+                  ' style="width:48px;background:#0d1117;color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:10px;text-align:right">' +
                 '</div>';
-              for (var ln = 0; ln < cell.lines.length; ln++) {
-                html += '<div style="padding-left:8px;color:#9aa4ad;font-size:10px">' +
-                  '<span style="color:#8b949e">L' + (ln+1) + ':</span> ' + escapeHtml(cell.lines[ln]) + '</div>';
+              for (var ln = 0; ln < 5; ln++) {
+                var lineVal = cell.lines[ln] == null ? '' : String(cell.lines[ln]);
+                // Show all 5 line slots — blanks let the user add new lines.
+                // Existing blanks (cell.lines never had this index) are passed
+                // with no data-orig so saving a still-blank field is a no-op.
+                var hasOrig = ln < cell.lines.length;
+                html += '<div style="display:flex;align-items:center;gap:4px;margin-top:2px">' +
+                  '<span style="color:#8b949e;font-size:9px;min-width:18px">L' + (ln+1) + ':</span>' +
+                  '<input class="uiEdit" type="text"' +
+                  ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
+                  ' data-key="' + keyBase + 'Line' + (ln+1) + '" data-orig="' + escapeHtml(lineVal) + '"' +
+                  ' data-was-set="' + (hasOrig ? '1' : '0') + '"' +
+                  ' value="' + escapeHtml(lineVal) + '"' +
+                  ' style="flex:1;background:#0d1117;color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
               }
               html += '</div>';
             }
@@ -1539,6 +1611,104 @@
       html += '</div>';
     }
     dlg.innerHTML = html;
+    // Re-attach the resize grip (innerHTML wiped it). We rebuild it the same
+    // way the first-open path did so width stays draggable on every refresh.
+    var grip2 = document.createElement('div');
+    grip2.id = 'uiInspectorResize';
+    grip2.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize;background:transparent;z-index:5';
+    grip2.title = 'Drag to resize';
+    grip2.addEventListener('mousedown', function(e){
+      e.preventDefault();
+      var startX = e.clientX, startW = dlg.getBoundingClientRect().width;
+      var min = 320, max = Math.max(min, window.innerWidth - 200);
+      function onMove(ev){
+        var w = startW + (startX - ev.clientX);
+        if (w < min) w = min;
+        if (w > max) w = max;
+        dlg.style.width = w + 'px';
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        try { localStorage.setItem('uiInspectorWidth', String(parseInt(dlg.style.width, 10) || 480)); } catch (e) {}
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    dlg.appendChild(grip2);
+    // Dirty-state tracking — each .uiEdit input compares current value to
+    // data-orig. When anything is dirty, enable the Save button.
+    var saveBtn = document.getElementById('uiInspectorSave');
+    function isDirty(input){
+      var orig = input.getAttribute('data-orig') || '';
+      var cur  = input.value;
+      // A blank line that wasn't previously set is NOT dirty — saving an empty
+      // L<n> only matters when there was content to clear.
+      if (input.dataset.wasSet === '0' && cur === '') return false;
+      return cur !== orig;
+    }
+    function refreshSaveBtn(){
+      var anyDirty = false;
+      var inputs = dlg.querySelectorAll('.uiEdit');
+      for (var i = 0; i < inputs.length; i++) if (isDirty(inputs[i])) { anyDirty = true; break; }
+      if (anyDirty) {
+        saveBtn.disabled = false;
+        saveBtn.style.background = '#1f6feb';
+        saveBtn.style.borderColor = '#1f6feb';
+        saveBtn.style.color = '#fff';
+        saveBtn.style.cursor = 'pointer';
+      } else {
+        saveBtn.disabled = true;
+        saveBtn.style.background = '#21262d';
+        saveBtn.style.borderColor = '#30363d';
+        saveBtn.style.color = '#6e7681';
+        saveBtn.style.cursor = 'not-allowed';
+      }
+    }
+    var inputs = dlg.querySelectorAll('.uiEdit');
+    for (var i = 0; i < inputs.length; i++) {
+      inputs[i].addEventListener('input', refreshSaveBtn);
+    }
+    saveBtn.addEventListener('click', async function(){
+      if (saveBtn.disabled) return;
+      // Collect dirty edits — for blanked-out Line slots we send value=null so
+      // the backend deletes the key. For all other fields we send the new value.
+      var edits = [];
+      var inputs2 = dlg.querySelectorAll('.uiEdit');
+      for (var i = 0; i < inputs2.length; i++) {
+        var inp = inputs2[i];
+        if (!isDirty(inp)) continue;
+        var v = inp.value;
+        if (v === '' && inp.dataset.wasSet === '1') v = null;
+        edits.push({
+          file:    inp.getAttribute('data-file'),
+          section: inp.getAttribute('data-section'),
+          key:     inp.getAttribute('data-key'),
+          value:   v,
+        });
+      }
+      if (edits.length === 0) return;
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+      try {
+        var res = await window.mimic.uiStudioWritePages(STATE.eqDir, edits);
+        if (!res || !res.ok) {
+          setStatus('save failed: ' + (res && res.error || 'unknown'), 'err');
+          saveBtn.textContent = 'Save changes'; refreshSaveBtn();
+          return;
+        }
+        setStatus(edits.length + ' edit' + (edits.length === 1 ? '' : 's') + ' saved · ' +
+          (res.written || []).map(function(w){ return w.file; }).join(', '), 'ok');
+        saveBtn.textContent = 'Saved ✓';
+        // Re-open the inspector to refresh data-orig from disk so further
+        // edits diff against the new baseline.
+        setTimeout(function(){
+          try { document.getElementById('inspectSocialsBtn').click(); } catch (e) {}
+        }, 600);
+      } catch (err) {
+        setStatus('save error: ' + (err && err.message), 'err');
+        saveBtn.textContent = 'Save changes'; refreshSaveBtn();
+      }
+    });
   }
 </script>
 </body></html>
