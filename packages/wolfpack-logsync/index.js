@@ -457,8 +457,13 @@ const CHARM_SPELLS = new Map([
   ['allure',            { cls: 'enchanter', dur: 720 }],
   ['persuade',          { cls: 'enchanter', dur: 720 }],
   ['alluring whispers', { cls: 'enchanter', dur: 720 }],
-  ["boltran`s agacerie",{ cls: 'enchanter', dur: 420 }],
-  ["boltran's agacerie",{ cls: 'enchanter', dur: 420 }],
+  // Boltran's Agacerie is the standard formula-10 / buffduration-205 charm
+  // (eqemu_spells id 1706) — identical to Allure / Charm / Persuade, so it gets
+  // the same 720s max as the rest of the line. (Was 420, which read "way too
+  // short" in the charm tracker. A backtick-name duplicate id 1705 carries a
+  // bogus 75/formula-8 value; the live spell is the 205/formula-10 one.)
+  ["boltran`s agacerie",{ cls: 'enchanter', dur: 720 }],
+  ["boltran's agacerie",{ cls: 'enchanter', dur: 720 }],
   ['dictate',           { cls: 'enchanter', dur: 48  }],   // AoE charm — short
   // Druid animal charm.
   ['charm animals',     { cls: 'enchanter', dur: 720 }],
