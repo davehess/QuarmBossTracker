@@ -4546,12 +4546,17 @@ function _serializeForDashboard() {
           // Pass 3: first significant word of each alias. Catches the case
           // where EQ's buff window strips the bardic suffix — e.g. spell is
           // "Niv\`s Melody of Preservation" but slot label is just "Niv\`s".
+          // Checks BOTH directions so an alias of 'amplification' matches a
+          // Zeal slot named just 'amp', and vice versa.
           for (const b of zealBuffs) {
             if (!b || !b.name || typeof b.ticks !== 'number' || b.ticks <= 0) continue;
             const bSlug = _slug(b.name.trim());
             for (const n of names) {
               const firstWord = _slug(n.split(/\s+/)[0]);
-              if (firstWord && firstWord.length >= 4 && bSlug.startsWith(firstWord)) return b;
+              if (!firstWord || firstWord.length < 3) continue;
+              // Either direction wins so a shorter-than-alias slot label
+              // (Amped/Amp for Amplification) still resolves.
+              if (bSlug.startsWith(firstWord) || firstWord.startsWith(bSlug)) return b;
             }
           }
           return null;
