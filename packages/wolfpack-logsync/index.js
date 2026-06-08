@@ -1524,6 +1524,9 @@ function _savePetStateSoon() {
           last_seen_at: v.last_seen_at,
         }]),
         petBuffLandings: [..._petBuffLandings.entries()].map(([k, v]) => [k, [...v.entries()]]),
+        // Mob Info target buffs (any mob/PC we've timed a land on) — same shape
+        // as petBuffLandings so the Mob Info overlay survives a restart too.
+        buffLandingsByTarget: [..._buffLandingsByTarget.entries()].map(([k, v]) => [k, [...v.entries()]]),
         petStatsByOwner: [..._petStatsByOwner.entries()],
       };
       const out = JSON.stringify(data);
@@ -1562,11 +1565,24 @@ function _loadPetStateFromDisk() {
         if (mp.size) _petBuffLandings.set(k, mp);
       }
     }
+    if (Array.isArray(raw.buffLandingsByTarget)) {
+      for (const [k, arr] of raw.buffLandingsByTarget) {
+        const mp = new Map();
+        for (const [bk, bv] of (arr || [])) {
+          // Same prune as pet landings: drop anything whose catalog duration has
+          // fully elapsed (+60s grace) so Mob Info never shows a stale countdown.
+          const durSecs = (Number(bv.dur_ticks) || 0) * 6;
+          if (durSecs > 0 && (now - (bv.landed_at || 0)) > (durSecs + 60) * 1000) continue;
+          mp.set(bk, bv);
+        }
+        if (mp.size) _buffLandingsByTarget.set(k, mp);
+      }
+    }
     if (Array.isArray(raw.petStatsByOwner)) {
       // Stats keep indefinitely (running performance picture across sessions).
       for (const [k, v] of raw.petStatsByOwner) _petStatsByOwner.set(k, v);
     }
-    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} landings · ${_petStatsByOwner.size} stats`);
+    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} pet landings · ${_buffLandingsByTarget.size} target landings · ${_petStatsByOwner.size} stats`);
   } catch (err) { console.warn('[pet-state] load failed:', err && err.message); }
 }
 const PET_HEALTH_TTL_MS = 30 * 60 * 1000;
@@ -1748,6 +1764,9 @@ function recordTargetBuffLanding(bcEvt) {
     const oldest = _buffLandingsByTarget.keys().next().value;
     if (oldest && oldest !== k) _buffLandingsByTarget.delete(oldest);
   }
+  // Persist so Mob Info target buffs survive an agent/Mimic restart (same disk
+  // file as the pet state, debounced).
+  _savePetStateSoon();
 }
 // Live observed buffs for a target → [{ name, remaining_secs, total_secs }],
 // pruning expired. Drives the Mob Info overlay's buff list.
