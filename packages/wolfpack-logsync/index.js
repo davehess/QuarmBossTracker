@@ -1738,7 +1738,19 @@ function recordPetBuffLanding(bcEvt) {
   if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
   const ownerLevel = (whoData.get(owner) || {}).level || null;
   const durTicks   = _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, ownerLevel);
-  mp.set(String(bcEvt.spell_name).toLowerCase(), {
+  const newKey     = String(bcEvt.spell_name).toLowerCase();
+  // Slot-based overwrite — if the new buff has a known category (haste / hp /
+  // runSpeed / etc.) drop any existing entry in the same category, including
+  // its 'fell off' linger. Mirrors EQ's slot-replacement rule: e.g. Spirit of
+  // Wolf overwrites Journeyman's Boots (both runSpeed). Skip if uncategorized.
+  const newCat = _categorizeBuff(bcEvt.spell_name);
+  if (newCat) {
+    for (const [k, b] of mp) {
+      if (k === newKey) continue;
+      if (_categorizeBuff(b && b.name) === newCat) mp.delete(k);
+    }
+  }
+  mp.set(newKey, {
     name: bcEvt.spell_name,
     dur_ticks: durTicks,
     dur_formula: bcEvt.dur_formula,
@@ -1758,6 +1770,35 @@ function _spellGood(name) {
   const e = _spellByNameLower.get(String(name || '').toLowerCase());
   return (e && e.good != null) ? (Number(e.good) ? 1 : 0) : null;
 }
+// Minimal buff categorizer — KEEP IN SYNC with utils/raidBuffs.js and
+// web/lib/buffs.ts. Used by the agent for slot-based overwrite: a new buff
+// landing in the same category as an existing one means the previous slot
+// occupant is replaced (e.g. Spirit of Wolf overwrites Journeyman's Boots,
+// both runSpeed). Also distinguishes HoTs (regen) from long-duration buffs
+// so HoTs don't get the 5-min 'fell off' linger.
+const _BUFF_KEYWORDS = {
+  hp:        ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroic bond','virtue','health','center','fortitude'],
+  regen:     ['regrowth','regenerat','chloroplast','replenish','pack regen','celestial health','celestial healing','celestial elixir'],
+  mana:      ['brilliance','iridescence','gift of brilliance'],
+  manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
+  haste:     ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
+  runSpeed:  ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
+  attack:    ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
+  ds:        ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
+};
+const _BUFF_CAT_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds'];
+function _categorizeBuff(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return null;
+  for (const cat of _BUFF_CAT_ORDER) {
+    for (const k of _BUFF_KEYWORDS[cat]) if (n.includes(k)) return cat;
+  }
+  return null;
+}
+// True if the buff is a heal-over-time / regen buff — these get NO 5-min
+// linger when they expire (per user feedback: 'Heals over time should fall
+// off within a tick'). Other expired buffs still linger as a rebuff cue.
+function _isHotBuff(name) { return _categorizeBuff(name) === 'regen'; }
 function petBuffsForOwner(ownerLower) {
   if (!ownerLower) return [];
   const now = Date.now();
@@ -1772,11 +1813,15 @@ function petBuffsForOwner(ownerLower) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
       let rem = durSecs - (now - (b.landed_at || now)) / 1000;
       let fellOff = false;
+      // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
+      // the 5-min rebuff cue. HoTs are short and re-applied frequently — a
+      // long-lingering 'fell off' is noise, not signal.
+      const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
       if (b.worn_off_at) {                                   // explicit "worn off"
-        if (now - b.worn_off_at > FELL_OFF_LINGER_MS) { lm.delete(k); continue; }
+        if (now - b.worn_off_at > lingerMs) { lm.delete(k); continue; }
         fellOff = true; rem = 0;
       } else if (rem <= 0) {                                 // natural expiry
-        if (rem < -(FELL_OFF_LINGER_MS / 1000)) { lm.delete(k); continue; }
+        if (rem < -(lingerMs / 1000)) { lm.delete(k); continue; }
         fellOff = true; rem = 0;
       }
       // total_secs lets the overlay draw a proportional countdown BAR (not just
@@ -1819,7 +1864,19 @@ function recordTargetBuffLanding(bcEvt) {
                    : ((whoData.get(k) || {}).level || null);
     if (!lvl) lvl = _assumedCasterLevel();
   }
-  mp.set(String(bcEvt.spell_name).toLowerCase(), {
+  const newKey = String(bcEvt.spell_name).toLowerCase();
+  // Slot-based overwrite (same logic as recordPetBuffLanding) — a new buff in
+  // a known category drops the previous slot occupant, including its 'fell
+  // off' linger. EQ's slot rule: e.g. Spirit of Wolf lands → Journeyman's
+  // Boots gone. Uncategorized buffs leave existing entries alone.
+  const newCat = _categorizeBuff(bcEvt.spell_name);
+  if (newCat) {
+    for (const [k2, b] of mp) {
+      if (k2 === newKey) continue;
+      if (_categorizeBuff(b && b.name) === newCat) mp.delete(k2);
+    }
+  }
+  mp.set(newKey, {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
@@ -1845,11 +1902,14 @@ function targetBuffsFor(targetLower) {
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
     let rem = durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
+    // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
+    // the 5-min rebuff cue. Same rationale as petBuffsForOwner above.
+    const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
     if (b.worn_off_at) {                                     // explicit "worn off"
-      if (now - b.worn_off_at > FELL_OFF_LINGER_MS) { mp.delete(k); continue; }
+      if (now - b.worn_off_at > lingerMs) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
     } else if (rem <= 0) {                                   // natural expiry
-      if (rem < -(FELL_OFF_LINGER_MS / 1000)) { mp.delete(k); continue; }
+      if (rem < -(lingerMs / 1000)) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
     }
     out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
