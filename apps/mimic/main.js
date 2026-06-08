@@ -4113,11 +4113,27 @@ ipcMain.handle('set-setup-mode', (_e, on) => { applySetupMode(!!on); return setu
 // where they are). The renderer flips body.setup itself to show its own
 // opacity slider; we just unlock + force-show THIS window so it can be
 // moved/resized without affecting the rest.
-ipcMain.handle('set-setup-mode-this', (e) => {
+ipcMain.handle('set-setup-mode-this', (e, on) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
     const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    // Done — exit single-overlay setup mode for THIS window. Restore the
+    // persisted lock state instead of forcing unlocked, so the Done button
+    // actually puts things back the way the user had them. Without this,
+    // Done was a no-op in scope='this' because the global setupMode was
+    // never set in the first place.
+    if (on === false) {
+      const cfg = loadConfig();
+      const locked = cfg.overlaysLocked !== false;
+      try { win.setIgnoreMouseEvents(locked, { forward: true }); } catch {}
+      try { win.setResizable(!locked); } catch {}
+      try {
+        win.webContents.send('overlay-locked', locked);
+        win.webContents.send('setup-mode', { active: false, overlayKey: key, scope: 'this' });
+      } catch {}
+      return true;
+    }
     // Unlock + show JUST this window; keep the others' state intact.
     win.setIgnoreMouseEvents(false);
     win.setResizable(true);

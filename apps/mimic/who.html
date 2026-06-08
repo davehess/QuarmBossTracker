@@ -137,8 +137,10 @@
       setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
       setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
       setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      menu.insertBefore(setupAllBtn, setupBtn.nextSibling);
+      // Order: 'Setup ALL' on top, then 'Setup THIS' beneath it — Setup ALL is
+      // the more common case the user wants, so it's the default landing spot.
       menu.insertBefore(setupBtn, menu.firstChild);
+      menu.insertBefore(setupAllBtn, menu.firstChild);
       document.body.appendChild(menu);
       try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
       setTimeout(function(){
@@ -152,8 +154,9 @@
   window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
 
   var _overlayKey = null;
+  var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
-    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){
@@ -161,7 +164,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function ago(iso){ if(!iso) return ''; var ms = Date.now() - Date.parse(iso); if(!(ms>0)) return ''; var s=Math.floor(ms/1000); if(s<60) return s+'s'; var m=Math.floor(s/60); if(m<60) return m+'m'; return Math.floor(m/60)+'h'; }

@@ -4845,13 +4845,21 @@ async function _handleAgentRaidBuffQueue(req, res) {
   const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
 
   try {
-    const [liveRows, rosterRows, charRows] = await Promise.all([
+    // Buff_casts window — 3h covers Aegolism/POTG/SoW/etc. extended-duration
+    // groups buffs without dragging in long-stale observations. We filter
+    // further per-row by spell duration + post-death cutoff below.
+    const buffCastsSince = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+
+    const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,updated_at`),
       supabase.select('raid_roster',
         `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank`),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
+      supabase.select('buff_casts',
+        `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
+        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=3000`),
     ]);
 
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
@@ -4864,24 +4872,93 @@ async function _handleAgentRaidBuffQueue(req, res) {
     const liveByName = new Map();
     for (const r of (liveRows || [])) if (r && r.character && !rb.isCorpse(r.character)) liveByName.set(r.character.toLowerCase(), r);
 
+    // Observed buff landings → per-target buff inference for raiders NOT
+    // running Mimic. Filters out anything (a) past its catalog duration and
+    // (b) cast BEFORE the target's most recent death (dying strips buffs).
+    // Multiple casts of the same spell → most recent wins. Same spell name
+    // shape as character_live_state.buffs ({name, ticks}) so the rest of the
+    // queue logic doesn't care whether the buffs are live or inferred.
+    const inferredBuffsByName = new Map();   // nameLower → [{ name, ticks }]
+    {
+      const now = Date.now();
+      // (target, spellNameLower) → latest cast row, after filtering. Spell
+      // duration is dur_ticks * 6 seconds — the no-focus catalog floor.
+      const byKey = new Map();
+      for (const c of (buffCastRows || [])) {
+        if (!c || !c.target || !c.spell_name) continue;
+        const targetKey = String(c.target).toLowerCase();
+        const castMs    = Date.parse(c.cast_at) || 0;
+        if (!castMs) continue;
+        const lastDeath = _lastRaiderDeath.get(targetKey) || 0;
+        if (castMs < lastDeath) continue;   // dying stripped this buff
+        const durSecs   = (Number(c.dur_ticks) || 0) * 6;
+        if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;   // expired
+        const k = targetKey + '|' + String(c.spell_name).toLowerCase();
+        const prev = byKey.get(k);
+        if (!prev || castMs > prev.castMs) byKey.set(k, { name: c.spell_name, ticks: c.dur_ticks, castMs, target: c.target });
+      }
+      for (const v of byKey.values()) {
+        const remSecs = (Number(v.ticks) || 0) * 6 - (now - v.castMs) / 1000;
+        const remTicks = remSecs > 0 ? Math.ceil(remSecs / 6) : 0;
+        if (remTicks <= 0) continue;
+        const k = String(v.target).toLowerCase();
+        if (!inferredBuffsByName.has(k)) inferredBuffsByName.set(k, []);
+        inferredBuffsByName.get(k).push({ name: v.name, ticks: remTicks });
+      }
+    }
+
     // Build a row per in-raid raider (live state OR roster). Categorize buffs,
     // figure HP slots, decide if they have a curse.
+    //
+    // ── GROUP fallback ──────────────────────────────────────────────────────
+    // When no raid roster is active (the user is in a group, not a raid), the
+    // raid_roster table is empty. Fall back to "everyone with fresh live state
+    // OR an inferred-buff record" so a Cleric in a 6-person group still sees
+    // their groupmates on the queue.
     const provides = rb.classProvides(bufferClass);
     const buffQueue = [];
     const debuffQueue = [];
 
+    const allKeys = new Set([
+      ...rosterByName.keys(),
+      ...liveByName.keys(),
+      ...inferredBuffsByName.keys(),
+    ]);
+    const groupMode = rosterByName.size === 0;
     const seen = new Set();
-    const allKeys = new Set([...rosterByName.keys(), ...liveByName.keys()]);
+
     for (const k of allKeys) {
       if (seen.has(k)) continue;
       seen.add(k);
       const live = liveByName.get(k);
       const rr   = rosterByName.get(k);
-      const name = (rr && rr.name) || (live && live.character) || k;
+      const inferred = !live ? inferredBuffsByName.get(k) : null;
+      const name = (rr && rr.name) || (live && live.character) || (inferred && inferred[0] && inferred[0].target) || k;
       const cls  = classFor(name);
       const role = rb.classToRole(cls);
-      const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : [];
-      const noAgent = !live;
+      // Live buffs take precedence; otherwise use inferred. Either way, this
+      // is the buff set we categorize from. `isInferred` flags rows whose
+      // buffs came from buff_casts (no Mimic on that player) so the overlay
+      // can render a "🔍 inferred" badge.
+      const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : (inferred || []);
+      const isInferred = !live && (inferred && inferred.length > 0);
+      // noAgent now means "we have NO signal at all" — neither live state nor
+      // an inferred buff landing. Skip buff-queue analysis for these (we don't
+      // know their gaps), but they're still candidates for the debuff/burst
+      // path if we get curses or damage from them later.
+      const noAgent = !live && !isInferred;
+
+      // Avatar / Celestial Tranquility / SK Touch of Hate Recourse detection —
+      // useful on EVERY queue row, not just the burst queue. Especially:
+      //   • Avatar present → likely benefits from Feral Avatar (near-cap proxy
+      //     until the worn-item parser lands).
+      //   • Celestial Tranquility (+40 atk) is a slot that Avatar overwrites.
+      //   • SK T. of Hate Recourse (+35 atk) is the slot Savagery overwrites.
+      const avatarBuff = buffs.find(b => b && b.name && /\b(feral avatar|primal avatar|avatar)\b/i.test(b.name));
+      const celestial  = buffs.find(b => b && b.name && /celestial tranquility/i.test(b.name));
+      const skRecourse = (cls && /shadow ?knight|^sk$/i.test(cls))
+                         ? buffs.find(b => b && b.name && /t\.?\s*of hate recourse|touch of hate recourse/i.test(b.name))
+                         : null;
 
       // Curses → debuff queue. Each curse line carries the buffer's casting
       // status from _castingByTarget so a second cure caster sees "Carol
@@ -4894,14 +4971,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
         debuffQueue.push({
           name, class: cls, group: rr ? rr.group_num : null,
           curses,
+          inferred: isInferred,
+          avatar_buff:           avatarBuff ? avatarBuff.name : null,
+          celestial_tranquility: !!celestial,
+          sk_recourse:           skRecourse ? skRecourse.name : null,
           casting: _castingOnTarget(name),
         });
       }
 
-      // Skip buff queue when (a) no buffer class is specified, (b) raider
-      // isn't running the agent (gaps are unknown), or (c) we can't categorize
-      // their role. Otherwise: missing categories the buffer class provides +
-      // HP slot gaps when the class provides HP.
+      // Skip buff-queue analysis when (a) no buffer class is specified,
+      // (b) we have no signal at all (no Mimic + no buff_casts), or (c) we
+      // can't categorize their role.
       if (provides.length === 0 || noAgent) continue;
       const expected = rb.ROLE_TARGETS[role] || [];
       const byCategory = {};
@@ -4928,6 +5008,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
         name, class: cls, group: rr ? rr.group_num : null,
         tier,
         missing: missing.map(c => rb.CATEGORY_LABELS[c]).concat(missingHp.map(s => 'HP ' + s)),
+        inferred: isInferred,
+        avatar_buff:           avatarBuff ? avatarBuff.name : null,
+        celestial_tranquility: !!celestial,
+        sk_recourse:           skRecourse ? skRecourse.name : null,
         casting: _castingOnTarget(name),
       });
     }
@@ -4969,24 +5053,38 @@ async function _handleAgentRaidBuffQueue(req, res) {
       } catch (e) {
         console.warn('[raid-buff-queue] damage fetch failed:', e && e.message);
       }
-      // Candidates: every in-raid raider with a melee role (warrior/paladin/SK
-      // = tank; monk/rogue/ranger/beastlord/berserker = melee). Skip those
-      // already carrying the burst buff. Family fold-up of damage isn't done
-      // here on purpose — the buff lands on the active character, not the main.
+      // Candidates: every in-raid (or in-group) tank/melee. Buffs taken from
+      // live state when available, else inferred from buff_casts (so a
+      // non-Mimic raider's Avatar / Hate Recourse is still visible). Skip
+      // those already carrying the burst buff. Family fold-up of damage isn't
+      // done here on purpose — the buff lands on the active character.
       for (const k of allKeys) {
         const live = liveByName.get(k);
         const rr   = rosterByName.get(k);
+        const inferred = !live ? inferredBuffsByName.get(k) : null;
         const name = (rr && rr.name) || (live && live.character) || k;
         const cls  = classFor(name);
         const role = rb.classToRole(cls);
         if (role !== 'tank' && role !== 'melee') continue;
-        const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : [];
+        const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : (inferred || []);
+        const isInferred = !live && (inferred && inferred.length > 0);
         const alreadyBuffed = buffs.some(b => b && b.name && burstSpec.carriesRx.test(b.name));
         if (alreadyBuffed) continue;
         const damage = dmgByName.get(name.toLowerCase()) || 0;
+        // Avatar / Celestial Tranquility / SK Touch-of-Hate-Recourse chips on
+        // burst rows — see the per-row block above for the rationale.
+        const avatarBuff = buffs.find(b => b && b.name && /\b(feral avatar|primal avatar|avatar)\b/i.test(b.name));
+        const celestial  = buffs.find(b => b && b.name && /celestial tranquility/i.test(b.name));
+        const skRecourse = (cls && /shadow ?knight|^sk$/i.test(cls))
+                           ? buffs.find(b => b && b.name && /t\.?\s*of hate recourse|touch of hate recourse/i.test(b.name))
+                           : null;
         burstQueue.push({
           name, class: cls, group: rr ? rr.group_num : null,
           damage,
+          inferred:              isInferred,
+          avatar_buff:           avatarBuff ? avatarBuff.name : null,
+          celestial_tranquility: !!celestial,
+          sk_recourse:           skRecourse ? skRecourse.name : null,
           casting: _castingOnTarget(name),
         });
       }
@@ -4996,7 +5094,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
       burstQueue = burstQueue.slice(0, 20);
     }
 
-    const out = { buff_queue: buffQueue.slice(0, 40), debuff_queue: debuffQueue.slice(0, 40) };
+    const out = {
+      buff_queue:   buffQueue.slice(0, 40),
+      debuff_queue: debuffQueue.slice(0, 40),
+      // group_mode is true when no raid_roster is fresh — the overlay shows
+      // a slightly different header ("group" instead of "raid") and the
+      // empty-state hint mentions groups.
+      group_mode:   groupMode,
+    };
     if (burstSpec) { out[burstSpec.key] = burstQueue; out.burst_label = burstSpec.label; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(out));
@@ -5560,6 +5665,27 @@ async function _handleAgentQuake(req, res) {
 // with how many raiders run Mimic. Payload:
 //   { casts: [{ caster, spell, target, started_at: ISO, cast_secs }] }
 const _castingByTarget = new Map();   // targetLower → Map<casterLower, {caster,spell,target,started_at_ms,cast_secs,received_at}>
+
+// Per-raider death timeline — used by the buff-queue inference to discard
+// observed buff_casts that landed BEFORE the raider's most recent death (which
+// would have stripped the buff). Updated from every encounter upload's
+// deaths[] array. In-memory only; restart-fresh is acceptable because
+// buff_casts themselves expire on their catalog duration.
+const _lastRaiderDeath = new Map();   // nameLower → epoch ms of last death
+function _noteRaiderDeaths(deaths) {
+  if (!Array.isArray(deaths)) return;
+  for (const d of deaths) {
+    if (!d || !d.name) continue;
+    const ts = Date.parse(d.ts) || Date.now();
+    const k = String(d.name).toLowerCase();
+    if (ts > (_lastRaiderDeath.get(k) || 0)) _lastRaiderDeath.set(k, ts);
+  }
+  // Bound memory: cap at 500 most-recently-touched names.
+  if (_lastRaiderDeath.size > 500) {
+    const oldest = _lastRaiderDeath.keys().next().value;
+    if (oldest) _lastRaiderDeath.delete(oldest);
+  }
+}
 function _pruneCasts(now) {
   for (const [tk, mp] of _castingByTarget) {
     for (const [ck, c] of mp) {
@@ -6572,6 +6698,12 @@ async function _handleAgentUpload(req, res) {
   const uploadedHealers   = Array.isArray(encounter.healers)   ? encounter.healers   : [];
   const uploadedDefenders = Array.isArray(encounter.defenders) ? encounter.defenders : [];
   const uploadedDeaths    = Array.isArray(encounter.deaths)    ? encounter.deaths    : [];
+  // Index per-raider deaths for the buff-queue inference path — when we infer
+  // a non-Mimic raider's current buffs from buff_casts, we must discard any
+  // cast that happened before their most recent death (dying clears buffs).
+  // In-memory only; resets on bot restart, which is fine because buff_casts
+  // themselves expire on their catalog duration anyway.
+  _noteRaiderDeaths(uploadedDeaths);
   const uploadedHealGaps  = encounter.heal_gaps || null;
 
   // ── Accumulate into active /raidnight session (all encounters, not just bosses) ──
