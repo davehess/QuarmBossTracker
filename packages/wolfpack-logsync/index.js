@@ -4506,7 +4506,23 @@ function _serializeForDashboard() {
         // match _isLikelyBardSong would get stuck rendering the bard strip
         // forever, even after switching characters. The class check is the
         // ground truth.
-        const isBardClass = !!(zealSt && /^bard$/i.test(String(zealSt.class || '')));
+        // "Is this character a Bard?" — Mimic never populates zealSt.class
+        // (only HP / zone / buffs / casting flow through the pipe), so the
+        // original `zealSt.class === 'Bard'` check was always false in
+        // practice. Fall through three sources, most authoritative first:
+        //   1. whoData class — captured from a real /who line or inferred
+        //      from a class-specific ability (e.g. Snare = ranger/druid,
+        //      Selo's = bard). Survives across sessions.
+        //   2. zealSt.class — kept for forward-compat in case Mimic ever
+        //      starts populating it.
+        //   3. state.kind === 'song' — observed-via-singing fallback.
+        //      Slightly sticky (the comment above warns that switching
+        //      character keeps the flag), but harmless inside this builder
+        //      because we're already keyed on the bard's character.
+        const wd = (whoData && whoData.get) ? whoData.get(k) : null;
+        const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
+                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
+                         ||   state.kind === 'song';
         const bardBuffs = (state.kind === 'song' && isBardClass) ? {
           amplification: ampBuff ? { remaining_ticks: ampBuff.ticks, remaining_secs: ampBuff.ticks * 6 } : null,
           // Prefer Harmonize when both are present (Harmonize replaces Resonance).
@@ -4571,8 +4587,13 @@ function _serializeForDashboard() {
       try {
         const active = _activeCharacter;
         if (active && !out[active.toLowerCase()]) {
-          const zSt = zealByLower.get(active.toLowerCase());
-          const cls = zSt && zSt.class ? String(zSt.class) : null;
+          const k = active.toLowerCase();
+          const zSt = zealByLower.get(k);
+          const wd  = (whoData && whoData.get) ? whoData.get(k) : null;
+          // Same three-source resolution as the real loop above. whoData
+          // wins when present (real /who output is the authoritative class);
+          // zealSt.class is the future-compat path.
+          const cls = (wd && wd.class) || (zSt && zSt.class) || null;
           if (cls && /^bard$/i.test(cls)) {
             out[active.toLowerCase()] = {
               character:      active,
