@@ -1090,6 +1090,23 @@
   });
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
+    // EQ keeps the UI layout in memory while running: "Load UI Skin → Keep Your
+    // Layout" does NOT re-read this file, and EQ overwrites it on the next camp/
+    // zone/quit. So a save while EQ is open silently won't apply (and gets
+    // clobbered). Warn + let the user bail before we touch the file.
+    var eqRunning = false;
+    try { eqRunning = await window.mimic.uiStudioIsEqRunning(); } catch (e) {}
+    if (eqRunning) {
+      var go = window.confirm(
+        'EverQuest is running.\n\n' +
+        'EQ keeps your window layout in memory while it runs:\n' +
+        '  • "Load UI Skin → Keep Your Layout" will NOT re-read this file.\n' +
+        '  • EQ overwrites it on the next camp / zone / quit.\n\n' +
+        'To make changes stick: fully EXIT EverQuest, then Save, then log the\n' +
+        'character back in (EQ reads window positions at login).\n\n' +
+        'Save anyway?');
+      if (!go) { setStatus('Save cancelled — fully exit EQ, then Save, then log back in.', 'err'); return; }
+    }
     // Write rescaled coords into the TARGET resolution's suffix block
     // (XPos<tgtW>x<tgtH> / YPos<tgtW>x<tgtH>). If that block doesn't exist
     // yet, emitIni inserts it — leaving the original source-resolution block
@@ -1118,7 +1135,24 @@
     setStatus('saving…');
     try {
       var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle);
-      if (res && res.ok) setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix + ' block · .bak backups created', 'ok');
+      if (res && res.ok) {
+        // EQ only loads window positions when the character ENTERS THE WORLD,
+        // and it reads the block matching its actual resolution. Surface both
+        // so a save doesn't look like it "did nothing".
+        var resWarn = '';
+        try {
+          var disp = await window.mimic.uiStudioListDisplays();
+          if (disp && disp.primary && (disp.primary.w !== STATE.tgtW || disp.primary.h !== STATE.tgtH)) {
+            resWarn = ' · ⚠ your monitor is ' + disp.primary.w + '×' + disp.primary.h +
+              ' — set Target to that (🖥 Detect) or EQ reads a different block';
+          }
+        } catch (e2) {}
+        var tail = eqRunning
+          ? ' · ⚠ EQ is running — fully exit it, then log back in, or it overwrites this on camp/zone/quit'
+          : ' · log the character in to apply (EQ reads window positions at login, not on a skin reload)';
+        setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix + ' block' + tail + resWarn,
+          (eqRunning || resWarn) ? 'err' : 'ok');
+      }
       else setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
     } catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });

@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // tabs, bandolier, socials, eqclient.ini) so a user can set up an
   // identical install on a different machine.
   uiStudioListDisplays:   ()        => ipcRenderer.invoke('ui-studio-list-displays'),
+  uiStudioIsEqRunning:    ()        => ipcRenderer.invoke('ui-studio-eq-running'),
   uiStudioListCharacters: ()        => ipcRenderer.invoke('ui-studio-list-characters'),
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),

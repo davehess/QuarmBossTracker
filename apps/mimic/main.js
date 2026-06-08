@@ -690,37 +690,38 @@ function _uiStudioFilesFor(character) {
 function _readUiBundle(eqDir, character) {
   const files = {};
   if (!eqDir || !character) return files;
-  for (const name of [...UI_STUDIO_GLOBAL, ..._uiStudioFilesFor(character)]) {
+  // CRITICAL: key the bundle by the REAL on-disk filename (exact case), never a
+  // reconstructed name. EQ reads UI_<Char>_pq.proj.ini with the character's
+  // canonical case at login; if Save writes back a different case (because the
+  // dropdown character case differs from the file), EQ keeps reading the old
+  // file and the edits silently never apply. User-confirmed: fixing the case
+  // made the changes load. So we resolve each wanted name to its real entry.
+  let entries = [];
+  try { entries = fs.readdirSync(eqDir); } catch { return files; }
+  const realByLower = new Map();          // lowercased name → real on-disk name
+  for (const f of entries) realByLower.set(f.toLowerCase(), f);
+
+  const want = [...UI_STUDIO_GLOBAL, ..._uiStudioFilesFor(character)];
+  // Also pick up UI_<char>*.ini variants at any server suffix (a user who
+  // swapped servers or /loadskin'd under a different suffix), by their REAL
+  // name so read+write stay case-exact.
+  const cLower = String(character).toLowerCase();
+  for (const f of entries) {
+    const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
+    if (m && m[1].toLowerCase() === cLower) want.push(f);
+  }
+
+  for (const wanted of want) {
+    const real = realByLower.get(String(wanted).toLowerCase());
+    if (!real || files[real]) continue;
     try {
-      const fp = path.join(eqDir, name);
-      if (fs.existsSync(fp)) {
-        const stat = fs.statSync(fp);
-        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
-          files[name] = fs.readFileSync(fp, 'utf8');
-        }
+      const fp = path.join(eqDir, real);
+      const stat = fs.statSync(fp);
+      if (stat.isFile() && stat.size > 0 && stat.size < 4 * 1024 * 1024) {
+        files[real] = fs.readFileSync(fp, 'utf8');   // key = exact on-disk name
       }
     } catch {}
   }
-  // Also glob: pick up UI_<char>*.ini variants (any server suffix). The
-  // canonical Quarm name is UI_<C>_pq.proj.ini, but a user who swapped
-  // servers or used /loadskin under a different suffix would otherwise have
-  // their window-layout file silently skipped — leaving "0 windows" loaded
-  // even though the data is right there in the EQ folder.
-  try {
-    const cLower = String(character).toLowerCase();
-    for (const f of fs.readdirSync(eqDir)) {
-      if (files[f]) continue;
-      const m = f.match(/^UI_([A-Za-z]+).*\.ini$/i);
-      if (!m || m[1].toLowerCase() !== cLower) continue;
-      try {
-        const fp = path.join(eqDir, f);
-        const stat = fs.statSync(fp);
-        if (stat.size > 0 && stat.size < 4 * 1024 * 1024) {
-          files[f] = fs.readFileSync(fp, 'utf8');
-        }
-      } catch {}
-    }
-  } catch {}
   return files;
 }
 async function _isEqRunning() {
@@ -3570,6 +3571,14 @@ ipcMain.handle('find-eq-installs', () => {
 // Returns { primary: {w,h}, displays: [{ id, label, w, h, primary, scaleFactor }] }.
 // Widescreen/ultrawide users (3840×1600, 5120×1440, etc.) weren't covered by
 // the dropdown — this lets them pick exact values without typing.
+// Is EverQuest running right now? UI Studio uses this to warn at Save time:
+// a running client keeps the window layout in memory, ignores on-disk edits on
+// a skin reload, and OVERWRITES UI_<char>.ini on the next camp/zone/quit — so
+// edits only stick if EQ is fully closed when you Save, then relaunched.
+ipcMain.handle('ui-studio-eq-running', async () => {
+  try { return await _isEqRunning(); } catch { return false; }
+});
+
 ipcMain.handle('ui-studio-list-displays', () => {
   try {
     const primary = screen.getPrimaryDisplay();
