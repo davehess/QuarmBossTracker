@@ -4897,24 +4897,48 @@ async function _handleAgentMobInfo(req, res) {
         } catch (err) { console.warn('[mob-info] zone long_name resolve failed:', err?.message); }
       }
 
-      // Spell list — join eqemu_npc_spells_entries (per-spell metadata for
-      // the npc_spells_id list) against eqemu_spells (catalog) to surface
-      // each spell's name + mana + cast time on the mob-info Spells tab.
-      // Currently empty in prod because the weekly sync hasn't been
-      // pulling npc_spells / npc_spells_entries — the code path here is
-      // ready so once that's resolved, the tab populates automatically.
+      // Spell list — EQEmu's npc_spells table supports INHERITANCE via the
+      // `parent_list` column. The leaf list might be empty while its parent
+      // (or grandparent) carries the actual spell entries. We walk up the
+      // chain so a list like 1354 ("akheva Xi_Xaui") with parent_list=5
+      // surfaces list 5's entries.
+      //
+      // Cap the walk at 4 hops (depth>4 across the prod catalog is unheard
+      // of) so a malformed cycle can't pin a request. Resolve all candidate
+      // list IDs first, then a single entries query that covers them all.
+      // Once entries are in hand, join eqemu_spells (catalog) to add the
+      // human-readable name + mana + cast time per spell.
       let spells = [];
       if (r.npc_spells_id && r.npc_spells_id > 0) {
         try {
+          const listIds = [r.npc_spells_id];
+          let cursor = r.npc_spells_id;
+          for (let hop = 0; hop < 4 && cursor; hop++) {
+            const parentRows = await supabase.select('eqemu_npc_spells',
+              `id=eq.${cursor}&select=parent_list&limit=1`);
+            const p = Array.isArray(parentRows) && parentRows[0] && parentRows[0].parent_list;
+            if (!p || p === 0 || listIds.includes(p)) break;
+            listIds.push(p);
+            cursor = p;
+          }
           const entries = await supabase.select('eqemu_npc_spells_entries',
-            `npc_spells_id=eq.${r.npc_spells_id}&select=spellid,manacost,recast_delay,priority,minlevel,maxlevel,type,min_hp,max_hp&order=priority.desc&limit=40`);
+            `npc_spells_id=in.(${listIds.join(',')})&select=spellid,manacost,recast_delay,priority,minlevel,maxlevel,type,min_hp,max_hp,npc_spells_id&order=priority.desc&limit=80`);
           if (Array.isArray(entries) && entries.length > 0) {
-            const ids = entries.map(e => e.spellid).filter(Boolean);
+            // Dedup by spellid — a leaf list can override the same spell from
+            // a parent. The leaf's row wins (we visited the leaf first, so
+            // its entries come first in `entries`).
+            const seen = new Set();
+            const dedup = [];
+            for (const e of entries) {
+              if (seen.has(e.spellid)) continue;
+              seen.add(e.spellid); dedup.push(e);
+            }
+            const ids = dedup.map(e => e.spellid).filter(Boolean);
             if (ids.length > 0) {
               const catRows = await supabase.select('eqemu_spells',
-                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time&limit=40`);
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time&limit=80`);
               const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
-              spells = entries.map(e => {
+              spells = dedup.slice(0, 40).map(e => {
                 const c = cat.get(e.spellid) || {};
                 return {
                   id:           e.spellid,
