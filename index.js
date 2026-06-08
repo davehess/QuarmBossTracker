@@ -4789,6 +4789,34 @@ async function _maybeRecordChatLoot(chatRow, uploadedByDiscordId) {
     .catch(err => console.warn('[chat-loot] insert failed:', err?.message));
 }
 
+// GET /api/agent/target-casts?name=<npc|player> → active casts on that target,
+// from the cross-client casting relay (_castingByTarget). Each entry counts down
+// its remaining cast time. Bearer-auth like the other agent endpoints.
+async function _handleAgentTargetCasts(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let name = '';
+  try { name = new URL(req.url, 'http://x').searchParams.get('name') || ''; } catch { /* */ }
+  const tk = String(name).trim().toLowerCase();
+  const now = Date.now();
+  _pruneCasts(now);
+  const mp = tk ? _castingByTarget.get(tk) : null;
+  const casts = [];
+  if (mp) {
+    for (const c of mp.values()) {
+      casts.push({
+        caster:         c.caster,
+        spell:          c.spell,
+        ends_at_ms:     c.started_at_ms + c.cast_secs * 1000,   // overlay counts down to this
+        remaining_secs: Math.max(0, Math.round((c.started_at_ms + c.cast_secs * 1000 - now) / 1000)),
+        cast_secs:      c.cast_secs,
+      });
+    }
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ casts }));
+}
+
 async function _handleAgentMobInfo(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5243,6 +5271,134 @@ async function _handleAgentLiveState(req, res) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
   }
+}
+
+// POST /api/agent/quake — the agent parsed the in-game "The next earthquake will
+// begin in…" line and computed the absolute next-quake time. We dedup across
+// agents, mirror to Supabase (pvp_quake) for the web banner, and post/edit a
+// single countdown message in the PvP channel. Payload:
+//   { quake: { next_quake_at: ISO, detected_at: ISO, source_text } }
+let _lastServerQuakeAt = null;
+async function _handleAgentQuake(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 16 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const q = payload && payload.quake;
+  const nextAtMs = q && q.next_quake_at ? Date.parse(q.next_quake_at) : NaN;
+  if (!Number.isFinite(nextAtMs)) { res.writeHead(400); return res.end(JSON.stringify({ error: 'bad next_quake_at' })); }
+  // Ignore stale reports (a backfill/old log replaying a past earthquake).
+  if (nextAtMs < Date.now() - 60 * 1000) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stale: true })); }
+
+  const state = require('./utils/state');
+  const prev  = state.getServerQuake();
+  const nextAtIso = new Date(nextAtMs).toISOString();
+  // Dedup across agents/lines: same next-quake within 2 min (clock skew) → no-op.
+  const near = (a, b) => a && b && Math.abs(a - b) < 2 * 60 * 1000;
+  if (near(_lastServerQuakeAt, nextAtMs) || (prev && prev.next_quake_at && near(Date.parse(prev.next_quake_at), nextAtMs))) {
+    _lastServerQuakeAt = nextAtMs;
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, deduped: true }));
+  }
+  _lastServerQuakeAt = nextAtMs;
+
+  // Mirror to Supabase for the web /pvp banner.
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      await supabase.upsert('pvp_quake', [{
+        guild_id:      process.env.SUPABASE_GUILD_ID || 'wolfpack',
+        next_quake_at: nextAtIso,
+        detected_at:   q.detected_at || new Date().toISOString(),
+        source_text:   q.source_text ? String(q.source_text).slice(0, 200) : null,
+        updated_at:    new Date().toISOString(),
+      }], 'guild_id').catch(e => console.warn('[quake] supabase upsert:', e?.message));
+    }
+  } catch (e) { console.warn('[quake] supabase mirror failed:', e?.message); }
+
+  // Post/edit the single "next earthquake" countdown message in the PvP channel.
+  let messageId = (prev && prev.messageId) || null;
+  try {
+    const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+    if (pvpTargetId) {
+      const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
+      if (ch) {
+        const epoch = Math.floor(nextAtMs / 1000);
+        const content = `🌋 **Next earthquake (PvP repop):** <t:${epoch}:R> · <t:${epoch}:F>`;
+        let edited = false;
+        if (messageId) {
+          const msg = await ch.messages.fetch(messageId).catch(() => null);
+          if (msg) { await msg.edit({ content, allowedMentions: { parse: [] } }).catch(() => {}); edited = true; }
+        }
+        if (!edited) {
+          const sent = await ch.send({ content, allowedMentions: { parse: [] } }).catch(() => null);
+          if (sent) messageId = sent.id;
+        }
+      }
+    }
+  } catch (e) { console.warn('[quake] discord post failed:', e?.message); }
+
+  state.saveServerQuake({ next_quake_at: nextAtIso, detected_at: q.detected_at || null, source_text: q.source_text || null, messageId });
+  res.writeHead(200); return res.end(JSON.stringify({ ok: true, next_quake_at: nextAtIso }));
+}
+
+// Cross-client casting relay. Each Mimic raider's agent reports its OWN
+// in-progress casts (spell + current target + cast time); we keep a short-lived
+// per-target index so anyone targeting that mob can see "who is casting what on
+// it" via GET /api/agent/target-casts. Bystanders can't be named (EQ logs only
+// "Soandso begins to cast a spell" with no spell/target), so coverage scales
+// with how many raiders run Mimic. Payload:
+//   { casts: [{ caster, spell, target, started_at: ISO, cast_secs }] }
+const _castingByTarget = new Map();   // targetLower → Map<casterLower, {caster,spell,target,started_at_ms,cast_secs,received_at}>
+function _pruneCasts(now) {
+  for (const [tk, mp] of _castingByTarget) {
+    for (const [ck, c] of mp) {
+      // Keep until the cast should have finished + a 3s grace; hard cap 30s.
+      const done = c.started_at_ms + (c.cast_secs || 6) * 1000 + 3000;
+      if (now > done || (now - c.received_at) > 30000) mp.delete(ck);
+    }
+    if (mp.size === 0) _castingByTarget.delete(tk);
+  }
+}
+async function _handleAgentCasting(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 32 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const casts = Array.isArray(payload?.casts) ? payload.casts : [];
+  const now = Date.now();
+  let stored = 0;
+  for (const c of casts) {
+    const caster = String(c?.caster || '').trim();
+    const spell  = String(c?.spell  || '').trim();
+    const target = String(c?.target || '').trim();
+    if (!caster || !spell || !target) continue;
+    const startedMs = c.started_at ? Date.parse(c.started_at) : now;
+    const castSecs  = Number.isFinite(Number(c.cast_secs)) ? Math.max(0, Math.min(60, Number(c.cast_secs))) : 6;
+    const tk = target.toLowerCase();
+    let mp = _castingByTarget.get(tk);
+    if (!mp) { mp = new Map(); _castingByTarget.set(tk, mp); }
+    mp.set(caster.toLowerCase(), {
+      caster, spell, target,
+      started_at_ms: Number.isFinite(startedMs) ? startedMs : now,
+      cast_secs: castSecs, received_at: now,
+    });
+    stored++;
+  }
+  // Bound memory: cap the number of tracked targets.
+  if (_castingByTarget.size > 300) {
+    const oldest = _castingByTarget.keys().next().value;
+    if (oldest) _castingByTarget.delete(oldest);
+  }
+  _pruneCasts(now);
+  res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored }));
 }
 
 // Ingest the live raid roster from Zeal's type-5 event (decoded agent-side).
@@ -6925,6 +7081,16 @@ http.createServer(async (req, res) => {
     }
   }
 
+  // Active casts on a target — the cross-client Casting section for Mob Info.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/target-casts')) {
+    try { return await _handleAgentTargetCasts(req, res); }
+    catch (err) {
+      console.error('[target-casts] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/agent/who-lookup')) {
     try { return await _handleAgentWhoLookup(req, res); }
     catch (err) {
@@ -7005,6 +7171,24 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentTrigger(req, res); }
     catch (err) {
       console.error('[trigger] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/quake') {
+    try { return await _handleAgentQuake(req, res); }
+    catch (err) {
+      console.error('[quake] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/casting') {
+    try { return await _handleAgentCasting(req, res); }
+    catch (err) {
+      console.error('[casting] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

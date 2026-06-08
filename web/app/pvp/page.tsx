@@ -14,6 +14,7 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
+import QuakeBanner from './QuakeBanner';
 
 export const dynamic = 'force-dynamic';
 
@@ -176,6 +177,24 @@ async function loadBossTimers(): Promise<BossKill[]> {
   return out;
 }
 
+// Next server-wide PvP earthquake (repops every PvP mob). Returns the ISO time
+// if we have one in the (near) future, else null. Fed by the agent parsing the
+// in-game "The next earthquake will begin in…" line → bot → pvp_quake.
+async function loadQuake(): Promise<string | null> {
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from('pvp_quake')
+    .select('next_quake_at')
+    .eq('guild_id', 'wolfpack')
+    .maybeSingle();
+  const iso = (data as { next_quake_at: string | null } | null)?.next_quake_at ?? null;
+  if (!iso) return null;
+  // Hide a long-stale time (>1h past) — a finished quake we never got a fresh
+  // line for. A just-passed one still shows briefly as "now".
+  if (new Date(iso).getTime() < Date.now() - 3600 * 1000) return null;
+  return iso;
+}
+
 function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
   const diff = new Date(toIso).getTime() - fromMs;
   const abs  = Math.abs(diff);
@@ -205,9 +224,10 @@ export default async function PvpPage({
   );
 
   const tz = await userTz();
-  const [{ rows, error }, bossTimers] = await Promise.all([
+  const [{ rows, error }, bossTimers, quakeAt] = await Promise.all([
     loadLeaderboard(sortKey),
     loadBossTimers(),
+    loadQuake(),
   ]);
   if (error) {
     return (
@@ -305,6 +325,10 @@ export default async function PvpPage({
           </table>
         )}
       </section>
+
+      {/* Next earthquake — a quake repops every PvP mob, so it sits directly
+          above the boss timers (it resets all of them). Live countdown. */}
+      {quakeAt && <QuakeBanner nextAt={quakeAt} />}
 
       {/* Boss timers — PvP-server spawn windows fed by the bot from Druzzil
           broadcasts and manual /pvpkill. Sorted soonest-spawning first; rows
