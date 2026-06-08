@@ -3,8 +3,15 @@
 <style>
   html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
     font-family:ui-sans-serif,system-ui,sans-serif;user-select:none;overflow:hidden}
+  /* Page is a flex column: toolbar takes its NATURAL height (it wraps to 2+
+     rows when there are many buttons) and #content fills the rest. This is why
+     the panels below are flex items, not position:fixed with a hardcoded 50px
+     toolbar offset — that offset broke (panel overlapped the toolbar's wrapped
+     second row) the moment the bar grew past one line. */
+  body{display:flex;flex-direction:column}
+  #content{flex:1 1 auto;display:flex;min-height:0}
   /* Top toolbar — resolution pickers, character selector, save/load. */
-  #bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;
+  #bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;
     border-bottom:1px solid #30363d;flex-wrap:wrap}
   #bar h1{font-size:13px;margin:0;color:#7ee7c7;letter-spacing:0.5px;font-weight:600;margin-right:6px}
   #bar label{font-size:11px;color:#8b949e;display:flex;align-items:center;gap:4px}
@@ -21,8 +28,8 @@
   #status.ok{color:#56d364} #status.err{color:#f87171}
   /* Canvas — proportional to target resolution, scaled to fit. Black bg
      represents the EQ screen. Window rectangles overlay. */
-  #stageWrap{display:flex;justify-content:center;align-items:center;flex:1;padding:14px;
-    background:#0a0c10;height:calc(100vh - 50px);overflow:auto;margin-left:186px}
+  #stageWrap{display:flex;justify-content:center;align-items:center;flex:1 1 auto;min-width:0;
+    padding:14px;background:#0a0c10;overflow:auto}
   #stage{position:relative;background:#000;border:1px solid #58a6ff;
     box-shadow:0 0 12px rgba(88,166,255,0.18)}
   /* Each window rectangle is absolutely positioned inside #stage. Color-coded
@@ -54,8 +61,9 @@
   .win .grip{position:absolute;width:8px;height:8px;background:#7ee7c7;
     border:1px solid #000;border-radius:1px;z-index:5}
   .win .grip.se{right:-4px;bottom:-4px;cursor:nwse-resize}
-  /* Side panel for the selected window's properties. */
-  #side{position:fixed;top:50px;right:0;bottom:0;width:240px;background:#161b22;
+  /* Side panel for the selected window's properties. Flex item (not fixed) so
+     it sits beside the canvas under the natural-height toolbar. */
+  #side{flex:0 0 240px;box-sizing:border-box;background:#161b22;
     border-left:1px solid #30363d;padding:10px;font-size:11px;overflow-y:auto;
     display:none}
   #side.on{display:block}
@@ -67,13 +75,12 @@
   #side .row{display:flex;gap:6px}
   #side .row .field{flex:1}
   #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
-  #stageWrap.has-side #stage{margin-right:240px}
   /* Left filter panel — category toggles so the canvas isn't an unreadable
-     pile of all 130 windows at once. View-only (Save still writes every
-     window). */
-  #filterPanel{position:fixed;top:50px;left:0;bottom:0;width:186px;box-sizing:border-box;
+     pile of all 130 windows at once. Flex item beside the canvas. View-only
+     (Save still writes every window). */
+  #filterPanel{flex:0 0 186px;box-sizing:border-box;
     background:#161b22;border-right:1px solid #30363d;padding:10px;font-size:11px;
-    overflow-y:auto;z-index:20}
+    overflow-y:auto}
   #filterPanel h3{margin:0 0 6px;color:#7ee7c7;font-size:12px}
   #filterPanel .hint{color:#6e7681;font-size:9px;margin:0 0 8px;line-height:1.4}
   #filterPanel .fbtns{display:flex;gap:6px;margin-bottom:8px}
@@ -167,28 +174,30 @@
     <div id="pvpPreviewCredit" style="color:#8b949e;font-size:10px;margin-bottom:8px"></div>
     <div id="pvpPreviewBody"></div>
   </div>
-  <aside id="filterPanel">
-    <h3>👁 Show</h3>
-    <p class="hint">Toggle window groups. View-only — Save still writes every window.</p>
-    <div class="fbtns">
-      <button id="filterAll">All</button>
-      <button id="filterNone">None</button>
-    </div>
-    <div id="filterList"></div>
-  </aside>
-  <div id="stageWrap"><div id="stage"></div></div>
-  <aside id="side">
-    <h3 id="sideTitle">Window</h3>
-    <div class="row">
-      <div class="field"><label>X</label><input id="fX" type="number" /></div>
-      <div class="field"><label>Y</label><input id="fY" type="number" /></div>
-    </div>
-    <div class="row">
-      <div class="field"><label>Width</label><input id="fW" type="number" /></div>
-      <div class="field"><label>Height</label><input id="fH" type="number" /></div>
-    </div>
-    <div class="meta" id="sideMeta"></div>
-  </aside>
+  <div id="content">
+    <aside id="filterPanel">
+      <h3>👁 Show</h3>
+      <p class="hint">Toggle window groups. View-only — Save still writes every window.</p>
+      <div class="fbtns">
+        <button id="filterAll">All</button>
+        <button id="filterNone">None</button>
+      </div>
+      <div id="filterList"></div>
+    </aside>
+    <div id="stageWrap"><div id="stage"></div></div>
+    <aside id="side">
+      <h3 id="sideTitle">Window</h3>
+      <div class="row">
+        <div class="field"><label>X</label><input id="fX" type="number" /></div>
+        <div class="field"><label>Y</label><input id="fY" type="number" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Width</label><input id="fW" type="number" /></div>
+        <div class="field"><label>Height</label><input id="fH" type="number" /></div>
+      </div>
+      <div class="meta" id="sideMeta"></div>
+    </aside>
+  </div>
 <script>
   // ── State ────────────────────────────────────────────────────────────────
   // bundle: { file → contents } loaded from disk. We mutate per-window
