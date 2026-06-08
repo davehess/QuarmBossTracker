@@ -245,7 +245,8 @@
       var hasRem   = b.remaining_secs != null;
       var hasTotal = hasRem && b.total_secs;
       var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
-      var col = !hasRem ? '#6e7681' : (b.remaining_secs > 30 ? '#a371f7' : (b.remaining_secs > 10 ? '#f0883e' : '#f85149'));
+      // Buff = green, debuff (good===0) = red; unknown remaining = gray.
+      var col = (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
       // Right-side label: "cur/max · M:SS" when we know the full duration, else M:SS.
       var bt;
       if (hasTotal) bt = Math.max(0, Math.ceil(b.remaining_secs/6)) + '/' + Math.max(1, Math.round(b.total_secs/6)) + ' · ' + fmtSecs(b.remaining_secs);

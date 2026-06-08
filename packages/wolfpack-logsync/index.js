@@ -1691,13 +1691,19 @@ function recordPetBuffLanding(bcEvt) {
 // overlay. A landing's catalog duration gives the countdown (no-focus floor —
 // duration-extension focuses only make it last longer); a /pet-health-only buff
 // shows its name with no timer.
+// good_effect for a spell name (1 = buff, 0 = debuff, null = unknown / catalog
+// not yet enriched). Drives buff=green / debuff=red coloring in the overlays.
+function _spellGood(name) {
+  const e = _spellByNameLower.get(String(name || '').toLowerCase());
+  return (e && e.good != null) ? (Number(e.good) ? 1 : 0) : null;
+}
 function petBuffsForOwner(ownerLower) {
   if (!ownerLower) return [];
   const now = Date.now();
   const byName = new Map();
   const rep = _petHealthByOwner.get(ownerLower);
   if (rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS) {
-    for (const [k, b] of rep.buffs) byName.set(k, { name: b.name, remaining_secs: null, observed_at_ms: rep.last_seen_at });
+    for (const [k, b] of rep.buffs) byName.set(k, { name: b.name, remaining_secs: null, observed_at_ms: rep.last_seen_at, good: _spellGood(b.name) });
   }
   const lm = _petBuffLandings.get(ownerLower);
   if (lm) {
@@ -1708,7 +1714,7 @@ function petBuffsForOwner(ownerLower) {
       // total_secs lets the overlay draw a proportional countdown BAR (not just
       // a chip); remaining_secs is the live number on it.
       byName.set(k, { name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-        total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now });
+        total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now, good: _spellGood(b.name) });
     }
   }
   return Array.from(byName.values());
@@ -1756,7 +1762,7 @@ function targetBuffsFor(targetLower) {
     const rem = durSecs - (now - (b.landed_at || now)) / 1000;
     if (rem < -60) { mp.delete(k); continue; }
     out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at });
+      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at, good: _spellGood(b.name) });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -13957,6 +13963,7 @@ function _zealBuffsForName(nameLower) {
       total_secs: null,
       observed_at_ms: Date.now(),
       source: 'zeal',
+      good: _spellGood(b.name),
     }));
   }
   return null;
