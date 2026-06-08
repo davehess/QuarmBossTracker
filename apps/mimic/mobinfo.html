@@ -198,8 +198,10 @@
       setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
       setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
       setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      menu.insertBefore(setupAllBtn, setupBtn.nextSibling);
+      // Order: 'Setup ALL' on top, then 'Setup THIS' beneath it — Setup ALL is
+      // the more common case the user wants, so it's the default landing spot.
       menu.insertBefore(setupBtn, menu.firstChild);
+      menu.insertBefore(setupAllBtn, menu.firstChild);
       document.body.appendChild(menu);
       try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
       setTimeout(function(){
@@ -213,8 +215,9 @@
   window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
 
   var _overlayKey = null;
+  var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
-    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){
@@ -222,7 +225,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
@@ -230,27 +233,75 @@
   // Buffs on the current target. For our own characters these are live Zeal
   // buffs (real remaining time, no original duration → full bar). For mobs /
   // other players they're observed cast-landings (proportional bar).
-  function renderTargetBuffs(mi){
-    var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs : null;
-    if (!buffs || !buffs.length) return '';
+  // One buff/debuff row.
+  function _tbuffRow(b){
+    var hasRem   = b.remaining_secs != null;
+    var hasTotal = hasRem && b.total_secs;
+    var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
+    // Buff = green, debuff (good===0) = red; unknown remaining = gray.
+    var col = (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
+    // Right-side label: "cur/max · M:SS" when we know the full duration, else M:SS.
+    var bt;
+    if (hasTotal) bt = Math.max(0, Math.ceil(b.remaining_secs/6)) + '/' + Math.max(1, Math.round(b.total_secs/6)) + ' · ' + fmtSecs(b.remaining_secs);
+    else bt = hasRem ? fmtSecs(b.remaining_secs) : '?';
+    // Fell off in the last 5 min → solid purple rebuff cue.
+    if (b.fell_off) { col = '#a371f7'; pct = 100; bt = 'fell off'; }
+    return '<div class="tbuff" title="'+esc(b.name)+(b.fell_off?' · fell off (rebuff)':(hasRem?(' · '+fmtSecs(b.remaining_secs)+' left'):' · present'))+'">'
+         +    '<span class="bn">'+esc(b.name)+'</span>'
+         +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
+         +    '<span class="bt">'+bt+'</span>'
+         +  '</div>';
+  }
+  // Render a titled section for a buff list, sorted by time-left ascending
+  // (lowest at top; untimed sink to the bottom). Returns '' if the list is empty.
+  function _tbuffSection(hdr, list){
+    if (!list || !list.length) return '';
+    list.sort(function(a, b){
+      var ar = (a && a.remaining_secs != null) ? a.remaining_secs : Infinity;
+      var br = (b && b.remaining_secs != null) ? b.remaining_secs : Infinity;
+      return ar - br;
+    });
     var rows = '';
-    for (var i=0;i<buffs.length;i++){
-      var b = buffs[i]; if (!b || !b.name) continue;
-      var hasRem   = b.remaining_secs != null;
-      var hasTotal = hasRem && b.total_secs;
-      // Proportional when we know the original duration; otherwise a full bar
-      // (we know it's up + how long is left, just not the % elapsed).
-      var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
-      var col = !hasRem ? '#6e7681' : (b.remaining_secs > 30 ? '#a371f7' : (b.remaining_secs > 10 ? '#f0883e' : '#f85149'));
-      rows += '<div class="tbuff" title="'+esc(b.name)+(hasRem?(' · '+fmtSecs(b.remaining_secs)+' left'):' · present')+'">'
-           +    '<span class="bn">'+esc(b.name)+'</span>'
-           +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
-           +    '<span class="bt">'+(hasRem?fmtSecs(b.remaining_secs):'?')+'</span>'
+    for (var i=0;i<list.length;i++){ var b = list[i]; if (b && b.name) rows += _tbuffRow(b); }
+    if (!rows) return '';
+    return '<div class="tbuffs"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
+  }
+  function renderTargetBuffs(mi){
+    var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
+    if (!buffs || !buffs.length) return '';
+    // Split into Debuffs (good===0) and Buffs (everything else), debuffs first.
+    var debuffs = [], goods = [];
+    for (var i=0;i<buffs.length;i++){ var b = buffs[i]; if (!b || !b.name) continue; if (b.good === 0) debuffs.push(b); else goods.push(b); }
+    var suffix = (mi && mi.target_is_pc) ? '(live)' : '(observed)';
+    return _tbuffSection('debuffs '+suffix, debuffs) + _tbuffSection('buffs '+suffix, goods);
+  }
+  // Cross-client "Casting" section — who is casting what on this target, right
+  // now, with a live countdown. Fed by the bot's casting relay; only raiders
+  // running Mimic can be named (EQ hides others' spell/target).
+  function renderTargetCasting(mi){
+    var casts = (mi && Array.isArray(mi.target_casting)) ? mi.target_casting.slice() : null;
+    if (!casts || !casts.length) return '';
+    var now = Date.now();
+    var remOf = function(c){
+      if (c && c.ends_at_ms != null) return Math.max(0, (c.ends_at_ms - now) / 1000);
+      return (c && c.remaining_secs != null) ? c.remaining_secs : 0;
+    };
+    casts.sort(function(a,b){ return remOf(a) - remOf(b); });   // finishing soonest first
+    var rows = '';
+    for (var i=0;i<casts.length;i++){
+      var c = casts[i]; if (!c || !c.caster || !c.spell) continue;
+      var rem = remOf(c);
+      var tot = c.cast_secs || rem || 1;
+      var pct = Math.max(0, Math.min(100, (rem / tot) * 100));
+      var lbl = rem >= 0.1 ? rem.toFixed(1) + 's' : '✓';
+      rows += '<div class="tbuff" title="'+esc(c.caster+' casting '+c.spell)+'">'
+           +    '<span class="bn">'+esc(c.caster)+' · '+esc(c.spell)+'</span>'
+           +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:#58a6ff"></div></div>'
+           +    '<span class="bt">'+lbl+'</span>'
            +  '</div>';
     }
     if (!rows) return '';
-    var hdr = (mi && mi.target_is_pc) ? 'buffs (live)' : 'observed buffs';
-    return '<div class="tbuffs"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
+    return '<div class="tbuffs"><div class="hdr">casting</div>'+rows+'</div>';
   }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
@@ -417,31 +468,55 @@
       var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>';
       var spellsBlock = '';
       if (mob && Array.isArray(mob.spells) && mob.spells.length > 0){
-        // Compact GINA-style table: name (left) · mana · cast · recast.
-        // Recast is in ms but displayed in seconds for readability — Quarm
-        // recasts are typically 5-60s, so seconds give the right precision.
-        var rows = '';
-        for (var spi = 0; spi < mob.spells.length; spi++){
-          var sp = mob.spells[spi];
-          var name = esc(sp.name || ('Spell #' + sp.id));
-          var mana = (sp.mana != null) ? esc(String(sp.mana)) : '—';
-          var cast = (sp.cast_ms != null) ? (sp.cast_ms >= 1000 ? (sp.cast_ms/1000).toFixed(1)+'s' : sp.cast_ms+'ms') : '—';
-          var recast = (sp.recast_ms != null) ? (sp.recast_ms >= 1000 ? Math.round(sp.recast_ms/1000)+'s' : sp.recast_ms+'ms') : '—';
-          rows += '<div style="display:grid;grid-template-columns:1fr 36px 50px 50px;gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
-                +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + '</span>'
-                +   '<span style="color:#79c0ff;text-align:right;font-variant-numeric:tabular-nums">' + mana + '</span>'
-                +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + cast + '</span>'
-                +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + recast + '</span>'
-                + '</div>';
+        // Split offensive (good===0 or unknown) from buff (good===1). Buffs
+        // are always 'Unresist.' (you can't resist yourself); hide the column
+        // entirely there. Offensive keeps the column — 'Magic -200 lure' etc.
+        var RESIST_NAME = { 0:'—', 1:'Magic', 2:'Fire', 3:'Cold', 4:'Poison', 5:'Disease', 6:'Chromatic', 7:'Prismatic' };
+        function fmtResist(sp){
+          var t = (sp.resist_type == null) ? null : Number(sp.resist_type);
+          var d = (sp.resist_diff == null) ? null : Number(sp.resist_diff);
+          if (t == null || t === 0) return 'Unresist.';
+          var lbl = RESIST_NAME[t] || ('R'+t);
+          if (d != null && d !== 0) lbl += ' ' + (d < 0 ? d + ' lure' : '+' + d);
+          return lbl;
+        }
+        function fmtMana(v){   return (v != null) ? esc(String(v)) : '—'; }
+        function fmtCast(v){   return (v != null) ? (v >= 1000 ? (v/1000).toFixed(1)+'s' : v+'ms') : '—'; }
+        function fmtRecast(v){ return (v != null) ? (v >= 1000 ? Math.round(v/1000)+'s' : v+'ms') : '—'; }
+        // Render a sectioned table. withResist=false drops the Resist column
+        // and uses a wider name column.
+        function spellTable(label, list, withResist){
+          if (!list.length) return '';
+          var cols = withResist ? '1fr 80px 36px 50px 50px' : '1fr 36px 50px 50px';
+          var hdr = '<div style="display:grid;grid-template-columns:'+cols+';gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;padding:0 0 2px;border-bottom:1px solid rgba(110,118,129,0.12);margin-bottom:2px">'
+                  +   '<span>'+esc(label)+'</span>'
+                  +   (withResist ? '<span style="text-align:right">Resist</span>' : '')
+                  +   '<span style="text-align:right">Mana</span>'
+                  +   '<span style="text-align:right">Cast</span>'
+                  +   '<span style="text-align:right">Recast</span>'
+                  + '</div>';
+          var rows = '';
+          for (var spi = 0; spi < list.length; spi++){
+            var sp = list[spi];
+            var name = esc(sp.name || ('Spell #' + sp.id));
+            rows += '<div style="display:grid;grid-template-columns:'+cols+';gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
+                  +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + '</span>'
+                  +   (withResist ? '<span style="color:#f0b429;text-align:right;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(fmtResist(sp)) + '</span>' : '')
+                  +   '<span style="color:#79c0ff;text-align:right;font-variant-numeric:tabular-nums">' + fmtMana(sp.mana) + '</span>'
+                  +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + fmtCast(sp.cast_ms) + '</span>'
+                  +   '<span style="color:#9aa4ad;text-align:right;font-variant-numeric:tabular-nums">' + fmtRecast(sp.recast_ms) + '</span>'
+                  + '</div>';
+          }
+          return '<div style="margin-top:8px">'+hdr+rows+'</div>';
+        }
+        var offensive = [], buffs = [];
+        for (var spj = 0; spj < mob.spells.length; spj++) {
+          var sp2 = mob.spells[spj];
+          if (sp2 && sp2.good === 1) buffs.push(sp2); else offensive.push(sp2);
         }
         spellsBlock = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
-                    +   '<div style="display:grid;grid-template-columns:1fr 36px 50px 50px;gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;padding:0 0 2px;border-bottom:1px solid rgba(110,118,129,0.12);margin-bottom:2px">'
-                    +     '<span>Spell</span>'
-                    +     '<span style="text-align:right">Mana</span>'
-                    +     '<span style="text-align:right">Cast</span>'
-                    +     '<span style="text-align:right">Recast</span>'
-                    +   '</div>'
-                    +   rows
+                    + spellTable(offensive.length ? 'Offensive (' + offensive.length + ')' : 'Offensive', offensive, true)
+                    + spellTable(buffs.length     ? 'Buffs ('     + buffs.length     + ')' : 'Buffs',     buffs,     false)
                     + '</div>';
       } else {
         spellsBlock = '<div class="sub" style="margin-top:8px;color:#6e7681">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';
@@ -513,6 +588,7 @@
       + hpBar
       + manaBar
       + manaLine
+      + renderTargetCasting(mi)
       + renderTargetBuffs(mi)
       + tabBody
       + lastFight

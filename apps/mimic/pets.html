@@ -34,6 +34,16 @@
   .petbuff.crit .t{color:#f85149}
   .petbuff .t.q{color:#6e7681}
   .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
+  /* Buff bars (Mob Info style) — label "Name (cur/max · time)" with a
+     counting-down bar underneath, sorted by time-left ascending. */
+  .bufrows{margin-top:4px;display:flex;flex-direction:column;gap:3px}
+  .bufrows.stale{opacity:0.55}
+  .bufrows .src{font-size:9px;color:#6e7681}
+  .bufb .lbl{font-size:10px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bufb .lbl .nm{color:#7ee787}
+  .bufb .lbl .tk{color:#8b949e;font-variant-numeric:tabular-nums}
+  .bufb .bar{height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden;margin-top:1px}
+  .bufb .bar > div{height:100%;transition:width 250ms linear}
   /* Pet target — "→ Lord Nagafen 5s ago". Tiny one-liner under the HP bar. */
   .pettarget{font-size:10px;color:#9aa4ad;margin-top:3px;display:flex;
     align-items:baseline;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -154,8 +164,10 @@
       setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
       setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
       setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      menu.insertBefore(setupAllBtn, setupBtn.nextSibling);
+      // Order: 'Setup ALL' on top, then 'Setup THIS' beneath it — Setup ALL is
+      // the more common case the user wants, so it's the default landing spot.
       menu.insertBefore(setupBtn, menu.firstChild);
+      menu.insertBefore(setupAllBtn, menu.firstChild);
       document.body.appendChild(menu);
       try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
       setTimeout(function(){
@@ -170,8 +182,9 @@
 
   // Setup mode + opacity slider.
   var _overlayKey = null;
+  var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
-    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){
@@ -179,7 +192,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   // Mirror of web/lib/buffs.ts shortBuffName + charm.html — keep all three in
   // sync when a new buff surfaces.
@@ -247,48 +260,51 @@
     return '<div class="petstats">'+blocks+'</div>';
   }
   function renderBuffs(p){
-    var buffs = Array.isArray(p.buffs) ? p.buffs : null;
+    var buffs = Array.isArray(p.buffs) ? p.buffs.slice() : null;
     if (!buffs || !buffs.length) return '';
     var obs = p.observed_at || null;
     var staleMs = obs ? (Date.now() - obs) : null;
     var staleClass = (staleMs != null && staleMs > 5*60*1000) ? ' stale' : '';
-    var chips = '';
+    // Sort by time-left ascending (lowest at top); untimed buffs sink to the bottom.
+    buffs.sort(function(a, b){
+      var ar = (a && a.remaining_secs != null) ? a.remaining_secs : Infinity;
+      var br = (b && b.remaining_secs != null) ? b.remaining_secs : Infinity;
+      return ar - br;
+    });
+    var rows = '';
     for (var i=0;i<buffs.length;i++){
       var b = buffs[i]; if (!b || !b.name) continue;
-      // Per-buff observed timestamp: landing-timed buffs carry their own (fresh
-      // each poll); /pet-health-only names fall back to the report time.
       var bo = b.observed_at_ms || obs;
       var hasTimer = b.remaining_secs != null;
-      var tone = hasTimer ? buffTone(b.remaining_secs, bo) : '';
-      var t = hasTimer ? fmtRem(b.remaining_secs, bo) : '';
-      // No timer = seen in /pet health but we never witnessed it land. Fall
-      // back to a TICK-COUNT + UPTIME from the report's observed timestamp
-      // so the bar still tells the user how long this buff has been on
-      // their pet — better than a bare "?".
-      var tDisp;
-      if (hasTimer) {
-        tDisp = t;
+      var total = b.total_secs || null;
+      // Label: "Name (curTick/maxTick · M:SS)" when we know the full duration;
+      // "Name (M:SS)" when we only know remaining; "Name (?)" otherwise.
+      var tk = '';
+      if (hasTimer && total) {
+        var curT = Math.max(0, Math.ceil(b.remaining_secs / 6));
+        var maxT = Math.max(1, Math.round(total / 6));
+        tk = ' (' + curT + '/' + maxT + ' · ' + fmtRem(b.remaining_secs, bo) + ')';
+      } else if (hasTimer) {
+        tk = ' (' + fmtRem(b.remaining_secs, bo) + ')';
       } else if (bo) {
-        var upMs = Math.max(0, Date.now() - bo);
-        var upS  = Math.floor(upMs/1000);
-        var ticks = Math.floor(upS / 6);   // EQ tick = 6s
-        var mm = Math.floor(upS/60), ss = upS - mm*60;
-        tDisp = '~' + ticks + 't · ' + mm + ':' + String(ss).padStart(2,'0');
-      } else {
-        tDisp = '?';
-      }
-      var title = b.name + (hasTimer
-        ? ' · ' + t + ' left (timed from observed cast)'
-        : (bo ? ' · uptime estimate from first observation (duration unknown — landing not seen)'
-              : ' · present (no cast seen — duration unknown)'));
-      chips += '<span class="petbuff ' + (hasTimer ? tone : '') + '" title="' + esc(title) + '">'
-            +    '<span class="bn">' + esc(shortBuffName(b.name)) + '</span>'
-            +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + tDisp + '</span>'
-            +  '</span>';
+        var upS = Math.floor(Math.max(0, Date.now() - bo) / 1000);
+        tk = ' (~' + Math.floor(upS/6) + 't up)';
+      } else { tk = ' (?)'; }
+      var pct = (hasTimer && total) ? Math.max(0, Math.min(100, (b.remaining_secs / total) * 100)) : (hasTimer ? 100 : 0);
+      // Buff = green, debuff (good===0) = red; unknown timer = gray. The bar
+      // length + time text convey urgency, the color conveys buff vs debuff.
+      var col = (b.good === 0) ? '#f85149' : (!hasTimer ? '#6e7681' : '#56d364');
+      // Fell off in the last 5 min → solid purple rebuff cue.
+      if (b.fell_off) { col = '#a371f7'; pct = 100; tk = ' (fell off — rebuff)'; }
+      var title = b.name + (b.fell_off ? ' · fell off (rebuff)' : (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)'));
+      rows += '<div class="bufb" title="' + esc(title) + '">'
+           +    '<div class="lbl"><span class="nm">' + esc(shortBuffName(b.name)) + '</span><span class="tk">' + esc(tk) + '</span></div>'
+           +    '<div class="bar"><div style="width:' + pct.toFixed(0) + '%;background:' + col + '"></div></div>'
+           +  '</div>';
     }
-    if (!chips) return '';
+    if (!rows) return '';
     var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : 'observed casts';
-    return '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
+    return '<div class="bufrows' + staleClass + '">' + rows + '<div class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳ stale' : 'ⓘ timed from observed casts') + '</div></div>';
   }
   // Pet target — "Attacking X Master." captured from the command ack. TTL'd
   // server-side so a stale target doesn't render past PET_TARGET_TTL_MS.

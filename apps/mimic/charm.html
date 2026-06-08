@@ -60,6 +60,15 @@
   .buffrow.low .bt{color:#f0883e} .buffrow.crit .bt{color:#f85149}
   .buffrow .bbar{flex:1 1 60px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden}
   .buffrow .bbar > div{height:100%;background:#56d364;transition:width 200ms linear}
+  /* Mob-Info-style buff rows: "Name (cur/max · time)" label over a bar. */
+  .bufrows{margin-top:4px;display:flex;flex-direction:column;gap:3px}
+  .bufrows.stale{opacity:0.55}
+  .bufrows .src{font-size:9px;color:#6e7681}
+  .bufb .lbl{font-size:10px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bufb .lbl .nm{color:#7ee787}
+  .bufb .lbl .tk{color:#8b949e;font-variant-numeric:tabular-nums}
+  .bufb .bar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:1px}
+  .bufb .bar > div{height:100%;transition:width 250ms linear}
   /* /pet health buff chips — each pet buff with its remaining time from the
      last /pet health report. Same tone tiers as the web BuffChip: dim → low
      (orange ≤6m) → crit (red ≤2m). Stale (no fresh report in N min) is faded. */
@@ -182,8 +191,10 @@
       setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
       setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
       setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      menu.insertBefore(setupAllBtn, setupBtn.nextSibling);
+      // Order: 'Setup ALL' on top, then 'Setup THIS' beneath it — Setup ALL is
+      // the more common case the user wants, so it's the default landing spot.
       menu.insertBefore(setupBtn, menu.firstChild);
+      menu.insertBefore(setupAllBtn, menu.firstChild);
       document.body.appendChild(menu);
       try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
       setTimeout(function(){
@@ -198,8 +209,9 @@
 
   // Setup mode + opacity slider.
   var _overlayKey = null;
+  var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
-    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){
@@ -207,7 +219,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   // Recharm-warn threshold — user-supplied seconds-since-charm to beep at. We
   // deliberately DON'T guess the charm spell's max duration (that lives in
@@ -276,54 +288,61 @@
     return '';
   }
   function renderPetBuffs(p){
-    var buffs = Array.isArray(p.pet_buffs) ? p.pet_buffs : null;
+    var buffs = Array.isArray(p.pet_buffs) ? p.pet_buffs.slice() : null;
     if (!buffs || !buffs.length) return '';
     var obs = p.pet_health_observed_at || null;
-    // After 5 min from the last /pet health, the numbers are old enough to
-    // flag the row as stale — the buffs probably still exist, but the time
-    // remaining is more guess than fact.
     var staleMs = obs ? (Date.now() - obs) : null;
     var staleClass = (staleMs != null && staleMs > 5*60*1000) ? ' stale' : '';
-    // Timed buffs (we saw the cast land → know the duration) render as a
-    // countdown BAR under the charm bar. Untimed buffs (name only, from
-    // /pet health with no observed cast) stay as small chips below.
-    var bars = '', chips = '';
+    // Sort by time-left ascending (lowest at top); untimed sink to the bottom.
+    buffs.sort(function(a, b){
+      var ar = (a && a.remaining_secs != null) ? a.remaining_secs : Infinity;
+      var br = (b && b.remaining_secs != null) ? b.remaining_secs : Infinity;
+      return ar - br;
+    });
+    var rows = '';
     for (var i=0;i<buffs.length;i++){
       var b = buffs[i]; if (!b || !b.name) continue;
       var bo = b.observed_at_ms || obs;
       var hasTimer = b.remaining_secs != null;
-      if (hasTimer && b.total_secs) {
-        var tone = buffTone(b.remaining_secs, bo);
-        var pct  = Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100));
-        var col  = b.remaining_secs > 30 ? '#56d364' : (b.remaining_secs > 12 ? '#f0883e' : '#f85149');
-        bars += '<div class="buffrow ' + tone + '" title="' + esc(b.name + ' · ' + fmtRem(b.remaining_secs, bo) + ' left (timed from the cast that landed)') + '">'
-             +    '<span class="bn">' + esc(shortBuffName(b.name)) + '</span>'
-             +    '<div class="bbar"><div style="width:' + pct.toFixed(1) + '%;background:' + col + '"></div></div>'
-             +    '<span class="bt">' + fmtRem(b.remaining_secs, bo) + '</span>'
-             +  '</div>';
-      } else {
-        var t2 = hasTimer ? fmtRem(b.remaining_secs, bo) : '?';
-        var tone2 = hasTimer ? buffTone(b.remaining_secs, bo) : '';
-        var title = b.name + (hasTimer ? ' · ' + t2 + ' left' : ' · present (no cast seen — duration unknown)');
-        chips += '<span class="petbuff ' + tone2 + '" title="' + esc(title) + '">'
-              +    '<span class="nm">' + esc(shortBuffName(b.name)) + '</span>'
-              +    '<span class="t' + (hasTimer ? '' : ' q') + '">' + t2 + '</span>'
-              +  '</span>';
-      }
+      var total = b.total_secs || null;
+      // "Name (curTick/maxTick · M:SS)" — same as the Pet tracker + Mob Info.
+      var tk = '';
+      if (hasTimer && total) {
+        var curT = Math.max(0, Math.ceil(b.remaining_secs / 6));
+        var maxT = Math.max(1, Math.round(total / 6));
+        tk = ' (' + curT + '/' + maxT + ' · ' + fmtRem(b.remaining_secs, bo) + ')';
+      } else if (hasTimer) {
+        tk = ' (' + fmtRem(b.remaining_secs, bo) + ')';
+      } else { tk = ' (?)'; }
+      var pct = (hasTimer && total) ? Math.max(0, Math.min(100, (b.remaining_secs / total) * 100)) : (hasTimer ? 100 : 0);
+      // Buff = green, debuff (good===0) = red; unknown timer = gray.
+      var col = (b.good === 0) ? '#f85149' : (!hasTimer ? '#6e7681' : '#56d364');
+      // Fell off in the last 5 min → solid purple rebuff cue.
+      if (b.fell_off) { col = '#a371f7'; pct = 100; tk = ' (fell off — rebuff)'; }
+      var title = b.name + (b.fell_off ? ' · fell off (rebuff)' : (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)'));
+      rows += '<div class="bufb" title="' + esc(title) + '">'
+           +    '<div class="lbl"><span class="nm">' + esc(shortBuffName(b.name)) + '</span><span class="tk">' + esc(tk) + '</span></div>'
+           +    '<div class="bar"><div style="width:' + pct.toFixed(0) + '%;background:' + col + '"></div></div>'
+           +  '</div>';
     }
-    var out = '';
-    if (bars)  out += '<div class="buffbars">' + bars + '</div>';
-    if (chips) {
-      var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : '/pet health';
-      out += '<div class="petbuffs' + staleClass + '">' + chips + '<span class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳' : 'ⓘ') + '</span></div>';
-    }
-    return out;
+    if (!rows) return '';
+    var srcLabel = obs ? '/pet health ' + Math.round((Date.now()-obs)/1000) + 's ago' : 'observed casts';
+    return '<div class="bufrows' + staleClass + '">' + rows + '<div class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳ stale' : 'ⓘ') + '</div></div>';
   }
 
   // Per-charm session memory: key → { started_at, warned }. Re-armed when a
   // pet's started_at changes (re-charm = new session). Used to fire the warn
   // once and to detect breaks (was active, now gone/broken).
   var prevActive = new Map();
+  // key → setTimeout handle; entries while a recharm callout is scheduled but
+  // not yet spoken. Suppresses a speech if the pet's tracker entry vanishes in
+  // the defer window (intentional kill of an already-broken pet).
+  var pendingRecharm = new Map();
+  // Snapshot of the tracker key set from the most recent poll — read by
+  // deferred recharm timers so they see the latest data, not the stale set
+  // from the poll that scheduled them.
+  var _trackedKeysSnapshot = new Set();
+  function trackedKeysNow(){ return _trackedKeysSnapshot; }
   var listEl = document.getElementById('list');
   var emptyEl = document.getElementById('empty');
 
@@ -353,16 +372,35 @@
         return p.broke_at && (now - p.broke_at) < LINGER_MS;
       });
 
-      // Recharm alert fires the INSTANT a pet stops being charmed — independent
-      // of the linger above. Track charmed keys; a key that was charmed last poll
-      // and isn't now → speak once.
+      // Recharm alert fires when a pet stops being charmed — but DEFERRED 3.5s
+      // so a charm-cycler who promptly kills the now-broken mob doesn't get a
+      // false-alarm "recharm pet" call: if the pet vanishes from the tracker
+      // within the defer window (death detection's killer-guard removes it on
+      // a player kill) we cancel the pending speech. Unexpected breaks still
+      // fire after the window.
       var charmedKeys = new Set(pets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
+      // Currently-tracked keys (active OR lingering broken) — used to decide
+      // whether a pending recharm got "intentionally killed" (vanishes from
+      // tracker entirely) vs just broke (still in tracker as broken).
+      var trackedKeys = new Set((s.charmPets || []).map(function(p){ return p && p.key; }).filter(Boolean));
       for (const [key, mem] of prevActive) {
-        if (!charmedKeys.has(key)) {
-          speak('recharm pet');
+        if (!charmedKeys.has(key) && !pendingRecharm.has(key)) {
+          // Defer speech; if the pet's tracker entry disappears in this window
+          // (i.e. the charmer killed it intentionally), we cancel.
+          var t = setTimeout(function(){
+            // If the pet is GONE from the tracker by now → intentional kill,
+            // stay silent. Otherwise → real unexpected break, speak.
+            if (trackedKeysNow().has(key)) speak('recharm pet');
+            pendingRecharm.delete(key);
+          }, 3500);
+          pendingRecharm.set(key, t);
           prevActive.delete(key);
         }
       }
+      // Snapshot for any pending recharm timers that fire after this poll —
+      // they consult trackedKeysNow() (the LATEST poll's tracker), not the
+      // stale set from this iteration.
+      _trackedKeysSnapshot = trackedKeys;
 
       var html = '';
       var anyImminent = false;
@@ -415,6 +453,15 @@
             mem.durWarned = true; warnHit = true;
             speak(isBard ? 'charm breaking' : 'charm breaking in 30 seconds');
           }
+          // Bard-only "recharm NOW" — fires when ≤ 3.1s remain in the current
+          // charm. Selo's Consonant Chain (the canonical Quarm bard charm song)
+          // casts in ~3s, so 3.1s left is exactly the "start the recast now or
+          // miss the cycle" mark. Strictly bard-class (not durEst guess) so an
+          // enchanter on an estimated duration doesn't get a mistimed alert.
+          if (p.charm_class === 'bard' && !durEst && !p.is_dire_charm && !mem.recharmNowWarned && durRemMs <= 3100 && durRemMs > 0) {
+            mem.recharmNowWarned = true; warnHit = true;
+            speak('recharm now');
+          }
         }
 
         var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (broke ? ' broke' : '') + (warnHit ? ' warn' : '') + (imminent ? ' imminent' : '');
@@ -448,7 +495,7 @@
           + '<button class="dismiss" data-dismiss="' + esc(p.key || '') + '" title="Dismiss — remove this pet from the tracker">&times;</button>'
           + '<div class="head"><span class="pet">' + esc(p.pet || '?') + badge + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
-          + '<div class="meta">tick ' + ticks + '/' + maxTicks + (durEst ? '~' : '') + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · <span class="up' + (elapsed >= RECHARM_RED_AT_MS ? ' danger' : '') + '">up ' + fmtElapsed(elapsed) + '</span>' + durStr + hpStr + warnLine + '</div>'
+          + '<div class="meta">tick ' + Math.min(ticks, maxTicks) + '/' + maxTicks + (durEst ? '~' : '') + ' · next mob tick ' + (remTick/1000).toFixed(1) + 's · <span class="up' + (elapsed >= RECHARM_RED_AT_MS ? ' danger' : '') + '">up ' + fmtElapsed(elapsed) + '</span>' + durStr + hpStr + warnLine + '</div>'
           + hpBar
           + '<div class="tickbar"><div style="width:' + tickPct.toFixed(0) + '%"></div></div>'
           + durBar

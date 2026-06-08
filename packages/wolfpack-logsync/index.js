@@ -1023,6 +1023,10 @@ function parseEvent(line, ts) {
   // "Storm Warden" / "Master Wizard" parse correctly and ranks are dropped.
   m = line.match(/\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:(\d+)\s+([^\]\(]+?)(?:\s*\([^)]+\))?|(ANONYMOUS)|(GM))\s*\]\s+(\w+)(?:\s+\(([^)]+)\))?(?:\s+<([^>]+)>)?/i);
   if (m) {
+    // `/who all` appends the player's current zone SHORT name after the guild:
+    //   "[60 Storm Warden] Alice (Wood Elf) <Wolf Pack> ZONE: oasis"
+    // A plain in-zone `/who` has no ZONE clause, so this is null there.
+    const zm = line.match(/\bZONE:\s*([A-Za-z0-9_'-]+)/i);
     return {
       ts:        tsIso,
       type:      'who',
@@ -1033,6 +1037,7 @@ function parseEvent(line, ts) {
       gm:        !!m[4],
       race:      m[6] || null,
       guild:     m[7] || null,
+      zone:      zm ? zm[1].toLowerCase() : null,
     };
   }
 
@@ -1061,7 +1066,7 @@ function characterFromFilename(filepath) {
 
 // Module-level /who observation buffer. Lives for the agent's process lifetime
 // so /who output captured between encounters still ships with the next upload.
-const whoData = new Map(); // lowercaseName → { name, class, level, race, guild, anonymous, gm, observedAt }
+const whoData = new Map(); // lowercaseName → { name, class, level, race, guild, anonymous, gm, zone, observedAt }
 
 // Names confirmed to be players (not NPCs). Built from multiple positive
 // sources — once a name lands here, all downstream player-only trackers
@@ -1142,16 +1147,15 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     // The overlay fires the recharm alert immediately on this transition, then
     // keeps showing the pet until it dies or PET_LINGER_MS passes.
     broke_at: eventKind === 'break' ? ts : null,
-    // started_at anchors elapsed/duration in the charm overlay. Set on land;
-    // carried forward on break so the closed entry still reports how long the
-    // charm lasted.
-    // Keep the original land time while the charm stays active, so a second
-    // 'land' for the SAME session (e.g. gauge land then the later "…Master" log
-    // ack) doesn't reset the duration/tick bars. A re-charm after a break
-    // (prev.is_active=false) starts a fresh clock.
-    started_at: eventKind === 'land'
-      ? ((prev && prev.is_active) ? prev.started_at : ts)
-      : (prev ? prev.started_at : ts),
+    // started_at anchors elapsed/duration in the charm overlay. Always reset
+    // on land — every land event reaching _bumpCharmTick is a real cast (the
+    // caller already filters duplicate pet-acks; see the source:'charm_land'
+    // handler in the encounter builder, which only calls _bumpCharmTick again
+    // when _pendingCharmSpell was consumed by the cast). Preserving across a
+    // re-cast made bards cycling on the same mob see 'up 3:15 · tick 32/10'
+    // instead of resetting to 0:00 each cycle. On break, preserve so the
+    // closed entry still reports how long the LAST charm lasted.
+    started_at: eventKind === 'land' ? ts : (prev ? prev.started_at : ts),
     // Dire Charm (AA) is permanent until a resist break — the overlay shows
     // no duration countdown for it, only the break alarm. Regular charm is
     // timed. Sticky across the session for this pet.
@@ -1240,6 +1244,10 @@ function _reconcileGaugeCharms() {
       // Already active — clear any stale pending entry so a re-charm after
       // a break still requires its own two-frame debounce.
       _pendingGaugeCharms.get(ownerLower)?.delete(k);
+      // Refresh last_tick_at as a "still alive" signal from the gauge — keeps
+      // the break detector below from firing during a long gap between actual
+      // 6s mob ticks (e.g. between encounters).
+      cur.last_tick_at = now;
     }
   }
   // Drop pending entries whose pet is no longer in slot 16 (transient pulse).
@@ -1255,7 +1263,13 @@ function _reconcileGaugeCharms() {
     const ol = String(info.owner).toLowerCase();
     if (!gaugeOwners.has(ol)) continue;                       // bystander → log-managed
     const set = gaugePets.get(ol);
-    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 3000) {
+    // Grace 10s: an enchanter re-charming the SAME pet removes it from slot
+    // 16 for the duration of the charm spell (3.5-4s) plus reconciler lag —
+    // the previous 3s threshold fired a false 'break' during normal cycling,
+    // which made the overlay speak 'recharm pet' even though the same mob got
+    // re-charmed seconds later. 10s easily covers a normal re-cast while a
+    // real break (gauge never returns) still fires promptly.
+    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 10000) {
       _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break (alert fires now)
     }
   }
@@ -1395,17 +1409,34 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
 // dies or 5 minutes pass"). Charm pets keep their mob name, so a slain line
 // names them: "You have slain a fungoid sporeling!" / "A fungoid sporeling has
 // been slain by Xxch." Returns true if a tracked pet was removed.
-const _PET_SLAIN_RX = /\bhas been slain\b|\bYou have slain\b/i;
-function checkCharmPetDeath(line) {
-  if (!line || !_PET_SLAIN_RX.test(line)) return false;
-  const low = line.toLowerCase();
-  for (const [k, info] of _charmTickTracker) {
-    // Match the pet's name appearing in the slain line. Pet names are mob names
-    // ("a fungoid sporeling") so a substring check on the lowercased line is
-    // safe and catches both "You have slain <pet>" and "<pet> has been slain".
-    if (k && low.includes(k)) { _charmTickTracker.delete(k); return true; }
+//
+// EXACT NAME MATCH (not substring): two same-named NPCs in zone (e.g. "An
+// Enthralled Razorfiend" in Sebilis — multiples coexist) used to false-positive
+// because the slain line for the OTHER mob contained the pet name as a
+// substring, removing the still-charmed pet from the tracker. Now we capture
+// the slain name + killer explicitly.
+//
+// KILLER GUARD: we don't kill our own charmed pet — they're friendly to us. If
+// the killer is a watched character / known player, the slain mob is a
+// DIFFERENT same-named NPC, NOT our pet. (If charm had actually broken first,
+// the charm_break event would have removed the pet BEFORE we got here.)
+const _SLAIN_BY_RX  = /\]\s+(.+?)\s+has been slain by\s+(.+?)\.?\s*$/i;
+const _SLAIN_YOU_RX = /\]\s+You have slain\s+(.+?)\.?\s*$/i;
+function checkCharmPetDeath(line, character) {
+  if (!line) return false;
+  let slainName = null, killerName = null;
+  let m = line.match(_SLAIN_BY_RX);
+  if (m) { slainName = m[1].trim(); killerName = m[2].trim(); }
+  else {
+    m = line.match(_SLAIN_YOU_RX);
+    if (m) { slainName = m[1].trim(); killerName = character || 'you'; }
   }
-  return false;
+  if (!slainName) return false;
+  const slainKey = slainName.toLowerCase();
+  if (!_charmTickTracker.has(slainKey)) return false;
+  if (killerName && isConfirmedPlayer(killerName)) return false;
+  _charmTickTracker.delete(slainKey);
+  return true;
 }
 
 // ── /pet health report state (Quarm format) ─────────────────────────────────
@@ -1524,6 +1555,9 @@ function _savePetStateSoon() {
           last_seen_at: v.last_seen_at,
         }]),
         petBuffLandings: [..._petBuffLandings.entries()].map(([k, v]) => [k, [...v.entries()]]),
+        // Mob Info target buffs (any mob/PC we've timed a land on) — same shape
+        // as petBuffLandings so the Mob Info overlay survives a restart too.
+        buffLandingsByTarget: [..._buffLandingsByTarget.entries()].map(([k, v]) => [k, [...v.entries()]]),
         petStatsByOwner: [..._petStatsByOwner.entries()],
       };
       const out = JSON.stringify(data);
@@ -1554,19 +1588,34 @@ function _loadPetStateFromDisk() {
       for (const [k, arr] of raw.petBuffLandings) {
         const mp = new Map();
         for (const [bk, bv] of (arr || [])) {
-          // Drop landings whose catalog duration has fully elapsed + a 60s grace.
+          // Drop landings past their duration + the 5-min fell-off linger, so a
+          // just-expired buff still shows its purple rebuff cue after a restart.
           const durSecs = (Number(bv.dur_ticks) || 0) * 6;
-          if (durSecs > 0 && (now - (bv.landed_at || 0)) > (durSecs + 60) * 1000) continue;
+          if (durSecs > 0 && (now - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
           mp.set(bk, bv);
         }
         if (mp.size) _petBuffLandings.set(k, mp);
+      }
+    }
+    if (Array.isArray(raw.buffLandingsByTarget)) {
+      for (const [k, arr] of raw.buffLandingsByTarget) {
+        const mp = new Map();
+        for (const [bk, bv] of (arr || [])) {
+          // Same prune as pet landings: duration + the 5-min fell-off linger, so
+          // Mob Info keeps the purple rebuff cue across a restart but never shows
+          // a stale countdown beyond that.
+          const durSecs = (Number(bv.dur_ticks) || 0) * 6;
+          if (durSecs > 0 && (now - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
+          mp.set(bk, bv);
+        }
+        if (mp.size) _buffLandingsByTarget.set(k, mp);
       }
     }
     if (Array.isArray(raw.petStatsByOwner)) {
       // Stats keep indefinitely (running performance picture across sessions).
       for (const [k, v] of raw.petStatsByOwner) _petStatsByOwner.set(k, v);
     }
-    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} landings · ${_petStatsByOwner.size} stats`);
+    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} pet landings · ${_buffLandingsByTarget.size} target landings · ${_petStatsByOwner.size} stats`);
   } catch (err) { console.warn('[pet-state] load failed:', err && err.message); }
 }
 const PET_HEALTH_TTL_MS = 30 * 60 * 1000;
@@ -1636,6 +1685,18 @@ function _petOwnerByName(petLower) {
 // dominates anyway, and an unknown level falls back to the cap (= spell max,
 // the accepted fallback). Capping means any formula we get slightly wrong
 // degrades to "max", never to an over-long timer beyond the spell's own cap.
+// Assumed caster level for duration estimates when the real caster level is
+// unknown (raider-cast debuffs especially). PoP era (unlocks 2026-10-01) raises
+// the cap to 65; before that the cap is 60. Gives a realistic FLOOR duration via
+// the spell formula instead of falling back to the spell's absolute max.
+const _POP_UNLOCK_MS = Date.parse('2026-10-01T00:00:00Z');
+function _assumedCasterLevel() {
+  return (Date.now() >= _POP_UNLOCK_MS) ? 65 : 60;
+}
+// After a tracked buff/debuff falls off (timer expired OR an explicit "worn off"
+// line), keep showing it this long with a purple "fell off" highlight as a
+// rebuff cue, then drop it. Applies to the Pet tracker + Mob Info overlays.
+const FELL_OFF_LINGER_MS = 5 * 60 * 1000;
 function _durTicksForLevel(formula, capTicks, level) {
   const cap = Number(capTicks) || 0;
   const lvl = Number(level) || 0;
@@ -1677,7 +1738,19 @@ function recordPetBuffLanding(bcEvt) {
   if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
   const ownerLevel = (whoData.get(owner) || {}).level || null;
   const durTicks   = _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, ownerLevel);
-  mp.set(String(bcEvt.spell_name).toLowerCase(), {
+  const newKey     = String(bcEvt.spell_name).toLowerCase();
+  // Slot-based overwrite — if the new buff has a known category (haste / hp /
+  // runSpeed / etc.) drop any existing entry in the same category, including
+  // its 'fell off' linger. Mirrors EQ's slot-replacement rule: e.g. Spirit of
+  // Wolf overwrites Journeyman's Boots (both runSpeed). Skip if uncategorized.
+  const newCat = _categorizeBuff(bcEvt.spell_name);
+  if (newCat) {
+    for (const [k, b] of mp) {
+      if (k === newKey) continue;
+      if (_categorizeBuff(b && b.name) === newCat) mp.delete(k);
+    }
+  }
+  mp.set(newKey, {
     name: bcEvt.spell_name,
     dur_ticks: durTicks,
     dur_formula: bcEvt.dur_formula,
@@ -1691,24 +1764,71 @@ function recordPetBuffLanding(bcEvt) {
 // overlay. A landing's catalog duration gives the countdown (no-focus floor —
 // duration-extension focuses only make it last longer); a /pet-health-only buff
 // shows its name with no timer.
+// good_effect for a spell name (1 = buff, 0 = debuff, null = unknown / catalog
+// not yet enriched). Drives buff=green / debuff=red coloring in the overlays.
+function _spellGood(name) {
+  const e = _spellByNameLower.get(String(name || '').toLowerCase());
+  return (e && e.good != null) ? (Number(e.good) ? 1 : 0) : null;
+}
+// Minimal buff categorizer — KEEP IN SYNC with utils/raidBuffs.js and
+// web/lib/buffs.ts. Used by the agent for slot-based overwrite: a new buff
+// landing in the same category as an existing one means the previous slot
+// occupant is replaced (e.g. Spirit of Wolf overwrites Journeyman's Boots,
+// both runSpeed). Also distinguishes HoTs (regen) from long-duration buffs
+// so HoTs don't get the 5-min 'fell off' linger.
+const _BUFF_KEYWORDS = {
+  hp:        ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroic bond','virtue','health','center','fortitude'],
+  regen:     ['regrowth','regenerat','chloroplast','replenish','pack regen','celestial health','celestial healing','celestial elixir'],
+  mana:      ['brilliance','iridescence','gift of brilliance'],
+  manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
+  haste:     ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
+  runSpeed:  ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
+  attack:    ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
+  ds:        ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
+};
+const _BUFF_CAT_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds'];
+function _categorizeBuff(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return null;
+  for (const cat of _BUFF_CAT_ORDER) {
+    for (const k of _BUFF_KEYWORDS[cat]) if (n.includes(k)) return cat;
+  }
+  return null;
+}
+// True if the buff is a heal-over-time / regen buff — these get NO 5-min
+// linger when they expire (per user feedback: 'Heals over time should fall
+// off within a tick'). Other expired buffs still linger as a rebuff cue.
+function _isHotBuff(name) { return _categorizeBuff(name) === 'regen'; }
 function petBuffsForOwner(ownerLower) {
   if (!ownerLower) return [];
   const now = Date.now();
   const byName = new Map();
   const rep = _petHealthByOwner.get(ownerLower);
   if (rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS) {
-    for (const [k, b] of rep.buffs) byName.set(k, { name: b.name, remaining_secs: null, observed_at_ms: rep.last_seen_at });
+    for (const [k, b] of rep.buffs) byName.set(k, { name: b.name, remaining_secs: null, observed_at_ms: rep.last_seen_at, good: _spellGood(b.name) });
   }
   const lm = _petBuffLandings.get(ownerLower);
   if (lm) {
     for (const [k, b] of lm) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
-      const rem = durSecs - (now - (b.landed_at || now)) / 1000;
-      if (rem < -60) continue;                              // long expired → drop
+      let rem = durSecs - (now - (b.landed_at || now)) / 1000;
+      let fellOff = false;
+      // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
+      // the 5-min rebuff cue. HoTs are short and re-applied frequently — a
+      // long-lingering 'fell off' is noise, not signal.
+      const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
+      if (b.worn_off_at) {                                   // explicit "worn off"
+        if (now - b.worn_off_at > lingerMs) { lm.delete(k); continue; }
+        fellOff = true; rem = 0;
+      } else if (rem <= 0) {                                 // natural expiry
+        if (rem < -(lingerMs / 1000)) { lm.delete(k); continue; }
+        fellOff = true; rem = 0;
+      }
       // total_secs lets the overlay draw a proportional countdown BAR (not just
-      // a chip); remaining_secs is the live number on it.
+      // a chip); remaining_secs is the live number on it. fell_off drives the
+      // 5-min purple rebuff cue.
       byName.set(k, { name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-        total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now });
+        total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now, good: _spellGood(b.name), fell_off: fellOff });
     }
   }
   return Array.from(byName.values());
@@ -1727,12 +1847,36 @@ function recordTargetBuffLanding(bcEvt) {
   const k = String(bcEvt.target).toLowerCase();
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
-  // Best-effort caster level: our pet → the pet's owner cast it; otherwise
-  // assume a self-buff and use the target's own observed level. Unknown → cap.
-  const petOwner = _petOwnerByName(k);
-  const lvl = petOwner ? ((whoData.get(petOwner) || {}).level || null)
-                       : ((whoData.get(k) || {}).level || null);
-  mp.set(String(bcEvt.spell_name).toLowerCase(), {
+  // Best-effort caster level for the duration estimate:
+  //   • DEBUFF (good===0) on a target — cast by a raider whose level we don't
+  //     track at land time. Assume the era level cap (_assumedCasterLevel:
+  //     60 now, 65 once PoP unlocks) so we show a realistic FLOOR duration
+  //     instead of the spell's absolute max.
+  //   • BUFF — our pet → the owner cast it; else a self-buff → the target's own
+  //     observed level. Fall back to the assumed cap when we have no level.
+  const good = _spellGood(bcEvt.spell_name);
+  let lvl;
+  if (good === 0) {
+    lvl = _assumedCasterLevel();
+  } else {
+    const petOwner = _petOwnerByName(k);
+    lvl = petOwner ? ((whoData.get(petOwner) || {}).level || null)
+                   : ((whoData.get(k) || {}).level || null);
+    if (!lvl) lvl = _assumedCasterLevel();
+  }
+  const newKey = String(bcEvt.spell_name).toLowerCase();
+  // Slot-based overwrite (same logic as recordPetBuffLanding) — a new buff in
+  // a known category drops the previous slot occupant, including its 'fell
+  // off' linger. EQ's slot rule: e.g. Spirit of Wolf lands → Journeyman's
+  // Boots gone. Uncategorized buffs leave existing entries alone.
+  const newCat = _categorizeBuff(bcEvt.spell_name);
+  if (newCat) {
+    for (const [k2, b] of mp) {
+      if (k2 === newKey) continue;
+      if (_categorizeBuff(b && b.name) === newCat) mp.delete(k2);
+    }
+  }
+  mp.set(newKey, {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
@@ -1742,6 +1886,9 @@ function recordTargetBuffLanding(bcEvt) {
     const oldest = _buffLandingsByTarget.keys().next().value;
     if (oldest && oldest !== k) _buffLandingsByTarget.delete(oldest);
   }
+  // Persist so Mob Info target buffs survive an agent/Mimic restart (same disk
+  // file as the pet state, debounced).
+  _savePetStateSoon();
 }
 // Live observed buffs for a target → [{ name, remaining_secs, total_secs }],
 // pruning expired. Drives the Mob Info overlay's buff list.
@@ -1753,10 +1900,20 @@ function targetBuffsFor(targetLower) {
   const out = [];
   for (const [k, b] of mp) {
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
-    const rem = durSecs - (now - (b.landed_at || now)) / 1000;
-    if (rem < -60) { mp.delete(k); continue; }
+    let rem = durSecs - (now - (b.landed_at || now)) / 1000;
+    let fellOff = false;
+    // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
+    // the 5-min rebuff cue. Same rationale as petBuffsForOwner above.
+    const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
+    if (b.worn_off_at) {                                     // explicit "worn off"
+      if (now - b.worn_off_at > lingerMs) { mp.delete(k); continue; }
+      fellOff = true; rem = 0;
+    } else if (rem <= 0) {                                   // natural expiry
+      if (rem < -(lingerMs / 1000)) { mp.delete(k); continue; }
+      fellOff = true; rem = 0;
+    }
     out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at });
+      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at, good: _spellGood(b.name), fell_off: fellOff });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -1798,6 +1955,33 @@ function noteSelfCast(line, character) {
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
   if (arr.length > 8) arr.splice(0, arr.length - 8);
+}
+// Cross-client casting relay: when WE begin a cast with a target, tell the bot
+// so anyone with that target up sees it in Mob Info's "Casting" section. Only
+// our own casts are nameable (EQ hides others' spell/target), so coverage scales
+// with Mimic adoption. LIVE path only (never backfill — stale casts are useless).
+const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
+const _lastCastRelay = new Map();   // charLower → { sig, at }
+function relaySelfCastForCasting(line, character) {
+  if (!line || !character) return;
+  const m = line.match(_CAST_BEGIN_RX);
+  if (!m) return;
+  const cl = String(character).toLowerCase();
+  const target = _zealTargetForChar(cl);
+  if (!target) return;                       // can't attribute without a target
+  const spell = m[1].trim();
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // Dedup a duplicated log line for the same cast within 2s.
+  const sig = cl + '|' + spell.toLowerCase() + '|' + String(target).toLowerCase();
+  const prev = _lastCastRelay.get(cl);
+  if (prev && prev.sig === sig && (atMs - prev.at) < 2000) return;
+  _lastCastRelay.set(cl, { sig, at: atMs });
+  enqueueUpload('casting', { agent_version: AGENT_VERSION, casts: [{
+    caster: character, spell, target,
+    started_at: new Date(atMs).toISOString(),
+    cast_secs: _spellCastSecs(spell),
+  }] });
 }
 // If the observer recently cast a spell whose catalog cast_on_other matches
 // THIS landing line, return an authoritative buff-cast event for it (correct
@@ -1865,16 +2049,47 @@ function notePetBuffWornOff(line, character) {
   if (!m) return;
   const spellLower = m[1].trim().toLowerCase();
   const owner = String(character).toLowerCase();
+  const wornAt = Date.now();
+  // Mark the timed landing as worn-off (not delete) so it lingers 5 min with the
+  // purple "fell off" cue. The presence-only /pet-health entry has no countdown,
+  // so just drop it — the timed landing carries the linger.
   const lm = _petBuffLandings.get(owner);
-  if (lm) { lm.delete(spellLower); if (lm.size === 0) _petBuffLandings.delete(owner); }
+  if (lm && lm.has(spellLower)) lm.get(spellLower).worn_off_at = wornAt;
   const rep = _petHealthByOwner.get(owner);
   if (rep && rep.buffs) rep.buffs.delete(spellLower);
   const petName = _petNameForOwner(owner);
   if (petName) {
     const tm = _buffLandingsByTarget.get(petName.toLowerCase());
-    if (tm) { tm.delete(spellLower); if (tm.size === 0) _buffLandingsByTarget.delete(petName.toLowerCase()); }
+    if (tm && tm.has(spellLower)) tm.get(spellLower).worn_off_at = wornAt;
   }
   _savePetStateSoon();
+}
+
+// Server-wide PvP earthquake announcement → the next-quake time. EQ logs, e.g.:
+//   "The next earthquake will begin in 8 Days, 12 Hours, 23 Minutes, and 30 Seconds."
+// Any of Days/Hours/Minutes/Seconds may be absent. Returns
+// { next_quake_at, detected_at, source_text } or null.
+const _EARTHQUAKE_RX = /the next earthquake will begin in\s+(.+?)\.?\s*$/i;
+let _lastQuakeSig = null;
+function parseEarthquake(line) {
+  if (!line || line.toLowerCase().indexOf('earthquake') === -1) return null;
+  const m = line.match(_EARTHQUAKE_RX);
+  if (!m) return null;
+  const spec = m[1];
+  const num = (rx) => { const mm = spec.match(rx); return mm ? parseInt(mm[1], 10) : 0; };
+  const d  = num(/(\d+)\s+days?/i);
+  const h  = num(/(\d+)\s+hours?/i);
+  const mi = num(/(\d+)\s+minutes?/i);
+  const s  = num(/(\d+)\s+seconds?/i);
+  const totalSecs = d * 86400 + h * 3600 + mi * 60 + s;
+  if (totalSecs <= 0) return null;
+  const ts = parseEqTimestamp(line);
+  const baseMs = ts ? ts.getTime() : Date.now();
+  return {
+    next_quake_at: new Date(baseMs + totalSecs * 1000).toISOString(),
+    detected_at:   new Date(baseMs).toISOString(),
+    source_text:   line.replace(/^\[.+?\]\s+/, '').slice(0, 200),
+  };
 }
 
 // Long-term who_data registry filter — anonymous rows + level 50+. The
@@ -1910,6 +2125,9 @@ function recordWhoEvent(ev) {
     guildRank: old.guildRank || null,   // /who never carries rank — preserve any /guildstatus value
     anonymous: !!ev.anonymous,
     gm:        !!ev.gm || !!old.gm,
+    // Zone only comes from `/who all`; a plain in-zone /who has none, so keep
+    // the last known zone rather than clobbering it with null.
+    zone:      ev.zone || old.zone || null,
     observedAt: ev.ts || new Date().toISOString(),
   });
   // Anyone we /who'd is a player — whitelist for downstream tank/death tracking
@@ -2524,11 +2742,24 @@ class EncounterBuilder {
       if (event.source === 'charm_land') {
         const petKey = _pk;
         const startTs = this.lastEvent || Date.now();
-        // De-dupe: if there's already an open session on this pet (same
-        // owner), don't overwrite it. EQ sometimes fires the regards line
-        // twice as the charm refreshes.
         const existing = (this._activeCharms ||= new Map()).get(petKey);
-        if (existing && existing.owner === owner) return;
+        // Same pet + same owner = either a REAL recast (bard cycle, or
+        // enchanter re-charm to refresh duration) OR a redundant pet-ack
+        // ("Attacking X Master") which also tags source:'charm_land'.
+        // Distinguish via _pendingCharmSpell: a real recast consumes one
+        // (the spell-cast event populated it within the last 12s); an ack
+        // alone gets nothing back. Recast → refresh the tick tracker so
+        // the overlay's 'up' timer + duration bar reset for the new
+        // cycle. Ack → leave the tracker alone. Either way the
+        // _activeCharms session continues (one mob = one DPS attribution
+        // session from charm to break).
+        if (existing && existing.owner === owner) {
+          const pcSpell = _consumePendingCharmSpell(owner, startTs);
+          if (pcSpell && (pcSpell.dur || pcSpell.cls)) {
+            _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: !!existing.is_dire_charm, ...pcSpell });
+          }
+          return;
+        }
         // If the existing session is with a different owner, the previous
         // charm broke (we may not have caught the break line). Close it.
         if (existing) {
@@ -3761,6 +3992,8 @@ function _endpointForKind(kind, botUrl) {
     case 'raid_roster':     return base + '/raid-roster';
     case 'trigger':         return base + '/trigger';
     case 'trigger_relay':   return base + '/trigger-relay';
+    case 'quake':           return base + '/quake';
+    case 'casting':         return base + '/casting';
     default:                return botUrl;
   }
 }
@@ -6669,6 +6902,7 @@ var WP_OVERLAY_ROWS = [
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
   ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks, drop table.'],
+  ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
 ];
@@ -6733,7 +6967,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, who: !!st.showWho };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -9204,6 +9438,19 @@ function startWebDashboard(port) {
       if (req.url === '/api/state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeForDashboard()));
+      }
+      // Mimic's buff-queue overlay polls this — we proxy the bot's
+      // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
+      // hammer Supabase. ?class=<bufferClass> filters the buff list to what
+      // the buffer can fix; the debuff list is class-agnostic.
+      if (req.url && req.url.indexOf('/api/buff-queue') === 0) {
+        let bufferClass = '';
+        try { bufferClass = new URL(req.url, 'http://x').searchParams.get('class') || ''; } catch { /* */ }
+        fetchRaidBuffQueue(bufferClass);
+        const cached = _buffQueueCache.get(String(bufferClass || '').toLowerCase());
+        const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(payload));
       }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
@@ -13930,6 +14177,88 @@ function fetchMobInfo(name) {
     req.end();
   } catch { _mobInfoInflight.delete(norm); }
 }
+// Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
+// the catalog doesn't carry it — a "You begin casting" line implies a real cast.
+function _spellCastSecs(name) {
+  const e = _spellByNameLower.get(String(name || '').toLowerCase());
+  const ms = (e && e.cast_ms != null) ? Number(e.cast_ms) : null;
+  return (ms != null && ms >= 0) ? Math.round(ms / 100) / 10 : 4;
+}
+// Cross-client casts on the current target — fetched from the bot's relay with a
+// short TTL so the Mob Info "Casting" section stays near-real-time without
+// hammering the endpoint. Cached per normalized target name.
+const _targetCastsByName  = new Map();   // nameLower → { at, casts }
+const _targetCastsInflight = new Set();
+const TARGET_CASTS_TTL_MS = 2000;
+function fetchTargetCasts(name) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(name || '').trim().toLowerCase();
+  if (!key || _targetCastsInflight.has(key)) return;
+  const cached = _targetCastsByName.get(key);
+  if (cached && (Date.now() - cached.at) < TARGET_CASTS_TTL_MS) return;
+  _targetCastsInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 6000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _targetCastsInflight.delete(key);
+        try { const j = JSON.parse(body); _targetCastsByName.set(key, { at: Date.now(), casts: (j && j.casts) || [] }); }
+        catch { _targetCastsByName.set(key, { at: Date.now(), casts: [] }); }
+      });
+    });
+    req.on('error',   () => { _targetCastsInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _targetCastsInflight.delete(key); });
+    req.end();
+  } catch { _targetCastsInflight.delete(key); }
+}
+
+// Buff queue cache (per buffer-class). Mimic's buff-queue overlay polls the
+// local agent which proxies to the bot's /api/agent/raid-buff-queue. The TTL is
+// tuned so a roomful of Mimics doesn't hammer Supabase but the overlay still
+// feels live (~3-5s between full refreshes).
+const _buffQueueCache = new Map();   // classLower → { at, payload }
+const _buffQueueInflight = new Set();
+const BUFF_QUEUE_TTL_MS = 3000;
+function fetchRaidBuffQueue(bufferClass) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(bufferClass || '').trim().toLowerCase();
+  if (_buffQueueInflight.has(key)) return;
+  const cached = _buffQueueCache.get(key);
+  if (cached && (Date.now() - cached.at) < BUFF_QUEUE_TTL_MS) return;
+  _buffQueueInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-buff-queue') + (bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '');
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _buffQueueInflight.delete(key);
+        try { const j = JSON.parse(body); _buffQueueCache.set(key, { at: Date.now(), payload: j }); }
+        catch { _buffQueueCache.set(key, { at: Date.now(), payload: { buff_queue: [], debuff_queue: [] } }); }
+      });
+    });
+    req.on('error',   () => { _buffQueueInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
+    req.end();
+  } catch { _buffQueueInflight.delete(key); }
+}
+
 // The freshest watched character's Zeal target (name + live HP%).
 function _currentTargetState() {
   let best = null;
@@ -13957,6 +14286,7 @@ function _zealBuffsForName(nameLower) {
       total_secs: null,
       observed_at_ms: Date.now(),
       source: 'zeal',
+      good: _spellGood(b.name),
     }));
   }
   return null;
@@ -13973,13 +14303,18 @@ function buildMobInfo() {
   // the buffs we observed landing on the target (mobs, other players).
   const tnameLower = String(st.target_name).toLowerCase();
   const zealBuffs = _zealBuffsForName(tnameLower);
+  // Cross-client casting on this target (who's casting what on it, with a
+  // countdown). Refresh on a short TTL; bystanders we can't name are absent.
+  const ctc = _targetCastsByName.get(tnameLower);
+  if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name);
   return {
-    target_name:   st.target_name,
-    target_hp_pct: st.target_hp_pct != null ? st.target_hp_pct : null,
-    mob:           cached ? cached.mob : null,   // null until the lookup returns
-    loading:       !cached,
-    target_buffs:  zealBuffs !== null ? zealBuffs : targetBuffsFor(tnameLower),
-    target_is_pc:  zealBuffs !== null,
+    target_name:    st.target_name,
+    target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+    mob:            cached ? cached.mob : null,   // null until the lookup returns
+    loading:        !cached,
+    target_buffs:   zealBuffs !== null ? zealBuffs : targetBuffsFor(tnameLower),
+    target_is_pc:   zealBuffs !== null,
+    target_casting: ctc ? ctc.casts : [],
   };
 }
 
@@ -14022,11 +14357,16 @@ function flushLiveStateToBot(opts) {
   const url  = base + '/live-state';
   const now  = Date.now();
   const uploader = _primaryCharacter();
+  const livePet  = _livePetHpByOwner();        // ownerLower → { name, hp_pct }
   const states = [];
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || (now - (st.updatedAt || 0)) > ZEAL_STALE_MS) continue;  // live chars only
     const buffs = Array.isArray(st.buffs) ? st.buffs : [];
+    // Pet snapshot: name + HP from the live Zeal pet gauge, buffs from the
+    // agent's pet-buff tracker (timed, persisted). Owners with no pet send null.
+    const pet      = livePet.get(String(ch).toLowerCase()) || null;
+    const petBuffs = pet ? petBuffsForOwner(String(ch).toLowerCase()) : [];
     const rec = {
       character:   ch,
       zone_id:     st.zone != null ? st.zone : null,
@@ -14034,11 +14374,19 @@ function flushLiveStateToBot(opts) {
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
       buffs,
       buff_count:  buffs.length,
+      pet_name:    pet ? pet.name : null,
+      pet_hp_pct:  pet && pet.hp_pct != null ? pet.hp_pct : null,
+      pet_buffs:   petBuffs.length ? petBuffs : null,
     };
     // Signature excludes HP% + buff ticks (which churn constantly) — we only
-    // re-send on a zone change, a change to the SET of buff names, or first
-    // sight of this character.
-    const sig = JSON.stringify([rec.zone_id, buffs.map(b => b && b.name)]);
+    // re-send on a zone change, a change to the SET of (own or pet) buff names,
+    // the pet appearing/vanishing, or first sight of this character.
+    const sig = JSON.stringify([
+      rec.zone_id,
+      buffs.map(b => b && b.name),
+      rec.pet_name,
+      petBuffs.map(b => b && b.name),
+    ]);
     if (_liveStateLastSig.get(ch) === sig) continue;
     _liveStateLastSig.set(ch, sig);
     states.push(rec);
@@ -15418,6 +15766,9 @@ async function main() {
         // (authoritative — disambiguates shared landing messages + catches
         // spells the tracked-buff index doesn't carry).
         if (!_sourceExcluded) noteSelfCast(line, b.character);
+        // Relay our own cast → bot, so anyone targeting the same mob/player sees
+        // it in Mob Info's Casting section (cross-client; only our casts nameable).
+        if (!_sourceExcluded) relaySelfCastForCasting(line, b.character);
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the
@@ -15435,14 +15786,27 @@ async function main() {
           recordTargetBuffLanding(bcEvt);
         }
 
+        // Server-wide PvP earthquake announcement → register the next-quake
+        // time so the bot can show a countdown above the PvP timers (Discord +
+        // web). Visible to everyone in zone; the bot dedups across agents.
+        if (!_sourceExcluded) {
+          const quakeEvt = parseEarthquake(line);
+          if (quakeEvt && quakeEvt.next_quake_at !== _lastQuakeSig) {
+            _lastQuakeSig = quakeEvt.next_quake_at;
+            enqueueUpload('quake', { agent_version: AGENT_VERSION, quake: quakeEvt });
+          }
+        }
+
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
         // — no upload, never leaves the machine.
         applyPetHealthLine(line, b.character);
 
         // Charm pet death → drop it from the tracker right away (don't wait out
-        // the 5-min linger window).
-        checkCharmPetDeath(line);
+        // the 5-min linger window). Pass the local character so "You have slain"
+        // is correctly attributed for the killer-guard (we don't kill our own
+        // pet — same-named different mob).
+        checkCharmPetDeath(line, b.character);
 
         // /who block boundaries (header/footer) → demarcate the current /who run
         // for the /who overlay. Rows themselves are attributed in recordWhoEvent.
