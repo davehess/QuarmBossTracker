@@ -3641,6 +3641,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showMobInfo = !cfg.showMobInfo; saveConfig(cfg);
       if (cfg.showMobInfo && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
       break;
+    case 'buffQueue':
+      cfg.showBuffQueue = !cfg.showBuffQueue; saveConfig(cfg);
+      if (cfg.showBuffQueue && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility();
+      break;
     case 'who':
       cfg.showWho = !cfg.showWho; saveConfig(cfg);
       if (cfg.showWho && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
