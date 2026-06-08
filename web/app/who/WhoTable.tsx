@@ -16,6 +16,7 @@ export type WhoRow = {
   level: number | null;
   observedClass: string | null;
   classOverride: string | null;
+  rosterClass: string | null;     // from the OpenDKP roster (members)
   effectiveClass: string | null;
   guild: string | null;
   guildRank: string | null;
@@ -203,17 +204,19 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
                       onChange={e => onClassChange(r, e.target.value)}
                       title={r.classOverride
                         ? `override (observed: ${r.observedClass || 'none'})`
-                        : (r.observedClass ? 'observed' : 'no class observed')}
+                        : (r.observedClass ? 'observed in /who' : (r.rosterClass ? 'from OpenDKP roster' : 'no class observed'))}
                       className={`bg-bg border rounded px-1 py-0.5 ${
                         r.classOverride ? 'border-gold text-gold'
-                          : r.effectiveClass ? 'border-border text-text' : 'border-red/60 text-red'}`}
+                          : r.observedClass ? 'border-border text-text'
+                          : r.rosterClass ? 'border-border text-dim'
+                          : 'border-red/60 text-red'}`}
                     >
-                      <option value="">{r.observedClass ? `(obs: ${r.observedClass})` : '— set —'}</option>
+                      <option value="">{r.observedClass ? `(obs: ${r.observedClass})` : (r.rosterClass ? `(roster: ${r.rosterClass})` : '— set —')}</option>
                       {BASE_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   ) : (
-                    <span className={r.classOverride ? 'text-gold' : r.effectiveClass ? 'text-text' : 'text-dim'}
-                      title={r.classOverride ? `officer-set (observed: ${r.observedClass || 'none'})` : 'observed'}>
+                    <span className={r.classOverride ? 'text-gold' : r.observedClass ? 'text-text' : r.rosterClass ? 'text-dim' : 'text-dim'}
+                      title={r.classOverride ? 'officer-set' : r.observedClass ? 'observed in /who' : r.rosterClass ? 'from OpenDKP roster' : 'unknown'}>
                       {r.effectiveClass || '—'}
                     </span>
                   )}
@@ -226,17 +229,19 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
                       value={r.zekOverride === true ? 'zek' : r.zekOverride === false ? 'no' : 'auto'}
                       disabled={pending}
                       onChange={e => onZekChange(r, e.target.value)}
-                      title={r.zekOverride != null ? 'manual override' : `auto (${r.autoZek ? 'seen in Zek' : 'no Zek guild'})`}
+                      title={r.zekOverride != null
+                        ? 'manually set by an officer'
+                        : (r.autoZek ? 'auto: seen in a Zek / Rise of Zek guild' : 'auto: never seen in a Zek guild')}
                       className={`bg-bg border rounded px-1 py-0.5 ${
                         r.effectiveZek ? 'border-red text-red' : 'border-border text-dim'}`}
                     >
-                      <option value="auto">{`Auto${r.autoZek ? ' (Zek)' : ''}`}</option>
-                      <option value="zek">Zek</option>
-                      <option value="no">Not Zek</option>
+                      <option value="auto">{r.autoZek ? 'Auto: Zek' : 'Auto: not Zek'}</option>
+                      <option value="zek">Force Zek</option>
+                      <option value="no">Force not Zek</option>
                     </select>
                   ) : (
                     r.effectiveZek
-                      ? <span className="text-red font-semibold" title={r.zekOverride != null ? 'officer-flagged' : 'seen in a Zek guild'}>Zek</span>
+                      ? <span className="text-red font-semibold" title={r.zekOverride != null ? 'officer-flagged' : 'seen in a Zek / Rise of Zek guild'}>Zek</span>
                       : <span className="text-dim">—</span>
                   )}
                 </td>
