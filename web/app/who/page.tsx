@@ -57,10 +57,24 @@ async function loadRows(): Promise<WhoRow[]> {
     overrides.set(o.character.toLowerCase(), o);
   }
 
+  // OpenDKP roster classes — authoritative for our own members, and they fill
+  // in the (very common) case where a Wolf Pack member's /who was always /anon
+  // so we never observed a class. Used as a fallback below the observed class.
+  const { data: chars } = await admin
+    .from('characters')
+    .select('name, class')
+    .eq('guild_id', 'wolfpack')
+    .not('class', 'is', null);
+  const rosterClassByName = new Map<string, string>();
+  for (const c of (chars ?? []) as { name: string; class: string | null }[]) {
+    if (c.name && c.class) rosterClassByName.set(c.name.toLowerCase(), c.class);
+  }
+
   return rows.map((r): WhoRow => {
     const o = overrides.get(r.character_key);
     const observedClass = r.observed_class || null;
     const classOverride = o?.class ?? null;
+    const rosterClass = rosterClassByName.get(r.character_key) ?? null;
     const zekOverride = (o && o.is_zek != null) ? o.is_zek : null;
     const autoZek = !!r.ever_zek_guild;
     return {
@@ -69,7 +83,8 @@ async function loadRows(): Promise<WhoRow[]> {
       level: r.level,
       observedClass,
       classOverride,
-      effectiveClass: classOverride ?? observedClass,
+      rosterClass,
+      effectiveClass: classOverride ?? observedClass ?? rosterClass,
       guild: r.guild_name,
       guildRank: r.guild_rank,
       anonymous: !!r.anonymous,
