@@ -132,6 +132,41 @@ export function classToRole(className: string | null | undefined): Role {
   return CLASS_ROLE[className.toLowerCase().trim()] || 'other';
 }
 
+// ── Curse detection ──────────────────────────────────────────────────────────
+// Curses are debuffs that need a Remove (Greater) Curse cure. They land in the
+// same buff window we already track via Zeal Type 1, so a Mimic-running raider
+// who's afflicted shows the curse name in their buffs[] alongside their regular
+// buffs. The /raid Cursed tab filters across the raid roster to show "who's
+// cursed and with what" so the cure caster can see at a glance.
+//
+// Substring match, case-insensitive. Curated rather than wildcard so we don't
+// flag SoW ("Spirit of Wolf") as a curse just because it has "of" in it.
+// Send unrecognized curse names — the OFF column on /raid Cursed surfaces
+// anything that's an "Other"-style debuff we don't yet pattern-match, and the
+// list gets folded in.
+const CURSE_KEYWORDS: string[] = [
+  'gravel rain',          // Vyzh`dra (and other Bloodfields-line bosses)
+  'sand storm', 'sandstorm',
+  'curse of',             // Curse of Misery, Curse of the Garou, etc.
+  "innoruuk's curse",     // Hate / planar
+  'venom of',             // Venom of the Snake (necro DoT curse)
+  'envenomed',
+  'plague',               // Plague of <X>
+  'pestilence',
+  'splurt',                // Necro DoT that's typically cured as a curse
+  'word of',              // Word of Pain / Word of Souls (cleric curses applied by mobs)
+];
+
+/** Is this buff name a curse-style debuff (needs Remove Curse to clear)? */
+export function isCurseBuff(name: string | null | undefined): boolean {
+  const n = String(name || '').toLowerCase().trim();
+  if (!n) return false;
+  for (const k of CURSE_KEYWORDS) {
+    if (n.includes(k)) return true;
+  }
+  return false;
+}
+
 // EQ corpses register as their own "character" named "<Owner>'s corpse<id>"
 // (e.g. "Hitya's corpse2854"). They leak into character_live_state / raid_roster
 // but are NOT raiders, so the raid + buff views must filter them out.

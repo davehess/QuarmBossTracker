@@ -16,7 +16,7 @@
 import { useMemo, useState } from 'react';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS, HP_SLOTS, HP_SLOT_LABELS,
-  shortBuffName, fmtBuffRemaining, buffTimeTone,
+  shortBuffName, fmtBuffRemaining, buffTimeTone, isCurseBuff,
   type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
 
@@ -127,6 +127,23 @@ export default function RaidView({
   // cover a shortage and the chip strip lets them flip.
   const [bufferClass, setBufferClass] = useState<BufferClass | ''>(() => asBufferClass(myClass));
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  // Top-level view: 'roster' (default — the full grouped buff grid) or
+  // 'cursed' (filtered to raiders with at least one curse-type debuff).
+  // Tracked here so the user can flip mid-pull without losing the side panel
+  // selection; the cure caster's whole flow is on /raid?view=cursed.
+  const [view, setView] = useState<'roster' | 'cursed'>('roster');
+
+  // Raiders currently afflicted by anything isCurseBuff() recognizes. Empty
+  // until a Mimic-running raider's buff list includes a known curse name.
+  // Counted separately so the tab can show a live badge ("Cursed · 3").
+  const cursedRows = useMemo(() => {
+    const out: { row: RaidRow; curses: { name: string; ticks: number | null }[] }[] = [];
+    for (const r of rows) {
+      const curses = (r.buffs || []).filter(b => isCurseBuff(b && b.name));
+      if (curses.length > 0) out.push({ row: r, curses });
+    }
+    return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
+  }, [rows]);
 
   // Group by raid group. Parked alts → "Not in raid" bucket sorted last.
   const groups = useMemo(() => {
@@ -217,6 +234,34 @@ export default function RaidView({
         </div>
       )}
 
+      {/* Top-level view tabs. Roster is the existing grouped buff grid +
+          buffer mode + queue. Cursed pulls just the raiders that any
+          Mimic-running raider has reported as carrying a known curse —
+          Gravel Rain on Vyzh`dra pulls, etc. — so the cure caster can
+          see who needs Remove Curse without scanning the full roster.
+          Badge shows live count so flipping is unprompted. */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={`px-3 py-1.5 text-xs rounded border transition-colors ${view === 'roster' ? 'bg-[#2a1d3d] text-[#d2a8ff] border-[#a371f7]' : 'bg-panel text-dim border-border hover:border-blue'}`}
+          onClick={() => setView('roster')}
+        >Roster</button>
+        <button
+          type="button"
+          className={`px-3 py-1.5 text-xs rounded border transition-colors ${view === 'cursed' ? 'bg-[#2a1010]/70 text-red-300 border-red-400/60' : 'bg-panel text-dim border-border hover:border-red-400/60'}`}
+          onClick={() => setView('cursed')}
+        >
+          Cursed
+          {cursedRows.length > 0 && (
+            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-red-500/30 text-red-200 font-semibold">{cursedRows.length}</span>
+          )}
+        </button>
+      </div>
+
+      {view === 'cursed' ? (
+        <CursedPanel rows={cursedRows} onSelect={(n) => setSelectedName(n)} />
+      ) : (
+      <>
       {/* Buffer mode — when OFF, show the class picker. When ON, show ONLY the
           picked class as a single elevated chip with the queue underneath, so
           the buffer can focus without the other classes' noise. */}
@@ -346,7 +391,73 @@ export default function RaidView({
           )}
         </aside>
       </div>
+      </>
+      )}
     </div>
+  );
+}
+
+// ── Cursed panel ─────────────────────────────────────────────────────────────
+// One-row-per-raider list of everyone with a known curse-type debuff in their
+// buff window. Cure caster scans this on Vyzh`dra pulls (Gravel Rain) or any
+// other curse mechanic; the longest-running curse goes red so the next cure
+// is unambiguous. Empty state when nobody's afflicted is the happy path —
+// shows the watched-curse list so the user knows what's being looked for.
+function CursedPanel({ rows, onSelect }: {
+  rows: { row: RaidRow; curses: { name: string; ticks: number | null }[] }[];
+  onSelect: (name: string) => void;
+}) {
+  if (rows.length === 0) {
+    return (
+      <section className="bg-panel border border-border rounded-lg p-6 text-center text-dim text-sm">
+        <div className="text-2xl mb-2">✨</div>
+        <div>No active curses across the raid.</div>
+        <div className="text-[11px] text-dim mt-2">
+          Tracks Gravel Rain, Curse of X, Venom of X, Splurt, Plague, and a handful of others. Send the buff-window name of any curse we&apos;re missing and we&apos;ll add it.
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="bg-panel border border-border rounded-lg overflow-hidden">
+      <header className="px-3 py-2 border-b border-border bg-[#1a1010]/40 flex items-baseline justify-between">
+        <span className="text-sm text-red-300">🩸 Cursed ({rows.length})</span>
+        <span className="text-[10px] text-dim">Live from Mimic buff windows · click a name for details</span>
+      </header>
+      <ul className="divide-y divide-border/40">
+        {rows.map(({ row, curses }) => (
+          <li
+            key={row.name}
+            className="px-3 py-2 hover:bg-[#1a1010]/40 cursor-pointer"
+            onClick={() => onSelect(row.name)}
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span className="text-text font-medium truncate">{row.name}</span>
+                {row.className && <span className="text-[10px] text-dim">{row.className}</span>}
+                {row.raidGroup != null && <span className="text-[10px] text-dim">G{row.raidGroup}</span>}
+              </div>
+              <span className="text-[10px] text-dim">{row.zone || '—'}</span>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {curses.map((c, i) => {
+                const tone = buffTimeTone(c.ticks);
+                const remain = fmtBuffRemaining(c.ticks);
+                return (
+                  <span
+                    key={c.name + ':' + i}
+                    className={`text-[11px] px-1.5 py-0.5 rounded border ${tone === 'crit' ? 'bg-red-500/20 text-red-200 border-red-400/60' : tone === 'low' ? 'bg-orange/20 text-orange border-orange/50' : 'bg-[#2a1010]/50 text-red-300 border-red-400/30'}`}
+                    title={`${c.name} · ${remain}`}
+                  >
+                    {shortBuffName(c.name)} <span className={`ml-1 text-[9px] ${TIME_TONE_CLASS[tone] || 'text-dim'}`}>{remain}</span>
+                  </span>
+                );
+              })}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
