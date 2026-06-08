@@ -3733,6 +3733,37 @@ ipcMain.handle('ui-studio-list-snapshots', async (_e, character) => {
   }
 });
 
+// Download a snapshot's raw { filename → text } file map WITHOUT writing it to
+// disk. Powers UI Studio's "📥 Restore" button: the editor loads the cloud
+// bundle into memory, lets the user rescale it to this machine's monitor, then
+// Save writes it locally — the deploy-on-a-new-computer flow. (The older
+// ui-studio-restore handler below writes straight to disk, bypassing rescale;
+// this one keeps the user in the visual editor.)
+ipcMain.handle('ui-studio-get-snapshot', async (_e, params) => {
+  const character = String(params?.character || '').trim();
+  const snapId    = String(params?.id || '').trim();
+  if (!character || !snapId) return { ok: false, error: 'character + id required' };
+  const cfg = loadConfig();
+  const _uiToken = resolveUploadToken(cfg);
+  if (!_uiToken) return { ok: false, error: 'no token configured' };
+  try {
+    const snap = await _httpsJson(
+      `${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(snapId)}?character=${encodeURIComponent(character)}`,
+      { headers: { 'Authorization': `Bearer ${_uiToken}` } },
+    );
+    if (!snap || !snap.files) return { ok: false, error: 'snapshot empty' };
+    return {
+      ok: true,
+      files: snap.files,
+      source_width:  snap.source_width  || null,
+      source_height: snap.source_height || null,
+      label: snap.label || null,
+    };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
 // Restore: download a snapshot, refuse while EQ is running, backup +
 // rewrite each file. Optionally clamp positions to the current display.
 ipcMain.handle('ui-studio-restore', async (_e, params) => {

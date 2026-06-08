@@ -122,6 +122,7 @@
     <button id="inspectSocialsBtn" class="secondary" title="Open the Hotbar/Socials inspector — see what's actually in your Sock_/Socials_ INI files">Hotbar Pages…</button>
     <button id="captureBtn"        class="secondary" title="Heuristic-parse your Sock_/Socials_ INIs into a draft PvP template JSON in your EQ folder — review + share">Capture PvP draft</button>
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
+    <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <span id="status"></span>
   </div>
   <!-- PvP-set prompt — slides in from the top when the loaded character's
@@ -493,6 +494,16 @@
       setStatus('no ini files for ' + STATE.character, 'err');
       return;
     }
+    STATE.fromCloud = false;
+    _renderLoadedBundle();
+  }
+
+  // Parse + rescale + render whatever is currently in STATE.bundle. Shared by
+  // the local "Load + Rescale" path and the cloud "Restore from backup" path —
+  // both end up with a { filename → text } bundle, so the only difference is
+  // where the bytes came from. Reads Source/Target from STATE (already set by
+  // the caller).
+  function _renderLoadedBundle(){
     // Parse every ini, extract windows with position data.
     STATE.windows = [];
     // Detect which resolution blocks the file actually contains. If the chosen
@@ -566,23 +577,38 @@
     }
     STATE.autoSwitched = autoSwitched;
     if (STATE.windows.length === 0) {
-      // Window-position data lives in EQ's UI_<char>_<server>.ini, which is
-      // only written when the character has run `/saveui` in-game. Other ini
-      // files (per-char settings, sockets/socials) carry hotbars/keybinds
-      // but NOT window positions — so loading "0 windows" almost always
-      // means /saveui hasn't been done yet for this character.
+      // Window-position data lives in EQ's UI_<char>_pq.proj.ini. Quarm has no
+      // /saveui command — the client writes this file automatically when you
+      // /camp, /quit, or zone. So "0 windows" means either the file isn't
+      // there yet (brand-new character who hasn't camped) or it exists but we
+      // couldn't parse a position out of it (send us the file so we can fix it).
+      var hadUiFile = false;
+      try {
+        hadUiFile = Object.keys(STATE.bundle || {}).some(function(k){
+          return /^UI_/i.test(k) && k.indexOf('__parsed') < 0;
+        });
+      } catch (e) {}
       setStatus(
-        'No saved window layout for ' + STATE.character + '. In EQ, type ' +
-        '/saveui to generate the UI_' + STATE.character + '_pq.proj.ini file, ' +
-        'then click Load + Rescale. (Hotbar Pages still works without this.)',
+        hadUiFile
+          ? 'Found UI_' + STATE.character + '_pq.proj.ini but read 0 window positions. ' +
+            'If this looks wrong, use ☁ Backup to send it to us so we can fix the parser. (Hotbar Pages still works.)'
+          : 'No saved layout for ' + STATE.character + ' yet. Quarm writes UI_' + STATE.character +
+            '_pq.proj.ini automatically when you /camp, /quit, or zone — do that once, then Load again. ' +
+            '(There is no /saveui on Quarm. Hotbar Pages still works without it.)',
         'err'
       );
     } else {
-      var msg = 'loaded ' + STATE.windows.length + ' windows · ' +
-        STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH +
-        ' · Save writes a ' + STATE.tgtW + '×' + STATE.tgtH + ' block (keeps your original)';
-      if (STATE.autoSwitched) {
-        msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
+      var msg;
+      if (STATE.fromCloud) {
+        msg = '☁ restored ' + STATE.windows.length + ' windows from cloud backup · set Target to ' +
+          'this machine\'s resolution, then Save to write ' + STATE.tgtW + '×' + STATE.tgtH + ' to ' + STATE.character + '\'s EQ folder';
+      } else {
+        msg = 'loaded ' + STATE.windows.length + ' windows · ' +
+          STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH +
+          ' · Save writes a ' + STATE.tgtW + '×' + STATE.tgtH + ' block (keeps your original)';
+        if (STATE.autoSwitched) {
+          msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
+        }
       }
       setStatus(msg, 'ok');
     }
@@ -954,6 +980,106 @@
       else setStatus('backup failed: ' + (res && res.error ? res.error : 'unknown'), 'err');
     } catch (e) { setStatus('backup failed: ' + e.message, 'err'); }
   });
+
+  // ── Cloud restore — deploy a backup on a new machine ─────────────────────
+  // Pulls a snapshot INTO the editor (not straight to disk), so the same
+  // rescale-and-save path runs against the cloud bundle. New-machine flow:
+  // pick the character (its EQ folder is the write target) → 📥 Restore →
+  // pick a backup → 🖥 Detect the new monitor as Target → Save.
+  function _selectedCharEqDir(){
+    var sel = document.getElementById('charSelect').value;
+    if (!sel) return null;
+    var parts = sel.split('|');
+    return { character: parts[0], eqDir: parts[1] };
+  }
+  document.getElementById('cloudRestoreBtn').addEventListener('click', async function(){
+    var who = _selectedCharEqDir();
+    if (!who) { setStatus('pick a character first — its EQ folder is where the backup gets written', 'err'); return; }
+    if (!window.mimic || !window.mimic.uiStudioListSnapshots) { setStatus('cloud restore unavailable', 'err'); return; }
+    setStatus('fetching cloud backups for ' + who.character + '…');
+    var r = await window.mimic.uiStudioListSnapshots(who.character)
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { setStatus('restore failed: ' + (r && r.error ? r.error : 'unknown'), 'err'); return; }
+    var snaps = r.snapshots || [];
+    if (snaps.length === 0) {
+      setStatus('no cloud backups for ' + who.character + ' — run ☁ Backup on the source machine first', 'err');
+      return;
+    }
+    _showSnapshotPicker(who, snaps);
+  });
+
+  function _showSnapshotPicker(who, snaps){
+    var old = document.getElementById('snapPicker'); if (old) old.remove();
+    var dlg = document.createElement('div');
+    dlg.id = 'snapPicker';
+    dlg.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);' +
+      'background:#161b22;border:1px solid #58a6ff;border-radius:6px;z-index:100;' +
+      'padding:10px;font-size:12px;color:#c9d1d9;min-width:340px;max-width:480px;' +
+      'max-height:70vh;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+    var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">Restore a backup for ' +
+      escapeHtml(who.character) + '</div>' +
+      '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">Loads into the editor — nothing is ' +
+      'written until you Save. Rescale to this monitor first with 🖥 Detect.</div>';
+    for (var i = 0; i < snaps.length; i++) {
+      var s = snaps[i];
+      var when = s.created_at ? new Date(s.created_at).toLocaleString() : '';
+      var srcRes = (s.source_width && s.source_height) ? (s.source_width + '×' + s.source_height) : 'unknown res';
+      var label = s.label || ('Backup ' + (i + 1));
+      html += '<button data-id="' + escapeHtml(s.id) + '" ' +
+        'data-w="' + (s.source_width || '') + '" data-h="' + (s.source_height || '') + '" ' +
+        'style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;' +
+        'border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
+        'cursor:pointer;font-size:11px;font-family:inherit">' +
+        '<div style="color:#e6edf3;font-weight:600">' + escapeHtml(label) + '</div>' +
+        '<div style="color:#8b949e;font-size:10px">' + escapeHtml(when) + ' · ' + escapeHtml(srcRes) +
+        ' · ' + (s.file_count || '?') + ' file(s)</div>' +
+        '</button>';
+    }
+    html += '<div style="margin-top:6px;text-align:right">' +
+      '<button id="snapPickerCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
+      '</div>';
+    dlg.innerHTML = html;
+    document.body.appendChild(dlg);
+    dlg.querySelectorAll('button[data-id]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = this.dataset.id;
+        var sw = parseInt(this.dataset.w, 10) || null;
+        var sh = parseInt(this.dataset.h, 10) || null;
+        dlg.remove();
+        _doCloudRestore(who, id, sw, sh);
+      });
+    });
+    document.getElementById('snapPickerCancel').addEventListener('click', function(){ dlg.remove(); });
+    var esc = function(e){ if (e.key === 'Escape') { dlg.remove(); document.removeEventListener('keydown', esc); } };
+    document.addEventListener('keydown', esc);
+  }
+
+  async function _doCloudRestore(who, id, snapSrcW, snapSrcH){
+    setStatus('downloading backup…');
+    var r = await window.mimic.uiStudioGetSnapshot({ character: who.character, id: id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok || !r.files) { setStatus('download failed: ' + (r && r.error ? r.error : 'unknown'), 'err'); return; }
+    // Establish editor context from the snapshot + the picked character.
+    STATE.character = who.character;
+    STATE.eqDir     = who.eqDir;
+    STATE.bundle    = r.files;
+    // Source resolution: prefer the snapshot's captured display size, then the
+    // value already in the Source inputs. _renderLoadedBundle's resolution
+    // auto-detect will still correct this to whatever block the INI actually
+    // contains, so it's just a starting hint.
+    var sW = snapSrcW || r.source_width  || parseInt(document.getElementById('srcW').value, 10) || 2560;
+    var sH = snapSrcH || r.source_height || parseInt(document.getElementById('srcH').value, 10) || 1440;
+    STATE.srcW = sW; STATE.srcH = sH;
+    document.getElementById('srcW').value = sW;
+    document.getElementById('srcH').value = sH;
+    _syncPresetFromInputs('src');
+    // Target stays whatever the user set (they should 🖥 Detect their new monitor).
+    STATE.tgtW = parseInt(document.getElementById('tgtW').value, 10) || sW;
+    STATE.tgtH = parseInt(document.getElementById('tgtH').value, 10) || sH;
+    STATE.fromCloud = true;
+    STATE.selected = -1;
+    _renderLoadedBundle();
+  }
 
   document.getElementById('captureBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('load a character first', 'err'); return; }

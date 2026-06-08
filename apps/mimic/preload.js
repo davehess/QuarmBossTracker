@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioListCharacters: ()        => ipcRenderer.invoke('ui-studio-list-characters'),
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
+  uiStudioGetSnapshot:    (params)  => ipcRenderer.invoke('ui-studio-get-snapshot', params),
   uiStudioRestore:        (params)  => ipcRenderer.invoke('ui-studio-restore', params),
   // Visual UI Studio editor — read/write per-character ini bundles for the
   // graphical resolution-rescaling editor. Read returns a raw filename →
