@@ -465,6 +465,10 @@ const TRANSFORMS = {
       'cast_time', 'recast_time', 'pushback', 'zonetype',
       'cast_on_you', 'cast_on_other', 'spell_fades',
       'goodEffect', 'good_effect',
+      // Resist family — EQEmu schemas have varied: classic `resisttype`/
+      // `ResistDiff`, modern `resist_type`/`resist_diff`. Accept both.
+      'resisttype', 'resist_type',
+      'ResistDiff', 'resistdiff', 'resist_diff',
     ]);
     if (!r.id || !r.name) return null;
     // EQEmu has historically used both `effectid1` and `effect_id_1` styles
@@ -488,6 +492,14 @@ const TRANSFORMS = {
       // 1 = beneficial (buff), 0 = detrimental (debuff). Drives buff/debuff
       // coloring in the overlays. EQEmu column is `goodEffect`; accept snake too.
       good_effect: eff('good_effect', 'goodEffect'),
+      // Resist type → 0 unresistable / 1 Magic / 2 Fire / 3 Cold / 4 Poison /
+      // 5 Disease / 6 Chromatic / 7 Prismatic. ResistDiff is negative = "lure"
+      // (harder to resist by that amount). Drives the Mob Info spell list's
+      // resist column ("Magic -200 lure" etc.).
+      resist_type: eff('resist_type', 'resisttype'),
+      resist_diff: r.ResistDiff !== undefined ? r.ResistDiff
+                 : r.resistdiff   !== undefined ? r.resistdiff
+                 : r.resist_diff,
     };
   },
   // NPC spell-list metadata. id = the list (referenced by eqemu_npc_types.
