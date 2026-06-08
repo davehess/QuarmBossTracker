@@ -40,6 +40,19 @@
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
   .row .grp{color:#6e7681;font-variant-numeric:tabular-nums}
   .row .cls{color:#9aa4ad;font-size:9px}
+  /* State chips that ride between class and the right column — inferred,
+     Avatar active, Celestial Tranquility, SK T. of Hate Recourse. Compact;
+     tooltip carries the detail. */
+  .row .chip{display:inline-flex;align-items:center;justify-content:center;
+    height:14px;min-width:14px;padding:0 3px;border-radius:3px;font-size:10px;
+    line-height:1;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#c9d1d9;cursor:help}
+  .row .chip.inferred{background:rgba(88,166,255,0.15);border-color:rgba(88,166,255,0.4);color:#79c0ff}
+  .row .chip.avatar  {background:rgba(240,180,41,0.18);border-color:rgba(240,180,41,0.5);color:#f0b429}
+  .row .chip.ct      {background:rgba(126,231,135,0.15);border-color:rgba(126,231,135,0.4);color:#7ee787}
+  .row .chip.rec     {background:rgba(248,113,113,0.18);border-color:rgba(248,113,113,0.5);color:#fca5a5}
+  /* Inferred rows dim slightly to differentiate from authoritative Mimic data. */
+  .row.inferred{background:rgba(8,5,16,0.40)}
+  .row.inferred .nm{color:#c9d1d9}
   .row .miss{margin-left:auto;color:#c9d1d9;font-size:9px;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:right}
   .row.r .miss{color:#fca5a5}
@@ -148,10 +161,20 @@
   document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
   window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
 
-  // Setup mode + opacity slider.
+  // Setup mode + opacity slider. _setupScope tracks 'this' (right-click → Setup
+  // THIS overlay) vs 'all' (tray → Setup mode — place all overlays) so the Done
+  // button routes to the right IPC; without scope tracking, Done is a no-op in
+  // single-overlay mode because it calls setSetupMode(false) which exits the
+  // GLOBAL flag — never set in single-overlay mode.
   var _overlayKey = null;
+  var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
-    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+    window.mimic.onSetupMode(function(p){
+      _overlayKey = p && p.overlayKey;
+      if (p && p.scope) _setupScope = p.scope;
+      else if (p && p.active) _setupScope = 'all';
+      document.body.classList.toggle('setup', !!(p && p.active));
+    });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){
@@ -159,7 +182,7 @@
     if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
   });
   var doneBtn = document.getElementById('exitSetupBtn');
-  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
+  if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   // Buffer class — persists per-overlay in localStorage so a relog comes back to
   // the same setting. The agent uses this to filter the buff queue.
@@ -210,13 +233,29 @@
     if (!bits.length) return '';
     return '<div class="casting"><span style="color:#6e7681">🔮</span>'+bits.join(' · ')+'</div>';
   }
+  // Buff-state chips that ride on every row — gives the buffer info that
+  // changes how they target:
+  //   🔍 inferred   — buff state came from observed casts, not Zeal (no Mimic).
+  //   🪶 Avatar     — already has Feral/Primal/proc Avatar (worn-atk hint).
+  //   🦅 CT         — has Celestial Tranquility (+40 ATK; Avatar replaces it).
+  //   ⚠ T.of Hate  — SK carrying T. of Hate Recourse (Savagery overwrites it).
+  function stateChips(r){
+    var bits = '';
+    if (r.inferred)               bits += '<span class="chip inferred" title="Buffs inferred from observed casts — this raider isn\'t running Mimic">🔍</span>';
+    if (r.avatar_buff)            bits += '<span class="chip avatar" title="'+esc(r.avatar_buff)+' is active">🪶</span>';
+    if (r.celestial_tranquility)  bits += '<span class="chip ct" title="Celestial Tranquility (+40 ATK) is active — Avatar will overwrite">🦅</span>';
+    if (r.sk_recourse)            bits += '<span class="chip rec" title="'+esc(r.sk_recourse)+' active — Savagery will overwrite">⚠</span>';
+    return bits;
+  }
   function renderRow(r, kind){
     var groupLbl = r.group != null ? ('G' + r.group) : '';
     var cls = kind === 'd' ? 'd' : kind === 'burst' ? 'burst' : tierClass(r.tier);
+    if (r.inferred) cls += ' inferred';
     var line = '<div class="row '+cls+'">'
              +    '<span class="nm">'+esc(r.name)+'</span>'
              +    (groupLbl ? '<span class="grp">'+esc(groupLbl)+'</span>' : '')
-             +    '<span class="cls">'+esc(r.class || '?')+'</span>';
+             +    '<span class="cls">'+esc(r.class || '?')+'</span>'
+             +    stateChips(r);
     if (kind === 'd') {
       var chips = '';
       for (var i = 0; i < r.curses.length; i++) {
@@ -246,14 +285,18 @@
     // section header so the bot can pick the right ability name.
     var burst = (payload && (payload.feral_queue || payload.savagery_queue)) || [];
     var burstLabel = (payload && payload.burst_label) || null;
+    // group_mode = no active raid roster → caption switches from "raid" to
+    // "group" and the empty-state hint changes.
+    var groupMode = !!(payload && payload.group_mode);
     var body = document.getElementById('body');
     var empty = document.getElementById('empty');
     if (bq.length === 0 && dq.length === 0 && burst.length === 0) {
       body.innerHTML = '';
       empty.style.display = '';
+      var noun = groupMode ? 'group' : 'raid';
       empty.textContent = bufferClass
-        ? ('no gaps a '+bufferClass+' can fix right now — every Mimic-running raider is covered')
-        : 'no raid roster yet — start any Mimic in raid and the queue fills in within seconds';
+        ? ('no gaps a '+bufferClass+' can fix right now — every '+(groupMode ? 'tracked groupmate' : 'Mimic-running raider')+' is covered')
+        : ('no '+noun+' roster yet — start any Mimic in '+noun+' and the queue fills in within seconds');
       return;
     }
     empty.style.display = 'none';
