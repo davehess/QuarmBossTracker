@@ -322,10 +322,20 @@
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
       // Tell the user when an OTHER character's fight is being hidden, so the
       // empty meter isn't mysterious. Updates the empty-state in-place.
+      // Empty-state copy. When the agent picked another character's encounter
+      // (multi-boxer with a more-recent update on a non-focused box), name
+      // the FOCUSED character so the user sees "waiting on Melting's combat"
+      // instead of the unhelpful "fight in progress on Timberowl". Once the
+      // agent ships per-character encounter tracking (agent 3.0.71+), this
+      // branch should rarely fire — the overlay prefers the focused
+      // character's encounter directly.
       var emptyHint = document.getElementById('empty');
-      if (emptyHint) emptyHint.textContent = _otherCharFight
-        ? 'fight in progress on ' + _otherCharFight
-        : 'waiting for combat…';
+      if (emptyHint) {
+        var focused = s.activeCharacter || null;
+        emptyHint.textContent = _otherCharFight
+          ? (focused ? 'waiting on ' + focused + '’s combat…' : 'waiting for combat…')
+          : 'waiting for combat…';
+      }
 
       // Per-FIGHT raw damage from currentEncounterThreat.perPlayer[].dmg — the
       // honest damage each player has done to the mob(s) THIS encounter, not

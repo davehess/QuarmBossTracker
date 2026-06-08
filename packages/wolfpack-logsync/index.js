@@ -2061,6 +2061,16 @@ class EncounterBuilder {
       if (et && et.flushedAt && Date.now() - et.flushedAt > 120_000) {
         stats.currentEncounterThreat = null;
       }
+      // Per-character mirror: drop our own entry once it's stale so the
+      // overlay doesn't keep showing a fight that ended ages ago when the
+      // user switches back to this character.
+      if (this.character && stats.currentEncounterThreatByChar) {
+        const k = String(this.character).toLowerCase();
+        const own = stats.currentEncounterThreatByChar[k];
+        if (own && own.flushedAt && Date.now() - own.flushedAt > 120_000) {
+          delete stats.currentEncounterThreatByChar[k];
+        }
+      }
       // else: leave stale data in place (flushedAt set by flush())
       return;
     }
@@ -2086,7 +2096,7 @@ class EncounterBuilder {
         procDetail: t.procDetail || {},
       };
     }
-    stats.currentEncounterThreat = {
+    const snap = {
       bossName:  this.bossName,
       startedAt: this.startedAt,
       flushedAt: null,
@@ -2097,6 +2107,14 @@ class EncounterBuilder {
       uploader:  this.character || null,
       perPlayer,
     };
+    stats.currentEncounterThreat = snap;
+    // Per-character mirror so a multi-boxer can see THEIR focused character's
+    // fight even when another character's log just landed an update. Keyed
+    // lower-case to match the active-character normalization in /api/state.
+    if (this.character) {
+      stats.currentEncounterThreatByChar = stats.currentEncounterThreatByChar || {};
+      stats.currentEncounterThreatByChar[String(this.character).toLowerCase()] = snap;
+    }
     // Mirror current DS-reflect accumulator so the dashboard can render
     // a live "🛡 Damage Shield" panel without poking builder internals.
     if (this.dsReflects && this.dsReflects.size > 0) {
@@ -3318,6 +3336,15 @@ class EncounterBuilder {
     if (stats.currentEncounterThreat) {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
+    // Mirror to the per-character map so the 2-min stale window applies
+    // independently per character (a multi-boxer's other character can
+    // still be mid-fight while this one wraps up).
+    if (this.character && stats.currentEncounterThreatByChar) {
+      const k = String(this.character).toLowerCase();
+      if (stats.currentEncounterThreatByChar[k]) {
+        stats.currentEncounterThreatByChar[k] = { ...stats.currentEncounterThreatByChar[k], flushedAt: Date.now() };
+      }
+    }
     this.reset();
   }
 }
@@ -3886,7 +3913,15 @@ const stats = {
   castCounts:      {},
   // currentEncounterThreat: live threat snapshot for the active encounter
   // (null when no fight is active). { bossName, startedAt, perPlayer: { name: { swing, proc, spell, heal, total } } }
+  // Globally last-write-wins for backward compatibility; the per-character
+  // map below is the source the DPS overlay should prefer when the agent is
+  // watching multiple logs at once (multi-boxers).
   currentEncounterThreat: null,
+  // currentEncounterThreatByChar: per-character snapshot keyed on the
+  // lowercased character whose log produced the encounter. Lets the DPS
+  // overlay show the FOCUSED character's fight even when another character's
+  // builder updated more recently. Cleared when the encounter resolves.
+  currentEncounterThreatByChar: {},
   // sessionDeeps: per-attacker DPS breakdown across all encounters this session.
   // { [name]: { melee, spell, proc, dot: { count, total, max }, crits: { total, melee, spell, bonusDmg } } }
   // Live-updated; surfaced on the DEEPS tab.
@@ -4324,7 +4359,16 @@ function _serializeForDashboard() {
     // doesn't prove the token is still valid, so the badge uses identity.
     mimicSignedIn:      !!_mimicSessionToken,
     mimicIdentity:      _mimicIdentity,
-    currentEncounterThreat: stats.currentEncounterThreat,
+    // Prefer the focused character's encounter when the agent is watching
+    // multiple logs (multi-boxer). Falls back to the last-write-wins global
+    // when no per-character entry exists, preserving single-character UX.
+    currentEncounterThreat: (() => {
+      const map = stats.currentEncounterThreatByChar || {};
+      const active = _activeCharacter;
+      if (active && map[active.toLowerCase()]) return map[active.toLowerCase()];
+      return stats.currentEncounterThreat;
+    })(),
+    currentEncounterThreatByChar: stats.currentEncounterThreatByChar || {},
     // Cross-instance uploader status. active=true → this instance is the one
     // sending data to the bot; false → another Parser/Mimic on this machine
     // owns the upload lock and we're read-only (local dashboard still live).
