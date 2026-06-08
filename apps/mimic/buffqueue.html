@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>buffqueue</title>
+<style>
+  /* Buff Queue overlay — same data the web /raid page shows in its two-column
+     queue (buff queue + debuff/cure queue), pinned in-game so a buffer can
+     work the list without alt-tabbing. Polls localhost:<port>/api/buff-queue
+     which the agent proxies from the bot with a 3s TTL. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;}
+  .title{display:flex;align-items:center;gap:6px;
+    font-size:12px;color:#79c0ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
+  .title .conn{font-size:11px}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .clsPick{margin-left:auto;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
+    border-radius:3px;font-size:10px;padding:1px 4px;font-family:inherit;cursor:pointer;}
+  .clsPick:focus{outline:1px solid #58a6ff}
+  /* Two stacked sections — buff queue on top, debuff queue below. Each section
+     has its own header chip and row list. */
+  .sec{margin-bottom:6px}
+  .sec .hdr{font-size:9px;color:#8b949e;letter-spacing:0.06em;text-transform:uppercase;
+    margin-bottom:2px;display:flex;align-items:baseline;gap:5px}
+  .sec.buffs .hdr .lab{color:#7ee787}
+  .sec.debuffs .hdr .lab{color:#f87171}
+  .sec .hdr .ct{color:#6e7681;font-variant-numeric:tabular-nums}
+  .sec .hdr .hint{color:#6e7681;font-size:9px;text-transform:none;letter-spacing:0;font-style:italic}
+  .row{position:relative;display:flex;align-items:baseline;gap:5px;padding:2px 5px;
+    background:rgba(8,5,16,0.55);border-radius:3px;border-left:3px solid #58a6ff;
+    text-shadow:0 1px 2px #000;font-size:10px;margin-bottom:2px}
+  .row.r{border-left-color:#f85149}
+  .row.o{border-left-color:#f0883e}
+  .row.y{border-left-color:#d4a72c}
+  .row.d{border-left-color:#f87171;background:rgba(40,12,12,0.55)}
+  .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+  .row .grp{color:#6e7681;font-variant-numeric:tabular-nums}
+  .row .cls{color:#9aa4ad;font-size:9px}
+  .row .miss{margin-left:auto;color:#c9d1d9;font-size:9px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:right}
+  .row.r .miss{color:#fca5a5}
+  .row.o .miss{color:#fed7aa}
+  .row.y .miss{color:#fde68a}
+  /* Curse chip on debuff rows — name + remaining time. Red border so it reads
+     as "needs cure". */
+  .row .curse{margin-left:auto;display:flex;flex-wrap:wrap;gap:3px;justify-content:flex-end;max-width:170px}
+  .row .curse .ch{padding:0 4px;border-radius:3px;border:1px solid rgba(248,113,113,0.45);
+    background:rgba(248,113,113,0.15);color:#fca5a5;font-size:9px;line-height:1.4}
+  .row .curse .ch .t{color:#fed7aa;font-variant-numeric:tabular-nums;margin-left:3px}
+  /* "Carol casting Aego 2s" inline — sits underneath the row when a buffer is
+     in-flight on that target, so a second cleric sees the queue is already
+     covered and skips it. */
+  .casting{font-size:9px;color:#79c0ff;padding:0 5px 1px;line-height:1.3;
+    display:flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+  .casting .who{color:#79c0ff;font-weight:600}
+  .casting .sp{color:#c9d1d9}
+  .casting .t{color:#6e7681;font-variant-numeric:tabular-nums}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:6px 4px;font-style:italic}
+  /* drag/lock/setup chrome — same pattern as the other overlays. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(88,166,255,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(88,166,255,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(88,166,255,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
+  <button id="hide-btn" title="Hide the buff queue (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Buff queue</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title">
+      <span id="conn" class="conn bad">○</span>
+      <span>🛡 Buff queue</span>
+      <select id="clsPick" class="clsPick" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
+        <option value="">(any class)</option>
+        <option>Cleric</option><option>Druid</option><option>Shaman</option>
+        <option>Enchanter</option><option>Bard</option><option>Paladin</option>
+        <option>Ranger</option><option>Beastlord</option><option>Magician</option>
+      </select>
+    </div>
+    <div id="body"></div>
+    <div id="empty">no raid roster yet — start any Mimic in raid and the queue fills in within seconds</div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  // Manual drag — same workaround as the other overlays.
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  // Setup mode + opacity slider.
+  var _overlayKey = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { window.mimic.setSetupMode(false); } catch (e) {} });
+
+  // Buffer class — persists per-overlay in localStorage so a relog comes back to
+  // the same setting. The agent uses this to filter the buff queue.
+  var clsPick = document.getElementById('clsPick');
+  var bufferClass = '';
+  try { bufferClass = localStorage.getItem('wp:bufferClass') || ''; } catch (e) {}
+  if (clsPick) { clsPick.value = bufferClass; }
+  // Hover-interact handshake — when LOCKED, mouse events normally pass through
+  // to EQ. Flip interactive while the cursor is over the picker so the click
+  // lands. Same pattern Mob Info's tabs use.
+  if (clsPick) {
+    clsPick.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    clsPick.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    clsPick.addEventListener('change', function(){
+      bufferClass = clsPick.value || '';
+      try { localStorage.setItem('wp:bufferClass', bufferClass); } catch (e) {}
+      tick();    // refresh immediately so the user sees the new queue
+    });
+  }
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }
+  function fmtSecs(s){
+    if (s == null || s < 0) return '?';
+    if (s < 60) return Math.round(s) + 's';
+    var m = Math.floor(s/60), r = Math.round(s%60);
+    if (m < 60) return r ? m+'m'+r+'s' : m+'m';
+    var h = Math.floor(m/60); m = m % 60;
+    return m ? h+'h'+m+'m' : h+'h';
+  }
+  function tierClass(t){
+    if (t === 'red')    return 'r';
+    if (t === 'orange') return 'o';
+    if (t === 'yellow') return 'y';
+    return '';
+  }
+  // Casting tagline: "Carol · Aegolism · 2s" — uses ends_at_ms when present so
+  // the countdown stays accurate without a re-fetch every second.
+  function castingRow(casting){
+    if (!casting || !casting.length) return '';
+    var now = Date.now();
+    var bits = [];
+    for (var i = 0; i < casting.length; i++) {
+      var c = casting[i]; if (!c || !c.caster || !c.spell) continue;
+      var rem = (c.ends_at_ms != null) ? Math.max(0, (c.ends_at_ms - now) / 1000)
+              : (c.remaining_secs != null ? c.remaining_secs : 0);
+      bits.push('<span><span class="who">'+esc(c.caster)+'</span> <span class="sp">→ '+esc(c.spell)+'</span> <span class="t">'+fmtSecs(rem)+'</span></span>');
+    }
+    if (!bits.length) return '';
+    return '<div class="casting"><span style="color:#6e7681">🔮</span>'+bits.join(' · ')+'</div>';
+  }
+  function renderRow(r, kind){
+    var groupLbl = r.group != null ? ('G' + r.group) : '';
+    var cls = (kind === 'd' ? 'd' : tierClass(r.tier));
+    var line = '<div class="row '+cls+'">'
+             +    '<span class="nm">'+esc(r.name)+'</span>'
+             +    (groupLbl ? '<span class="grp">'+esc(groupLbl)+'</span>' : '')
+             +    '<span class="cls">'+esc(r.class || '?')+'</span>';
+    if (kind === 'd') {
+      var chips = '';
+      for (var i = 0; i < r.curses.length; i++) {
+        var c = r.curses[i];
+        var t = (c.remaining_secs != null) ? '<span class="t">'+fmtSecs(c.remaining_secs)+'</span>' : '';
+        chips += '<span class="ch">'+esc(c.name)+t+'</span>';
+      }
+      line += '<span class="curse">'+chips+'</span>';
+    } else {
+      line += '<span class="miss">'+esc((r.missing || []).join(' · '))+'</span>';
+    }
+    line += '</div>';
+    line += castingRow(r.casting);
+    return line;
+  }
+  function render(payload){
+    var bq = (payload && payload.buff_queue) || [];
+    var dq = (payload && payload.debuff_queue) || [];
+    var body = document.getElementById('body');
+    var empty = document.getElementById('empty');
+    if (bq.length === 0 && dq.length === 0) {
+      body.innerHTML = '';
+      empty.style.display = '';
+      empty.textContent = bufferClass
+        ? ('no gaps a '+bufferClass+' can fix right now — every Mimic-running raider is covered')
+        : 'no raid roster yet — start any Mimic in raid and the queue fills in within seconds';
+      return;
+    }
+    empty.style.display = 'none';
+    var html = '';
+    if (bq.length) {
+      var hint = bufferClass ? ('severity-first · gaps a '+esc(bufferClass)+' can fix') : 'pick a class to filter';
+      html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+bq.length+'</span><span class="hint">'+hint+'</span></div>';
+      for (var i = 0; i < bq.length; i++) html += renderRow(bq[i], 'b');
+      html += '</div>';
+    }
+    if (dq.length) {
+      html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dq.length+'</span><span class="hint">cures needed</span></div>';
+      for (var i = 0; i < dq.length; i++) html += renderRow(dq[i], 'd');
+      html += '</div>';
+    }
+    body.innerHTML = html;
+  }
+  async function tick(){
+    try {
+      var qs = bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '';
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/buff-queue'+qs, { cache: 'no-store' });
+      var s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      render(s);
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  tick(); setInterval(tick, 1500);
+</script>
+</body>
+</html>
