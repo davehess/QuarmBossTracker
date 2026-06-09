@@ -2900,6 +2900,34 @@ async function _handleAgentChat(req, res) {
 //   npc (or other)                 → plain death notice
 const WP_GUILD_NAME = process.env.PVP_GUILD_NAME || 'Wolf Pack';
 
+// In-memory cache for the catalog NPC lookup. Used by every PvP harvest path
+// to drop names that are actually NPCs (Diabo Xi Va, Trakanon, etc.) before
+// they land in who_observations as fake characters. TTL is the bot's lifetime
+// — the npc catalog is synced weekly, so a restart picks up additions.
+const _catalogNpcCache = new Map();   // nameLower → bool
+async function _isCatalogNpc(name) {
+  if (!name) return false;
+  const k = String(name).trim();
+  if (!k) return false;
+  const cacheKey = k.toLowerCase();
+  if (_catalogNpcCache.has(cacheKey)) return _catalogNpcCache.get(cacheKey);
+  // EQEmu names use _ for spaces; normalize before the ilike compare.
+  const normalized = k.replace(/\s+/g, '_');
+  let found = false;
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      const rows = await supabase.select(
+        'eqemu_npc_types',
+        `name=ilike.${encodeURIComponent(normalized)}&select=id&limit=1`,
+      );
+      found = Array.isArray(rows) && rows.length > 0;
+    }
+  } catch { /* fail open — false positive is acceptable, mis-classifying a real player is worse */ }
+  _catalogNpcCache.set(cacheKey, found);
+  return found;
+}
+
 // Dedup cache: when multiple LIVE parsers (different machines) see the same
 // Druzzil Ro broadcast, each uploads it independently within ~1-2s of each
 // other. We collapse those to one Discord post + one ledger row.
@@ -3007,6 +3035,12 @@ async function _handleAgentPvp(req, res) {
       if (!name) continue;
       if (side === 'killer' && b?.killer_is_npc) continue;
       if (guild === WP_GUILD_NAME) continue;     // WP members already in roster
+      // Catalog-aware NPC filter — defense in depth. The agent flag handles
+      // most cases, but VICTIMS aren't flagged and unguilded killers without
+      // the flag would still get in. eqemu_npc_types is the source of truth
+      // for NPC names; if the broadcast names a known NPC we drop it. (Used
+      // to land in /who as a 'character' which is wrong by definition.)
+      if (await _isCatalogNpc(name)) continue;
       harvestedRows.push({
         name,
         guild: guild || null,
@@ -3422,19 +3456,23 @@ async function _handleAgentPvpAssists(req, res) {
       });
       // The victim's also a free observation if not WP (i.e. has a real guild).
       if (r.victim && r.victim_guild && r.victim_guild !== 'Wolf Pack') {
-        whoRows.push({
-          guild_id:    r.guild_id,
-          character:   r.victim,
-          level:       null,
-          race:        null,
-          class:       null,
-          guild_name:  r.victim_guild || null,
-          anonymous:   false,
-          gm:          false,
-          zone:        r.zone || null,
-          observed_at: r.killed_at,
-          uploaded_by: 'pvp-assist',
-        });
+        // Catalog NPC filter — Diabo Xi Va etc. shouldn't land in /who as
+        // "characters". The agent doesn't flag victims; we check here.
+        if (!(await _isCatalogNpc(r.victim))) {
+          whoRows.push({
+            guild_id:    r.guild_id,
+            character:   r.victim,
+            level:       null,
+            race:        null,
+            class:       null,
+            guild_name:  r.victim_guild || null,
+            anonymous:   false,
+            gm:          false,
+            zone:        r.zone || null,
+            observed_at: r.killed_at,
+            uploaded_by: 'pvp-assist',
+          });
+        }
       }
     }
     if (whoRows.length > 0) {
