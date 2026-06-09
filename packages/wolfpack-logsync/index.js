@@ -2708,7 +2708,18 @@ class EncounterBuilder {
       // Defense-in-depth: even if a name slipped past the writer-side
       // NPC check, drop it here if it shows up as a damage target — the
       // mob we're fighting can't simultaneously be on our threat table.
-      if (this.targets.has(name)) continue;
+      // EXCEPTION: our own pets. A charm pet is usually a mob we damaged
+      // BEFORE charming it (mez → tash → charm), so its name lives in
+      // this.targets from the pre-charm fight — but post-charm it's on
+      // OUR side and its damage rows are exactly what the DPS HUD's pet
+      // rows need. Same-named trash ambiguity is accepted (mobs rarely
+      // hit our targets unless charmed).
+      const nl = String(name).toLowerCase();
+      const petOwner = this.petLeaders[nl]
+        || (this._activeCharms?.get(nl)?.owner)
+        || (_charmTickTracker.get(nl)?.is_active ? _charmTickTracker.get(nl).owner : null)
+        || null;
+      if (this.targets.has(name) && !petOwner) continue;
       perPlayer[name] = {
         swing:      Math.round(t.swing),
         proc:       Math.round(t.proc),
@@ -2722,6 +2733,10 @@ class EncounterBuilder {
         // Inbound damage taken (from mobs) — Tank tab on the damage overlay.
         took:       Math.round(t.took || 0),
         tookMax:    Math.round(t.tookMax || 0),
+        // Set for OUR pet rows (charm or summoned) — lets the DPS HUD allow
+        // the multi-word name past its anti-NPC filter and label the row
+        // "A Fungoid Sporeling (Hopeya)".
+        pet_owner:  petOwner,
         procDetail: t.procDetail || {},
       };
     }
@@ -3315,9 +3330,20 @@ class EncounterBuilder {
       // filter: anyone we've been DAMAGING this encounter (this.targets)
       // is by definition an NPC, so reject them too.
       const attackerIsKnownNpc = attacker && this.targets.has(attacker);
-      if (!pvpHit && attacker && !attackerIsKnownNpc
+      // OUR pets (charm or summoned) bypass both the multi-word anti-NPC
+      // filter AND the known-NPC check — a charm pet is usually a mob we
+      // damaged before charming, so it's in this.targets, and its name has
+      // spaces ("A Fungoid Sporeling"). Without this bypass, pet damage
+      // never reached threatBy and the DPS HUD showed only the owner's own
+      // swings. Pet identity: encounter petLeaders, open charm session, or
+      // the gauge-driven module tracker's active entry.
+      const _atkL = attacker ? attacker.toLowerCase() : '';
+      const attackerIsOurPet = !!(attacker && (this.petLeaders[_atkL]
+        || this._activeCharms?.has(_atkL)
+        || _charmTickTracker.get(_atkL)?.is_active));
+      if (!pvpHit && attacker && (!attackerIsKnownNpc || attackerIsOurPet)
           && (attacker === this.character || isPlausibleAttacker(attacker))
-          && (!/\s/.test(attacker) || attacker === this.character)) {
+          && (!/\s/.test(attacker) || attacker === this.character || attackerIsOurPet)) {
         if (!this.threatBy.has(attacker)) {
           this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
         }
@@ -3390,7 +3416,14 @@ class EncounterBuilder {
         : atkRaw;
       const defenderIsPlayer = defender && (defender === this.character || isConfirmedPlayer(defender));
       const attackerIsPlayer = attacker && (attacker === this.character || isConfirmedPlayer(attacker));
-      if (defenderIsPlayer && !attackerIsPlayer && defender !== attacker) {
+      // OUR pet eating hits IS tanking — the whole point of charm play.
+      // Without this, an enchanter's Tank tab stayed empty because the
+      // defender (the pet) is never a confirmed player.
+      const _defL = defender ? defender.toLowerCase() : '';
+      const defenderIsOurPet = !!(defender && (this.petLeaders[_defL]
+        || this._activeCharms?.has(_defL)
+        || _charmTickTracker.get(_defL)?.is_active));
+      if ((defenderIsPlayer || defenderIsOurPet) && !attackerIsPlayer && defender !== attacker) {
         if (!this.threatBy.has(defender)) {
           this.threatBy.set(defender, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, took: 0, tookMax: 0, procDetail: {} });
         }

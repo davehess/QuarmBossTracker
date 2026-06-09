@@ -45,6 +45,13 @@
   .charm .meta .up.danger{color:#f85149;font-weight:bold}
   .charm .badge{font-size:9px;padding:0 4px;border-radius:3px;background:#2d2150;color:#c9a0ff;margin-left:4px}
   .charm.dire .badge{background:#16361f;color:#56d364}
+  /* Inline "remove" button next to the BROKE badge — bigger target than the
+     ✕ corner dismiss for clearing stale broken-charm cards after a mez break
+     or a botched cycle. Reuses the same data-dismiss path via class="dismiss". */
+  .charm .remove-broken{margin-left:6px;font-size:9px;padding:1px 6px;border-radius:3px;
+    background:#3d1d1d;color:#fca5a5;border:1px solid #5a2a2a;cursor:pointer;
+    font-family:inherit;letter-spacing:0.5px;text-transform:uppercase;line-height:1.3}
+  .charm .remove-broken:hover{background:#5a2a2a;color:#fff;border-color:#f87171}
   .tickbar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .tickbar > div{height:100%;background:#a371f7;transition:width 100ms linear}
   .charm .meta .hp{color:#56d364;font-weight:bold}
@@ -466,6 +473,7 @@
 
         var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (broke ? ' broke' : '') + (warnHit ? ' warn' : '') + (imminent ? ' imminent' : '');
         var badge = broke ? '<span class="badge">BROKE</span>'
+                          + ' <button class="dismiss remove-broken" data-dismiss="' + esc(p.key || '') + '" title="Remove this broken-charm card from the tracker">remove</button>'
                   : (p.is_dire_charm ? '<span class="badge">DIRE</span>' : '<span class="badge">charm</span>');
         var brokeAgo = broke ? Math.round((now - (p.broke_at || now)) / 1000) : 0;
         var warnLine = broke

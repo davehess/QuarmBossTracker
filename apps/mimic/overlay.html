@@ -294,6 +294,15 @@
     if (tabDpsBtn)  tabDpsBtn .classList.remove('on');
     if (tabTankBtn) tabTankBtn.classList.add('on');
   }
+  // Hover-interact handshake — when the overlay is LOCKED (click-through),
+  // mouse events pass through to EQ. Flip the window interactive while the
+  // cursor is over a tab so the click lands. Same fix the Mob Info tabs
+  // needed ("Tank button doesn't do anything" = this exact failure mode).
+  [tabDpsBtn, tabTankBtn].forEach(function(btn){
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  });
   if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
   if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
 
@@ -351,9 +360,12 @@
       const pp = et && et.perPlayer;
       if (pp && typeof pp === 'object') {
         const field = TAB_MODE === 'tank' ? 'took' : 'dmg';
+        // The no-spaces filter drops NPC noise — but OUR pets have multi-word
+        // names ("A Fungoid Sporeling"). The agent stamps pet rows with
+        // pet_owner, which both whitelists them here and labels the row.
         rows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0])
-          .filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null])
+          .filter(x => x[0] && (!/\s/.test(x[0]) || x[3]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0))
           .slice(0,8);
       }
@@ -367,10 +379,15 @@
 
       const ul = document.getElementById('deeps');
       ul.innerHTML = rows.map(function(row, i){
-        var n = row[0], d = row[1], mx = row[2];
+        var n = row[0], d = row[1], mx = row[2], petOwner = row[3];
         var pct = sumDmg > 0 ? (d / sumDmg) * 100 : 0;
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
+        // Pet rows carry their owner in dim parens — same convention as the
+        // Mob Info "Allure (Hopeya)" charm label.
+        var ownerHtml = petOwner
+          ? ' <span style="color:#8b949e;font-size:9px;font-style:italic">(' + esc(petOwner) + ')</span>'
+          : '';
         // In Tank mode, show the biggest single hit absorbed under the
         // row name as a small subscript — "max 4.1K" makes spike-tank
         // damage stand out vs the running total. Suppressed in DPS mode
@@ -381,7 +398,7 @@
           : '';
         return '<li' + (isMe ? ' class="me"' : '') + '>'
              + '<span class="r">' + (i+1) + '.</span>'
-             + '<span class="n">' + esc(n) + maxHitHtml + '</span>'
+             + '<span class="n">' + esc(n) + ownerHtml + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d) + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
