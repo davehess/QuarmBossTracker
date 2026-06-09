@@ -3388,8 +3388,68 @@ async function _handleAgentPvpAssists(req, res) {
   const written = await supabase.upsert('pvp_assists', rows, 'dedup_key')
     .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
   const stored = Array.isArray(written) ? written.length : 0;
+
+  // Discord post — group by (victim, killed-at-second) so multiple assisters
+  // on the same kill bundle into one message. Skip kills we've recently
+  // posted (10-min in-memory dedup) so an agent retry doesn't double-post.
+  // Goes to PVP_THREAD_ID / PVP_CHANNEL_ID like the kill broadcast.
+  try {
+    const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+    if (pvpTargetId && rows.length > 0) {
+      const groups = new Map();   // (victim|second) → { victim, victimGuild, zone, killer, killerIsNpc, killedAt, assisters[] }
+      for (const r of rows) {
+        const k = (r.victim.toLowerCase()) + '|' + r.killed_at.slice(0, 19);
+        let g = groups.get(k);
+        if (!g) {
+          g = {
+            victim: r.victim, victimGuild: r.victim_guild,
+            zone: r.zone, killer: r.killer, killerIsNpc: !!r.killer_is_npc,
+            killedAt: r.killed_at, assisters: [],
+          };
+          groups.set(k, g);
+        }
+        if (!g.assisters.includes(r.assister)) g.assisters.push(r.assister);
+      }
+      const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
+      if (ch) {
+        for (const g of groups.values()) {
+          if (g.assisters.length === 0) continue;
+          const dedupKey = (g.victim.toLowerCase()) + '|' + g.killedAt.slice(0, 19);
+          if (_recentPvpAssistPost(dedupKey)) continue;
+          // "🪶 Assist on Bob of <Tranquility> in nro — Carol, Hopeya, Hitya (3)
+          //   killed by Adiwen". Zone + killed-by lines included when known.
+          const victimLine = g.victim + (g.victimGuild ? ` of <${g.victimGuild}>` : '');
+          const zoneLine   = g.zone ? ` in ${g.zone}` : '';
+          const killerLine = g.killer
+            ? `\n> killed by **${g.killer}**${g.killerIsNpc ? ' _(NPC)_' : ''}`
+            : '';
+          const assistersFmt = g.assisters.map(a => `**${a}**`).join(', ');
+          const content = `🪶 Assist on ${victimLine}${zoneLine} — ${assistersFmt} _(${g.assisters.length})_${killerLine}`;
+          await ch.send({ content, allowedMentions: { parse: [] } }).catch(err => {
+            console.warn('[pvp-assists] post failed:', err?.message);
+          });
+        }
+      }
+    }
+  } catch (e) { console.warn('[pvp-assists] post wrap failed:', e?.message); }
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, stored, dropped }));
+}
+// 10-min in-memory ring for assist-group dedup. Keys are
+// "victimLower|killedAtSecondIso" so an agent retry / a same-second double
+// upload doesn't double-post. Bounded at 500 entries to cap memory.
+const _recentPvpAssistPosts = new Map();   // key → expiresAt
+function _recentPvpAssistPost(key) {
+  const now = Date.now();
+  for (const [k, ex] of _recentPvpAssistPosts) if (ex <= now) _recentPvpAssistPosts.delete(k);
+  if (_recentPvpAssistPosts.has(key)) return true;
+  if (_recentPvpAssistPosts.size > 500) {
+    const oldest = _recentPvpAssistPosts.keys().next().value;
+    if (oldest) _recentPvpAssistPosts.delete(oldest);
+  }
+  _recentPvpAssistPosts.set(key, now + 10 * 60 * 1000);
+  return false;
 }
 
 // ── Druzzil Ro boss-kill auto-timer ───────────────────────────────────────
