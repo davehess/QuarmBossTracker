@@ -2998,14 +2998,19 @@ async function _handleAgentPvp(req, res) {
   const harvestedRows = [];
   for (const b of broadcasts) {
     const nowIso = b?.ts || new Date().toISOString();
+    const zone = b?.zone || null;
     for (const side of ['victim', 'killer']) {
       const name  = b?.[side];
       const guild = b?.[`${side}Guild`];
-      if (!name || !guild) continue;
-      if (guild === WP_GUILD_NAME) continue;     // skip our own members
+      // Drop empty + NPC killers. A null/empty guild is OK — some broadcasts
+      // genuinely lack it; we still want the name + zone observation.
+      if (!name) continue;
+      if (side === 'killer' && b?.killer_is_npc) continue;
+      if (guild === WP_GUILD_NAME) continue;     // WP members already in roster
       harvestedRows.push({
         name,
-        guild,
+        guild: guild || null,
+        zone,
         observedAt: nowIso,
         // class/level/race left null — PvP broadcasts don't carry them.
       });
@@ -3025,6 +3030,7 @@ async function _handleAgentPvp(req, res) {
           guild_name:  w.guild,
           anonymous:   false,
           gm:          false,
+          zone:        w.zone,
           observed_at: new Date(w.observedAt).toISOString(),
           uploaded_by: 'pvp-relay',
         }));
@@ -3388,6 +3394,51 @@ async function _handleAgentPvpAssists(req, res) {
   const written = await supabase.upsert('pvp_assists', rows, 'dedup_key')
     .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
   const stored = Array.isArray(written) ? written.length : 0;
+
+  // Harvest assist rows into who_observations — same pattern as the main PvP
+  // relay above. The killer + victim are usually already covered by the kill
+  // broadcast, but the ASSISTER is uniquely visible here. Assisters are
+  // already roster-validated above so all are WP; we still record them so
+  // their zone shows in /who (and so we have a row regardless of whether the
+  // separate kill broadcast made it through).
+  try {
+    const whoRows = [];
+    for (const r of rows) {
+      whoRows.push({
+        guild_id:    r.guild_id,
+        character:   r.assister,
+        level:       null,
+        race:        null,
+        class:       null,
+        guild_name:  r.assister_guild || null,
+        anonymous:   false,
+        gm:          false,
+        zone:        r.zone || null,
+        observed_at: r.killed_at,
+        uploaded_by: 'pvp-assist',
+      });
+      // The victim's also a free observation if not WP (i.e. has a real guild).
+      if (r.victim && r.victim_guild && r.victim_guild !== 'Wolf Pack') {
+        whoRows.push({
+          guild_id:    r.guild_id,
+          character:   r.victim,
+          level:       null,
+          race:        null,
+          class:       null,
+          guild_name:  r.victim_guild || null,
+          anonymous:   false,
+          gm:          false,
+          zone:        r.zone || null,
+          observed_at: r.killed_at,
+          uploaded_by: 'pvp-assist',
+        });
+      }
+    }
+    if (whoRows.length > 0) {
+      await supabase.upsert('who_observations', whoRows, 'guild_id,character,observed_minute,uploaded_by')
+        .catch(err => console.warn('[pvp-assists] who_observations upsert failed:', err?.message));
+    }
+  } catch (e) { console.warn('[pvp-assists] who harvest failed:', e?.message); }
 
   // Discord post — group by (victim, killed-at-second) so multiple assisters
   // on the same kill bundle into one message. Skip kills we've recently
