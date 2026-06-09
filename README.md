@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Bot:** v3.0.62 · **Agent:** v3.0.94 · **Web:** v1.0.46 · **Mimic:** v1.0.67 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase + Vercel
+**Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase + Vercel · Component versions live in each `package.json` (see [Releases](https://github.com/davehess/QuarmBossTracker/releases) for Mimic/Parser builds). Architecture map: `CLAUDE.md`.
 
 ---
 
@@ -15,7 +15,7 @@ Two paths — pick one. Both upload the same combat data to the bot.
 
 **One-click installer:** [**wolfpack.quest/mimic**](https://wolfpack.quest/mimic)
 
-Electron desktop app, **v1.0.0 stable**. Bundles its own Node runtime — nothing else to install. SmartScreen will warn (not code-signed yet) → *More info → Run anyway*. Auto-updates in place from here on.
+Electron desktop app. Bundles its own Node runtime — nothing else to install. SmartScreen will warn (not code-signed yet) → *More info → Run anyway*. Auto-updates in place from here on (stable channel; betas ship from the `beta` branch).
 
 **What you get on top of uploads:** always-on-top DPS HUD overlay · trigger alerts with TTS + countdown timers · charm tracker (6s tick + recharm alarm) · `/tells` history synced privately to wolfpack.quest/me/tells · Buffs & Zone card (what every character is carrying + where they parked) · UI Studio (back up your EQ window layout, hotkeys, chat tabs, `eqclient.ini` → restore on any machine) · optional Discord sign-in that persists across upgrades.
 
