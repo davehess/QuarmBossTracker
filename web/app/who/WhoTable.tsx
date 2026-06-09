@@ -7,7 +7,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { setWhoClass, setWhoZek } from './actions';
+import { setWhoClass, setWhoZek, deleteWhoCharacter } from './actions';
 import { BASE_CLASSES } from './classes';
 
 export type WhoRow = {
@@ -143,6 +143,25 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
     });
   }
 
+  function onDeleteRow(r: WhoRow) {
+    // Confirm before nuking — every observation row vanishes (no undo from the
+    // UI). Officers use this to scrub NPC entries / stale aliases.
+    const yes = window.confirm(
+      `Delete every /who observation for "${r.character}"?\n\n` +
+      `This removes ${r.obsCount.toLocaleString()} row${r.obsCount === 1 ? '' : 's'} from the directory and ` +
+      `any override (class / Zek flag) too. Can't be undone from the UI.`,
+    );
+    if (!yes) return;
+    setErr(null);
+    // Optimistic — drop locally; router.refresh will reconcile.
+    setRows(rs => rs.filter(x => x.character !== r.character));
+    startTransition(async () => {
+      const res = await deleteWhoCharacter(r.character);
+      if (!res.ok) { setErr(res.error ?? 'delete failed'); router.refresh(); }
+      else router.refresh();
+    });
+  }
+
   const Th = ({ k, label, className }: { k: SortKey; label: string; className?: string }) => (
     <th
       className={`px-2 py-1 text-left cursor-pointer select-none hover:text-text ${className || ''}`}
@@ -199,6 +218,7 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
               <Th k="zek" label="Zek" />
               <Th k="obsCount" label="Seen #" />
               <Th k="lastSeen" label="Last" />
+              {canEdit && <th className="px-2 py-1 text-left w-6"></th>}
             </tr>
           </thead>
           <tbody>
@@ -271,10 +291,24 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
                 </td>
                 <td className="px-2 py-1 text-dim">{r.obsCount.toLocaleString()}</td>
                 <td className="px-2 py-1 text-dim whitespace-nowrap" title={r.lastSeen || ''}>{ago(r.lastSeen)}</td>
+                {canEdit && (
+                  <td className="px-2 py-1 text-right">
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => onDeleteRow(r)}
+                      className="text-dim hover:text-red disabled:opacity-40 disabled:cursor-not-allowed text-xs leading-none p-1"
+                      title="Delete every observation row for this character (use for NPCs / stale entries). Officer only."
+                      aria-label={`Delete ${r.character}`}
+                    >
+                      ✕
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
             {view.length === 0 && (
-              <tr><td colSpan={9} className="px-2 py-6 text-center text-dim">no characters match these filters</td></tr>
+              <tr><td colSpan={canEdit ? 10 : 9} className="px-2 py-6 text-center text-dim">no characters match these filters</td></tr>
             )}
           </tbody>
         </table>
