@@ -1929,7 +1929,12 @@ function petBuffsForOwner(ownerLower) {
       // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
       // the 5-min rebuff cue. HoTs are short and re-applied frequently — a
       // long-lingering 'fell off' is noise, not signal.
-      const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
+      // Stuns + other sub-minute effects (Color Flux 12s, mez breakers, instant
+      // procs) don't deserve the 5-min "fell off — rebuff" cue — you don't
+      // rebuff a stun, you re-stun. Cap the linger at one tick (6s) for any
+      // catalog-duration < 60s, same as HoTs.
+      const _shortFx = ((Number(b && b.dur_ticks) || 0) * 6) > 0 && ((Number(b && b.dur_ticks) || 0) * 6) < 60;
+      const lingerMs = (_isHotBuff(b && b.name) || _shortFx) ? 6_000 : FELL_OFF_LINGER_MS;
       if (b.worn_off_at) {                                   // explicit "worn off"
         if (now - b.worn_off_at > lingerMs) { lm.delete(k); continue; }
         fellOff = true; rem = 0;
