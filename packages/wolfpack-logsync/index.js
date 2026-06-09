@@ -13353,10 +13353,34 @@ function _translateDotNetRegex(pattern) {
   // "Aten Ha Ra", "Lord Nagafen") never matched and triggers like Enrage
   // silently never fired. Allow word chars + space + apostrophe + hyphen,
   // lazy so the surrounding anchored context (^...$) still constrains the
-  // match. {c} is the agent's own character — substituted at match time
-  // ideally; the stop-gap keeps the trigger compiling + firing.
-  p = p.replace(/\{[sScC]\d*\}/g, "(?:[\\w' -]+?)");
+  // match. The capture is NAMED — first occurrence as `s`, second as `s1`,
+  // etc. — so (a) action templates like "ENRAGE - {s}" interpolate the
+  // captured mob name and (b) the live evaluator can audit the match against
+  // our charm-pet tracker to suppress triggers firing on our own pet.
+  let sIdx = 0;
+  p = p.replace(/\{[sScC]\d*\}/g, () => {
+    const name = sIdx === 0 ? 's' : `s${sIdx}`;
+    sIdx++;
+    return `(?<${name}>[\\w' -]+?)`;
+  });
   return p;
+}
+// True when the captured {s}-style name matches a currently active charm pet.
+// Live triggers using `{s} yawns.`, `{s} slows down.`, `{s} has become ENRAGED.`
+// etc. otherwise false-fire when our OWN charm pet gets slowed/enraged. The
+// tracker stores keys lowercased; we just need to look up.
+function _captureMatchesCharmPet(captures) {
+  if (!captures || typeof captures !== 'object') return false;
+  for (const k of Object.keys(captures)) {
+    if (!/^s\d*$/.test(k)) continue;          // {s} family only
+    const v = captures[k];
+    if (!v) continue;
+    const key = String(v).trim().toLowerCase();
+    if (!key) continue;
+    const info = _charmTickTracker.get(key);
+    if (info && info.is_active) return true;
+  }
+  return false;
 }
 
 // For literal (non-regex) EQLP triggers, escape regex metacharacters so
@@ -14674,13 +14698,18 @@ function evaluateTriggersAgainstLine(line, tsMs) {
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
     if (!m) continue;
+    // Charm-pet filter — if the captured {s} name is one of our currently
+    // active charm pets, the message is about OUR pet (slow on a charmed
+    // mob, our pet enrages at low HP, etc.) and the call would be wrong.
+    // Don't apply to Zeal-condition triggers (no log-match captures there).
+    const captures = m.groups || {};
+    if (_captureMatchesCharmPet(captures)) continue;
     // Cooldown gate
     if (t.cooldown_seconds && t.cooldown_seconds > 0) {
       const last = _triggerLastFire.get(t.id || t.name) || 0;
       if (tsMs - last < t.cooldown_seconds * 1000) continue;
     }
     _triggerLastFire.set(t.id || t.name, tsMs);
-    const captures = m.groups || {};
     _fireTriggerActions(t, captures, tsMs, false);
   }
 }

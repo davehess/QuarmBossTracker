@@ -5,5 +5,5 @@
 export const BASE_CLASSES = [
   'Warrior', 'Cleric', 'Paladin', 'Ranger', 'Shadow Knight', 'Druid',
   'Monk', 'Bard', 'Rogue', 'Shaman', 'Necromancer', 'Wizard',
-  'Magician', 'Enchanter',
+  'Magician', 'Enchanter', 'Beastlord',
 ] as const;
