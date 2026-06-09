@@ -3,7 +3,7 @@
 A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
 
-**Bot:** v3.0.62 · **Agent:** v3.0.94 · **Web:** v1.0.49 · **Mimic:** v1.0.67 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase + Vercel
+**Bot:** v3.0.62 · **Agent:** v3.0.96 · **Web:** v1.0.49 · **Mimic:** v1.0.67 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase + Vercel
 
 ---
 

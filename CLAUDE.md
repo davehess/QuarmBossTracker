@@ -3,7 +3,7 @@
 | Component | Version | Source |
 |---|---|---|
 | **Bot** | 3.0.62 | `package.json` |
-| **Agent** (`wolfpack-logsync`) | 3.0.95 | `packages/wolfpack-logsync/package.json` |
+| **Agent** (`wolfpack-logsync`) | 3.0.96 | `packages/wolfpack-logsync/package.json` |
 | **Web** (`wolfpack.quest`) | 1.0.49 | `web/package.json` |
 | **Mimic** (Electron desktop) | 1.0.67 (stable, main) / 1.0.68-beta.7 (beta channel) | `apps/mimic/package.json` |
 

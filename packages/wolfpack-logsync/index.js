@@ -6769,6 +6769,36 @@ function renderZealCard(s) {
   }
   morphInto(el, h);
 }
+// Recent fires card — isolated from renderTriggers so the volatile fmtAgo()
+// timestamps don't dirty the parent #triggers HTML on every poll. The Clear
+// buttons stay wired via the delegated click handler in the trigger-editor
+// IIFE (it lives on #triggers, which is this card's ancestor).
+function renderRecentFiresCard(s) {
+  const el = document.getElementById('wpRecentFires');
+  if (!el) return;   // Triggers tab hasn't painted yet
+  const overlays = (s.activeOverlays || []).slice(0, 6);
+  let h = '<h2>⚡ Recent fires';
+  h += '<span style="float:right;font-size:11px;font-weight:normal">';
+  h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
+  h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
+  h += '</span></h2>';
+  if (overlays.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Test</b> on a row to preview without waiting for a real match.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
+    for (const o of overlays) {
+      const ago = fmtAgo(o.shownAt || 0);
+      const sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
+      const scColor = o.test ? 'color:var(--gold)' : '';
+      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
+           '<td class="name">' + esc(o.trigger || '?') + '</td>' +
+           '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
+           '<td>' + esc(o.text || '') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  morphInto(el, h);
+}
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
@@ -6789,33 +6819,13 @@ function renderTriggers(s) {
   // don't change, so setSectionHTML short-circuits and only the card repaints.
   h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
 
-  // Active overlays (recent matches) — top of the page so the user can see
-  // their triggers actually firing as they tune them. The "Clear" buttons
-  // remove overlays from the in-memory ring buffer; no DB writes either way
-  // so this is safe to mash without consequence.
-  const overlays = (s.activeOverlays || []).slice(0, 6);
-  h += '<div class="card wide">';
-  h += '<h2>⚡ Recent fires';
-  h += '<span style="float:right;font-size:11px;font-weight:normal">';
-  h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
-  h += '<button id="trigClearAllBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px" title="Remove ALL active overlays (in-memory only — no DB writes)">🗑 Clear all</button>';
-  h += '</span></h2>';
-  if (overlays.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Test</b> on a row to preview without waiting for a real match.</div>';
-  } else {
-    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
-    for (const o of overlays) {
-      const ago = fmtAgo(o.shownAt || 0);
-      const sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
-      const scColor = o.test ? 'color:var(--gold)' : '';
-      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
-           '<td class="name">' + esc(o.trigger || '?') + '</td>' +
-           '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
-           '<td>' + esc(o.text || '') + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
+  // Recent fires — isolated into its own wp* card filled by renderRecentFiresCard
+  // on each poll. Same rationale as wpZealCard above: the "When" column ticks
+  // every second via fmtAgo(), so leaving the card inline made the whole
+  // triggers section's HTML string differ on every poll — which morphInto
+  // resolves via a full innerHTML wipe of #triggers, remounting the editor and
+  // resetting any typing the user had in progress. That was the twitch.
+  h += '<div id="wpRecentFires" class="card wide"></div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
@@ -7516,6 +7526,7 @@ async function refresh() {
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
                      ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['recentfires', renderRecentFiresCard],
                      ['overlays', renderOverlays], ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
