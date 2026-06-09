@@ -1669,6 +1669,15 @@ function applyPetHealthLine(line, character) {
 // looks stronger." is OUR pet getting buffed (vs another player).
 function _petOwnerByName(petLower) {
   if (!petLower) return null;
+  // Charm-tracker first — it's the debounced, authoritative source for charm
+  // pets, and it survives the brief slot-16 dropouts that happen during a
+  // re-charm cast (~3s). Without this fallback, `recordPetBuffLanding` would
+  // miss any buff landing that happens to coincide with that window, and the
+  // pet's buffs would stay "(fell off — rebuff)" on the Charm tracker even
+  // after a fresh recast (Mob Info's buff list, which keys off target name
+  // rather than owner, would show the correct countdown — confusing).
+  const ct = _charmTickTracker.get(petLower);
+  if (ct && ct.is_active && ct.owner) return String(ct.owner).toLowerCase();
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || !Array.isArray(st.gauges)) continue;
@@ -1950,11 +1959,20 @@ function noteSelfCast(line, character) {
   // able to match any recent cast, not only the most recent.
   let arr = _recentSelfCast.get(cl);
   if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
-  arr.push({ spellLower: m[1].trim().toLowerCase(), name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  const spellLower = m[1].trim().toLowerCase();
+  arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // Prune old / cap length.
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
   if (arr.length > 8) arr.splice(0, arr.length - 8);
+  // Stage charm-spell duration here too. The other staging path lives in the
+  // parseEvent cast pipeline and depends on parseEvent emitting a `cast`
+  // event for the line — which it sometimes doesn't for the self "You begin
+  // casting" form. When that path misses, the charm overlay falls back to
+  // its 60s estimate ("tick N/10~"). Doing it here covers the gap with no
+  // extra cost: same regex match we just did, same character context.
+  const ci = CHARM_SPELLS.get(spellLower);
+  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: String(character), ts: atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
 // so anyone with that target up sees it in Mob Info's "Casting" section. Only
@@ -6801,8 +6819,12 @@ function renderRecentFiresCard(s) {
       const ago = fmtAgo(o.shownAt || 0);
       const sc  = o.test ? 'TEST' : (o.scope === 'personal' ? 'personal' : 'guild');
       const scColor = o.test ? 'color:var(--gold)' : '';
+      // NOT class="name" — the wolfpack.quest character-link click delegation
+      // walks .name elements, slices to the first space, and opens
+      // /character/<first-token>. "Enrage soon (target ≤10% HP)" → /character/
+      // Enrage → 404. Same trap as the guild-trigger table elsewhere here.
       h += '<tr><td class="dim">' + esc(ago) + '</td>' +
-           '<td class="name">' + esc(o.trigger || '?') + '</td>' +
+           '<td style="color:var(--orange)">' + esc(o.trigger || '?') + '</td>' +
            '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
            '<td>' + esc(o.text || '') + '</td></tr>';
     }
