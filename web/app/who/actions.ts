@@ -86,3 +86,34 @@ export async function setWhoZek(
   // true = flag Zek, false = explicitly not-Zek, null = unset (auto from guild).
   return upsertOverride(character, { is_zek: isZek });
 }
+
+// Officer-only: delete every who_observations row for a character, plus any
+// who_overrides row. Used to scrub NPCs or stale entries from the directory.
+// The character vanishes from the directory entirely on next load.
+export async function deleteWhoCharacter(
+  character: string,
+): Promise<{ ok: boolean; error?: string; deleted?: number }> {
+  const who = await officerIdentity();
+  if (!who) return { ok: false, error: 'officer access required' };
+  const name = String(character || '').trim();
+  if (!name) return { ok: false, error: 'character required' };
+
+  const admin = supabaseAdmin();
+  // Case-insensitive name match — observations are stored under whatever
+  // case EQ used. Filter by guild as well so a stray cross-guild row can't
+  // be reached by accident.
+  const { data: obsRows, error: obsErr } = await admin
+    .from('who_observations')
+    .delete()
+    .ilike('character', name)
+    .eq('guild_id', 'wolfpack')
+    .select('id');
+  if (obsErr) return { ok: false, error: obsErr.message };
+  await admin
+    .from('who_overrides')
+    .delete()
+    .ilike('character', name)
+    .eq('guild_id', 'wolfpack');
+  revalidatePath('/who');
+  return { ok: true, deleted: (obsRows ?? []).length };
+}
