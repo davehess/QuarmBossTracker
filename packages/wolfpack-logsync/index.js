@@ -1181,6 +1181,52 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     const dur = (opts.duration_sec != null) ? opts.duration_sec : (prev ? prev.duration_sec : 0);
     if (dur > 0) _recordCharmSpellOnTarget(pet, owner, opts.charm_spell_name, dur);
   }
+  // Capture pre-charm debuffs into the Charm tracker. When you debuff a
+  // mob THEN charm it (the only practical sequence — EQ won't let you
+  // debuff your own pet), the debuff lands in _buffLandingsByTarget keyed
+  // by the target NAME, but never in _petBuffLandings keyed by the OWNER
+  // (because at land time the mob wasn't yet a pet, so _petOwnerByName
+  // returned null and recordPetBuffLanding bailed). Mob Info shows them
+  // (it keys by target), but the Charm tracker doesn't. On a fresh land,
+  // sweep _buffLandingsByTarget[pet] into _petBuffLandings[owner] so the
+  // Tashanian / Mez / etc. you cast pre-charm carry over to the Charm
+  // tracker too. Skip worn-off and expired entries.
+  if (eventKind === 'land' && owner) {
+    _captureTargetBuffsOnCharm(pet, owner);
+  }
+}
+// Copy any active (not-expired, not-worn-off) entries from
+// _buffLandingsByTarget[pet] into _petBuffLandings[owner] so a charm-land
+// "inherits" the debuffs already on the mob. Pre-charm debuff lands
+// previously had no owner to attach to, so they only existed in
+// _buffLandingsByTarget — Mob Info saw them, Charm tracker didn't.
+function _captureTargetBuffsOnCharm(pet, owner) {
+  if (!pet || !owner) return;
+  const petLower   = String(pet).toLowerCase();
+  const ownerLower = String(owner).toLowerCase();
+  const tgtBuffs = _buffLandingsByTarget.get(petLower);
+  if (!tgtBuffs || tgtBuffs.size === 0) return;
+  let petBuffs = _petBuffLandings.get(ownerLower);
+  if (!petBuffs) { petBuffs = new Map(); _petBuffLandings.set(ownerLower, petBuffs); }
+  const now = Date.now();
+  let captured = 0;
+  for (const [spellKey, b] of tgtBuffs) {
+    if (!b || !b.name) continue;
+    if (b.worn_off_at) continue;                          // already gone
+    const durSecs = (Number(b.dur_ticks) || 0) * 6;
+    if (durSecs > 0 && (now - (b.landed_at || now)) / 1000 > durSecs) continue;   // expired
+    // Don't clobber a more-recent pet-side entry for the same spell.
+    const existing = petBuffs.get(spellKey);
+    if (existing && (existing.landed_at || 0) >= (b.landed_at || 0)) continue;
+    petBuffs.set(spellKey, {
+      name:        b.name,
+      dur_ticks:   b.dur_ticks,
+      dur_formula: b.dur_formula,
+      landed_at:   b.landed_at,
+    });
+    captured++;
+  }
+  if (captured > 0) _savePetStateSoon();
 }
 
 // If a self charm-spell cast is staged and still fresh, return its {cls,dur}
@@ -7204,6 +7250,7 @@ var WP_OVERLAY_ROWS = [
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
+  ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
 ];
 
 function renderOverlays(s) {
@@ -7266,7 +7313,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
