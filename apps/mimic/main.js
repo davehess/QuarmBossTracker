@@ -2115,6 +2115,85 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
 // user clears them). Adds the key at the end of its section if it doesn't
 // exist yet. Writes a .bak alongside (suffix matches uiStudioWriteBundle's
 // pattern) before writing the new content.
+// Scan the active UI skin's XML files for each window's design size. EQ
+// stores window definitions under <eqDir>/uifiles/<skin>/*.xml; the skin name
+// comes from eqclient.ini UISkin= (default 'default'). Inside each file a
+// window is defined as <Screen item="Name">…<Size><CX>w</CX><CY>h</CY></Size>;
+// some skins use the lowercase Schema variant with width/height attributes.
+//
+// We use these sizes as the AUTHORITATIVE MAX for the visual layout — the
+// per-character INI's Width/Height can desync (resized at a different
+// resolution, partially saved, etc.) so the XML size is the right cap.
+// Returns { skin, sizes: { windowName: { cx, cy, file } }, scanned: <count> }.
+ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
+  try {
+    const d = String(eqDir || '').trim();
+    if (!d || !fs.existsSync(d)) return { ok: false, error: 'eqDir does not exist' };
+    // Resolve the active skin from eqclient.ini. Falls back to 'default' when
+    // missing — that's what EQ uses too. Case-insensitive UISkin lookup
+    // because some clients write USkin / UI_SKIN variants.
+    let skin = 'default';
+    const eqClient = path.join(d, 'eqclient.ini');
+    if (fs.existsSync(eqClient)) {
+      try {
+        const txt = fs.readFileSync(eqClient, 'utf8');
+        const m = txt.match(/^\s*UISkin\s*=\s*(.+?)\s*$/im);
+        if (m && m[1].trim()) skin = m[1].trim();
+      } catch {}
+    }
+    const skinDir = path.join(d, 'uifiles', skin);
+    if (!fs.existsSync(skinDir) || !fs.statSync(skinDir).isDirectory()) {
+      return { ok: true, skin, sizes: {}, scanned: 0, note: 'skin dir missing: ' + skinDir };
+    }
+    const sizes = {};
+    let scanned = 0;
+    const files = fs.readdirSync(skinDir).filter(f => /\.xml$/i.test(f));
+    for (const f of files) {
+      const fp = path.join(skinDir, f);
+      let xml;
+      try { xml = fs.readFileSync(fp, 'utf8'); } catch { continue; }
+      scanned++;
+      // Two formats observed across EQ skin variants:
+      //   1. <Screen item="MainChatWindow">…<Size><CX>800</CX><CY>600</CY></Size>
+      //   2. <Window item="MainChatWindow">…<Size width="800" height="600"/>
+      // Regex-based extraction is robust enough for our needs (max-size hint);
+      // a full XML parse isn't worth the dependency. We match nested-tag and
+      // self-closing-attribute Size shapes per Screen/Window block.
+      const rxItem = /<(Screen|Window)\b[^>]*\bitem\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/\1>/gi;
+      let mi;
+      while ((mi = rxItem.exec(xml)) !== null) {
+        const name = mi[2].trim();
+        const body = mi[3];
+        if (!name) continue;
+        if (sizes[name]) continue;   // first-seen wins; some skins have inherited Screen wrappers
+        let cx = null, cy = null;
+        const sNest = body.match(/<Size\b[^>]*>([\s\S]*?)<\/Size>/i);
+        if (sNest) {
+          const cxm = sNest[1].match(/<CX>\s*(-?\d+)\s*<\/CX>/i);
+          const cym = sNest[1].match(/<CY>\s*(-?\d+)\s*<\/CY>/i);
+          if (cxm) cx = parseInt(cxm[1], 10);
+          if (cym) cy = parseInt(cym[1], 10);
+        }
+        if (cx == null || cy == null) {
+          const sAttr = body.match(/<Size\b([^/]*?)\/>/i);
+          if (sAttr) {
+            const wm = sAttr[1].match(/\bwidth\s*=\s*"(-?\d+)"/i);
+            const hm = sAttr[1].match(/\bheight\s*=\s*"(-?\d+)"/i);
+            if (wm) cx = parseInt(wm[1], 10);
+            if (hm) cy = parseInt(hm[1], 10);
+          }
+        }
+        if (cx != null && cy != null && cx > 0 && cy > 0) {
+          sizes[name] = { cx, cy, file: f };
+        }
+      }
+    }
+    return { ok: true, skin, sizes, scanned };
+  } catch (err) {
+    return { ok: false, error: err && err.message };
+  }
+});
+
 ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
   try {
     const d = String(eqDir || '').trim();

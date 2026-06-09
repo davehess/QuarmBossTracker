@@ -556,6 +556,15 @@
       setStatus('no ini files for ' + STATE.character, 'err');
       return;
     }
+    // Scan the active UI skin's XML files for each window's design CX/CY —
+    // gives us authoritative MAX sizes when the INI's W/H is stale (saved at a
+    // different resolution, partial save, never resized in-game, etc).
+    // Failure is non-fatal; we just fall back to the INI sizes.
+    try {
+      var scan = await window.mimic.uiStudioScanWindowDefaults(STATE.eqDir);
+      STATE.xmlSizes = (scan && scan.ok && scan.sizes) || {};
+      STATE.xmlSkin  = (scan && scan.skin) || null;
+    } catch (e) { STATE.xmlSizes = {}; STATE.xmlSkin = null; }
     STATE.fromCloud = false;
     _renderLoadedBundle();
   }
@@ -625,6 +634,25 @@
         var classify = classifyWindow(s);
         var cIdx     = (classify.kind === 'chat') ? _chatIndexOf(s.name) : null;
         var cMeta    = (cIdx != null) ? (chatMeta[cIdx] || { index: cIdx }) : null;
+        // XML max-size cap. The skin XML defines each window's design size; we
+        // clamp the visual w/h to that (rescaled to the target resolution
+        // proportionally — XML sizes are at the design resolution, typically
+        // 1024×768 or 1920×1080 depending on the skin). When the INI has no
+        // size we ALSO fall back to the XML size so the window still renders.
+        var xmlMax = (STATE.xmlSizes || {})[s.name] || null;
+        if (xmlMax) {
+          // Scale the XML size with the same fx factors used elsewhere so it
+          // reads correctly in the target resolution canvas.
+          var xCx = Math.round(xmlMax.cx * fxX);
+          var xCy = Math.round(xmlMax.cy * fxY);
+          // Apply as a cap. If INI w/h reads bigger than the XML allows, the
+          // INI was wrong (or saved at a different scale) — clamp down so the
+          // visual matches what EQ will actually show.
+          if (xCx > 0 && w > xCx) w = xCx;
+          if (xCy > 0 && h > xCy) h = xCy;
+          // If hasWH was false (no size in INI), use XML as the actual size.
+          if (!hasWH && xCx > 0 && xCy > 0) { w = xCx; h = xCy; }
+        }
         STATE.windows.push({
           id:     'w' + (seq++),
           file:   fname,
@@ -637,6 +665,7 @@
           hasWH:    hasWH,
           srcSuffix: pos.used,
           chatMeta: cMeta,
+          xmlMax:   xmlMax,    // { cx, cy, file } at the skin's design resolution
           x: x, y: y, w: w, h: h,
           origX: x, origY: y, origW: w, origH: h,
         });
