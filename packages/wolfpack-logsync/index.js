@@ -5012,6 +5012,90 @@ function _serializeForDashboard() {
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
+    // Charm-tracking diagnostic — surfaces the four checkpoints the charm
+    // detection has to pass through (cast seen → pending staged → slot 16
+    // populated → tracker entry created), so a user can SEE where the
+    // pipeline stopped if their charm isn't lighting up. Renders on the
+    // Triggers tab as a small "🐺 Charm diagnostic" card.
+    charmDiag: (() => {
+      const now = Date.now();
+      const out = {
+        now,
+        recent_self_casts: [],
+        pending_charm:     null,
+        charm_pending_window_ms: PENDING_CHARM_WINDOW_MS,
+        slot16_by_char:    [],
+        tracker:           [],
+        charm_spell_names: [],
+      };
+      // Recent self-casts across every watched character (newest last so
+      // the dashboard renders newest first when reversed). Only entries
+      // matching a CHARM_SPELLS spell are surfaced — keeps the panel small
+      // and focused. 30s window.
+      const CHARM_NAMES = new Set();
+      for (const k of CHARM_SPELLS.keys()) CHARM_NAMES.add(k);
+      out.charm_spell_names = Array.from(CHARM_NAMES).sort();
+      for (const [chLower, arr] of _recentSelfCast.entries()) {
+        for (const rc of (arr || [])) {
+          if (!rc || !rc.spellLower) continue;
+          if (now - rc.atMs > 30_000) continue;
+          out.recent_self_casts.push({
+            character:   chLower,
+            spell:       rc.name,
+            spell_lower: rc.spellLower,
+            is_charm:    CHARM_NAMES.has(rc.spellLower),
+            cast_at_ms:  rc.atMs,
+            ago_secs:    Math.round((now - rc.atMs) / 1000),
+            target:      rc.target || null,
+          });
+        }
+      }
+      out.recent_self_casts.sort((a, b) => b.cast_at_ms - a.cast_at_ms);
+      out.recent_self_casts = out.recent_self_casts.slice(0, 8);
+      // Pending charm — what was staged by the last cast detection.
+      if (_pendingCharmSpell) {
+        const age = now - _pendingCharmSpell.ts;
+        out.pending_charm = {
+          spell:    _pendingCharmSpell.name || '(unknown)',
+          class:    _pendingCharmSpell.cls,
+          dur_sec:  _pendingCharmSpell.dur,
+          owner:    _pendingCharmSpell.owner,
+          age_ms:   age,
+          expires_in_ms: Math.max(0, PENDING_CHARM_WINDOW_MS - age),
+          expired:  age > PENDING_CHARM_WINDOW_MS,
+        };
+      }
+      // Zeal slot 16 per character + whether it would pass the
+      // article-prefix filter that _reconcileGaugeCharms uses to decide
+      // "this is a charm pet".
+      for (const ch of Object.keys(_zealState)) {
+        const st = _zealState[ch];
+        if (!st || !Array.isArray(st.gauges)) continue;
+        const petG = st.gauges.find(g => g && g.slot === 16 && g.text);
+        out.slot16_by_char.push({
+          character:  ch,
+          slot16_text: petG ? String(petG.text) : null,
+          passes_article_filter: petG ? /^an?\s+/i.test(String(petG.text)) : false,
+          updated_age_secs: st.updatedAt ? Math.round((now - st.updatedAt) / 1000) : null,
+        });
+      }
+      // Active charm tracker entries.
+      for (const [k, info] of _charmTickTracker.entries()) {
+        out.tracker.push({
+          key:           k,
+          pet:           info.pet,
+          owner:         info.owner,
+          is_active:     info.is_active,
+          is_dire:       !!info.is_dire_charm,
+          charm_class:   info.charm_class,
+          duration_sec:  info.duration_sec,
+          started_at:    info.started_at,
+          last_tick_at:  info.last_tick_at,
+          broke_at:      info.broke_at,
+        });
+      }
+      return out;
+    })(),
     // Bard melody — per watched character, the songs in /melody slot order
     // + the current cast position. Powers the melody overlay's vertical
     // list with ▶ play icon, casting bar, and the "stopped here" marker
@@ -6864,6 +6948,123 @@ function renderZealCard(s) {
   }
   morphInto(el, h);
 }
+// 🐺 Charm diagnostic — shows the four-stage charm-detection pipeline so a
+// user can see WHERE their charm dropped if the tracker isn\\'t lighting up:
+//   1. Did the agent see the cast? (recent_self_casts row matching CHARM_SPELLS)
+//   2. Did it stage the pending charm? (pending_charm)
+//   3. Did the gauge get the pet? (slot16_by_char rows + article-filter pass)
+//   4. Did the tracker open a session? (tracker entries)
+// Hidden when there\\'s nothing to show; surfaces a "Detected ✓ / Missing ✗"
+// row per stage when there is.
+function renderCharmDiag(s) {
+  const el = document.getElementById('wpCharmDiag');
+  if (!el) return;   // Triggers tab not painted yet
+  const d = s && s.charmDiag;
+  if (!d) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  // Only render if there\\'s actionable data: any charm cast in the last 30s,
+  // any pending charm, any slot 16 entry, or any tracker row.
+  const hasData = (d.recent_self_casts && d.recent_self_casts.some(c => c.is_charm))
+               || d.pending_charm
+               || (d.tracker && d.tracker.length)
+               || (d.slot16_by_char && d.slot16_by_char.some(r => r.slot16_text));
+  if (!hasData) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+
+  const chk = (ok) => ok ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>';
+  let h = '<h2>🐺 Charm diagnostic <span class="dim" style="font-size:11px;font-weight:normal">(why isn\\'t my charm tracker lighting up?)</span></h2>';
+
+  // Recent charm casts
+  const charmCasts = (d.recent_self_casts || []).filter(c => c.is_charm);
+  const otherCasts = (d.recent_self_casts || []).filter(c => !c.is_charm);
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>1. Cast seen?</b> ';
+  if (charmCasts.length === 0) {
+    h += chk(false) + ' <span class="dim">no charm-spell "You begin casting" line in the last 30s on any watched character.</span>';
+    if (otherCasts.length > 0) {
+      h += '<div class="dim" style="font-size:10px;margin-top:2px">' + otherCasts.length + ' other cast(s) seen — confirms log tail is working. Check spell name spelling against CHARM_SPELLS map.</div>';
+    }
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>When</th><th>Character</th><th>Spell</th><th>Target (Zeal)</th></tr>';
+    for (const c of charmCasts) {
+      h += '<tr><td class="dim">' + c.ago_secs + 's ago</td>'
+         +   '<td>' + esc(c.character) + '</td>'
+         +   '<td style="color:var(--orange)">' + esc(c.spell) + '</td>'
+         +   '<td class="dim">' + esc(c.target || '—') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // Pending charm
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>2. Pending charm staged?</b> ';
+  if (!d.pending_charm) {
+    h += chk(false) + ' <span class="dim">_pendingCharmSpell is empty (already consumed by a land OR never staged).</span>';
+  } else {
+    const p = d.pending_charm;
+    h += p.expired ? chk(false) : chk(true);
+    h += ' <span style="color:var(--blue)">' + esc(p.spell) + '</span> · <span class="dim">' + esc(p.class) + '</span>'
+       + ' · ' + p.dur_sec + 's duration · owner <b>' + esc(p.owner || '?') + '</b>'
+       + ' · staged ' + Math.round(p.age_ms / 1000) + 's ago'
+       + (p.expired ? ' <span style="color:var(--red)">(EXPIRED — window is ' + Math.round(d.charm_pending_window_ms / 1000) + 's; the gauge took too long)</span>'
+                    : ' · expires in ' + Math.round(p.expires_in_ms / 1000) + 's');
+  }
+  h += '</div>';
+
+  // Zeal gauge slot 16
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>3. Zeal slot 16 (pet gauge)?</b> ';
+  const slot16Rows = (d.slot16_by_char || []).filter(r => r.slot16_text);
+  if (slot16Rows.length === 0) {
+    h += chk(false) + ' <span class="dim">No character is reporting slot 16 — Zeal pipe may be disconnected, or the charm hasn\\'t landed yet (gauge populates ~2s after).</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Character</th><th>slot 16 text</th><th>Article filter</th><th>Updated</th></tr>';
+    for (const r of slot16Rows) {
+      h += '<tr><td>' + esc(r.character) + '</td>'
+         +   '<td><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(r.slot16_text) + '</code></td>'
+         +   '<td>' + (r.passes_article_filter
+              ? '<span style="color:var(--green)">passes</span>'
+              : '<span style="color:var(--red)">FAILS — needs to start with "a "/"an "</span>') + '</td>'
+         +   '<td class="dim">' + (r.updated_age_secs != null ? r.updated_age_secs + 's ago' : '?') + '</td></tr>';
+    }
+    h += '</table>';
+    if (slot16Rows.some(r => !r.passes_article_filter)) {
+      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ The article-prefix filter in _reconcileGaugeCharms only opens a charm session when the slot 16 text starts with "a " or "an ". If your charmed mob doesn\\'t have an article in its name, this filter rejects it — flag the case so we can relax the rule.</div>';
+    }
+  }
+  h += '</div>';
+
+  // Tracker entries
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>4. Tracker session opened?</b> ';
+  if (!d.tracker || d.tracker.length === 0) {
+    h += chk(false) + ' <span class="dim">_charmTickTracker is empty. If steps 1-3 are ✓ but this is ✗, the gauge debounce (1.5s) hasn\\'t fired yet — wait a couple of seconds. If it stays empty, the owner mismatch in _consumePendingCharmSpell is the next thing to check.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Pet</th><th>Owner</th><th>Active</th><th>Class</th><th>Duration</th><th>Up</th></tr>';
+    const now = d.now || Date.now();
+    for (const t of d.tracker) {
+      const up = t.started_at ? Math.round((now - t.started_at) / 1000) : 0;
+      h += '<tr><td>' + esc(t.pet || '?') + '</td>'
+         +   '<td>' + esc(t.owner || '?') + '</td>'
+         +   '<td>' + (t.is_active ? '<span style="color:var(--green)">active</span>'
+                                   : '<span class="dim">broken</span>') + '</td>'
+         +   '<td class="dim">' + esc(t.charm_class || '(estimate)') + '</td>'
+         +   '<td>' + (t.duration_sec ? t.duration_sec + 's' : '<span class="dim">(60s est)</span>') + '</td>'
+         +   '<td class="dim">' + up + 's</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  morphInto(el, h);
+}
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
@@ -6883,6 +7084,9 @@ function renderTriggers(s) {
   // the volatile card means the HTML below stays byte-stable when triggers
   // don't change, so setSectionHTML short-circuits and only the card repaints.
   h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
+  // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
+  // until there's data to show (no watched character casting charms, etc.).
+  h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
 
   // Active overlays (recent matches) — top of the page so the user can see
   // their triggers actually firing as they tune them. The "Clear" buttons
@@ -7611,6 +7815,7 @@ async function refresh() {
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
                      ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['charmdiag', renderCharmDiag],
                      ['overlays', renderOverlays], ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];

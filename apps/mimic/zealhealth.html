@@ -107,6 +107,43 @@
     moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
     moveBtn.addEventListener('mousedown', _beginDrag);
+    // Right-click on the ✥ corner → resize presets + per-overlay Setup mode,
+    // same pattern as every other overlay.
+    moveBtn.addEventListener('contextmenu', function(ev){
+      ev.preventDefault();
+      var prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
+      var menu = document.createElement('div');
+      menu.id = 'wpResizeMenu';
+      menu.style.cssText = 'position:fixed;top:30px;left:6px;z-index:200;background:rgba(14,17,22,0.95);border:1px solid rgba(88,166,255,0.4);border-radius:5px;padding:4px;display:flex;flex-direction:column;gap:2px;font-family:ui-monospace,Menlo,Consolas,monospace';
+      [['xs','XS · 200×100'],['sm','S · 260×140'],['md','M · 320×200'],['lg','L · 400×260'],['xl','XL · 500×320']].forEach(function(s){
+        var b = document.createElement('button');
+        b.textContent = s[1];
+        b.style.cssText = 'background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px';
+        b.onmouseenter = function(){ b.style.background = '#1f6feb'; b.style.color = '#fff'; try { window.mimic.overlayHoverInteractive(true); } catch (e) {} };
+        b.onmouseleave = function(){ b.style.background = '#21262d'; b.style.color = '#c9d1d9'; };
+        b.onclick = function(){ try { window.mimic.overlayResizePreset(s[0]); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+        menu.appendChild(b);
+      });
+      var setupBtn = document.createElement('button');
+      setupBtn.textContent = '🛠 Setup THIS overlay';
+      setupBtn.style.cssText = 'background:#2a1d3d;color:#d2a8ff;border:1px solid #a371f7;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
+      setupBtn.onmouseenter = function(){ setupBtn.style.background='#3d2a57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
+      setupBtn.onclick = function(){ try { window.mimic.setSetupModeThis(); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+      var setupAllBtn = document.createElement('button');
+      setupAllBtn.textContent = '🛠 Setup ALL overlays';
+      setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
+      setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
+      setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
+      menu.insertBefore(setupBtn, menu.firstChild);
+      menu.insertBefore(setupAllBtn, menu.firstChild);
+      document.body.appendChild(menu);
+      try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
+      setTimeout(function(){
+        document.addEventListener('mousedown', function closer(e){
+          if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', closer); try { window.mimic.overlayHoverInteractive(false); } catch (e2) {} }
+        });
+      }, 0);
+    });
   }
   document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
   window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
