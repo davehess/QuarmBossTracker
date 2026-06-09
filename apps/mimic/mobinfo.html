@@ -246,8 +246,15 @@
     else bt = hasRem ? fmtSecs(b.remaining_secs) : '?';
     // Fell off in the last 5 min → solid purple rebuff cue.
     if (b.fell_off) { col = '#a371f7'; pct = 100; bt = 'fell off'; }
-    return '<div class="tbuff" title="'+esc(b.name)+(b.fell_off?' · fell off (rebuff)':(hasRem?(' · '+fmtSecs(b.remaining_secs)+' left'):' · present'))+'">'
-         +    '<span class="bn">'+esc(b.name)+'</span>'
+    // Owner-in-parens: charm-spell entries (Allure, etc.) carry the caster's
+    // name so other Mimic users targeting the same charmed mob can see who's
+    // running it. Rendered dim/italic to differentiate from the spell name
+    // itself.
+    var ownerStr = (b.owner) ? ' <span style="color:#8b949e;font-style:italic">(' + esc(b.owner) + ')</span>' : '';
+    var tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
+            + (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present'));
+    return '<div class="tbuff" title="'+tip+'">'
+         +    '<span class="bn">'+esc(b.name)+ownerStr+'</span>'
          +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
          +    '<span class="bt">'+bt+'</span>'
          +  '</div>';

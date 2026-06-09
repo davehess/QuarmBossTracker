@@ -1169,6 +1169,18 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     duration_sec: (opts && opts.duration_sec != null) ? opts.duration_sec
                 : (prev ? prev.duration_sec : null),
   });
+  // Mirror the charm spell into _buffLandingsByTarget so the Mob Info debuff
+  // section shows e.g. "Allure (Hopeya)" with a live countdown — Allure's
+  // cast_on_other is NULL in eqemu_spells, so the log-driven path can't
+  // surface it; the charm-land event is the only signal we have. Only on
+  // 'land' (the synthesis represents the active charm), and only when the
+  // caller knows the actual spell + duration (i.e. a real cast was staged —
+  // gauge-only re-charms without a fresh cast carry the previous session's
+  // values forward without re-bumping the debuff).
+  if (eventKind === 'land' && opts && opts.charm_spell_name) {
+    const dur = (opts.duration_sec != null) ? opts.duration_sec : (prev ? prev.duration_sec : 0);
+    if (dur > 0) _recordCharmSpellOnTarget(pet, owner, opts.charm_spell_name, dur);
+  }
 }
 
 // If a self charm-spell cast is staged and still fresh, return its {cls,dur}
@@ -1182,7 +1194,33 @@ function _consumePendingCharmSpell(owner, nowMs) {
   // resolves the same way, so this holds for self charm.
   if (p.owner && owner && String(p.owner).toLowerCase() !== String(owner).toLowerCase()) return null;
   _pendingCharmSpell = null;
-  return { charm_class: p.cls, duration_sec: p.dur };
+  return { charm_class: p.cls, duration_sec: p.dur, charm_spell_name: p.name || null };
+}
+
+// Synthesize a "charm spell" entry in _buffLandingsByTarget so the charm shows
+// as a timed DEBUFF on the pet's Mob Info card, e.g. "Allure (Hopeya)".
+// Charm spells have good_effect=0 in eqemu_spells, so they naturally land in
+// the debuff section of renderTargetBuffs without extra coloring logic. The
+// `owner` field is rendered in parens by the Mob Info overlay so other Mimic
+// users targeting the same mob can see who's charming it. Cleared when the
+// charm session ends (break / re-charm refresh) by the same overwrite-by-name
+// logic that handles every other landed buff.
+function _recordCharmSpellOnTarget(pet, owner, spellName, durSec) {
+  if (!pet || !spellName || !(durSec > 0)) return;
+  const k = String(pet).toLowerCase();
+  let mp = _buffLandingsByTarget.get(k);
+  if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
+  const newKey = String(spellName).toLowerCase();
+  // dur_ticks stored as ticks (catalog-native unit) since targetBuffsFor
+  // computes durSecs as dur_ticks * 6.
+  mp.set(newKey, {
+    name: spellName,
+    dur_ticks: Math.max(1, Math.round(durSec / 6)),
+    landed_at: Date.now(),
+    owner: owner ? String(owner) : null,
+    is_charm_spell: true,
+  });
+  _savePetStateSoon();
 }
 
 // Reconcile the charm tracker against the LIVE Zeal pet gauge (slot 16). On
@@ -1919,8 +1957,16 @@ function targetBuffsFor(targetLower) {
       if (rem < -(lingerMs / 1000)) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
     }
+    // Charm-spell entries carry the owner name so Mob Info can render
+    // "Allure (Hopeya)" — the only path for tracking a charm whose
+    // cast_on_other is NULL in the catalog. Always treat as a debuff
+    // (good=0) so it lands in the Debuff section regardless of catalog
+    // lookup.
+    const isCharm = !!(b && b.is_charm_spell);
     out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at, good: _spellGood(b.name), fell_off: fellOff });
+      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at,
+      good: isCharm ? 0 : _spellGood(b.name), fell_off: fellOff,
+      owner: (b && b.owner) ? b.owner : null });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -1970,7 +2016,7 @@ function noteSelfCast(line, character) {
   // ("tick N/10~"). Doing it here covers the gap with no extra cost: same
   // regex match we just did, same character context.
   const ci = CHARM_SPELLS.get(spellLower);
-  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: String(character), ts: atMs };
+  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
 // so anyone with that target up sees it in Mob Info's "Casting" section. Only
@@ -3375,7 +3421,7 @@ class EncounterBuilder {
       // by a short time window, mirroring _pendingDireCharm.
       if (!event.attacker) {
         const ci = CHARM_SPELLS.get(String(spell).toLowerCase());
-        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: this.character || null, ts: Date.now() };
+        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
       }
       // Bard melody tracker — singing-only (the parseEvent split tags bard
       // songs with event.singing=true). Move-to-front a song-name cycle per
