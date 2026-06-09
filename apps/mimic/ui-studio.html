@@ -556,6 +556,15 @@
       setStatus('no ini files for ' + STATE.character, 'err');
       return;
     }
+    // Scan the active UI skin's XML files for each window's design CX/CY —
+    // gives us authoritative MAX sizes when the INI's W/H is stale (saved at a
+    // different resolution, partial save, never resized in-game, etc).
+    // Failure is non-fatal; we just fall back to the INI sizes.
+    try {
+      var scan = await window.mimic.uiStudioScanWindowDefaults(STATE.eqDir);
+      STATE.xmlSizes = (scan && scan.ok && scan.sizes) || {};
+      STATE.xmlSkin  = (scan && scan.skin) || null;
+    } catch (e) { STATE.xmlSizes = {}; STATE.xmlSkin = null; }
     STATE.fromCloud = false;
     _renderLoadedBundle();
   }
@@ -623,6 +632,57 @@
         // chat windows are the interesting one — they carry tab + channel
         // metadata that the user wants visible without poking through INIs.
         var classify = classifyWindow(s);
+        var cIdx     = (classify.kind === 'chat') ? _chatIndexOf(s.name) : null;
+        var cMeta    = (cIdx != null) ? (chatMeta[cIdx] || { index: cIdx }) : null;
+        // XML max-size cap. The skin XML defines each window's design size; we
+        // clamp the visual w/h to that (rescaled to the target resolution
+        // proportionally — XML sizes are at the design resolution, typically
+        // 1024×768 or 1920×1080 depending on the skin). When the INI has no
+        // size we ALSO fall back to the XML size so the window still renders.
+        // XML lookup: exact name first, then template fallback for windows
+        // that share a base XML. Verified on NillipussUI_1080p
+        // (https://github.com/NilliP/NillipussUI_1080p): every chat window
+        // (MainChat, "Chat 1".."Chat N", numeric "Chat<N>") is sized by the
+        // single ChatWindow XML — the per-character INI then has each one
+        // resized independently. We honor that fallback here.
+        var _xmlLookup = (function(sectionName){
+          var xs = STATE.xmlSizes || {};
+          var n = String(sectionName || '').trim();
+          if (!n) return null;
+          // 1. Exact match — covers PlayerWindow, TargetWindow, BuffWindow, etc.
+          if (xs[n]) return xs[n];
+          // 2. INI uses bare name; XML adds Window / Wnd suffix.
+          //    e.g. "Actions" → "ActionsWindow", "Bank" → "BankWnd".
+          if (xs[n + 'Window']) return xs[n + 'Window'];
+          if (xs[n + 'Wnd'])    return xs[n + 'Wnd'];
+          // 3. INI carries trailing _<N> or <N> for multi-instance windows
+          //    (HotButtonWnd_2, GroupWindow1) — try the base name, then with
+          //    the suffix dance again.
+          var m = n.match(/^(.+?)[_]?(\d+)$/);
+          if (m) {
+            if (xs[m[1]]) return xs[m[1]];
+            if (xs[m[1] + 'Window']) return xs[m[1] + 'Window'];
+            if (xs[m[1] + 'Wnd'])    return xs[m[1] + 'Wnd'];
+          }
+          return null;
+        });
+        // Chat windows are deliberately resized per-instance by the user — the
+        // ChatWindow XML template only describes the design default, not a real
+        // cap. Skip the XML logic for them; honor the INI sizes verbatim.
+        var xmlMax = (classify.kind === 'chat') ? null : _xmlLookup(s.name);
+        if (xmlMax) {
+          // Scale the XML size with the same fx factors used elsewhere so it
+          // reads correctly in the target resolution canvas.
+          var xCx = Math.round(xmlMax.cx * fxX);
+          var xCy = Math.round(xmlMax.cy * fxY);
+          // Apply as a cap. If INI w/h reads bigger than the XML allows, the
+          // INI was wrong (or saved at a different scale) — clamp down so the
+          // visual matches what EQ will actually show.
+          if (xCx > 0 && w > xCx) w = xCx;
+          if (xCy > 0 && h > xCy) h = xCy;
+          // If hasWH was false (no size in INI), use XML as the actual size.
+          if (!hasWH && xCx > 0 && xCy > 0) { w = xCx; h = xCy; }
+        }
         STATE.windows.push({
           id:     'w' + (seq++),
           file:   fname,
@@ -634,6 +694,8 @@
           props:    s.props,
           hasWH:    hasWH,
           srcSuffix: pos.used,
+          chatMeta: cMeta,
+          xmlMax:   xmlMax,    // { cx, cy, file } at the skin's design resolution
           x: x, y: y, w: w, h: h,
           origX: x, origY: y, origW: w, origH: h,
         });
@@ -724,15 +786,33 @@
       if (parsed.sections[i].name !== 'ChatManager') continue;
       var props = parsed.sections[i].props || {};
       for (var key in props) {
-        var m = key.match(/^ChatWindow(\d+)_DefaultChannel$/i);
+        var m = key.match(/^ChatWindow(\d+)_(DefaultChannel|Name|ChatChannel)$/i);
         if (m) {
           var idx = parseInt(m[1], 10);
-          if (!meta[idx]) meta[idx] = {};
-          meta[idx].defaultChannel = parseInt(props[key], 10);
+          if (!meta[idx]) meta[idx] = { index: idx };
+          if (/Name$/i.test(m[2])) meta[idx].name = String(props[key]);
+          else if (/DefaultChannel$/i.test(m[2])) meta[idx].defaultChannel = parseInt(props[key], 10);
+          else if (/ChatChannel$/i.test(m[2])) meta[idx].chatChannel = parseInt(props[key], 10);
+        }
+        // ChannelMap<filter> = <windowIndex> → which filters route to a window.
+        var mk = key.match(/^ChannelMap(\d+)$/);
+        if (mk) {
+          var win = parseInt(props[key], 10);
+          if (!meta[win]) meta[win] = { index: win };
+          if (!meta[win].filters) meta[win].filters = [];
+          meta[win].filters.push(parseInt(mk[1], 10));
         }
       }
     }
     return meta;
+  }
+  // Index for a position-section name → ChatManager window index. MainChat = 0;
+  // "Chat <N>" = N. Returns null for non-chat sections.
+  function _chatIndexOf(sectionName) {
+    var n = String(sectionName || '');
+    if (/^mainchat$/i.test(n)) return 0;
+    var m = n.match(/^chat\s*(\d+)$/i);
+    return m ? parseInt(m[1], 10) : null;
   }
   function _categoryOf(section, chatMeta) {
     var n = String(section || '');
@@ -975,9 +1055,18 @@
       var sh = Math.max(8, Math.round(w.h * STATE.sliceScale));
       var sel = (STATE.selected === i) ? ' selected' : '';
       var kindCls = w.kind ? ' kind-' + w.kind : '';
+      // Chat windows get a richer label: "WindowName (Chat #) · default ch X"
+      // — the ChatManager-supplied name (when present) reads more naturally
+      // than the position-section name ("Chat12" → "F THIS CHAT (Chat 12)").
+      var lbl = w.label;
+      if (w.kind === 'chat' && w.chatMeta) {
+        var disp = w.chatMeta.name && w.chatMeta.name !== w.label ? w.chatMeta.name : w.label;
+        var idx  = w.chatMeta.index;
+        lbl = disp + (idx != null ? ' (Chat ' + idx + ')' : '');
+      }
       html += '<div class="win' + sel + kindCls + '" data-i="' + i + '" '
             + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
-            + '<span class="lbl">' + escapeHtml(w.label) + '</span>'
+            + '<span class="lbl">' + escapeHtml(lbl) + '</span>'
             + '<span class="sz">' + w.w + '×' + w.h + '</span>'
             + (STATE.selected === i ? '<div class="grip se" data-grip="se"></div>' : '')
             + '</div>';
@@ -1389,44 +1478,143 @@
     var chat  = res && res.chat;
     var tells = res && res.tells;
     var dlg = document.getElementById('socialsInspector');
+    // Persisted width — drag the left edge to resize. Restored across opens.
+    var savedW = parseInt(localStorage.getItem('uiInspectorWidth') || '480', 10);
+    if (!(savedW >= 320 && savedW <= window.innerWidth - 200)) savedW = 480;
     if (!dlg) {
       dlg = document.createElement('div');
       dlg.id = 'socialsInspector';
-      dlg.style.cssText = 'position:fixed;top:50px;right:0;bottom:0;width:480px;' +
+      dlg.style.cssText = 'position:fixed;top:50px;right:0;bottom:0;width:' + savedW + 'px;' +
         'background:#161b22;border-left:1px solid #30363d;z-index:60;overflow-y:auto;' +
-        'padding:14px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
+        'padding:14px 14px 14px 22px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
       document.body.appendChild(dlg);
+      // Resize handle pinned to the left edge — drag to resize between 320px
+      // and viewport-200px. cursor:ew-resize; persists to localStorage on
+      // release. Persistent across opens since the dialog div is reused.
+      var grip = document.createElement('div');
+      grip.id = 'uiInspectorResize';
+      grip.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:6px;' +
+        'cursor:ew-resize;background:transparent;z-index:5';
+      grip.title = 'Drag to resize';
+      grip.addEventListener('mousedown', function(e){
+        e.preventDefault();
+        var startX = e.clientX, startW = dlg.getBoundingClientRect().width;
+        var min = 320, max = Math.max(min, window.innerWidth - 200);
+        function onMove(ev){
+          var w = startW + (startX - ev.clientX);
+          if (w < min) w = min;
+          if (w > max) w = max;
+          dlg.style.width = w + 'px';
+        }
+        function onUp(){
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          try { localStorage.setItem('uiInspectorWidth', String(parseInt(dlg.style.width, 10) || 480)); } catch (e) {}
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      dlg.appendChild(grip);
+    } else {
+      dlg.style.width = savedW + 'px';
     }
-    var html = '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
-      'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px">×</button>' +
+    // Header bar — resize hint + Save button (enables when any input is dirty).
+    var html = '<div style="position:relative">' +
+      '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
+      'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px;line-height:1;padding:0 0 0 6px">×</button>' +
+      '<button id="uiInspectorSave" disabled ' +
+      'style="float:right;background:#21262d;border:1px solid #30363d;color:#6e7681;border-radius:4px;' +
+      'padding:3px 10px;font-family:sans-serif;font-size:11px;cursor:not-allowed;margin-right:8px">Save changes</button>' +
       '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 UI Inspector</h2>' +
       '<p style="color:#8b949e;font-size:10px;margin:0 0 10px;font-family:sans-serif">' +
       'Chat routing, tell windows, and per-page Hotbar + Socials — parsed from ' +
-      'your character INI. Raw section dump is at the bottom for reference.</p>';
+      'your character INI. HotButton hotkeys and Social name / color / lines are <b>editable</b> — ' +
+      'change a field and click <b>Save changes</b>. ' +
+      'Drag the left edge to resize.</p>' +
+      '</div>';
 
     // ── Chat windows & routing (from UI_<char> [ChatManager]) ─────────────
+    // Each window renders as a card with:
+    //   • Header: "Name (Chat #)" with the ★ Always chat here toggle
+    //   • Default channel pill
+    //   • Routed filter chips — draggable to other (non-tell) windows, X to remove
+    // Tell windows (default_channel === 3) are NOT drop targets — those filters
+    // route by sender, not by category.
     if (chat && Array.isArray(chat.windows) && chat.windows.length) {
-      html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+      html += '<div id="chatRoutingBlock" data-file="' + escapeHtml(chat.file) + '" style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
         '💬 Chat windows & routing <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
         escapeHtml(chat.file) + ' · ' + chat.num_windows + ' windows)</span></div>' +
         '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;font-family:sans-serif">' +
-        'Which named window each EQ channel feeds. Read-only for now — this is the map a ' +
-        'future drag-drop "raid chat here, tells there" editor will write back to.</p>';
-      html += '<table style="width:100%;border-collapse:collapse;font-size:10px">' +
-        '<tr style="color:#8b949e;text-align:left"><th style="padding:2px 4px">#</th>' +
-        '<th style="padding:2px 4px">Name</th><th style="padding:2px 4px">Default ch</th>' +
-        '<th style="padding:2px 4px">Routed</th></tr>';
+        'Drag a channel chip from one window to another to reroute. Click <b>★</b> on a window ' +
+        'to make it the <b>Always chat here</b> target (highlights + bolds). Tell windows are ' +
+        'not drop targets — those route per sender.</p>';
+      // Common EQ channel-filter name map (varies slightly by client; falls
+      // back to "Ch <N>" for indexes outside the table). The user sees a
+      // recognizable label instead of a bare number.
+      var FILTER_NAMES = {
+        0:'Say', 1:'Tell', 2:'Group', 3:'Shout', 4:'Auction', 5:'OOC', 6:'Guild',
+        7:'Petition', 8:'Combat', 9:'Spells', 10:'Skills', 11:'NPC', 12:'Faction',
+        13:'Death', 14:'Loot', 15:'Money', 16:'System', 17:'Random', 18:'Damage',
+        19:'Other', 20:'Yell', 21:'Group Inv', 22:'Player NPC', 23:'Pet', 24:'Bard Songs'
+      };
+      function _filterName(n){ return FILTER_NAMES[n] || ('Ch ' + n); }
+      function _channelName(n){
+        if (n == null) return '—';
+        // Default-channel uses a slightly different palette — same indexes as
+        // filters for the common ones (Say=0, Tell=3 etc); falls back too.
+        return FILTER_NAMES[n] || ('Ch ' + n);
+      }
+      // ALWAYS_HERE flag — one window at a time. Initial value comes from
+      // chat.always_here_idx when the backend captured it; otherwise null. The
+      // ★ button toggles + saves it via the same writePages path.
+      var alwaysIdx = (chat && chat.always_here_idx != null) ? parseInt(chat.always_here_idx, 10) : null;
+      html += '<div data-always-idx="' + (alwaysIdx == null ? '' : alwaysIdx) + '" style="display:flex;flex-direction:column;gap:8px">';
       for (var ci = 0; ci < chat.windows.length; ci++) {
         var cwn = chat.windows[ci];
         var routed = (chat.routed_filters && chat.routed_filters[cwn.index]) || [];
-        html += '<tr style="border-bottom:1px solid #21262d">' +
-          '<td style="padding:2px 4px;color:#8b949e">' + cwn.index + '</td>' +
-          '<td style="padding:2px 4px;color:#56d364;font-weight:600">' + escapeHtml(cwn.name || '(unnamed)') + '</td>' +
-          '<td style="padding:2px 4px;color:#9aa4ad">' + (cwn.default_channel != null ? cwn.default_channel : '—') + '</td>' +
-          '<td style="padding:2px 4px;color:#9aa4ad">' + (routed.length ? routed.length + ' filter' + (routed.length === 1 ? '' : 's') : '—') + '</td>' +
-          '</tr>';
+        var isTell = cwn.default_channel === 3;
+        var isAlways = alwaysIdx === cwn.index;
+        var headerStyle = isAlways
+          ? 'color:#f6c365;font-weight:700;letter-spacing:0.5px'
+          : 'color:#c9d1d9;font-weight:600';
+        var cardBorder = isAlways ? '#f0b429' : '#21262d';
+        var cardBg     = isAlways ? 'rgba(240,180,41,0.06)' : '#0d1117';
+        html += '<div class="chatCard" data-win="' + cwn.index + '" data-is-tell="' + (isTell?'1':'0') + '"' +
+          ' style="background:' + cardBg + ';border:1px solid ' + cardBorder + ';border-radius:5px;padding:6px 8px">';
+        // Header — name (Chat #) + default channel + ★
+        html += '<div style="display:flex;align-items:center;gap:8px">' +
+          '<span style="' + headerStyle + ';font-family:sans-serif;font-size:12px">' +
+            (isAlways ? '⭐ ' : '') + escapeHtml(cwn.name || '(unnamed)') +
+            ' <span style="color:#8b949e;font-weight:400;font-size:10px">(Chat ' + cwn.index + ')</span>' +
+          '</span>' +
+          '<span style="color:#8b949e;font-size:10px;font-family:sans-serif">default:</span>' +
+          '<span style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
+            escapeHtml(_channelName(cwn.default_channel)) + '</span>' +
+          (isTell
+            ? '<span style="margin-left:auto;color:#8b949e;font-size:9px;font-family:sans-serif">tell window · not a drop target</span>'
+            : '<button class="alwaysHereBtn" data-win="' + cwn.index + '" title="Always chat here — outgoing chat goes to this window" ' +
+              'style="margin-left:auto;background:none;border:1px solid ' + (isAlways ? '#f0b429' : '#30363d') + ';color:' + (isAlways ? '#f6c365' : '#8b949e') + ';' +
+              'cursor:pointer;font-size:13px;line-height:1;padding:2px 8px;border-radius:3px">★</button>') +
+          '</div>';
+        // Channel chips row
+        html += '<div class="chatChipRow" data-win="' + cwn.index + '" data-drop="' + (isTell?'0':'1') + '" ' +
+          'style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;min-height:18px">';
+        if (routed.length === 0) {
+          html += '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+        }
+        for (var rf = 0; rf < routed.length; rf++) {
+          var filt = routed[rf];
+          html += '<span class="chatChip" draggable="true" data-filter="' + filt + '" data-from-win="' + cwn.index + '"' +
+            ' style="display:inline-flex;align-items:center;gap:3px;background:#1f2a3d;color:#79c0ff;border:1px solid #2a3d57;' +
+            'border-radius:3px;padding:1px 4px 1px 6px;font-size:10px;cursor:grab;user-select:none">' +
+            escapeHtml(_filterName(filt)) +
+            ' <button class="chipRemove" data-filter="' + filt + '" data-from-win="' + cwn.index + '" title="Remove this routing"' +
+            ' style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:11px;padding:0 2px;line-height:1">×</button>' +
+            '</span>';
+        }
+        html += '</div></div>';
       }
-      html += '</table></div>';
+      html += '</div></div>';
     }
 
     // ── Tell windows (Zeal) ───────────────────────────────────────────────
@@ -1478,13 +1666,21 @@
             ' <span style="color:#8b949e;font-size:10px">(Shift+' + (P+1) + ')</span>' +
             ' <span style="color:#8b949e;font-size:10px">— ' + hotBtns.length + ' hotbutton' + (hotBtns.length===1?'':'s') +
             ', ' + socBtns.length + ' social' + (socBtns.length===1?'':'s') + '</span></summary>';
+          // Editable rows — every input carries data-file/section/key so the
+          // Save handler can collect dirty fields surgically. Original value
+          // is preserved on data-orig so we know what's actually changed.
           if (hotBtns.length > 0) {
             html += '<div style="margin:6px 0 3px;color:#a371f7;font-size:10px;font-weight:600;font-family:sans-serif">HotButtons</div>';
             for (var hb = 0; hb < hotBtns.length; hb++) {
               var B = hotBtns[hb];
-              html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
-                '<span style="color:#c9d1d9">Button ' + B + '</span> = ' +
-                '<span style="color:#f6c365">' + escapeHtml(hots[B]) + '</span></div>';
+              var hotVal = hots[B] == null ? '' : String(hots[B]);
+              html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px;display:flex;align-items:center;gap:6px">' +
+                '<span style="color:#c9d1d9;min-width:62px">Button ' + B + '</span> = ' +
+                '<input class="uiEdit" type="text" ' +
+                ' data-file="' + escapeHtml(f.file) + '" data-section="HotButtons"' +
+                ' data-key="Page' + P + 'Button' + B + '" data-orig="' + escapeHtml(hotVal) + '"' +
+                ' value="' + escapeHtml(hotVal) + '"' +
+                ' style="flex:1;background:#0d1117;color:#f6c365;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
             }
           }
           if (socBtns.length > 0) {
@@ -1492,14 +1688,38 @@
             for (var sb = 0; sb < socBtns.length; sb++) {
               var SB = socBtns[sb];
               var cell = socs[SB] || { name: null, color: null, lines: [] };
+              var nameVal  = cell.name  == null ? '' : String(cell.name);
+              var colorVal = cell.color == null ? '' : String(cell.color);
+              var keyBase  = 'Page' + P + 'Button' + SB;
               html += '<div style="margin:4px 0;padding:4px 6px;background:#161b22;border:1px solid #21262d;border-radius:3px">' +
-                '<div style="color:#c9d1d9;font-size:11px">Button ' + SB + ': ' +
-                '<b style="color:#56d364">' + escapeHtml(cell.name || '(unnamed)') + '</b>' +
-                (cell.color != null ? ' <span style="color:#8b949e;font-size:9px">color=' + cell.color + '</span>' : '') +
+                '<div style="display:flex;align-items:center;gap:6px;font-size:11px">' +
+                  '<span style="color:#c9d1d9;min-width:62px">Button ' + SB + '</span>' +
+                  '<input class="uiEdit" type="text" placeholder="(unnamed)"' +
+                  ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
+                  ' data-key="' + keyBase + 'Name" data-orig="' + escapeHtml(nameVal) + '"' +
+                  ' value="' + escapeHtml(nameVal) + '"' +
+                  ' style="flex:1;background:#0d1117;color:#56d364;font-weight:600;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:11px">' +
+                  '<span style="color:#8b949e;font-size:9px">color</span>' +
+                  '<input class="uiEdit" type="number" min="0" max="255"' +
+                  ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
+                  ' data-key="' + keyBase + 'Color" data-orig="' + escapeHtml(colorVal) + '"' +
+                  ' value="' + escapeHtml(colorVal) + '"' +
+                  ' style="width:48px;background:#0d1117;color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:10px;text-align:right">' +
                 '</div>';
-              for (var ln = 0; ln < cell.lines.length; ln++) {
-                html += '<div style="padding-left:8px;color:#9aa4ad;font-size:10px">' +
-                  '<span style="color:#8b949e">L' + (ln+1) + ':</span> ' + escapeHtml(cell.lines[ln]) + '</div>';
+              for (var ln = 0; ln < 5; ln++) {
+                var lineVal = cell.lines[ln] == null ? '' : String(cell.lines[ln]);
+                // Show all 5 line slots — blanks let the user add new lines.
+                // Existing blanks (cell.lines never had this index) are passed
+                // with no data-orig so saving a still-blank field is a no-op.
+                var hasOrig = ln < cell.lines.length;
+                html += '<div style="display:flex;align-items:center;gap:4px;margin-top:2px">' +
+                  '<span style="color:#8b949e;font-size:9px;min-width:18px">L' + (ln+1) + ':</span>' +
+                  '<input class="uiEdit" type="text"' +
+                  ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
+                  ' data-key="' + keyBase + 'Line' + (ln+1) + '" data-orig="' + escapeHtml(lineVal) + '"' +
+                  ' data-was-set="' + (hasOrig ? '1' : '0') + '"' +
+                  ' value="' + escapeHtml(lineVal) + '"' +
+                  ' style="flex:1;background:#0d1117;color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
               }
               html += '</div>';
             }
@@ -1539,6 +1759,248 @@
       html += '</div>';
     }
     dlg.innerHTML = html;
+    // Re-attach the resize grip (innerHTML wiped it). We rebuild it the same
+    // way the first-open path did so width stays draggable on every refresh.
+    var grip2 = document.createElement('div');
+    grip2.id = 'uiInspectorResize';
+    grip2.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize;background:transparent;z-index:5';
+    grip2.title = 'Drag to resize';
+    grip2.addEventListener('mousedown', function(e){
+      e.preventDefault();
+      var startX = e.clientX, startW = dlg.getBoundingClientRect().width;
+      var min = 320, max = Math.max(min, window.innerWidth - 200);
+      function onMove(ev){
+        var w = startW + (startX - ev.clientX);
+        if (w < min) w = min;
+        if (w > max) w = max;
+        dlg.style.width = w + 'px';
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        try { localStorage.setItem('uiInspectorWidth', String(parseInt(dlg.style.width, 10) || 480)); } catch (e) {}
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    dlg.appendChild(grip2);
+    // Dirty-state tracking — each .uiEdit input compares current value to
+    // data-orig. When anything is dirty, enable the Save button.
+    var saveBtn = document.getElementById('uiInspectorSave');
+    function isDirty(input){
+      var orig = input.getAttribute('data-orig') || '';
+      var cur  = input.value;
+      // A blank line that wasn't previously set is NOT dirty — saving an empty
+      // L<n> only matters when there was content to clear.
+      if (input.dataset.wasSet === '0' && cur === '') return false;
+      return cur !== orig;
+    }
+    function refreshSaveBtn(){
+      var anyDirty = false;
+      var inputs = dlg.querySelectorAll('.uiEdit');
+      for (var i = 0; i < inputs.length; i++) if (isDirty(inputs[i])) { anyDirty = true; break; }
+      if (!anyDirty && typeof _chatEdits !== 'undefined' && _chatEdits.size > 0) anyDirty = true;
+      if (anyDirty) {
+        saveBtn.disabled = false;
+        saveBtn.style.background = '#1f6feb';
+        saveBtn.style.borderColor = '#1f6feb';
+        saveBtn.style.color = '#fff';
+        saveBtn.style.cursor = 'pointer';
+      } else {
+        saveBtn.disabled = true;
+        saveBtn.style.background = '#21262d';
+        saveBtn.style.borderColor = '#30363d';
+        saveBtn.style.color = '#6e7681';
+        saveBtn.style.cursor = 'not-allowed';
+      }
+    }
+    var inputs = dlg.querySelectorAll('.uiEdit');
+    for (var i = 0; i < inputs.length; i++) {
+      inputs[i].addEventListener('input', refreshSaveBtn);
+    }
+
+    // ── Chat routing interactions ────────────────────────────────────────────
+    // Drag a chip from one window's chip-row to another's. Drop replaces that
+    // chip's window assignment (writes a new ChannelMap<filter>=<win> on save).
+    // X on a chip flags it for deletion. ★ toggles "Always chat here" between
+    // windows — only one at a time. All mutations push onto _chatEdits which
+    // the Save handler folds into the edits array sent to writePages.
+    //
+    // Edit shape per item: { file, section:'ChatManager', key, value | null }.
+    // - Chip move:   ChannelMap<filter> = <newWin>
+    // - Chip remove: ChannelMap<filter> = null
+    // - ★ pin:       ChatWindow<oldIdx>_AlwaysHere = null  +  ChatWindow<newIdx>_AlwaysHere = 1
+    var _chatEdits = new Map();   // key → value (latest write wins per key)
+    var chatBlock = document.getElementById('chatRoutingBlock');
+    function _chatFile(){ return chatBlock ? chatBlock.dataset.file : null; }
+    function _stageChatEdit(key, value){
+      if (!_chatFile()) return;
+      _chatEdits.set(key, value);
+      refreshSaveBtn();
+    }
+    function _renderChatDirtyHint(){
+      // No-op for now — refreshSaveBtn already enables the Save button.
+      // Future: visually mark windows whose routing changed.
+    }
+    if (chatBlock) {
+      // Drag-drop wiring. We bind on the chip and the row (drop target) — no
+      // delegation so newly-added chips don't accidentally get duplicate
+      // listeners. The dialog re-renders on save, which rebuilds everything.
+      var chips = chatBlock.querySelectorAll('.chatChip');
+      var rows  = chatBlock.querySelectorAll('.chatChipRow');
+      function _setRowHover(row, on){
+        if (!row) return;
+        row.style.outline = on ? '1px dashed #58a6ff' : '';
+        row.style.outlineOffset = on ? '2px' : '';
+      }
+      for (var ci2 = 0; ci2 < chips.length; ci2++) {
+        var chip = chips[ci2];
+        chip.addEventListener('dragstart', function(e){
+          var f = this.getAttribute('data-filter');
+          var fromWin = this.getAttribute('data-from-win');
+          e.dataTransfer.setData('text/plain', JSON.stringify({ filter: parseInt(f, 10), fromWin: parseInt(fromWin, 10) }));
+          e.dataTransfer.effectAllowed = 'move';
+          this.style.opacity = '0.5';
+        });
+        chip.addEventListener('dragend', function(){ this.style.opacity = ''; });
+      }
+      for (var ri = 0; ri < rows.length; ri++) {
+        var row = rows[ri];
+        if (row.getAttribute('data-drop') !== '1') continue;   // tell windows aren't drop targets
+        row.addEventListener('dragover', function(e){
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          _setRowHover(this, true);
+        });
+        row.addEventListener('dragleave', function(){ _setRowHover(this, false); });
+        row.addEventListener('drop', function(e){
+          e.preventDefault();
+          _setRowHover(this, false);
+          var raw = e.dataTransfer.getData('text/plain'); if (!raw) return;
+          var data; try { data = JSON.parse(raw); } catch (er) { return; }
+          var toWin = parseInt(this.getAttribute('data-win'), 10);
+          if (data.fromWin === toWin) return;
+          // Stage the routing edit.
+          _stageChatEdit('Sec' + '\x01' + 'ChannelMap' + data.filter, { section: 'ChatManager', key: 'ChannelMap' + data.filter, value: String(toWin) });
+          // Move the chip DOM-side so the UI reflects the change before save.
+          var movedChip = chatBlock.querySelector('.chatChip[data-filter="' + data.filter + '"][data-from-win="' + data.fromWin + '"]');
+          if (movedChip) {
+            movedChip.setAttribute('data-from-win', String(toWin));
+            var rm = movedChip.querySelector('.chipRemove');
+            if (rm) rm.setAttribute('data-from-win', String(toWin));
+            // Drop the "no routed channels" placeholder if it's here.
+            var placeholder = this.querySelector('span[style*="italic"]');
+            if (placeholder) placeholder.remove();
+            this.appendChild(movedChip);
+            // If the source row is now empty, restore its placeholder.
+            var fromRow = chatBlock.querySelector('.chatChipRow[data-win="' + data.fromWin + '"]');
+            if (fromRow && fromRow.querySelectorAll('.chatChip').length === 0) {
+              fromRow.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+            }
+          }
+        });
+      }
+      // X on a chip → remove that routing.
+      var xBtns = chatBlock.querySelectorAll('.chipRemove');
+      for (var xi = 0; xi < xBtns.length; xi++) {
+        xBtns[xi].addEventListener('click', function(e){
+          e.stopPropagation();
+          var f = parseInt(this.getAttribute('data-filter'), 10);
+          _stageChatEdit('Sec' + '\x01' + 'ChannelMap' + f, { section: 'ChatManager', key: 'ChannelMap' + f, value: null });
+          var chipEl = this.closest('.chatChip');
+          var rowEl  = chipEl ? chipEl.parentElement : null;
+          if (chipEl) chipEl.remove();
+          if (rowEl && rowEl.querySelectorAll('.chatChip').length === 0) {
+            rowEl.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+          }
+        });
+      }
+      // ★ Always chat here — exclusive (clears any other window's flag).
+      var stars = chatBlock.querySelectorAll('.alwaysHereBtn');
+      for (var sti = 0; sti < stars.length; sti++) {
+        stars[sti].addEventListener('click', function(){
+          var newWin = parseInt(this.getAttribute('data-win'), 10);
+          var holder = chatBlock.querySelector('[data-always-idx]');
+          var prev = (holder && holder.dataset.alwaysIdx !== '') ? parseInt(holder.dataset.alwaysIdx, 10) : null;
+          var isOff = (prev === newWin);
+          // Stage edits — clear prev (if any), set new (unless toggling off).
+          if (prev != null) _stageChatEdit('Sec' + '\x01' + 'ChatWindow' + prev + '_AlwaysHere', { section: 'ChatManager', key: 'ChatWindow' + prev + '_AlwaysHere', value: null });
+          if (!isOff) _stageChatEdit('Sec' + '\x01' + 'ChatWindow' + newWin + '_AlwaysHere', { section: 'ChatManager', key: 'ChatWindow' + newWin + '_AlwaysHere', value: '1' });
+          if (holder) holder.dataset.alwaysIdx = isOff ? '' : String(newWin);
+          // Update the card highlights without a full re-render.
+          var cards = chatBlock.querySelectorAll('.chatCard');
+          for (var k = 0; k < cards.length; k++) {
+            var c = cards[k];
+            var w = parseInt(c.getAttribute('data-win'), 10);
+            var on = !isOff && (w === newWin);
+            c.style.background = on ? 'rgba(240,180,41,0.06)' : '#0d1117';
+            c.style.borderColor = on ? '#f0b429' : '#21262d';
+            var btn = c.querySelector('.alwaysHereBtn');
+            if (btn) {
+              btn.style.borderColor = on ? '#f0b429' : '#30363d';
+              btn.style.color = on ? '#f6c365' : '#8b949e';
+            }
+            // Re-tag the header name with the ⭐ + bold.
+            var nameSpan = c.querySelector('div span:first-child');
+            if (nameSpan) {
+              nameSpan.style.color      = on ? '#f6c365' : '#c9d1d9';
+              nameSpan.style.fontWeight = on ? '700' : '600';
+              var nm = nameSpan.textContent.replace(/^⭐\s*/, '');
+              nameSpan.firstChild.textContent = (on ? '⭐ ' : '') + nm;
+            }
+          }
+        });
+      }
+    }
+
+    saveBtn.addEventListener('click', async function(){
+      if (saveBtn.disabled) return;
+      // Collect dirty edits — for blanked-out Line slots we send value=null so
+      // the backend deletes the key. For all other fields we send the new value.
+      var edits = [];
+      var inputs2 = dlg.querySelectorAll('.uiEdit');
+      for (var i = 0; i < inputs2.length; i++) {
+        var inp = inputs2[i];
+        if (!isDirty(inp)) continue;
+        var v = inp.value;
+        if (v === '' && inp.dataset.wasSet === '1') v = null;
+        edits.push({
+          file:    inp.getAttribute('data-file'),
+          section: inp.getAttribute('data-section'),
+          key:     inp.getAttribute('data-key'),
+          value:   v,
+        });
+      }
+      // Fold the staged chat-routing edits (drag-drop, X, ★) into the same
+      // writePages call. All ChatManager edits go to the UI_<char> file.
+      var chatF = _chatFile();
+      if (chatF && _chatEdits.size > 0) {
+        for (var ce of _chatEdits.values()) {
+          edits.push({ file: chatF, section: ce.section, key: ce.key, value: ce.value });
+        }
+      }
+      if (edits.length === 0) return;
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+      try {
+        var res = await window.mimic.uiStudioWritePages(STATE.eqDir, edits);
+        if (!res || !res.ok) {
+          setStatus('save failed: ' + (res && res.error || 'unknown'), 'err');
+          saveBtn.textContent = 'Save changes'; refreshSaveBtn();
+          return;
+        }
+        setStatus(edits.length + ' edit' + (edits.length === 1 ? '' : 's') + ' saved · ' +
+          (res.written || []).map(function(w){ return w.file; }).join(', '), 'ok');
+        saveBtn.textContent = 'Saved ✓';
+        // Re-open the inspector to refresh data-orig from disk so further
+        // edits diff against the new baseline.
+        setTimeout(function(){
+          try { document.getElementById('inspectSocialsBtn').click(); } catch (e) {}
+        }, 600);
+      } catch (err) {
+        setStatus('save error: ' + (err && err.message), 'err');
+        saveBtn.textContent = 'Save changes'; refreshSaveBtn();
+      }
+    });
   }
 </script>
 </body></html>

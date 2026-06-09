@@ -195,6 +195,53 @@ async function loadQuake(): Promise<string | null> {
   return iso;
 }
 
+// Hot zones — any zone with ≥2 announced PvP kills/deaths in the last hour.
+// "Announced" = PvP-server broadcast (Druzzil Ro) OR an assist (which only
+// exists when a broadcast was matched against a damage window). That filter
+// excludes anything someone might be quietly farming. Sorted by recency
+// of the most-recent event so the page surfaces what's heating up RIGHT NOW.
+type HotZone = {
+  zone: string;
+  events: number;
+  victims: number;
+  killers: number;
+  last_event_at: string;
+  recent_chars: string[];   // de-duped (victim + killer) names from the window
+};
+async function loadHotZones(): Promise<HotZone[]> {
+  const sb = supabaseAdmin();
+  const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: kills } = await sb
+    .from('pvp_kills')
+    .select('zone, killer, victim, killer_is_npc, killed_at')
+    .eq('guild_id', 'wolfpack')
+    .gte('killed_at', sinceIso)
+    .not('zone', 'is', null)
+    .limit(1000);
+  type Row = { zone: string; killer: string | null; victim: string; killer_is_npc: boolean | null; killed_at: string };
+  const buckets = new Map<string, { events: number; victims: Set<string>; killers: Set<string>; last: string; chars: Set<string> }>();
+  for (const r of (kills ?? []) as Row[]) {
+    if (!r.zone) continue;
+    let b = buckets.get(r.zone);
+    if (!b) { b = { events: 0, victims: new Set(), killers: new Set(), last: r.killed_at, chars: new Set() }; buckets.set(r.zone, b); }
+    b.events += 1;
+    if (r.victim) { b.victims.add(r.victim.toLowerCase()); b.chars.add(r.victim); }
+    if (r.killer && !r.killer_is_npc) { b.killers.add(r.killer.toLowerCase()); b.chars.add(r.killer); }
+    if (r.killed_at > b.last) b.last = r.killed_at;
+  }
+  return [...buckets.entries()]
+    .filter(([, b]) => b.events >= 2)
+    .map(([zone, b]) => ({
+      zone,
+      events: b.events,
+      victims: b.victims.size,
+      killers: b.killers.size,
+      last_event_at: b.last,
+      recent_chars: [...b.chars].slice(0, 8),
+    }))
+    .sort((a, b) => (b.last_event_at || '').localeCompare(a.last_event_at || ''));
+}
+
 function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
   const diff = new Date(toIso).getTime() - fromMs;
   const abs  = Math.abs(diff);
@@ -224,10 +271,11 @@ export default async function PvpPage({
   );
 
   const tz = await userTz();
-  const [{ rows, error }, bossTimers, quakeAt] = await Promise.all([
+  const [{ rows, error }, bossTimers, quakeAt, hotZones] = await Promise.all([
     loadLeaderboard(sortKey),
     loadBossTimers(),
     loadQuake(),
+    loadHotZones(),
   ]);
   if (error) {
     return (
@@ -329,6 +377,45 @@ export default async function PvpPage({
       {/* Next earthquake — a quake repops every PvP mob, so it sits directly
           above the boss timers (it resets all of them). Live countdown. */}
       {quakeAt && <QuakeBanner nextAt={quakeAt} />}
+
+      {/* Hot zones — any zone with 2+ announced PvP kills/deaths in the last
+          hour. Surfaces what's heating up RIGHT NOW so the on-line raiders
+          know where to go (or where to avoid). */}
+      {hotZones.length > 0 && (
+        <section className="bg-panel border border-orange/40 rounded-lg p-4">
+          <h2 className="text-lg text-orange flex items-center gap-2">
+            <span aria-hidden>🔥</span>
+            <span>Hot zones · last hour</span>
+            <span className="text-xs text-dim font-normal">({hotZones.length} zone{hotZones.length === 1 ? '' : 's'})</span>
+          </h2>
+          <p className="text-xs text-dim mt-1">
+            Zones with 2+ announced PvP kills/deaths in the last 60 minutes — sorted by recency.
+          </p>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {hotZones.map(z => {
+              const minsAgo = Math.max(0, Math.round((Date.now() - new Date(z.last_event_at).getTime()) / 60000));
+              return (
+                <li key={z.zone} className="bg-bg/60 border border-border rounded p-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-text font-semibold">{z.zone}</span>
+                    <span className="text-xs text-dim tabular-nums">{minsAgo}m ago</span>
+                  </div>
+                  <div className="text-xs text-dim mt-1 tabular-nums">
+                    <span className="text-orange">{z.events}</span> event{z.events === 1 ? '' : 's'}
+                    {' · '}<span className="text-text">{z.killers}</span> killer{z.killers === 1 ? '' : 's'}
+                    {' · '}<span className="text-text">{z.victims}</span> victim{z.victims === 1 ? '' : 's'}
+                  </div>
+                  {z.recent_chars.length > 0 && (
+                    <div className="text-[11px] text-dim mt-1.5 leading-snug">
+                      {z.recent_chars.join(' · ')}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {/* Boss timers — PvP-server spawn windows fed by the bot from Druzzil
           broadcasts and manual /pvpkill. Sorted soonest-spawning first; rows

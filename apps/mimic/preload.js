@@ -96,6 +96,13 @@ contextBridge.exposeInMainWorld('mimic', {
   // the visual editor + add a heuristic local capture for Sock_/Socials_
   // files so users can share their PvP setups as draft templates.
   uiStudioInspectSocials: (character, eqDir) => ipcRenderer.invoke('ui-studio-inspect-socials', character, eqDir),
+  // Surgical write-back for the UI Inspector's editable HotButton + Socials
+  // fields. edits = [{ file, section, key, value | null }, ...] — null deletes
+  // the key. Preserves comments/order; .studio-*.bak written before save.
+  uiStudioWritePages:    (eqDir, edits)      => ipcRenderer.invoke('ui-studio-write-pages', eqDir, edits),
+  // Scan the active UI skin's XML files for each window's design size — used
+  // as the authoritative MAX size in the visual layout. Returns { skin, sizes }.
+  uiStudioScanWindowDefaults: (eqDir)        => ipcRenderer.invoke('ui-studio-scan-window-defaults', eqDir),
   uiStudioCapturePvpDraft:(params)           => ipcRenderer.invoke('ui-studio-capture-pvp-draft', params),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns

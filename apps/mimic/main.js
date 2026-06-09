@@ -2109,6 +2109,190 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
 // sections (raw section name + key/value props) so the UI Studio can render
 // a "Hotbar Pages" inspector. Helps the user see what's actually in their
 // INI and gives us format samples to refine the parser against.
+// Surgical INI writer — preserves comments, blank lines, key order, and any
+// sections we don't touch. Edits are { file, section, key, value | null } —
+// when value === null the key is REMOVED (used to drop Socials lines when the
+// user clears them). Adds the key at the end of its section if it doesn't
+// exist yet. Writes a .bak alongside (suffix matches uiStudioWriteBundle's
+// pattern) before writing the new content.
+// Scan the active UI skin's XML files for each window's design size. EQ
+// stores window definitions under <eqDir>/uifiles/<skin>/*.xml; the skin name
+// comes from eqclient.ini UISkin= (default 'default'). Inside each file a
+// window is defined as <Screen item="Name">…<Size><CX>w</CX><CY>h</CY></Size>;
+// some skins use the lowercase Schema variant with width/height attributes.
+//
+// We use these sizes as the AUTHORITATIVE MAX for the visual layout — the
+// per-character INI's Width/Height can desync (resized at a different
+// resolution, partially saved, etc.) so the XML size is the right cap.
+// Returns { skin, sizes: { windowName: { cx, cy, file } }, scanned: <count> }.
+ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
+  try {
+    const d = String(eqDir || '').trim();
+    if (!d || !fs.existsSync(d)) return { ok: false, error: 'eqDir does not exist' };
+    // Resolve the active skin from eqclient.ini. Falls back to 'default' when
+    // missing — that's what EQ uses too. Case-insensitive UISkin lookup
+    // because some clients write USkin / UI_SKIN variants.
+    let skin = 'default';
+    const eqClient = path.join(d, 'eqclient.ini');
+    if (fs.existsSync(eqClient)) {
+      try {
+        const txt = fs.readFileSync(eqClient, 'utf8');
+        const m = txt.match(/^\s*UISkin\s*=\s*(.+?)\s*$/im);
+        if (m && m[1].trim()) skin = m[1].trim();
+      } catch {}
+    }
+    const skinDir = path.join(d, 'uifiles', skin);
+    if (!fs.existsSync(skinDir) || !fs.statSync(skinDir).isDirectory()) {
+      return { ok: true, skin, sizes: {}, scanned: 0, note: 'skin dir missing: ' + skinDir };
+    }
+    const sizes = {};
+    let scanned = 0;
+    const files = fs.readdirSync(skinDir).filter(f => /\.xml$/i.test(f));
+    for (const f of files) {
+      const fp = path.join(skinDir, f);
+      let xml;
+      try { xml = fs.readFileSync(fp, 'utf8'); } catch { continue; }
+      scanned++;
+      // Two formats observed across EQ skin variants:
+      //   1. <Screen item="MainChatWindow">…<Size><CX>800</CX><CY>600</CY></Size>
+      //   2. <Window item="MainChatWindow">…<Size width="800" height="600"/>
+      // Regex-based extraction is robust enough for our needs (max-size hint);
+      // a full XML parse isn't worth the dependency. We match nested-tag and
+      // self-closing-attribute Size shapes per Screen/Window block.
+      const rxItem = /<(Screen|Window)\b[^>]*\bitem\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/\1>/gi;
+      let mi;
+      while ((mi = rxItem.exec(xml)) !== null) {
+        const name = mi[2].trim();
+        const body = mi[3];
+        if (!name) continue;
+        if (sizes[name]) continue;   // first-seen wins; some skins have inherited Screen wrappers
+        let cx = null, cy = null;
+        const sNest = body.match(/<Size\b[^>]*>([\s\S]*?)<\/Size>/i);
+        if (sNest) {
+          const cxm = sNest[1].match(/<CX>\s*(-?\d+)\s*<\/CX>/i);
+          const cym = sNest[1].match(/<CY>\s*(-?\d+)\s*<\/CY>/i);
+          if (cxm) cx = parseInt(cxm[1], 10);
+          if (cym) cy = parseInt(cym[1], 10);
+        }
+        if (cx == null || cy == null) {
+          const sAttr = body.match(/<Size\b([^/]*?)\/>/i);
+          if (sAttr) {
+            const wm = sAttr[1].match(/\bwidth\s*=\s*"(-?\d+)"/i);
+            const hm = sAttr[1].match(/\bheight\s*=\s*"(-?\d+)"/i);
+            if (wm) cx = parseInt(wm[1], 10);
+            if (hm) cy = parseInt(hm[1], 10);
+          }
+        }
+        if (cx != null && cy != null && cx > 0 && cy > 0) {
+          sizes[name] = { cx, cy, file: f };
+        }
+      }
+    }
+    return { ok: true, skin, sizes, scanned };
+  } catch (err) {
+    return { ok: false, error: err && err.message };
+  }
+});
+
+ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
+  try {
+    const d = String(eqDir || '').trim();
+    if (!d || !Array.isArray(edits) || edits.length === 0) {
+      return { ok: false, error: 'eqDir + edits required' };
+    }
+    if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) {
+      return { ok: false, error: 'eqDir does not exist: ' + d };
+    }
+    // Group edits by file → section → key.
+    const byFile = new Map();
+    for (const e of edits) {
+      if (!e || !e.file || !e.section || !e.key) continue;
+      const fp = path.join(d, String(e.file));
+      // Path-traversal guard: must resolve inside eqDir.
+      const resolved = path.resolve(fp);
+      if (!resolved.startsWith(path.resolve(d) + path.sep)) continue;
+      if (!fs.existsSync(resolved)) continue;
+      if (!byFile.has(resolved)) byFile.set(resolved, []);
+      byFile.get(resolved).push({
+        section: String(e.section),
+        key:     String(e.key),
+        value:   e.value == null ? null : String(e.value),
+      });
+    }
+    const written = [];
+    for (const [fp, eds] of byFile) {
+      const orig = fs.readFileSync(fp, 'utf8');
+      const eol  = /\r\n/.test(orig) ? '\r\n' : '\n';
+      const lines = orig.split(/\r?\n/);
+      // Build (section, key) → desired value map; null means delete.
+      const want = new Map();
+      for (const e of eds) want.set(e.section + '' + e.key, e.value);
+      // Pass 1: walk the file, applying in-place updates / deletions. Track
+      // which section ends each section starts/ends at so we can append new
+      // keys to the right section in pass 2.
+      const sectionEnds = new Map();   // sectionName → index AFTER last line of that section
+      let curSec = null, curStart = -1;
+      const out = [];
+      for (let i = 0; i < lines.length; i++) {
+        const L = lines[i];
+        const ms = L.match(/^\s*\[([^\]]+)\]\s*$/);
+        if (ms) {
+          // Close the previous section before opening the new one.
+          if (curSec) sectionEnds.set(curSec, out.length);
+          curSec = ms[1]; curStart = out.length;
+          out.push(L);
+          continue;
+        }
+        if (curSec) {
+          const mk = L.match(/^(\s*)([\w.]+)\s*=\s*(.*?)(\s*)$/);
+          if (mk) {
+            const k = mk[2];
+            const sig = curSec + '' + k;
+            if (want.has(sig)) {
+              const newVal = want.get(sig);
+              want.delete(sig);
+              if (newVal === null) continue;   // delete line entirely
+              out.push(mk[1] + k + '=' + newVal + mk[4]);
+              continue;
+            }
+          }
+        }
+        out.push(L);
+      }
+      if (curSec) sectionEnds.set(curSec, out.length);
+      // Pass 2: append remaining (still-wanted) keys at the end of their
+      // section. Walk in reverse so we don't invalidate later indices.
+      const remaining = [...want.entries()].map(([sig, value]) => {
+        const [section, key] = sig.split('');
+        return { section, key, value };
+      }).filter(e => e.value !== null);
+      remaining.sort((a, b) => (sectionEnds.get(b.section) ?? -1) - (sectionEnds.get(a.section) ?? -1));
+      for (const e of remaining) {
+        const idx = sectionEnds.get(e.section);
+        if (idx == null) {
+          // Section doesn't exist — append a fresh one at end of file.
+          out.push('[' + e.section + ']');
+          out.push(e.key + '=' + e.value);
+        } else {
+          out.splice(idx, 0, e.key + '=' + e.value);
+          // Shift any later section ends.
+          for (const [s, n] of sectionEnds) if (n > idx) sectionEnds.set(s, n + 1);
+        }
+      }
+      const next = out.join(eol);
+      if (next === orig) { written.push({ file: path.basename(fp), unchanged: true }); continue; }
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const bakPath = fp + '.studio-' + ts + '.bak';
+      try { fs.writeFileSync(bakPath, orig); } catch {}
+      fs.writeFileSync(fp, next);
+      written.push({ file: path.basename(fp), bak: path.basename(bakPath) });
+    }
+    return { ok: true, written };
+  } catch (err) {
+    return { ok: false, error: err && err.message };
+  }
+});
+
 ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
   try {
     const c = String(character || '').trim();
@@ -2241,11 +2425,19 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
             if (!routed[win]) routed[win] = [];
             routed[win].push(parseInt(mk[1], 10));
           }
+          // AlwaysHere flag — at most one window is pinned. Drives the bold +
+          // highlight in the Inspector. Stored as ChatWindow<N>_AlwaysHere=1.
+          let alwaysHereIdx = null;
+          for (const [k, v] of Object.entries(cm)) {
+            const mk = k.match(/^ChatWindow(\d+)_AlwaysHere$/i);
+            if (mk && parseInt(v, 10) === 1) { alwaysHereIdx = parseInt(mk[1], 10); break; }
+          }
           chat = {
             file: path.basename(uiPath),
             num_windows: parseInt(cm.NumWindows, 10) || windows.length,
             windows,
             routed_filters: routed,
+            always_here_idx: alwaysHereIdx,
           };
         }
       }
