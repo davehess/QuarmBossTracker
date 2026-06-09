@@ -1211,16 +1211,38 @@ function _recordCharmSpellOnTarget(pet, owner, spellName, durSec) {
   let mp = _buffLandingsByTarget.get(k);
   if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
   const newKey = String(spellName).toLowerCase();
+  const durTicks = Math.max(1, Math.round(durSec / 6));
+  const landedAt = Date.now();
   // dur_ticks stored as ticks (catalog-native unit) since targetBuffsFor
   // computes durSecs as dur_ticks * 6.
   mp.set(newKey, {
     name: spellName,
-    dur_ticks: Math.max(1, Math.round(durSec / 6)),
-    landed_at: Date.now(),
+    dur_ticks: durTicks,
+    landed_at: landedAt,
     owner: owner ? String(owner) : null,
     is_charm_spell: true,
   });
   _savePetStateSoon();
+  // Cross-client mirror: push a synthesized buff-landing event so the bot
+  // stores it in buff_casts AND relays it to OTHER Mimic users targeting
+  // the same pet via /api/agent/target-buffs. Without this, Allure /
+  // Beguile / Charm have no cross-client visibility at all — their
+  // cast_on_other is NULL, so the log path can never produce a
+  // landing row.
+  const spellEntry = _spellByNameLower.get(newKey) || null;
+  if (typeof buffCastBuffer !== 'undefined' && Array.isArray(buffCastBuffer)) {
+    buffCastBuffer.push({
+      target:         String(pet),
+      spell_id:       spellEntry ? (spellEntry.id || 0) : 0,
+      spell_name:     spellName,
+      landing_text:   '',                                 // no log line for charm
+      dur_ticks:      durTicks,
+      dur_formula:    spellEntry ? (spellEntry.durf || 0) : 0,
+      cast_at:        new Date(landedAt).toISOString(),
+      observer:       owner || null,                      // observer == caster for self-cast charm
+      is_charm_spell: true,
+    });
+  }
 }
 
 // Reconcile the charm tracker against the LIVE Zeal pet gauge (slot 16). On
@@ -9519,8 +9541,24 @@ function startWebDashboard(port) {
       if (req.url && req.url.indexOf('/api/buff-queue') === 0) {
         let bufferClass = '';
         try { bufferClass = new URL(req.url, 'http://x').searchParams.get('class') || ''; } catch { /* */ }
-        fetchRaidBuffQueue(bufferClass);
-        const cached = _buffQueueCache.get(String(bufferClass || '').toLowerCase());
+        // Use the currently-active EQ window's character so the bot can
+        // sort the queue with same-zone raiders at the top + filter to
+        // who's actually online. Falls back to the freshest Zeal client
+        // when there's no signal from Mimic about the active window.
+        let bufferCharacter = '';
+        try {
+          const active = (stats && stats.activeCharacter) ? String(stats.activeCharacter) : '';
+          if (active) bufferCharacter = active;
+          else {
+            const st = _currentTargetState();
+            for (const ch of Object.keys(_zealState)) {
+              if (_zealState[ch] === st) { bufferCharacter = ch; break; }
+            }
+          }
+        } catch { /* */ }
+        fetchRaidBuffQueue(bufferClass, bufferCharacter);
+        const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
+        const cached = _buffQueueCache.get(cacheKey);
         const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
@@ -14318,22 +14356,64 @@ function fetchTargetCasts(name) {
   } catch { _targetCastsInflight.delete(key); }
 }
 
+// Cross-client target_buffs on the current target — pulled from buff_casts via
+// the bot's /api/agent/target-buffs relay. Same shape as target_casts: short
+// TTL, per-target cache, lazy-fetched from buildMobInfo. Lets us see e.g. who
+// is charming the same mob we're targeting, and any tracked buff anyone has
+// landed on it. Merged with the LOCAL _buffLandingsByTarget for display.
+const _targetBuffsByName  = new Map();   // nameLower → { at, buffs }
+const _targetBuffsInflight = new Set();
+const TARGET_BUFFS_TTL_MS = 5000;
+function fetchTargetBuffs(name) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(name || '').trim().toLowerCase();
+  if (!key || _targetBuffsInflight.has(key)) return;
+  const cached = _targetBuffsByName.get(key);
+  if (cached && (Date.now() - cached.at) < TARGET_BUFFS_TTL_MS) return;
+  _targetBuffsInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 6000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _targetBuffsInflight.delete(key);
+        try { const j = JSON.parse(body); _targetBuffsByName.set(key, { at: Date.now(), buffs: (j && j.buffs) || [] }); }
+        catch { _targetBuffsByName.set(key, { at: Date.now(), buffs: [] }); }
+      });
+    });
+    req.on('error',   () => { _targetBuffsInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _targetBuffsInflight.delete(key); });
+    req.end();
+  } catch { _targetBuffsInflight.delete(key); }
+}
+
 // Buff queue cache (per buffer-class). Mimic's buff-queue overlay polls the
 // local agent which proxies to the bot's /api/agent/raid-buff-queue. The TTL is
 // tuned so a roomful of Mimics doesn't hammer Supabase but the overlay still
 // feels live (~3-5s between full refreshes).
-const _buffQueueCache = new Map();   // classLower → { at, payload }
+const _buffQueueCache = new Map();   // classLower|character → { at, payload }
 const _buffQueueInflight = new Set();
 const BUFF_QUEUE_TTL_MS = 3000;
-function fetchRaidBuffQueue(bufferClass) {
+function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
-  const key = String(bufferClass || '').trim().toLowerCase();
+  const key = String(bufferClass || '').trim().toLowerCase() + '|' + String(bufferCharacter || '').trim().toLowerCase();
   if (_buffQueueInflight.has(key)) return;
   const cached = _buffQueueCache.get(key);
   if (cached && (Date.now() - cached.at) < BUFF_QUEUE_TTL_MS) return;
   _buffQueueInflight.add(key);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-buff-queue') + (bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '');
+  const qs = [];
+  if (bufferClass)     qs.push('class=' + encodeURIComponent(bufferClass));
+  if (bufferCharacter) qs.push('character=' + encodeURIComponent(bufferCharacter));
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-buff-queue') + (qs.length ? '?' + qs.join('&') : '');
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -14404,12 +14484,35 @@ function buildMobInfo() {
   // countdown). Refresh on a short TTL; bystanders we can't name are absent.
   const ctc = _targetCastsByName.get(tnameLower);
   if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name);
+  // Cross-client target_buffs — fetched from the bot's relay so charm
+  // spells (Allure, etc.) and other buff landings cast by OTHER Mimic
+  // users on the same target show up here too. Merged with locally-
+  // observed buffs by spell name (local wins — most accurate timer
+  // when we saw it ourselves; remote fills the gap when we didn't).
+  const ctb = _targetBuffsByName.get(tnameLower);
+  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name);
+  let buffs;
+  if (zealBuffs !== null) {
+    buffs = zealBuffs;
+  } else {
+    const local  = targetBuffsFor(tnameLower);
+    const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
+    const seen = new Set(local.map(b => String(b.name || '').toLowerCase()));
+    buffs = local.slice();
+    for (const b of remote) {
+      if (!b || !b.name) continue;
+      const k = String(b.name).toLowerCase();
+      if (seen.has(k)) continue;
+      buffs.push(b);
+      seen.add(k);
+    }
+  }
   return {
     target_name:    st.target_name,
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
     mob:            cached ? cached.mob : null,   // null until the lookup returns
     loading:        !cached,
-    target_buffs:   zealBuffs !== null ? zealBuffs : targetBuffsFor(tnameLower),
+    target_buffs:   buffs,
     target_is_pc:   zealBuffs !== null,
     target_casting: ctc ? ctc.casts : [],
   };
