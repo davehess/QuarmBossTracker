@@ -639,7 +639,38 @@
         // proportionally — XML sizes are at the design resolution, typically
         // 1024×768 or 1920×1080 depending on the skin). When the INI has no
         // size we ALSO fall back to the XML size so the window still renders.
-        var xmlMax = (STATE.xmlSizes || {})[s.name] || null;
+        // XML lookup: exact name first, then template fallback for windows
+        // that share a base XML. Verified on NillipussUI_1080p
+        // (https://github.com/NilliP/NillipussUI_1080p): every chat window
+        // (MainChat, "Chat 1".."Chat N", numeric "Chat<N>") is sized by the
+        // single ChatWindow XML — the per-character INI then has each one
+        // resized independently. We honor that fallback here.
+        var _xmlLookup = (function(sectionName){
+          var xs = STATE.xmlSizes || {};
+          var n = String(sectionName || '').trim();
+          if (!n) return null;
+          // 1. Exact match — covers PlayerWindow, TargetWindow, BuffWindow, etc.
+          if (xs[n]) return xs[n];
+          // 2. Chat family — MainChat / "Chat <N>" / "Chat<N>" → ChatWindow.
+          //    Verified on NillipussUI_1080p: every chat instance is sized by
+          //    one ChatWindow XML; per-character INI then resizes each.
+          if (/^mainchat$/i.test(n) || /^chat\s*\d+$/i.test(n)) return xs.ChatWindow || null;
+          // 3. INI uses bare name; XML adds Window / Wnd suffix.
+          //    e.g. "Actions" → "ActionsWindow", "Bank" → "BankWnd".
+          if (xs[n + 'Window']) return xs[n + 'Window'];
+          if (xs[n + 'Wnd'])    return xs[n + 'Wnd'];
+          // 4. INI carries trailing _<N> or <N> for multi-instance windows
+          //    (HotButtonWnd_2, GroupWindow1) — try the base name, then with
+          //    the suffix dance again.
+          var m = n.match(/^(.+?)[_]?(\d+)$/);
+          if (m) {
+            if (xs[m[1]]) return xs[m[1]];
+            if (xs[m[1] + 'Window']) return xs[m[1] + 'Window'];
+            if (xs[m[1] + 'Wnd'])    return xs[m[1] + 'Wnd'];
+          }
+          return null;
+        });
+        var xmlMax = _xmlLookup(s.name);
         if (xmlMax) {
           // Scale the XML size with the same fx factors used elsewhere so it
           // reads correctly in the target resolution canvas.
