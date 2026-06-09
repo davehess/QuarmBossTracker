@@ -2346,11 +2346,19 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
             if (!routed[win]) routed[win] = [];
             routed[win].push(parseInt(mk[1], 10));
           }
+          // AlwaysHere flag — at most one window is pinned. Drives the bold +
+          // highlight in the Inspector. Stored as ChatWindow<N>_AlwaysHere=1.
+          let alwaysHereIdx = null;
+          for (const [k, v] of Object.entries(cm)) {
+            const mk = k.match(/^ChatWindow(\d+)_AlwaysHere$/i);
+            if (mk && parseInt(v, 10) === 1) { alwaysHereIdx = parseInt(mk[1], 10); break; }
+          }
           chat = {
             file: path.basename(uiPath),
             num_windows: parseInt(cm.NumWindows, 10) || windows.length,
             windows,
             routed_filters: routed,
+            always_here_idx: alwaysHereIdx,
           };
         }
       }
