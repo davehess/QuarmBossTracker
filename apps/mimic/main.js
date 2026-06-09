@@ -3884,6 +3884,15 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === whoWindow) {
       cfg.showWho = false; saveConfig(cfg);
       try { whoWindow.hide(); } catch {}
+    } else if (win === buffQueueWindow) {
+      cfg.showBuffQueue = false; saveConfig(cfg);
+      try { buffQueueWindow.hide(); } catch {}
+    } else if (win === melodyWindow) {
+      cfg.showMelody = false; saveConfig(cfg);
+      try { melodyWindow.hide(); } catch {}
+    } else if (win === zealWindow) {
+      cfg.showZeal = false; saveConfig(cfg);
+      try { zealWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
