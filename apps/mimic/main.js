@@ -3763,6 +3763,27 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
   } catch { return false; }
 });
 
+// Ensure the calling overlay window has at least `h` px of height — the
+// shared right-click chrome menu needs ~280 px to render its 7 buttons,
+// and an XS-preset overlay (100 px tall) clips the bottom of the menu
+// because the menu DOM lives inside the window. Grows the window without
+// moving its top-left; the overlay's regular overlayAutoHeight call
+// shrinks it back to content size once the menu closes.
+ipcMain.handle('overlay-ensure-min-height', (e, h) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const wanted = Math.max(50, Math.round(+h || 0));
+    if (!wanted) return false;
+    const b = win.getBounds();
+    if (b.height >= wanted) return true;
+    const disp = screen.getDisplayMatching(b);
+    const maxH = Math.max(80, disp.workArea.height - 20);
+    win.setBounds({ x: b.x, y: b.y, width: b.width, height: Math.min(maxH, wanted) });
+    return true;
+  } catch { return false; }
+});
+
 // Resize an overlay window to a named preset, anchored at its CURRENT
 // top-left so a user picking "Larger" from the move-icon context menu sees
 // the same overlay grow rightward rather than jumping to a new position.
