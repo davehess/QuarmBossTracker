@@ -1216,8 +1216,17 @@ function _captureTargetBuffsOnCharm(pet, owner) {
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
     if (durSecs > 0 && (now - (b.landed_at || now)) / 1000 > durSecs) continue;   // expired
     // Don't clobber a more-recent pet-side entry for the same spell.
+    // Tie-breaker on equal landed_at: prefer whichever has the longer
+    // dur_ticks. This heals pre-v3.1.1 entries where recordPetBuffLanding
+    // computed dur_ticks=0 for level-formula buffs (missing era-cap
+    // fallback) — the target-side entry's correct dur_ticks wins.
     const existing = petBuffs.get(spellKey);
-    if (existing && (existing.landed_at || 0) >= (b.landed_at || 0)) continue;
+    if (existing) {
+      const ex = existing.landed_at || 0;
+      const nw = b.landed_at || 0;
+      if (ex > nw) continue;
+      if (ex === nw && (existing.dur_ticks || 0) >= (b.dur_ticks || 0)) continue;
+    }
     petBuffs.set(spellKey, {
       name:        b.name,
       dur_ticks:   b.dur_ticks,
@@ -1849,7 +1858,14 @@ function recordPetBuffLanding(bcEvt) {
   if (!owner) return;
   let mp = _petBuffLandings.get(owner);
   if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
-  const ownerLevel = (whoData.get(owner) || {}).level || null;
+  // Caster level for duration scaling: prefer the owner's real /who level,
+  // fall back to the era cap (60 in Luclin, 65 in PoP) when whoData is empty.
+  // Without this fallback, level-driven formulas (Boon of the Garou = formula
+  // 7, t = lvl) compute t = 0 — which makes the buff land "already expired"
+  // → the Charm tracker immediately shows it as "fell off — rebuff" even
+  // while Mob Info (which already uses the era-cap fallback in
+  // recordTargetBuffLanding) shows it ticking down correctly.
+  const ownerLevel = (whoData.get(owner) || {}).level || _assumedCasterLevel();
   const durTicks   = _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, ownerLevel);
   const newKey     = String(bcEvt.spell_name).toLowerCase();
   // Slot-based overwrite — if the new buff has a known category (haste / hp /
