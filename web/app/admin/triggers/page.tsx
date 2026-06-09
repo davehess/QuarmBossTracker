@@ -17,6 +17,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import TriggerList from './TriggerList';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,25 +79,6 @@ async function createOrUpdate(formData: FormData) {
   } else {
     await admin.from('guild_triggers').insert([{ ...row, created_by_discord_id: u!.id }]);
   }
-  revalidatePath('/admin/triggers');
-}
-
-async function toggleEnabled(formData: FormData) {
-  'use server';
-  if (!(await actionAssertOfficer())) redirect('/?error=admin_required');
-  const id = String(formData.get('id') || '');
-  const want = String(formData.get('want') || 'true') === 'true';
-  if (!id) return;
-  await supabaseAdmin().from('guild_triggers').update({ enabled: want }).eq('id', id);
-  revalidatePath('/admin/triggers');
-}
-
-async function deleteTrigger(formData: FormData) {
-  'use server';
-  if (!(await actionAssertOfficer())) redirect('/?error=admin_required');
-  const id = String(formData.get('id') || '');
-  if (!id) return;
-  await supabaseAdmin().from('guild_triggers').delete().eq('id', id);
   revalidatePath('/admin/triggers');
 }
 
@@ -256,60 +238,20 @@ export default async function AdminTriggersPage({
         <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
           Triggers {p.category ? `· ${p.category}` : ''}
         </h3>
-        {triggers.length === 0 ? (
-          <div className="p-6 text-sm text-dim">No triggers in this category yet.</div>
-        ) : (
-          <ul className="divide-y divide-border/50">
-            {triggers.map(t => {
-              const ov = t.actions?.find?.((a: any) => a?.type === 'text_overlay');
-              return (
-                <li key={t.id} className="p-3 hover:bg-[#1a212c]">
-                  <div className="flex items-start justify-between gap-2 flex-wrap">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={t.enabled ? 'text-text' : 'text-dim line-through'}>{t.name}</span>
-                        <span className="text-dim text-[10px] px-1.5 py-0.5 rounded border border-border">{t.category}</span>
-                        {t.cooldown_seconds > 0 && <span className="text-dim text-[10px]">cd {t.cooldown_seconds}s</span>}
-                        {t.applies_to_classes && t.applies_to_classes.length > 0 && (
-                          <span className="text-dim text-[10px]">[{t.applies_to_classes.join(', ')}]</span>
-                        )}
-                      </div>
-                      <div className="text-dim text-[11px] font-mono break-all mt-1">{t.pattern}</div>
-                      {ov && (
-                        <div className="text-[11px] mt-1">
-                          → <span style={{ color: ov.color || 'red' }}>{ov.text}</span>
-                          <span className="text-dim ml-2">({ov.duration_ms || 5000}ms)</span>
-                        </div>
-                      )}
-                      {t.notes && <div className="text-dim text-[10px] mt-1 italic">{t.notes}</div>}
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <form action={toggleEnabled}>
-                        <input type="hidden" name="id" value={t.id} />
-                        <input type="hidden" name="want" value={String(!t.enabled)} />
-                        <button type="submit"
-                          className={`px-2 py-1 rounded border text-[10px] ${t.enabled ? 'border-green text-green' : 'border-dim text-dim'}`}>
-                          {t.enabled ? 'on' : 'off'}
-                        </button>
-                      </form>
-                      <Link href={`/admin/triggers?edit=${t.id}${p.category ? `&category=${p.category}` : ''}`}
-                        className="px-2 py-1 rounded border border-border text-[10px] text-blue hover:underline">
-                        edit
-                      </Link>
-                      <form action={deleteTrigger}>
-                        <input type="hidden" name="id" value={t.id} />
-                        <button type="submit" className="px-2 py-1 rounded border border-red text-[10px] text-red-400"
-                          formAction={deleteTrigger}>
-                          delete
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <TriggerList
+          triggers={triggers.map(t => ({
+            id: t.id,
+            name: t.name,
+            category: t.category,
+            enabled: t.enabled,
+            pattern: t.pattern,
+            cooldown_seconds: t.cooldown_seconds,
+            applies_to_classes: t.applies_to_classes,
+            notes: t.notes,
+            actions: t.actions,
+          }))}
+          categorySuffix={p.category ? `&category=${p.category}` : ''}
+        />
       </section>
     </div>
   );
