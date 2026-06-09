@@ -1669,6 +1669,13 @@ function applyPetHealthLine(line, character) {
 // looks stronger." is OUR pet getting buffed (vs another player).
 function _petOwnerByName(petLower) {
   if (!petLower) return null;
+  // Charm-tracker first — debounced and authoritative for charm pets, and it
+  // survives the brief slot-16 dropouts that happen during a re-charm cast
+  // (~3s window). Without this fallback, recordPetBuffLanding misses any buff
+  // landing that coincides with that window, and the pet's buffs stay
+  // "(fell off — rebuff)" on the Charm tracker even after a fresh recast.
+  const ct = _charmTickTracker.get(petLower);
+  if (ct && ct.is_active && ct.owner) return String(ct.owner).toLowerCase();
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || !Array.isArray(st.gauges)) continue;
@@ -1950,11 +1957,20 @@ function noteSelfCast(line, character) {
   // able to match any recent cast, not only the most recent.
   let arr = _recentSelfCast.get(cl);
   if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
-  arr.push({ spellLower: m[1].trim().toLowerCase(), name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  const spellLower = m[1].trim().toLowerCase();
+  arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // Prune old / cap length.
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
   if (arr.length > 8) arr.splice(0, arr.length - 8);
+  // Stage charm-spell duration here too. The other staging path (parseEvent
+  // cast pipeline) depends on parseEvent emitting a `cast` event for the
+  // line — which it sometimes doesn't for the self "You begin casting" form.
+  // When that path misses, the charm overlay falls back to its 60s estimate
+  // ("tick N/10~"). Doing it here covers the gap with no extra cost: same
+  // regex match we just did, same character context.
+  const ci = CHARM_SPELLS.get(spellLower);
+  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: String(character), ts: atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
 // so anyone with that target up sees it in Mob Info's "Casting" section. Only
@@ -1996,38 +2012,49 @@ function resolveSelfCastLanding(line, observer) {
   const nowMs = ts ? ts.getTime() : Date.now();
   const m = line.match(/^\[(.+?)\]\s+(.+)$/);
   if (!m) return null;
-  const body = m[2];
-  // Same target/suffix split as parseBuffLanding (possessive OR first space).
-  const candidates = [];
-  const apos = body.indexOf("'s");
-  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);
-  const sp = body.indexOf(' ');
-  if (sp > 0) candidates.push([body.slice(0, sp), body.slice(sp + 1)]);
-  if (!candidates.length) return null;
+  const body = m[2].replace(/\s+$/, '');     // strip trailing whitespace
+  const bodyLower = body.toLowerCase();
   // Newest cast first so the most recent matching spell wins.
   for (let i = arr.length - 1; i >= 0; i--) {
     const rc = arr[i];
     if (nowMs - rc.atMs > SELF_CAST_WINDOW_MS) continue;
     const e = _spellByNameLower.get(rc.spellLower);
     if (!e || !e.other) continue;
-    const expected = String(e.other).trim().toLowerCase();
-    for (const [name, suffixRaw] of candidates) {
-      if (suffixRaw.trim().toLowerCase() !== expected) continue;
-      // Attribute only to the target we were casting at (when known) so we
-      // don't mis-name a bystander's same-message buff.
-      if (rc.target && String(rc.target).toLowerCase() !== String(name).toLowerCase()) continue;
-      return {
-        target:      name,
-        spell_id:    e.id || 0,
-        spell_name:  e.name,
-        landing_text: suffixRaw.trim().slice(0, 200),
-        dur_ticks:   e.dur,
-        dur_formula: e.durf,
-        cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
-        observer:    observer,
-        _selfCast:   true,
-      };
+    // We know the spell we cast, so we know the EXACT cast_on_other suffix EQ
+    // will print. Match by "body ends with expected" instead of guessing where
+    // the target name ends — the old first-space split broke multi-word NPC
+    // names ("A Soriz Slave slows down." → split at "A | Soriz Slave slows
+    // down." → suffix didn't match "slows down.", so the debuff never
+    // registered on Mob Info). Possessive form ("Bonkur's eye gleams ...")
+    // leaves the "'s" attached to the suffix and needs no separator; space
+    // form requires the char before the suffix to be a space.
+    const expected = String(e.other).trim();
+    const expectedLower = expected.toLowerCase();
+    if (!expectedLower || !bodyLower.endsWith(expectedLower)) continue;
+    const cut = body.length - expected.length;
+    let nameEnd;
+    if (expected.startsWith("'")) {
+      nameEnd = cut;                          // "<name>'s ..." — no separator
+    } else {
+      if (cut === 0 || body[cut - 1] !== ' ') continue;
+      nameEnd = cut - 1;
     }
+    const name = body.slice(0, nameEnd).trim();
+    if (!name) continue;
+    // Attribute only to the target we were casting at (when known) so we
+    // don't mis-name a bystander's same-message buff.
+    if (rc.target && String(rc.target).toLowerCase() !== name.toLowerCase()) continue;
+    return {
+      target:      name,
+      spell_id:    e.id || 0,
+      spell_name:  e.name,
+      landing_text: body.slice(cut).slice(0, 200),
+      dur_ticks:   e.dur,
+      dur_formula: e.durf,
+      cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
+      observer:    observer,
+      _selfCast:   true,
+    };
   }
   return null;
 }
