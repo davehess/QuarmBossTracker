@@ -1996,38 +1996,49 @@ function resolveSelfCastLanding(line, observer) {
   const nowMs = ts ? ts.getTime() : Date.now();
   const m = line.match(/^\[(.+?)\]\s+(.+)$/);
   if (!m) return null;
-  const body = m[2];
-  // Same target/suffix split as parseBuffLanding (possessive OR first space).
-  const candidates = [];
-  const apos = body.indexOf("'s");
-  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);
-  const sp = body.indexOf(' ');
-  if (sp > 0) candidates.push([body.slice(0, sp), body.slice(sp + 1)]);
-  if (!candidates.length) return null;
+  const body = m[2].replace(/\s+$/, '');     // strip trailing whitespace
+  const bodyLower = body.toLowerCase();
   // Newest cast first so the most recent matching spell wins.
   for (let i = arr.length - 1; i >= 0; i--) {
     const rc = arr[i];
     if (nowMs - rc.atMs > SELF_CAST_WINDOW_MS) continue;
     const e = _spellByNameLower.get(rc.spellLower);
     if (!e || !e.other) continue;
-    const expected = String(e.other).trim().toLowerCase();
-    for (const [name, suffixRaw] of candidates) {
-      if (suffixRaw.trim().toLowerCase() !== expected) continue;
-      // Attribute only to the target we were casting at (when known) so we
-      // don't mis-name a bystander's same-message buff.
-      if (rc.target && String(rc.target).toLowerCase() !== String(name).toLowerCase()) continue;
-      return {
-        target:      name,
-        spell_id:    e.id || 0,
-        spell_name:  e.name,
-        landing_text: suffixRaw.trim().slice(0, 200),
-        dur_ticks:   e.dur,
-        dur_formula: e.durf,
-        cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
-        observer:    observer,
-        _selfCast:   true,
-      };
+    // We know the spell we cast, so we know the EXACT cast_on_other suffix EQ
+    // will print. Match by "body ends with expected" instead of guessing where
+    // the target name ends — the old first-space split broke multi-word NPC
+    // names ("A Soriz Slave slows down." → split at "A | Soriz Slave slows
+    // down." → suffix didn't match "slows down.", debuff never registered on
+    // Mob Info). Possessive form ("Bonkur's eye gleams ...") leaves the "'s"
+    // attached to the suffix and needs no separator; space form needs the
+    // char before the suffix to be a space so we don't substring-collide.
+    const expected = String(e.other).trim();
+    const expectedLower = expected.toLowerCase();
+    if (!expectedLower || !bodyLower.endsWith(expectedLower)) continue;
+    const cut = body.length - expected.length;
+    let nameEnd;
+    if (expected.startsWith("'")) {
+      nameEnd = cut;                          // "<name>'s ..." — no separator
+    } else {
+      if (cut === 0 || body[cut - 1] !== ' ') continue;
+      nameEnd = cut - 1;
     }
+    const name = body.slice(0, nameEnd).trim();
+    if (!name) continue;
+    // Attribute only to the target we were casting at (when known) so we
+    // don't mis-name a bystander's same-message buff.
+    if (rc.target && String(rc.target).toLowerCase() !== name.toLowerCase()) continue;
+    return {
+      target:      name,
+      spell_id:    e.id || 0,
+      spell_name:  e.name,
+      landing_text: body.slice(cut).slice(0, 200),
+      dur_ticks:   e.dur,
+      dur_formula: e.durf,
+      cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
+      observer:    observer,
+      _selfCast:   true,
+    };
   }
   return null;
 }
