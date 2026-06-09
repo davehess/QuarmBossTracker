@@ -3035,6 +3035,9 @@ async function _handleAgentPvp(req, res) {
           uploaded_by: 'pvp-relay',
         }));
         supabase.upsert('who_observations', rows, 'guild_id,character,observed_minute,uploaded_by')
+          .then(() => supabase.rpc('flag_zek_proximity_recent', {
+            p_guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          }).catch(err => console.warn('[pvp-relay] zek proximity rescan failed:', err?.message)))
           .catch(err => console.warn('[pvp-relay] who-obs upsert failed:', err?.message));
       }
     } catch (err) {
@@ -3437,6 +3440,12 @@ async function _handleAgentPvpAssists(req, res) {
     if (whoRows.length > 0) {
       await supabase.upsert('who_observations', whoRows, 'guild_id,character,observed_minute,uploaded_by')
         .catch(err => console.warn('[pvp-assists] who_observations upsert failed:', err?.message));
+      // Same Zek-proximity rescan as the pvp-relay path — unguilded assisters
+      // / victims who happened to be in zone with a Zek-guilded character
+      // within ±3 min get flagged as inferred Zek.
+      await supabase.rpc('flag_zek_proximity_recent', {
+        p_guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      }).catch(err => console.warn('[pvp-assists] zek proximity rescan failed:', err?.message));
     }
   } catch (e) { console.warn('[pvp-assists] who harvest failed:', e?.message); }
 

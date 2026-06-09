@@ -28,6 +28,8 @@ export type WhoRow = {
   firstSeen: string | null;
   obsCount: number;
   autoZek: boolean;
+  // True when autoZek came from proximity inference, not an observed guild.
+  inferredZek: boolean;
   zekOverride: boolean | null;   // null = unset (auto)
   effectiveZek: boolean;
   setByName: string | null;
@@ -245,17 +247,25 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
                       onChange={e => onZekChange(r, e.target.value)}
                       title={r.zekOverride != null
                         ? 'manually set by an officer'
-                        : (r.autoZek ? 'auto: seen in a Zek / Rise of Zek guild' : 'auto: never seen in a Zek guild')}
+                        : (r.autoZek
+                            ? (r.inferredZek
+                                ? 'auto (inferred): unguilded but observed in a zone with a Zek-guilded character within ±3 minutes during PvP'
+                                : 'auto: seen in a Zek / Rise of Zek guild')
+                            : 'auto: never seen in a Zek guild')}
                       className={`bg-bg border rounded px-1 py-0.5 ${
                         r.effectiveZek ? 'border-red text-red' : 'border-border text-dim'}`}
                     >
-                      <option value="auto">{r.autoZek ? 'Auto: Zek' : 'Auto: not Zek'}</option>
+                      <option value="auto">{r.autoZek ? (r.inferredZek && !r.zekOverride ? 'Auto: Zek?' : 'Auto: Zek') : 'Auto: not Zek'}</option>
                       <option value="zek">Force Zek</option>
                       <option value="no">Force not Zek</option>
                     </select>
                   ) : (
                     r.effectiveZek
-                      ? <span className="text-red font-semibold" title={r.zekOverride != null ? 'officer-flagged' : 'seen in a Zek / Rise of Zek guild'}>Zek</span>
+                      ? <span className="text-red font-semibold" title={
+                          r.zekOverride != null ? 'officer-flagged' :
+                          r.inferredZek      ? 'inferred — unguilded but seen in a zone with a Zek-guilded character within ±3 minutes during PvP' :
+                                               'seen in a Zek / Rise of Zek guild'
+                        }>{r.zekOverride == null && r.inferredZek ? 'Zek?' : 'Zek'}</span>
                       : <span className="text-dim">—</span>
                   )}
                 </td>

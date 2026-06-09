@@ -27,6 +27,7 @@ type DirRow = {
   first_seen: string | null;
   obs_count: number | null;
   ever_zek_guild: boolean | null;
+  ever_inferred_zek: boolean | null;
   zone: string | null;
 };
 
@@ -87,7 +88,10 @@ async function loadRows(): Promise<WhoRow[]> {
     const classOverride = o?.class ?? null;
     const rosterClass = rosterClassByName.get(r.character_key) ?? null;
     const zekOverride = (o && o.is_zek != null) ? o.is_zek : null;
-    const autoZek = !!r.ever_zek_guild;
+    // autoZek = either guild-named Zek OR proximity-inferred Zek (PvP-derived
+    // observation where another Zek-guilded character was in zone within ±3m).
+    const inferredZek = !!r.ever_inferred_zek;
+    const autoZek = !!r.ever_zek_guild || inferredZek;
     return {
       character: r.character,
       race: r.race,
@@ -106,6 +110,7 @@ async function loadRows(): Promise<WhoRow[]> {
       firstSeen: r.first_seen,
       obsCount: r.obs_count ?? 0,
       autoZek,
+      inferredZek,
       zekOverride,
       effectiveZek: zekOverride != null ? zekOverride : autoZek,
       setByName: o?.set_by_name ?? null,
