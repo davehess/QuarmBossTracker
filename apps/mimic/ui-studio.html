@@ -651,15 +651,11 @@
           if (!n) return null;
           // 1. Exact match — covers PlayerWindow, TargetWindow, BuffWindow, etc.
           if (xs[n]) return xs[n];
-          // 2. Chat family — MainChat / "Chat <N>" / "Chat<N>" → ChatWindow.
-          //    Verified on NillipussUI_1080p: every chat instance is sized by
-          //    one ChatWindow XML; per-character INI then resizes each.
-          if (/^mainchat$/i.test(n) || /^chat\s*\d+$/i.test(n)) return xs.ChatWindow || null;
-          // 3. INI uses bare name; XML adds Window / Wnd suffix.
+          // 2. INI uses bare name; XML adds Window / Wnd suffix.
           //    e.g. "Actions" → "ActionsWindow", "Bank" → "BankWnd".
           if (xs[n + 'Window']) return xs[n + 'Window'];
           if (xs[n + 'Wnd'])    return xs[n + 'Wnd'];
-          // 4. INI carries trailing _<N> or <N> for multi-instance windows
+          // 3. INI carries trailing _<N> or <N> for multi-instance windows
           //    (HotButtonWnd_2, GroupWindow1) — try the base name, then with
           //    the suffix dance again.
           var m = n.match(/^(.+?)[_]?(\d+)$/);
@@ -670,7 +666,10 @@
           }
           return null;
         });
-        var xmlMax = _xmlLookup(s.name);
+        // Chat windows are deliberately resized per-instance by the user — the
+        // ChatWindow XML template only describes the design default, not a real
+        // cap. Skip the XML logic for them; honor the INI sizes verbatim.
+        var xmlMax = (classify.kind === 'chat') ? null : _xmlLookup(s.name);
         if (xmlMax) {
           // Scale the XML size with the same fx factors used elsewhere so it
           // reads correctly in the target resolution canvas.
