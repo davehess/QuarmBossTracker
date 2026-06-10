@@ -79,7 +79,8 @@ function colorTier(
 
   const missingHpSlots = (['A','B','C'] as const).filter(s => !hpSlots[s]);
   const isCaster = role === 'caster' || role === 'priest';
-  const missingMana       = isCaster && !byCategory.mana?.length;
+  // Mana (max-mana) is no longer a queue gap — KEI covers it (see ROLE_TARGETS).
+  const missingMana       = false;
   const missingManaRegen  = isCaster && !byCategory.manaRegen?.length;
 
   // ORANGE: any HP slot empty, OR a caster missing mana/mana-regen.

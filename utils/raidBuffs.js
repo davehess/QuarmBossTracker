@@ -71,8 +71,13 @@ function categorizeBuff(name) {
 const ROLE_TARGETS = {
   tank:   ['haste', 'attack', 'ds', 'resists'],
   melee:  ['haste', 'attack', 'resists'],
-  priest: ['mana', 'manaRegen', 'resists'],
-  caster: ['mana', 'manaRegen', 'resists'],
+  // Mana (max-mana, Gift of Brilliance line) intentionally dropped: KEI /
+  // Clarity already covers the practical "caster has mana to burn" need,
+  // so flagging it as a separate gap had Enchanters queueing Mana AND
+  // Mana Regen for the same target. Max-mana still categorizes for the
+  // detail panel — it just isn't a queue gap anymore.
+  priest: ['manaRegen', 'resists'],
+  caster: ['manaRegen', 'resists'],
   bard:   ['haste', 'resists'],
   other:  ['resists'],
 };
@@ -95,7 +100,7 @@ const CLASS_PROVIDES = {
   cleric:    ['hp', 'regen', 'resists'],
   druid:     ['hp', 'regen', 'runSpeed', 'ds', 'resists'],
   shaman:    ['hp', 'attack', 'haste', 'regen', 'resists'],
-  enchanter: ['mana', 'manaRegen', 'haste', 'resists'],
+  enchanter: ['manaRegen', 'haste', 'resists'],
   bard:      ['haste', 'runSpeed', 'attack', 'manaRegen', 'ds'],
   paladin:   ['hp', 'resists'],
   ranger:    ['regen', 'ds'],

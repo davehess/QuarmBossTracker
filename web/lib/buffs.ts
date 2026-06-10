@@ -290,11 +290,14 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 // HP is tracked separately via the three HP slots (every role wants all three),
 // so it's not repeated here. These are the NON-HP categories expected per role.
+// Mana (max-mana, Gift of Brilliance line) intentionally dropped: KEI /
+// Clarity covers the practical need so flagging it as a separate gap had
+// Enchanters queueing both Mana AND Mana Regen for the same target.
 export const ROLE_TARGETS: Record<Role, BuffCategory[]> = {
   tank:   ['haste', 'attack', 'ds', 'resists'],
   melee:  ['haste', 'attack', 'resists'],
-  priest: ['mana', 'manaRegen', 'resists'],
-  caster: ['mana', 'manaRegen', 'resists'],
+  priest: ['manaRegen', 'resists'],
+  caster: ['manaRegen', 'resists'],
   bard:   ['haste', 'resists'],
   other:  ['resists'],
 };
