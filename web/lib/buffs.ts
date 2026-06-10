@@ -13,10 +13,10 @@
 // conservative: first matching category wins, in CATEGORY_ORDER priority.
 
 export type BuffCategory =
-  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds' | 'resists';
+  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds' | 'levitate' | 'resists';
 
 export const CATEGORY_ORDER: BuffCategory[] = [
-  'hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'resists',
+  'hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate', 'resists',
 ];
 
 export const CATEGORY_LABELS: Record<BuffCategory, string> = {
@@ -28,6 +28,7 @@ export const CATEGORY_LABELS: Record<BuffCategory, string> = {
   runSpeed:  'Run Speed',
   attack:    'Attack',
   ds:        'Dmg Shield',
+  levitate:  'Levitate',
   resists:   'Resists',
 };
 
@@ -75,6 +76,8 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   ],
   // Damage shields (buffs + bard DS songs).
   ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat', 'damage shield', 'legacy of', 'shield of barbs'],
+  // Levitation — situational but worth a visible row (Hate trenches, Sky).
+  levitate: ['levitat', 'dead men floating', 'dead man floating', 'flying'],
   // Resist buffs (single + group). "Circle of Seasons" is the Druid all-resist
   // group buff seen in raid dumps.
   resists: [
@@ -91,6 +94,92 @@ export function categorizeBuff(name: string): BuffCategory | null {
     if (KEYWORDS[cat].some(k => n.includes(k))) return cat;
   }
   return null;
+}
+
+// Buffs that credit a SECOND category beyond their primary match. VoG is
+// primarily haste but carries an ATK component; Spirit of Bihli is run speed
+// with ATK. Single-category-wins kept them out of the Attack row, which made
+// "Attack — missing" lie on raiders carrying them.
+const SECONDARY_CATEGORY: [string, BuffCategory][] = [
+  ['visions of grandeur', 'attack'],
+  ['spirit of bihli',     'attack'],
+];
+export function secondaryCategoriesFor(name: string): BuffCategory[] {
+  const n = (name || '').toLowerCase();
+  if (!n) return [];
+  return SECONDARY_CATEGORY.filter(([k]) => n.includes(k)).map(([, c]) => c);
+}
+
+// ── Haste ranking ────────────────────────────────────────────────────────────
+// EQ won't let a LOWER-tier haste land over a higher one — and some item/click
+// hastes are higher % than VoG, so suggesting VoG to those raiders is wrong
+// (they'd have to click the better buff off first!). Relative ordering only —
+// DRAFT, tune against in-era percentages; unknown haste names rank 0 so the
+// queue annotates instead of asserting.
+const HASTE_RANK: [string, number][] = [
+  ['quickness', 1],
+  ['alacrity', 2],
+  ['celerity', 3],
+  ['augmentation', 3],
+  ['swift like the wind', 4],
+  ['aanya', 5],
+  ['wonderous rapidity', 6],
+  ['visions of grandeur', 7],
+  ['speed of the shissar', 8],
+];
+export function hasteRank(name: string | null | undefined): number {
+  const n = String(name || '').toLowerCase();
+  if (!n) return 0;
+  for (const [k, r] of HASTE_RANK) if (n.includes(k)) return r;
+  return 0;   // unknown haste (item clicks, songs) — can't compare safely
+}
+
+// ── Upgrade chains ───────────────────────────────────────────────────────────
+// Same buff line, low → high. When a raider carries an earlier link and the
+// buffer's class can cast a later one, the queue shows a YELLOW upgrade item
+// instead of silence (the category was "covered", just not by the best
+// available — Aego when the cleric has Ancient: Gift of Aegolism, FoS when
+// the shaman has Khura's, JBoots when Bihli adds ATK for melee).
+export type UpgradeChain = {
+  key: string;
+  label: string;
+  chain: string[];                 // lowercased substrings, low → high
+  classes: string[];               // who can cast the top end
+  roles?: Role[];                  // limit to these roles (default: all)
+};
+export const UPGRADE_CHAINS: UpgradeChain[] = [
+  {
+    key: 'aego',
+    label: 'Aego line',
+    chain: ['aegolism', 'blessing of aegolism', 'ancient: gift of aegolism'],
+    classes: ['cleric'],
+  },
+  {
+    key: 'focus',
+    label: 'Focus line',
+    chain: ['focus of spirit', 'khura'],
+    classes: ['shaman'],
+  },
+  {
+    key: 'bihli',
+    label: 'Run speed + ATK',
+    chain: ['journeyman', 'spirit of bihli'],
+    classes: ['shaman'],
+    roles: ['melee', 'tank'],
+  },
+];
+
+// Index of the HIGHEST chain link a buff list carries (-1 = none). The chain
+// arrays put more-specific names later, so we scan from the top down.
+export function chainPosition(chain: string[], buffNames: string[]): number {
+  let best = -1;
+  for (const raw of buffNames) {
+    const n = (raw || '').toLowerCase();
+    for (let i = chain.length - 1; i >= 0; i--) {
+      if (n.includes(chain[i]) && i > best) { best = i; break; }
+    }
+  }
+  return best;
 }
 
 // ── Resist types ─────────────────────────────────────────────────────────────
@@ -255,13 +344,13 @@ export const HP_SLOT_LABELS: Record<HpSlot, string> = {
 export const HP_SLOT_PROVIDER: Record<HpSlot, string> = {
   A: 'Druid (POTG/POTC) · Cleric (Aego) · Shaman (ToW)',
   B: 'Cleric (Symbol)',
-  C: 'Cleric (Khura/Brell) · Wizard (Arch)',
+  C: 'Shaman (Khura/FoS) · Cleric (Brell) · Wizard (Arch)',
 };
 
 const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
   A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi'],
   B: ['symbol of'],
-  C: ['khura', 'brell', 'arch shielding'],
+  C: ['khura', 'focus of spirit', 'brell', 'arch shielding'],
 };
 const AEGOLISM_KEYWORDS = ['aegolism'];
 

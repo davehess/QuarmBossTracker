@@ -6129,9 +6129,18 @@ async function _handleAgentLiveState(req, res) {
   const states      = Array.isArray(payload?.states) ? payload.states : [];
   const nowIso      = new Date().toISOString();
   const rows = [];
+  const swaps = [];   // {character, swapped_to} — targeted UPDATEs, not upserts
   for (const st of states) {
     const character = String(st?.character || '').trim();
     if (!character || character.length > 64) continue;
+    // Character-swap record (agent v3.1.13+): the same EQ client logged a
+    // different character in, so this one is gone. Stamp swapped_to WITHOUT
+    // touching the rest of the row (buffs etc. stay as the last-known
+    // snapshot) — /raid moves them to "Not in raid (swapped to X)".
+    if (st?.swapped_to && typeof st.swapped_to === 'string') {
+      swaps.push({ character, swapped_to: st.swapped_to.trim().slice(0, 64) });
+      continue;
+    }
     // Sanitize buffs → compact [{name, ticks, song}] and cap so a misbehaving
     // agent can't store a huge blob. EQ tops out ~30 buff/song slots. `song`
     // (agent v3.1.12+) = the short-duration song window (Zeal ids 135-140, 6
@@ -6174,17 +6183,26 @@ async function _handleAgentLiveState(req, res) {
       pet_hp_pct:  petHp,
       pet_buffs:   petBuffs,
       uploaded_by: uploadedBy,
+      // A fresh snapshot supersedes any earlier swap stamp — they're back.
+      swapped_to:  null,
+      swapped_at:  null,
       updated_at:  nowIso,
     });
   }
-  if (rows.length === 0) {
+  if (rows.length === 0 && swaps.length === 0) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
   try {
-    await supabase.upsert('character_live_state', rows, 'guild_id,character');
+    if (rows.length) await supabase.upsert('character_live_state', rows, 'guild_id,character');
+    for (const s of swaps) {
+      await supabase.update('character_live_state',
+        `guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(s.character)}`,
+        { swapped_to: s.swapped_to, swapped_at: nowIso, updated_at: nowIso })
+        .catch(() => {});
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+    return res.end(JSON.stringify({ ok: true, stored: rows.length + swaps.length }));
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));

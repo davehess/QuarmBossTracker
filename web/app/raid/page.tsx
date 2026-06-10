@@ -23,7 +23,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
   categorizeBuff, classToRole, analyzeHpSlots, ROLE_TARGETS, isCorpse,
-  resistTypesFor, isSongBuff,
+  resistTypesFor, isSongBuff, secondaryCategoriesFor,
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
 import RaidView, { type RaidRow } from './RaidView';
@@ -40,6 +40,8 @@ type LiveStateRow = {
   pet_name: string | null;
   pet_hp_pct: number | null;
   pet_buffs: PetBuff[] | null;
+  swapped_to: string | null;
+  swapped_at: string | null;
   updated_at: string | null;
 };
 
@@ -97,7 +99,7 @@ export default async function RaidHubPage() {
   const admin = supabaseAdmin();
   const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }] = await Promise.all([
     admin.from('character_live_state')
-      .select('character, zone_name, self_hp_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, updated_at')
+      .select('character, zone_name, self_hp_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
       .eq('guild_id', 'wolfpack')
       .order('updated_at', { ascending: false }),
     admin.from('characters')
@@ -171,6 +173,11 @@ export default async function RaidHubPage() {
       const cat = categorizeBuff(b.name);
       if (cat) (byCategory[cat] ||= []).push(b.name);
       else other.push(b.name);
+      // Secondary credits — VoG/Bihli carry an ATK component beyond their
+      // primary category, so "Attack — missing" doesn't lie about them.
+      for (const sec of secondaryCategoriesFor(b.name)) {
+        if (sec !== cat && !(byCategory[sec] ||= []).includes(b.name)) byCategory[sec].push(b.name);
+      }
     }
     return { byCategory, other, resists, songs };
   }
@@ -185,6 +192,15 @@ export default async function RaidHubPage() {
   const seen = new Set<string>();
   const rows: RaidRow[] = [];
 
+  // A character whose client logged someone else in (Mimic same-pid swap,
+  // stamped within the last 6h) is shown parked with "(swapped to X)" even if
+  // the Zeal raid window still lists their body in a group.
+  const SWAP_FRESH_MS = 6 * 60 * 60 * 1000;
+  const swapFor = (live: LiveStateRow | undefined): string | null => {
+    if (!live?.swapped_to || !live.swapped_at) return null;
+    return (Date.now() - new Date(live.swapped_at).getTime()) < SWAP_FRESH_MS ? live.swapped_to : null;
+  };
+
   // 1. Roster members first (with or without live state).
   for (const [lower, rr] of rosterByName) {
     if (seen.has(lower)) continue;
@@ -195,14 +211,16 @@ export default async function RaidHubPage() {
     const { byCategory, other, resists, songs } = bucketBuffs(live?.buffs ?? null);
     const hpSlots = analyzeHpSlots((live?.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
     const noAgent = !live;
+    const swappedTo = swapFor(live);
     rows.push({
       name: rr.name,
       className,
       role,
-      raidGroup: rr.group_num ?? null,
+      raidGroup: swappedTo ? null : (rr.group_num ?? null),
       level: rr.level ?? null,
       rank: rr.rank ?? null,        // '2' raid leader, '1' group leader, else member
-      inRaid: true,
+      inRaid: !swappedTo,
+      swappedTo,
       noAgent,
       zone: live?.zone_name ?? null,
       updatedAt: live?.updated_at ?? null,
@@ -240,6 +258,7 @@ export default async function RaidHubPage() {
       level: null,
       rank: null,
       inRaid: false,
+      swappedTo: swapFor(r),
       noAgent: false,
       zone: r.zone_name,
       updatedAt: r.updated_at,
@@ -255,6 +274,27 @@ export default async function RaidHubPage() {
       pet: petFor(r),
       isMe: !!(meDiscordId && discordIdFor(r.character) === meDiscordId),
     });
+  }
+
+  // Damage-shield magnitudes — decode SPA 59 from eqemu_spells.raw for every
+  // DS buff seen across the raid, so the card can show "+14" per slot instead
+  // of just the name. Buff-window names match spell names; when several ranks
+  // share a name we take the largest (annotated as the catalog max).
+  const dsNames = [...new Set(rows.flatMap(r => r.byCategory.ds ?? []))];
+  const dsValues: Record<string, number> = {};
+  if (dsNames.length) {
+    const { data: dsSpells } = await admin
+      .from('eqemu_spells')
+      .select('name, raw')
+      .in('name', dsNames);
+    for (const sp of (dsSpells ?? []) as { name: string; raw: { eff: (number | null)[]; base: (number | null)[] } | null }[]) {
+      if (!sp.raw || !Array.isArray(sp.raw.eff)) continue;
+      for (let i = 0; i < sp.raw.eff.length; i++) {
+        if (sp.raw.eff[i] !== 59) continue;     // SPA 59 = damage shield
+        const v = Math.abs(sp.raw.base?.[i] ?? 0);
+        if (v > (dsValues[sp.name] ?? 0)) dsValues[sp.name] = v;
+      }
+    }
   }
 
   // The signed-in user's class as they appear in the current raid (if any) —
@@ -283,6 +323,7 @@ export default async function RaidHubPage() {
       leaderClass={leader?.className ?? null}
       groupLeaders={Object.fromEntries(groupLeaders)}
       myClass={myClass}
+      dsValues={dsValues}
     />
   );
 }

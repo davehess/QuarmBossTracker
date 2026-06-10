@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS, HP_SLOTS, HP_SLOT_LABELS,
-  RESIST_TYPES, RESIST_LABELS,
+  RESIST_TYPES, RESIST_LABELS, UPGRADE_CHAINS, chainPosition, hasteRank,
   shortBuffName, fmtBuffRemaining, buffTimeTone, isCurseBuff,
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
@@ -38,6 +38,7 @@ export type RaidRow = {
   level: number | null;
   rank: string | null;           // '2' raid leader, '1' group leader
   inRaid: boolean;
+  swappedTo: string | null;      // this client logged another character in
   noAgent: boolean;              // not running Mimic → unknown buff state
   zone: string | null;
   updatedAt: string | null;
@@ -142,7 +143,7 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
 }
 
 export default function RaidView({
-  rows, raidSize, mimicCovered, leaderName, leaderClass, groupLeaders, myClass,
+  rows, raidSize, mimicCovered, leaderName, leaderClass, groupLeaders, myClass, dsValues,
 }: {
   rows: RaidRow[];
   raidSize: number;
@@ -151,6 +152,7 @@ export default function RaidView({
   leaderClass: string | null;
   groupLeaders: Record<number, string>;
   myClass: string | null;
+  dsValues: Record<string, number>;
 }) {
   // Default Buffer-mode class = the signed-in user's own class as detected in
   // the raid roster. Override is always available; some folks swap to help
@@ -194,8 +196,10 @@ export default function RaidView({
   // Stale parked characters (no live-state update in >15 min — logged off)
   // are hidden by default; staleHidden carries the count for the toggle.
   const STALE_MS = 15 * 60 * 1000;
+  // Swapped characters are exempt — "(swapped to X)" is the information.
   const isStale = (r: RaidRow) =>
-    !r.inRaid && (!r.updatedAt || (Date.now() - new Date(r.updatedAt).getTime()) > STALE_MS);
+    !r.inRaid && !r.swappedTo
+    && (!r.updatedAt || (Date.now() - new Date(r.updatedAt).getTime()) > STALE_MS);
   const staleHidden = useMemo(() => rows.filter(isStale).length, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
   const groups = useMemo(() => {
     const m = new Map<string, RaidRow[]>();
@@ -223,27 +227,55 @@ export default function RaidView({
   // severity (red → orange → yellow). PREVIEW — needs real timers to be useful.
   const bufferQueue = useMemo(() => {
     if (!bufferClass) return [];
-    const provides = CLASS_PROVIDES[bufferClass.toLowerCase()] || [];
-    const providesResists = CLASS_PROVIDES_RESISTS[bufferClass.toLowerCase()] || [];
+    const cls = bufferClass.toLowerCase();
+    const provides = CLASS_PROVIDES[cls] || [];
+    const providesResists = CLASS_PROVIDES_RESISTS[cls] || [];
     if (provides.length === 0 && providesResists.length === 0) return [];
     const severity = { red: 0, orange: 1, yellow: 2, green: 3, unknown: 4 } as const;
-    const out: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[] }[] = [];
+    const out: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[] }[] = [];
     for (const r of rows) {
       if (!r.inRaid || r.noAgent) continue;
       const expected = ROLE_TARGETS[r.role] || [];
+      const buffNames = r.buffs.map(b => b?.name).filter(Boolean) as string[];
       // Generic categories minus resists — those get per-school treatment so
       // "has Circle of Seasons" doesn't hide a missing Group Resist Magic.
-      const missing = provides.filter(cat => cat !== 'resists' && expected.includes(cat) && !(r.byCategory[cat]?.length));
+      let missing = provides.filter(cat => cat !== 'resists' && expected.includes(cat) && !(r.byCategory[cat]?.length));
       const missingResists = providesResists.filter(t => !(r.resists[t]?.length));
       // HP slots are special — clerics/druids/shaman provide them, missing
       // counts even if the role-target categories all check out.
       const providesHp = provides.includes('hp');
       const missingHp = providesHp ? HP_SLOTS.filter(s => !r.hpSlots[s]) : [];
-      if (missing.length > 0 || missingHp.length > 0 || missingResists.length > 0) {
-        out.push({ row: r, missing, missingResists });
+      // Upgrade chains (yellow): the category is "covered" but a better cast
+      // exists in this class's book — Aego → Ancient Aego, FoS → Khura's,
+      // JBoots → Bihli (melee/tank gets the ATK).
+      const upgrades: string[] = [];
+      for (const ch of UPGRADE_CHAINS) {
+        if (!ch.classes.includes(cls)) continue;
+        if (ch.roles && !ch.roles.includes(r.role)) continue;
+        const pos = chainPosition(ch.chain, buffNames);
+        if (pos >= 0 && pos < ch.chain.length - 1) upgrades.push(ch.label + ' ↑');
+      }
+      // Haste nuance (enchanter VoG, rank 7): a known LOWER haste = upgrade;
+      // an UNKNOWN haste (item click) may be higher and would block VoG, so
+      // flag it for a human look instead of asserting. EQ won't override a
+      // higher-percentage haste — the raider must click theirs off first.
+      if (cls === 'enchanter' && (r.byCategory.haste?.length ?? 0) > 0 && missing.indexOf('haste') === -1) {
+        const best = Math.max(...(r.byCategory.haste || []).map(hasteRank));
+        if (best > 0 && best < 7) upgrades.push('Haste ↑ VoG');
+        else if (best === 0) upgrades.push('Haste? (item haste may block VoG)');
+      }
+      if (missing.length > 0 || missingHp.length > 0 || missingResists.length > 0 || upgrades.length > 0) {
+        out.push({ row: r, missing, missingResists, upgrades });
       }
     }
-    out.sort((a, b) => severity[a.row.tier] - severity[b.row.tier]);
+    // Severity by tier, but pure-upgrade rows (nothing missing) sink below
+    // anything with a real gap.
+    out.sort((a, b) => {
+      const aGap = (a.missing.length + a.missingResists.length) > 0 ? 0 : 1;
+      const bGap = (b.missing.length + b.missingResists.length) > 0 ? 0 : 1;
+      if (aGap !== bGap) return aGap - bGap;
+      return severity[a.row.tier] - severity[b.row.tier];
+    });
     return out.slice(0, 30);
   }, [bufferClass, rows]);
 
@@ -399,6 +431,11 @@ export default function RaidView({
                           {isGrpLead && <span title="Group leader" className="text-blue">⭐ </span>}
                           {r.name}
                           {r.isMe && <span title="That&apos;s you" className="text-blue ml-1">·</span>}
+                          {r.swappedTo && (
+                            <span className="text-dim font-normal ml-1.5" title={`This client logged ${r.swappedTo} in — ${r.name} is no longer playing`}>
+                              (swapped to <span className="text-blue">{r.swappedTo}</span>)
+                            </span>
+                          )}
                         </span>
                         {!r.noAgent && (
                           <span
@@ -472,7 +509,7 @@ export default function RaidView({
               Click a raider to see their full buff state, missing slots, and a one-tap <code>/target</code> copy.
             </div>
           ) : (
-            <CharacterDetail row={selected} onClose={() => setSelectedName(null)} />
+            <CharacterDetail row={selected} dsValues={dsValues} onClose={() => setSelectedName(null)} />
           )}
         </aside>
       </div>
@@ -617,7 +654,7 @@ function BufferQueues({
   bufferClass, buffQueue, debuffQueue, onSelect,
 }: {
   bufferClass: BufferClass;
-  buffQueue: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[] }[];
+  buffQueue: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[] }[];
   debuffQueue: { row: RaidRow; curses: { name: string; ticks: number | null }[] }[];
   onSelect: (name: string) => void;
 }) {
@@ -636,7 +673,7 @@ function BufferQueues({
           </div>
         ) : (
           <ul className="text-xs space-y-1.5">
-            {buffQueue.map(({ row, missing, missingResists }) => (
+            {buffQueue.map(({ row, missing, missingResists, upgrades }) => (
               <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1.5 last:border-0">
                 <span className={['inline-block w-1.5 h-5 rounded-sm shrink-0', TIER_STYLE[row.tier].bar].join(' ')} />
                 <button
@@ -649,11 +686,18 @@ function BufferQueues({
                   <span className="text-[9px] leading-none px-1 py-0.5 rounded bg-blue/15 text-blue border border-blue/30 shrink-0">🐺</span>
                 )}
                 <span className="text-dim text-[11px]">{row.className} · Grp {row.raidGroup ?? '?'}</span>
-                <span className="text-dim ml-auto text-[11px] text-right">
-                  {[
-                    ...missing.map(c => CATEGORY_LABELS[c]),
-                    ...missingResists.map(t => 'Resist ' + RESIST_LABELS[t]),
-                  ].join(' · ') || 'HP slot missing'}
+                <span className="ml-auto text-[11px] text-right">
+                  <span className="text-dim">
+                    {[
+                      ...missing.map(c => CATEGORY_LABELS[c]),
+                      ...missingResists.map(t => 'Resist ' + RESIST_LABELS[t]),
+                    ].join(' · ') || (upgrades.length === 0 ? 'HP slot missing' : '')}
+                  </span>
+                  {upgrades.length > 0 && (
+                    <span className="text-[#d4a72c]" title="Covered, but a better cast is available — yellow = upgrade, not a gap">
+                      {(missing.length + missingResists.length) > 0 ? ' · ' : ''}{upgrades.join(' · ')}
+                    </span>
+                  )}
                 </span>
               </li>
             ))}
@@ -788,7 +832,7 @@ function PetLine({ pet }: { pet: PetState }) {
   );
 }
 
-function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }) {
+function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: Record<string, number>; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const target = '/target ' + row.name;
   const copy = async () => {
@@ -878,7 +922,7 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
           <div>
             <div className="text-[10px] uppercase tracking-widest text-dim mb-1">Buff categories</div>
             <ul className="space-y-1">
-              {(['regen','mana','manaRegen','haste','runSpeed','attack','ds'] as BuffCategory[]).map(cat => {
+              {(['regen','mana','manaRegen','haste','runSpeed','attack','levitate'] as BuffCategory[]).map(cat => {
                 const names = row.byCategory[cat] || [];
                 const present = names.length > 0;
                 const exp = expected.includes(cat);
@@ -921,6 +965,34 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
                 );
               })}
             </ul>
+          </div>
+
+          {/* Damage shields — every DS stacks, so list EACH slot with its
+              magnitude (SPA 59 decoded from the spell catalog) + the total. */}
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-dim mb-1">
+              Damage shields
+              {(row.byCategory.ds?.length ?? 0) > 0 && (() => {
+                const total = (row.byCategory.ds || []).reduce((s, n) => s + (dsValues[n] ?? 0), 0);
+                return total > 0 ? <span className="text-green normal-case tracking-normal"> · {total} total</span> : null;
+              })()}
+            </div>
+            {(row.byCategory.ds?.length ?? 0) === 0 ? (
+              expected.includes('ds')
+                ? <div className="text-[11px] text-red-400">— missing</div>
+                : <div className="text-[11px] text-dim italic">none</div>
+            ) : (
+              <ul className="space-y-1">
+                {(row.byCategory.ds || []).map((n, i) => (
+                  <li key={n + ':' + i} className="flex items-center gap-2 text-[11px]">
+                    <BuffChip name={n} />
+                    <span className="text-green tabular-nums ml-auto" title="Catalog damage-shield value (highest rank sharing this name)">
+                      {dsValues[n] != null ? `+${dsValues[n]}` : '+?'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {/* Bard songs currently landed (Zeal's 6-slot song window; name
