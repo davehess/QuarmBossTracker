@@ -4393,6 +4393,84 @@ async function _handleAgentFaction(req, res) {
   res.end(JSON.stringify({ ok: true, written }));
 }
 
+// POST /api/agent/pop_flags
+//
+// PoP flag grants (pre-built for the 2026-10-01 unlock; table
+// 20260610180000). The grant line never names the flag, so the agent sends
+// context -- {character, ts, zone, boss} -- and we resolve flag_key from the
+// DRAFT catalog below. Unrecognized combos store as 'unmapped' with zone +
+// boss preserved: launch-week catalog fixes are a map edit + one UPDATE.
+// KEEP IN SYNC with web/lib/popFlags.ts (zones/tiers live there). Verify
+// against wiki.takp.info + takp.info/flag-check before launch -- both were
+// network-blocked from the dev sandbox when this was written.
+const POP_FLAG_BY_BOSS = {
+  'grummus':                'cod_access',        // PoDisease -> Crypt of Decay
+  'aerin`dar':              'hoh_access',        // PoValor -> Halls of Honor
+  "aerin'dar":              'hoh_access',
+  'terris thule':           'tactics_access',    // Lair of Terris -> Drunder
+  'manaetic behemoth':      'mb_dead',           // PoInnovation
+  'saryrn':                 'saryrn_dead',       // PoTorment
+  'bertoxxulous':           'bert_dead',         // Crypt of Decay
+  'mithaniel marr':         'marr_dead',         // Temple of Marr
+  'rallos zek':             'earth_access',      // Tactics -> PoEarth
+  'agnarr the storm lord':  'agnarr_dead',       // Bastion of Thunder
+  'solusek ro':             'fire_access',       // SolRo Tower -> Doomfire
+  'fennin ro':              'fennin_dead',       // Doomfire
+  'coirnav':                'coirnav_dead',      // Reef of Coirnav
+  'the rathe council':      'rathe_dead',        // PoEarth
+  'xegony':                 'xegony_dead',       // PoAir
+  'quarm':                  'time_complete',     // Plane of Time
+};
+async function _handleAgentPopFlags(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  const supabase = require('./utils/supabase');
+  if (events.length === 0 || !supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = [];
+  const seen = new Set();
+  for (const e of events) {
+    if (!e || !e.character || !e.ts) continue;
+    const ts = new Date(e.ts);
+    if (isNaN(ts.getTime())) continue;
+    const bossLower = e.boss ? String(e.boss).toLowerCase() : '';
+    const flagKey = POP_FLAG_BY_BOSS[bossLower] || 'unmapped';
+    const key = `${String(e.character).toLowerCase()}|${flagKey}|${ts.toISOString()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      guild_id:  guildId,
+      character: String(e.character).slice(0, 64),
+      flag_key:  flagKey,
+      zone:      e.zone ? String(e.zone).slice(0, 64) : null,
+      boss:      e.boss ? String(e.boss).slice(0, 64) : null,
+      source:    'event',
+      earned_at: ts.toISOString(),
+    });
+  }
+  let written = 0;
+  if (rows.length) {
+    const r = await supabase.upsert('pop_flags', rows, 'guild_id,character,flag_key,earned_at')
+      .catch(err => { console.warn('[pop-flags] upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written = r.length;
+  }
+  _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
 // POST /api/agent/buff_casts
 //
 // Observed buff landings on other players (see migration 20260605120000). The
@@ -8076,6 +8154,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentFaction(req, res); }
     catch (err) {
       console.error('[faction] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/pop_flags') {
+    try { return await _handleAgentPopFlags(req, res); }
+    catch (err) {
+      console.error('[pop-flags] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
