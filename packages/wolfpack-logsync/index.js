@@ -2361,6 +2361,15 @@ function parseConsiderLine(line, character) {
   if (_lastConStanding.size > 4000) {
     _lastConStanding.delete(_lastConStanding.keys().next().value);
   }
+  // HOSTILE cons never upload. An engaged mob cons scowls/threateningly
+  // regardless of base faction (every raid pull spams them), so they carry
+  // no faction signal — the server keeps only the latest NON-hostile
+  // standing per mob. The dedup map above still recorded the hostile tier,
+  // which is exactly what makes the next non-hostile con re-emit: the
+  // scowls→amiably TRANSITION (mob dropped you from hate — e.g. a Feign
+  // Death finally stuck) registers instead of being suppressed as
+  // "unchanged amiably".
+  if (entry[2] <= 1) return null;
   const ts = parseEqTimestamp(line);
   return {
     kind:      'con',
