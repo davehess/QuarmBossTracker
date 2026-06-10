@@ -264,8 +264,42 @@
     if (r.avatar_buff)            bits += '<span class="chip avatar" title="'+esc(r.avatar_buff)+' is active">🪶</span>';
     if (r.celestial_tranquility)  bits += '<span class="chip ct" title="Celestial Tranquility (+40 ATK) is active — Avatar will overwrite">🦅</span>';
     if (r.sk_recourse)            bits += '<span class="chip rec" title="'+esc(r.sk_recourse)+' active — Savagery will overwrite">⚠</span>';
+    if (r.skip_group_aego)        bits += '<span class="chip ct" title="'+esc(r.hp_a || 'POTG/POTC')+' fills HP slot A — single-target the Symbol, do NOT group-cast Aegolism over it">🌿</span>';
     return bits;
   }
+
+  // Category → "spells you might have memmed" hint. recent_casts comes from
+  // the agent's per-character rotation tracker; a spell cast this session is
+  // almost certainly still on a gem. Curated regexes per category label —
+  // a HINT, not gem truth (Zeal doesn't expose gem contents).
+  var CAT_HINTS = [
+    [/^HP( [ABC])?$/,   /aegolism|temperance|symbol of|khura|focus of spirit|protection of the (glades|cabbage)|talisman of wunshi|brell|arch shielding|virtue|conviction/i],
+    [/^HP Regen$/,      /regrowth|regenerat|chloroplast|replenish/i],
+    [/^Mana$/,          /brilliance|iridescence/i],
+    [/^Mana Regen$/,    /clarity|koadic|breeze|gift of (pure thought|insight)|clairvoyance/i],
+    [/^Haste$/,         /haste|celerity|quickness|swift|alacrity|aanya|visions of grandeur|speed of/i],
+    [/^Run Speed$/,     /spirit of (the )?wolf|flight of eagle|pack spirit|bihli/i],
+    [/^Attack$/,        /avatar|ferocity|strength|might of|predator|bihli/i],
+    [/^Dmg Shield$/,    /thorn|thistle|shield of|bramblecoat|legacy of/i],
+    [/^Levitate$/,      /levitat|dead m[ae]n floating/i],
+    [/^Resists$/,       /resist|endure|talisman of (epuration|jasinth|shadoo)|circle of seasons/i],
+  ];
+  function memmedHint(label, recentCasts){
+    if (!recentCasts || !recentCasts.length) return null;
+    for (var i = 0; i < CAT_HINTS.length; i++) {
+      if (!CAT_HINTS[i][0].test(label)) continue;
+      for (var j = 0; j < recentCasts.length; j++) {
+        if (CAT_HINTS[i][1].test(recentCasts[j])) return recentCasts[j];
+      }
+    }
+    return null;
+  }
+
+  // Collapsed category sections persist across polls + relaunches.
+  var _collapsed = {};
+  try { _collapsed = JSON.parse(localStorage.getItem('wp:bq:collapsed') || '{}') || {}; } catch (e) {}
+  function _saveCollapsed(){ try { localStorage.setItem('wp:bq:collapsed', JSON.stringify(_collapsed)); } catch (e) {} }
+
   function renderRow(r, kind){
     var groupLbl = r.group != null ? ('G' + r.group) : '';
     var cls = kind === 'd' ? 'd' : kind === 'burst' ? 'burst' : tierClass(r.tier);
@@ -323,7 +357,38 @@
     if (bq.length) {
       var hint = bufferClass ? ('severity-first · gaps a '+esc(bufferClass)+' can fix') : 'pick a class to filter';
       html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+bq.length+'</span><span class="hint">'+hint+'</span></div>';
-      for (var i = 0; i < bq.length; i++) html += renderRow(bq[i], 'b');
+      // Group by buff line: a raider missing two categories appears under
+      // both, so the buffer can work one spell line top to bottom. Each
+      // section collapses (▸/▾ persists) and shows a 🔮 hint when a spell
+      // matching the line was cast this session (likely still memmed).
+      var recent = (payload && payload.recent_casts) || [];
+      var byCat = {};
+      var catOrder = [];
+      for (var i = 0; i < bq.length; i++) {
+        var labels = (bq[i].missing && bq[i].missing.length) ? bq[i].missing : ['Other'];
+        for (var j = 0; j < labels.length; j++) {
+          var L = labels[j];
+          if (!byCat[L]) { byCat[L] = []; catOrder.push(L); }
+          byCat[L].push(bq[i]);
+        }
+      }
+      for (var ci = 0; ci < catOrder.length; ci++) {
+        var label = catOrder[ci];
+        var rowsC = byCat[label];
+        var isCollapsed = !!_collapsed[label];
+        var mem = memmedHint(label, recent);
+        html += '<div class="cat">'
+              +   '<div class="cathdr" data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
+              +     '<span style="font-size:9px">'+(isCollapsed ? '▸' : '▾')+'</span>'
+              +     '<span style="font-weight:600">'+esc(label)+'</span>'
+              +     '<span style="color:#6e7681;font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
+              +     (mem ? '<span style="margin-left:auto;color:#7ee787;font-size:9px" title="You cast '+esc(mem)+' this session — likely still on a gem">🔮 '+esc(mem)+'</span>' : '')
+              +   '</div>';
+        if (!isCollapsed) {
+          for (var ri = 0; ri < rowsC.length; ri++) html += renderRow(rowsC[ri], 'b');
+        }
+        html += '</div>';
+      }
       html += '</div>';
     }
     if (dq.length) {
@@ -341,6 +406,20 @@
     // clip and an empty queue shrinks back to its empty-state line.
     try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
+  // Collapse/expand a category section. Delegated once (render replaces the
+  // body's innerHTML every poll); re-renders from the last payload so the
+  // toggle is instant instead of waiting for the next tick.
+  var _lastPayload = null;
+  document.getElementById('body').addEventListener('click', function(ev){
+    var hdr = ev.target && ev.target.closest ? ev.target.closest('.cathdr') : null;
+    if (!hdr) return;
+    var label = hdr.getAttribute('data-cat');
+    if (!label) return;
+    _collapsed[label] = !_collapsed[label];
+    _saveCollapsed();
+    if (_lastPayload) render(_lastPayload);
+  });
+
   async function tick(){
     try {
       var qs = bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '';
@@ -348,6 +427,7 @@
       var s = await r.json();
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
+      _lastPayload = s;
       render(s);
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';

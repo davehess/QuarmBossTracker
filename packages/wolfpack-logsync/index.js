@@ -10120,6 +10120,16 @@ function startWebDashboard(port) {
         const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
         const cached = _buffQueueCache.get(cacheKey);
         const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
+        // Enrich with the buffer's recent casts (the melody/rotation tracker
+        // keeps the last cast cycle per character) so the overlay can mark
+        // category sections "likely memmed" — you cast it this session, it's
+        // almost certainly still on a gem.
+        try {
+          const mel = bufferCharacter ? _bardMelody.get(String(bufferCharacter).toLowerCase()) : null;
+          payload.recent_casts = mel && Array.isArray(mel.order)
+            ? mel.order.map(e => e && (e.name || e)).filter(Boolean).slice(0, 12)
+            : [];
+        } catch { payload.recent_casts = []; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
