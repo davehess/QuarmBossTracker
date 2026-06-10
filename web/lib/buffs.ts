@@ -37,11 +37,16 @@ export const CATEGORY_LABELS: Record<BuffCategory, string> = {
 // more specific/important categories should come earlier when a name could
 // plausibly match two (e.g. "clarity" → manaRegen, never mana).
 const KEYWORDS: Record<BuffCategory, string[]> = {
-  // Max-HP / HP+stat group buffs.
+  // Max-HP / HP+stat group buffs. MUST cover everything analyzeHpSlots
+  // recognizes — Khura's filled slot C while leaking into "Other" because
+  // the two keyword lists drifted. POTG/POTC live here (hp wins first in
+  // CATEGORY_ORDER) so the resists list's 'protection of' can't steal them.
   hp: [
     'aegolism', 'symbol of', 'temperance', 'hand of conviction', 'blessing of',
     'brell', 'riotous health', 'inner fire', 'courage', 'daring', 'bravery',
     'valor', 'resolution', 'heroic bond', 'virtue', 'health', 'center', 'fortitude',
+    'khura', 'focus of spirit', 'arch shielding',
+    'protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
   ],
   // HP regeneration over time.
   regen: ['regrowth', 'regenerat', 'chloroplast', 'replenish', 'pack regen'],
