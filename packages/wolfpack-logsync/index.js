@@ -8035,6 +8035,106 @@ function _raidTierColor(t) {
   return 'var(--blue)';
 }
 var _raidSelName = null;   // click-to-expand raider in the Raid card
+// ── Website-parity raider detail (bot detail payload, v3.0.85+) ────────────
+// Renders the same sections the wolfpack.quest /raid panel shows: HP SLOTS,
+// BUFF CATEGORIES (with song sub-lines + catalog magnitudes), RESISTS (n/5),
+// DAMAGE SHIELDS (+N per slot, total), SONGS (n/6), OTHER, DI/CHA warning.
+var _RD_RES_ORDER  = ['MR','FR','CR','PR','DR'];
+var _RD_RES_LABELS = { MR:'Magic', FR:'Fire', CR:'Cold', PR:'Poison', DR:'Disease' };
+var _RD_CAT_ORDER  = ['regen','manaRegen','mana','haste','attack','runSpeed','levitate','survival'];
+var _RD_CAT_LABELS = { regen:'HP Regen', manaRegen:'Mana Regen', mana:'Mana', haste:'Haste', attack:'Attack', runSpeed:'Run Speed', levitate:'Levitate', survival:'Survival' };
+var _RD_ROLE_OF = { warrior:'tank', paladin:'tank', 'shadow knight':'tank', shadowknight:'tank', sk:'tank',
+  rogue:'melee', monk:'melee', ranger:'melee', beastlord:'melee', berserker:'melee',
+  cleric:'priest', druid:'priest', shaman:'priest',
+  wizard:'caster', magician:'caster', necromancer:'caster', enchanter:'caster', bard:'bard' };
+var _RD_ROLE_EXPECT = { tank:['haste','attack'], melee:['haste','attack'], priest:['manaRegen'], caster:['manaRegen'], bard:['haste'], other:[] };
+function _rdFmtSecs(s) {
+  if (s == null || s <= 0) return '';
+  if (s >= 3600) { var hh = Math.floor(s/3600); var mm2 = Math.floor((s%3600)/60); return hh + 'h' + (mm2 ? mm2 + 'm' : ''); }
+  if (s >= 60) return Math.round(s/60) + 'm';
+  return Math.round(s) + 's';
+}
+function _rdEntry(e, isHaste) {
+  if (!e) return '';
+  var t = _rdFmtSecs(e.s);
+  var v = (e.v != null) ? ' <span style="color:var(--green)" class="num">+' + e.v + (isHaste ? '%' : '') + '</span>' : '';
+  return '<span style="color:var(--text)">' + esc(e.n) + '</span>' + (t ? ' <span class="dim num">' + t + '</span>' : '') + v;
+}
+function _rdSongLine(e, isHaste) {
+  return '<div style="padding-left:14px;font-size:10px"><span style="color:#a371f7" title="Bard song — stacks on top of the primary buff">♪ song:</span> ' + _rdEntry(e, isHaste) + '</div>';
+}
+function _raidDetailHtml(sel, det) {
+  var role = _RD_ROLE_OF[String(sel.class || '').toLowerCase()] || 'other';
+  var expect = _RD_ROLE_EXPECT[role] || [];
+  var h2 = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;font-size:11px">';
+  function secHdr(t) { return '<div class="dim" style="font-size:9px;letter-spacing:0.07em;text-transform:uppercase;margin-bottom:3px">' + t + '</div>'; }
+  function row(label, inner) { return '<div style="display:flex;gap:6px;align-items:baseline;margin-bottom:2px"><span class="dim" style="width:74px;flex:none">' + label + '</span><span style="min-width:0">' + inner + '</span></div>'; }
+  var missing = '<span style="color:var(--red)">— missing</span>';
+  // HP SLOTS column
+  var hpHtml = secHdr('HP slots');
+  var hpLabels = { A:'POTG/Aego', B:'Symbol', C:'Khura/Brell' };
+  ['A','B','C'].forEach(function(s){
+    var nm = det.hp && det.hp[s];
+    hpHtml += row('HP · ' + hpLabels[s], nm ? '<span style="color:var(--green)">' + esc(nm) + '</span>' : missing);
+  });
+  // BUFF CATEGORIES column
+  var catHtml = secHdr('Buff categories');
+  _RD_CAT_ORDER.forEach(function(cat){
+    var entries = (det.cats && det.cats[cat]) || [];
+    var exp = expect.indexOf(cat) !== -1;
+    if (!entries.length && !exp) return;
+    var isHaste = cat === 'haste';
+    var prim = []; var sngs = [];
+    for (var i3 = 0; i3 < entries.length; i3++) (entries[i3].song ? sngs : prim).push(entries[i3]);
+    var inner;
+    if (prim.length) inner = _rdEntry(prim[0], isHaste) + (prim.length > 1 ? ' <span class="dim">+' + (prim.length - 1) + '</span>' : '');
+    else if (sngs.length) inner = '<span class="dim" style="font-style:italic">song only ↓</span>';
+    else inner = missing;
+    catHtml += row(_RD_CAT_LABELS[cat] || cat, inner);
+    for (var i4 = 0; i4 < sngs.length; i4++) catHtml += _rdSongLine(sngs[i4], isHaste);
+  });
+  // RESISTS column
+  var covered = 0;
+  _RD_RES_ORDER.forEach(function(t){ if (det.resists && det.resists[t] && det.resists[t].length) covered++; });
+  var resHtml = secHdr('Resists (' + covered + '/5)');
+  _RD_RES_ORDER.forEach(function(t){
+    var entries = (det.resists && det.resists[t]) || [];
+    var prim = []; var sngs = [];
+    for (var i5 = 0; i5 < entries.length; i5++) (entries[i5].song ? sngs : prim).push(entries[i5]);
+    var inner;
+    if (prim.length) inner = _rdEntry(prim[0], false) + (prim.length > 1 ? ' <span class="dim">+' + (prim.length - 1) + ' more</span>' : '');
+    else if (sngs.length) inner = '<span class="dim" style="font-style:italic">song only ↓</span>';
+    else inner = missing;
+    resHtml += row(_RD_RES_LABELS[t], inner);
+    for (var i6 = 0; i6 < sngs.length; i6++) resHtml += _rdSongLine(sngs[i6], false);
+  });
+  // DS + SONGS + OTHER column
+  var dsList = det.ds || [];
+  var dsTotal = 0;
+  for (var i7 = 0; i7 < dsList.length; i7++) if (dsList[i7].v != null) dsTotal += dsList[i7].v;
+  var dsHtml = secHdr('Damage shields' + (dsTotal > 0 ? ' · <span style="color:var(--green)" class="num">' + dsTotal + ' total</span>' : ''));
+  if (!dsList.length) dsHtml += '<div>' + (role === 'tank' ? missing : '<span class="dim" style="font-style:italic">none</span>') + '</div>';
+  else for (var i8 = 0; i8 < dsList.length; i8++) dsHtml += '<div style="margin-bottom:2px">' + _rdEntry(dsList[i8], false) + '</div>';
+  var sgList = det.songs || [];
+  dsHtml += '<div style="margin-top:8px">' + secHdr('Songs (' + sgList.length + '/6)');
+  if (!sgList.length) dsHtml += '<div class="dim" style="font-style:italic">no songs landed</div>';
+  else for (var i9 = 0; i9 < sgList.length; i9++) dsHtml += '<div style="margin-bottom:2px">♪ ' + _rdEntry(sgList[i9], false) + '</div>';
+  dsHtml += '</div>';
+  var otList = det.other || [];
+  if (otList.length) {
+    dsHtml += '<div style="margin-top:8px">' + secHdr('Other (' + otList.length + ')')
+      + '<div class="dim" style="line-height:1.7">' + otList.map(function(e){ return esc(e.n); }).join(' · ') + '</div></div>';
+  }
+  h2 += '<div>' + hpHtml + '</div><div>' + catHtml + '</div><div>' + resHtml + '</div><div>' + dsHtml + '</div>';
+  h2 += '</div>';
+  // DI-without-CHA warning — death save rolls vs Charisma.
+  if (det.di && !det.cha) {
+    h2 += '<div style="margin-top:8px;padding:5px 9px;border:1px solid rgba(240,136,62,0.5);background:rgba(240,136,62,0.10);border-radius:4px;font-size:11px">'
+      + '⚠ <span style="color:var(--orange)">Divine Intervention without a CHA buff</span>'
+      + '<span class="dim"> — the death save rolls vs Charisma. Enchanter/Shaman: land a CHA buff.</span></div>';
+  }
+  return h2;
+}
 // Per-class buff-line checklist — shown as sections even when fully covered,
 // so picking a class shows the whole job, not just the gaps. Mirrors the
 // bot CLASS_PROVIDES (labels match the queue missing-strings).
@@ -8095,7 +8195,8 @@ function renderRaidTab(q) {
         var selected = _raidSelName === m.name;
         h += '<div class="wp-raid-row" data-raider="' + esc(m.name) + '" style="position:relative;cursor:pointer;padding:3px 6px 4px;font-size:11px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:' + (selected ? 'rgba(88,166,255,0.12)' : 'rgba(8,5,16,0.35)') + ';border-radius:3px;overflow:hidden">'
           + '<div style="display:flex;align-items:baseline;gap:5px">'
-          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name) + '</span>'
+          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name)
+          + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:#a371f7;font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
           + (hp != null ? '<span class="num" style="margin-left:auto;font-size:10px;color:' + hpColor + '">' + hp + '%</span>' : '')
           + '</div>'
           + '<div style="display:flex;align-items:baseline;gap:5px;font-size:9px" class="dim">'
@@ -8122,7 +8223,9 @@ function renderRaidTab(q) {
           + '<button type="button" id="wpRaidSelClose" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;font-size:10px;padding:1px 7px">✕ close</button>'
           + '</div>';
         var bl = sel.buffs || [];
-        if (!bl.length) {
+        if (sel.detail) {
+          h += _raidDetailHtml(sel, sel.detail);
+        } else if (!bl.length) {
           h += '<div class="dim" style="font-size:11px">No buff data for this raider' + (sel.mimic ? '' : ' — not running Mimic; observed casts fill in as buffers land things') + '.</div>';
         } else {
           h += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
