@@ -4290,18 +4290,19 @@ async function _handleAgentFunEvent(req, res) {
 
 // POST /api/agent/faction
 //
-// Per-character faction tracking (migration 20260610120000). Two event kinds
-// ride one payload from the agent's self-only log lines:
+// Per-character faction tracking, COMPACT design (migration 20260610150000).
+// Two event kinds ride one payload from the agent's self-only log lines:
 //   {kind:'hit', character, faction, direction ±1, capped, ts}
-//     — "Your faction standing with X got better/worse." Classic prints no
-//       numeric delta; magnitudes marry to PQDI faction pages at display
-//       time. capped=true is the at-cap form ("could not possibly get any
-//       better/worse") — it pins the character's absolute min/max position.
+//     — "Your faction standing with X got better/worse." Aggregated here
+//       into ONE additive rollup row per (character, faction) via the
+//       bump_faction_standing RPC: counters add, at-cap timestamps pin the
+//       absolute min/max position, first/last hit track recency. No
+//       per-event rows — the table's size ceiling is characters × factions.
 //   {kind:'con',  character, mob, standing, rank, ts}
-//     — a /consider standing TRANSITION (agent dedups unchanged cons).
-// Unique constraints make complete-log backfill crawls idempotent. Known
-// undercount: two same-second hits on the SAME faction (AE kill of twin
-// mobs) collapse into one row — acceptable for v1 tallies.
+//     — a /consider standing TRANSITION. Only NON-hostile standings matter
+//       (an engaged mob cons scowls/threateningly regardless of faction, so
+//       those are combat noise — and the agent already drops them); we keep
+//       the LATEST standing per (character, mob), overwritten in place.
 async function _handleAgentFaction(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -4326,43 +4327,64 @@ async function _handleAgentFaction(req, res) {
   }
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-  const hits = [];
-  const cons = [];
+
+  // Hits → one aggregate per (character, faction). A 1,500-event backfill
+  // chunk collapses to a handful of RPC rows.
+  const agg = new Map();   // charLower|factionLower → rollup row
+  // Cons → latest per (character, mob); a single upsert payload must not
+  // contain the same key twice (Postgres rejects double-update in one
+  // statement), so collapse here too.
+  const latestCon = new Map();
+
   for (const e of events) {
     if (!e || !e.character || !e.ts) continue;
     const ts = new Date(e.ts);
     if (isNaN(ts.getTime())) continue;
+    const iso = ts.toISOString();
     if (e.kind === 'hit' && e.faction) {
-      hits.push({
-        guild_id:  guildId,
-        character: String(e.character).slice(0, 64),
-        faction:   String(e.faction).slice(0, 96),
-        direction: e.direction > 0 ? 1 : -1,
-        capped:    !!e.capped,
-        event_ts:  ts.toISOString(),
-        uploaded_by_discord_id: identity.discord_id,
-      });
+      const character = String(e.character).slice(0, 64);
+      const faction   = String(e.faction).slice(0, 96);
+      const key = character.toLowerCase() + '|' + faction.toLowerCase();
+      let a = agg.get(key);
+      if (!a) {
+        a = { guild_id: guildId, character, faction, better: 0, worse: 0,
+              capped_max_at: null, capped_min_at: null,
+              first_hit_at: iso, last_hit_at: iso, last_direction: null };
+        agg.set(key, a);
+      }
+      const dir = e.direction > 0 ? 1 : -1;
+      if (dir > 0) a.better++; else a.worse++;
+      if (e.capped && dir > 0 && (!a.capped_max_at || iso > a.capped_max_at)) a.capped_max_at = iso;
+      if (e.capped && dir < 0 && (!a.capped_min_at || iso > a.capped_min_at)) a.capped_min_at = iso;
+      if (iso < a.first_hit_at) a.first_hit_at = iso;
+      if (iso >= a.last_hit_at) { a.last_hit_at = iso; a.last_direction = dir; }
     } else if (e.kind === 'con' && e.mob && e.standing) {
-      cons.push({
-        guild_id:  guildId,
-        character: String(e.character).slice(0, 64),
-        mob:       String(e.mob).slice(0, 64),
-        standing:  String(e.standing).slice(0, 24),
-        rank:      Number.isFinite(e.rank) ? Math.trunc(e.rank) : null,
-        event_ts:  ts.toISOString(),
-        uploaded_by_discord_id: identity.discord_id,
-      });
+      // Defense in depth — the agent drops hostile cons (rank ≤ 1) before
+      // upload, but never trust the wire.
+      const rank = Number.isFinite(e.rank) ? Math.trunc(e.rank) : null;
+      if (rank != null && rank <= 1) continue;
+      const character = String(e.character).slice(0, 64);
+      const mob       = String(e.mob).slice(0, 64);
+      const key = character.toLowerCase() + '|' + mob.toLowerCase();
+      const prev = latestCon.get(key);
+      if (!prev || iso > prev.event_ts) {
+        latestCon.set(key, {
+          guild_id: guildId, character, mob,
+          standing: String(e.standing).slice(0, 24),
+          rank, event_ts: iso,
+        });
+      }
     }
   }
 
   let written = 0;
-  if (hits.length) {
-    const r = await supabase.upsert('faction_hits', hits, 'guild_id,character,faction,event_ts,direction')
-      .catch(err => { console.warn('[faction] hits upsert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length;
+  if (agg.size) {
+    const r = await supabase.rpc('bump_faction_standing', { p_rows: Array.from(agg.values()) })
+      .catch(err => { console.warn('[faction] standing bump failed:', err?.message); return null; });
+    if (Number.isFinite(r)) written += r;
   }
-  if (cons.length) {
-    const r = await supabase.upsert('faction_cons', cons, 'guild_id,character,mob,event_ts')
+  if (latestCon.size) {
+    const r = await supabase.upsert('faction_cons', Array.from(latestCon.values()), 'guild_id,character,mob')
       .catch(err => { console.warn('[faction] cons upsert failed:', err?.message); return null; });
     if (Array.isArray(r)) written += r.length;
   }
