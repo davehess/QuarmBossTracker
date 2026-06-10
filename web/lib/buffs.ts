@@ -108,6 +108,10 @@ export function categorizeBuff(name: string): BuffCategory | null {
 const SECONDARY_CATEGORY: [string, BuffCategory][] = [
   ['visions of grandeur', 'attack'],
   ['spirit of bihli',     'attack'],
+  // POTG/POTC carry a mana-regen component — the reason casters take the
+  // druid line over group Aego in HP slot A.
+  ['protection of the glades',  'manaRegen'],
+  ['protection of the cabbage', 'manaRegen'],
 ];
 export function secondaryCategoriesFor(name: string): BuffCategory[] {
   const n = (name || '').toLowerCase();

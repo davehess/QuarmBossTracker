@@ -5414,8 +5414,33 @@ async function _handleAgentRaidBuffQueue(req, res) {
         if (remTicks <= 0) continue;
         const k = String(v.target).toLowerCase();
         if (!inferredBuffsByName.has(k)) inferredBuffsByName.set(k, []);
-        inferredBuffsByName.get(k).push({ name: v.name, ticks: remTicks });
+        // castMs rides along so live-row merging can tell "landed AFTER the
+        // target's last Zeal flush" from stale history.
+        inferredBuffsByName.get(k).push({ name: v.name, ticks: remTicks, castMs: v.castMs });
       }
+    }
+
+    // Live buffs + NEWER observed landings, merged. Live state used to win
+    // outright — but it only flushes when the TARGET's Mimic sees a change,
+    // so a fresh Feral Avatar the CASTER's agent observed (buff_casts lands
+    // within ~5s) was ignored until the target's row caught up, and the
+    // burst queue kept listing an already-buffed raider. Any observed cast
+    // newer than the live row's updated_at joins the set.
+    function buffsFor(live, inferred) {
+      const liveBuffs = (live && Array.isArray(live.buffs)) ? live.buffs : null;
+      if (!liveBuffs) return inferred || [];
+      const liveAt = live.updated_at ? Date.parse(live.updated_at) || 0 : 0;
+      const merged = liveBuffs.slice();
+      const have = new Set(liveBuffs.map(b => b && b.name ? String(b.name).toLowerCase() : ''));
+      for (const inf of (inferred || [])) {
+        if (!inf || !inf.name) continue;
+        if ((inf.castMs || 0) <= liveAt) continue;
+        const nl = String(inf.name).toLowerCase();
+        if (have.has(nl)) continue;
+        merged.push({ name: inf.name, ticks: inf.ticks });
+        have.add(nl);
+      }
+      return merged;
     }
 
     // Build a row per in-raid raider (live state OR roster). Categorize buffs,
@@ -5458,15 +5483,15 @@ async function _handleAgentRaidBuffQueue(req, res) {
       seen.add(k);
       const live = liveByName.get(k);
       const rr   = rosterByName.get(k);
-      const inferred = !live ? inferredBuffsByName.get(k) : null;
-      const name = (rr && rr.name) || (live && live.character) || (inferred && inferred[0] && inferred[0].target) || k;
+      const inferred = inferredBuffsByName.get(k) || null;
+      const name = (rr && rr.name) || (live && live.character) || k;
       const cls  = classFor(name);
       const role = rb.classToRole(cls);
-      // Live buffs take precedence; otherwise use inferred. Either way, this
+      // Live buffs merged with NEWER observed landings (see buffsFor) — this
       // is the buff set we categorize from. `isInferred` flags rows whose
-      // buffs came from buff_casts (no Mimic on that player) so the overlay
-      // can render a "🔍 inferred" badge.
-      const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : (inferred || []);
+      // buffs came ONLY from buff_casts (no Mimic on that player) so the
+      // overlay can render a "🔍 inferred" badge.
+      const buffs = buffsFor(live, inferred);
       const isInferred = !live && (inferred && inferred.length > 0);
       // noAgent now means "we have NO signal at all" — neither live state nor
       // an inferred buff landing. Skip buff-queue analysis for these (we don't
@@ -5533,6 +5558,11 @@ async function _handleAgentRaidBuffQueue(req, res) {
       for (const b of buffs) if (b && b.name) {
         const cat = rb.categorizeBuff(b.name);
         if (cat) (byCategory[cat] = byCategory[cat] || []).push(b.name);
+        // Secondary credits — VoG/Bihli carry ATK; POTG/POTC carry mana
+        // regen (a POTG caster isn't "missing Mana Regen" to an enchanter).
+        for (const sec of rb.secondaryCategoriesFor(b.name)) {
+          if (sec !== cat && !(byCategory[sec] = byCategory[sec] || []).includes(b.name)) byCategory[sec].push(b.name);
+        }
       }
       const missing = provides.filter(cat => expected.includes(cat) && !(byCategory[cat] || []).length);
       const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
@@ -5549,9 +5579,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
       else if ((role === 'caster' || role === 'priest') && (missing.includes('mana') || missing.includes('manaRegen'))) tier = 'orange';
       else tier = 'yellow';
 
+      // POTG/POTC fills HP slot A *instead of* group Aegolism — clerics
+      // should single-target the Symbol instead of group-casting Aego over
+      // someone's druid buff. Surface what fills slot A so the overlay can
+      // annotate.
+      const slotA = hpSlots.A ? String(hpSlots.A) : null;
+      const hasPotg = !!(slotA && /protection of the (glades|cabbage)/i.test(slotA));
       buffQueue.push({
         name, class: cls, role, group: rr ? rr.group_num : null,
         tier,
+        hp_a: slotA,
+        skip_group_aego: hasPotg,
         missing: missing.map(c => rb.CATEGORY_LABELS[c]).concat(missingHp.map(s => 'HP ' + s)),
         // Tank HP gap = priority cue for the buff queue's sort. A naked
         // warrior needs Symbol before a naked wizard does.
@@ -5627,12 +5665,12 @@ async function _handleAgentRaidBuffQueue(req, res) {
       for (const k of allKeys) {
         const live = liveByName.get(k);
         const rr   = rosterByName.get(k);
-        const inferred = !live ? inferredBuffsByName.get(k) : null;
+        const inferred = inferredBuffsByName.get(k) || null;
         const name = (rr && rr.name) || (live && live.character) || k;
         const cls  = classFor(name);
         const role = rb.classToRole(cls);
         if (role !== 'tank' && role !== 'melee') continue;
-        const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : (inferred || []);
+        const buffs = buffsFor(live, inferred);
         const isInferred = !live && (inferred && inferred.length > 0);
         const alreadyBuffed = buffs.some(b => b && b.name && burstSpec.carriesRx.test(b.name));
         if (alreadyBuffed) continue;

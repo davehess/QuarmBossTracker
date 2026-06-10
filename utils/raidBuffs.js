@@ -6,14 +6,16 @@
 // is cursed" view is available locally without each overlay re-fetching the
 // full live-state table. Update both together when adding a keyword.
 
-const CATEGORY_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'resists'];
+const CATEGORY_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate', 'resists'];
 const CATEGORY_LABELS = {
   hp: 'HP', regen: 'HP Regen', mana: 'Mana', manaRegen: 'Mana Regen',
-  haste: 'Haste', runSpeed: 'Run Speed', attack: 'Attack', ds: 'Dmg Shield', resists: 'Resists',
+  haste: 'Haste', runSpeed: 'Run Speed', attack: 'Attack', ds: 'Dmg Shield', levitate: 'Levitate', resists: 'Resists',
 };
 
 const KEYWORDS = {
-  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroic bond','virtue','health','center','fortitude'],
+  // MUST cover everything analyzeHpSlots recognizes (drift = Khura's in
+  // 'Other'); potg/potc here so resists' 'protection of' can't steal them.
+  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroic bond','virtue','health','center','fortitude','khura','focus of spirit','arch shielding','protection of the glades','protection of the cabbage','talisman of wunshi'],
   regen: ['regrowth','regenerat','chloroplast','replenish','pack regen'],
   mana: ['brilliance','iridescence','gift of brilliance'],
   manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
@@ -21,8 +23,24 @@ const KEYWORDS = {
   runSpeed: ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
   attack: ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
   ds: ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
+  levitate: ['levitat','dead men floating','dead man floating','flying'],
   resists: ['resist','endure','protection of','talisman of altuna','talisman of jasinth','talisman of shadoo','circle of','aegis of bathezid','colossal','elemental'],
 };
+
+// Buffs crediting a SECOND category beyond their primary: VoG/Bihli carry
+// ATK; POTG/POTC carry mana regen (why a caster with POTG doesn't need the
+// cleric's group Aego AND shouldn't be flagged missing mana regen).
+const SECONDARY_CATEGORY = [
+  ['visions of grandeur', 'attack'],
+  ['spirit of bihli', 'attack'],
+  ['protection of the glades', 'manaRegen'],
+  ['protection of the cabbage', 'manaRegen'],
+];
+function secondaryCategoriesFor(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return [];
+  return SECONDARY_CATEGORY.filter(([k]) => n.includes(k)).map(([, c]) => c);
+}
 
 function categorizeBuff(name) {
   const n = String(name || '').toLowerCase();
@@ -104,6 +122,6 @@ function isCorpse(name) {
 
 module.exports = {
   CATEGORY_ORDER, CATEGORY_LABELS,
-  categorizeBuff, classToRole, classProvides, ROLE_TARGETS,
+  categorizeBuff, secondaryCategoriesFor, classToRole, classProvides, ROLE_TARGETS,
   analyzeHpSlots, HP_SLOTS, isCurseBuff, isCorpse,
 };
