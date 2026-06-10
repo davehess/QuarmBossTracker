@@ -101,7 +101,11 @@ const CLASS_PROVIDES = {
   druid:     ['hp', 'regen', 'runSpeed', 'ds', 'resists'],
   shaman:    ['hp', 'attack', 'haste', 'regen', 'resists'],
   enchanter: ['manaRegen', 'haste', 'resists'],
-  bard:      ['haste', 'runSpeed', 'attack', 'manaRegen', 'ds'],
+  // Bard 'attack' dropped: the group ATK comes from the epic Dance of the
+  // Blade proc, which fires from normal melee anyhow — queueing it just
+  // tells the bard to do what they are already doing. Their haste / mana
+  // regen / DS songs are the actionable lines.
+  bard:      ['haste', 'runSpeed', 'manaRegen', 'ds'],
   paladin:   ['hp', 'resists'],
   ranger:    ['regen', 'ds'],
   beastlord: ['attack', 'regen'],

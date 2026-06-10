@@ -105,7 +105,10 @@ const CLASS_PROVIDES: Record<string, BuffCategory[]> = {
   druid:     ['hp', 'regen', 'runSpeed', 'ds', 'resists'],
   shaman:    ['hp', 'attack', 'haste', 'regen', 'resists'],
   enchanter: ['mana', 'manaRegen', 'haste', 'resists'],
-  bard:      ['haste', 'runSpeed', 'attack', 'manaRegen', 'ds'],
+  // Bard 'attack' dropped — group ATK comes from the epic Dance of the Blade
+  // proc, which fires from normal melee anyhow. Bard buffs are group-ranged
+  // (GroupV2, 100 range), so the queue scopes to their own group below.
+  bard:      ['haste', 'runSpeed', 'manaRegen', 'ds'],
   paladin:   ['hp', 'resists'],
   ranger:    ['regen', 'ds'],
   beastlord: ['attack', 'regen'],

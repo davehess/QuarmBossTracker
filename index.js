@@ -5688,6 +5688,16 @@ async function _handleAgentRaidBuffQueue(req, res) {
       if (lv && lv.zone_name) return String(lv.zone_name);
       return null;
     })();
+    // Bard buffs are GROUP-ranged (GroupV2, 100 range) — Nature's Melody
+    // haste, levitate songs, Dance of the Blade all hit only their own
+    // group. A Bard's buff queue therefore scopes to their group; gaps in
+    // other groups aren't theirs to fix. Falls back to whole-raid when we
+    // can't resolve the buffer's group (no roster row).
+    const bardGroupScope = (() => {
+      if (bufferClass.toLowerCase() !== 'bard') return null;
+      const rrSelf = bufferKey ? rosterByName.get(bufferKey) : null;
+      return (rrSelf && rrSelf.group_num != null) ? rrSelf.group_num : null;
+    })();
     const seen = new Set();
 
     for (const k of allKeys) {
@@ -5737,6 +5747,11 @@ async function _handleAgentRaidBuffQueue(req, res) {
           name: b.name,
           counters: cnt || null,
           remaining_secs: (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks < 6000) ? Math.round(b.ticks * 6) : null,
+          // Zeal buff-window slot (1-15) when the target's own Mimic
+          // reported it. Slots 1-4 are cheap to dispel — a group member
+          // can strip the debuff without clipping many real buffs.
+          slot: (typeof b.slot === 'number' && b.slot >= 1) ? b.slot : null,
+          low_slot: (typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 4) || undefined,
         });
       }
       if (curses.length > 0) {
@@ -5757,6 +5772,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // (b) we have no signal at all (no Mimic + no buff_casts), or (c) we
       // can't categorize their role.
       if (provides.length === 0 || noAgent) continue;
+      // Bard scope: only their own group's gaps (group-ranged songs). The
+      // curse path above intentionally ran first — knowing who's cursed is
+      // raid-wide information regardless of who can fix it.
+      if (bardGroupScope != null && rr && rr.group_num !== bardGroupScope) continue;
       const expected = rb.ROLE_TARGETS[role] || [];
       const byCategory = {};
       for (const b of buffs) if (b && b.name) {
@@ -6525,6 +6544,10 @@ async function _handleAgentLiveState(req, res) {
       // an authoritative "not a song" downstream (web falls back to a name
       // heuristic when the flag is missing).
       ...(b && typeof b.song === 'boolean' ? { song: b.song } : {}),
+      // Zeal buff-window slot (1-15, song window 1-6) — agent v3.1.24+.
+      // Powers the debuff "slot N · dispellable" callout: a detrimental in
+      // slots 1-4 can be stripped without clipping many real buffs.
+      ...(b && typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 30 ? { slot: Math.trunc(b.slot) } : {}),
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
