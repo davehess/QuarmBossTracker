@@ -462,11 +462,14 @@ const TRANSFORMS = {
   // Names are the standard EQEmu/EQMacEmu spells_new columns; pick() is
   // case-insensitive and tolerant, so an absent column simply lands NULL.
   spells: (cols, row) => {
+    const SLOT_COLS = [];
+    for (let i = 1; i <= 12; i++) {
+      SLOT_COLS.push(`effectid${i}`, `effect_base_value${i}`, `effect_id_${i}`, `effect_base_value_${i}`, `max${i}`, `formula${i}`);
+    }
     const r = pick(cols, row, [
       'id', 'name', 'mana', 'buffduration', 'buffdurationformula', 'recourse_link',
       'targettype', 'skill',
-      'effectid1', 'effect_base_value1', 'effectid2', 'effect_base_value2', 'effectid3', 'effect_base_value3',
-      'effect_id_1', 'effect_base_value_1', 'effect_id_2', 'effect_base_value_2', 'effect_id_3', 'effect_base_value_3',
+      ...SLOT_COLS,
       'cast_time', 'recast_time', 'pushback', 'zonetype',
       'cast_on_you', 'cast_on_other', 'spell_fades',
       'goodEffect', 'good_effect',
@@ -479,7 +482,20 @@ const TRANSFORMS = {
     // EQEmu has historically used both `effectid1` and `effect_id_1` styles
     // across forks — accept either so the effect columns aren't silently NULL.
     const eff = (a, b) => (r[a] !== undefined ? r[a] : r[b]);
+    // Full 12-slot effect arrays → the raw JSONB column. The 3 dedicated
+    // columns cover proc-hate detection, but focus decoding (improved
+    // damage/heal + limit slots), Flowing Thought (SPA 15 rides slots 4+),
+    // and worn-haste % (needs the max value) all live in later slots. One
+    // JSONB beats 48 new columns.
+    const slotIds = [], slotBases = [], slotMaxes = [], slotFormulas = [];
+    for (let i = 1; i <= 12; i++) {
+      slotIds.push(eff(`effect_id_${i}`, `effectid${i}`) ?? null);
+      slotBases.push(eff(`effect_base_value_${i}`, `effect_base_value${i}`) ?? null);
+      slotMaxes.push(r[`max${i}`] ?? null);
+      slotFormulas.push(r[`formula${i}`] ?? null);
+    }
     return {
+      raw: { eff: slotIds, base: slotBases, max: slotMaxes, formula: slotFormulas },
       id: r.id, name: r.name, mana: r.mana,
       buffduration: r.buffduration, buffdurationformula: r.buffdurationformula,
       recourse_link: r.recourse_link, targettype: r.targettype, skill: r.skill,
