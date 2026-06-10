@@ -5388,15 +5388,21 @@ async function _spellFxMap() {
           if (eff === 59 && Math.abs(base) > (fx.ds || 0))              fx.ds = Math.abs(base);
           if (eff === 79 && base > 0 && base > (fx.regen || 0))         fx.regen = base;
           // Cure counters — what a cure spell has to chew through. SPA 35 =
-          // disease (Turgur's Insects carries 16), 36 = poison (Envenomed
-          // Bolt 10), 116 = curse. SPA 20 = blindness (Flash of Light).
-          // Drives the cure queue: ANY detrimental carrying one of these is
-          // cureable, no keyword list required.
-          if (eff === 35  && base > 0 && base > (fx.dc || 0)) fx.dc = base;
-          if (eff === 36  && base > 0 && base > (fx.pc || 0)) fx.pc = base;
-          if (eff === 116 && base > 0 && base > (fx.cc || 0)) fx.cc = base;
-          if (eff === 20) fx.blind = true;
+          // disease (Turgur's Insects carries 16, Tashani 1), 36 = poison
+          // (Envenomed Bolt 10), 116 = curse. SPA 20 = blindness. On a
+          // DETRIMENTAL these are POSITIVE (counters applied); on a CURE they
+          // are NEGATIVE (counters removed). Split the two so the same SPA
+          // both flags a cureable debuff AND identifies the cure spell.
+          if (eff === 35) { if (base > 0 && base > (fx.dc || 0)) fx.dc = base; else if (base < 0) fx.cureDisease = true; }
+          if (eff === 36) { if (base > 0 && base > (fx.pc || 0)) fx.pc = base; else if (base < 0) fx.curePoison = true; }
+          if (eff === 116) { if (base > 0 && base > (fx.cc || 0)) fx.cc = base; else if (base < 0) fx.cureCurse = true; }
+          // Blindness: the DEBUFF carries SPA 20 with base<0; the CURE (Cure
+          // Blindness) carries SPA 20 base>0 on a beneficial spell.
+          if (eff === 20) { if (base < 0) fx.blind = true; else if (base > 0) fx.cureBlindMaybe = true; }
         }
+        // A SPA-20-positive spell is only a blindness CURE if it's beneficial
+        // (otherwise it's an unrelated stun/illusion effect).
+        if (fx.cureBlindMaybe && fx.good === 1) fx.cureBlind = true;
         m.set(sp.name.toLowerCase(), fx);
       }
       if (rows.length < PAGE) break;
@@ -5794,18 +5800,35 @@ async function _handleAgentRaidBuffQueue(req, res) {
           low_slot: (typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 4) || undefined,
         });
       }
-      if (curses.length > 0) {
+      // Optimistic cure removal: when a cure that clears this affliction just
+      // LANDED on the target (cast completed within the suppress window),
+      // drop that chip from the list immediately rather than waiting for the
+      // target's next live-state flush to show it gone. A still-in-flight cure
+      // instead marks the chip "being cured" so a second curer skips it.
+      const activeCurses = [];
+      for (const c of curses) {
+        const cs = _cureStateFor(name, c.cure);
+        if (cs.state === 'done') continue;               // optimistically removed
+        if (cs.state === 'casting') { c.being_cured = true; c.cured_by = cs.caster; c.cure_secs = cs.secs; }
+        activeCurses.push(c);
+      }
+      if (activeCurses.length > 0) {
         // Cure-type priority order (per user): curse → blind → poison →
         // disease. Within a raider's chips, order by that, then by counters.
-        curses.sort((a, b) =>
-          (_CURE_RANK[a.cure] - _CURE_RANK[b.cure]) || ((b.counters || 0) - (a.counters || 0)));
+        // Being-cured chips sink within their type (already handled).
+        activeCurses.sort((a, b) =>
+          (Number(!!a.being_cured) - Number(!!b.being_cured))
+          || (_CURE_RANK[a.cure] - _CURE_RANK[b.cure]) || ((b.counters || 0) - (a.counters || 0)));
         debuffQueue.push({
           name, class: cls, role, group: rr ? rr.group_num : null,
-          curses,
+          curses: activeCurses,
           max_counters:          maxCounters,
           // Top cure rank on this raider — drives the cross-raider sort so the
           // section reads curse-afflicted first, then blind, poison, disease.
-          cure_rank:             Math.min(...curses.map(c => _CURE_RANK[c.cure])),
+          cure_rank:             Math.min(...activeCurses.map(c => _CURE_RANK[c.cure])),
+          // Whole row is being handled if every remaining chip is in-flight —
+          // sinks it below un-handled rows in the cross-raider sort.
+          all_being_cured:       activeCurses.every(c => c.being_cured) || undefined,
           same_zone:             sameZone,
           inferred: isInferred,
           casting: _castingOnTarget(name),
@@ -5904,7 +5927,8 @@ async function _handleAgentRaidBuffQueue(req, res) {
     //   3. highest counter count (Gravel Rain = 12 outranks 1-counter)
     //   4. group → name
     debuffQueue.sort((a, b) =>
-      (Number(!!b.same_zone) - Number(!!a.same_zone))
+      (Number(!!a.all_being_cured) - Number(!!b.all_being_cured))
+      || (Number(!!b.same_zone) - Number(!!a.same_zone))
       || ((a.cure_rank ?? 9) - (b.cure_rank ?? 9))
       || ((b.max_counters || 0) - (a.max_counters || 0))
       || ((a.group || 99) - (b.group || 99))
@@ -6849,6 +6873,37 @@ function _pruneCasts(now) {
     }
     if (mp.size === 0) _castingByTarget.delete(tk);
   }
+  // Cure casts linger past completion for the optimistic-removal window so the
+  // debuff drops the instant the cure lands rather than waiting for the
+  // target's next live-state flush.
+  for (const [tk, arr] of _cureCastByTarget) {
+    const kept = arr.filter(e => now < e.ends_at_ms + _CURE_SUPPRESS_MS);
+    if (kept.length) _cureCastByTarget.set(tk, kept);
+    else _cureCastByTarget.delete(tk);
+  }
+}
+// targetLower → [{ cure, caster, ends_at_ms }] — cure spells observed in
+// flight on each target. Drives "being cured" marking + optimistic removal.
+const _cureCastByTarget = new Map();
+const _CURE_SUPPRESS_MS = 8000;   // hide a cured debuff this long after the cure lands
+// For a target + cure type: is a cure in flight (→ being_cured), or did one
+// just land (→ suppress the debuff)? Returns { state:'casting'|'done'|null,
+// caster, secs }.
+function _cureStateFor(target, cure) {
+  const arr = _cureCastByTarget.get(String(target || '').toLowerCase());
+  if (!arr || !arr.length) return { state: null };
+  const now = Date.now();
+  let best = { state: null };
+  for (const e of arr) {
+    if (e.cure !== cure) continue;
+    if (now < e.ends_at_ms) {
+      const secs = Math.max(0, Math.round((e.ends_at_ms - now) / 1000));
+      if (best.state !== 'casting' || secs < best.secs) best = { state: 'casting', caster: e.caster, secs };
+    } else if (now < e.ends_at_ms + _CURE_SUPPRESS_MS && best.state !== 'casting') {
+      best = { state: 'done', caster: e.caster, secs: 0 };
+    }
+  }
+  return best;
 }
 async function _handleAgentCasting(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -6872,11 +6927,32 @@ async function _handleAgentCasting(req, res) {
     const tk = target.toLowerCase();
     let mp = _castingByTarget.get(tk);
     if (!mp) { mp = new Map(); _castingByTarget.set(tk, mp); }
+    const startMs = Number.isFinite(startedMs) ? startedMs : now;
     mp.set(caster.toLowerCase(), {
       caster, spell, target,
-      started_at_ms: Number.isFinite(startedMs) ? startedMs : now,
+      started_at_ms: startMs,
       cast_secs: castSecs, received_at: now,
     });
+    // Cure-cast tracking → optimistic debuff removal. If this cast is a CURE
+    // (catalog SPA 35/36/116 negative or 20 beneficial), record which
+    // affliction it clears on this target + when the cast completes, so the
+    // debuff queue can mark the row "being cured" while in-flight and drop it
+    // promptly after the cast lands (instead of waiting ~5s for the target's
+    // next live-state flush to show the debuff gone).
+    const fxC = _spellFxByName ? _spellFxByName.get(spell.toLowerCase()) : null;
+    if (fxC) {
+      const cures = [];
+      if (fxC.cureCurse)   cures.push('curse');
+      if (fxC.cureBlind)   cures.push('blind');
+      if (fxC.curePoison)  cures.push('poison');
+      if (fxC.cureDisease) cures.push('disease');
+      if (cures.length) {
+        let cm = _cureCastByTarget.get(tk);
+        if (!cm) { cm = []; _cureCastByTarget.set(tk, cm); }
+        const endsAt = startMs + castSecs * 1000;
+        for (const cure of cures) cm.push({ cure, caster, ends_at_ms: endsAt });
+      }
+    }
     stored++;
   }
   // Bound memory: cap the number of tracked targets.
