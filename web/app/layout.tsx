@@ -13,15 +13,15 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://wolfpack.quest';
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default:  'Wolf Pack EQ — Tracker',
-    template: '%s · Wolf Pack EQ',
+    default:  'WolfPack.quest',
+    template: '%s · WolfPack.quest',
   },
   description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
   openGraph: {
-    title:       'Wolf Pack EQ — Tracker',
+    title:       'WolfPack.quest',
     description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
     url:         SITE_URL,
-    siteName:    'Wolf Pack EQ',
+    siteName:    'WolfPack.quest',
     type:        'website',
   },
   twitter: { card: 'summary' },
@@ -50,8 +50,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/mimic-logo.png" alt="Wolf Pack Mimic" width={38} height={38} className="rounded-md shrink-0" />
                 <span className="text-lg sm:text-2xl text-blue font-bold">
-                  <span className="hidden sm:inline">Wolf Pack EQ — Tracker</span>
-                  <span className="sm:hidden">Wolf Pack EQ</span>
+                  <span className="hidden sm:inline">WolfPack<span className="text-dim">.quest</span></span>
+                  <span className="sm:hidden">WolfPack<span className="text-dim">.quest</span></span>
                 </span>
               </a>
               <div className="flex flex-col items-end gap-2 shrink-0">
