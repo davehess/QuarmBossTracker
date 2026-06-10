@@ -2908,7 +2908,7 @@ function applyBuffQueueVisibility() {
 function createMobInfoOverlay() {
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
   mobInfoWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Mob Info overlay',
+    title: 'Wolf Pack Mimic — Target Info overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 230, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -3414,7 +3414,7 @@ function buildTrayMenu() {
         if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
         pushStatus();
       } },
-    { label: 'Mob Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
         if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
         pushStatus();

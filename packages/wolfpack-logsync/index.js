@@ -6779,7 +6779,7 @@ function renderSetupChecks(s) {
       bad: logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
     { ok: zealLive, label: 'Zeal connected',
       good: 'live buff/group data flowing from Zeal',
-      bad: 'no live Zeal feed — install/enable Zeal so buffs, groups and Mob Info work',
+      bad: 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work',
       info: zeal.length > 0 && !zealLive ? 'last-seen snapshots only — log a character in' : null },
   ];
   let h = '<h2>🩺 Setup checklist</h2><table style="font-size:12px">';
@@ -7724,7 +7724,7 @@ var WP_OVERLAY_ROWS = [
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
-  ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks, drop table.'],
+  ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
