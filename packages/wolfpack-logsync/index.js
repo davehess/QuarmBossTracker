@@ -8332,7 +8332,14 @@ function renderRaidTab(q) {
               ? ' <span style="color:#7ee787" title="Buff slot ' + c.slot + ' — dispellable without clipping much">s' + c.slot + '✂</span>'
               : ' <span class="dim" title="Buff slot ' + c.slot + '">s' + c.slot + '</span>';
           }
-          return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '') + sl;
+          // Cure type from catalog counters (bot v3.0.88+) — which cure to
+          // reach for: poison green, disease gold, blind dim, curse orange.
+          var cu = '';
+          if (c.cure) {
+            var cuCol = c.cure === 'poison' ? 'var(--green)' : c.cure === 'disease' ? 'var(--gold)' : c.cure === 'blind' ? 'var(--dim)' : 'var(--orange)';
+            cu = ' <span style="color:' + cuCol + '" title="Cure type: ' + esc(c.cure) + (c.counters ? ' — ' + c.counters + ' counters' : '') + '">' + esc(c.cure) + '</span>';
+          }
+          return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '') + cu + sl;
         }).join(' · ');
         h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--red);margin-bottom:1px">'
           + '<span style="color:var(--text);font-weight:600">' + esc(d.name) + '</span>'

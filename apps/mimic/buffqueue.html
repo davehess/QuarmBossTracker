@@ -331,7 +331,14 @@
             ? ' <span style="color:#7ee787" title="Buff slot '+c.slot+' — low slot; dispellable without clipping much">s'+c.slot+'✂</span>'
             : ' <span style="color:#8b949e" title="Buff slot '+c.slot+'">s'+c.slot+'</span>';
         }
-        chips += '<span class="ch">'+esc(c.name)+t+sl+'</span>';
+        // Cure type from the catalog counters (bot v3.0.88+): tells the cure
+        // caster WHICH cure to reach for. Counters ride in the tooltip.
+        var cu = '';
+        if (c.cure) {
+          var cuCol = c.cure === 'poison' ? '#56d364' : c.cure === 'disease' ? '#d4a72c' : c.cure === 'blind' ? '#8b949e' : '#f0883e';
+          cu = ' <span style="color:'+cuCol+'" title="Cure type: '+esc(c.cure)+(c.counters ? ' — '+c.counters+' counters' : '')+'">'+esc(c.cure)+'</span>';
+        }
+        chips += '<span class="ch">'+esc(c.name)+t+cu+sl+'</span>';
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {
