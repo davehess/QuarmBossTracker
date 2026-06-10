@@ -79,8 +79,16 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'savage', 'brutal', 'might of', 'tumultuous', 'aggression', 'bull',
     'call of the predator', 'feral avatar', 'ancient: feral',
   ],
-  // Damage shields (buffs + bard DS songs).
-  ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat', 'damage shield', 'legacy of', 'shield of barbs'],
+  // Damage shields. Mage line: Shield of Flame / Cadeau of Flame /
+  // Inferno Shield. Cleric Barrier of Combustion / Boon of Immolation.
+  // Fiery Might is HP+DS combo. All have SPA 59 in eqemu_spells.raw.eff;
+  // catalog-driven detection is the eventual fix — this list is the
+  // safety net while it lands.
+  ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat',
+       'damage shield', 'legacy of', 'shield of barbs',
+       'cadeau of flame', 'shield of flame', 'inferno shield', 'fiery might',
+       'barrier of combustion', 'boon of immolation',
+       'aura of vinitras', 'aura of the defender'],
   // Levitation — situational but worth a visible row (Hate trenches, Sky).
   levitate: ['levitat', 'dead men floating', 'dead man floating', 'flying'],
   // Resist buffs (single + group). Circle of Seasons = Fire + Cold only;

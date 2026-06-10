@@ -5907,6 +5907,9 @@ async function _handleAgentRaidBuffQueue(req, res) {
 }
 // Casting status on a single target, for the queue rows (compact — first 2
 // in-flight casts, sorted soonest-finishing). Returns [] when nobody's casting.
+// Drops casts whose remaining time has hit 0 — the previous 3s grace window
+// surfaced "Aegolism 0s · Call of Sky 0s" rows that read as broken (the cast
+// was actually already done; the buff lands on the next live-state flush).
 function _castingOnTarget(name) {
   const tk = String(name || '').trim().toLowerCase();
   if (!tk) return [];
@@ -5915,12 +5918,54 @@ function _castingOnTarget(name) {
   const now = Date.now();
   const out = [];
   for (const c of mp.values()) {
-    const rem = Math.max(0, Math.round((c.started_at_ms + c.cast_secs * 1000 - now) / 1000));
-    if (rem <= 0 && now > c.started_at_ms + c.cast_secs * 1000 + 3000) continue;
-    out.push({ caster: c.caster, spell: c.spell, remaining_secs: rem, ends_at_ms: c.started_at_ms + c.cast_secs * 1000 });
+    // Override the agent-supplied cast_secs with the bot's catalog when the
+    // agent shipped an obviously-stub value (≤ 4s default). Older agents
+    // whose cached catalog predates the cast_ms field default to 4 for any
+    // spell, which made a real 14s Aegolism cast read as 0s remaining after
+    // four seconds.
+    const catSecs = _catalogCastSecs(c.spell);
+    const effSecs = (catSecs > 0 && (c.cast_secs <= 4 + 0.01 || c.cast_secs !== catSecs))
+      ? catSecs : c.cast_secs;
+    const endsAt = c.started_at_ms + effSecs * 1000;
+    const rem = Math.round((endsAt - now) / 1000);
+    if (rem <= 0) continue;
+    out.push({ caster: c.caster, spell: c.spell, remaining_secs: rem, ends_at_ms: endsAt });
   }
   out.sort((a, b) => a.remaining_secs - b.remaining_secs);
   return out.slice(0, 2);
+}
+
+// Bot-side catalog cache for "real" cast time in seconds, keyed by lowercase
+// spell name. Populated lazily on first lookup from eqemu_spells. Refreshed
+// once an hour; weekly sync keeps the catalog stable.
+let _catalogCastSecsByName = null;   // Map<nameLower, secs>
+let _catalogCastSecsAt = 0;
+const _CATALOG_CAST_TTL_MS = 60 * 60 * 1000;
+function _catalogCastSecs(name) {
+  if (!name) return 0;
+  if (!_catalogCastSecsByName || (Date.now() - _catalogCastSecsAt) > _CATALOG_CAST_TTL_MS) {
+    _refreshCatalogCastSecs();
+    if (!_catalogCastSecsByName) return 0;
+  }
+  return _catalogCastSecsByName.get(String(name).toLowerCase()) || 0;
+}
+function _refreshCatalogCastSecs() {
+  const supabase = require('./utils/supabase');
+  // fire-and-forget refresh; subsequent callers use whatever's loaded
+  supabase.select('eqemu_spells', 'select=name,cast_time&order=id.asc&limit=10000')
+    .then(rows => {
+      const m = new Map();
+      for (const r of rows || []) {
+        if (!r || !r.name) continue;
+        const ms = Number(r.cast_time) || 0;
+        if (ms > 0) m.set(String(r.name).toLowerCase(), Math.round(ms / 100) / 10);
+      }
+      _catalogCastSecsByName = m;
+      _catalogCastSecsAt = Date.now();
+    })
+    .catch(e => console.warn('[catalog cast secs] refresh failed:', e && e.message));
+  // Mark touched so we don't refire on a tight error loop.
+  _catalogCastSecsAt = _catalogCastSecsAt || Date.now();
 }
 
 async function _handleAgentMobInfo(req, res) {

@@ -25,7 +25,16 @@ const KEYWORDS = {
   haste: ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
   runSpeed: ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
   attack: ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
-  ds: ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
+  // Damage shields. Mage line: Shield of Flame / Cadeau of Flame /
+  // Inferno Shield. Cleric Boon of Immolation / Barrier of Combustion.
+  // Fiery Might is HP+DS combo (SPA 0 + 59 in catalog). All have SPA 59
+  // in eqemu_spells.raw.eff — the catalog-derived layer (next commit) is
+  // the real fix; this keyword list is the safety net.
+  ds: ['thorn','thistle','shield of fire','shield of lava','bramblecoat',
+       'damage shield','legacy of','shield of barbs',
+       'cadeau of flame','shield of flame','inferno shield','fiery might',
+       'barrier of combustion','boon of immolation',
+       'aura of vinitras','aura of the defender'],
   // Survival / absorption slots: Divine Aura (cleric self-invuln), Kazumi's
   // Note of Preservation (bard absorption song), Bestowal of Divinity (group
   // DA-flag), Quivering Veil of Xarn (necro lich-save). Each occupies a real
