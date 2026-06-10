@@ -270,17 +270,25 @@
 
   // Category → "spells you might have memmed" hint. recent_casts comes from
   // the agent's per-character rotation tracker; a spell cast this session is
-  // almost certainly still on a gem. Curated regexes per category label —
-  // a HINT, not gem truth (Zeal doesn't expose gem contents).
+  // almost certainly still on a gem. SLOT-AWARE — HP A only matches slot A
+  // spells (Aego line + group HP+AC), HP B only matches the Symbol line,
+  // HP C only matches the Shaman HP single-target line + Brell + Arch
+  // Shielding. Without this, casting Symbol of Transal once made the queue
+  // suggest it for HP A forever even after the user re-memmed Aegolism.
+  // Specific labels (HP A/B/C) checked before the generic /^HP/ fallback.
   var CAT_HINTS = [
-    [/^HP( [ABC])?$/,   /aegolism|temperance|symbol of|khura|focus of spirit|protection of the (glades|cabbage)|talisman of wunshi|brell|arch shielding|virtue|conviction/i],
-    [/^HP Regen$/,      /regrowth|regenerat|chloroplast|replenish/i],
+    [/^HP A$/, /aegolism|blessing of aegolism|ancient: gift of aegolism|temperance|protection of the (glades|cabbage)|talisman of wunshi|courage|center|daring|bravery|valor|resolution|heroism|heroic bond|fortitude|virtue|conviction/i],
+    [/^HP B$/, /aegolism|blessing of aegolism|ancient: gift of aegolism|symbol of/i],
+    [/^HP C$/, /khura|focus of spirit|talisman of (kragg|tnarg)|inner fire|brell|arch shielding/i],
+    [/^HP$/,   /aegolism|temperance|symbol of|khura|focus of spirit|talisman of (kragg|tnarg|wunshi)|inner fire|protection of the (glades|cabbage)|brell|arch shielding|virtue|conviction|courage|daring|bravery|valor|resolution|heroism|heroic bond|fortitude/i],
+    [/^HP Regen$/,      /regrowth|regenerat|chloroplast|replenish|elixir/i],
     [/^Mana$/,          /brilliance|iridescence/i],
     [/^Mana Regen$/,    /clarity|koadic|breeze|gift of (pure thought|insight)|clairvoyance/i],
     [/^Haste$/,         /haste|celerity|quickness|swift|alacrity|aanya|visions of grandeur|speed of/i],
     [/^Run Speed$/,     /spirit of (the )?wolf|flight of eagle|pack spirit|bihli/i],
     [/^Attack$/,        /avatar|ferocity|strength|might of|predator|bihli/i],
     [/^Dmg Shield$/,    /thorn|thistle|shield of|bramblecoat|legacy of/i],
+    [/^Survival$/,      /divine aura|kazumi|bestowal of divinity|quivering veil/i],
     [/^Levitate$/,      /levitat|dead m[ae]n floating/i],
     [/^Resists$/,       /resist|endure|talisman of (epuration|jasinth|shadoo)|circle of seasons/i],
   ];
