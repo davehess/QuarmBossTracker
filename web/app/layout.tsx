@@ -126,12 +126,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               Your logs stay on your device. Toggle exclusions any time on{' '}
               <a href="/me" className="text-blue hover:underline">/me</a>.
             </div>
-            <div>
-              Windows code signing for Wolf Pack Mimic provided free by{' '}
-              <a href="https://signpath.io" target="_blank" rel="noreferrer" className="text-blue hover:underline">SignPath.io</a>,
-              {' '}certificate by{' '}
-              <a href="https://signpath.org" target="_blank" rel="noreferrer" className="text-blue hover:underline">SignPath Foundation</a>.
-            </div>
           </footer>
         </div>
       </body>
