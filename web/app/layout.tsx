@@ -46,16 +46,51 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 the avatar so it doesn't bloat the nav row; the timezone picker
                 stacks underneath the user. */}
             <div className="flex items-start justify-between gap-3 flex-wrap">
-              <a href="/" className="flex items-center gap-2.5 no-underline">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/mimic-logo.png" alt="Wolf Pack Mimic" width={38} height={38} className="rounded-md shrink-0" />
-                <span className="text-lg sm:text-2xl text-blue font-bold">
-                  <span className="hidden sm:inline">WolfPack<span className="text-dim">.quest</span></span>
-                  <span className="sm:hidden">WolfPack<span className="text-dim">.quest</span></span>
-                </span>
-              </a>
+              {/* Brand column — wordmark with the download CTAs directly
+                  underneath, per user request. */}
+              <div className="flex flex-col gap-2 min-w-0">
+                <a href="/" className="flex items-center gap-2.5 no-underline">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/mimic-logo.png" alt="Wolf Pack miMIC" width={38} height={38} className="rounded-md shrink-0" />
+                  <span className="text-lg sm:text-2xl text-blue font-bold whitespace-nowrap">
+                    WolfPack<span className="text-dim">.quest</span>
+                  </span>
+                </a>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href="/mimic?direct=1"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-blue bg-[#1f6feb33] text-blue text-xs hover:bg-[#1f6feb66] transition-colors whitespace-nowrap no-underline"
+                    title="Wolf Pack miMIC — the all-in-one desktop client (bundles the wolfpack-logsync agent + DPS overlay, trigger TTS, charm tracker, /tells). Downloads the latest STABLE installer directly. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/mimic-logo.png" alt="" width={14} height={14} className="rounded-sm" />
+                    <span>Download mi<span className="tracking-wide">MIC</span></span>
+                    <span aria-hidden className="text-dim text-[10px]">↗</span>
+                  </a>
+                  {/* Beta channel — same installer pipeline, prerelease tag.
+                      Quiet styling so the stable button stays the primary CTA. */}
+                  <a
+                    href="/mimic/beta?direct=1"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-bg/40 text-dim text-xs hover:bg-bg/70 hover:text-fg transition-colors whitespace-nowrap no-underline"
+                    title="Wolf Pack miMIC — BETA channel. Latest prerelease build with in-progress features. Less stable than the main download; only grab this if you're testing or have been asked to."
+                  >
+                    <span>Beta</span>
+                    <span aria-hidden className="text-dim text-[10px]">↗</span>
+                  </a>
+                </div>
+              </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <div className="flex items-center gap-2">
+                  <Link
+                    href="/feedback"
+                    className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
+                  >
+                    💬 Feedback
+                  </Link>
                   {showAdmin && (
                     <Link
                       href="/admin"
@@ -70,40 +105,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </div>
             </div>
 
-            {/* Row 2 — primary nav (left) + compact download CTAs (right), on
-                their own line below the brand so the layout reads the same at
-                every width. Admin lives up in the account block, not here, so
-                this row never wraps onto a second line. */}
+            {/* Row 2 — primary nav on its own clean strip. Downloads moved up
+                under the wordmark; Feedback + Admin live in the account
+                block. */}
             <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
               <Nav showMe={showMe} />
-              <div className="flex flex-wrap gap-2 shrink-0">
-                <a
-                  href="/mimic?direct=1"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-blue bg-[#1f6feb33] text-blue text-xs hover:bg-[#1f6feb66] transition-colors whitespace-nowrap no-underline"
-                  title="Wolf Pack Mimic Parser — the all-in-one desktop client (bundles the wolfpack-logsync agent + DPS overlay, trigger TTS, charm tracker, /tells). Downloads the latest STABLE installer directly. SmartScreen will warn (not code-signed yet) — More info → Run anyway."
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/mimic-logo.png" alt="" width={14} height={14} className="rounded-sm" />
-                  <span>Download Mimic</span>
-                  <span aria-hidden className="text-dim text-[10px]">↗</span>
-                </a>
-                {/* Beta channel — same installer pipeline, prerelease tag.
-                    For testers who want the next-version features early
-                    and have already toggled the beta channel in their tray.
-                    Quiet styling so the stable button stays the primary CTA. */}
-                <a
-                  href="/mimic/beta?direct=1"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-bg/40 text-dim text-xs hover:bg-bg/70 hover:text-fg transition-colors whitespace-nowrap no-underline"
-                  title="Wolf Pack Mimic — BETA channel. Latest prerelease build with in-progress features. Less stable than the main download; only grab this if you're testing or have been asked to."
-                >
-                  <span>Beta</span>
-                  <span aria-hidden className="text-dim text-[10px]">↗</span>
-                </a>
-              </div>
             </div>
           </header>
           <main>{children}</main>

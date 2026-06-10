@@ -12,7 +12,7 @@ export const TZ_COOKIE  = 'wp_tz';
 // elsewhere. 'auto' means use the browser's resolved TZ (set by the picker
 // at runtime); when the cookie isn't present we fall back to America/New_York.
 export const TZ_CHOICES: { value: string; label: string }[] = [
-  { value: 'auto',                       label: 'Auto (from this device)' },
+  { value: 'auto',                       label: 'Auto Timezone (from Device)' },
   { value: 'America/New_York',           label: 'Eastern (default — most of the pack)' },
   { value: 'America/Chicago',            label: 'Central' },
   { value: 'America/Denver',             label: 'Mountain' },
