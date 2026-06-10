@@ -319,7 +319,7 @@ export default async function RaidHubPage() {
     }
   }
 
-  type ResistEntry = { name: string; value: number | null; stacking: boolean };
+  type ResistEntry = { name: string; value: number | null; stacking: boolean; isSong: boolean };
   function bucketBuffs(buffs: { name: string; ticks: number | null; song?: boolean }[] | null) {
     const byCategory: Record<string, string[]> = {};
     const other: string[] = [];
@@ -329,19 +329,20 @@ export default async function RaidHubPage() {
     for (const b of (buffs ?? [])) {
       if (!b || !b.name) continue;
       const lower = b.name.toLowerCase();
-      if (isSongBuff(b.name, b.song)) songs.push({ name: b.name, ticks: b.ticks ?? null });
+      const isSong = isSongBuff(b.name, b.song);
+      if (isSong) songs.push({ name: b.name, ticks: b.ticks ?? null });
       if (lower.includes('divine intervention')) hasDI = true;
       const meta = spellMeta.get(lower);
       if (meta) {
         if (meta.cha) chaCovered = true;
         const stacking = STACKING_RESIST.some(k => lower.includes(k));
         for (const [school, value] of Object.entries(meta.resists) as [ResistType, number][]) {
-          resists[school].push({ name: b.name, value, stacking });
+          resists[school].push({ name: b.name, value, stacking, isSong });
         }
       } else {
         // Name missing from the catalog (rank suffixes, typo'd dumps) — fall
         // back to the keyword map with no value.
-        for (const t of resistTypesFor(b.name)) resists[t].push({ name: b.name, value: null, stacking: false });
+        for (const t of resistTypesFor(b.name)) resists[t].push({ name: b.name, value: null, stacking: false, isSong });
       }
       const cat = categorizeBuff(b.name);
       if (cat) (byCategory[cat] ||= []).push(b.name);

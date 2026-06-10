@@ -50,7 +50,7 @@ export type RaidRow = {
   // Per-school coverage, decoded from the spell catalog (SPA 46-50). value =
   // the resist amount; stacking = rides a non-colliding slot (White/Green
   // Petals) so it ADDS to the primary instead of competing for it.
-  resists: Record<ResistType, { name: string; value: number | null; stacking: boolean }[]>;
+  resists: Record<ResistType, { name: string; value: number | null; stacking: boolean; isSong?: boolean }[]>;
   songs: { name: string; ticks: number | null }[];  // bard songs currently landed
   hasDI: boolean;                // Divine Intervention on the buff bar
   chaCovered: boolean;           // any buff granting +CHA (DI's save rolls vs CHA)
@@ -1016,8 +1016,13 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
             <ul className="space-y-1">
               {RESIST_TYPES.map(t => {
                 const entries = row.resists[t] || [];
-                const primaries = entries.filter(e => !e.stacking);
-                const stackers  = entries.filter(e => e.stacking);
+                // Bard songs land in the SONG window (separate from buffs)
+                // and stack with everything; pull them out so each gets its
+                // own line under the primary buff. White/Green Petals etc.
+                // (catalog "stacking" entries) stay on their own line too.
+                const songs    = entries.filter(e => e.isSong);
+                const stackers = entries.filter(e => !e.isSong && e.stacking);
+                const primaries = entries.filter(e => !e.isSong && !e.stacking);
                 const total = entries.reduce((s, e) => s + (e.value ?? 0), 0);
                 return (
                   <li key={t} className="text-[11px]">
@@ -1031,11 +1036,18 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
                               {primaries[0].value != null && <span className="text-green tabular-nums shrink-0">+{primaries[0].value}</span>}
                               {primaries.length > 1 ? <span className="text-dim shrink-0">+{primaries.length - 1} more</span> : null}
                             </span>
-                          : <span className="text-dim italic">stacking only ↓</span>}
-                      {total > 0 && (primaries.length + stackers.length) > 1 && (
+                          : <span className="text-dim italic">{songs.length > 0 ? 'song only ↓' : 'stacking only ↓'}</span>}
+                      {total > 0 && (primaries.length + stackers.length + songs.length) > 1 && (
                         <span className="text-green text-[10px] tabular-nums ml-auto shrink-0" title="Sum of all listed resist buffs for this school">Σ {total}</span>
                       )}
                     </div>
+                    {songs.map((e, i) => (
+                      <div key={'song:' + e.name + ':' + i} className="flex items-center gap-2 pl-20 ml-2 text-[10px]">
+                        <span className="text-purple" title="Bard song — lands in the song window (stacks with everything)">♪ song:</span>
+                        <BuffChip name={e.name} />
+                        {e.value != null && <span className="text-green tabular-nums">+{e.value}</span>}
+                      </div>
+                    ))}
                     {stackers.map((e, i) => (
                       <div key={e.name + ':' + i} className="flex items-center gap-2 pl-20 ml-2 text-[10px]">
                         <span className="text-dim">stacks:</span>
