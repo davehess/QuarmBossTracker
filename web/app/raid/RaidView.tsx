@@ -46,8 +46,13 @@ export type RaidRow = {
   buffCount: number;
   byCategory: Record<string, string[]>;
   other: string[];
-  resists: Record<ResistType, string[]>;   // per-school coverage (MR/FR/CR/PR/DR)
+  // Per-school coverage, decoded from the spell catalog (SPA 46-50). value =
+  // the resist amount; stacking = rides a non-colliding slot (White/Green
+  // Petals) so it ADDS to the primary instead of competing for it.
+  resists: Record<ResistType, { name: string; value: number | null; stacking: boolean }[]>;
   songs: { name: string; ticks: number | null }[];  // bard songs currently landed
+  hasDI: boolean;                // Divine Intervention on the buff bar
+  chaCovered: boolean;           // any buff granting +CHA (DI's save rolls vs CHA)
   hpSlots: HpSlotState;
   tier: 'green' | 'upgradable' | 'yellow' | 'orange' | 'red' | 'unknown';
   buffs: { name: string; ticks: number | null }[];
@@ -235,7 +240,7 @@ export default function RaidView({
     const providesResists = CLASS_PROVIDES_RESISTS[cls] || [];
     if (provides.length === 0 && providesResists.length === 0) return [];
     const severity = { red: 0, orange: 1, yellow: 2, upgradable: 3, green: 4, unknown: 5 } as const;
-    const out: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[] }[] = [];
+    const out: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[]; diNeedsCha: boolean }[] = [];
     for (const r of rows) {
       if (!r.inRaid || r.noAgent) continue;
       const expected = ROLE_TARGETS[r.role] || [];
@@ -267,15 +272,18 @@ export default function RaidView({
         if (best > 0 && best < 7) upgrades.push('Haste ↑ VoG');
         else if (best === 0) upgrades.push('Haste? (item haste may block VoG)');
       }
-      if (missing.length > 0 || missingHp.length > 0 || missingResists.length > 0 || upgrades.length > 0) {
-        out.push({ row: r, missing, missingResists, upgrades });
+      // DI's death save rolls against CHA — a tank carrying DI with no CHA
+      // buff is a real gap for the classes that can fix it.
+      const diNeedsCha = (cls === 'enchanter' || cls === 'shaman') && r.hasDI && !r.chaCovered;
+      if (missing.length > 0 || missingHp.length > 0 || missingResists.length > 0 || upgrades.length > 0 || diNeedsCha) {
+        out.push({ row: r, missing, missingResists, upgrades, diNeedsCha });
       }
     }
     // Severity by tier, but pure-upgrade rows (nothing missing) sink below
     // anything with a real gap.
     out.sort((a, b) => {
-      const aGap = (a.missing.length + a.missingResists.length) > 0 ? 0 : 1;
-      const bGap = (b.missing.length + b.missingResists.length) > 0 ? 0 : 1;
+      const aGap = (a.missing.length + a.missingResists.length + (a.diNeedsCha ? 1 : 0)) > 0 ? 0 : 1;
+      const bGap = (b.missing.length + b.missingResists.length + (b.diNeedsCha ? 1 : 0)) > 0 ? 0 : 1;
       if (aGap !== bGap) return aGap - bGap;
       return severity[a.row.tier] - severity[b.row.tier];
     });
@@ -657,7 +665,7 @@ function BufferQueues({
   bufferClass, buffQueue, debuffQueue, onSelect,
 }: {
   bufferClass: BufferClass;
-  buffQueue: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[] }[];
+  buffQueue: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[]; diNeedsCha: boolean }[];
   debuffQueue: { row: RaidRow; curses: { name: string; ticks: number | null }[] }[];
   onSelect: (name: string) => void;
 }) {
@@ -676,7 +684,7 @@ function BufferQueues({
           </div>
         ) : (
           <ul className="text-xs space-y-1.5">
-            {buffQueue.map(({ row, missing, missingResists, upgrades }) => (
+            {buffQueue.map(({ row, missing, missingResists, upgrades, diNeedsCha }) => (
               <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1.5 last:border-0">
                 <span className={['inline-block w-1.5 h-5 rounded-sm shrink-0', TIER_STYLE[row.tier].bar].join(' ')} />
                 <button
@@ -694,6 +702,7 @@ function BufferQueues({
                     {[
                       ...missing.map(c => CATEGORY_LABELS[c]),
                       ...missingResists.map(t => 'Resist ' + RESIST_LABELS[t]),
+                      ...(diNeedsCha ? ['DI w/o CHA'] : []),
                     ].join(' · ') || (upgrades.length === 0 ? 'HP slot missing' : '')}
                   </span>
                   {upgrades.length > 0 && (
@@ -945,30 +954,59 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
             </ul>
           </div>
 
-          {/* Resists — all five schools. One "Resists" line hid which school
-              was uncovered (Circle of Seasons satisfied the bucket while a
-              missing Group Resist Magic stayed invisible). */}
+          {/* Resists — all five schools, with the resist amount decoded from
+              the spell catalog. Stacking buffs (White/Green Petals — they
+              ride a non-colliding slot) render on their own line under the
+              primary, since they ADD instead of competing. */}
           <div>
             <div className="text-[10px] uppercase tracking-widest text-dim mb-1">
               Resists ({RESIST_TYPES.filter(t => row.resists[t]?.length).length}/5)
             </div>
             <ul className="space-y-1">
               {RESIST_TYPES.map(t => {
-                const names = row.resists[t] || [];
+                const entries = row.resists[t] || [];
+                const primaries = entries.filter(e => !e.stacking);
+                const stackers  = entries.filter(e => e.stacking);
+                const total = entries.reduce((s, e) => s + (e.value ?? 0), 0);
                 return (
-                  <li key={t} className="flex items-center gap-2 text-[11px]">
-                    <span className="text-dim w-20 shrink-0">{RESIST_LABELS[t]}</span>
-                    {names.length > 0
-                      ? <span className="flex items-center gap-1 min-w-0" title={names.join(', ')}>
-                          <BuffChip name={names[0]} />
-                          {names.length > 1 ? <span className="text-green shrink-0">+{names.length - 1}</span> : null}
-                        </span>
-                      : <span className="text-red-400">— missing</span>}
+                  <li key={t} className="text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-dim w-20 shrink-0">{RESIST_LABELS[t]}</span>
+                      {entries.length === 0
+                        ? <span className="text-red-400">— missing</span>
+                        : primaries.length > 0
+                          ? <span className="flex items-center gap-1 min-w-0" title={primaries.map(e => `${e.name}${e.value != null ? ' +' + e.value : ''}`).join(', ')}>
+                              <BuffChip name={primaries[0].name} />
+                              {primaries[0].value != null && <span className="text-green tabular-nums shrink-0">+{primaries[0].value}</span>}
+                              {primaries.length > 1 ? <span className="text-dim shrink-0">+{primaries.length - 1} more</span> : null}
+                            </span>
+                          : <span className="text-dim italic">stacking only ↓</span>}
+                      {total > 0 && (primaries.length + stackers.length) > 1 && (
+                        <span className="text-green text-[10px] tabular-nums ml-auto shrink-0" title="Sum of all listed resist buffs for this school">Σ {total}</span>
+                      )}
+                    </div>
+                    {stackers.map((e, i) => (
+                      <div key={e.name + ':' + i} className="flex items-center gap-2 pl-20 ml-2 text-[10px]">
+                        <span className="text-dim">stacks:</span>
+                        <BuffChip name={e.name} />
+                        {e.value != null && <span className="text-green tabular-nums">+{e.value}</span>}
+                      </div>
+                    ))}
                   </li>
                 );
               })}
             </ul>
           </div>
+
+          {/* Divine Intervention save rolls against CHARISMA — a tank with DI
+              but no CHA buff is leaving the save to base stats. Enchanter /
+              shaman queues flag this too. */}
+          {row.hasDI && !row.chaCovered && (
+            <div className="text-[11px] rounded border border-orange/50 bg-orange/10 px-2 py-1.5">
+              ⚠ <span className="text-orange">Divine Intervention without a CHA buff</span>
+              <span className="text-dim"> — the death save rolls vs Charisma. Enchanter/Shaman: land a CHA buff.</span>
+            </div>
+          )}
 
           {/* Damage shields — every DS stacks, so list EACH slot with its
               magnitude (SPA 59 decoded from the spell catalog) + the total. */}

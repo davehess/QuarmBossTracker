@@ -172,18 +172,68 @@ export default async function RaidHubPage() {
     };
   }
 
+  // ── Spell-catalog decode for every buff name in play ───────────────────────
+  // One batched eqemu_spells lookup; raw effect slots give AUTHORITATIVE
+  // per-school resist values (SPA 46 FR / 47 CR / 48 PR / 49 DR / 50 MR) —
+  // the keyword guesses had Circle of Seasons covering all five schools when
+  // it's fire+cold only. Also decodes CHA (SPA 10 with base>0 — base 0 is the
+  // ubiquitous placeholder slot) for the Divine-Intervention-needs-Charisma
+  // tank check (DI's death save rolls against CHA).
+  const RESIST_SPA: Record<number, ResistType> = { 46: 'FR', 47: 'CR', 48: 'PR', 49: 'DR', 50: 'MR' };
+  // Slot-1 collision rules can't be derived from the dump reliably (Shadoo
+  // and White Petals share the same placeholder-then-resist shape but only
+  // the flowers stack) — curated per the in-game stacking behavior.
+  const STACKING_RESIST = ['aura of white petals', 'aura of green petals'];
+  type SpellMeta = { resists: Partial<Record<ResistType, number>>; cha: boolean };
+  const spellMeta = new Map<string, SpellMeta>();
+  {
+    const allNames = [...new Set(
+      liveClean.flatMap(r => (r.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]),
+    )];
+    if (allNames.length) {
+      const { data: spellRows } = await admin
+        .from('eqemu_spells')
+        .select('name, raw')
+        .in('name', allNames);
+      for (const sp of (spellRows ?? []) as { name: string; raw: { eff: (number | null)[]; base: (number | null)[] } | null }[]) {
+        if (!sp.raw || !Array.isArray(sp.raw.eff)) continue;
+        const meta: SpellMeta = spellMeta.get(sp.name.toLowerCase()) ?? { resists: {}, cha: false };
+        for (let i = 0; i < sp.raw.eff.length; i++) {
+          const effId: number | null = sp.raw.eff[i];
+          const base = sp.raw.base?.[i] ?? 0;
+          const school = effId != null ? RESIST_SPA[effId] : undefined;
+          if (school && base > 0 && base > (meta.resists[school] ?? 0)) meta.resists[school] = base;
+          if (effId === 10 && base > 0) meta.cha = true;
+        }
+        spellMeta.set(sp.name.toLowerCase(), meta);
+      }
+    }
+  }
+
+  type ResistEntry = { name: string; value: number | null; stacking: boolean };
   function bucketBuffs(buffs: { name: string; ticks: number | null; song?: boolean }[] | null) {
     const byCategory: Record<string, string[]> = {};
     const other: string[] = [];
-    // Per-school resist coverage (MR/FR/CR/PR/DR → granting buff names) and
-    // the bard songs currently landed (song flag from agent v3.1.12+, name
-    // heuristic for older data).
-    const resists: Record<ResistType, string[]> = { MR: [], FR: [], CR: [], PR: [], DR: [] };
+    const resists: Record<ResistType, ResistEntry[]> = { MR: [], FR: [], CR: [], PR: [], DR: [] };
     const songs: { name: string; ticks: number | null }[] = [];
+    let hasDI = false, chaCovered = false;
     for (const b of (buffs ?? [])) {
       if (!b || !b.name) continue;
+      const lower = b.name.toLowerCase();
       if (isSongBuff(b.name, b.song)) songs.push({ name: b.name, ticks: b.ticks ?? null });
-      for (const t of resistTypesFor(b.name)) resists[t].push(b.name);
+      if (lower.includes('divine intervention')) hasDI = true;
+      const meta = spellMeta.get(lower);
+      if (meta) {
+        if (meta.cha) chaCovered = true;
+        const stacking = STACKING_RESIST.some(k => lower.includes(k));
+        for (const [school, value] of Object.entries(meta.resists) as [ResistType, number][]) {
+          resists[school].push({ name: b.name, value, stacking });
+        }
+      } else {
+        // Name missing from the catalog (rank suffixes, typo'd dumps) — fall
+        // back to the keyword map with no value.
+        for (const t of resistTypesFor(b.name)) resists[t].push({ name: b.name, value: null, stacking: false });
+      }
       const cat = categorizeBuff(b.name);
       if (cat) (byCategory[cat] ||= []).push(b.name);
       else other.push(b.name);
@@ -193,7 +243,11 @@ export default async function RaidHubPage() {
         if (sec !== cat && !(byCategory[sec] ||= []).includes(b.name)) byCategory[sec].push(b.name);
       }
     }
-    return { byCategory, other, resists, songs };
+    // Strongest first per school so the card leads with the real coverage.
+    for (const school of Object.keys(resists) as ResistType[]) {
+      resists[school].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+    }
+    return { byCategory, other, resists, songs, hasDI, chaCovered };
   }
 
   // Build rows: every roster member (or live-state character) gets one. Roster
@@ -222,7 +276,7 @@ export default async function RaidHubPage() {
     const live = liveByName.get(lower);
     const className = classFor(rr.name);
     const role = classToRole(className);
-    const { byCategory, other, resists, songs } = bucketBuffs(live?.buffs ?? null);
+    const { byCategory, other, resists, songs, hasDI, chaCovered } = bucketBuffs(live?.buffs ?? null);
     const hpSlots = analyzeHpSlots((live?.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
     const noAgent = !live;
     const swappedTo = swapFor(live);
@@ -247,6 +301,8 @@ export default async function RaidHubPage() {
       other,
       resists,
       songs,
+      hasDI,
+      chaCovered,
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, live?.buffs ?? null, noAgent),
       buffs: live?.buffs ?? [],
@@ -262,7 +318,7 @@ export default async function RaidHubPage() {
     seen.add(lower);
     const className = classFor(r.character);
     const role = classToRole(className);
-    const { byCategory, other, resists, songs } = bucketBuffs(r.buffs);
+    const { byCategory, other, resists, songs, hasDI, chaCovered } = bucketBuffs(r.buffs);
     const hpSlots = analyzeHpSlots((r.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
     rows.push({
       name: r.character,
@@ -282,6 +338,8 @@ export default async function RaidHubPage() {
       other,
       resists,
       songs,
+      hasDI,
+      chaCovered,
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, r.buffs, false),
       buffs: r.buffs ?? [],
