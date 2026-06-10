@@ -1247,6 +1247,16 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   // Tashanian / Mez / etc. you cast pre-charm carry over to the Charm
   // tracker too. Skip worn-off and expired entries.
   if (eventKind === 'land' && owner) {
+    // Fresh charm session (no prior tracker, or the prior session had
+    // broken) → previous pet's debuffs are dead with it. Wipe the
+    // owner-keyed pet buffs so we don't inherit them onto a same-named
+    // new mob. A re-cast for refresh on the same active charm preserves
+    // (prev.is_active && prev.last_event === 'land').
+    const refreshingSamePet = !!(prev && prev.is_active && prev.last_event === 'land');
+    if (!refreshingSamePet) {
+      const m = _petBuffLandings.get(String(owner).toLowerCase());
+      if (m && m.size) { m.clear(); _savePetStateSoon(); }
+    }
     _captureTargetBuffsOnCharm(pet, owner);
   }
 }
@@ -1255,6 +1265,16 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
 // "inherits" the debuffs already on the mob. Pre-charm debuff lands
 // previously had no owner to attach to, so they only existed in
 // _buffLandingsByTarget — Mob Info saw them, Charm tracker didn't.
+//
+// Pet names are NPC-type strings ("a razorfiend"), so the same target key
+// applies to every razorfiend ever debuffed. Without a freshness gate the
+// sweep grabs stale entries from a previous same-named mob — Menttok casting
+// Forlorn Deeds on razorfiend #1, then later charming razorfiend #2, made
+// the charm tracker show Forlorn Deeds on his current pet even though it
+// was never cast on it. The "debuff then charm" sequence is a few seconds
+// in practice; cap the lookback at PRE_CHARM_DEBUFF_WINDOW_SEC so older
+// entries from the same target key can't ride along.
+const PRE_CHARM_DEBUFF_WINDOW_SEC = 60;
 function _captureTargetBuffsOnCharm(pet, owner) {
   if (!pet || !owner) return;
   const petLower   = String(pet).toLowerCase();
@@ -1264,12 +1284,15 @@ function _captureTargetBuffsOnCharm(pet, owner) {
   let petBuffs = _petBuffLandings.get(ownerLower);
   if (!petBuffs) { petBuffs = new Map(); _petBuffLandings.set(ownerLower, petBuffs); }
   const now = Date.now();
+  const windowFloorMs = now - PRE_CHARM_DEBUFF_WINDOW_SEC * 1000;
   let captured = 0;
   for (const [spellKey, b] of tgtBuffs) {
     if (!b || !b.name) continue;
     if (b.worn_off_at) continue;                          // already gone
+    const landedMs = b.landed_at || 0;
+    if (landedMs < windowFloorMs) continue;               // older than the pre-charm window — different mob, same name
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
-    if (durSecs > 0 && (now - (b.landed_at || now)) / 1000 > durSecs) continue;   // expired
+    if (durSecs > 0 && (now - landedMs) / 1000 > durSecs) continue;   // expired
     // Don't clobber a more-recent pet-side entry for the same spell.
     // Tie-breaker on equal landed_at: prefer whichever has the longer
     // dur_ticks. This heals pre-v3.1.1 entries where recordPetBuffLanding
@@ -1278,7 +1301,7 @@ function _captureTargetBuffsOnCharm(pet, owner) {
     const existing = petBuffs.get(spellKey);
     if (existing) {
       const ex = existing.landed_at || 0;
-      const nw = b.landed_at || 0;
+      const nw = landedMs;
       if (ex > nw) continue;
       if (ex === nw && (existing.dur_ticks || 0) >= (b.dur_ticks || 0)) continue;
     }
@@ -1286,7 +1309,7 @@ function _captureTargetBuffsOnCharm(pet, owner) {
       name:        b.name,
       dur_ticks:   b.dur_ticks,
       dur_formula: b.dur_formula,
-      landed_at:   b.landed_at,
+      landed_at:   landedMs,
     });
     captured++;
   }
