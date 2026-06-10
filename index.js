@@ -5361,11 +5361,16 @@ async function _spellFxMap() {
     const PAGE = 1000;
     while (true) {
       const rows = await supabase.select('eqemu_spells',
-        `select=name,raw&order=id.asc&offset=${from}&limit=${PAGE}`);
+        `select=name,raw,buffduration,good_effect&order=id.asc&offset=${from}&limit=${PAGE}`);
       if (!Array.isArray(rows) || rows.length === 0) break;
       for (const sp of rows) {
         if (!sp || !sp.name || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
         const fx = m.get(sp.name.toLowerCase()) || { res: {} };
+        // Duration + beneficial flag ride along for the focus-haste limit
+        // checks (SPA 140 min-duration, 138 beneficial-only) and the cure
+        // detection (counters only matter on detrimentals).
+        if (sp.buffduration != null) fx.dur = Number(sp.buffduration) || 0;
+        if (sp.good_effect != null)  fx.good = Number(sp.good_effect) ? 1 : 0;
         for (let i = 0; i < sp.raw.eff.length; i++) {
           const eff = sp.raw.eff[i];
           const base = (sp.raw.base && sp.raw.base[i]) || 0;
@@ -5378,6 +5383,15 @@ async function _spellFxMap() {
           if (eff === 15 && base > 0 && base > (fx.mana || 0))          fx.mana = base;
           if (eff === 59 && Math.abs(base) > (fx.ds || 0))              fx.ds = Math.abs(base);
           if (eff === 79 && base > 0 && base > (fx.regen || 0))         fx.regen = base;
+          // Cure counters — what a cure spell has to chew through. SPA 35 =
+          // disease (Turgur's Insects carries 16), 36 = poison (Envenomed
+          // Bolt 10), 116 = curse. SPA 20 = blindness (Flash of Light).
+          // Drives the cure queue: ANY detrimental carrying one of these is
+          // cureable, no keyword list required.
+          if (eff === 35  && base > 0 && base > (fx.dc || 0)) fx.dc = base;
+          if (eff === 36  && base > 0 && base > (fx.pc || 0)) fx.pc = base;
+          if (eff === 116 && base > 0 && base > (fx.cc || 0)) fx.cc = base;
+          if (eff === 20) fx.blind = true;
         }
         m.set(sp.name.toLowerCase(), fx);
       }
@@ -5665,6 +5679,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
     const provides = rb.classProvides(bufferClass);
     const buffQueue = [];
     const debuffQueue = [];
+    // Spell-effects catalog up front — the cure detection in the per-raider
+    // loop reads counters (SPA 35/36/116/20) per debuff; the rosterOut detail
+    // build below reuses the same map.
+    const spellFx = await _spellFxMap();
 
     // Only include characters who are demonstrably ONLINE right now:
     //   • In the current raid_roster window (Zeal type-5 snapshot, 15min fresh)
@@ -5733,18 +5751,33 @@ async function _handleAgentRaidBuffQueue(req, res) {
       const rowZone   = live && live.zone_name ? String(live.zone_name) : null;
       const sameZone  = !!(bufferZone && rowZone && bufferZone === rowZone);
 
-      // Curses → debuff queue. Each curse line carries the buffer's casting
-      // status from _castingByTarget so a second cure caster sees "Carol
-      // already casting Remove Curse on Bob, 2s". Counter count (how many
-      // RC ticks until cured) drives the "tippy-top" sort: high-counter
-      // curses outrank low-counter ones within the debuff section.
+      // Cureables → debuff queue. Catalog-driven: ANY detrimental carrying
+      // cure counters is listed — SPA 116 curse (Remove Curse), SPA 36
+      // poison (Counteract Poison — Shadow Poison etc.), SPA 35 disease
+      // (Counteract Disease — Turgur's/Togor's slows ride a disease
+      // component, so curing the disease strips the slow), and SPA 20
+      // blindness (Cure Blindness). The old keyword list (gravel rain /
+      // curse of / plague …) stays as a fallback for catalog misses.
+      // Counter count drives the "tippy-top" sort: high-counter afflictions
+      // outrank low-counter ones within the debuff section.
       const curses = [];
       let maxCounters = 0;
-      for (const b of buffs) if (b && b.name && rb.isCurseBuff(b.name)) {
-        const cnt = _CURSE_COUNTERS_FOR(b.name);
+      for (const b of buffs) {
+        if (!b || !b.name) continue;
+        const fxB = spellFx.get(String(b.name).toLowerCase());
+        let cure = null, cnt = 0;
+        if (fxB && fxB.good === 0) {
+          if (fxB.cc) { cure = 'curse';   cnt = fxB.cc; }
+          else if (fxB.pc) { cure = 'poison';  cnt = fxB.pc; }
+          else if (fxB.dc) { cure = 'disease'; cnt = fxB.dc; }
+          else if (fxB.blind) { cure = 'blind'; }
+        }
+        if (!cure && rb.isCurseBuff(b.name)) { cure = 'curse'; cnt = _CURSE_COUNTERS_FOR(b.name) || 0; }
+        if (!cure) continue;
         if (cnt > maxCounters) maxCounters = cnt;
         curses.push({
           name: b.name,
+          cure,
           counters: cnt || null,
           remaining_secs: (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks < 6000) ? Math.round(b.ticks * 6) : null,
           // Zeal buff-window slot (1-15) when the target's own Mimic
@@ -5952,7 +5985,6 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // broadcasts captured in raid_roster; buffs/zone from live state; tier
     // mirrors /raid's severity intent.
     const mgbTrained = await _mgbTrainedSet(supabase, guildId);
-    const spellFx = await _spellFxMap();
     const rosterOut = [];
     for (const [k, rr] of rosterByName) {
       const live = liveByName.get(k);
@@ -6036,13 +6068,21 @@ function _castingOnTarget(name) {
   for (const c of mp.values()) {
     // Override the agent-supplied cast_secs with the bot's catalog ONLY when
     // the agent shipped the 4s stub default (older catalog cache without
-    // cast_ms). Trust any non-stub value — that includes focus-haste-
-    // adjusted casts (e.g. Utoh with Enhancement Haste III casts Focus of
-    // Spirit in 8.4s instead of 12s; the agent already knows that, and the
-    // bot must not clobber it back to the raw catalog 12.
+    // cast_ms).
     const isStubDefault = Math.abs((Number(c.cast_secs) || 0) - 4) < 0.05;
     const catSecs = _catalogCastSecs(c.spell);
-    const effSecs = (isStubDefault && catSecs > 0) ? catSecs : c.cast_secs;
+    let effSecs = (isStubDefault && catSecs > 0) ? catSecs : c.cast_secs;
+    // Focus spell haste from the caster's Quarmy gear (worn Enhancement
+    // Haste etc.). The agent relays the CATALOG cast time — it doesn't know
+    // the caster's gear — so Utoh's Khura's Focusing (26s catalog) ran ~7s
+    // past the real 18.2s cast (30% Enhancement Haste III). Apply the best
+    // applicable focus whenever the value we're about to use IS the catalog
+    // number (agent stub or catalog match); if a future agent ships a
+    // pre-hasted value it won't match the catalog and we leave it alone.
+    if (catSecs > 0 && Math.abs(effSecs - catSecs) < 0.05) {
+      const pct = _focusHastePctFor(c.caster, c.spell, catSecs);
+      if (pct > 0) effSecs = Math.round(effSecs * (1 - pct / 100) * 10) / 10;
+    }
     const endsAt = c.started_at_ms + effSecs * 1000;
     const rem = Math.round((endsAt - now) / 1000);
     if (rem <= 0) continue;
@@ -6050,6 +6090,89 @@ function _castingOnTarget(name) {
   }
   out.sort((a, b) => a.remaining_secs - b.remaining_secs);
   return out.slice(0, 2);
+}
+
+// ── Focus spell-haste from Quarmy gear ──────────────────────────────────────
+// characterLower → [{ pct, minCastMs, minDurTicks, beneficialOnly }] decoded
+// from equipped items' worn effects (SPA 127 + limit slots 138/140/143; the
+// max-spell-level limit 134 is skipped — we don't track per-class spell
+// levels, and in-era casts are below the cap anyway). Source: character_gear
+// (the member's own Quarmy export) ⨯ eqemu_items.worneffect ⨯ eqemu_spells.
+// Only known for raiders whose owners run the gear sync — absence = no
+// adjustment, which just leaves the old (catalog-speed) behavior.
+let _focusHasteByChar = null;
+let _focusHasteAt = 0;
+const _FOCUS_HASTE_TTL_MS = 10 * 60 * 1000;
+function _focusHastePctFor(caster, spell, baseCastSecs) {
+  if (!caster || !spell) return 0;
+  if (!_focusHasteByChar || (Date.now() - _focusHasteAt) > _FOCUS_HASTE_TTL_MS) {
+    _refreshFocusHaste();
+    if (!_focusHasteByChar) return 0;
+  }
+  const foci = _focusHasteByChar.get(String(caster).toLowerCase());
+  if (!foci || !foci.length) return 0;
+  const fx = _spellFxByName ? _spellFxByName.get(String(spell).toLowerCase()) : null;
+  const baseCastMs = baseCastSecs * 1000;
+  let best = 0;
+  for (const f of foci) {
+    if (f.beneficialOnly && !(fx && fx.good === 1)) continue;
+    if (f.minCastMs && baseCastMs < f.minCastMs) continue;
+    if (f.minDurTicks && !(fx && (fx.dur || 0) >= f.minDurTicks)) continue;
+    if (f.pct > best) best = f.pct;
+  }
+  return best;
+}
+function _refreshFocusHaste() {
+  _focusHasteAt = _focusHasteAt || Date.now();   // guard tight error loops
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  (async () => {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const gear = await supabase.select('character_gear',
+      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id&limit=10000`);
+    if (!Array.isArray(gear) || gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
+    const itemIds = [...new Set(gear.map(g => g && g.item_id).filter(Boolean))];
+    // item → worn-effect spell id (chunked in() lists keep the URLs sane)
+    const wornByItem = new Map();
+    for (let i = 0; i < itemIds.length; i += 150) {
+      const chunk = itemIds.slice(i, i + 150);
+      const rows = await supabase.select('eqemu_items',
+        `id=in.(${chunk.join(',')})&select=id,worneffect`);
+      for (const r of rows || []) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
+    }
+    const spellIds = [...new Set(wornByItem.values())];
+    const fociBySpell = new Map();   // spell id → focus decode (or null)
+    for (let i = 0; i < spellIds.length; i += 150) {
+      const chunk = spellIds.slice(i, i + 150);
+      const rows = await supabase.select('eqemu_spells',
+        `id=in.(${chunk.join(',')})&select=id,raw`);
+      for (const sp of rows || []) {
+        if (!sp || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
+        let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false;
+        for (let j = 0; j < sp.raw.eff.length; j++) {
+          const eff = sp.raw.eff[j];
+          const base = (sp.raw.base && sp.raw.base[j]) || 0;
+          if (eff === 127 && base > pct) pct = base;          // spell haste %
+          if (eff === 143 && base > 0) minCastMs = base;      // Limit: Min Cast Time (ms)
+          if (eff === 140 && base > 0) minDurTicks = base;    // Limit: Min Duration (ticks)
+          if (eff === 138 && base === 1) beneficialOnly = true;
+        }
+        if (pct > 0) fociBySpell.set(sp.id, { pct, minCastMs, minDurTicks, beneficialOnly });
+      }
+    }
+    const m = new Map();
+    for (const g of gear) {
+      if (!g || !g.character || !g.item_id) continue;
+      const focus = fociBySpell.get(wornByItem.get(g.item_id));
+      if (!focus) continue;
+      const k = String(g.character).toLowerCase();
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(focus);
+    }
+    _focusHasteByChar = m;
+    _focusHasteAt = Date.now();
+    console.log(`[focus-haste] refreshed: ${m.size} characters with worn spell-haste foci`);
+  })().catch(e => console.warn('[focus-haste] refresh failed:', e && e.message));
 }
 
 // Bot-side catalog cache for "real" cast time in seconds, keyed by lowercase
