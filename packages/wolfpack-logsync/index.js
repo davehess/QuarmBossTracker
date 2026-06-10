@@ -2381,6 +2381,30 @@ function parseConsiderLine(line, character) {
   };
 }
 
+// PoP flag grant — "You have received a character flag!" The line never
+// names the flag, so attach context: the character's current zone (Zeal)
+// and the most recent boss kill (threat snapshot). The bot maps
+// (zone, boss) -> flag_key; unmapped combos are preserved for launch-week
+// catalog fixes. Pre-built for the 2026-10-01 PoP unlock — harmless before.
+function parsePopFlagLine(line, character) {
+  if (!character || line.indexOf('received a character flag') === -1) return null;
+  if (!/\]\s+You have received a character flag!/i.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  const cl = String(character).toLowerCase();
+  let zone = null;
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+  }
+  const enc = (stats.currentEncounterThreatByChar || {})[cl] || stats.currentEncounterThreat;
+  const boss = enc && enc.bossName ? String(enc.bossName) : null;
+  return {
+    character,
+    zone:  zone ? String(zone).slice(0, 64) : null,
+    boss:  boss ? boss.slice(0, 64) : null,
+    ts:    ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
 function parseEarthquake(line) {
   if (!line || line.toLowerCase().indexOf('earthquake') === -1) return null;
   const m = line.match(_EARTHQUAKE_RX);
@@ -4402,6 +4426,7 @@ function _endpointForKind(kind, botUrl) {
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
     case 'faction':         return base + '/faction';
+    case 'pop_flag':        return base + '/pop_flags';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -11933,6 +11958,8 @@ function runOptinBackfill(files, opts = {}) {
             if (facEvt) factionBuffer.push(facEvt);
             const conFacEvt = parseConsiderLine(line, f.character);
             if (conFacEvt) factionBuffer.push(conFacEvt);
+            const pfEvt = parsePopFlagLine(line, f.character);
+            if (pfEvt) popFlagBuffer.push(pfEvt);
             // Feral Avatar cast-begin (caster-side AND bystander-side).
             // Complementary to parseFeralAvatarReceived below — that one fires
             // on the buff land, this one on the cast begin. Both push so the
@@ -12989,6 +13016,7 @@ const pvpAssistBuffer   = [];   // pending PvP assist correlations (us → playe
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
 const factionBuffer     = [];   // pending faction hits + /con standing transitions
+const popFlagBuffer     = [];   // pending PoP flag grants (zone+boss context attached)
 const buffCastBuffer    = [];   // pending observed buff landings on other players
 const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
 
@@ -13040,6 +13068,8 @@ function startChatRelay() {
       uploadFunEvents(funEventBuffer.splice(0), _uploadOpts).catch(() => {});
     if (factionBuffer.length > 0)
       uploadFaction(factionBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (popFlagBuffer.length > 0)
+      uploadPopFlags(popFlagBuffer.splice(0), _uploadOpts).catch(() => {});
     if (buffCastBuffer.length > 0)
       uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts).catch(() => {});
     // Tell relay drains per-character — the endpoint requires one character
@@ -15669,6 +15699,16 @@ function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
 // incl. the at-cap forms) and 'con' (a /consider standing TRANSITION for a
 // mob). Bot-side unique constraints make backfill replays idempotent, so
 // crawling a complete log history is safe to re-run.
+function uploadPopFlags(events, { dryRun } = {}) {
+  if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const e of events) console.log(`[pop-flag] ${e.character} · ${e.zone || '?'} · ${e.boss || '?'} · ${e.ts}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('pop_flag', { agent_version: AGENT_VERSION, events });
+  return Promise.resolve();
+}
+
 function uploadFaction(events, { dryRun } = {}) {
   if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
   if (dryRun) {
@@ -16286,6 +16326,8 @@ async function main() {
         if (facEvt) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
         if (conFacEvt) factionBuffer.push(conFacEvt);
+        const pfEvt = parsePopFlagLine(line, b.character);
+        if (pfEvt) popFlagBuffer.push(pfEvt);
         const faCastEvt = parseFeralAvatar(line, b.character);
         if (faCastEvt) funEventBuffer.push(faCastEvt);
         const faEvt = parseFeralAvatarReceived(line, b.character);
@@ -16324,6 +16366,10 @@ async function main() {
     if (factionBuffer.length > 0) {
       await uploadFaction(factionBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
         console.warn(`[faction backfill] ${err.message}`));
+    }
+    if (popFlagBuffer.length > 0) {
+      await uploadPopFlags(popFlagBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[pop-flag backfill] ${err.message}`));
     }
     if (buffCastBuffer.length > 0) {
       await uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
@@ -16536,6 +16582,8 @@ async function main() {
         if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
         if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
+        const pfEvt = parsePopFlagLine(line, b.character);
+        if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
         // Feral Avatar — caster-side fires only on the BL's own log; bystander
         // form fires on anyone in zone. Both push so the bot's (guild_id,
         // event_type, caster, event_ts) dedup collapses overlap.
