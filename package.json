@@ -16,7 +16,7 @@
   "dependencies": {
     "@discordjs/voice": "^0.18.0",
     "@noble/ciphers": "^1.2.1",
-    "discord.js": "^14.14.1",
+    "discord.js": "^14.26.4",
     "dotenv": "^16.4.5",
     "googleapis": "^171.4.0",
     "msedge-tts": "^2.0.5",
