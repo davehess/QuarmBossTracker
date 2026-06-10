@@ -1787,6 +1787,10 @@ function applyOverlayInteractivity() {
   // user prefs, so they can all be placed at once.
   const locked = !setupMode && cfg.overlaysLocked !== false;
   for (const [key, win] of _overlayEntries()) {
+    // A window mid single-overlay setup keeps its unlocked state — a global
+    // interactivity sweep (tray toggle, status push) must not re-lock it
+    // out from under the user while its setup strip is open.
+    if (_inSingleSetup(win)) continue;
     if (locked) {
       win.setIgnoreMouseEvents(true, { forward: true });
       win.setResizable(false);
@@ -3915,7 +3919,11 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
     if (wantInteractive) {
       win.setIgnoreMouseEvents(false);
     } else {
-      // Restore whatever the lock state dictates for this window.
+      // Restore whatever the lock state dictates for this window. A window
+      // in SINGLE-overlay setup mode stays interactive — this restore path
+      // is exactly what used to re-lock it on the first mouseleave, making
+      // its Done button and resize edges unclickable.
+      if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return true; }
       const cfg = loadConfig();
       const locked = !setupMode && cfg.overlaysLocked !== false;
       if (locked) win.setIgnoreMouseEvents(true, { forward: true });
@@ -4444,6 +4452,17 @@ ipcMain.handle('set-setup-mode', (_e, on) => { applySetupMode(!!on); return setu
 // where they are). The renderer flips body.setup itself to show its own
 // opacity slider; we just unlock + force-show THIS window so it can be
 // moved/resized without affecting the rest.
+// Windows currently in SINGLE-overlay setup mode (webContents ids). The
+// hover-interact restore path and applyOverlayInteractivity() both recompute
+// "locked" from the GLOBAL setupMode — which single mode never sets — so
+// without this registry the first mouseleave after opening the setup strip
+// flipped the window back to click-through: the Done button and the resize
+// edges went dead while the strip stayed on screen.
+const _singleSetupWins = new Set();
+function _inSingleSetup(win) {
+  try { return !!win && !win.isDestroyed() && _singleSetupWins.has(win.webContents.id); }
+  catch { return false; }
+}
 ipcMain.handle('set-setup-mode-this', (e, on) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -4455,6 +4474,7 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
     // Done was a no-op in scope='this' because the global setupMode was
     // never set in the first place.
     if (on === false) {
+      _singleSetupWins.delete(win.webContents.id);
       const cfg = loadConfig();
       const locked = cfg.overlaysLocked !== false;
       try { win.setIgnoreMouseEvents(locked, { forward: true }); } catch {}
@@ -4466,6 +4486,8 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
       return true;
     }
     // Unlock + show JUST this window; keep the others' state intact.
+    _singleSetupWins.add(win.webContents.id);
+    win.once('closed', () => { try { _singleSetupWins.delete(win.webContents.id); } catch {} });
     win.setIgnoreMouseEvents(false);
     win.setResizable(true);
     try { win.showInactive(); } catch {}
