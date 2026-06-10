@@ -210,7 +210,7 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
         <br /><br />
         <b>Want an accurate accounting for your own characters?</b> Install Mimic
         (<a href="https://wolfpack.quest/mimic" className="text-blue underline">wolfpack.quest/mimic</a>) or
-        run the local agent — their buffs + zone will sync within seconds. Open <code>localhost:7779</code> for your live view.
+        run the local agent — their buffs + zone will sync within seconds. Open <code>localhost:7777</code> for your live view.
       </div>
 
       {/* Filters */}

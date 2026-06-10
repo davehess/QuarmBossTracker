@@ -553,13 +553,13 @@ export default async function MePage() {
               <div className="text-xs text-dim mt-0.5">{bannerSub}</div>
             </div>
             <a
-              href="http://localhost:7779"
+              href="http://localhost:7777"
               target="_blank"
               rel="noreferrer"
               className="text-xs text-blue hover:underline whitespace-nowrap"
               title="The local parser dashboard — only opens if your wolfpack-logsync agent is running on this machine."
             >
-              localhost:7779 ↗
+              localhost:7777 ↗
             </a>
           </div>
           {syncRows.length > 0 && (
@@ -882,7 +882,7 @@ export default async function MePage() {
               <Panel
                 title="Buffs & Zone"
                 badge="GUILD"
-                tooltip="What this character is currently carrying (buffs/songs) and the zone they were last seen in, synced from your local parser's Zeal feed. A snapshot updated when things change — open localhost:7779 for live, second-by-second buff timers."
+                tooltip="What this character is currently carrying (buffs/songs) and the zone they were last seen in, synced from your local parser's Zeal feed. A snapshot updated when things change — open localhost:7777 for live, second-by-second buff timers."
               >
                 {!live ? (
                   <div className="text-dim text-xs italic">
@@ -913,8 +913,8 @@ export default async function MePage() {
                     )}
                     <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim flex items-center justify-between gap-2 flex-wrap">
                       <span>{live.updatedAt ? <>synced {relTime(live.updatedAt)}</> : 'snapshot'}</span>
-                      <a href="http://localhost:7779" target="_blank" rel="noreferrer" className="text-blue hover:underline whitespace-nowrap">
-                        live on localhost:7779 ↗
+                      <a href="http://localhost:7777" target="_blank" rel="noreferrer" className="text-blue hover:underline whitespace-nowrap">
+                        live on localhost:7777 ↗
                       </a>
                     </div>
                   </>
