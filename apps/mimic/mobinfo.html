@@ -552,10 +552,22 @@
                   + '</div>';
       }
     }
+    // PC target slot occupancy — "Buffs n/15 · Songs m/6". Authoritative only
+    // for Mimic-watched characters (Zeal sees their real buff window); absent
+    // for mobs and observed-only players.
+    var slotLine = '';
+    if (mi.target_slots) {
+      var ts = mi.target_slots;
+      var bcol = ts.buffs >= ts.buff_max ? '#f0883e' : '#56d364';
+      var scol = ts.songs >= ts.song_max ? '#f0883e' : '#56d364';
+      slotLine = '<div class="sub">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
+               + ' · songs <span style="color:'+scol+'">'+ts.songs+'/'+ts.song_max+'</span></div>';
+    }
     bodyEl.innerHTML = '<div class="mob">'
       + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
+      + slotLine
       + hpBar
       + manaBar
       + manaLine

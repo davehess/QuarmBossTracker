@@ -1046,7 +1046,11 @@ function _zealAbsorb(obj, pid) {
           const name = it.value;
           if (name && name !== '' && String(name).toLowerCase() !== 'none') {
             const ticks = it.meta && typeof it.meta.ticks === 'number' ? it.meta.ticks : null;
-            buffs.push({ name: String(name), ticks });
+            // song:true = the short-duration song window (Zeal ids 135-140,
+            // 6 slots) vs the main 15-slot buff window (45-59). Rides through
+            // the agent's live-state upload so /raid can show songs separately
+            // and Mob Info can render "Buffs n/15 · Songs m/6".
+            buffs.push({ name: String(name), ticks, song: (id >= 135 && id <= 140) });
           }
         } else if (id === 134) {
           if (it.value && it.value !== '') casting = String(it.value);

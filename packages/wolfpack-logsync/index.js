@@ -15190,6 +15190,9 @@ function _zealBuffsForName(nameLower) {
       observed_at_ms: Date.now(),
       source: 'zeal',
       good: _spellGood(b.name),
+      // Short-duration song window (Zeal ids 135-140) vs the 15-slot buff
+      // window — drives Mob Info's "Buffs n/15 · Songs m/6" header.
+      song: !!b.song,
     }));
   }
   return null;
@@ -15233,6 +15236,14 @@ function buildMobInfo() {
       seen.add(k);
     }
   }
+  // Slot occupancy for PC targets (authoritative via Zeal): the classic
+  // buff window holds 15 buff/debuff slots, the song window 6. Null for
+  // mobs/unwatched players — we only see observed landings for those.
+  let slotCounts = null;
+  if (zealBuffs !== null) {
+    const songs = zealBuffs.filter(b => b.song).length;
+    slotCounts = { buffs: zealBuffs.length - songs, buff_max: 15, songs, song_max: 6 };
+  }
   return {
     target_name:    st.target_name,
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
@@ -15240,6 +15251,7 @@ function buildMobInfo() {
     loading:        !cached,
     target_buffs:   buffs,
     target_is_pc:   zealBuffs !== null,
+    target_slots:   slotCounts,
     target_casting: ctc ? ctc.casts : [],
   };
 }
