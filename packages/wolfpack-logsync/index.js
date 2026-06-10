@@ -7988,9 +7988,22 @@ function _raidTierColor(t) {
 function renderRaidTab(q) {
   var root = document.getElementById('raid');
   if (!root) return;
+
+  // ── Card 1: Buff queue, grouped by buff line ──────────────────────────────
+  // Canonical category order — the order a buffer works the raid: HP slots
+  // first, then haste/attack/DS, then caster lines, then the rest.
+  var CAT_ORDER = ['HP A', 'HP B', 'HP C', 'HP', 'Haste', 'Attack', 'Dmg Shield',
+                   'Mana', 'Mana Regen', 'HP Regen', 'Run Speed', 'Levitate', 'Resists'];
+  function catRank(label) {
+    for (var i = 0; i < CAT_ORDER.length; i++) {
+      if (label === CAT_ORDER[i]) return i;
+      if (label.indexOf('Resist') === 0 && CAT_ORDER[i] === 'Resists') return i;
+    }
+    return CAT_ORDER.length;
+  }
   var h = '<div class="grid">';
-  h += '<div class="card wide"><h2>⚔ Buffs / Raid '
-    + '<span class="dim" style="font-size:11px;font-weight:normal">(live from the bot — 3s cache; the website refreshes slower)</span></h2>';
+  h += '<div class="card"><h2>🛡 Buff queue '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(grouped by buff line · 3s cache)</span></h2>';
   h += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0 10px;font-size:12px">'
     + '<span class="dim">Buffing as</span>'
     + '<select id="wpRaidCls" style="background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font:inherit">'
@@ -7999,56 +8012,104 @@ function renderRaidTab(q) {
         return '<option' + (c === _raidTabCls ? ' selected' : '') + '>' + c + '</option>';
       }).join('')
     + '</select>'
-    + '<a href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer" style="margin-left:auto;color:var(--orange)">full raid hub ↗</a>'
     + '</div>';
   if (!q) {
-    h += '<div class="dim">Loading the queue from the bot…</div></div></div>';
-    morphInto(root, h);
-    return;
-  }
-  var bq = q.buff_queue || [], dq = q.debuff_queue || [];
-  var burst = q.feral_queue || q.savagery_queue || [];
-  h += '<h3 style="color:var(--green);margin:8px 0 4px">🛡 Buff queue <span class="dim" style="font-size:11px;font-weight:normal">' + bq.length + ' · severity first</span></h3>';
-  if (!bq.length) h += '<div class="dim" style="font-size:12px">No gaps' + (_raidTabCls ? ' a ' + esc(_raidTabCls) + ' can fix' : '') + ' right now.</div>';
-  else {
-    h += '<table style="font-size:12px"><tr><th>Raider</th><th>Grp</th><th>Class</th><th>Missing</th></tr>';
-    for (var i = 0; i < bq.length; i++) {
-      var r = bq[i];
-      h += '<tr><td class="name" style="border-left:3px solid ' + _raidTierColor(r.tier) + ';padding-left:6px">' + esc(r.name)
-        + (r.inferred ? ' <span class="dim" title="Inferred from observed casts — not running Mimic">🔍</span>' : '')
-        + (r.skip_group_aego ? ' <span title="POTG/POTC fills HP slot A — single-target the Symbol, do not group-cast Aego">🌿</span>' : '')
-        + '</td>'
-        + '<td class="num">' + (r.group != null ? r.group : '—') + '</td>'
-        + '<td class="dim">' + esc(r.class || '?') + '</td>'
-        + '<td style="font-size:11px">' + esc((r.missing || []).join(' · ')) + '</td></tr>';
+    h += '<div class="dim">Loading the queue from the bot…</div></div>';
+  } else {
+    var bq = q.buff_queue || [];
+    if (!bq.length) {
+      h += '<div class="dim" style="font-size:12px">No gaps' + (_raidTabCls ? ' a ' + esc(_raidTabCls) + ' can fix' : '') + ' right now.</div>';
+    } else {
+      // Group rows under each missing buff line — a raider missing two lines
+      // appears under both, so the buffer can work line by line.
+      var byCat = {};
+      for (var i = 0; i < bq.length; i++) {
+        var labels = (bq[i].missing && bq[i].missing.length) ? bq[i].missing : ['Other'];
+        for (var j = 0; j < labels.length; j++) {
+          (byCat[labels[j]] = byCat[labels[j]] || []).push(bq[i]);
+        }
+      }
+      var cats = Object.keys(byCat).sort(function(a, b){ return catRank(a) - catRank(b) || a.localeCompare(b); });
+      for (var ci = 0; ci < cats.length; ci++) {
+        var label = cats[ci], rows = byCat[label];
+        h += '<div style="margin:8px 0 3px;padding:3px 8px;background:rgba(88,166,255,0.08);border-radius:4px;font-size:11px;color:var(--blue);font-weight:600">'
+          + esc(label) + ' <span class="dim" style="font-weight:normal">' + rows.length + '</span></div>';
+        for (var ri = 0; ri < rows.length; ri++) {
+          var r = rows[ri];
+          h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid ' + _raidTierColor(r.tier) + ';margin-bottom:1px">'
+            + '<span style="color:var(--text);font-weight:600">' + esc(r.name) + '</span>'
+            + '<span class="dim" style="font-size:10px">G' + (r.group != null ? r.group : '?') + ' · ' + esc(r.class || '?') + '</span>'
+            + (r.inferred ? '<span class="dim" title="Inferred from observed casts — not running Mimic">🔍</span>' : '')
+            + (r.skip_group_aego ? '<span title="POTG/POTC fills HP slot A — single-target the Symbol, do not group-cast Aego">🌿</span>' : '')
+            + '</div>';
+        }
+      }
     }
-    h += '</table>';
-  }
-  h += '<h3 style="color:var(--red);margin:14px 0 4px">🩸 Debuff queue <span class="dim" style="font-size:11px;font-weight:normal">' + dq.length + ' · cures needed</span></h3>';
-  if (!dq.length) h += '<div class="dim" style="font-size:12px">No active curses across the raid.</div>';
-  else {
-    h += '<table style="font-size:12px"><tr><th>Raider</th><th>Grp</th><th>Curses</th></tr>';
-    for (var j = 0; j < dq.length; j++) {
-      var d = dq[j];
-      var chips = (d.curses || []).map(function(c){
-        return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '');
-      }).join(' · ');
-      h += '<tr><td class="name">' + esc(d.name) + '</td><td class="num">' + (d.group != null ? d.group : '—') + '</td>'
-        + '<td style="font-size:11px;color:var(--red)">' + chips + '</td></tr>';
+    var dq = q.debuff_queue || [];
+    if (dq.length) {
+      h += '<div style="margin:12px 0 3px;padding:3px 8px;background:rgba(248,81,73,0.10);border-radius:4px;font-size:11px;color:var(--red);font-weight:600">🩸 Cures needed <span class="dim" style="font-weight:normal">' + dq.length + '</span></div>';
+      for (var dj = 0; dj < dq.length; dj++) {
+        var d = dq[dj];
+        var chips = (d.curses || []).map(function(c){
+          return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '');
+        }).join(' · ');
+        h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--red);margin-bottom:1px">'
+          + '<span style="color:var(--text);font-weight:600">' + esc(d.name) + '</span>'
+          + '<span class="dim" style="font-size:10px">G' + (d.group != null ? d.group : '?') + '</span>'
+          + '<span style="font-size:11px;color:var(--red)">' + chips + '</span></div>';
+      }
     }
-    h += '</table>';
-  }
-  if (burst.length && q.burst_label) {
-    h += '<h3 style="color:var(--gold);margin:14px 0 4px">⚡ ' + esc(q.burst_label) + ' queue <span class="dim" style="font-size:11px;font-weight:normal">damage descending</span></h3>';
-    h += '<table style="font-size:12px"><tr><th>Raider</th><th>Grp</th><th>Class</th><th>Damage</th></tr>';
-    for (var k = 0; k < burst.length; k++) {
-      var b2 = burst[k];
-      h += '<tr><td class="name">' + esc(b2.name) + '</td><td class="num">' + (b2.group != null ? b2.group : '—') + '</td>'
-        + '<td class="dim">' + esc(b2.class || '?') + '</td><td class="num">' + (b2.damage ? fmtK(b2.damage) : '<span class="dim">no data</span>') + '</td></tr>';
+    var burst = q.feral_queue || q.savagery_queue || [];
+    if (burst.length && q.burst_label) {
+      h += '<div style="margin:12px 0 3px;padding:3px 8px;background:rgba(240,180,41,0.10);border-radius:4px;font-size:11px;color:var(--gold);font-weight:600">⚡ ' + esc(q.burst_label) + ' <span class="dim" style="font-weight:normal">damage descending</span></div>';
+      for (var bk = 0; bk < burst.length; bk++) {
+        var b2 = burst[bk];
+        h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--gold);margin-bottom:1px">'
+          + '<span style="color:var(--text);font-weight:600">' + esc(b2.name) + '</span>'
+          + '<span class="dim" style="font-size:10px">G' + (b2.group != null ? b2.group : '?') + ' · ' + esc(b2.class || '?') + '</span>'
+          + '<span class="num" style="margin-left:auto">' + (b2.damage ? fmtK(b2.damage) : '<span class="dim">no data</span>') + '</span></div>';
+      }
     }
-    h += '</table>';
+    h += '</div>';
   }
-  h += '</div></div>';
+
+  // ── Card 2: Raid — live roster with health + buff state ──────────────────
+  h += '<div class="card"><h2>⚔ Raid '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(your raid only — HP from Zeal group gauges)</span> '
+    + '<a href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer" style="color:var(--orange);font-size:11px;font-weight:normal;float:right">full raid hub ↗</a></h2>';
+  var roster = (q && q.roster) || [];
+  if (!roster.length) {
+    h += '<div class="dim" style="font-size:12px">No raid roster flowing yet — join a raid (or group) with Mimic running and this fills in within seconds.</div>';
+  } else {
+    var mimics = roster.filter(function(r){ return r.mimic; }).length;
+    h += '<div class="dim" style="font-size:11px;margin:4px 0 8px">' + roster.length + ' raiders · ' + mimics + ' on Mimic</div>';
+    var byGroup = {};
+    var groupOrder = [];
+    for (var gi = 0; gi < roster.length; gi++) {
+      var gk = roster[gi].group != null ? ('Group ' + roster[gi].group) : 'No group';
+      if (!byGroup[gk]) { byGroup[gk] = []; groupOrder.push(gk); }
+      byGroup[gk].push(roster[gi]);
+    }
+    for (var go = 0; go < groupOrder.length; go++) {
+      var glabel = groupOrder[go], members = byGroup[glabel];
+      h += '<div style="margin:8px 0 3px;font-size:11px;color:var(--gold);font-weight:600">👥 ' + esc(glabel) + ' <span class="dim" style="font-weight:normal">' + members.length + '</span></div>';
+      for (var mi = 0; mi < members.length; mi++) {
+        var m = members[mi];
+        var hp = m.hp_pct != null ? Math.max(0, Math.min(100, Math.round(m.hp_pct))) : null;
+        var hpColor = hp == null ? 'var(--border)' : (hp > 50 ? 'var(--green)' : (hp > 20 ? 'var(--orange)' : 'var(--red)'));
+        h += '<div style="position:relative;display:flex;align-items:baseline;gap:7px;padding:3px 8px 4px;font-size:12px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:rgba(8,5,16,0.35);border-radius:3px;overflow:hidden">'
+          + '<span style="color:var(--text);font-weight:600">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name) + '</span>'
+          + '<span class="dim" style="font-size:10px">' + esc(m.class || '?') + (m.level != null ? ' L' + m.level : '') + '</span>'
+          + (m.mimic ? '<span style="font-size:9px" title="Running Mimic — live buff data">🐺</span>' : (m.inferred ? '<span class="dim" style="font-size:9px" title="Buffs inferred from observed casts">🔍</span>' : '<span class="dim" style="font-size:9px;font-style:italic">no data</span>'))
+          + '<span class="dim" style="margin-left:auto;font-size:10px">' + (m.buff_count ? m.buff_count + ' buffs' : '') + '</span>'
+          + (hp != null ? '<span class="num" style="font-size:11px;color:' + hpColor + '">' + hp + '%</span>' : '')
+          + (hp != null ? '<span style="position:absolute;left:0;bottom:0;height:2px;background:' + hpColor + ';width:' + hp + '%"></span>' : '')
+          + '</div>';
+      }
+    }
+  }
+  h += '</div>';
+  h += '</div>';
   morphInto(root, h);
   var sel = document.getElementById('wpRaidCls');
   if (sel) _bindOnce(sel, 'change', function(){
