@@ -926,17 +926,17 @@ function parseEvent(line, ts) {
   if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
 
   // ── Aggro dumps ──────────────────────────────────────────────────────────
-  // Feign Death — monk ability AND the SK/necro spell landing both print the
-  // same fall line ("You have fallen to the ground." self / "<Name> has
-  // fallen to the ground." bystander). The line prints whether the FD
-  // succeeded or failed; we can't tell from the log alone, so the threat
-  // meter assumes success (raid-skill FD rarely fails, and a failed FD's
-  // continued combat rebuilds the meter anyway).
+  // Feign Death — the fall line is the FAILURE tell: "You have fallen to the
+  // ground." prints when the FD did NOT take and you're still on the hate
+  // table. A SUCCESSFUL FD is silent in the log — the only way to know it
+  // stuck is mob behavior (stops attacking / re-engages someone else / cons
+  // non-scowling on positive faction). So these events are failure counters
+  // only; the threat meter must NOT zero anyone's threat from them.
   if (/\]\s+You have fallen to the ground\.\s*$/i.test(line)) {
-    return { ts: tsIso, type: 'feign_death', attacker: null };
+    return { ts: tsIso, type: 'feign_death', attacker: null, success: false };
   }
   m = line.match(/\]\s+(\w+) has fallen to the ground\.\s*$/i);
-  if (m) return { ts: tsIso, type: 'feign_death', attacker: m[1] };
+  if (m) return { ts: tsIso, type: 'feign_death', attacker: m[1], success: false };
   // Rogue Evade (mid-fight Hide) — SELF-ONLY lines, so only the rogue's own
   // agent sees them. Success cuts hate roughly in half on TAKP-era servers.
   if (/\]\s+You have momentarily ducked away from the main combat\.\s*$/i.test(line)) {
@@ -2288,6 +2288,90 @@ function notePetBuffWornOff(line, character) {
 // { next_quake_at, detected_at, source_text } or null.
 const _EARTHQUAKE_RX = /the next earthquake will begin in\s+(.+?)\.?\s*$/i;
 let _lastQuakeSig = null;
+// ── Faction tracking detectors ──────────────────────────────────────────────
+// Two self-only line families feed the per-character faction picture
+// (surfaced on wolfpack.quest /character/<name>/factions, BETA):
+//
+//  1. Faction HITS — printed on kills and quest turn-ins:
+//       "Your faction standing with VeliumHounds got worse."
+//       "Your faction standing with KaladimCitizens got better."
+//     At the cap the server says so — gold data, it pins the character's
+//     absolute position on that faction:
+//       "Your faction standing with X could not possibly get any better."
+//       "Your faction standing with X could not possibly get any worse."
+//     Classic prints no numeric delta; we store direction + cap flag and
+//     marry magnitudes to PQDI's faction pages (per-mob/per-quest values)
+//     on the web side. Base standing by class/race/deity is a follow-up.
+//
+//  2. CON standings — every /consider prints the mob's faction tier toward
+//     YOU as the leading phrase ("scowls at you, ready to attack" … "regards
+//     you as an ally"). We log standing TRANSITIONS per (character, mob), so
+//     a complete-log crawl charts when each faction tier moved — and a mob
+//     that cons non-scowling is also the only log-visible evidence that a
+//     Feign Death actually stuck (success is silent; see the FD handler).
+const CON_STANDINGS = [
+  ['regards you as an ally',         'ally',           8],
+  ['looks upon you warmly',          'warmly',         7],
+  ['kindly considers you',           'kindly',         6],
+  ['judges you amiably',             'amiably',        5],
+  ['regards you indifferently',      'indifferently',  4],
+  ['looks your way apprehensively',  'apprehensively', 3],
+  ['glowers at you dubiously',       'dubiously',      2],
+  ['glares at you threateningly',    'threateningly',  1],
+  ['scowls at you, ready to attack', 'scowls',         0],
+];
+// Phrases are plain prose (no regex metacharacters), so a straight join is
+// safe — keep it that way if new tiers are ever added.
+const _CON_RX = new RegExp('\\]\\s+(.+?)\\s+(' + CON_STANDINGS.map(([p]) => p).join('|') + ')', 'i');
+function parseFactionLine(line, character) {
+  if (!character || line.indexOf('Your faction standing with') === -1) return null;
+  const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)|could not possibly get any (better|worse))\.\s*$/i);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  const dirWord = (m[2] || m[3] || '').toLowerCase();
+  return {
+    kind:      'hit',
+    character,
+    faction:   m[1].trim().slice(0, 96),
+    direction: dirWord === 'better' ? 1 : -1,
+    capped:    !!m[3],
+    ts:        ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+// Standing-change dedup so /con spam doesn't flood the upload buffer: emit
+// only when the standing for (character, mob) differs from the last one seen
+// this session. Backfill crawls therefore record TRANSITIONS — exactly the
+// history we want ("when did Thurgadin stop scowling at me").
+const _lastConStanding = new Map();   // charLower|mobLower → standing
+function parseConsiderLine(line, character) {
+  if (!character || line.indexOf(' you') === -1) return null;
+  const m = line.match(_CON_RX);
+  if (!m) return null;
+  const mob = m[1].trim();
+  // Sanity: mob names are short; a chat line that happens to contain a con
+  // phrase would carry a long prefix ("Soandso says, 'that gnoll ...") —
+  // reject anything with quotes or implausible length.
+  if (!mob || mob.length > 64 || /['"‘’]/.test(mob) || /\b(?:says|tells|shouts|auctions)\b/i.test(mob)) return null;
+  const phrase = m[2].toLowerCase();
+  const entry = CON_STANDINGS.find(([p]) => p === phrase);
+  if (!entry) return null;
+  const key = String(character).toLowerCase() + '|' + mob.toLowerCase();
+  if (_lastConStanding.get(key) === entry[1]) return null;   // unchanged → skip
+  _lastConStanding.set(key, entry[1]);
+  if (_lastConStanding.size > 4000) {
+    _lastConStanding.delete(_lastConStanding.keys().next().value);
+  }
+  const ts = parseEqTimestamp(line);
+  return {
+    kind:      'con',
+    character,
+    mob:       mob.slice(0, 64),
+    standing:  entry[1],
+    rank:      entry[2],
+    ts:        ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
 function parseEarthquake(line) {
   if (!line || line.toLowerCase().indexOf('earthquake') === -1) return null;
   const m = line.match(_EARTHQUAKE_RX);
@@ -3534,10 +3618,13 @@ class EncounterBuilder {
       }
     }
 
-    // Aggro dumps — Feign Death and rogue Evade pull the player DOWN the
-    // threat meter. Only the threat buckets (swing/proc/spell/heal) are
-    // touched; dmg/healRaw/took are damage-meter numbers and must survive
-    // a dump untouched (FDing doesn't un-deal your damage).
+    // Aggro dumps — rogue Evade pulls the player DOWN the threat meter; the
+    // Feign Death fall line is the FAILURE signal (a successful FD is silent
+    // in the log — only the mob's behavior reveals it), so FD lines are
+    // counted as failed attempts and never reduce anyone's threat. Only the
+    // threat buckets (swing/proc/spell/heal) are touched by evade;
+    // dmg/healRaw/took are damage-meter numbers and must survive untouched
+    // (evading doesn't un-deal your damage).
     if (event.type === 'feign_death' || event.type === 'evade') {
       // FD bystander form carries the faller's name; self forms resolve to
       // the uploader. Single-capitalized-word gate keeps NPC corpses and
@@ -3546,11 +3633,12 @@ class EncounterBuilder {
       if (who && /^[A-Z][a-zA-Z]{2,19}$/.test(who) && this.threatBy.has(who)) {
         const t = this.threatBy.get(who);
         if (event.type === 'feign_death') {
-          // Successful FD = off the hate list. We can't distinguish a failed
-          // FD from the log line, so assume success — a failed FD's continued
-          // combat rebuilds the buckets within seconds anyway.
-          t.procDetail['Feign Death'] = (t.procDetail['Feign Death'] || 0) + 1;
-          t.swing = 0; t.proc = 0; t.spell = 0; t.heal = 0;
+          // The fall line = failed FD; the player is still on the hate
+          // table at full threat. Count it so monks can see their FD
+          // fail rate in the breakdown column. (Successful FDs leave no
+          // log line; inferring them from mob con/disengage behavior is
+          // the faction-consider work — see parseConsiderLine.)
+          t.procDetail['Feign Death (failed)'] = (t.procDetail['Feign Death (failed)'] || 0) + 1;
         } else if (event.success) {
           // Successful Evade ≈ a big flat cut; TAKP-era servers model it as
           // roughly half your hate. Halve every bucket so the breakdown bar
@@ -4304,6 +4392,7 @@ function _endpointForKind(kind, botUrl) {
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
+    case 'faction':         return base + '/faction';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -11828,6 +11917,13 @@ function runOptinBackfill(files, opts = {}) {
             if (dpEvt) funEventBuffer.push(dpEvt);
             const dirgeEvt = parseDirgeCast(line, f.character);
             if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+            // Faction hits + /con standing transitions — self-only lines; rides
+            // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
+            // complete-log backfill crawls idempotent.
+            const facEvt = parseFactionLine(line, f.character);
+            if (facEvt) factionBuffer.push(facEvt);
+            const conFacEvt = parseConsiderLine(line, f.character);
+            if (conFacEvt) factionBuffer.push(conFacEvt);
             // Feral Avatar cast-begin (caster-side AND bystander-side).
             // Complementary to parseFeralAvatarReceived below — that one fires
             // on the buff land, this one on the cast begin. Both push so the
@@ -12883,6 +12979,7 @@ const pvpBuffer         = [];   // pending PVP broadcast lines
 const pvpAssistBuffer   = [];   // pending PvP assist correlations (us → player damage + their death by someone else)
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
+const factionBuffer     = [];   // pending faction hits + /con standing transitions
 const buffCastBuffer    = [];   // pending observed buff landings on other players
 const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
 
@@ -12932,6 +13029,8 @@ function startChatRelay() {
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
     if (funEventBuffer.length > 0)
       uploadFunEvents(funEventBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (factionBuffer.length > 0)
+      uploadFaction(factionBuffer.splice(0), _uploadOpts).catch(() => {});
     if (buffCastBuffer.length > 0)
       uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts).catch(() => {});
     // Tell relay drains per-character — the endpoint requires one character
@@ -15556,6 +15655,21 @@ function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
   return Promise.resolve();
 }
 
+// Faction events upload → bot's /api/agent/faction. Two kinds ride the same
+// payload: 'hit' (a "Your faction standing with X got better/worse" line,
+// incl. the at-cap forms) and 'con' (a /consider standing TRANSITION for a
+// mob). Bot-side unique constraints make backfill replays idempotent, so
+// crawling a complete log history is safe to re-run.
+function uploadFaction(events, { dryRun } = {}) {
+  if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const e of events) console.log(`[faction] ${e.kind} · ${e.character} · ${e.faction || e.mob} · ${e.direction != null ? (e.direction > 0 ? 'better' : 'worse') : e.standing} · ${e.ts}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('faction', { agent_version: AGENT_VERSION, events });
+  return Promise.resolve();
+}
+
 // Fun-events upload (Peopleslayer LD counter, future CoH/DI/Aegolism). Each
 // event is a tagged occurrence the bot stores in the fun_events table with
 // a unique constraint on (guild_id, event_type, caster, event_ts) so re-
@@ -16147,6 +16261,13 @@ async function main() {
         if (dpEvt) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+        // Faction hits + /con standing transitions — self-only lines; rides
+        // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
+        // complete-log backfill crawls idempotent.
+        const facEvt = parseFactionLine(line, b.character);
+        if (facEvt) factionBuffer.push(facEvt);
+        const conFacEvt = parseConsiderLine(line, b.character);
+        if (conFacEvt) factionBuffer.push(conFacEvt);
         const faCastEvt = parseFeralAvatar(line, b.character);
         if (faCastEvt) funEventBuffer.push(faCastEvt);
         const faEvt = parseFeralAvatarReceived(line, b.character);
@@ -16181,6 +16302,10 @@ async function main() {
     if (funEventBuffer.length > 0) {
       await uploadFunEvents(funEventBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
         console.warn(`[fun-event backfill] ${err.message}`));
+    }
+    if (factionBuffer.length > 0) {
+      await uploadFaction(factionBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[faction backfill] ${err.message}`));
     }
     if (buffCastBuffer.length > 0) {
       await uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
@@ -16386,6 +16511,13 @@ async function main() {
         if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
+        // Faction hits + /con standing transitions — self-only lines; rides
+        // the 5s relay flush to /api/agent/faction. Honors the per-character
+        // exclude_from_stats opt-out like every other upload stream.
+        const facEvt = parseFactionLine(line, b.character);
+        if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
+        const conFacEvt = parseConsiderLine(line, b.character);
+        if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
         // Feral Avatar — caster-side fires only on the BL's own log; bystander
         // form fires on anyone in zone. Both push so the bot's (guild_id,
         // event_type, caster, event_ts) dedup collapses overlap.
