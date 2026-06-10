@@ -13,11 +13,13 @@
 //   • Mass-buff cooldown + Feral Avatar queue (roadmap stage 3)
 //   • DKP auction winner highlight (roadmap stage 4)
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS, HP_SLOTS, HP_SLOT_LABELS,
+  RESIST_TYPES, RESIST_LABELS,
   shortBuffName, fmtBuffRemaining, buffTimeTone, isCurseBuff,
-  type BuffCategory, type Role, type HpSlotState,
+  type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
 
 // Tone for a buff's live time-left — crit (refresh now) → low → ok. "unknown"
@@ -43,6 +45,8 @@ export type RaidRow = {
   buffCount: number;
   byCategory: Record<string, string[]>;
   other: string[];
+  resists: Record<ResistType, string[]>;   // per-school coverage (MR/FR/CR/PR/DR)
+  songs: { name: string; ticks: number | null }[];  // bard songs currently landed
   hpSlots: HpSlotState;
   tier: 'green' | 'yellow' | 'orange' | 'red' | 'unknown';
   buffs: { name: string; ticks: number | null }[];
@@ -90,6 +94,18 @@ const CLASS_PROVIDES: Record<string, BuffCategory[]> = {
   beastlord: ['attack', 'regen'],
   magician:  ['ds'],
   wizard:    ['hp'],
+};
+
+// Which resist SCHOOLS each class can cover — drives per-school gaps in the
+// buffer queue ("Resist Magic missing on Dafeet") instead of the generic
+// resists bucket, which any one resist buff satisfied.
+const CLASS_PROVIDES_RESISTS: Record<string, ResistType[]> = {
+  enchanter: ['MR'],
+  cleric:    ['MR', 'PR', 'DR'],
+  druid:     ['FR', 'CR'],
+  shaman:    ['CR', 'PR', 'DR'],
+  paladin:   ['DR'],
+  bard:      ['MR', 'FR', 'CR', 'PR', 'DR'],   // psalms cover every school
 };
 
 function ago(iso: string | null): string {
@@ -146,6 +162,21 @@ export default function RaidView({
   // Tracked here so the user can flip mid-pull without losing the side panel
   // selection; the cure caster's whole flow is on /raid?view=cursed.
   const [view, setView] = useState<'roster' | 'cursed'>('roster');
+  // "Not in raid" parking lot: hide characters unseen for >15 min by default
+  // (logged-off alts pile up fast) — the toggle brings them back.
+  const [showStale, setShowStale] = useState(false);
+
+  // Live page: re-runs the server component every 15s so freshly-cast buffs
+  // show without a manual reload. router.refresh() preserves client state
+  // (selected raider, buffer class, view) — only the data props re-render.
+  // Paused while the tab is hidden.
+  const router = useRouter();
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') router.refresh();
+    }, 15_000);
+    return () => clearInterval(t);
+  }, [router]);
 
   // Raiders currently afflicted by anything isCurseBuff() recognizes. Empty
   // until a Mimic-running raider's buff list includes a known curse name.
@@ -160,11 +191,18 @@ export default function RaidView({
   }, [rows]);
 
   // Group by raid group. Parked alts → "Not in raid" bucket sorted last.
+  // Stale parked characters (no live-state update in >15 min — logged off)
+  // are hidden by default; staleHidden carries the count for the toggle.
+  const STALE_MS = 15 * 60 * 1000;
+  const isStale = (r: RaidRow) =>
+    !r.inRaid && (!r.updatedAt || (Date.now() - new Date(r.updatedAt).getTime()) > STALE_MS);
+  const staleHidden = useMemo(() => rows.filter(isStale).length, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
   const groups = useMemo(() => {
     const m = new Map<string, RaidRow[]>();
     const keyFor = (r: RaidRow) =>
       r.raidGroup != null ? `Group ${r.raidGroup}` : 'Not in raid';
     for (const r of rows) {
+      if (!showStale && isStale(r)) continue;
       const k = keyFor(r);
       const arr = m.get(k);
       if (arr) arr.push(r); else m.set(k, [r]);
@@ -177,7 +215,7 @@ export default function RaidView({
       if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi;
       return a[0].localeCompare(b[0]);
     });
-  }, [rows]);
+  }, [rows, showStale]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selected = selectedName ? rows.find(r => r.name === selectedName) ?? null : null;
 
@@ -186,18 +224,24 @@ export default function RaidView({
   const bufferQueue = useMemo(() => {
     if (!bufferClass) return [];
     const provides = CLASS_PROVIDES[bufferClass.toLowerCase()] || [];
-    if (provides.length === 0) return [];
+    const providesResists = CLASS_PROVIDES_RESISTS[bufferClass.toLowerCase()] || [];
+    if (provides.length === 0 && providesResists.length === 0) return [];
     const severity = { red: 0, orange: 1, yellow: 2, green: 3, unknown: 4 } as const;
-    const out: { row: RaidRow; missing: BuffCategory[] }[] = [];
+    const out: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[] }[] = [];
     for (const r of rows) {
       if (!r.inRaid || r.noAgent) continue;
       const expected = ROLE_TARGETS[r.role] || [];
-      const missing = provides.filter(cat => expected.includes(cat) && !(r.byCategory[cat]?.length));
+      // Generic categories minus resists — those get per-school treatment so
+      // "has Circle of Seasons" doesn't hide a missing Group Resist Magic.
+      const missing = provides.filter(cat => cat !== 'resists' && expected.includes(cat) && !(r.byCategory[cat]?.length));
+      const missingResists = providesResists.filter(t => !(r.resists[t]?.length));
       // HP slots are special — clerics/druids/shaman provide them, missing
       // counts even if the role-target categories all check out.
       const providesHp = provides.includes('hp');
       const missingHp = providesHp ? HP_SLOTS.filter(s => !r.hpSlots[s]) : [];
-      if (missing.length > 0 || missingHp.length > 0) out.push({ row: r, missing });
+      if (missing.length > 0 || missingHp.length > 0 || missingResists.length > 0) {
+        out.push({ row: r, missing, missingResists });
+      }
     }
     out.sort((a, b) => severity[a.row.tier] - severity[b.row.tier]);
     return out.slice(0, 30);
@@ -324,6 +368,16 @@ export default function RaidView({
                         : <span title="No Mimic in this group — HP signals unavailable" className="text-[9px] uppercase tracking-widest text-dim border border-dim/40 rounded px-1.5 py-0.5">no mimic</span>
                     )}
                     {!isRaidGroup && <span className="text-dim/70 text-xs">parked / not in current raid</span>}
+                    {!isRaidGroup && staleHidden > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setShowStale(s => !s); }}
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-border text-dim hover:text-text hover:border-blue"
+                        title="Parked characters with no live data in the last 15 minutes are hidden by default"
+                      >
+                        {showStale ? `hide ${staleHidden} unseen >15m` : `show ${staleHidden} unseen >15m`}
+                      </button>
+                    )}
                   </div>
                   <TierLegend rows={grpRows} />
                 </header>
@@ -392,6 +446,19 @@ export default function RaidView({
               </section>
             );
           })}
+
+          {/* When every parked character is stale, the "Not in raid" section
+              vanishes — keep the toggle reachable. */}
+          {staleHidden > 0 && !groups.some(([l]) => l === 'Not in raid') && (
+            <section className="bg-panel border border-border/60 rounded-lg px-3 py-2 text-xs text-dim flex items-center justify-between">
+              <span>🛋️ {staleHidden} parked character{staleHidden === 1 ? '' : 's'} unseen for &gt;15m</span>
+              <button
+                type="button"
+                onClick={() => setShowStale(true)}
+                className="px-1.5 py-0.5 rounded border border-border hover:text-text hover:border-blue"
+              >show</button>
+            </section>
+          )}
 
           {/* Soon-but-not-yet feature teasers, all data-driven from what we
               already have or know how to add. Visible so we keep momentum. */}
@@ -550,7 +617,7 @@ function BufferQueues({
   bufferClass, buffQueue, debuffQueue, onSelect,
 }: {
   bufferClass: BufferClass;
-  buffQueue: { row: RaidRow; missing: BuffCategory[] }[];
+  buffQueue: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[] }[];
   debuffQueue: { row: RaidRow; curses: { name: string; ticks: number | null }[] }[];
   onSelect: (name: string) => void;
 }) {
@@ -569,7 +636,7 @@ function BufferQueues({
           </div>
         ) : (
           <ul className="text-xs space-y-1.5">
-            {buffQueue.map(({ row, missing }) => (
+            {buffQueue.map(({ row, missing, missingResists }) => (
               <li key={row.name} className="flex items-center gap-2 border-b border-border/40 pb-1.5 last:border-0">
                 <span className={['inline-block w-1.5 h-5 rounded-sm shrink-0', TIER_STYLE[row.tier].bar].join(' ')} />
                 <button
@@ -583,7 +650,10 @@ function BufferQueues({
                 )}
                 <span className="text-dim text-[11px]">{row.className} · Grp {row.raidGroup ?? '?'}</span>
                 <span className="text-dim ml-auto text-[11px] text-right">
-                  {missing.map(c => CATEGORY_LABELS[c]).join(' · ') || 'HP slot missing'}
+                  {[
+                    ...missing.map(c => CATEGORY_LABELS[c]),
+                    ...missingResists.map(t => 'Resist ' + RESIST_LABELS[t]),
+                  ].join(' · ') || 'HP slot missing'}
                 </span>
               </li>
             ))}
@@ -804,11 +874,11 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
           </div>
 
           {/* Categories — only those expected for the role, with the missing
-              ones flagged. */}
+              ones flagged. Resists get their own per-school section below. */}
           <div>
             <div className="text-[10px] uppercase tracking-widest text-dim mb-1">Buff categories</div>
             <ul className="space-y-1">
-              {(['regen','mana','manaRegen','haste','runSpeed','attack','ds','resists'] as BuffCategory[]).map(cat => {
+              {(['regen','mana','manaRegen','haste','runSpeed','attack','ds'] as BuffCategory[]).map(cat => {
                 const names = row.byCategory[cat] || [];
                 const present = names.length > 0;
                 const exp = expected.includes(cat);
@@ -826,6 +896,50 @@ function CharacterDetail({ row, onClose }: { row: RaidRow; onClose: () => void }
                 );
               })}
             </ul>
+          </div>
+
+          {/* Resists — all five schools. One "Resists" line hid which school
+              was uncovered (Circle of Seasons satisfied the bucket while a
+              missing Group Resist Magic stayed invisible). */}
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-dim mb-1">
+              Resists ({RESIST_TYPES.filter(t => row.resists[t]?.length).length}/5)
+            </div>
+            <ul className="space-y-1">
+              {RESIST_TYPES.map(t => {
+                const names = row.resists[t] || [];
+                return (
+                  <li key={t} className="flex items-center gap-2 text-[11px]">
+                    <span className="text-dim w-20 shrink-0">{RESIST_LABELS[t]}</span>
+                    {names.length > 0
+                      ? <span className="flex items-center gap-1 min-w-0" title={names.join(', ')}>
+                          <BuffChip name={names[0]} />
+                          {names.length > 1 ? <span className="text-green shrink-0">+{names.length - 1}</span> : null}
+                        </span>
+                      : <span className="text-red-400">— missing</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* Bard songs currently landed (Zeal's 6-slot song window; name
+              heuristic for raiders on a pre-3.1.12 agent). */}
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-dim mb-1">
+              Songs ({Math.min(row.songs.length, 6)}/6)
+            </div>
+            {row.songs.length === 0 ? (
+              <div className="text-[11px] text-dim italic">no songs landed</div>
+            ) : (
+              <ul className="space-y-1">
+                {row.songs.slice(0, 6).map((s, i) => (
+                  <li key={s.name + ':' + i} className="text-[11px]">
+                    <BuffChip name={s.name} />
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {row.other.length > 0 && (

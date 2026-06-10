@@ -23,7 +23,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
   categorizeBuff, classToRole, analyzeHpSlots, ROLE_TARGETS, isCorpse,
-  type BuffCategory, type Role, type HpSlotState,
+  resistTypesFor, isSongBuff,
+  type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
 import RaidView, { type RaidRow } from './RaidView';
 
@@ -34,7 +35,7 @@ type LiveStateRow = {
   character: string;
   zone_name: string | null;
   self_hp_pct: number | null;
-  buffs: { name: string; ticks: number | null }[] | null;
+  buffs: { name: string; ticks: number | null; song?: boolean }[] | null;
   buff_count: number | null;
   pet_name: string | null;
   pet_hp_pct: number | null;
@@ -155,16 +156,23 @@ export default async function RaidHubPage() {
     };
   }
 
-  function bucketBuffs(buffs: { name: string; ticks: number | null }[] | null) {
+  function bucketBuffs(buffs: { name: string; ticks: number | null; song?: boolean }[] | null) {
     const byCategory: Record<string, string[]> = {};
     const other: string[] = [];
+    // Per-school resist coverage (MR/FR/CR/PR/DR → granting buff names) and
+    // the bard songs currently landed (song flag from agent v3.1.12+, name
+    // heuristic for older data).
+    const resists: Record<ResistType, string[]> = { MR: [], FR: [], CR: [], PR: [], DR: [] };
+    const songs: { name: string; ticks: number | null }[] = [];
     for (const b of (buffs ?? [])) {
       if (!b || !b.name) continue;
+      if (isSongBuff(b.name, b.song)) songs.push({ name: b.name, ticks: b.ticks ?? null });
+      for (const t of resistTypesFor(b.name)) resists[t].push(b.name);
       const cat = categorizeBuff(b.name);
       if (cat) (byCategory[cat] ||= []).push(b.name);
       else other.push(b.name);
     }
-    return { byCategory, other };
+    return { byCategory, other, resists, songs };
   }
 
   // Build rows: every roster member (or live-state character) gets one. Roster
@@ -184,7 +192,7 @@ export default async function RaidHubPage() {
     const live = liveByName.get(lower);
     const className = classFor(rr.name);
     const role = classToRole(className);
-    const { byCategory, other } = bucketBuffs(live?.buffs ?? null);
+    const { byCategory, other, resists, songs } = bucketBuffs(live?.buffs ?? null);
     const hpSlots = analyzeHpSlots((live?.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
     const noAgent = !live;
     rows.push({
@@ -205,6 +213,8 @@ export default async function RaidHubPage() {
       buffCount: live?.buff_count ?? (live?.buffs?.length ?? 0),
       byCategory,
       other,
+      resists,
+      songs,
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, live?.buffs ?? null, noAgent),
       buffs: live?.buffs ?? [],
@@ -220,7 +230,7 @@ export default async function RaidHubPage() {
     seen.add(lower);
     const className = classFor(r.character);
     const role = classToRole(className);
-    const { byCategory, other } = bucketBuffs(r.buffs);
+    const { byCategory, other, resists, songs } = bucketBuffs(r.buffs);
     const hpSlots = analyzeHpSlots((r.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
     rows.push({
       name: r.character,
@@ -237,6 +247,8 @@ export default async function RaidHubPage() {
       buffCount: r.buff_count ?? (r.buffs?.length ?? 0),
       byCategory,
       other,
+      resists,
+      songs,
       hpSlots,
       tier: colorTier(role, byCategory, hpSlots, r.buffs, false),
       buffs: r.buffs ?? [],

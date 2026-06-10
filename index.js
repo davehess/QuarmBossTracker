@@ -6132,12 +6132,19 @@ async function _handleAgentLiveState(req, res) {
   for (const st of states) {
     const character = String(st?.character || '').trim();
     if (!character || character.length > 64) continue;
-    // Sanitize buffs → compact [{name, ticks}] and cap so a misbehaving agent
-    // can't store a huge blob. EQ tops out ~30 buff/song slots.
+    // Sanitize buffs → compact [{name, ticks, song}] and cap so a misbehaving
+    // agent can't store a huge blob. EQ tops out ~30 buff/song slots. `song`
+    // (agent v3.1.12+) = the short-duration song window (Zeal ids 135-140, 6
+    // slots) vs the 15-slot buff window — /raid renders songs separately.
     let buffs = Array.isArray(st?.buffs) ? st.buffs : [];
     buffs = buffs.slice(0, 60).map(b => ({
       name:  String(b?.name || '').slice(0, 80),
       ticks: (b && typeof b.ticks === 'number') ? b.ticks : null,
+      // Only persist the flag when the agent SENT one — pre-3.1.12 agents
+      // don't tag songs, and coercing their absence to false would read as
+      // an authoritative "not a song" downstream (web falls back to a name
+      // heuristic when the flag is missing).
+      ...(b && typeof b.song === 'boolean' ? { song: b.song } : {}),
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;

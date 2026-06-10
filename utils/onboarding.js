@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.70': [
+    '**/raid got sharper** — the raider card now breaks Resists into all five schools (so a missing Group Resist Magic shows even when Circle of Seasons is up), shows landed bard **songs** separately, auto-refreshes every 15s, and hides parked characters unseen >15 min (toggle to show). The buffer queue flags the specific resist school your class covers. Mimic 1.0.69 betas add "Buffs n/15 · Songs n/6" to Mob Info for player targets.',
+  ],
   '3.0.68': [
     '**Quarmy gear ingest** — drop your in-game Quarmy export (`<Name>Quarmy.txt`) in the EQ folder and Mimic ships your equipped gear, clicky bags, and AA ranks to a new **Gear (beta)** page on your character at wolfpack.quest. Bank, shared bank, and coin rows are stripped on YOUR machine before anything uploads — they never leave it. `exclude_inventory` on /me opts a character out entirely (no file read, no upload).',
   ],

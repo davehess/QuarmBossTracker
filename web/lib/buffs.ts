@@ -93,6 +93,66 @@ export function categorizeBuff(name: string): BuffCategory | null {
   return null;
 }
 
+// ── Resist types ─────────────────────────────────────────────────────────────
+// The single "resists" category hid which of the FIVE schools a raider is
+// actually covered for — "Circle of Seasons" satisfied the bucket while a
+// missing Group Resist Magic stayed invisible. Per-buff school mapping so the
+// raid card can render MR/FR/CR/PR/DR rows and the buffer queue can flag the
+// specific school a buffer's class provides.
+export type ResistType = 'MR' | 'FR' | 'CR' | 'PR' | 'DR';
+export const RESIST_TYPES: ResistType[] = ['MR', 'FR', 'CR', 'PR', 'DR'];
+export const RESIST_LABELS: Record<ResistType, string> = {
+  MR: 'Magic', FR: 'Fire', CR: 'Cold', PR: 'Poison', DR: 'Disease',
+};
+
+// All-school buffs first (substring match); then per-school keyword lists.
+// Bard psalms: Warmth = cold (a warming song), Cooling = fire, Purity =
+// poison, Vitality = disease, Guardian Rhythms = magic+all-ish (kept MR).
+const RESIST_ALL_KEYWORDS = [
+  'circle of seasons', 'aegis of bathezid', 'talisman of jasinth',
+  'protection of the cabbage', 'mark of karn',
+];
+const RESIST_TYPE_KEYWORDS: Record<ResistType, string[]> = {
+  MR: ['magic', 'guardian rhythms', 'psalm of veeshan', 'group resistance'],
+  FR: ['fire', 'flame', 'psalm of cooling', 'inferno'],
+  CR: ['cold', 'frost', 'psalm of warmth', 'ice'],
+  PR: ['poison', 'psalm of purity', 'talisman of shadoo', 'venom'],
+  DR: ['disease', 'psalm of vitality', 'talisman of shadoo', 'plague'],
+};
+
+/** Which resist schools a buff covers — empty when it isn't a resist buff. */
+export function resistTypesFor(name: string): ResistType[] {
+  const n = (name || '').toLowerCase();
+  if (!n) return [];
+  // Only consider names the resists category already recognizes, plus the
+  // explicit all-school list — keeps "Fire Fist" (worn) etc. from matching
+  // the FR keyword.
+  const isResistBuff = KEYWORDS.resists.some(k => n.includes(k))
+    || RESIST_ALL_KEYWORDS.some(k => n.includes(k))
+    || /psalm of|guardian rhythms/.test(n);
+  if (!isResistBuff) return [];
+  if (RESIST_ALL_KEYWORDS.some(k => n.includes(k))) return [...RESIST_TYPES];
+  const out: ResistType[] = [];
+  for (const t of RESIST_TYPES) {
+    if (RESIST_TYPE_KEYWORDS[t].some(k => n.includes(k))) out.push(t);
+  }
+  // Recognized resist buff with no school keyword (e.g. "Elemental Shield")
+  // → conservative: fire + cold (the elemental pair).
+  if (out.length === 0 && /elemental/.test(n)) return ['FR', 'CR'];
+  return out;
+}
+
+// ── Bard songs ───────────────────────────────────────────────────────────────
+// Agent v3.1.12+ tags buffs from Zeal's 6-slot song window with song:true.
+// For older data we fall back to a name heuristic so the songs section isn't
+// empty for raiders on yesterday's Mimic.
+const SONG_NAME_RX = /psalm of|chant|chorus|melody|cantata|aria of|verses of|warsong|battlecry|guardian rhythms|selo|hymn|march of|anthem|jonthan|niv's|niv`s|cassindra|kelin|tuyen|denon|crission|lyssa|mcvaxius|vilia|solon|brusco/i;
+export function isSongBuff(name: string | null | undefined, songFlag?: boolean | null): boolean {
+  if (songFlag === true) return true;
+  if (songFlag === false) return false;   // authoritative tag says buff window
+  return SONG_NAME_RX.test(String(name || ''));
+}
+
 // ── Roles + "what good looks like" target profiles ──────────────────────────
 // Which categories a character SHOULD have, by role. Seed defaults — tune to
 // taste (e.g. officers may want DI/CHA tracked for tanks once we categorize
