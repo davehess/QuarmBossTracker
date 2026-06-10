@@ -23,7 +23,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
   categorizeBuff, classToRole, analyzeHpSlots, ROLE_TARGETS, isCorpse,
-  resistTypesFor, isSongBuff, secondaryCategoriesFor,
+  resistTypesFor, isSongBuff, secondaryCategoriesFor, UPGRADE_CHAINS, chainPosition,
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
 import RaidView, { type RaidRow } from './RaidView';
@@ -59,14 +59,18 @@ type RosterRow = {
 //   ORANGE — missing critical buff family for the role: any HP slot empty, OR
 //            a priest/caster missing mana / mana-regen
 //   YELLOW — missing one or two of the OTHER role-target categories
-//   GREEN  — all role-expected buffs present (and all 3 HP slots filled)
+//            ("almost everything buffed, missing something non-critical")
+//   LIGHT GREEN ('upgradable') — nothing missing, but at least one buff has
+//            a stronger cast available (Aego vs Ancient: Gift of Aegolism,
+//            Focus of Spirit vs Khura's, JBoots vs Bihli)
+//   GREEN  — all role-expected buffs present at best-available strength
 function colorTier(
   role: Role,
   byCategory: Record<string, string[]>,
   hpSlots: HpSlotState,
   buffs: { name: string; ticks: number | null }[] | null,
   noAgent: boolean,
-): 'green' | 'yellow' | 'orange' | 'red' | 'unknown' {
+): 'green' | 'upgradable' | 'yellow' | 'orange' | 'red' | 'unknown' {
   if (noAgent) return 'unknown';
   const totalBuffs = (buffs ?? []).filter(b => b && b.name).length;
   if (totalBuffs === 0) return 'red';
@@ -85,6 +89,16 @@ function colorTier(
   const target = (ROLE_TARGETS[role] || []).filter(c => c !== 'mana' && c !== 'manaRegen');
   const missingOther = target.filter(c => !(byCategory[c]?.length)).length;
   if (missingOther > 0) return 'yellow';
+
+  // LIGHT GREEN: fully covered, but a known upgrade chain has a lower link —
+  // class-blind here (whether ANY buffer can improve it; the queue scopes it
+  // to the buffer's class).
+  const names = (buffs ?? []).map(b => b?.name).filter(Boolean) as string[];
+  for (const ch of UPGRADE_CHAINS) {
+    if (ch.roles && !ch.roles.includes(role)) continue;
+    const pos = chainPosition(ch.chain, names);
+    if (pos >= 0 && pos < ch.chain.length - 1) return 'upgradable';
+  }
 
   return 'green';
 }

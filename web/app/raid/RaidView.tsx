@@ -49,7 +49,7 @@ export type RaidRow = {
   resists: Record<ResistType, string[]>;   // per-school coverage (MR/FR/CR/PR/DR)
   songs: { name: string; ticks: number | null }[];  // bard songs currently landed
   hpSlots: HpSlotState;
-  tier: 'green' | 'yellow' | 'orange' | 'red' | 'unknown';
+  tier: 'green' | 'upgradable' | 'yellow' | 'orange' | 'red' | 'unknown';
   buffs: { name: string; ticks: number | null }[];
   pet: PetState | null;          // live charm/summoned pet snapshot (Zeal)
   isMe: boolean;                 // the signed-in user's character
@@ -62,11 +62,14 @@ export type PetState = {
 };
 
 const TIER_STYLE: Record<RaidRow['tier'], { bg: string; bar: string; label: string }> = {
-  green:   { bg: 'bg-[#0f2a1a]/60', bar: 'bg-green',      label: 'fully buffed' },
-  yellow:  { bg: 'bg-[#2a2410]/60', bar: 'bg-[#d4a72c]',  label: 'minor gaps' },
-  orange:  { bg: 'bg-[#2a1f10]/70', bar: 'bg-orange',     label: 'expiring soon' },
-  red:     { bg: 'bg-[#2a1010]/70', bar: 'bg-red-500',    label: 'critical missing' },
-  unknown: { bg: 'bg-[#11151c]/60', bar: 'bg-dim',        label: 'no Mimic — unknown' },
+  green:      { bg: 'bg-[#0f2a1a]/60', bar: 'bg-green',      label: 'fully buffed' },
+  // Light green — everything covered, but at least one buff has a stronger
+  // cast available (Aego when Ancient Aego exists, FoS vs Khura's, …).
+  upgradable: { bg: 'bg-[#13301f]/50', bar: 'bg-[#7ee787]',  label: 'covered — upgradable' },
+  yellow:     { bg: 'bg-[#2a2410]/60', bar: 'bg-[#d4a72c]',  label: 'minor gaps' },
+  orange:     { bg: 'bg-[#2a1f10]/70', bar: 'bg-orange',     label: 'expiring soon' },
+  red:        { bg: 'bg-[#2a1010]/70', bar: 'bg-red-500',    label: 'critical missing' },
+  unknown:    { bg: 'bg-[#11151c]/60', bar: 'bg-dim',        label: 'no Mimic — unknown' },
 };
 
 // HP bar + HP% text coloring — green > 50% / amber > 20% / red ≤ 20%. Same
@@ -231,7 +234,7 @@ export default function RaidView({
     const provides = CLASS_PROVIDES[cls] || [];
     const providesResists = CLASS_PROVIDES_RESISTS[cls] || [];
     if (provides.length === 0 && providesResists.length === 0) return [];
-    const severity = { red: 0, orange: 1, yellow: 2, green: 3, unknown: 4 } as const;
+    const severity = { red: 0, orange: 1, yellow: 2, upgradable: 3, green: 4, unknown: 5 } as const;
     const out: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[] }[] = [];
     for (const r of rows) {
       if (!r.inRaid || r.noAgent) continue;
@@ -694,7 +697,7 @@ function BufferQueues({
                     ].join(' · ') || (upgrades.length === 0 ? 'HP slot missing' : '')}
                   </span>
                   {upgrades.length > 0 && (
-                    <span className="text-[#d4a72c]" title="Covered, but a better cast is available — yellow = upgrade, not a gap">
+                    <span className="text-[#7ee787]" title="Covered but upgradable — light green means a better cast is available, not a gap. Yellow stays 'buffed but missing something non-critical'.">
                       {(missing.length + missingResists.length) > 0 ? ' · ' : ''}{upgrades.join(' · ')}
                     </span>
                   )}
@@ -780,11 +783,11 @@ function ClassCountPanel({ counts, raidSize }: { counts: [string, number][]; rai
 function TierLegend({ rows }: { rows: RaidRow[] }) {
   const counts = rows.reduce<Record<RaidRow['tier'], number>>(
     (acc, r) => { acc[r.tier]++; return acc; },
-    { green: 0, yellow: 0, orange: 0, red: 0, unknown: 0 },
+    { green: 0, upgradable: 0, yellow: 0, orange: 0, red: 0, unknown: 0 },
   );
   return (
     <div className="flex items-center gap-1.5 text-[10px]">
-      {(['green','yellow','orange','red','unknown'] as const).map(t =>
+      {(['green','upgradable','yellow','orange','red','unknown'] as const).map(t =>
         counts[t] > 0
           ? <span key={t} className={['inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60'].join(' ')}>
               <span className={['inline-block w-2 h-2 rounded-sm', TIER_STYLE[t].bar].join(' ')} />
