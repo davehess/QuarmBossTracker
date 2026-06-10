@@ -1546,19 +1546,31 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
   // say. Once we tag a character as 'song', it sticks for the rest of the
   // session (bards don't morph into wizards mid-fight).
   let kind = (opts && opts.kind) || 'song';
-  if (_isLikelyBardSong(spellName)) kind = 'song';
+  const isLikelyBardSong = _isLikelyBardSong(spellName);
+  if (isLikelyBardSong) kind = 'song';
   const key = String(character).toLowerCase();
   let state = _bardMelody.get(key);
   if (!state) {
-    state = { order: [], currentPos: -1, castStartedAt: atMs, cycleLength: 0, lastChangeAt: atMs, kind };
+    state = { order: [], currentPos: -1, castStartedAt: atMs, cycleLength: 0, lastChangeAt: atMs, kind, bardConfirmed: false };
     _bardMelody.set(key, state);
   }
+  // Positive-evidence sticky bard flag: a recognized bard-only song name
+  // (Lcea's Lament, Anthem de Arms, Selo's …) is concrete enough to flip
+  // a character to bard for the session even when no /who has run yet.
+  // Reset on melody-idle (zoned / char swap) so we don't drag the flag
+  // across character switches that share a Mimic instance.
+  if (isLikelyBardSong) state.bardConfirmed = true;
   // If we haven't cast in MELODY_IDLE_MS, treat this as a brand-new melody
   // (zoned / stopped / swapped). Avoids merging two unrelated rotations.
   if (state.lastChangeAt && (atMs - state.lastChangeAt) > MELODY_IDLE_MS) {
     state.order = [];
     state.currentPos = -1;
     state.cycleLength = 0;
+    // Reset bardConfirmed too — a fresh session (zoned / char swap / long
+    // idle) needs to re-prove the character is a bard before flipping the
+    // overlay title. This is what kept the old kind:'song' fallback sticky
+    // across characters; we re-evaluate fresh.
+    state.bardConfirmed = false;
   }
   // Track the current melody kind on the character's state. Once a bard,
   // always a bard for this character — never downgrade 'song' → 'spell' on
@@ -5715,8 +5727,16 @@ function _serializeForDashboard() {
         // bard UI (Melody title + utility strip) on for non-bards — the
         // overlay then NEVER reverted to "Spell Casting". Class or nothing.
         const wd = (whoData && whoData.get) ? whoData.get(k) : null;
+        // Three sources, in order of authority:
+        //   1. whoData class — captured from a real /who line.
+        //   2. zealSt.class — forward-compat for if Mimic ever pipes class.
+        //   3. state.bardConfirmed — set when this character was observed
+        //      singing a recognized-bard-only song (Lcea's, Anthem de Arms,
+        //      Selo's, …). Resets on melody-idle (zone / char swap) so it
+        //      can't carry across characters sharing a Mimic instance.
         const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
-                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')));
+                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
+                         || !!state.bardConfirmed;
         // Buff → info shape. When ticks is unknown (null/0) we still emit
         // `observed:true` so the overlay can render "on" instead of "off" —
         // surfacing buff presence even without a countdown. Source flag
