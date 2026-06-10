@@ -82,6 +82,7 @@ function decodeSpell(s: any): Fx {
       case 136: if (TARGET_NAME[base]) quals.push(TARGET_NAME[base]); break;
       case 138: quals.push(base ? 'beneficial' : 'detrimental'); break;
       case 140: quals.push('duration spells'); break;
+      case 143: if (base > 0) quals.push(`casts ≥${base / 1000}s`); break;
     }
   }
   if (primary) fx.focus = quals.length ? `${primary} — ${quals.join(', ')}` : primary;
@@ -376,7 +377,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                       <span className="text-dim text-xs ml-2">({f.item})</span>
                       {f.desc
                         ? <div className="text-xs text-text">{f.desc}</div>
-                        : <div className="text-xs text-dim italic">benefit decode lands with the next catalog sync</div>}
+                        : <div className="text-xs text-dim italic">no decodable benefit — check the item on PQDI</div>}
                     </li>
                   ))}
                 </ul>
