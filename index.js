@@ -5363,9 +5363,9 @@ async function _handleAgentRaidBuffQueue(req, res) {
 
     const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,last_zone,updated_at`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,last_zone,self_hp_pct,updated_at`),
       supabase.select('raid_roster',
-        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,uploaded_by_discord_id,captured_at`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
       supabase.select('buff_casts',
@@ -5742,9 +5742,55 @@ async function _handleAgentRaidBuffQueue(req, res) {
       burstQueue = burstQueue.slice(0, 20);
     }
 
+    // Compact live-roster view for the dashboard's Raid card — the buffer's
+    // raid only (same scoping as the queue). HP rides the Zeal group-gauge
+    // broadcasts captured in raid_roster; buffs/zone from live state; tier
+    // mirrors /raid's severity intent.
+    const rosterOut = [];
+    for (const [k, rr] of rosterByName) {
+      const live = liveByName.get(k);
+      const inferred = inferredBuffsByName.get(k) || null;
+      const buffs = buffsFor(live, inferred);
+      const cls  = classFor(rr.name) || rr.class || null;
+      const role = rb.classToRole(cls);
+      const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
+      const missingHp = rb.HP_SLOTS.filter(sl => !hpSlots[sl]).length;
+      const noSignal = !live && !(inferred && inferred.length);
+      let tier = 'unknown';
+      if (!noSignal) {
+        const totalBuffs = buffs.filter(b => b && b.name).length;
+        if (totalBuffs === 0) tier = 'red';
+        else if (missingHp > 0) tier = 'orange';
+        else {
+          const byCat2 = {};
+          for (const b of buffs) if (b && b.name) {
+            const c2 = rb.categorizeBuff(b.name);
+            if (c2) (byCat2[c2] = byCat2[c2] || []).push(b.name);
+          }
+          const exp2 = rb.ROLE_TARGETS[role] || [];
+          tier = exp2.some(c2 => !(byCat2[c2] || []).length) ? 'yellow' : 'green';
+        }
+      }
+      rosterOut.push({
+        name:       rr.name,
+        class:      cls,
+        group:      rr.group_num != null ? rr.group_num : null,
+        rank:       rr.rank || null,
+        level:      rr.level != null ? rr.level : null,
+        hp_pct:     rr.hp_pct != null ? rr.hp_pct : (live && live.self_hp_pct != null ? live.self_hp_pct : null),
+        buff_count: buffs.filter(b => b && b.name).length,
+        mimic:      !!live,
+        inferred:   !live && !!(inferred && inferred.length),
+        zone:       live && live.last_zone ? String(live.last_zone) : null,
+        tier,
+      });
+    }
+    rosterOut.sort((a, b) => ((a.group != null ? a.group : 99) - (b.group != null ? b.group : 99)) || a.name.localeCompare(b.name));
+
     const out = {
       buff_queue:   buffQueue.slice(0, 40),
       debuff_queue: debuffQueue.slice(0, 40),
+      roster:       rosterOut.slice(0, 80),
       // group_mode is true when no raid_roster is fresh — the overlay shows
       // a slightly different header ("group" instead of "raid") and the
       // empty-state hint mentions groups.
