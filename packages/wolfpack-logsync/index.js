@@ -10332,6 +10332,21 @@ function startWebDashboard(port) {
         // the stale entry forever ("shows Dafeet after switching characters").
         if (character && payload?.disconnected === true) {
           delete _zealState[character];
+          // Same-client swap: forward "<character> swapped to <X>" to the
+          // bot so /raid moves them to "Not in raid (swapped to X)" instead
+          // of showing both characters as live raiders. Fire-and-forget on
+          // the live-state endpoint (the bot stamps swapped_to/swapped_at).
+          const swappedTo = typeof payload?.swapped_to === 'string' ? payload.swapped_to.trim() : '';
+          if (swappedTo && _uploadOpts && _uploadOpts.botUrl && !_uploadOpts.dryRun) {
+            try {
+              const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+              _postLiveState(base + '/live-state', _uploadOpts.token, {
+                agent_version: AGENT_VERSION,
+                uploaded_by: _primaryCharacter() || null,
+                states: [{ character, swapped_to: swappedTo.slice(0, 64) }],
+              });
+            } catch { /* best effort */ }
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: true, retired: true }));
         }

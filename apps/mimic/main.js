@@ -931,12 +931,14 @@ function _zealParseData(obj) {
 // character's last target forever (the "stale Dafeet" bug: switch characters
 // with no target on the new one → the old entry stays the freshest WITH a
 // target and wins _currentTargetState()).
-function _retireZealChar(character, why) {
+function _retireZealChar(character, why, swappedTo) {
   if (!_zealLiveByChar.has(character)) return;
   _zealLiveByChar.delete(character);
   appendAgentLog(`[zeal] retired live state for ${character}${why ? ' (' + why + ')' : ''}\n`);
   if (!agentPort) return;
-  const body = JSON.stringify({ character, disconnected: true });
+  // swapped_to = the character that took over this client (same-pid swap).
+  // The agent forwards it to the bot so /raid can show "(swapped to X)".
+  const body = JSON.stringify({ character, disconnected: true, ...(swappedTo ? { swapped_to: swappedTo } : {}) });
   const req = http.request({
     host: '127.0.0.1', port: agentPort, path: '/api/zeal-state', method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
@@ -958,7 +960,7 @@ function _zealAbsorb(obj, pid) {
     // is still pinned to this pid, that character just logged off (character
     // switch on the same eqgame.exe — the pipe never closes for that case).
     for (const [name, other] of _zealLiveByChar) {
-      if (name !== character && other.pid === pid) _retireZealChar(name, `pid ${pid} now ${character}`);
+      if (name !== character && other.pid === pid) _retireZealChar(name, `pid ${pid} now ${character}`, character);
     }
   }
   const s = cur.snapshot;
@@ -3920,6 +3922,14 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    // OVERLAY WINDOWS ONLY. The shared preload's document-level hover
+    // handshake (beta.2) fires from EVERY window that loads it — including
+    // the MAIN Mimic window, where the mouseleave restore path was applying
+    // setIgnoreMouseEvents(true) and making the whole app click-through
+    // inside the EQ window's bounds. Non-overlay windows are never lockable;
+    // ignore their hover traffic entirely.
+    const isOverlay = _overlayEntries().some(([, w]) => w === win);
+    if (!isOverlay) return false;
     if (wantInteractive) {
       win.setIgnoreMouseEvents(false);
     } else {
