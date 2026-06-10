@@ -162,12 +162,15 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
 }
 
 export default function RaidView({
-  rows, raidLabels, myClass, dsValues,
+  rows, raidLabels, myClass, dsValues, ari,
 }: {
   rows: RaidRow[];
   raidLabels: string[];
   myClass: string | null;
   dsValues: Record<string, number>;
+  // Auto-Raid-Invite registry (officer-set via Discord /ari, mirrored to
+  // ari_state). null = not configured. Password intentionally not included.
+  ari: { character: string; setByName: string | null; setAt: string | null } | null;
 }) {
   // Default Buffer-mode class = the signed-in user's own class as detected in
   // the raid roster. Override is always available; some folks swap to help
@@ -372,15 +375,43 @@ export default function RaidView({
           Front-and-center so it's the first thing a guildie sees. */}
       <CoverageUnlocks raidSize={raidSize} mimicCovered={mimicCovered} />
 
-      {/* Raid leader callout */}
-      {leaderName && (
+      {/* Raid leader + auto-raid-invite status. Leader comes from the Zeal
+          raid roster (rank '2'); ARI from the officer-set Discord /ari
+          registry (ari_state mirror). Three states:
+            • ARI on the leader  → green "ON"
+            • ARI on someone else → blue, named (common when a box leads)
+            • not configured      → orange nudge with the command to run */}
+      {(leaderName || ari) && (
         <div className="bg-panel border border-border rounded-lg p-3 text-xs flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            👑 <span className="text-gold">{leaderName}</span> is leading the raid.
-            {leaderClass && <span className="text-dim"> · {leaderClass}</span>}
-            <span className="text-dim">{' '}· when <code>/ari</code> is set, we&apos;ll auto-DM the password to clickers from here.</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {leaderName ? (
+              <span>
+                👑 <span className="text-gold">{leaderName}</span> is leading the raid.
+                {leaderClass && <span className="text-dim"> · {leaderClass}</span>}
+              </span>
+            ) : (
+              <span className="text-dim">👑 No raid leader detected yet (waiting on a Zeal roster snapshot).</span>
+            )}
+            {ari ? (
+              leaderName && ari.character.toLowerCase() === leaderName.toLowerCase() ? (
+                <span className="text-green border border-green/40 bg-green/10 rounded px-1.5 py-0.5"
+                      title={`Auto-raid-invite configured${ari.setByName ? ' by ' + ari.setByName : ''}${ari.setAt ? ' · ' + new Date(ari.setAt).toLocaleString() : ''}. Send a tell to ${ari.character} for an invite — password is in Discord (/ari).`}>
+                  /autoraidinvite ON
+                </span>
+              ) : (
+                <span className="text-blue border border-blue/40 bg-blue/10 rounded px-1.5 py-0.5"
+                      title={`Auto-raid-invite configured${ari.setByName ? ' by ' + ari.setByName : ''}${ari.setAt ? ' · ' + new Date(ari.setAt).toLocaleString() : ''}. Password is in Discord (/ari).`}>
+                  ARI via <span className="font-semibold">{ari.character}</span>
+                </span>
+              )
+            ) : (
+              <span className="text-orange border border-orange/40 bg-orange/10 rounded px-1.5 py-0.5"
+                    title="No auto-raid-invite registered. An officer can run /ari <character> <password> in Discord so members know whom to tell for an invite.">
+                /autoraidinvite not set
+              </span>
+            )}
           </div>
-          <span className="text-[10px] uppercase tracking-widest text-orange border border-orange/40 rounded px-1.5 py-0.5">preview</span>
+          <span className="text-[10px] text-dim">tell {ari ? ari.character : 'the leader'} for an invite · password via Discord <code>/ari</code></span>
         </div>
       )}
 

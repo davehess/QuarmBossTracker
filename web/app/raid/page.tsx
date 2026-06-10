@@ -126,7 +126,7 @@ export default async function RaidHubPage() {
   // every extended-duration group buff in era without dragging in stale
   // observations.
   const buffCastsSince = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }] = await Promise.all([
+  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }, { data: ariRow }] = await Promise.all([
     admin.from('character_live_state')
       .select('character, zone_name, self_hp_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
       .eq('guild_id', 'wolfpack')
@@ -156,6 +156,14 @@ export default async function RaidHubPage() {
       .gte('cast_at', buffCastsSince)
       .order('cast_at', { ascending: false })
       .limit(3000),
+    // Auto-Raid-Invite registry — set by officers via the Discord /ari
+    // command, mirrored by the bot to ari_state. The raid-leader banner
+    // shows whether ARI is configured and on whom (the password itself
+    // stays in Discord; we never render it here).
+    admin.from('ari_state')
+      .select('character, set_by_name, set_at')
+      .eq('guild_id', 'wolfpack')
+      .maybeSingle(),
   ]);
   // Per-target, per-spell: most recent cast still within its catalog duration
   // becomes an inferred buff entry. Two Mimic raiders in the same group can
@@ -571,12 +579,20 @@ export default async function RaidHubPage() {
 
   // Headline counters (leader, coverage, group leads) are computed in
   // RaidView per ACTIVE raid tab now that concurrent raids stay separate.
+  const ari = ariRow && (ariRow as { character: string | null }).character
+    ? {
+        character: String((ariRow as { character: string }).character),
+        setByName: (ariRow as { set_by_name: string | null }).set_by_name ?? null,
+        setAt:     (ariRow as { set_at: string | null }).set_at ?? null,
+      }
+    : null;
   return (
     <RaidView
       rows={rows}
       raidLabels={raidLabels}
       myClass={myClass}
       dsValues={dsValues}
+      ari={ari}
     />
   );
 }
