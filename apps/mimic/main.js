@@ -931,12 +931,14 @@ function _zealParseData(obj) {
 // character's last target forever (the "stale Dafeet" bug: switch characters
 // with no target on the new one → the old entry stays the freshest WITH a
 // target and wins _currentTargetState()).
-function _retireZealChar(character, why) {
+function _retireZealChar(character, why, swappedTo) {
   if (!_zealLiveByChar.has(character)) return;
   _zealLiveByChar.delete(character);
   appendAgentLog(`[zeal] retired live state for ${character}${why ? ' (' + why + ')' : ''}\n`);
   if (!agentPort) return;
-  const body = JSON.stringify({ character, disconnected: true });
+  // swapped_to = the character that took over this client (same-pid swap).
+  // The agent forwards it to the bot so /raid can show "(swapped to X)".
+  const body = JSON.stringify({ character, disconnected: true, ...(swappedTo ? { swapped_to: swappedTo } : {}) });
   const req = http.request({
     host: '127.0.0.1', port: agentPort, path: '/api/zeal-state', method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
@@ -958,7 +960,7 @@ function _zealAbsorb(obj, pid) {
     // is still pinned to this pid, that character just logged off (character
     // switch on the same eqgame.exe — the pipe never closes for that case).
     for (const [name, other] of _zealLiveByChar) {
-      if (name !== character && other.pid === pid) _retireZealChar(name, `pid ${pid} now ${character}`);
+      if (name !== character && other.pid === pid) _retireZealChar(name, `pid ${pid} now ${character}`, character);
     }
   }
   const s = cur.snapshot;
@@ -1046,7 +1048,14 @@ function _zealAbsorb(obj, pid) {
           const name = it.value;
           if (name && name !== '' && String(name).toLowerCase() !== 'none') {
             const ticks = it.meta && typeof it.meta.ticks === 'number' ? it.meta.ticks : null;
-            buffs.push({ name: String(name), ticks });
+            // song:true = the short-duration song window (Zeal ids 135-140,
+            // 6 slots) vs the main 15-slot buff window (45-59). Rides through
+            // the agent's live-state upload so /raid can show songs separately
+            // and Mob Info can render "Buffs n/15 · Songs m/6".
+            // slot = 1-based window position. Debuffs sitting in buff slots
+            // 1-4 are cheap to dispel — the queue's "slot N" callout needs it.
+            const isSongWin = (id >= 135 && id <= 140);
+            buffs.push({ name: String(name), ticks, song: isSongWin, slot: isSongWin ? (id - 134) : (id - 44) });
           }
         } else if (id === 134) {
           if (it.value && it.value !== '') casting = String(it.value);
@@ -1352,7 +1361,7 @@ function startZealCapture() {
       try {
         if (Notification.isSupported()) {
           const n = new Notification({
-            title: 'Wolf Pack Mimic — Zeal pipes look off',
+            title: 'Wolf Pack miMIC — Zeal pipes look off',
             body:  'EQ is running but no Zeal data is flowing. Open Zeal in-game → Settings → Pipes and enable all data types. Need to verify? Tray → Overlays → Zeal health (diagnostic).',
           });
           n.on('click', () => {
@@ -1605,7 +1614,7 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
-    title: 'Wolf Pack Mimic — Main window (Dashboard)',
+    title: 'Wolf Pack miMIC — Main window (Dashboard)',
     show: !_autoStarted,
     // Window + taskbar icon while running. build/icon.ico is buildResources
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
@@ -1671,7 +1680,7 @@ function createMainWindow() {
       try {
         if (Notification.isSupported()) {
           new Notification({
-            title: '⚠ Wolf Pack Mimic — setup needed',
+            title: '⚠ Wolf Pack miMIC — setup needed',
             body:  issue + ' — Mimic is staying visible until setup is complete. Click "Open Settings" in the banner.',
             silent: false,
           }).show();
@@ -1787,6 +1796,10 @@ function applyOverlayInteractivity() {
   // user prefs, so they can all be placed at once.
   const locked = !setupMode && cfg.overlaysLocked !== false;
   for (const [key, win] of _overlayEntries()) {
+    // A window mid single-overlay setup keeps its unlocked state — a global
+    // interactivity sweep (tray toggle, status push) must not re-lock it
+    // out from under the user while its setup strip is open.
+    if (_inSingleSetup(win)) continue;
     if (locked) {
       win.setIgnoreMouseEvents(true, { forward: true });
       win.setResizable(false);
@@ -1868,7 +1881,7 @@ function createPanelOverlay(panelKey) {
     // Descriptive title so this process is identifiable in Task Manager /
     // Alt-Tab (e.g. "Wolf Pack Mimic — DEEPS panel overlay") instead of a
     // wall of identical "Wolf Pack Mimic" entries.
-    title: `Wolf Pack Mimic — ${panelKey} panel overlay`,
+    title: `Wolf Pack miMIC — ${panelKey} panel overlay`,
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -1897,7 +1910,7 @@ function createPanelOverlay(panelKey) {
 function createOverlayWindow() {
   const b = _resolveBounds('hudBounds', 'hudBoundsSig', { x: 40, y: 40, width: 320, height: 220 });
   overlayWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — HUD overlay',
+    title: 'Wolf Pack miMIC — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 180, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -1922,7 +1935,7 @@ function createOverlayWindow() {
 function createTriggerOverlay() {
   const b = _resolveBounds('triggerBounds', 'triggerBoundsSig', { x: 700, y: 200, width: 600, height: 200 });
   triggerWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Triggers overlay',
+    title: 'Wolf Pack miMIC — Triggers overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -1962,7 +1975,7 @@ function openSettings() {
 function openUiStudio() {
   if (uiStudioWindow) { uiStudioWindow.focus(); return; }
   uiStudioWindow = new BrowserWindow({
-    width: 1200, height: 780, title: 'Wolf Pack Mimic — UI Studio',
+    width: 1200, height: 780, title: 'Wolf Pack miMIC — UI Studio',
     backgroundColor: '#0d1117',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
@@ -2794,7 +2807,7 @@ function applyTriggerVisibility() {
 function createCharmOverlay() {
   const b = _resolveBounds('charmBounds', 'charmBoundsSig', { x: 700, y: 420, width: 300, height: 180 });
   charmWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Charm tracker overlay',
+    title: 'Wolf Pack miMIC — Charm tracker overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -2828,7 +2841,7 @@ function applyCharmVisibility() {
 function createPetsOverlay() {
   const b = _resolveBounds('petsBounds', 'petsBoundsSig', { x: 700, y: 620, width: 300, height: 160 });
   petsWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Pet tracker overlay',
+    title: 'Wolf Pack miMIC — Pet tracker overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 70,
     frame: false, transparent: true, resizable: true,
@@ -2862,7 +2875,7 @@ function applyPetsVisibility() {
 function createBuffQueueOverlay() {
   const b = _resolveBounds('buffQueueBounds', 'buffQueueBoundsSig', { x: 1020, y: 60, width: 330, height: 260 });
   buffQueueWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Buff queue overlay',
+    title: 'Wolf Pack miMIC — Buff queue overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -2895,7 +2908,7 @@ function applyBuffQueueVisibility() {
 function createMobInfoOverlay() {
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
   mobInfoWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Mob Info overlay',
+    title: 'Wolf Pack miMIC — Target Info overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 230, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -2926,7 +2939,7 @@ function applyMobInfoVisibility() {
 function createWhoOverlay() {
   const b = _resolveBounds('whoBounds', 'whoBoundsSig', { x: 40, y: 300, width: 320, height: 280 });
   whoWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — /who overlay',
+    title: 'Wolf Pack miMIC — /who overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -2958,7 +2971,7 @@ function applyWhoVisibility() {
 function createMelodyOverlay() {
   const b = _resolveBounds('melodyBounds', 'melodyBoundsSig', { x: 40, y: 600, width: 280, height: 180 });
   melodyWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Melody overlay',
+    title: 'Wolf Pack miMIC — Melody overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -2993,7 +3006,7 @@ function applyMelodyVisibility() {
 function createZealHealthOverlay() {
   const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
   zealWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Zeal health overlay',
+    title: 'Wolf Pack miMIC — Zeal health overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -3029,7 +3042,7 @@ function applyZealVisibility() {
 function createThreatMeterOverlay() {
   const b = _resolveBounds('threatBounds', 'threatBoundsSig', { x: 40, y: 320, width: 320, height: 200 });
   threatWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Threat meter overlay',
+    title: 'Wolf Pack miMIC — Threat meter overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -3283,16 +3296,16 @@ function pushStatus() {
 }
 function tooltipFor(s) {
   const v = `v${app.getVersion()}`;
-  if (!s.agentRunning) return `Wolf Pack Mimic ${v} — agent starting…`;
+  if (!s.agentRunning) return `Wolf Pack miMIC ${v} — agent starting…`;
   // Setup state wins the tooltip when something's wrong — the tray icon is the
   // last visible Mimic surface for users who hide the window, so the tooltip
   // should call out what to fix when they finally hover.
   const issue = _setupIssue();
-  if (issue) return `⚠ Wolf Pack Mimic ${v} — SETUP NEEDED: ${issue}`;
+  if (issue) return `⚠ Wolf Pack miMIC ${v} — SETUP NEEDED: ${issue}`;
   const mode = s.localOnly ? 'Local only' : 'Uploading';
   const quiet = s.quietMode ? ' · Quiet mode' : '';
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
-  return `Wolf Pack Mimic ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
+  return `Wolf Pack miMIC ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
 }
 
 // ── Self-uninstall ──────────────────────────────────────────────────────────
@@ -3401,7 +3414,7 @@ function buildTrayMenu() {
         if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility();
         pushStatus();
       } },
-    { label: 'Mob Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
         if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility();
         pushStatus();
@@ -3436,20 +3449,10 @@ function buildTrayMenu() {
         pushStatus();
       } },
     { type: 'separator' },
-    // Panel overlays — surface the most-wanted dashboard panels as named
-    // toggles (the same windows the card "🪟 overlay" buttons open). Checked =
-    // that overlay window is currently open; clicking toggles it. The key is the
-    // emoji-stripped panel title; the dashboard's overlay matcher resolves it to
-    // the emoji-titled card (_pkStrip in WEB_HTML). createPanelOverlay itself
-    // toggles (open if closed, close if open).
-    { label: 'Panel overlays', enabled: false },
-    ...PANEL_OVERLAYS.map(p => ({
-      label: '  ' + p.label,
-      type: 'checkbox',
-      checked: panelOverlays.has(p.key),
-      click: () => { createPanelOverlay(p.key); pushStatus(); },
-    })),
-    { type: 'separator' },
+    // Panel-overlay tray toggles removed per user feedback — the per-card
+    // "🪟 overlay" buttons on the dashboard cover ad-hoc pop-outs without a
+    // global list that pretends to be raid-window state. PANEL_OVERLAYS
+    // stays defined for createPanelOverlay key resolution.
     // Lock toggle — unchecking makes the overlays grabbable so you can drag +
     // resize them; checking locks them click-through in place. Pure window
     // op, never restarts the agent.
@@ -3572,14 +3575,12 @@ function buildTrayMenu() {
           pushStatus();
         } },
     ] : []),
-    { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
     connectItem,
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
-    updateItem,
     updatePopupItem,
     betaChannelItem,
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
@@ -3587,11 +3588,15 @@ function buildTrayMenu() {
     // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
     ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
     { type: 'separator' },
-    // Restart agent → Settings → Quit. Settings sits directly above Quit per
-    // request (the two safe, common bottom actions nearest the cursor).
+    // Bottom block per user request: Overlays sits right above Restart agent
+    // (the tray opens upward, so this puts the most-used submenu nearest the
+    // cursor), then Check for updates directly below Restart, then Settings →
+    // Quit as the two safe bottom actions.
+    { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'Restart agent', click: async () => {
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
       } },
+    updateItem,
     { label: 'Settings…', click: openSettings },
     { label: 'Quit Mimic', click: () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } app.quit(); } },
   ]);
@@ -3796,7 +3801,7 @@ function wireAutoUpdater() {
         buttons: ['Restart now', 'Later'],
         defaultId: 0,
         cancelId: 1,
-        title: 'Wolf Pack Mimic — update ready',
+        title: 'Wolf Pack miMIC — update ready',
         message: `Mimic v${updatePending.version} is ready to install.`,
         detail: 'Restart now to apply the update. Your settings and agent state are preserved.',
       }).then(({ response }) => {
@@ -3912,10 +3917,22 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    // OVERLAY WINDOWS ONLY. The shared preload's document-level hover
+    // handshake (beta.2) fires from EVERY window that loads it — including
+    // the MAIN Mimic window, where the mouseleave restore path was applying
+    // setIgnoreMouseEvents(true) and making the whole app click-through
+    // inside the EQ window's bounds. Non-overlay windows are never lockable;
+    // ignore their hover traffic entirely.
+    const isOverlay = _overlayEntries().some(([, w]) => w === win);
+    if (!isOverlay) return false;
     if (wantInteractive) {
       win.setIgnoreMouseEvents(false);
     } else {
-      // Restore whatever the lock state dictates for this window.
+      // Restore whatever the lock state dictates for this window. A window
+      // in SINGLE-overlay setup mode stays interactive — this restore path
+      // is exactly what used to re-lock it on the first mouseleave, making
+      // its Done button and resize edges unclickable.
+      if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return true; }
       const cfg = loadConfig();
       const locked = !setupMode && cfg.overlaysLocked !== false;
       if (locked) win.setIgnoreMouseEvents(true, { forward: true });
@@ -4381,7 +4398,23 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
     try { registerHideAllHotkey(); } catch {}
   }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
+  // Create any newly-enabled overlay window that doesn't exist yet — windows
+  // are only created at startup when their pref was already on, so a flip
+  // from onboarding/settings was a silent no-op until restart (the apply*
+  // functions return early on a missing window). Mirrors toggle-overlay.
+  try {
+    if (merged.showHud          && !overlayWindow)   createOverlayWindow();
+    if (merged.enableTriggerTts && !triggerWindow)   createTriggerOverlay();
+    if (merged.showCharm        && !charmWindow)     createCharmOverlay();
+    if (merged.showPets         && !petsWindow)      createPetsOverlay();
+    if (merged.showMobInfo      && !mobInfoWindow)   createMobInfoOverlay();
+    if (merged.showBuffQueue    && !buffQueueWindow) createBuffQueueOverlay();
+    if (merged.showWho          && !whoWindow)       createWhoOverlay();
+    if (merged.showMelody       && !melodyWindow)    createMelodyOverlay();
+    if (merged.showZeal         && !zealWindow)      createZealHealthOverlay();
+    if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
+  } catch (e) { void e; }
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -4444,6 +4477,17 @@ ipcMain.handle('set-setup-mode', (_e, on) => { applySetupMode(!!on); return setu
 // where they are). The renderer flips body.setup itself to show its own
 // opacity slider; we just unlock + force-show THIS window so it can be
 // moved/resized without affecting the rest.
+// Windows currently in SINGLE-overlay setup mode (webContents ids). The
+// hover-interact restore path and applyOverlayInteractivity() both recompute
+// "locked" from the GLOBAL setupMode — which single mode never sets — so
+// without this registry the first mouseleave after opening the setup strip
+// flipped the window back to click-through: the Done button and the resize
+// edges went dead while the strip stayed on screen.
+const _singleSetupWins = new Set();
+function _inSingleSetup(win) {
+  try { return !!win && !win.isDestroyed() && _singleSetupWins.has(win.webContents.id); }
+  catch { return false; }
+}
 ipcMain.handle('set-setup-mode-this', (e, on) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -4455,6 +4499,7 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
     // Done was a no-op in scope='this' because the global setupMode was
     // never set in the first place.
     if (on === false) {
+      _singleSetupWins.delete(win.webContents.id);
       const cfg = loadConfig();
       const locked = cfg.overlaysLocked !== false;
       try { win.setIgnoreMouseEvents(locked, { forward: true }); } catch {}
@@ -4466,6 +4511,8 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
       return true;
     }
     // Unlock + show JUST this window; keep the others' state intact.
+    _singleSetupWins.add(win.webContents.id);
+    win.once('closed', () => { try { _singleSetupWins.delete(win.webContents.id); } catch {} });
     win.setIgnoreMouseEvents(false);
     win.setResizable(true);
     try { win.showInactive(); } catch {}
@@ -4561,7 +4608,7 @@ app.whenReady().then(async () => {
     try {
       if (Notification.isSupported()) {
         new Notification({
-          title: '⚠ Wolf Pack Mimic — setup needed',
+          title: '⚠ Wolf Pack miMIC — setup needed',
           body:  issue + ' — open Mimic to finish.',
           silent: false,
         }).show();

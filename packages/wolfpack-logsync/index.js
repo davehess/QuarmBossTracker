@@ -620,19 +620,19 @@ function parseEvent(line, ts) {
   // for direct nukes ("is hit by YOUR Whirlwind for 250"), so the spell name
   // must match the DS allow-list — otherwise we'd over-tag every spell hit.
   //
-  // Known DS sources (extend here as new ones are discovered in logs):
-  //   thorns / Thorns of the Whitewood   (Druid)
-  //   brambles / bramblecoat              (Druid)
-  //   spikes / spikecoat                  (Druid)
-  //   symbol of Naltron / Holy Armor      (Cleric)
-  //   sanity shield                       (Cleric, Necro)
-  //   reflect-style                       (Enchanter, Magician items)
-  //   mind wrack                          (Necro)
-  //   halo of light                       (item proc)
-  //   barbs                               (Beastlord, Druid epic line)
-  //   cassindra's chant                   (Bard)
-  //   Tooth of the Earth                  (item)
-  const DS_SOURCE_RX = /(?:thorns?\b|brambl|spike|sanity\s*shield|mind\s*wrack|reflect\b|symbol\s+of\s+naltron|cassindra|halo\s+of\s+light|tooth\s+of\s+the\s+earth|fangs?\b|barbs?\b|burn(?:ing)?\s+aura|chant\s+of\s+battle)/i;
+  // Known DS sources — CURATED 2026-06-11 (owner review: halo of light /
+  // cassindra / symbol of naltron / sanity shield were NOT damage shields and
+  // polluted the Tanks card). Real lines only:
+  //   thorns / thistles / brambles / spikes / barbs + the -coat self line   (Druid, Ranger)
+  //   Shield of Fire/Flame/Lava + Inferno Shield / Barrier of Combustion /
+  //     Boon of Immolation / Cadeau of Flame                                 (Magician)
+  //   Legacy of Thorn / Legacy of Spike                                      (Druid group)
+  //   Feedback                                                               (Enchanter)
+  //   Psalm of Warmth / Cooling / Purity / Vitality (resist + DS component)  (Bard)
+  //   Spikecoat-style clickies (Girdle of Living Thorns etc. cast the same
+  //     named spells, so the keywords cover them)
+  //   Tooth of the Earth / fangs                                             (item procs)
+  const DS_SOURCE_RX = /(?:thorns?\b|thistl|brambl|spikes?\b|spikecoat|barbs?\b|legacy\s+of\s+(?:thorn|spike)|shield\s+of\s+(?:fire|flames?|lava|blades?|thistles?|brambles?|spikes?|thorns?|barbs?)|inferno\s+shield|barrier\s+of\s+combustion|boon\s+of\s+immolation|cadeau\s+of\s+flame|feedback\b|psalm\s+of\s+(?:warmth|cooling|purity|vitality)|tooth\s+of\s+the\s+earth|fangs?\b)/i;
   m = line.match(/\]\s+(.+?)\s+is\s+\w+\s+by\s+(YOUR|.+?(?:'s|`s))\s+(.+?)\s+for\s+(\d+)\s+points?\s+of\s+non-melee\s+damage/i);
   if (m && DS_SOURCE_RX.test(m[3])) {
     const source = m[2];
@@ -1247,6 +1247,16 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   // Tashanian / Mez / etc. you cast pre-charm carry over to the Charm
   // tracker too. Skip worn-off and expired entries.
   if (eventKind === 'land' && owner) {
+    // Fresh charm session (no prior tracker, or the prior session had
+    // broken) → previous pet's debuffs are dead with it. Wipe the
+    // owner-keyed pet buffs so we don't inherit them onto a same-named
+    // new mob. A re-cast for refresh on the same active charm preserves
+    // (prev.is_active && prev.last_event === 'land').
+    const refreshingSamePet = !!(prev && prev.is_active && prev.last_event === 'land');
+    if (!refreshingSamePet) {
+      const m = _petBuffLandings.get(String(owner).toLowerCase());
+      if (m && m.size) { m.clear(); _savePetStateSoon(); }
+    }
     _captureTargetBuffsOnCharm(pet, owner);
   }
 }
@@ -1255,6 +1265,16 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
 // "inherits" the debuffs already on the mob. Pre-charm debuff lands
 // previously had no owner to attach to, so they only existed in
 // _buffLandingsByTarget — Mob Info saw them, Charm tracker didn't.
+//
+// Pet names are NPC-type strings ("a razorfiend"), so the same target key
+// applies to every razorfiend ever debuffed. Without a freshness gate the
+// sweep grabs stale entries from a previous same-named mob — Menttok casting
+// Forlorn Deeds on razorfiend #1, then later charming razorfiend #2, made
+// the charm tracker show Forlorn Deeds on his current pet even though it
+// was never cast on it. The "debuff then charm" sequence is a few seconds
+// in practice; cap the lookback at PRE_CHARM_DEBUFF_WINDOW_SEC so older
+// entries from the same target key can't ride along.
+const PRE_CHARM_DEBUFF_WINDOW_SEC = 60;
 function _captureTargetBuffsOnCharm(pet, owner) {
   if (!pet || !owner) return;
   const petLower   = String(pet).toLowerCase();
@@ -1264,12 +1284,15 @@ function _captureTargetBuffsOnCharm(pet, owner) {
   let petBuffs = _petBuffLandings.get(ownerLower);
   if (!petBuffs) { petBuffs = new Map(); _petBuffLandings.set(ownerLower, petBuffs); }
   const now = Date.now();
+  const windowFloorMs = now - PRE_CHARM_DEBUFF_WINDOW_SEC * 1000;
   let captured = 0;
   for (const [spellKey, b] of tgtBuffs) {
     if (!b || !b.name) continue;
     if (b.worn_off_at) continue;                          // already gone
+    const landedMs = b.landed_at || 0;
+    if (landedMs < windowFloorMs) continue;               // older than the pre-charm window — different mob, same name
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
-    if (durSecs > 0 && (now - (b.landed_at || now)) / 1000 > durSecs) continue;   // expired
+    if (durSecs > 0 && (now - landedMs) / 1000 > durSecs) continue;   // expired
     // Don't clobber a more-recent pet-side entry for the same spell.
     // Tie-breaker on equal landed_at: prefer whichever has the longer
     // dur_ticks. This heals pre-v3.1.1 entries where recordPetBuffLanding
@@ -1278,7 +1301,7 @@ function _captureTargetBuffsOnCharm(pet, owner) {
     const existing = petBuffs.get(spellKey);
     if (existing) {
       const ex = existing.landed_at || 0;
-      const nw = b.landed_at || 0;
+      const nw = landedMs;
       if (ex > nw) continue;
       if (ex === nw && (existing.dur_ticks || 0) >= (b.dur_ticks || 0)) continue;
     }
@@ -1286,7 +1309,7 @@ function _captureTargetBuffsOnCharm(pet, owner) {
       name:        b.name,
       dur_ticks:   b.dur_ticks,
       dur_formula: b.dur_formula,
-      landed_at:   b.landed_at,
+      landed_at:   landedMs,
     });
     captured++;
   }
@@ -1523,19 +1546,31 @@ function _bumpBardMelody(character, spellName, atMs, opts) {
   // say. Once we tag a character as 'song', it sticks for the rest of the
   // session (bards don't morph into wizards mid-fight).
   let kind = (opts && opts.kind) || 'song';
-  if (_isLikelyBardSong(spellName)) kind = 'song';
+  const isLikelyBardSong = _isLikelyBardSong(spellName);
+  if (isLikelyBardSong) kind = 'song';
   const key = String(character).toLowerCase();
   let state = _bardMelody.get(key);
   if (!state) {
-    state = { order: [], currentPos: -1, castStartedAt: atMs, cycleLength: 0, lastChangeAt: atMs, kind };
+    state = { order: [], currentPos: -1, castStartedAt: atMs, cycleLength: 0, lastChangeAt: atMs, kind, bardConfirmed: false };
     _bardMelody.set(key, state);
   }
+  // Positive-evidence sticky bard flag: a recognized bard-only song name
+  // (Lcea's Lament, Anthem de Arms, Selo's …) is concrete enough to flip
+  // a character to bard for the session even when no /who has run yet.
+  // Reset on melody-idle (zoned / char swap) so we don't drag the flag
+  // across character switches that share a Mimic instance.
+  if (isLikelyBardSong) state.bardConfirmed = true;
   // If we haven't cast in MELODY_IDLE_MS, treat this as a brand-new melody
   // (zoned / stopped / swapped). Avoids merging two unrelated rotations.
   if (state.lastChangeAt && (atMs - state.lastChangeAt) > MELODY_IDLE_MS) {
     state.order = [];
     state.currentPos = -1;
     state.cycleLength = 0;
+    // Reset bardConfirmed too — a fresh session (zoned / char swap / long
+    // idle) needs to re-prove the character is a bard before flipping the
+    // overlay title. This is what kept the old kind:'song' fallback sticky
+    // across characters; we re-evaluate fresh.
+    state.bardConfirmed = false;
   }
   // Track the current melody kind on the character's state. Once a bard,
   // always a bard for this character — never downgrade 'song' → 'spell' on
@@ -1927,7 +1962,12 @@ function recordPetBuffLanding(bcEvt) {
   // runSpeed / etc.) drop any existing entry in the same category, including
   // its 'fell off' linger. Mirrors EQ's slot-replacement rule: e.g. Spirit of
   // Wolf overwrites Journeyman's Boots (both runSpeed). Skip if uncategorized.
-  const newCat = _categorizeBuff(bcEvt.spell_name);
+  // Ladders first (see recordTargetBuffLanding) — pets get the same ranked
+  // replacement + blocked-cast semantics.
+  const ladderFx = _resistLadderEffect(mp, bcEvt.spell_name);
+  if (ladderFx && ladderFx.skip) return;
+  if (ladderFx) for (const k2 of ladderFx.drop) mp.delete(k2);
+  const newCat = ladderFx ? null : _categorizeBuff(bcEvt.spell_name);
   if (newCat) {
     for (const [k, b] of mp) {
       if (k === newKey) continue;
@@ -1966,11 +2006,51 @@ const _BUFF_KEYWORDS = {
   mana:      ['brilliance','iridescence','gift of brilliance'],
   manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
   haste:     ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
-  runSpeed:  ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
+  runSpeed:  ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew','spirit of bih'],
   attack:    ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
   ds:        ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
 };
 const _BUFF_CAT_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds'];
+
+// Per-school resist LADDERS (low → high). Resists were uncategorized, so a
+// fresh Resist Disease sat NEXT TO the Endure Disease it had just replaced
+// in-game (and Jasinth next to both). Same-school lines occupy one slot:
+// landing a higher link removes every lower one; a lower cast over a higher
+// existing buff is BLOCKED in-game, so we skip recording it. Schools are
+// independent — Resist Disease never touches Endure Magic. Values per the
+// spell catalog: flowers +10 < endure ~20 < resist ~40 < talisman/CoS +55.
+// (White/Green Petals stack in later slots and are deliberately absent.)
+const _RESIST_LADDERS = [
+  ['aura of black petals', 'endure disease', 'resist disease', 'talisman of jasinth', 'talisman of epuration'],   // DR
+  ['endure poison',  'resist poison',  'talisman of shadoo', 'talisman of epuration'],                            // PR
+  ['aura of blue petals', 'endure magic', 'resist magic', 'group resistance to magic'],                           // MR
+  ['aura of red petals',  'endure fire',  'resist fire',  'circle of seasons'],                                   // FR
+  ['endure cold', 'resist cold', 'circle of seasons'],                                                            // CR
+  // Run speed is a ladder too: Bih`Li overrides SoW, and SoW will NOT land
+  // over Bih`Li — the unranked category overwrite got that backwards.
+  ['journeyman', 'spirit of wolf', 'spirit of the wolf', 'spirit of bih'],                                        // runSpeed
+];
+// Returns { skip:true } when an existing strictly-higher same-ladder buff
+// blocks the new cast, else { drop:[keys...] } — the lower links to delete.
+function _resistLadderEffect(mp, spellName) {
+  const n = String(spellName || '').toLowerCase();
+  const drop = [];
+  let inAnyLadder = false;
+  for (const ladder of _RESIST_LADDERS) {
+    const rank = ladder.findIndex(k => n.includes(k));
+    if (rank === -1) continue;
+    inAnyLadder = true;
+    for (const [k2, b] of mp) {
+      const bn = String((b && b.name) || '').toLowerCase();
+      if (bn === n) continue;
+      const r2 = ladder.findIndex(k => bn.includes(k));
+      if (r2 === -1) continue;
+      if (r2 > rank) return { skip: true };   // higher link already on — cast was blocked
+      drop.push(k2);                          // lower (or equal-rank alias) link — replaced
+    }
+  }
+  return inAnyLadder ? { drop } : null;
+}
 function _categorizeBuff(name) {
   const n = String(name || '').toLowerCase();
   if (!n) return null;
@@ -2058,7 +2138,15 @@ function recordTargetBuffLanding(bcEvt) {
   // a known category drops the previous slot occupant, including its 'fell
   // off' linger. EQ's slot rule: e.g. Spirit of Wolf lands → Journeyman's
   // Boots gone. Uncategorized buffs leave existing entries alone.
-  const newCat = _categorizeBuff(bcEvt.spell_name);
+  // Ladders first — ranked lines (resists, run speed) own their slots: a
+  // higher link drops the lower ones; a lower cast over a higher link was
+  // blocked in-game so it is not recorded. When a ladder matched, the
+  // unranked category overwrite below is skipped (it would delete the
+  // higher link on a lower cast — SoW eating Bih`Li).
+  const ladderFx = _resistLadderEffect(mp, bcEvt.spell_name);
+  if (ladderFx && ladderFx.skip) return;
+  if (ladderFx) for (const k2 of ladderFx.drop) mp.delete(k2);
+  const newCat = ladderFx ? null : _categorizeBuff(bcEvt.spell_name);
   if (newCat) {
     for (const [k2, b] of mp) {
       if (k2 === newKey) continue;
@@ -5239,6 +5327,38 @@ function _serializeForDashboard() {
       targets: [...(s.targets || [])],
     };
   }
+
+// Zeal writes zeal.ini into the EQ folder; the "Export data on /camp" option
+// persists as ExportOnCamp=TRUE. Reading it lets the Setup checklist verify
+// the gear/AA export is actually enabled instead of just reminding. EQ dirs
+// come from WOLFPACK_EQ_DIR plus every watched log's folder (Logs/ parent).
+let _zealCampAt = 0;
+let _zealCampVal = null;
+function _zealExportOnCampState() {
+  if (Date.now() - _zealCampAt < 60_000) return _zealCampVal;
+  _zealCampAt = Date.now();
+  try {
+    const dirs = new Set();
+    if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
+    for (const w of (stats.watchedLogs || [])) {
+      if (!w || !w.logPath) continue;
+      let d = path.dirname(w.logPath);
+      if (/^logs$/i.test(path.basename(d))) d = path.dirname(d);
+      dirs.add(d);
+    }
+    let found = 0, on = 0;
+    for (const d of dirs) {
+      const ini = path.join(d, 'zeal.ini');
+      if (!fs.existsSync(ini)) continue;
+      found++;
+      const txt = fs.readFileSync(ini, 'utf8');
+      if (/^\s*ExportOnCamp\s*=\s*(true|1)\s*$/im.test(txt)) on++;
+    }
+    _zealCampVal = found === 0 ? null : (on === found);
+  } catch { _zealCampVal = null; }
+  return _zealCampVal;
+}
+
   // Active-character signal — the watched character whose Zeal pipe most
   // recently sent a sample (i.e. the EQ window the user is currently in).
   // Lets overlays focus on JUST the focused character — clears pet/charm/
@@ -5291,6 +5411,11 @@ function _serializeForDashboard() {
     // doesn't prove the token is still valid, so the badge uses identity.
     mimicSignedIn:      !!_mimicSessionToken,
     mimicIdentity:      _mimicIdentity,
+    // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
+    // each known EQ folder (60s cache). true = every found zeal.ini has
+    // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
+    // found (can't tell). Drives the Setup-checklist row.
+    zealExportOnCamp:   _zealExportOnCampState(),
     // Prefer the focused character's encounter when the agent is watching
     // multiple logs (multi-boxer). Falls back to the last-write-wins global
     // when no per-character entry exists, preserving single-character UX.
@@ -5639,8 +5764,16 @@ function _serializeForDashboard() {
         // bard UI (Melody title + utility strip) on for non-bards — the
         // overlay then NEVER reverted to "Spell Casting". Class or nothing.
         const wd = (whoData && whoData.get) ? whoData.get(k) : null;
+        // Three sources, in order of authority:
+        //   1. whoData class — captured from a real /who line.
+        //   2. zealSt.class — forward-compat for if Mimic ever pipes class.
+        //   3. state.bardConfirmed — set when this character was observed
+        //      singing a recognized-bard-only song (Lcea's, Anthem de Arms,
+        //      Selo's, …). Resets on melody-idle (zone / char swap) so it
+        //      can't carry across characters sharing a Mimic instance.
         const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
-                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')));
+                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
+                         || !!state.bardConfirmed;
         // Buff → info shape. When ticks is unknown (null/0) we still emit
         // `observed:true` so the overlay can render "on" instead of "off" —
         // surfacing buff presence even without a countdown. Source flag
@@ -5998,8 +6131,9 @@ body { background:var(--bg); color:var(--text); font-family:'Cascadia Code',Cons
 h1 { color:var(--blue); margin:0 0 4px 0; font-size:22px; }
 h2 { color:var(--gold); border-bottom:1px solid var(--border); padding-bottom:6px; margin:0 0 12px 0; font-size:14px; text-transform:uppercase; letter-spacing:.05em; }
 h3 { color:var(--dim); margin:0 0 8px 0; font-size:12px; font-weight:normal; text-transform:uppercase; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:14px; }
-.card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:14px; margin:0 0 14px 0; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; margin:0 0 14px 0; }
+.grid .card { margin:0 }
 .card.wide { grid-column:1/-1 }
 table { width:100%; border-collapse:collapse; font-size:13px; }
 th,td { text-align:left; padding:3px 8px; }
@@ -6137,51 +6271,49 @@ body.wp-overlay-mode .wp-overlay-target table td {
 body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
-<h1>🐺 Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
+<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
 <div class="subtle" id="header"></div>
-<div class="wp-quicklinks" id="wpQuickLinks">
-  <span>Jump to wolfpack.quest:</span>
-  <a href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer" title="Raid hub — live grouped roster, color tiers, buff coverage at a glance">/raid</a>
+<div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+  <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
+     style="color:var(--blue);border:1px solid var(--border);border-radius:5px;padding:3px 9px;text-decoration:none;font-weight:600"
+     title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a><span>:</span>
   <a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" title="Your /me dashboard — stats, settings, recent">/me</a>
   <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" title="Recent parses (last 30 days)">parses</a>
   <a href="https://wolfpack.quest/pvp" target="_blank" rel="noreferrer" title="PvP leaderboard">pvp</a>
-  <a href="https://wolfpack.quest/leaderboards" target="_blank" rel="noreferrer" title="Damage leaderboards">leaderboards</a>
   <a href="https://wolfpack.quest/fun" target="_blank" rel="noreferrer" title="Fun counters (Peopleslayer LD, Longest Dire Charm, etc.)">fun</a>
-  <span id="wpUploaderLinks"></span>
+  <span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">
+    <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
+       style="color:var(--orange);border:1px solid var(--orange);border-radius:5px;padding:3px 9px;text-decoration:none"
+       title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
+    <button id="wpUiStudioBtn" type="button"
+       style="background:transparent;border:1px solid var(--green);color:var(--green);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
+       title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
+    <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
+  </span>
 </div>
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
-  <button data-tab="tanks">Tanks</button>
-  <button data-tab="healers">Healers</button>
-  <button data-tab="deeps">DEEPS</button>
-  <button data-tab="pets">Pets</button>
-  <button data-tab="triggers">⚡ Triggers</button>
   <button data-tab="overlays">🪟 Overlays</button>
-  <button data-tab="info">Info / Stats</button>
-  <button data-tab="optin">Opt-in Logs</button>
-  <button id="wpUiStudioBtn" type="button"
-     style="background:transparent;border:1px solid var(--green);color:var(--green);padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit"
-     title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
-  <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
-     class="nav-quest"
-     style="margin-left:auto;color:var(--orange);border-color:var(--orange)"
-     title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
-  <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
-     class="nav-quest"
-     style="margin-left:6px"
-     title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
-  <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections">⚙ Panels</button>
-  <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
+  <button data-tab="raid">⚔ Buffs / Raid</button>
+  <button data-tab="fights">⚔️ Fights</button>
+  <button data-tab="info">Info</button>
+  <button data-tab="triggers">⚡ Triggers</button>
+  <button data-tab="optin">Logsync</button>
+  <button id="wpGear" class="wp-gear" style="margin-left:auto" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <div id="dash" class="section active"></div>
-<div id="tanks" class="section"></div>
-<div id="healers" class="section"></div>
-<div id="deeps" class="section"></div>
-<div id="pets" class="section"></div>
-<div id="triggers" class="section"></div>
 <div id="overlays" class="section"></div>
+<div id="raid" class="section"></div>
+<!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
+     render-targets (renderTanks/renderDeeps still setSectionHTML into them),
+     not independent .section tabs, so both show whenever Fights is active. -->
+<div id="fights" class="section">
+  <div id="tanks"></div>
+  <div id="deeps"></div>
+</div>
 <div id="info" class="section"></div>
+<div id="triggers" class="section"></div>
 <div id="optin" class="section"></div>
 <script>
 function _isNewerVersion(a, b) {
@@ -6370,7 +6502,7 @@ function renderHeader(s) {
     h += '<div class="banner stale-backfill" title="' + esc(tip) + '" style="background:#1a3a1f;color:#bff5c5;border:1px solid #2ea043;display:flex;gap:10px;align-items:center;justify-content:space-between">'
        + '<span><span class="pulse-dot" aria-hidden></span><b> ' + sb.count + ' ' + fileWord + '</b> backfilled before recent detectors landed. '
        + 'Re-run to capture <b>' + esc(labelList || 'new fun-event counters') + '</b>.</span>'
-       + '<button id="bannerGoOptin" style="background:#fff;color:#1a3a1f;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;white-space:nowrap">Open Opt-in Logs →</button>'
+       + '<button id="bannerGoOptin" style="background:#fff;color:#1a3a1f;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;white-space:nowrap">Open Logsync →</button>'
        + '</div>';
   }
   // Setup-state banners. These are the "why is nothing flowing" causes — all
@@ -6419,13 +6551,15 @@ function renderHeader(s) {
   // Version line — always renders an update-now button on the right so users
   // can trigger a restart-and-pull-latest at any time, even when the bot
   // hasn't (yet) advertised a newer version via polling.
+  // The H1 already shows "(agent x.y.z)" — repeating the bare version here
+  // confused people. Only render when an UPDATE is available (arrow + link).
   let versionStr;
   if (hasNewer) {
     versionStr = 'v' + esc(s.version) +
                  ' <span style="color:var(--gold)">→ v' + esc(s.latestAgentVersion) + ' available</span>' +
                  ' <a href="#" id="inlineUpdateBtn" style="color:var(--blue);margin-left:6px">[install]</a>';
   } else {
-    versionStr = 'v' + esc(s.version);
+    versionStr = '';
   }
   const alwaysBtn = '<button id="manualUpdateBtn" style="margin-left:12px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="' +
                   (s.updateBlocked ? 'Update blocked: ' + esc(s.updateBlocked) : 'Save session, restart agent, pull the latest version') +
@@ -6434,7 +6568,8 @@ function renderHeader(s) {
   // Click-to-reset for officers who want a clean board between raid nights
   // or after testing. Wipes session counters and Recent Parses; lifetime
   // totals and persisted resume state for opt-in backfills are preserved.
-  const resetBtn = '<button id="resetSessionBtn" style="margin-left:8px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="Zero out the session counters and Recent Parses on this dashboard">⟲ Reset dashboard</button>';
+  // (Reset dashboard moved to the Settings window — Settings → Reset
+  // dashboard. POSTs the same /api/reset-session endpoint.)
   // Upload-queue chip — visible only when there's pending work or a recent
   // permanent drop. Shows pending count + the last-retry summary so a
   // network blip is obvious without scrolling.
@@ -6463,10 +6598,21 @@ function renderHeader(s) {
     const display = s.mimicIdentity.display_name || s.mimicIdentity.discord_id || 'Discord account';
     const officer = s.mimicIdentity.is_officer ? ' <span style="color:var(--gold)" title="Officer">👑</span>' : '';
     identityChip = ' · <span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked Mimic install — Settings → Wolf Pack account to manage">⛓ ' + esc(display) + officer + '</span>';
+    // Officers: Admin link rides right next to the username chip.
+    if (s.mimicIdentity.is_officer) {
+      identityChip += ' <a href="https://wolfpack.quest/admin" target="_blank" rel="noreferrer" style="color:var(--red);border:1px solid var(--red);border-radius:3px;font-size:11px;padding:2px 6px;text-decoration:none" title="Officer admin — links, agents, triggers, audits">🛡 Admin ↗</a>';
+    }
   } else if (s.mimicSignedIn) {
     identityChip = ' · <span style="background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
   }
-  h += '<div>' + versionStr + ' · ' + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + alwaysBtn + resetBtn + '</div>';
+  h += '<div>' + (versionStr ? versionStr + ' · ' : '') + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + '</div>';
+  // Update button lives in the H1 next to "(agent x.y.z)" — fill its slot
+  // BEFORE the byte-stable early-return below (the slot is outside #header).
+  // Only rewrite when changed so the button isn't recreated every poll.
+  try {
+    const updSlot = document.getElementById('wpUpdSlot');
+    if (updSlot && updSlot.innerHTML !== alwaysBtn) updSlot.innerHTML = alwaysBtn;
+  } catch (e3) { /* */ }
   if (!setSectionHTML('header', h)) return;
   // Stale-backfill banner has a one-click hop to the Opt-in Logs pane.
   // Drives directly at the nav button so we reuse its tab-switching glue
@@ -6547,20 +6693,17 @@ function renderHeader(s) {
     try { if (window.mimic && window.mimic.openSettings) window.mimic.openSettings(); } catch (e) { void e; }
   });
 
-  // Reset-dashboard click — zeros session counters server-side, then we
-  // re-pull /api/state so the UI refreshes immediately without a hard reload.
-  const r = document.getElementById('resetSessionBtn');
-  _bindOnce(r, 'click', async () => {
-    if (!confirm('Reset session counters? Recent Parses, top damage and per-class panes go back to empty. Lifetime totals and opt-in backfill progress are preserved.')) return;
-    r.disabled = true; r.textContent = 'Resetting...';
-    try { await fetch('/api/reset-session', { method: 'POST' }); } catch {}
-    try { const fresh = await (await fetch('/api/state')).json(); refresh(); void fresh; } catch {}
-    r.disabled = false; r.textContent = '⟲ Reset dashboard';
-  });
+  // (Reset-dashboard click wiring removed — the button lives in the Mimic
+  // Settings window now and POSTs /api/reset-session directly.)
 }
 
 function renderDash(s) {
   let h = '';
+
+  // Setup checklist — the first thing on the Dashboard: is the engine actually
+  // wired to feed the raid tools? Each row is a known signal from /api/state.
+  // Self-updating #wpSetupChecks so its live ✓/✗ doesn't repaint the section.
+  h += '<div id="wpSetupChecks" class="card wide" style="display:none"></div>';
 
   // Per-character "buffs & zone" card — what each watched character is carrying
   // and where they are right now, OR what they logged out with (the last Zeal
@@ -6579,14 +6722,8 @@ function renderDash(s) {
   // every poll, which would otherwise force the whole #dash section to rewrite).
   // Filled by renderTriggerAlertsCard.
   h += '<div id="wpTriggerAlerts" class="card" style="display:none;border-color:#a06628"></div>';
-  // Trigger summary chip
-  if ((s.guildTriggerCount || 0) > 0 || (s.personalTriggerCount || 0) > 0) {
-    h += '<div class="card"><h2>Triggers</h2>' +
-         '<div class="dim" style="font-size:11px">' +
-         (s.guildTriggerCount || 0) + ' guild · ' +
-         (s.personalTriggerCount || 0) + ' personal' +
-         '</div></div>';
-  }
+  // (Removed the bare "N guild · N personal" trigger count card — it carried no
+  // actionable info. The Triggers tab has the real config + recent fires.)
 
   h += '<div class="grid">';
   // Recent parses — hide placeholder rows from older uploads (boss "?" with
@@ -6611,9 +6748,8 @@ function renderDash(s) {
   // 💚 Healing — this fight. Isolated (live during combat). renderHealingCard.
   h += '<div id="wpHealingCard" class="card" style="display:none"></div>';
 
-  // Watched Logs — isolated ("ago" times change every poll → the main idle
-  // stutter source). renderWatchedLogsCard.
-  h += '<div id="wpWatchedLogs" class="card" style="display:none"></div>';
+  // (Watched Logs moved to the Info / Stats tab — it's reference data, not a
+  // raid-night card. renderInfo emits the #wpWatchedLogs placeholder now.)
 
   // Recent Tells — isolated (its "When" column ticks every poll). renderRecentTellsCard.
   h += '<div id="wpRecentTells" class="card wide" style="display:none"></div>';
@@ -6640,7 +6776,82 @@ function renderDash(s) {
 // renderCritsCard. A card hidden via the ✕ panel button carries wp-hidden on
 // its element — we never force it back visible (respect _isPanelHidden()).
 function _isPanelHidden(el) {
-  return !!(el && el.classList && el.classList.contains('wp-hidden'));
+  if (!el) return false;
+  if (el.classList && el.classList.contains('wp-hidden')) return true;
+  // Also consult the persisted per-page hidden set — a re-render rebuilds
+  // the card WITHOUT wp-hidden and raced the MutationObserver re-apply,
+  // which is exactly how a dismissed Watched Logs card kept coming back.
+  try { if (window._wpPanelHiddenSetHas && window._wpPanelHiddenSetHas(el)) return true; } catch (e) { /* */ }
+  return false;
+}
+// Setup checklist — is the engine actually wired to feed the raid tools? Each
+// row is a ✓ (good) / ✗ (action needed) / ? (can't tell) derived from
+// /api/state. Self-updating #wpSetupChecks. We don't hide rows that pass — the
+// whole point is a member can glance at it and confirm everything is green.
+function renderSetupChecks(s) {
+  const el = document.getElementById('wpSetupChecks');
+  if (!el) return;
+  if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  const now = Date.now();
+  const logs = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
+  const freshLog = logs.some(w => w && w.lastSeen && (now - w.lastSeen) < 15 * 60 * 1000);
+  const zeal = Array.isArray(s.zealClients) ? s.zealClients : [];
+  const zealLive = zeal.some(c => c && c.live);
+  const rows = [
+    { ok: !!s.mimicSignedIn, label: 'Mimic account linked',
+      good: 'signed in — uploads land under your name',
+      bad: 'not linked — open Settings → Sign in with Discord (otherwise uploads are anonymous)' },
+    { ok: !s.localOnly, label: 'Uploading enabled',
+      good: 'token set — parses + buffs sync to the guild',
+      bad: 'local-only — no token, nothing leaves this machine (set it in Settings)' },
+    { ok: logs.length > 0, label: 'EQ logs found',
+      good: logs.length + ' log file' + (logs.length === 1 ? '' : 's') + ' being tailed',
+      bad: 'no eqlog_*_pq.proj.txt — turn on logging (/log on + Logging=on in eqclient.ini) and point Mimic at your EQ folder' },
+    { ok: freshLog, label: 'In-game logging ON',
+      good: 'a log updated in the last 15 min',
+      bad: logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
+    { ok: zealLive, label: 'Zeal connected',
+      good: 'live buff/group data flowing from Zeal',
+      bad: 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work',
+      info: zeal.length > 0 && !zealLive ? 'last-seen snapshots only — log a character in' : null },
+  ];
+  let h = '<h2>🩺 Setup checklist</h2><table style="font-size:12px">';
+  for (const r of rows) {
+    const mark = r.ok ? '<span style="color:var(--green)">✓</span>'
+                      : '<span style="color:var(--red)">✗</span>';
+    const detail = r.ok ? r.good : r.bad;
+    h += '<tr><td style="width:18px;text-align:center">' + mark + '</td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">' + esc(r.label) + '</td>'
+       + '<td class="dim" style="font-size:11px">' + esc(r.info || detail) + '</td></tr>';
+  }
+  // Export-on-/camp — real check when zeal.ini is readable (agent scans each
+  // EQ folder for ExportOnCamp=TRUE), reminder row when it is not.
+  if (s.zealExportOnCamp === true) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
+       + '<td class="dim" style="font-size:11px">ExportOnCamp=TRUE in zeal.ini — gear + AAs sync on every /camp (accurate cast bars + MGB detection).</td></tr>';
+  } else if (s.zealExportOnCamp === false) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
+       + '<td class="dim" style="font-size:11px">zeal.ini found but ExportOnCamp is OFF — in Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync.</td></tr>';
+  } else {
+    h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
+       + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
+  }
+  // UI backups — point at UI Studio so a reinstall / new PC restores the EQ
+  // window layout + eqclient.ini in one click.
+  h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+     + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Back up your UI</td>'
+     + '<td class="dim" style="font-size:11px">Open <b>UI Studio</b> (top right) and capture your EQ window layout + eqclient.ini — restores in one click on a reinstall or a new PC.</td></tr>';
+  // Tray pin — Windows tucks new tray icons behind the hidden-icons chevron,
+  // where the Overlays / Restart / update menu is easy to forget exists.
+  // Not detectable from here, so it stays a reminder row.
+  h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+     + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">miMIC in the Windows taskbar</td>'
+     + '<td class="dim" style="font-size:11px">Drag the miMIC icon out of the hidden-icons arrow (the <b>^</b> next to the clock) onto the taskbar tray so it is always visible — Overlays, Restart agent, and updates all live in that tray menu.</td></tr>';
+  h += '</table>';
+  morphInto(el, h);
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -6793,6 +7004,69 @@ function renderTanks(s) {
     h += '</table></div>';
   }
 
+  // (Weapon Loadouts moved to Info / Stats — buildLoadoutsHtml.)
+
+  const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
+  h += '<div class="card wide"><h2>Incoming Damage</h2>';
+  if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
+  else {
+    h += '<table><tr><th>Tank</th><th>Dmg Taken</th><th>Hits</th><th>Ramp Hits</th><th>Ramp Dmg</th><th>Invuln Avoided</th><th>Riposted For</th></tr>';
+    for (const [n, d] of defs.slice(0,12)) {
+      h += '<tr><td class="name">' + esc(n) + '</td>' +
+           '<td class="num">' + fmtK(d.damageTaken) + '</td>' +
+           '<td class="num">' + (d.hits||0) + '</td>' +
+           '<td class="num">' + (d.rampageHits ? '<span class="tag ramp">'+d.rampageHits+'</span>' : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (d.rampageDmg ? fmtK(d.rampageDmg) : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (d.invulnAvoidedDmg ? '<span class="tag invuln">'+fmtK(d.invulnAvoidedDmg)+'</span>' : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + fmtK(d.ripostedFor||0) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
+  // Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
+  // by total damage descending so heavy DS wearers float to the top; expand a
+  // row to see the spell/song breakdown that's feeding it.
+  const ds = s.damageShield || {};
+  const dsTotals = Object.entries(ds).map(function(kv){
+    const name = kv[0];
+    const sources = kv[1] || {};
+    var total = 0, hits = 0;
+    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
+    return { name: name, total: total, hits: hits, sources: sources };
+  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
+  h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
+  if (dsTotals.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes the druid/ranger thorn lines (thorns, thistles, brambles, spikes, barbs, the -coat selfs, Legacy of Thorn/Spike), the magician fire shields (Shield of Fire/Flame/Lava, Inferno Shield, Barrier of Combustion, Boon of Immolation, Cadeau of Flame), enchanter Feedback, the bard Psalms, and DS clickies casting those lines. Missing one? Let an officer know.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
+    for (const t of dsTotals.slice(0, 12)) {
+      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
+      const srcSummary = srcEntries.map(function(kv){
+        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
+      }).join(' · ');
+      h += '<tr><td class="name">' + esc(t.name) + '</td>' +
+           '<td class="num">' + fmtK(t.total) + '</td>' +
+           '<td class="num">' + t.hits + '</td>' +
+           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // Deaths
+  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
+  h += '<div class="card"><h2>Deaths This Session</h2>';
+  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
+  else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
+  h += '</div>';
+  h += '</div>';
+  // Healers fold in below the tank cards — one combat-support tab.
+  h += buildHealersHtml(s);
+  if (!setSectionHTML('tanks', h)) return;
+}
+
+function buildLoadoutsHtml(s) {
+  let h = '';
   // ── Character loadouts — parsed from <Char>-Inventory.txt files in EQ dir
   const invsAll = Object.entries(s.characterInventories || {});
   const hidden = new Set((s.hiddenLoadoutChars || []).map(c => c.toLowerCase()));
@@ -6891,61 +7165,10 @@ function renderTanks(s) {
     h += '</div>';
   }
 
-  const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
-  h += '<div class="card wide"><h2>Incoming Damage</h2>';
-  if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
-  else {
-    h += '<table><tr><th>Tank</th><th>Dmg Taken</th><th>Hits</th><th>Ramp Hits</th><th>Ramp Dmg</th><th>Invuln Avoided</th><th>Riposted For</th></tr>';
-    for (const [n, d] of defs.slice(0,12)) {
-      h += '<tr><td class="name">' + esc(n) + '</td>' +
-           '<td class="num">' + fmtK(d.damageTaken) + '</td>' +
-           '<td class="num">' + (d.hits||0) + '</td>' +
-           '<td class="num">' + (d.rampageHits ? '<span class="tag ramp">'+d.rampageHits+'</span>' : '<span class="dim">—</span>') + '</td>' +
-           '<td class="num">' + (d.rampageDmg ? fmtK(d.rampageDmg) : '<span class="dim">—</span>') + '</td>' +
-           '<td class="num">' + (d.invulnAvoidedDmg ? '<span class="tag invuln">'+fmtK(d.invulnAvoidedDmg)+'</span>' : '<span class="dim">—</span>') + '</td>' +
-           '<td class="num">' + fmtK(d.ripostedFor||0) + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
-  // Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
-  // by total damage descending so heavy DS wearers float to the top; expand a
-  // row to see the spell/song breakdown that's feeding it.
-  const ds = s.damageShield || {};
-  const dsTotals = Object.entries(ds).map(function(kv){
-    const name = kv[0];
-    const sources = kv[1] || {};
-    var total = 0, hits = 0;
-    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
-    return { name: name, total: total, hits: hits, sources: sources };
-  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
-  h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
-  if (dsTotals.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes thorns / brambles / spikes / sanity shield / symbol of naltron / cassindra / halo of light / reflect and similar. Open a new pattern? Let an officer know.</div>';
-  } else {
-    h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
-    for (const t of dsTotals.slice(0, 12)) {
-      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
-      const srcSummary = srcEntries.map(function(kv){
-        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
-      }).join(' · ');
-      h += '<tr><td class="name">' + esc(t.name) + '</td>' +
-           '<td class="num">' + fmtK(t.total) + '</td>' +
-           '<td class="num">' + t.hits + '</td>' +
-           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // Deaths
-  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
-  h += '<div class="card"><h2>Deaths This Session</h2>';
-  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
-  else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
-  h += '</div>';
-  h += '</div>';
-  if (!setSectionHTML('tanks', h)) return;
+  return h;
+}
+
+function wireLoadoutControls() {
   // Wire the hide/show character buttons in the Weapon Loadouts table.
   // Idempotent under morph (nodes persist across polls).
   document.querySelectorAll('[data-hide-char]').forEach(b => _bindOnce(b, 'click', async () => {
@@ -6987,7 +7210,7 @@ function renderTanks(s) {
   });
 }
 
-function renderHealers(s) {
+function buildHealersHtml(s) {
   let h = '<div class="grid"><div class="card wide">' +
           '<h2>Healers This Session ' +
           '<span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span>' +
@@ -7025,7 +7248,7 @@ function renderHealers(s) {
     ch += '</table></div></div>';
     h += ch;
   }
-  setSectionHTML('healers', h);
+  return h;
 }
 
 function renderDeeps(s) {
@@ -7095,13 +7318,13 @@ function renderDeeps(s) {
   setSectionHTML('deeps', h);
 }
 
-function renderPets(s) {
+function buildPetsHtml(s) {
   let h = '<div class="card"><h2>Known Pets This Session</h2>';
   const pets = (s.knownPets||[]);
   if (!pets.length) h += '<div class="dim">No pets observed yet.</div>';
   else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>'; for (const p of pets) h += '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; h += '</table>'; }
   h += '</div>';
-  setSectionHTML('pets', h);
+  return h;
 }
 
 // ── Triggers tab ───────────────────────────────────────────────────────────
@@ -7163,7 +7386,7 @@ function renderZealClients(s) {
     return;
   }
   if (el.style.display === 'none') el.style.display = '';
-  let h = '<h2>🧪 Buffs &amp; Zone <span class="dim" style="font-size:11px;font-weight:normal">· what each character is carrying + where (via Zeal)</span></h2>';
+  let h = '<h2>🧪 Buffs &amp; Zone <span class="dim" style="font-size:11px;font-weight:normal">· what each character has buffwise and where they are (via Zeal)</span></h2>';
   for (const c of clients) {
     const dot   = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
     const where = c.zone_name ? esc(c.zone_name) : (c.zone != null ? 'zone ' + esc(String(c.zone)) : 'unknown zone');
@@ -7554,7 +7777,7 @@ var WP_OVERLAY_ROWS = [
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
-  ['mobinfo', 'Mob Info',            'Current target: HP, AC, resists, special attacks, drop table.'],
+  ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
@@ -7579,6 +7802,15 @@ function renderOverlays(s) {
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
   // Stated here once so it's discoverable from the dashboard instead of having
   // to read the icons' tooltips.
+  // Show/hide-ALL hotkey — current binding + rebind capture. The accelerator
+  // is registered globally by Mimic (registerHideAllHotkey); saving
+  // hideAllHotkey via saveConfig re-registers live.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">Show / hide ALL overlays:</b>'
+    + '<code id="wpHideHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpHideHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<span id="wpHideHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
     + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
     + '</div>';
@@ -7598,12 +7830,60 @@ function renderOverlays(s) {
       +  '<td class="dim">' + desc + '</td></tr>';
   }
   h += '</table>';
-  h += '<div class="dim" style="font-size:11px;margin-top:8px">A panel from the <b>Dashboard</b> tab can also be sent to its own overlay via the <code style="background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">overlay</code> button on each card. Lock/Setup placement live in the tray.</div>';
+  h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock/Setup placement live in the tray.</div>';
   h += '</div>';
 
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
+  wpWireHideHotkey();
+}
+
+// Hotkey row wiring — read the current accelerator from config, and capture a
+// new combo on demand. Electron accelerator format (Ctrl/Alt/Shift + key);
+// at least one modifier required so a bare letter cannot eat normal typing.
+var _wpHotkeyCapturing = false;
+function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+function wpWireHideHotkey() {
+  var cur = document.getElementById('wpHideHotkeyCur');
+  var btn = document.getElementById('wpHideHotkeyBtn');
+  var hint = document.getElementById('wpHideHotkeyHint');
+  if (!cur || !btn || !window.mimic || !window.mimic.getConfig) return;
+  window.mimic.getConfig().then(function(cfg){
+    var a = (cfg && typeof cfg.hideAllHotkey === 'string' && cfg.hideAllHotkey.trim()) ? cfg.hideAllHotkey.trim() : 'CommandOrControl+Shift+H';
+    cur.textContent = _wpFmtAccel(a);
+  }).catch(function(){ cur.textContent = 'Ctrl+Shift+H'; });
+  _bindOnce(btn, 'click', function(){
+    if (_wpHotkeyCapturing) return;
+    _wpHotkeyCapturing = true;
+    if (hint) hint.textContent = 'Press the new key combo now (needs Ctrl, Alt or Shift — Esc cancels)…';
+    function done(msg) {
+      _wpHotkeyCapturing = false;
+      document.removeEventListener('keydown', onKey, true);
+      if (hint) hint.textContent = msg || '';
+      if (msg) setTimeout(function(){ if (hint) hint.textContent = ''; }, 4000);
+    }
+    function onKey(e) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { done('Cancelled.'); return; }
+      var k = e.key;
+      if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return;  // wait for the real key
+      if (!e.ctrlKey && !e.altKey && !e.shiftKey) { if (hint) hint.textContent = 'Add Ctrl, Alt or Shift — a bare key would eat normal typing.'; return; }
+      var key = k.length === 1 ? k.toUpperCase() : k;                // letters → upper; F1-F12 etc. pass through
+      if (key === ' ') key = 'Space';
+      var parts = [];
+      if (e.ctrlKey)  parts.push('CommandOrControl');
+      if (e.altKey)   parts.push('Alt');
+      if (e.shiftKey) parts.push('Shift');
+      parts.push(key);
+      var accel = parts.join('+');
+      window.mimic.saveConfig({ hideAllHotkey: accel }).then(function(){
+        cur.textContent = _wpFmtAccel(accel);
+        done('Saved — active immediately.');
+      }).catch(function(){ done('Save failed.'); });
+    }
+    document.addEventListener('keydown', onKey, true);
+  });
 }
 
 // Flip an overlay via the Mimic IPC bridge, then refresh button states.
@@ -7650,7 +7930,12 @@ function renderInfo(s) {
   // double-counts. Floor to sessionMin so a brand-new install isn't shown below
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
-  let h = '<div class="grid">';
+  let h = '';
+  // Watched Logs — moved here from the Dashboard (reference data, not a
+  // raid-night card). Self-updating #wpWatchedLogs filled by
+  // renderWatchedLogsCard; placeholder hidden until logs are seen.
+  h += '<div id="wpWatchedLogs" class="card wide" style="display:none"></div>';
+  h += '<div class="grid">';
   // 🥋 Monk Mending — only if attempts > 0
   const m = s.sessionMends || {};
   if (m.attempts > 0) {
@@ -7851,7 +8136,370 @@ function renderInfo(s) {
   }
 
   h += '</div>';
+  // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
+  h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
   setSectionHTML('info', h);
+  wireLoadoutControls();
+}
+
+
+// ── Buffs / Raid tab ─────────────────────────────────────────────────────────
+// Same data as the buff-queue overlay + wolfpack.quest/raid, but full-page and
+// on the agent's 3s cache instead of the website's 15s refresh — "review this
+// outside the main site, faster". Class picker persists with the overlay's key.
+var _raidTabCls = '';
+try { _raidTabCls = localStorage.getItem('wp:bufferClass') || ''; } catch (e) {}
+function _raidTierColor(t) {
+  if (t === 'red') return 'var(--red)';
+  if (t === 'orange') return 'var(--orange)';
+  if (t === 'yellow') return 'var(--gold)';
+  if (t === 'upgradable') return '#7ee787';   // light green — present but a higher cast is available
+  return 'var(--blue)';
+}
+var _raidSelName = null;   // click-to-expand raider in the Raid card
+// ── Website-parity raider detail (bot detail payload, v3.0.85+) ────────────
+// Renders the same sections the wolfpack.quest /raid panel shows: HP SLOTS,
+// BUFF CATEGORIES (with song sub-lines + catalog magnitudes), RESISTS (n/5),
+// DAMAGE SHIELDS (+N per slot, total), SONGS (n/6), OTHER, DI/CHA warning.
+var _RD_RES_ORDER  = ['MR','FR','CR','PR','DR'];
+var _RD_RES_LABELS = { MR:'Magic', FR:'Fire', CR:'Cold', PR:'Poison', DR:'Disease' };
+var _RD_CAT_ORDER  = ['regen','manaRegen','mana','haste','attack','runSpeed','levitate','survival'];
+var _RD_CAT_LABELS = { regen:'HP Regen', manaRegen:'Mana Regen', mana:'Mana', haste:'Haste', attack:'Attack', runSpeed:'Run Speed', levitate:'Levitate', survival:'Survival' };
+var _RD_ROLE_OF = { warrior:'tank', paladin:'tank', 'shadow knight':'tank', shadowknight:'tank', sk:'tank',
+  rogue:'melee', monk:'melee', ranger:'melee', beastlord:'melee', berserker:'melee',
+  cleric:'priest', druid:'priest', shaman:'priest',
+  wizard:'caster', magician:'caster', necromancer:'caster', enchanter:'caster', bard:'bard' };
+var _RD_ROLE_EXPECT = { tank:['haste','attack'], melee:['haste','attack'], priest:['manaRegen'], caster:['manaRegen'], bard:['haste'], other:[] };
+function _rdFmtSecs(s) {
+  if (s == null || s <= 0) return '';
+  if (s >= 3600) { var hh = Math.floor(s/3600); var mm2 = Math.floor((s%3600)/60); return hh + 'h' + (mm2 ? mm2 + 'm' : ''); }
+  if (s >= 60) return Math.round(s/60) + 'm';
+  return Math.round(s) + 's';
+}
+function _rdEntry(e, isHaste) {
+  if (!e) return '';
+  var t = _rdFmtSecs(e.s);
+  var v = (e.v != null) ? ' <span style="color:var(--green)" class="num">+' + e.v + (isHaste ? '%' : '') + '</span>' : '';
+  return '<span style="color:var(--text)">' + esc(e.n) + '</span>' + (t ? ' <span class="dim num">' + t + '</span>' : '') + v;
+}
+function _rdSongLine(e, isHaste) {
+  return '<div style="padding-left:14px;font-size:10px"><span style="color:#a371f7" title="Bard song — stacks on top of the primary buff">♪ song:</span> ' + _rdEntry(e, isHaste) + '</div>';
+}
+function _raidDetailHtml(sel, det) {
+  var role = _RD_ROLE_OF[String(sel.class || '').toLowerCase()] || 'other';
+  var expect = _RD_ROLE_EXPECT[role] || [];
+  var h2 = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;font-size:11px">';
+  function secHdr(t) { return '<div class="dim" style="font-size:9px;letter-spacing:0.07em;text-transform:uppercase;margin-bottom:3px">' + t + '</div>'; }
+  function row(label, inner) { return '<div style="display:flex;gap:6px;align-items:baseline;margin-bottom:2px"><span class="dim" style="width:74px;flex:none">' + label + '</span><span style="min-width:0">' + inner + '</span></div>'; }
+  var missing = '<span style="color:var(--red)">— missing</span>';
+  // HP SLOTS column
+  var hpHtml = secHdr('HP slots');
+  var hpLabels = { A:'POTG/Aego', B:'Symbol', C:'Khura/Brell' };
+  ['A','B','C'].forEach(function(s){
+    var nm = det.hp && det.hp[s];
+    hpHtml += row('HP · ' + hpLabels[s], nm ? '<span style="color:var(--green)">' + esc(nm) + '</span>' : missing);
+  });
+  // BUFF CATEGORIES column
+  var catHtml = secHdr('Buff categories');
+  _RD_CAT_ORDER.forEach(function(cat){
+    var entries = (det.cats && det.cats[cat]) || [];
+    var exp = expect.indexOf(cat) !== -1;
+    if (!entries.length && !exp) return;
+    var isHaste = cat === 'haste';
+    var prim = []; var sngs = [];
+    for (var i3 = 0; i3 < entries.length; i3++) (entries[i3].song ? sngs : prim).push(entries[i3]);
+    var inner;
+    if (prim.length) inner = _rdEntry(prim[0], isHaste) + (prim.length > 1 ? ' <span class="dim">+' + (prim.length - 1) + '</span>' : '');
+    else if (sngs.length) inner = '<span class="dim" style="font-style:italic">song only ↓</span>';
+    else inner = missing;
+    catHtml += row(_RD_CAT_LABELS[cat] || cat, inner);
+    for (var i4 = 0; i4 < sngs.length; i4++) catHtml += _rdSongLine(sngs[i4], isHaste);
+  });
+  // RESISTS column
+  var covered = 0;
+  _RD_RES_ORDER.forEach(function(t){ if (det.resists && det.resists[t] && det.resists[t].length) covered++; });
+  var resHtml = secHdr('Resists (' + covered + '/5)');
+  _RD_RES_ORDER.forEach(function(t){
+    var entries = (det.resists && det.resists[t]) || [];
+    var prim = []; var sngs = [];
+    for (var i5 = 0; i5 < entries.length; i5++) (entries[i5].song ? sngs : prim).push(entries[i5]);
+    var inner;
+    if (prim.length) inner = _rdEntry(prim[0], false) + (prim.length > 1 ? ' <span class="dim">+' + (prim.length - 1) + ' more</span>' : '');
+    else if (sngs.length) inner = '<span class="dim" style="font-style:italic">song only ↓</span>';
+    else inner = missing;
+    resHtml += row(_RD_RES_LABELS[t], inner);
+    for (var i6 = 0; i6 < sngs.length; i6++) resHtml += _rdSongLine(sngs[i6], false);
+  });
+  // DS + SONGS + OTHER column
+  var dsList = det.ds || [];
+  var dsTotal = 0;
+  for (var i7 = 0; i7 < dsList.length; i7++) if (dsList[i7].v != null) dsTotal += dsList[i7].v;
+  var dsHtml = secHdr('Damage shields' + (dsTotal > 0 ? ' · <span style="color:var(--green)" class="num">' + dsTotal + ' total</span>' : ''));
+  if (!dsList.length) dsHtml += '<div>' + (role === 'tank' ? missing : '<span class="dim" style="font-style:italic">none</span>') + '</div>';
+  else for (var i8 = 0; i8 < dsList.length; i8++) dsHtml += '<div style="margin-bottom:2px">' + _rdEntry(dsList[i8], false) + '</div>';
+  var sgList = det.songs || [];
+  dsHtml += '<div style="margin-top:8px">' + secHdr('Songs (' + sgList.length + '/6)');
+  if (!sgList.length) dsHtml += '<div class="dim" style="font-style:italic">no songs landed</div>';
+  else for (var i9 = 0; i9 < sgList.length; i9++) dsHtml += '<div style="margin-bottom:2px">♪ ' + _rdEntry(sgList[i9], false) + '</div>';
+  dsHtml += '</div>';
+  var otList = det.other || [];
+  if (otList.length) {
+    dsHtml += '<div style="margin-top:8px">' + secHdr('Other (' + otList.length + ')')
+      + '<div class="dim" style="line-height:1.7">' + otList.map(function(e){ return esc(e.n); }).join(' · ') + '</div></div>';
+  }
+  h2 += '<div>' + hpHtml + '</div><div>' + catHtml + '</div><div>' + resHtml + '</div><div>' + dsHtml + '</div>';
+  h2 += '</div>';
+  // DI-without-CHA warning — death save rolls vs Charisma.
+  if (det.di && !det.cha) {
+    h2 += '<div style="margin-top:8px;padding:5px 9px;border:1px solid rgba(240,136,62,0.5);background:rgba(240,136,62,0.10);border-radius:4px;font-size:11px">'
+      + '⚠ <span style="color:var(--orange)">Divine Intervention without a CHA buff</span>'
+      + '<span class="dim"> — the death save rolls vs Charisma. Enchanter/Shaman: land a CHA buff.</span></div>';
+  }
+  return h2;
+}
+// Per-class buff-line checklist — shown as sections even when fully covered,
+// so picking a class shows the whole job, not just the gaps. Mirrors the
+// bot CLASS_PROVIDES (labels match the queue missing-strings).
+var _CLASS_CHECKLIST = {
+  cleric:    ['HP A', 'HP B', 'HP C', 'HP Regen', 'Resists'],
+  druid:     ['HP A', 'HP Regen', 'Run Speed', 'Dmg Shield', 'Resists'],
+  shaman:    ['HP C', 'Haste', 'Attack', 'HP Regen', 'Resists'],
+  enchanter: ['Mana', 'Mana Regen', 'Haste', 'Resists'],
+  bard:      ['Haste', 'Run Speed', 'Attack', 'Mana Regen', 'Dmg Shield'],
+  paladin:   ['HP', 'Resists'],
+  ranger:    ['HP Regen', 'Dmg Shield'],
+  beastlord: ['Attack', 'HP Regen'],
+  magician:  ['Dmg Shield'],
+};
+function renderRaidTab(q) {
+  var root = document.getElementById('raid');
+  if (!root) return;
+
+  var CAT_ORDER = ['HP A', 'HP B', 'HP C', 'HP', 'Haste', 'Attack', 'Dmg Shield',
+                   'Mana', 'Mana Regen', 'HP Regen', 'Run Speed', 'Levitate', 'Resists'];
+  function catRank(label) {
+    for (var i = 0; i < CAT_ORDER.length; i++) {
+      if (label === CAT_ORDER[i]) return i;
+      if (label.indexOf('Resist') === 0 && CAT_ORDER[i] === 'Resists') return i;
+    }
+    return CAT_ORDER.length;
+  }
+
+  var h = '<div class="grid">';
+
+  // ── Raid card FIRST, full width — one column per group, click a raider to
+  // expand their buffs across the bottom. ─────────────────────────────────
+  h += '<div class="card wide"><h2>⚔ Raid '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(your raid only — HP from Zeal group gauges)</span> '
+    + '<a href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer" style="color:var(--orange);font-size:11px;font-weight:normal;float:right">full raid hub ↗</a></h2>';
+  var roster = (q && q.roster) || [];
+  if (!roster.length) {
+    h += '<div class="dim" style="font-size:12px">No raid roster flowing yet — join a raid (or group) with Mimic running and this fills in within seconds.</div>';
+  } else {
+    var mimics = roster.filter(function(r){ return r.mimic; }).length;
+    h += '<div class="dim" style="font-size:11px;margin:4px 0 8px">' + roster.length + ' raiders · ' + mimics + ' on Mimic · click a name for their buffs</div>';
+    var byGroup = {};
+    var groupOrder = [];
+    for (var gi = 0; gi < roster.length; gi++) {
+      var gk = roster[gi].group != null ? ('Group ' + roster[gi].group) : 'No group';
+      if (!byGroup[gk]) { byGroup[gk] = []; groupOrder.push(gk); }
+      byGroup[gk].push(roster[gi]);
+    }
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;align-items:start">';
+    for (var go = 0; go < groupOrder.length; go++) {
+      var glabel = groupOrder[go], members = byGroup[glabel];
+      h += '<div>';
+      h += '<div style="margin:0 0 4px;font-size:11px;color:var(--gold);font-weight:600;border-bottom:1px solid var(--border);padding-bottom:2px">👥 ' + esc(glabel) + ' <span class="dim" style="font-weight:normal">' + members.length + '</span></div>';
+      for (var mi = 0; mi < members.length; mi++) {
+        var m = members[mi];
+        var hp = m.hp_pct != null ? Math.max(0, Math.min(100, Math.round(m.hp_pct))) : null;
+        var hpColor = hp == null ? 'var(--border)' : (hp > 50 ? 'var(--green)' : (hp > 20 ? 'var(--orange)' : 'var(--red)'));
+        var selected = _raidSelName === m.name;
+        h += '<div class="wp-raid-row" data-raider="' + esc(m.name) + '" style="position:relative;cursor:pointer;padding:3px 6px 4px;font-size:11px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:' + (selected ? 'rgba(88,166,255,0.12)' : 'rgba(8,5,16,0.35)') + ';border-radius:3px;overflow:hidden">'
+          + '<div style="display:flex;align-items:baseline;gap:5px">'
+          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name)
+          + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:#a371f7;font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
+          + (hp != null ? '<span class="num" style="margin-left:auto;font-size:10px;color:' + hpColor + '">' + hp + '%</span>' : '')
+          + '</div>'
+          + '<div style="display:flex;align-items:baseline;gap:5px;font-size:9px" class="dim">'
+          + '<span>' + esc(m.class || '?') + (m.level != null ? ' L' + m.level : '') + '</span>'
+          + (m.mimic ? '<span title="Running Mimic — live buff data">🐺</span>' : (m.inferred ? '<span title="Buffs inferred from observed casts">🔍</span>' : '<span style="font-style:italic">no data</span>'))
+          + '<span style="margin-left:auto">' + (m.buff_count ? m.buff_count + 'b' : '') + (m.hp_missing ? ' <span style="color:var(--orange)">-' + m.hp_missing + 'hp</span>' : '') + '</span>'
+          + '</div>'
+          + (hp != null ? '<span style="position:absolute;left:0;bottom:0;height:2px;background:' + hpColor + ';width:' + hp + '%"></span>' : '')
+          + '</div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+    // Click-to-expand detail — full width under the columns.
+    if (_raidSelName) {
+      var sel = null;
+      for (var si = 0; si < roster.length; si++) if (roster[si].name === _raidSelName) { sel = roster[si]; break; }
+      if (sel) {
+        h += '<div style="margin-top:10px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px">'
+          + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">'
+          + '<b style="color:var(--blue);font-size:13px">' + esc(sel.name) + '</b>'
+          + '<span class="dim" style="font-size:11px">' + esc(sel.class || '?') + (sel.level != null ? ' L' + sel.level : '') + (sel.zone ? ' · ' + esc(sel.zone) : '') + '</span>'
+          + (sel.hp_missing ? '<span style="color:var(--orange);font-size:11px">' + sel.hp_missing + ' HP slot' + (sel.hp_missing === 1 ? '' : 's') + ' missing</span>' : '<span style="color:var(--green);font-size:11px">HP slots full</span>')
+          + '<button type="button" id="wpRaidSelClose" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;font-size:10px;padding:1px 7px">✕ close</button>'
+          + '</div>';
+        var bl = sel.buffs || [];
+        if (sel.detail) {
+          h += _raidDetailHtml(sel, sel.detail);
+        } else if (!bl.length) {
+          h += '<div class="dim" style="font-size:11px">No buff data for this raider' + (sel.mimic ? '' : ' — not running Mimic; observed casts fill in as buffers land things') + '.</div>';
+        } else {
+          h += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+          for (var bi = 0; bi < bl.length; bi++) {
+            var bb = bl[bi];
+            var rem = (typeof bb.t === 'number' && bb.t > 0 && bb.t < 6000) ? Math.round(bb.t * 6 / 60) + 'm' : '';
+            h += '<span style="font-size:11px;background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:2px 8px">'
+              + esc(bb.n) + (rem ? ' <span class="dim">' + rem + '</span>' : '') + '</span>';
+          }
+          h += '</div>';
+        }
+        h += '</div>';
+      }
+    }
+  }
+  h += '</div>';
+
+  // ── Buff queue card — per-class checklist with gaps grouped per line ─────
+  h += '<div class="card wide"><h2>🛡 Buff queue '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(grouped by buff line · 3s cache)</span></h2>';
+  h += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0 10px;font-size:12px">'
+    + '<span class="dim">Buffing as</span>'
+    + '<select id="wpRaidCls" style="background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font:inherit">'
+    + '<option value="">(any class)</option>'
+    + ['Cleric','Druid','Shaman','Enchanter','Bard','Paladin','Ranger','Beastlord','Magician'].map(function(c){
+        return '<option' + (c === _raidTabCls ? ' selected' : '') + '>' + c + '</option>';
+      }).join('')
+    + '</select>'
+    + '</div>';
+  if (!q) {
+    h += '<div class="dim">Loading the queue from the bot…</div>';
+  } else {
+    var bq = q.buff_queue || [];
+    var byCat = {};
+    for (var i2 = 0; i2 < bq.length; i2++) {
+      var labels = [];
+      if (bq[i2].missing && bq[i2].missing.length) labels = labels.concat(bq[i2].missing);
+      // Upgrade chains (Focus line ↑, Aego line ↑, Symbol line ↑) — a
+      // raider with a lower link than the buffer's class can cast lands in
+      // its own labeled section so the buffer can recast at max rank.
+      if (bq[i2].upgrades && bq[i2].upgrades.length) {
+        for (var ui = 0; ui < bq[i2].upgrades.length; ui++) {
+          labels.push(bq[i2].upgrades[ui] + ' ↑');
+        }
+      }
+      if (!labels.length) labels = ['Other'];
+      for (var j2 = 0; j2 < labels.length; j2++) {
+        (byCat[labels[j2]] = byCat[labels[j2]] || []).push(bq[i2]);
+      }
+    }
+    // The class checklist shows EVERY line this class owns — covered lines
+    // render as a ✓ so the buffer sees the whole job, not just the gaps.
+    var checklist = _CLASS_CHECKLIST[_raidTabCls.toLowerCase()] || [];
+    var cats = Object.keys(byCat);
+    for (var ck = 0; ck < checklist.length; ck++) if (cats.indexOf(checklist[ck]) === -1) cats.push(checklist[ck]);
+    cats.sort(function(a, b){ return catRank(a) - catRank(b) || a.localeCompare(b); });
+    if (!cats.length) {
+      h += '<div class="dim" style="font-size:12px">Pick a class to see its buff checklist, or wait for raid data.</div>';
+    }
+    // Cures FIRST (per user) — time-critical, already ordered curse → blind →
+    // poison → disease by the bot. Render above the buff checklist.
+    var dq = q.debuff_queue || [];
+    if (dq.length) {
+      h += '<div style="margin:4px 0 3px;padding:3px 8px;background:rgba(248,81,73,0.10);border-radius:4px;font-size:11px;color:var(--red);font-weight:600">🩸 Cures needed <span class="dim" style="font-weight:normal">' + dq.length + ' · curse → blind → poison → disease</span></div>';
+      for (var dj = 0; dj < dq.length; dj++) {
+        var d = dq[dj];
+        var chips = (d.curses || []).map(function(c){
+          var sl = '';
+          if (c.slot != null) {
+            sl = c.low_slot
+              ? ' <span style="color:#7ee787" title="Buff slot ' + c.slot + ' — dispellable without clipping much">s' + c.slot + '✂</span>'
+              : ' <span class="dim" title="Buff slot ' + c.slot + '">s' + c.slot + '</span>';
+          }
+          var cu = '';
+          if (c.cure) {
+            var cuCol = c.cure === 'poison' ? 'var(--green)' : c.cure === 'disease' ? 'var(--gold)' : c.cure === 'blind' ? 'var(--dim)' : 'var(--orange)';
+            cu = ' <span style="color:' + cuCol + '" title="Cure type: ' + esc(c.cure) + (c.counters ? ' — ' + c.counters + ' counters' : '') + '">' + esc(c.cure) + '</span>';
+          }
+          // Being cured (bot v3.0.90+) — a matching cure is in flight; show the
+          // curer and strike the chip so a second curer skips it.
+          var cured = '', open = '', close = '';
+          if (c.being_cured) {
+            open = '<span style="opacity:0.5;text-decoration:line-through">'; close = '</span>';
+            cured = ' <span style="color:#7ee787" title="' + esc(c.cured_by || 'someone') + ' is curing this">✓ ' + esc(c.cured_by || 'curing') + (c.cure_secs ? ' ' + c.cure_secs + 's' : '') + '</span>';
+          }
+          return open + esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '') + cu + sl + close + cured;
+        }).join(' · ');
+        h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--red);margin-bottom:1px">'
+          + '<span style="color:var(--text);font-weight:600">' + esc(d.name) + '</span>'
+          + '<span class="dim" style="font-size:10px">G' + (d.group != null ? d.group : '?') + '</span>'
+          + '<span style="font-size:11px;color:var(--red)">' + chips + '</span></div>';
+      }
+    }
+    for (var ci = 0; ci < cats.length; ci++) {
+      var label = cats[ci], rows = byCat[label] || [];
+      var covered = rows.length === 0;
+      var isUpgrade = label.indexOf(' ↑') !== -1;
+      var bg, color, suffix;
+      if (covered) { bg = 'rgba(86,211,100,0.07)'; color = 'var(--green)'; suffix = '<span style="font-weight:normal">✓ covered across the raid</span>'; }
+      else if (isUpgrade) { bg = 'rgba(126,231,135,0.10)'; color = '#7ee787'; suffix = '<span class="dim" style="font-weight:normal">' + rows.length + ' upgradable</span>'; }
+      else { bg = 'rgba(88,166,255,0.08)'; color = 'var(--blue)'; suffix = '<span class="dim" style="font-weight:normal">' + rows.length + ' missing</span>'; }
+      h += '<div style="margin:8px 0 3px;padding:3px 8px;background:' + bg + ';border-radius:4px;font-size:11px;color:' + color + ';font-weight:600">'
+        + esc(label) + ' ' + suffix + '</div>';
+      for (var ri = 0; ri < rows.length; ri++) {
+        var r = rows[ri];
+        h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid ' + _raidTierColor(r.tier) + ';margin-bottom:1px">'
+          + '<span style="color:var(--text);font-weight:600">' + esc(r.name) + '</span>'
+          + '<span class="dim" style="font-size:10px">G' + (r.group != null ? r.group : '?') + ' · ' + esc(r.class || '?') + '</span>'
+          + (r.inferred ? '<span class="dim" title="Inferred from observed casts — not running Mimic">🔍</span>' : '')
+          + (r.skip_group_aego ? '<span title="POTG/POTC fills HP slot A — single-target the Symbol, do not group-cast Aego">🌿</span>' : '')
+          + '</div>';
+      }
+    }
+    var burst = q.feral_queue || q.savagery_queue || [];
+    if (burst.length && q.burst_label) {
+      h += '<div style="margin:12px 0 3px;padding:3px 8px;background:rgba(240,180,41,0.10);border-radius:4px;font-size:11px;color:var(--gold);font-weight:600">⚡ ' + esc(q.burst_label) + ' <span class="dim" style="font-weight:normal">top targets only — ~3 per ' + esc(_raidTabCls || 'caster') + ' in raid</span></div>';
+      for (var bk = 0; bk < burst.length; bk++) {
+        var b2 = burst[bk];
+        h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--gold);margin-bottom:1px">'
+          + '<span style="color:var(--text);font-weight:600">' + esc(b2.name) + '</span>'
+          + '<span class="dim" style="font-size:10px">G' + (b2.group != null ? b2.group : '?') + ' · ' + esc(b2.class || '?') + '</span>'
+          + '<span class="num" style="margin-left:auto">' + (b2.damage ? fmtK(b2.damage) : '<span class="dim">no data</span>') + '</span></div>';
+      }
+    }
+  }
+  h += '</div>';
+  h += '</div>';
+  morphInto(root, h);
+  var sel2 = document.getElementById('wpRaidCls');
+  if (sel2) _bindOnce(sel2, 'change', function(){
+    _raidTabCls = sel2.value || '';
+    try { localStorage.setItem('wp:bufferClass', _raidTabCls); } catch (e) {}
+    refreshRaidTab();
+  });
+  // Raider click-to-expand — delegated on the stable #raid container so it
+  // survives the 3s morphs.
+  _bindOnce(root, 'click', function(ev){
+    var t = ev.target;
+    if (t && t.id === 'wpRaidSelClose') { _raidSelName = null; refreshRaidTab(); return; }
+    var row = t && t.closest ? t.closest('.wp-raid-row') : null;
+    if (!row) return;
+    var nm = row.getAttribute('data-raider');
+    _raidSelName = (_raidSelName === nm) ? null : nm;
+    refreshRaidTab();
+  });
+}
+async function refreshRaidTab() {
+  try {
+    var qs = _raidTabCls ? ('?class=' + encodeURIComponent(_raidTabCls)) : '';
+    var r = await fetch('/api/buff-queue' + qs, { cache: 'no-store' });
+    renderRaidTab(await r.json());
+  } catch (e) { renderRaidTab(null); }
 }
 
 let _optinPane = 'active';   // 'active' | 'ignored' — UI-only, server uses its own
@@ -8165,11 +8813,12 @@ async function refresh() {
                      ['critscard', renderCritsCard],
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
                      // so #dash stops repainting every poll — the stutter fix).
+                     ['setupchecks', renderSetupChecks],
                      ['triggeralerts', renderTriggerAlertsCard], ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
-                     ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
-                     ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['tanks', renderTanks], ['deeps', renderDeeps],
+                     ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['charmdiag', renderCharmDiag],
                      ['overlays', renderOverlays], ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
@@ -8195,7 +8844,7 @@ async function refresh() {
     const pending = (s.backfillRequests || []).filter(r => r.status === 'pending').length;
     const optinBtn = document.querySelector('.nav button[data-tab="optin"]');
     if (optinBtn) {
-      const baseLabel = 'Opt-in Logs';
+      const baseLabel = 'Logsync';
       optinBtn.textContent = pending > 0 ? (baseLabel + ' (' + pending + ')') : baseLabel;
       optinBtn.style.color = pending > 0 ? '#f0883e' : '';
     }
@@ -8235,10 +8884,12 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   b.classList.add('active');
   document.getElementById(b.dataset.tab).classList.add('active');
   if (b.dataset.tab === 'optin') refreshOptin();
+  if (b.dataset.tab === 'raid') refreshRaidTab();
 }));
 refresh(); setInterval(refresh, 2000);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
+setInterval(() => { var r = document.getElementById('raid'); if (r && r.classList.contains('active')) refreshRaidTab(); }, 3000);
 
 // UI Studio nav button — opens the standalone editor window via Electron IPC.
 // Available only when the dashboard is running inside Mimic's main window
@@ -8316,7 +8967,13 @@ async function dismissTopDamage(key) {
 // after every section re-render via a MutationObserver. Drag-to-arrange and
 // the new loot/bids panels come in later increments.
 (function(){
-  var LS_KEY = "wpHiddenPanels";
+  // V2: keys are PER-PAGE ("dash|watched logs") so hiding a card on the
+  // Dashboard does not also hide a same-named card on another tab, and the
+  // ⚙ Panels menu lists only the ACTIVE page. The pre-V2 un-scoped set kept
+  // resurrecting Watched Logs because re-renders rebuilt the card without
+  // the wp-hidden class and the visibility race let it flash back — the
+  // renderers now consult the persisted set directly (window._wpPanelHiddenSetHas).
+  var LS_KEY = "wpHiddenPanelsV2";
   function loadHidden(){
     try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) || "[]")); }
     catch (e) { return new Set(); }
@@ -8324,7 +8981,11 @@ async function dismissTopDamage(key) {
   function saveHidden(set){
     try { localStorage.setItem(LS_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
   }
-  function panelKey(card){
+  function sectionIdOf(card){
+    var sec = card.closest ? card.closest(".section") : null;
+    return (sec && sec.id) || "dash";
+  }
+  function titleKey(card){
     var h = card.querySelector("h2");
     if (!h) return "";
     // Read ONLY the h2's own TEXT nodes — skip injected chrome (drag handle,
@@ -8338,6 +8999,10 @@ async function dismissTopDamage(key) {
     t = t.split("(")[0].split("—")[0].split("·")[0];
     return t.trim().toLowerCase();
   }
+  function panelKey(card){
+    var tk = titleKey(card);
+    return tk ? (sectionIdOf(card) + "|" + tk) : "";
+  }
   function allCards(){
     return Array.prototype.slice.call(document.querySelectorAll(".section .card"));
   }
@@ -8349,13 +9014,37 @@ async function dismissTopDamage(key) {
       else card.classList.remove("wp-hidden");
     });
   }
+  // Reveal a card whose key was just removed from the hidden set. Removing the
+  // wp-hidden class alone is NOT enough: a renderer's empty-state path may have
+  // independently set inline display:none on the card (e.g. Buffs and Zone when
+  // Zeal momentarily reported zero clients). That inline style survives the
+  // class removal, so the card stays invisible — the "Show doesn't pull the
+  // Buff bar back up" bug. Clear the inline none so the next render repopulates
+  // it; a genuinely-empty card re-hides itself on the next poll, which is fine.
+  function revealCards(keys){
+    allCards().forEach(function(card){
+      var k = panelKey(card);
+      if (!k || keys.indexOf(k) === -1) return;
+      card.classList.remove("wp-hidden");
+      if (card.style && card.style.display === "none") card.style.display = "";
+    });
+  }
+  // Renderers consult this so a re-render can never resurrect a hidden card
+  // between MutationObserver ticks (the Watched Logs bounce-back).
+  window._wpPanelHiddenSetHas = function(card){
+    try { var k = panelKey(card); return !!(k && loadHidden().has(k)); }
+    catch (e) { return false; }
+  };
   function buildMenu(){
     var menu = document.getElementById("wpPanelMenu");
     if (!menu) return;
     var hidden = loadHidden();
     var seen = {};
     var rows = [];
-    allCards().forEach(function(card){
+    // ONLY the active page's cards — panels are per-page now.
+    var active = document.querySelector(".section.active");
+    var cards = active ? Array.prototype.slice.call(active.querySelectorAll(".card")) : allCards();
+    cards.forEach(function(card){
       var k = panelKey(card);
       if (!k || seen[k]) return;
       seen[k] = true;
@@ -8364,7 +9053,15 @@ async function dismissTopDamage(key) {
       label = label.split("(")[0].split("—")[0].split("·")[0].trim();
       rows.push({ key: k, label: label });
     });
-    var html = "<h4>Show panels</h4>";
+    // Hidden cards render no DOM h2 sometimes (display:none shells) — also
+    // list any persisted-hidden keys for THIS page so they can be re-enabled.
+    var activeId = active ? active.id : "dash";
+    hidden.forEach(function(k){
+      if (k.indexOf(activeId + "|") !== 0 || seen[k]) return;
+      seen[k] = true;
+      rows.push({ key: k, label: k.slice(activeId.length + 1) });
+    });
+    var html = "<h4>Show panels — this page</h4>";
     rows.forEach(function(r){
       var checked = hidden.has(r.key) ? "" : " checked";
       html += "<label><input type=checkbox data-pk='" + r.key + "'" + checked + "> " + r.label + "</label>";
@@ -8375,16 +9072,29 @@ async function dismissTopDamage(key) {
       cb.addEventListener("change", function(){
         var set = loadHidden();
         var pk = cb.getAttribute("data-pk");
-        if (cb.checked) set.delete(pk); else set.add(pk);
-        saveHidden(set);
-        applyHidden();
+        if (cb.checked) { set.delete(pk); saveHidden(set); applyHidden(); revealCards([pk]); }
+        else { set.add(pk); saveHidden(set); applyHidden(); }
       });
     });
     var showAll = document.getElementById("wpShowAll");
-    if (showAll) showAll.addEventListener("click", function(){ saveHidden(new Set()); applyHidden(); buildMenu(); });
+    if (showAll) showAll.addEventListener("click", function(){
+      // Show all — for THIS page only; other pages keep their prefs.
+      var set = loadHidden();
+      var pageId = (document.querySelector(".section.active") || {}).id || "dash";
+      var revealed = [];
+      Array.from(set).forEach(function(k){ if (k.indexOf(pageId + "|") === 0) { set.delete(k); revealed.push(k); } });
+      saveHidden(set); applyHidden(); revealCards(revealed); buildMenu();
+    });
     var closeBtn = document.getElementById("wpClose");
     if (closeBtn) closeBtn.addEventListener("click", function(){ menu.style.display = "none"; });
   }
+  // Expose a rebuild hook so the per-card ✕ click can refresh the open
+  // popover (so the just-dismissed card's checkbox flips off live, instead
+  // of staying stale until the user closes and re-opens the menu).
+  window._wpPanelsRebuild = function(){
+    var m = document.getElementById("wpPanelMenu");
+    if (m && m.style.display === "block") buildMenu();
+  };
   var gear = document.getElementById("wpGear");
   var menu = document.getElementById("wpPanelMenu");
   if (gear && menu){
@@ -8404,7 +9114,7 @@ async function dismissTopDamage(key) {
     });
   }
   var obs = new MutationObserver(function(){ applyHidden(); });
-  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -8462,26 +9172,9 @@ async function dismissTopDamage(key) {
   // Populate uploader-specific quicklinks once watchedLogs has loaded. The
   // dashboard refresh writes the header with parser version + character; the
   // shorter path is to poll /api/state for the first watched character.
-  function refreshUploaderLinks(){
-    var slot = document.getElementById("wpUploaderLinks");
-    if (!slot) return;
-    fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){
-      var wls = (s && s.watchedLogs) || [];
-      var me = null;
-      for (var i = 0; i < wls.length; i++){
-        var c = (wls[i] && wls[i].character) || "";
-        if (looksLikeCharacter(c)) { me = c; break; }
-      }
-      if (!me) { morphInto(slot, ""); return; }
-      morphInto(slot,
-        " · <a href='https://wolfpack.quest/character/" + encodeURIComponent(me) +
-        "' target='_blank' rel='noreferrer' title='Your character page on wolfpack.quest'>/character/" + me + "</a>" +
-        " <a href='https://wolfpack.quest/pvp/" + encodeURIComponent(me) +
-        "' target='_blank' rel='noreferrer' title='Your PvP record'>/pvp/" + me + "</a>");
-    }).catch(function(){});
-  }
-  refreshUploaderLinks();
-  setInterval(refreshUploaderLinks, 30000);
+  // (The /character/<You> + /pvp/<You> quicklinks were removed per user
+  // feedback — they crowded the strip; both pages are one click away via
+  // wolfpack.quest.)
 })();
 
 // ── Increment 2d — "send this panel to its own overlay window" (Mimic only)
@@ -8511,15 +9204,21 @@ async function dismissTopDamage(key) {
     return !!(window.mimic && typeof window.mimic.createPanelOverlay === "function");
   }
   // Persisted hidden-panel set — SAME localStorage key the panel popover uses
-  // ("wpHiddenPanels"), so the direct ✕ button and the popover checkboxes stay
-  // in sync. Both key off the clean text-node panel key.
-  var HIDE_LS_KEY = "wpHiddenPanels";
+  // ("wpHiddenPanelsV2", per-page scoped), so the direct ✕ button and the
+  // popover checkboxes stay in sync.
+  var HIDE_LS_KEY = "wpHiddenPanelsV2";
   function _loadHiddenSet(){
     try { return new Set(JSON.parse(localStorage.getItem(HIDE_LS_KEY) || "[]")); }
     catch (e) { return new Set(); }
   }
   function _saveHiddenSet(set){
     try { localStorage.setItem(HIDE_LS_KEY, JSON.stringify(Array.prototype.slice.call(set))); } catch (e) {}
+  }
+  function _scopedHideKey(card){
+    var sec = card && card.closest ? card.closest(".section") : null;
+    var sid = (sec && sec.id) || "dash";
+    var tk = panelKeyForCard(card);
+    return tk ? (sid + "|" + tk) : "";
   }
   function decorateButtons(){
     if (!mimicHosts()) return;
@@ -8540,12 +9239,9 @@ async function dismissTopDamage(key) {
       hideBtn.title = "Hide this panel (re-show from the ⚙ Panels menu)";
       hideBtn.textContent = "✕";
       h.appendChild(hideBtn);
-      var btn = document.createElement("button");
-      btn.className = "wp-overlay-btn";
-      btn.setAttribute("data-panel-key", key);
-      btn.title = "Open this panel in its own always-on-top overlay window";
-      btn.textContent = "🪟 overlay";
-      h.appendChild(btn);
+      // (Per-card "🪟 overlay" pop-out button removed per user feedback —
+      // it confused more than it helped. The dedicated overlays cover the
+      // real raid surfaces; createPanelOverlay stays for ?overlay= URLs.)
     }
   }
   document.addEventListener("click", function(e){
@@ -8554,12 +9250,18 @@ async function dismissTopDamage(key) {
     // ✕ hide button — check FIRST since it shares the wp-overlay-btn class.
     if (t.classList.contains("wp-hide-btn")){
       e.preventDefault(); e.stopPropagation();
-      var hk = t.getAttribute("data-panel-key");
-      var set = _loadHiddenSet();
-      set.add(hk);
-      _saveHiddenSet(set);
-      var card = t.closest ? t.closest(".card") : null;
-      if (card) card.classList.add("wp-hidden");
+      var hcard = t.closest ? t.closest(".card") : null;
+      var hk = hcard ? _scopedHideKey(hcard) : "";
+      if (hk){
+        var set = _loadHiddenSet();
+        set.add(hk);
+        _saveHiddenSet(set);
+      }
+      if (hcard) hcard.classList.add("wp-hidden");
+      // Re-sync the ⚙ Panels popover IF it is open so its checkbox flips
+      // off without the user having to close and re-open it. The popover's
+      // builder is exposed for re-entry.
+      try { if (typeof window._wpPanelsRebuild === "function") window._wpPanelsRebuild(); } catch (err) {}
       return;
     }
     if (!t.classList.contains("wp-overlay-btn")) return;
@@ -8569,7 +9271,7 @@ async function dismissTopDamage(key) {
     try { if (window.mimic) window.mimic.createPanelOverlay(pk); } catch (err) {}
   }, true);
   var obs = new MutationObserver(decorateButtons);
-  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -8609,7 +9311,7 @@ async function dismissTopDamage(key) {
       return matched;
     }
     var obs2 = new MutationObserver(applyOverlayTarget);
-    ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+    ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
       var el = document.getElementById(id);
       if (el) obs2.observe(el, { childList: true, subtree: true });
     });
@@ -8774,7 +9476,7 @@ async function dismissTopDamage(key) {
     }
   }
   var obs = new MutationObserver(decorate);
-  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -10120,6 +10822,16 @@ function startWebDashboard(port) {
         const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
         const cached = _buffQueueCache.get(cacheKey);
         const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
+        // Enrich with the buffer's recent casts (the melody/rotation tracker
+        // keeps the last cast cycle per character) so the overlay can mark
+        // category sections "likely memmed" — you cast it this session, it's
+        // almost certainly still on a gem.
+        try {
+          const mel = bufferCharacter ? _bardMelody.get(String(bufferCharacter).toLowerCase()) : null;
+          payload.recent_casts = mel && Array.isArray(mel.order)
+            ? mel.order.map(e => e && (e.name || e)).filter(Boolean).slice(0, 12)
+            : [];
+        } catch { payload.recent_casts = []; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
@@ -10332,6 +11044,21 @@ function startWebDashboard(port) {
         // the stale entry forever ("shows Dafeet after switching characters").
         if (character && payload?.disconnected === true) {
           delete _zealState[character];
+          // Same-client swap: forward "<character> swapped to <X>" to the
+          // bot so /raid moves them to "Not in raid (swapped to X)" instead
+          // of showing both characters as live raiders. Fire-and-forget on
+          // the live-state endpoint (the bot stamps swapped_to/swapped_at).
+          const swappedTo = typeof payload?.swapped_to === 'string' ? payload.swapped_to.trim() : '';
+          if (swappedTo && _uploadOpts && _uploadOpts.botUrl && !_uploadOpts.dryRun) {
+            try {
+              const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+              _postLiveState(base + '/live-state', _uploadOpts.token, {
+                agent_version: AGENT_VERSION,
+                uploaded_by: _primaryCharacter() || null,
+                states: [{ character, swapped_to: swappedTo.slice(0, 64) }],
+              });
+            } catch { /* best effort */ }
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: true, retired: true }));
         }
@@ -14019,7 +14746,36 @@ function parseBuffLanding(line, observer) {
     // Collapse same-name duplicates (e.g. two SoW spell ids); only call it
     // ambiguous when genuinely different spells share the message.
     const names = new Set(hits.map(h => h.name));
-    const resolved = names.size === 1 ? hits[0] : null;
+    let resolved = names.size === 1 ? hits[0] : null;
+    // Ambiguous landing (e.g. "is surrounded by a brief lupine aura." is
+    // shared by Spirit of Wolf / Spirit of Bih`Li / Pack Spirit / …): if the
+    // OBSERVER recently cast one of the candidate spells — including clicking
+    // an item whose effect is one of them (the Blood Orchid Katana's Spirit
+    // of Wolf) — infer THAT spell. Authoritative: we know what we cast.
+    // resolveSelfCastLanding handles this too, but its rc.target guard rejects
+    // the match when the recipient wasn't the active target at click time
+    // (common for group buffs / item clicks), so this name-only fallback
+    // covers the gap.
+    if (!resolved && observer) {
+      const recent = _recentSelfCast.get(String(observer).toLowerCase());
+      if (recent && recent.length) {
+        const nowMs = ts ? ts.getTime() : Date.now();
+        const tgtLower = String(name).toLowerCase();
+        let nameOnly = null;
+        for (let i = recent.length - 1; i >= 0; i--) {
+          const rc = recent[i];
+          if (nowMs - rc.atMs > SELF_CAST_WINDOW_MS) continue;
+          const hit = hits.find(h => String(h.name).toLowerCase() === rc.spellLower);
+          if (!hit) continue;
+          // Prefer the cast whose recorded target IS this landing's recipient
+          // (no chance of stealing a bystander's same-family buff). Else keep
+          // the most-recent name match as a fallback.
+          if (rc.target && String(rc.target).toLowerCase() === tgtLower) { resolved = hit; break; }
+          if (!nameOnly) nameOnly = hit;
+        }
+        if (!resolved) resolved = nameOnly;
+      }
+    }
     return {
       target:      name,
       spell_id:    resolved ? resolved.id : 0,
@@ -15190,6 +15946,9 @@ function _zealBuffsForName(nameLower) {
       observed_at_ms: Date.now(),
       source: 'zeal',
       good: _spellGood(b.name),
+      // Short-duration song window (Zeal ids 135-140) vs the 15-slot buff
+      // window — drives Mob Info's "Buffs n/15 · Songs m/6" header.
+      song: !!b.song,
     }));
   }
   return null;
@@ -15233,6 +15992,14 @@ function buildMobInfo() {
       seen.add(k);
     }
   }
+  // Slot occupancy for PC targets (authoritative via Zeal): the classic
+  // buff window holds 15 buff/debuff slots, the song window 6. Null for
+  // mobs/unwatched players — we only see observed landings for those.
+  let slotCounts = null;
+  if (zealBuffs !== null) {
+    const songs = zealBuffs.filter(b => b.song).length;
+    slotCounts = { buffs: zealBuffs.length - songs, buff_max: 15, songs, song_max: 6 };
+  }
   return {
     target_name:    st.target_name,
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
@@ -15240,6 +16007,7 @@ function buildMobInfo() {
     loading:        !cached,
     target_buffs:   buffs,
     target_is_pc:   zealBuffs !== null,
+    target_slots:   slotCounts,
     target_casting: ctc ? ctc.casts : [],
   };
 }
@@ -16321,8 +17089,12 @@ async function main() {
     process.on('SIGTERM', () => { removePidFile(); process.exit(0); });
     // Auto-open the browser on FRESH starts only — skip if we just resumed
     // (i.e. this is a [U] auto-restart or quick Ctrl+C relaunch). Also skip
-    // when --no-auto-open is set for headless / CI scenarios.
-    if (!_sessionRestored && !args.flags.noAutoOpen) {
+    // when --no-auto-open is set for headless / CI scenarios, AND when running
+    // under Mimic (WOLFPACK_CLIENT=mimic) — the Electron window already shows
+    // the dashboard, so popping the external browser on every startup was just
+    // noise. Parser.bat users still get the browser (it's their only UI).
+    const _underMimic = process.env.WOLFPACK_CLIENT === 'mimic';
+    if (!_sessionRestored && !args.flags.noAutoOpen && !_underMimic) {
       // Small delay so the listener has bound and the page returns 200
       setTimeout(() => openDashboardInBrowser(args.flags.webPort), 800);
     }

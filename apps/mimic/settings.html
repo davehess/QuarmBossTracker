@@ -33,8 +33,14 @@
 </style></head>
 <body>
   <div id="toast" class="toast"></div>
-  <h1>🐺 Mimic Settings</h1>
+  <h1 style="display:flex;align-items:center;gap:10px"><img src="assets/icon-256.png" alt="" style="width:34px;height:34px;border-radius:8px"><span>mi<span style="letter-spacing:0.5px">MIC</span> Settings</span></h1>
   <div class="sub">Stored locally in your user profile. Mimic brings its own Node runtime — nothing else to install.</div>
+  <div style="margin:8px 0 2px">
+    <button id="resetDashBtn" type="button"
+      style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px"
+      title="Zero out the dashboard session counters and Recent Parses. Lifetime totals and opt-in backfill progress are preserved.">⟲ Reset dashboard</button>
+    <span id="resetDashMsg" style="margin-left:8px;font-size:11px;color:#8b949e"></span>
+  </div>
 
   <h2>Wolf Pack connection</h2>
   <div class="sub">Mimic runs <b>local-only by default</b> — dashboard and overlays work without a token. Add a token to share your parses with the guild and unlock your stats on wolfpack.quest.</div>
@@ -617,5 +623,26 @@
   window.mimic.onStatus(_renderAccount);
 
   load();
+
+  // Reset dashboard — moved here from the dashboard header. POSTs the agent's
+  // /api/reset-session; the dashboard refreshes itself on its next poll.
+  (function(){
+    var btn = document.getElementById('resetDashBtn');
+    var msg = document.getElementById('resetDashMsg');
+    if (!btn) return;
+    btn.addEventListener('click', function(){
+      if (!confirm('Reset session counters? Recent Parses, top damage and per-class panes go back to empty. Lifetime totals and opt-in backfill progress are preserved.')) return;
+      btn.disabled = true; if (msg) msg.textContent = 'resetting…';
+      var done = function(okFlag){
+        btn.disabled = false;
+        if (msg) msg.textContent = okFlag ? 'done — dashboard refreshes on its next poll' : 'could not reach the agent (is it running?)';
+      };
+      try {
+        window.mimic.getAgentPort().then(function(port){
+          return fetch('http://127.0.0.1:' + port + '/api/reset-session', { method: 'POST' });
+        }).then(function(){ done(true); }).catch(function(){ done(false); });
+      } catch (e) { done(false); }
+    });
+  })();
 </script>
 </body></html>

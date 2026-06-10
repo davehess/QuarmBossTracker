@@ -118,20 +118,20 @@
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
-  <button id="hide-btn" title="Hide Mob Info (turn back on from the tray → Overlays)">✕</button>
+  <button id="hide-btn" title="Hide Target Info (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
   </div>
   <div id="setupbar">
-    <span>🛠 Mob Info</span>
+    <span>🛠 Target Info</span>
     <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
     <div class="title">
       <span id="conn" class="conn bad">○</span>
-      <span>🎯 Mob Info</span>
+      <span>🎯 Target Info</span>
       <span id="lvlRange" class="lvlRange"></span>
       <span class="tabs">
         <button id="tabStats"  class="tab on" type="button">Stats</button>
@@ -552,10 +552,22 @@
                   + '</div>';
       }
     }
+    // PC target slot occupancy — "Buffs n/15 · Songs m/6". Authoritative only
+    // for Mimic-watched characters (Zeal sees their real buff window); absent
+    // for mobs and observed-only players.
+    var slotLine = '';
+    if (mi.target_slots) {
+      var ts = mi.target_slots;
+      var bcol = ts.buffs >= ts.buff_max ? '#f0883e' : '#56d364';
+      var scol = ts.songs >= ts.song_max ? '#f0883e' : '#56d364';
+      slotLine = '<div class="sub">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
+               + ' · songs <span style="color:'+scol+'">'+ts.songs+'/'+ts.song_max+'</span></div>';
+    }
     bodyEl.innerHTML = '<div class="mob">'
       + '<div><span class="nm">'+esc(nm)+'</span>'+cls+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
+      + slotLine
       + hpBar
       + manaBar
       + manaLine

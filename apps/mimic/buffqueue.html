@@ -120,7 +120,7 @@
     <div class="title">
       <span id="conn" class="conn bad">○</span>
       <span>🛡 Buff queue</span>
-      <select id="clsPick" class="clsPick" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
+      <select id="clsPick" class="clsPick" style="margin-right:30px" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
         <option value="">(any class)</option>
         <option>Cleric</option><option>Druid</option><option>Shaman</option>
         <option>Enchanter</option><option>Bard</option><option>Paladin</option>
@@ -143,9 +143,22 @@
 
   var hideBtn = document.getElementById('hide-btn');
   if (hideBtn) {
-    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
-    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
-    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+    // Stray-click guard — the class dropdown's native popup dismisses with a
+    // click that frequently lands on ✕ ("buff queue keeps disappearing even
+    // though I have it enabled"). A deliberate hide hovers the button first;
+    // a drive-by click arrives with ~0ms of hover. Require 250ms on-button
+    // before the click counts; a blocked click flashes the ✕ as the cue.
+    var _hideHoverAt = 0;
+    hideBtn.addEventListener('mouseenter', function(){ _hideHoverAt = Date.now(); try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ _hideHoverAt = 0; try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){
+      if (!_hideHoverAt || (Date.now() - _hideHoverAt) < 250) {
+        hideBtn.style.opacity = '1'; hideBtn.style.borderColor = '#f87171'; hideBtn.style.color = '#f87171';
+        setTimeout(function(){ hideBtn.style.opacity = ''; hideBtn.style.borderColor = ''; hideBtn.style.color = ''; }, 600);
+        return;
+      }
+      try { window.mimic.hideThisOverlay(); } catch (e) {}
+    });
   }
 
   // Manual drag — same workaround as the other overlays.
@@ -251,8 +264,50 @@
     if (r.avatar_buff)            bits += '<span class="chip avatar" title="'+esc(r.avatar_buff)+' is active">🪶</span>';
     if (r.celestial_tranquility)  bits += '<span class="chip ct" title="Celestial Tranquility (+40 ATK) is active — Avatar will overwrite">🦅</span>';
     if (r.sk_recourse)            bits += '<span class="chip rec" title="'+esc(r.sk_recourse)+' active — Savagery will overwrite">⚠</span>';
+    if (r.skip_group_aego)        bits += '<span class="chip ct" title="'+esc(r.hp_a || 'POTG/POTC')+' fills HP slot A — single-target the Symbol, do NOT group-cast Aegolism over it">🌿</span>';
     return bits;
   }
+
+  // Category → "spells you might have memmed" hint. recent_casts comes from
+  // the agent's per-character rotation tracker; a spell cast this session is
+  // almost certainly still on a gem. SLOT-AWARE — HP A only matches slot A
+  // spells (Aego line + group HP+AC), HP B only matches the Symbol line,
+  // HP C only matches the Shaman HP single-target line + Brell + Arch
+  // Shielding. Without this, casting Symbol of Transal once made the queue
+  // suggest it for HP A forever even after the user re-memmed Aegolism.
+  // Specific labels (HP A/B/C) checked before the generic /^HP/ fallback.
+  var CAT_HINTS = [
+    [/^HP A$/, /aegolism|blessing of aegolism|ancient: gift of aegolism|temperance|protection of the (glades|cabbage)|talisman of wunshi|courage|center|daring|bravery|valor|resolution|heroism|heroic bond|fortitude|virtue|conviction/i],
+    [/^HP B$/, /aegolism|blessing of aegolism|ancient: gift of aegolism|symbol of/i],
+    [/^HP C$/, /khura|focus of spirit|talisman of (kragg|tnarg)|inner fire|brell|arch shielding/i],
+    [/^HP$/,   /aegolism|temperance|symbol of|khura|focus of spirit|talisman of (kragg|tnarg|wunshi)|inner fire|protection of the (glades|cabbage)|brell|arch shielding|virtue|conviction|courage|daring|bravery|valor|resolution|heroism|heroic bond|fortitude/i],
+    [/^HP Regen$/,      /regrowth|regenerat|chloroplast|replenish|elixir/i],
+    [/^Mana$/,          /brilliance|iridescence/i],
+    [/^Mana Regen$/,    /clarity|koadic|breeze|gift of (pure thought|insight)|clairvoyance/i],
+    [/^Haste$/,         /haste|celerity|quickness|swift|alacrity|aanya|visions of grandeur|speed of/i],
+    [/^Run Speed$/,     /spirit of (the )?wolf|flight of eagle|pack spirit|bihli/i],
+    [/^Attack$/,        /avatar|ferocity|strength|might of|predator|bihli/i],
+    [/^Dmg Shield$/,    /thorn|thistle|shield of|bramblecoat|legacy of/i],
+    [/^Survival$/,      /divine aura|kazumi|bestowal of divinity|quivering veil/i],
+    [/^Levitate$/,      /levitat|dead m[ae]n floating/i],
+    [/^Resists$/,       /resist|endure|talisman of (epuration|jasinth|shadoo)|circle of seasons/i],
+  ];
+  function memmedHint(label, recentCasts){
+    if (!recentCasts || !recentCasts.length) return null;
+    for (var i = 0; i < CAT_HINTS.length; i++) {
+      if (!CAT_HINTS[i][0].test(label)) continue;
+      for (var j = 0; j < recentCasts.length; j++) {
+        if (CAT_HINTS[i][1].test(recentCasts[j])) return recentCasts[j];
+      }
+    }
+    return null;
+  }
+
+  // Collapsed category sections persist across polls + relaunches.
+  var _collapsed = {};
+  try { _collapsed = JSON.parse(localStorage.getItem('wp:bq:collapsed') || '{}') || {}; } catch (e) {}
+  function _saveCollapsed(){ try { localStorage.setItem('wp:bq:collapsed', JSON.stringify(_collapsed)); } catch (e) {} }
+
   function renderRow(r, kind){
     var groupLbl = r.group != null ? ('G' + r.group) : '';
     var cls = kind === 'd' ? 'd' : kind === 'burst' ? 'burst' : tierClass(r.tier);
@@ -267,7 +322,32 @@
       for (var i = 0; i < r.curses.length; i++) {
         var c = r.curses[i];
         var t = (c.remaining_secs != null) ? '<span class="t">'+fmtSecs(c.remaining_secs)+'</span>' : '';
-        chips += '<span class="ch">'+esc(c.name)+t+'</span>';
+        // Zeal buff-window slot — slots 1-4 highlight green: a group member
+        // can dispel without clipping many real buffs (matters most on
+        // high-damage debuffs).
+        var sl = '';
+        if (c.slot != null) {
+          sl = c.low_slot
+            ? ' <span style="color:#7ee787" title="Buff slot '+c.slot+' — low slot; dispellable without clipping much">s'+c.slot+'✂</span>'
+            : ' <span style="color:#8b949e" title="Buff slot '+c.slot+'">s'+c.slot+'</span>';
+        }
+        // Cure type from the catalog counters (bot v3.0.88+): tells the cure
+        // caster WHICH cure to reach for. Counters ride in the tooltip.
+        var cu = '';
+        if (c.cure) {
+          var cuCol = c.cure === 'poison' ? '#56d364' : c.cure === 'disease' ? '#d4a72c' : c.cure === 'blind' ? '#8b949e' : '#f0883e';
+          cu = ' <span style="color:'+cuCol+'" title="Cure type: '+esc(c.cure)+(c.counters ? ' — '+c.counters+' counters' : '')+'">'+esc(c.cure)+'</span>';
+        }
+        // Being cured (bot v3.0.90+): a matching cure is in flight on this
+        // target — show who + secs and dim/strike the chip so a second curer
+        // skips it. The chip vanishes on its own the moment the cure lands.
+        var cured = '';
+        var chipStyle = '';
+        if (c.being_cured) {
+          chipStyle = 'opacity:0.5;text-decoration:line-through';
+          cured = ' <span style="color:#7ee787;text-decoration:none" title="'+esc(c.cured_by||'someone')+' is curing this — skip it">✓ '+esc(c.cured_by||'curing')+(c.cure_secs ? ' '+c.cure_secs+'s' : '')+'</span>';
+        }
+        chips += '<span class="ch" style="'+chipStyle+'">'+esc(c.name)+t+cu+sl+cured+'</span>';
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {
@@ -307,15 +387,48 @@
     }
     empty.style.display = 'none';
     var html = '';
+    // Debuff / cure queue FIRST (per user) — cures are time-critical and the
+    // bot already orders them curse → blind → poison → disease.
+    if (dq.length) {
+      html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dq.length+'</span><span class="hint">cures needed · curse → blind → poison → disease</span></div>';
+      for (var di = 0; di < dq.length; di++) html += renderRow(dq[di], 'd');
+      html += '</div>';
+    }
     if (bq.length) {
       var hint = bufferClass ? ('severity-first · gaps a '+esc(bufferClass)+' can fix') : 'pick a class to filter';
       html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+bq.length+'</span><span class="hint">'+hint+'</span></div>';
-      for (var i = 0; i < bq.length; i++) html += renderRow(bq[i], 'b');
-      html += '</div>';
-    }
-    if (dq.length) {
-      html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dq.length+'</span><span class="hint">cures needed</span></div>';
-      for (var i = 0; i < dq.length; i++) html += renderRow(dq[i], 'd');
+      // Group by buff line: a raider missing two categories appears under
+      // both, so the buffer can work one spell line top to bottom. Each
+      // section collapses (▸/▾ persists) and shows a 🔮 hint when a spell
+      // matching the line was cast this session (likely still memmed).
+      var recent = (payload && payload.recent_casts) || [];
+      var byCat = {};
+      var catOrder = [];
+      for (var i = 0; i < bq.length; i++) {
+        var labels = (bq[i].missing && bq[i].missing.length) ? bq[i].missing : ['Other'];
+        for (var j = 0; j < labels.length; j++) {
+          var L = labels[j];
+          if (!byCat[L]) { byCat[L] = []; catOrder.push(L); }
+          byCat[L].push(bq[i]);
+        }
+      }
+      for (var ci = 0; ci < catOrder.length; ci++) {
+        var label = catOrder[ci];
+        var rowsC = byCat[label];
+        var isCollapsed = !!_collapsed[label];
+        var mem = memmedHint(label, recent);
+        html += '<div class="cat">'
+              +   '<div class="cathdr" data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
+              +     '<span style="font-size:9px">'+(isCollapsed ? '▸' : '▾')+'</span>'
+              +     '<span style="font-weight:600">'+esc(label)+'</span>'
+              +     '<span style="color:#6e7681;font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
+              +     (mem ? '<span style="margin-left:auto;color:#7ee787;font-size:9px" title="You cast '+esc(mem)+' this session — likely still on a gem">🔮 '+esc(mem)+'</span>' : '')
+              +   '</div>';
+        if (!isCollapsed) {
+          for (var ri = 0; ri < rowsC.length; ri++) html += renderRow(rowsC[ri], 'b');
+        }
+        html += '</div>';
+      }
       html += '</div>';
     }
     if (burst.length && burstLabel) {
@@ -328,6 +441,20 @@
     // clip and an empty queue shrinks back to its empty-state line.
     try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
+  // Collapse/expand a category section. Delegated once (render replaces the
+  // body's innerHTML every poll); re-renders from the last payload so the
+  // toggle is instant instead of waiting for the next tick.
+  var _lastPayload = null;
+  document.getElementById('body').addEventListener('click', function(ev){
+    var hdr = ev.target && ev.target.closest ? ev.target.closest('.cathdr') : null;
+    if (!hdr) return;
+    var label = hdr.getAttribute('data-cat');
+    if (!label) return;
+    _collapsed[label] = !_collapsed[label];
+    _saveCollapsed();
+    if (_lastPayload) render(_lastPayload);
+  });
+
   async function tick(){
     try {
       var qs = bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '';
@@ -335,6 +462,7 @@
       var s = await r.json();
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
+      _lastPayload = s;
       render(s);
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';

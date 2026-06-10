@@ -7,7 +7,7 @@
   body{padding:32px 28px;display:flex;flex-direction:column;align-items:center}
   .wrap{width:100%;max-width:720px}
   header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
-  .wolf{font-size:36px}
+  .wolf img{width:64px;height:64px;border-radius:12px;display:block}
   h1{margin:0;color:#58a6ff;font-size:18px;font-weight:600}
   .sub{color:#8b949e;font-size:11px;margin-top:2px}
   .beta{color:#f6c365;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-left:6px}
@@ -94,9 +94,9 @@
 <div class="wrap">
 
   <header>
-    <div class="wolf">🐺</div>
+    <div class="wolf"><img src="assets/icon-256.png" alt=""></div>
     <div>
-      <h1>Wolf Pack Mimic</h1>
+      <h1>Wolf Pack mi<span style="letter-spacing:1px">MIC</span></h1>
       <div class="sub">Getting your engine ready — answer a few quick things while we wait.</div>
     </div>
   </header>
@@ -240,9 +240,19 @@
       <span class="badge">Off by default</span>
     </div>
     <p>Floating, always-on-top panels you can place over EverQuest. All start <b>off</b> — turn on what you want (and change it anytime from the tray → <b>Overlays</b>). Each overlay has an <b>✕</b> in its corner to hide it again, and the tray's <b>Setup mode</b> lets you drag + resize them.</p>
-    <label class="radio"><input type="checkbox" id="ovHud"><span>⚔️ DPS HUD<span class="desc">Live damage for the fight you're in.</span></span></label>
-    <label class="radio"><input type="checkbox" id="ovTrigger"><span>⚡ Trigger alerts (TTS) + timers<span class="desc">Speaks + flashes your raid triggers and shows debuff timers.</span></span></label>
-    <label class="radio"><input type="checkbox" id="ovCharm"><span>🔮 Charm tracker<span class="desc">Recharm countdown — handy for charm classes (enchanters, etc.).</span></span></label>
+    <!-- Full overlay catalog, 2-up — mirrors tray → Overlays so first-run
+         users see everything Mimic can put on screen, not a teaser trio. -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">
+      <label class="radio"><input type="checkbox" id="ovHud"><span>⚔️ DPS HUD<span class="desc">Live damage for the fight you're in.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovTrigger"><span>⚡ Trigger alerts (TTS) + timers<span class="desc">Speaks + flashes raid triggers, shows debuff timers.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovCharm"><span>🔮 Charm tracker<span class="desc">Recharm countdown for charm classes.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovPets"><span>🐾 Pet tracker<span class="desc">Summoned pets — HP + timed buffs.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovMobInfo"><span>👁 Target Info<span class="desc">Target stats, loot table, spells, buff slots.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovBuffQueue"><span>🛡 Buff queue<span class="desc">Raid buff gaps + cures, filtered to your class.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovWho"><span>📜 /who<span class="desc">Zone roster from your last /who.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovMelody"><span>🎶 Casting tracker<span class="desc">Melody on bards; spell casts otherwise.</span></span></label>
+      <label class="radio"><input type="checkbox" id="ovThreat"><span>🎯 Threat meter<span class="desc">Live hate ranking for the current fight.</span></span></label>
+    </div>
   </div>
 
   <div class="actions" style="flex-direction:column;align-items:stretch;gap:6px">
@@ -425,9 +435,15 @@
     const mode = cfg.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === mode); });
     $('quietMode').checked = !!cfg.quietMode;
-    $('ovHud').checked     = !!cfg.showHud;
-    $('ovTrigger').checked = !!cfg.enableTriggerTts;
-    $('ovCharm').checked   = !!cfg.showCharm;
+    $('ovHud').checked       = !!cfg.showHud;
+    $('ovTrigger').checked   = !!cfg.enableTriggerTts;
+    $('ovCharm').checked     = !!cfg.showCharm;
+    $('ovPets').checked      = !!cfg.showPets;
+    $('ovMobInfo').checked   = !!cfg.showMobInfo;
+    $('ovBuffQueue').checked = !!cfg.showBuffQueue;
+    $('ovWho').checked       = !!cfg.showWho;
+    $('ovMelody').checked    = !!cfg.showMelody;
+    $('ovThreat').checked    = !!cfg.showThreat;
     refreshGate();
     // Returning users who already finished onboarding skip this screen — boot
     // straight to the dashboard once it's up so Mimic feels like the
@@ -442,7 +458,9 @@
   // saveConfig's main-process handler applies overlay visibility live, so
   // flipping one of these shows/hides the overlay immediately (the windows are
   // created at startup; visibility is governed by these prefs).
-  [['ovHud','showHud'], ['ovTrigger','enableTriggerTts'], ['ovCharm','showCharm']].forEach(([id, key]) => {
+  [['ovHud','showHud'], ['ovTrigger','enableTriggerTts'], ['ovCharm','showCharm'],
+   ['ovPets','showPets'], ['ovMobInfo','showMobInfo'], ['ovBuffQueue','showBuffQueue'],
+   ['ovWho','showWho'], ['ovMelody','showMelody'], ['ovThreat','showThreat']].forEach(([id, key]) => {
     $(id).addEventListener('change', async (e) => {
       pingUserInteraction();
       try { await window.mimic.saveConfig({ [key]: e.target.checked }); } catch (_) {}
