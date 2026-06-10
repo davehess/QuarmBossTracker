@@ -8892,6 +8892,21 @@ async function dismissTopDamage(key) {
       else card.classList.remove("wp-hidden");
     });
   }
+  // Reveal a card whose key was just removed from the hidden set. Removing the
+  // wp-hidden class alone is NOT enough: a renderer's empty-state path may have
+  // independently set inline display:none on the card (e.g. Buffs and Zone when
+  // Zeal momentarily reported zero clients). That inline style survives the
+  // class removal, so the card stays invisible — the "Show doesn't pull the
+  // Buff bar back up" bug. Clear the inline none so the next render repopulates
+  // it; a genuinely-empty card re-hides itself on the next poll, which is fine.
+  function revealCards(keys){
+    allCards().forEach(function(card){
+      var k = panelKey(card);
+      if (!k || keys.indexOf(k) === -1) return;
+      card.classList.remove("wp-hidden");
+      if (card.style && card.style.display === "none") card.style.display = "";
+    });
+  }
   // Renderers consult this so a re-render can never resurrect a hidden card
   // between MutationObserver ticks (the Watched Logs bounce-back).
   window._wpPanelHiddenSetHas = function(card){
@@ -8935,9 +8950,8 @@ async function dismissTopDamage(key) {
       cb.addEventListener("change", function(){
         var set = loadHidden();
         var pk = cb.getAttribute("data-pk");
-        if (cb.checked) set.delete(pk); else set.add(pk);
-        saveHidden(set);
-        applyHidden();
+        if (cb.checked) { set.delete(pk); saveHidden(set); applyHidden(); revealCards([pk]); }
+        else { set.add(pk); saveHidden(set); applyHidden(); }
       });
     });
     var showAll = document.getElementById("wpShowAll");
@@ -8945,8 +8959,9 @@ async function dismissTopDamage(key) {
       // Show all — for THIS page only; other pages keep their prefs.
       var set = loadHidden();
       var pageId = (document.querySelector(".section.active") || {}).id || "dash";
-      Array.from(set).forEach(function(k){ if (k.indexOf(pageId + "|") === 0) set.delete(k); });
-      saveHidden(set); applyHidden(); buildMenu();
+      var revealed = [];
+      Array.from(set).forEach(function(k){ if (k.indexOf(pageId + "|") === 0) { set.delete(k); revealed.push(k); } });
+      saveHidden(set); applyHidden(); revealCards(revealed); buildMenu();
     });
     var closeBtn = document.getElementById("wpClose");
     if (closeBtn) closeBtn.addEventListener("click", function(){ menu.style.display = "none"; });
@@ -14618,7 +14633,36 @@ function parseBuffLanding(line, observer) {
     // Collapse same-name duplicates (e.g. two SoW spell ids); only call it
     // ambiguous when genuinely different spells share the message.
     const names = new Set(hits.map(h => h.name));
-    const resolved = names.size === 1 ? hits[0] : null;
+    let resolved = names.size === 1 ? hits[0] : null;
+    // Ambiguous landing (e.g. "is surrounded by a brief lupine aura." is
+    // shared by Spirit of Wolf / Spirit of Bih`Li / Pack Spirit / …): if the
+    // OBSERVER recently cast one of the candidate spells — including clicking
+    // an item whose effect is one of them (the Blood Orchid Katana's Spirit
+    // of Wolf) — infer THAT spell. Authoritative: we know what we cast.
+    // resolveSelfCastLanding handles this too, but its rc.target guard rejects
+    // the match when the recipient wasn't the active target at click time
+    // (common for group buffs / item clicks), so this name-only fallback
+    // covers the gap.
+    if (!resolved && observer) {
+      const recent = _recentSelfCast.get(String(observer).toLowerCase());
+      if (recent && recent.length) {
+        const nowMs = ts ? ts.getTime() : Date.now();
+        const tgtLower = String(name).toLowerCase();
+        let nameOnly = null;
+        for (let i = recent.length - 1; i >= 0; i--) {
+          const rc = recent[i];
+          if (nowMs - rc.atMs > SELF_CAST_WINDOW_MS) continue;
+          const hit = hits.find(h => String(h.name).toLowerCase() === rc.spellLower);
+          if (!hit) continue;
+          // Prefer the cast whose recorded target IS this landing's recipient
+          // (no chance of stealing a bystander's same-family buff). Else keep
+          // the most-recent name match as a fallback.
+          if (rc.target && String(rc.target).toLowerCase() === tgtLower) { resolved = hit; break; }
+          if (!nameOnly) nameOnly = hit;
+        }
+        if (!resolved) resolved = nameOnly;
+      }
+    }
     return {
       target:      name,
       spell_id:    resolved ? resolved.id : 0,
