@@ -6094,8 +6094,9 @@ body { background:var(--bg); color:var(--text); font-family:'Cascadia Code',Cons
 h1 { color:var(--blue); margin:0 0 4px 0; font-size:22px; }
 h2 { color:var(--gold); border-bottom:1px solid var(--border); padding-bottom:6px; margin:0 0 12px 0; font-size:14px; text-transform:uppercase; letter-spacing:.05em; }
 h3 { color:var(--dim); margin:0 0 8px 0; font-size:12px; font-weight:normal; text-transform:uppercase; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:14px; }
-.card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:14px; margin:0 0 14px 0; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; margin:0 0 14px 0; }
+.grid .card { margin:0 }
 .card.wide { grid-column:1/-1 }
 table { width:100%; border-collapse:collapse; font-size:13px; }
 th,td { text-align:left; padding:3px 8px; }
@@ -7777,7 +7778,7 @@ function renderOverlays(s) {
       +  '<td class="dim">' + desc + '</td></tr>';
   }
   h += '</table>';
-  h += '<div class="dim" style="font-size:11px;margin-top:8px">A panel from the <b>Dashboard</b> tab can also be sent to its own overlay via the <code style="background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">overlay</code> button on each card. Lock/Setup placement live in the tray.</div>';
+  h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock/Setup placement live in the tray.</div>';
   h += '</div>';
 
   h += '</div>';
@@ -9203,12 +9204,9 @@ async function dismissTopDamage(key) {
       hideBtn.title = "Hide this panel (re-show from the ⚙ Panels menu)";
       hideBtn.textContent = "✕";
       h.appendChild(hideBtn);
-      var btn = document.createElement("button");
-      btn.className = "wp-overlay-btn";
-      btn.setAttribute("data-panel-key", key);
-      btn.title = "Open this panel in its own always-on-top overlay window";
-      btn.textContent = "🪟 overlay";
-      h.appendChild(btn);
+      // (Per-card "🪟 overlay" pop-out button removed per user feedback —
+      // it confused more than it helped. The dedicated overlays cover the
+      // real raid surfaces; createPanelOverlay stays for ?overlay= URLs.)
     }
   }
   document.addEventListener("click", function(e){
