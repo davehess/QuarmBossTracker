@@ -21,6 +21,10 @@ export const dynamic = 'force-dynamic';
 
 type GearRow = { loc: string; slot: string; item_id: number; item_name: string; count: number; updated_at: string };
 type AaRow = { aa_index: number; rank: number };
+// AA catalog: the export's AAIndex matches eqemu_altadv_vars.eqmacid
+// (verified: Hitya's AAIndex 10 rank 4 ↔ Quarmy skill_id 47 / eqmacid 10 =
+// Innate Magic Protection). Quarmy's web payload keys on skill_id instead.
+type AaCat = { eqmacid: number; name: string; max_level: number | null };
 type ItemRow = {
   id: number; name: string; ac: number | null; hp: number | null; mana: number | null;
   damage: number | null; delay: number | null; attack: number | null; haste: number | null;
@@ -82,7 +86,15 @@ async function load(decoded: string) {
       for (const s of (spellRows ?? []) as { id: number; name: string }[]) spellNames[s.id] = s.name;
     }
   }
-  return { char, gear, aas, items, spellNames };
+  let aaCat: Record<number, AaCat> = {};
+  if (aas.length) {
+    const { data: aaRows } = await sb
+      .from('eqemu_altadv_vars')
+      .select('eqmacid, name, max_level')
+      .in('eqmacid', aas.map(a => a.aa_index));
+    for (const a of (aaRows ?? []) as AaCat[]) aaCat[a.eqmacid] = a;
+  }
+  return { char, gear, aas, items, spellNames, aaCat };
 }
 
 const fx = (id: number | null | undefined, spellNames: Record<number, string>) =>
@@ -96,7 +108,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/gear`);
 
-  const { char, gear, aas, items, spellNames } = await load(decoded);
+  const { char, gear, aas, items, spellNames, aaCat } = await load(decoded);
 
   if (char?.exclude_inventory) {
     return (
@@ -298,16 +310,19 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
               <p className="text-xs text-dim">No AA data in the export yet.</p>
             ) : (
               <>
-                <p className="text-xs text-dim mb-2">
-                  The export carries AA table indices, not names — the index ↔ name catalog is a
-                  follow-up. Raw ranks below.
-                </p>
                 <div className="flex flex-wrap gap-2 text-xs">
-                  {aas.map(a => (
-                    <span key={a.aa_index} className="px-2 py-0.5 rounded bg-[#1f242c] border border-border text-dim">
-                      AA #{a.aa_index} <span className="text-text">rank {a.rank}</span>
-                    </span>
-                  ))}
+                  {aas.map(a => {
+                    const cat = aaCat[a.aa_index];
+                    const maxed = cat?.max_level != null && a.rank >= cat.max_level;
+                    return (
+                      <span key={a.aa_index} className="px-2 py-0.5 rounded bg-[#1f242c] border border-border">
+                        <span className="text-text">{cat?.name || `AA #${a.aa_index}`}</span>{' '}
+                        <span className={maxed ? 'text-green' : 'text-dim'}>
+                          {a.rank}{cat?.max_level != null ? `/${cat.max_level}` : ''}
+                        </span>
+                      </span>
+                    );
+                  })}
                 </div>
               </>
             )}
