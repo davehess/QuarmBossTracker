@@ -84,6 +84,7 @@ let buffQueueWindow = null;
 let whoWindow     = null;
 let melodyWindow  = null;
 let zealWindow    = null;
+let threatWindow  = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -637,6 +638,7 @@ function _boundsKeyForWindow(win) {
   if (win === whoWindow)     return 'whoBounds';
   if (win === melodyWindow)  return 'melodyBounds';
   if (win === zealWindow)    return 'zealBounds';
+  if (win === threatWindow)  return 'threatBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1710,6 +1712,7 @@ function _overlayEntries() {
   if (whoWindow     && !whoWindow.isDestroyed())     out.push(['who',     whoWindow]);
   if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
   if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
+  if (threatWindow  && !threatWindow.isDestroyed())  out.push(['threat',  threatWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1768,6 +1771,7 @@ function applySetupMode(on) {
     if (!whoWindow)     createWhoOverlay();
     if (!melodyWindow)  createMelodyOverlay();
     if (!zealWindow)    createZealHealthOverlay();
+    if (!threatWindow)  createThreatMeterOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -2969,6 +2973,42 @@ function applyZealVisibility() {
   if (shouldShow) zealWindow.showInactive(); else zealWindow.hide();
 }
 
+// Threat meter overlay — per-fight per-player aggro breakdown (swing / proc /
+// spell / heal stacked bar) reading stats.currentEncounterThreat. Tanks see
+// where their hate is coming from; non-tanks see when they're about to pull.
+// Opt-in (default off); EQ-gated like every other built-in.
+function createThreatMeterOverlay() {
+  const b = _resolveBounds('threatBounds', 'threatBoundsSig', { x: 40, y: 320, width: 320, height: 200 });
+  threatWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — Threat meter overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 240, minHeight: 80,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  threatWindow.setAlwaysOnTop(true, 'screen-saver');
+  threatWindow.setVisibleOnAllWorkspaces(true);
+  threatWindow.loadFile('threatmeter.html');
+  threatWindow.on('moved',  () => _persistBounds('threatBounds', threatWindow));
+  threatWindow.on('resize', () => _persistBounds('threatBounds', threatWindow));
+  threatWindow.once('ready-to-show', () => {
+    threatWindow.webContents.send('agent-port', agentPort);
+    applyThreatVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(threatWindow, 'threat');
+  });
+}
+function applyThreatVisibility() {
+  if (!threatWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — primarily for tanks but useful to anyone who
+  // wants to see if they're about to pull. EQ-gated.
+  const shouldShow = unlocked || (cfg.showThreat && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) threatWindow.showInactive(); else threatWindow.hide();
+}
+
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
 // presence poller (on running ↔ not-running flips) and by config toggles.
 function applyAllVisibility() {
@@ -2981,6 +3021,7 @@ function applyAllVisibility() {
   applyWhoVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
+  applyThreatVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -3013,6 +3054,7 @@ function toggleHideAllOverlays() {
       showWho:          !!cfg.showWho,
       showMelody:       !!cfg.showMelody,
       showZeal:         !!cfg.showZeal,
+      showThreat:       !!cfg.showThreat,
     };
     cfg.showHud = false;
     cfg.enableTriggerTts = false;
@@ -3023,6 +3065,7 @@ function toggleHideAllOverlays() {
     cfg.showWho = false;
     cfg.showMelody = false;
     cfg.showZeal = false;
+    cfg.showThreat = false;
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -3035,7 +3078,7 @@ function toggleHideAllOverlays() {
     // older build): SHOW the core overlays so the hotkey can never get stuck
     // unable to unhide.
     cfg.showHud = true; cfg.showCharm = true; cfg.showPets = true;
-    cfg.showMobInfo = true; cfg.showBuffQueue = true; cfg.showWho = true; cfg.showMelody = true; cfg.showZeal = true;
+    cfg.showMobInfo = true; cfg.showBuffQueue = true; cfg.showWho = true; cfg.showMelody = true; cfg.showZeal = true; cfg.showThreat = true;
     _hideAllActive = false;
   }
   // Persist the toggle state so a restart-while-hidden still knows it's hidden
@@ -3160,6 +3203,7 @@ function currentStatus() {
     showMelody: !!cfg.showMelody,
     melodyBardOnly: !!cfg.melodyBardOnly,
     showZeal: !!cfg.showZeal,
+    showThreat: !!cfg.showThreat,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -3335,6 +3379,11 @@ function buildTrayMenu() {
     { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
         if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
+        pushStatus();
+      } },
+    { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showThreat = mi.checked; saveConfig(cfg);
+        if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -3870,6 +3919,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showZeal = !cfg.showZeal; saveConfig(cfg);
       if (cfg.showZeal && !zealWindow) createZealHealthOverlay(); else applyZealVisibility();
       break;
+    case 'threat':
+      cfg.showThreat = !cfg.showThreat; saveConfig(cfg);
+      if (cfg.showThreat && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
+      break;
     default:
       return null;
   }
@@ -3914,6 +3967,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === zealWindow) {
       cfg.showZeal = false; saveConfig(cfg);
       try { zealWindow.hide(); } catch {}
+    } else if (win === threatWindow) {
+      cfg.showThreat = false; saveConfig(cfg);
+      try { threatWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }

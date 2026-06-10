@@ -192,6 +192,30 @@ const PROC_HATE = {
   'shock of dyn`leth':   250,
 };
 
+// Self-cast flat-hate proxy for AAs and direct-hate spells that don't show
+// a damage line — without this they're invisible to the threat meter even
+// though they're a real chunk of a tank's TPS. Lowercased spell/AA name →
+// hate per cast. Bumps the caster's `spell` bucket so the breakdown reads
+// honestly. Community-sourced PoP-era ballparks; correct as observed.
+const CAST_HATE = {
+  // Knight aggro AAs
+  'voice of thule':                  3000,   // SHD AA — pulls a single mob hard
+  'disruptive persecution':          1500,   // PAL AA — burst aggro
+  'projection of fury':               750,   // SHD AA — burst aggro
+  // Warrior provocation chain
+  'provocation':                     1000,   // WAR AA — boosted taunt
+  'bellow of the mastruq':           2000,   // WAR AA — AoE taunt
+  // Hate-add nukes (named hate procs from clickies / disciplines)
+  "hate's attraction":               2500,
+  'corrupt taunting':                 600,
+  // Negative-hate / fade — let them surface as a *spell* row so the user
+  // can see them in the breakdown even though they reduce hate. Negative
+  // values shrink the spell bucket; the row still shows but doesn't lead.
+  'voice of quellious':             -2500,
+  'quivering veil of xarn':         -2000,
+  'fading memories':                -1500,
+};
+
 // ── Config ───────────────────────────────────────────────────────────────────
 // These regexes match RAW log lines that should never be parsed, much less
 // uploaded. Match-and-discard happens before any other processing.
@@ -2751,6 +2775,24 @@ class EncounterBuilder {
       uploader:  this.character || null,
       perPlayer,
     };
+    // Pet aggro rollup — every charm or summoned pet that has a row in
+    // perPlayer with a known pet_owner contributes its total threat back to
+    // its OWNER's row as `pet_threat_total`. Lets the threat overlay show
+    // "Hopeya 18.2k +pet 12.0k" so an enchanter can see their COMBINED hate
+    // signature (the mob doesn't separate pet-hate from owner-hate when
+    // deciding who to chew on).
+    for (const t of Object.values(perPlayer)) {
+      if (!t.pet_owner) continue;
+      // Case-insensitive owner lookup (perPlayer keys are original case;
+      // pet_owner field is also original case but the threat builder may
+      // capitalize differently if the agent saw the name in multiple spots).
+      const ownerLower = String(t.pet_owner).toLowerCase();
+      const ownerKey = Object.keys(perPlayer).find(k => k.toLowerCase() === ownerLower);
+      const ownerRow = ownerKey ? perPlayer[ownerKey] : null;
+      if (ownerRow) {
+        ownerRow.pet_threat_total = (ownerRow.pet_threat_total || 0) + (t.total || 0);
+      }
+    }
     stats.currentEncounterThreat = snap;
     // Per-character mirror so a multi-boxer can see THEIR focused character's
     // fight even when another character's log just landed an update. Keyed
@@ -3542,8 +3584,27 @@ class EncounterBuilder {
       // (no attacker = the builder's own character cast it); matched to the land
       // by a short time window, mirroring _pendingDireCharm.
       if (!event.attacker) {
-        const ci = CHARM_SPELLS.get(String(spell).toLowerCase());
+        const sl = String(spell).toLowerCase();
+        const ci = CHARM_SPELLS.get(sl);
+        // The `name` field on _pendingCharmSpell lets the charm overlay show
+        // which spell opened the session (Allure / Boltran's / …) in its
+        // "pending charm staged?" diagnostic line.
         if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
+        // Direct-hate AAs / spells — Voice of Thule, Disruptive Persecution,
+        // Hate's Attraction, etc. — never produce a damage line, so they're
+        // invisible to the rest of the threat math. Bump the caster's spell
+        // bucket by the catalog hate so the Threat overlay reads honestly.
+        // procDetail also records the cast so a tank can see WHAT AA they're
+        // leaning on across the fight.
+        const ch = CAST_HATE[sl];
+        if (ch !== undefined && this.character) {
+          if (!this.threatBy.has(this.character)) {
+            this.threatBy.set(this.character, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
+          }
+          const ct = this.threatBy.get(this.character);
+          ct.spell += ch;
+          ct.procDetail[spell] = (ct.procDetail[spell] || 0) + 1;
+        }
       }
       // Bard melody tracker — singing-only (the parseEvent split tags bard
       // songs with event.singing=true). Move-to-front a song-name cycle per
@@ -7305,6 +7366,7 @@ var WP_OVERLAY_ROWS = [
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
+  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
 ];
 
 function renderOverlays(s) {
@@ -7367,8 +7429,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal };
-      var btns = document.querySelectorAll('.wp-ov-toggle');
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal };      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat };      var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
         b.textContent = isOn ? 'ON' : 'OFF';
