@@ -6235,15 +6235,25 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 </style></head><body>
 <h1><img src="data:image/png;base64,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" alt="" style="height:22px;width:22px;vertical-align:-4px;margin-right:7px"> Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
 <div class="subtle" id="header"></div>
-<div class="wp-quicklinks" id="wpQuickLinks">
+<div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
   <span>Jump to wolfpack.quest:</span>
-  <a href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer" title="Raid hub — live grouped roster, color tiers, buff coverage at a glance">/raid</a>
   <a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" title="Your /me dashboard — stats, settings, recent">/me</a>
   <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" title="Recent parses (last 30 days)">parses</a>
   <a href="https://wolfpack.quest/pvp" target="_blank" rel="noreferrer" title="PvP leaderboard">pvp</a>
   <a href="https://wolfpack.quest/leaderboards" target="_blank" rel="noreferrer" title="Damage leaderboards">leaderboards</a>
   <a href="https://wolfpack.quest/fun" target="_blank" rel="noreferrer" title="Fun counters (Peopleslayer LD, Longest Dire Charm, etc.)">fun</a>
   <span id="wpUploaderLinks"></span>
+  <span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">
+    <a id="wpAdminLink" href="https://wolfpack.quest/admin" target="_blank" rel="noreferrer"
+       style="display:none;color:var(--red);border:1px solid var(--red);border-radius:5px;padding:3px 9px;text-decoration:none"
+       title="Officer admin — links, agents, triggers, audits">🛡 Admin ↗</a>
+    <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
+       style="color:var(--orange);border:1px solid var(--orange);border-radius:5px;padding:3px 9px;text-decoration:none"
+       title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
+    <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
+       style="color:var(--blue);border:1px solid var(--border);border-radius:5px;padding:3px 9px;text-decoration:none"
+       title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
+  </span>
 </div>
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
@@ -6255,17 +6265,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="info">Info / Stats</button>
   <button data-tab="optin">Opt-in Logs</button>
   <button id="wpUiStudioBtn" type="button"
-     style="background:transparent;border:1px solid var(--green);color:var(--green);padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit"
+     style="margin-left:auto;background:transparent;border:1px solid var(--green);color:var(--green);padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit"
      title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
-  <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
-     class="nav-quest"
-     style="margin-left:auto;color:var(--orange);border-color:var(--orange)"
-     title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
-  <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
-     class="nav-quest"
-     style="margin-left:6px"
-     title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
-  <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections">⚙ Panels</button>
+  <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
   <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
@@ -6557,6 +6559,11 @@ function renderHeader(s) {
     const display = s.mimicIdentity.display_name || s.mimicIdentity.discord_id || 'Discord account';
     const officer = s.mimicIdentity.is_officer ? ' <span style="color:var(--gold)" title="Officer">👑</span>' : '';
     identityChip = ' · <span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked Mimic install — Settings → Wolf Pack account to manage">⛓ ' + esc(display) + officer + '</span>';
+    // Officers get a direct Admin link in the top-right quicklinks cluster.
+    try {
+      const adm = document.getElementById('wpAdminLink');
+      if (adm) adm.style.display = s.mimicIdentity.is_officer ? '' : 'none';
+    } catch (e2) { /* */ }
   } else if (s.mimicSignedIn) {
     identityChip = ' · <span style="background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
   }
@@ -6734,7 +6741,13 @@ function renderDash(s) {
 // renderCritsCard. A card hidden via the ✕ panel button carries wp-hidden on
 // its element — we never force it back visible (respect _isPanelHidden()).
 function _isPanelHidden(el) {
-  return !!(el && el.classList && el.classList.contains('wp-hidden'));
+  if (!el) return false;
+  if (el.classList && el.classList.contains('wp-hidden')) return true;
+  // Also consult the persisted per-page hidden set — a re-render rebuilds
+  // the card WITHOUT wp-hidden and raced the MutationObserver re-apply,
+  // which is exactly how a dismissed Watched Logs card kept coming back.
+  try { if (window._wpPanelHiddenSetHas && window._wpPanelHiddenSetHas(el)) return true; } catch (e) { /* */ }
+  return false;
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -8311,7 +8324,15 @@ function renderRaidTab(q) {
       for (var dj = 0; dj < dq.length; dj++) {
         var d = dq[dj];
         var chips = (d.curses || []).map(function(c){
-          return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '');
+          // slot N = Zeal buff-window position; slots 1-4 (green ✂) can be
+          // dispelled without clipping many real buffs.
+          var sl = '';
+          if (c.slot != null) {
+            sl = c.low_slot
+              ? ' <span style="color:#7ee787" title="Buff slot ' + c.slot + ' — dispellable without clipping much">s' + c.slot + '✂</span>'
+              : ' <span class="dim" title="Buff slot ' + c.slot + '">s' + c.slot + '</span>';
+          }
+          return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '') + sl;
         }).join(' · ');
         h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--red);margin-bottom:1px">'
           + '<span style="color:var(--text);font-weight:600">' + esc(d.name) + '</span>'
@@ -8824,7 +8845,13 @@ async function dismissTopDamage(key) {
 // after every section re-render via a MutationObserver. Drag-to-arrange and
 // the new loot/bids panels come in later increments.
 (function(){
-  var LS_KEY = "wpHiddenPanels";
+  // V2: keys are PER-PAGE ("dash|watched logs") so hiding a card on the
+  // Dashboard does not also hide a same-named card on another tab, and the
+  // ⚙ Panels menu lists only the ACTIVE page. The pre-V2 un-scoped set kept
+  // resurrecting Watched Logs because re-renders rebuilt the card without
+  // the wp-hidden class and the visibility race let it flash back — the
+  // renderers now consult the persisted set directly (window._wpPanelHiddenSetHas).
+  var LS_KEY = "wpHiddenPanelsV2";
   function loadHidden(){
     try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) || "[]")); }
     catch (e) { return new Set(); }
@@ -8832,7 +8859,11 @@ async function dismissTopDamage(key) {
   function saveHidden(set){
     try { localStorage.setItem(LS_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
   }
-  function panelKey(card){
+  function sectionIdOf(card){
+    var sec = card.closest ? card.closest(".section") : null;
+    return (sec && sec.id) || "dash";
+  }
+  function titleKey(card){
     var h = card.querySelector("h2");
     if (!h) return "";
     // Read ONLY the h2's own TEXT nodes — skip injected chrome (drag handle,
@@ -8846,6 +8877,10 @@ async function dismissTopDamage(key) {
     t = t.split("(")[0].split("—")[0].split("·")[0];
     return t.trim().toLowerCase();
   }
+  function panelKey(card){
+    var tk = titleKey(card);
+    return tk ? (sectionIdOf(card) + "|" + tk) : "";
+  }
   function allCards(){
     return Array.prototype.slice.call(document.querySelectorAll(".section .card"));
   }
@@ -8857,13 +8892,22 @@ async function dismissTopDamage(key) {
       else card.classList.remove("wp-hidden");
     });
   }
+  // Renderers consult this so a re-render can never resurrect a hidden card
+  // between MutationObserver ticks (the Watched Logs bounce-back).
+  window._wpPanelHiddenSetHas = function(card){
+    try { var k = panelKey(card); return !!(k && loadHidden().has(k)); }
+    catch (e) { return false; }
+  };
   function buildMenu(){
     var menu = document.getElementById("wpPanelMenu");
     if (!menu) return;
     var hidden = loadHidden();
     var seen = {};
     var rows = [];
-    allCards().forEach(function(card){
+    // ONLY the active page's cards — panels are per-page now.
+    var active = document.querySelector(".section.active");
+    var cards = active ? Array.prototype.slice.call(active.querySelectorAll(".card")) : allCards();
+    cards.forEach(function(card){
       var k = panelKey(card);
       if (!k || seen[k]) return;
       seen[k] = true;
@@ -8872,7 +8916,15 @@ async function dismissTopDamage(key) {
       label = label.split("(")[0].split("—")[0].split("·")[0].trim();
       rows.push({ key: k, label: label });
     });
-    var html = "<h4>Show panels</h4>";
+    // Hidden cards render no DOM h2 sometimes (display:none shells) — also
+    // list any persisted-hidden keys for THIS page so they can be re-enabled.
+    var activeId = active ? active.id : "dash";
+    hidden.forEach(function(k){
+      if (k.indexOf(activeId + "|") !== 0 || seen[k]) return;
+      seen[k] = true;
+      rows.push({ key: k, label: k.slice(activeId.length + 1) });
+    });
+    var html = "<h4>Show panels — this page</h4>";
     rows.forEach(function(r){
       var checked = hidden.has(r.key) ? "" : " checked";
       html += "<label><input type=checkbox data-pk='" + r.key + "'" + checked + "> " + r.label + "</label>";
@@ -8889,7 +8941,13 @@ async function dismissTopDamage(key) {
       });
     });
     var showAll = document.getElementById("wpShowAll");
-    if (showAll) showAll.addEventListener("click", function(){ saveHidden(new Set()); applyHidden(); buildMenu(); });
+    if (showAll) showAll.addEventListener("click", function(){
+      // Show all — for THIS page only; other pages keep their prefs.
+      var set = loadHidden();
+      var pageId = (document.querySelector(".section.active") || {}).id || "dash";
+      Array.from(set).forEach(function(k){ if (k.indexOf(pageId + "|") === 0) set.delete(k); });
+      saveHidden(set); applyHidden(); buildMenu();
+    });
     var closeBtn = document.getElementById("wpClose");
     if (closeBtn) closeBtn.addEventListener("click", function(){ menu.style.display = "none"; });
   }
@@ -8912,7 +8970,7 @@ async function dismissTopDamage(key) {
     });
   }
   var obs = new MutationObserver(function(){ applyHidden(); });
-  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+  ["dash","tanks","deeps","raid","triggers","overlays","info","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -9019,15 +9077,21 @@ async function dismissTopDamage(key) {
     return !!(window.mimic && typeof window.mimic.createPanelOverlay === "function");
   }
   // Persisted hidden-panel set — SAME localStorage key the panel popover uses
-  // ("wpHiddenPanels"), so the direct ✕ button and the popover checkboxes stay
-  // in sync. Both key off the clean text-node panel key.
-  var HIDE_LS_KEY = "wpHiddenPanels";
+  // ("wpHiddenPanelsV2", per-page scoped), so the direct ✕ button and the
+  // popover checkboxes stay in sync.
+  var HIDE_LS_KEY = "wpHiddenPanelsV2";
   function _loadHiddenSet(){
     try { return new Set(JSON.parse(localStorage.getItem(HIDE_LS_KEY) || "[]")); }
     catch (e) { return new Set(); }
   }
   function _saveHiddenSet(set){
     try { localStorage.setItem(HIDE_LS_KEY, JSON.stringify(Array.prototype.slice.call(set))); } catch (e) {}
+  }
+  function _scopedHideKey(card){
+    var sec = card && card.closest ? card.closest(".section") : null;
+    var sid = (sec && sec.id) || "dash";
+    var tk = panelKeyForCard(card);
+    return tk ? (sid + "|" + tk) : "";
   }
   function decorateButtons(){
     if (!mimicHosts()) return;
@@ -9062,12 +9126,14 @@ async function dismissTopDamage(key) {
     // ✕ hide button — check FIRST since it shares the wp-overlay-btn class.
     if (t.classList.contains("wp-hide-btn")){
       e.preventDefault(); e.stopPropagation();
-      var hk = t.getAttribute("data-panel-key");
-      var set = _loadHiddenSet();
-      set.add(hk);
-      _saveHiddenSet(set);
-      var card = t.closest ? t.closest(".card") : null;
-      if (card) card.classList.add("wp-hidden");
+      var hcard = t.closest ? t.closest(".card") : null;
+      var hk = hcard ? _scopedHideKey(hcard) : "";
+      if (hk){
+        var set = _loadHiddenSet();
+        set.add(hk);
+        _saveHiddenSet(set);
+      }
+      if (hcard) hcard.classList.add("wp-hidden");
       return;
     }
     if (!t.classList.contains("wp-overlay-btn")) return;
@@ -9077,7 +9143,7 @@ async function dismissTopDamage(key) {
     try { if (window.mimic) window.mimic.createPanelOverlay(pk); } catch (err) {}
   }, true);
   var obs = new MutationObserver(decorateButtons);
-  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+  ["dash","tanks","deeps","raid","triggers","overlays","info","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -9117,7 +9183,7 @@ async function dismissTopDamage(key) {
       return matched;
     }
     var obs2 = new MutationObserver(applyOverlayTarget);
-    ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+    ["dash","tanks","deeps","raid","triggers","overlays","info","optin"].forEach(function(id){
       var el = document.getElementById(id);
       if (el) obs2.observe(el, { childList: true, subtree: true });
     });
@@ -9282,7 +9348,7 @@ async function dismissTopDamage(key) {
     }
   }
   var obs = new MutationObserver(decorate);
-  ["dash","tanks","healers","deeps","pets","info","optin"].forEach(function(id){
+  ["dash","tanks","deeps","raid","triggers","overlays","info","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });

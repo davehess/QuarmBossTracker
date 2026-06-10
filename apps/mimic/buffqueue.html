@@ -322,7 +322,16 @@
       for (var i = 0; i < r.curses.length; i++) {
         var c = r.curses[i];
         var t = (c.remaining_secs != null) ? '<span class="t">'+fmtSecs(c.remaining_secs)+'</span>' : '';
-        chips += '<span class="ch">'+esc(c.name)+t+'</span>';
+        // Zeal buff-window slot — slots 1-4 highlight green: a group member
+        // can dispel without clipping many real buffs (matters most on
+        // high-damage debuffs).
+        var sl = '';
+        if (c.slot != null) {
+          sl = c.low_slot
+            ? ' <span style="color:#7ee787" title="Buff slot '+c.slot+' — low slot; dispellable without clipping much">s'+c.slot+'✂</span>'
+            : ' <span style="color:#8b949e" title="Buff slot '+c.slot+'">s'+c.slot+'</span>';
+        }
+        chips += '<span class="ch">'+esc(c.name)+t+sl+'</span>';
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {

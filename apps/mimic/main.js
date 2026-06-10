@@ -1052,7 +1052,10 @@ function _zealAbsorb(obj, pid) {
             // 6 slots) vs the main 15-slot buff window (45-59). Rides through
             // the agent's live-state upload so /raid can show songs separately
             // and Mob Info can render "Buffs n/15 · Songs m/6".
-            buffs.push({ name: String(name), ticks, song: (id >= 135 && id <= 140) });
+            // slot = 1-based window position. Debuffs sitting in buff slots
+            // 1-4 are cheap to dispel — the queue's "slot N" callout needs it.
+            const isSongWin = (id >= 135 && id <= 140);
+            buffs.push({ name: String(name), ticks, song: isSongWin, slot: isSongWin ? (id - 134) : (id - 44) });
           }
         } else if (id === 134) {
           if (it.value && it.value !== '') casting = String(it.value);
@@ -3446,20 +3449,10 @@ function buildTrayMenu() {
         pushStatus();
       } },
     { type: 'separator' },
-    // Panel overlays — surface the most-wanted dashboard panels as named
-    // toggles (the same windows the card "🪟 overlay" buttons open). Checked =
-    // that overlay window is currently open; clicking toggles it. The key is the
-    // emoji-stripped panel title; the dashboard's overlay matcher resolves it to
-    // the emoji-titled card (_pkStrip in WEB_HTML). createPanelOverlay itself
-    // toggles (open if closed, close if open).
-    { label: 'Panel overlays', enabled: false },
-    ...PANEL_OVERLAYS.map(p => ({
-      label: '  ' + p.label,
-      type: 'checkbox',
-      checked: panelOverlays.has(p.key),
-      click: () => { createPanelOverlay(p.key); pushStatus(); },
-    })),
-    { type: 'separator' },
+    // Panel-overlay tray toggles removed per user feedback — the per-card
+    // "🪟 overlay" buttons on the dashboard cover ad-hoc pop-outs without a
+    // global list that pretends to be raid-window state. PANEL_OVERLAYS
+    // stays defined for createPanelOverlay key resolution.
     // Lock toggle — unchecking makes the overlays grabbable so you can drag +
     // resize them; checking locks them click-through in place. Pure window
     // op, never restarts the agent.
