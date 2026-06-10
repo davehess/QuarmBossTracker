@@ -6280,7 +6280,6 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" title="Your /me dashboard — stats, settings, recent">/me</a>
   <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" title="Recent parses (last 30 days)">parses</a>
   <a href="https://wolfpack.quest/pvp" target="_blank" rel="noreferrer" title="PvP leaderboard">pvp</a>
-  <a href="https://wolfpack.quest/leaderboards" target="_blank" rel="noreferrer" title="Damage leaderboards">leaderboards</a>
   <a href="https://wolfpack.quest/fun" target="_blank" rel="noreferrer" title="Fun counters (Peopleslayer LD, Longest Dire Charm, etc.)">fun</a>
   <span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">
     <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
@@ -6297,9 +6296,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Buffs / Raid</button>
   <button data-tab="fights">⚔️ Fights</button>
-  <button data-tab="info">Info / Stats</button>
+  <button data-tab="info">Info</button>
   <button data-tab="triggers">⚡ Triggers</button>
-  <button data-tab="optin">Opt-in Logs</button>
+  <button data-tab="optin">Logsync</button>
   <button id="wpGear" class="wp-gear" style="margin-left:auto" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
@@ -6503,7 +6502,7 @@ function renderHeader(s) {
     h += '<div class="banner stale-backfill" title="' + esc(tip) + '" style="background:#1a3a1f;color:#bff5c5;border:1px solid #2ea043;display:flex;gap:10px;align-items:center;justify-content:space-between">'
        + '<span><span class="pulse-dot" aria-hidden></span><b> ' + sb.count + ' ' + fileWord + '</b> backfilled before recent detectors landed. '
        + 'Re-run to capture <b>' + esc(labelList || 'new fun-event counters') + '</b>.</span>'
-       + '<button id="bannerGoOptin" style="background:#fff;color:#1a3a1f;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;white-space:nowrap">Open Opt-in Logs →</button>'
+       + '<button id="bannerGoOptin" style="background:#fff;color:#1a3a1f;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;white-space:nowrap">Open Logsync →</button>'
        + '</div>';
   }
   // Setup-state banners. These are the "why is nothing flowing" causes — all
@@ -8839,7 +8838,7 @@ async function refresh() {
     const pending = (s.backfillRequests || []).filter(r => r.status === 'pending').length;
     const optinBtn = document.querySelector('.nav button[data-tab="optin"]');
     if (optinBtn) {
-      const baseLabel = 'Opt-in Logs';
+      const baseLabel = 'Logsync';
       optinBtn.textContent = pending > 0 ? (baseLabel + ' (' + pending + ')') : baseLabel;
       optinBtn.style.color = pending > 0 ? '#f0883e' : '';
     }
