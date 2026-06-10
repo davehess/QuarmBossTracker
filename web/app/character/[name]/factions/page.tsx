@@ -21,6 +21,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { groupFactions } from '@/lib/factionGroups';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,11 +45,13 @@ const STANDING_COLORS: Record<string, string> = {
   indifferently:  'text-dim',
   apprehensively: 'text-orange',
   dubiously:      'text-orange',
+  threateningly:  'text-red',
+  scowls:         'text-red',
 };
 
 async function load(decoded: string) {
   const sb = supabaseAdmin();
-  const [standingRes, consRes] = await Promise.all([
+  const [standingRes, consRes, charRes] = await Promise.all([
     sb.from('faction_standing')
       .select('faction, better_count, worse_count, capped_max_at, capped_min_at, first_hit_at, last_hit_at, last_direction')
       .ilike('character', decoded)
@@ -59,10 +62,19 @@ async function load(decoded: string) {
       .ilike('character', decoded)
       .order('event_ts', { ascending: false })
       .limit(500),
+    // Race/class feed the estimated base standings for unrecorded factions.
+    // Deity isn't captured anywhere yet — estimates say so.
+    sb.from('characters')
+      .select('race, class')
+      .ilike('name', decoded)
+      .limit(1),
   ]);
+  const char = (charRes.data && charRes.data[0]) || null;
   return {
     standings: (standingRes.data ?? []) as StandingRow[],
     cons:      (consRes.data ?? []) as ConRow[],
+    race:      (char?.race as string | null) ?? null,
+    cls:       (char?.class as string | null) ?? null,
   };
 }
 
@@ -74,11 +86,13 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/factions`);
 
-  const { standings, cons } = await load(decoded);
+  const { standings, cons, race, cls } = await load(decoded);
 
-  const factions = standings
-    .slice()
-    .sort((a, b) => (b.better_count + b.worse_count) - (a.better_count + a.worse_count));
+  // Bloc grouping — factions render next to the ones whose hits arrive
+  // together (Velious war, Seru vs Katta, Chardok vs the goblin mines, …),
+  // most-active bloc first. Catalog members with no recorded hits show as
+  // "?" rows with an estimated base standing from race/class.
+  const grouped = groupFactions(standings, f => f.better_count + f.worse_count, { race, cls });
   const conRows = cons
     .slice()
     .sort((a, b) => (b.rank ?? 4) - (a.rank ?? 4) || a.mob.localeCompare(b.mob));
@@ -107,47 +121,81 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
       </section>
 
       <section className="bg-panel border border-border rounded-lg p-4">
-        <h3 className="text-sm text-orange mb-3">Faction standing ({factions.length} faction{factions.length === 1 ? '' : 's'})</h3>
-        {factions.length === 0 ? (
+        <h3 className="text-sm text-orange mb-1">Faction standing ({standings.length} recorded)</h3>
+        <p className="text-xs text-dim mb-3">
+          Grouped by the wars you grind them in — raising one side of a bloc usually lowers the other.
+          <span className="text-text"> ? rows</span> are bloc factions with no recorded hits yet; their{' '}
+          <i>est. base</i> tier is a coarse estimate from race/class
+          {race || cls ? <> ({[race, cls].filter(Boolean).join(' ')})</> : null} —{' '}
+          <b>deity isn&apos;t tracked yet</b>, so deity-shifted factions may sit a tier off. <code>/con</code> something
+          on that faction in-game to pin the real tier.
+        </p>
+        {grouped.length === 0 ? (
           <div className="text-sm text-dim p-2">
             No faction hits recorded yet. They flow automatically while this character plays with the agent
             running — or crawl old logs via the agent&apos;s backfill to fill in history.
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-dim text-xs text-left">
-                <th className="py-1 pr-3">Faction</th>
-                <th className="py-1 pr-3 text-right">Raised</th>
-                <th className="py-1 pr-3 text-right">Lowered</th>
-                <th className="py-1 pr-3">Position</th>
-                <th className="py-1">Last hit</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {factions.map(f => (
-                <tr key={f.faction}>
-                  <td className="py-1.5 pr-3 text-text">{f.faction}</td>
-                  <td className="py-1.5 pr-3 text-right text-green">{f.better_count > 0 ? `+${f.better_count}` : '—'}</td>
-                  <td className="py-1.5 pr-3 text-right text-red">{f.worse_count > 0 ? `−${f.worse_count}` : '—'}</td>
-                  <td className="py-1.5 pr-3">
-                    {f.capped_max_at && <span className="text-gold text-xs" title={`hit the max cap ${fmtDate(f.capped_max_at)}`}>▲ at max cap</span>}
-                    {f.capped_max_at && f.capped_min_at && <span className="text-dim text-xs"> · </span>}
-                    {f.capped_min_at && <span className="text-red text-xs" title={`hit the min cap ${fmtDate(f.capped_min_at)}`}>▼ at min cap</span>}
-                    {!f.capped_max_at && !f.capped_min_at && <span className="text-dim text-xs">—</span>}
-                  </td>
-                  <td className="py-1.5 text-dim text-xs">
-                    {fmtDate(f.last_hit_at)}
-                    {f.last_direction != null && (
-                      <span className={f.last_direction > 0 ? 'text-green ml-1' : 'text-red ml-1'}>
-                        {f.last_direction > 0 ? '↑' : '↓'}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="space-y-4">
+            {grouped.map(({ group, rows, missing }) => (
+              <div key={group.key}>
+                <div className="flex items-baseline gap-2 mb-1">
+                  <h4 className="text-xs text-gold uppercase tracking-wider">{group.label}</h4>
+                  <span className="text-[10px] text-dim italic">{group.hint}</span>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-dim text-xs text-left">
+                      <th className="py-1 pr-3 w-[40%]">Faction</th>
+                      <th className="py-1 pr-3 text-right">Raised</th>
+                      <th className="py-1 pr-3 text-right">Lowered</th>
+                      <th className="py-1 pr-3">Position</th>
+                      <th className="py-1">Last hit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {rows.map(f => (
+                      <tr key={f.faction}>
+                        <td className="py-1.5 pr-3 text-text">{f.faction}</td>
+                        <td className="py-1.5 pr-3 text-right text-green">{f.better_count > 0 ? `+${f.better_count}` : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right text-red">{f.worse_count > 0 ? `−${f.worse_count}` : '—'}</td>
+                        <td className="py-1.5 pr-3">
+                          {f.capped_max_at && <span className="text-gold text-xs" title={`hit the max cap ${fmtDate(f.capped_max_at)}`}>▲ at max cap</span>}
+                          {f.capped_max_at && f.capped_min_at && <span className="text-dim text-xs"> · </span>}
+                          {f.capped_min_at && <span className="text-red text-xs" title={`hit the min cap ${fmtDate(f.capped_min_at)}`}>▼ at min cap</span>}
+                          {!f.capped_max_at && !f.capped_min_at && <span className="text-dim text-xs">—</span>}
+                        </td>
+                        <td className="py-1.5 text-dim text-xs">
+                          {fmtDate(f.last_hit_at)}
+                          {f.last_direction != null && (
+                            <span className={f.last_direction > 0 ? 'text-green ml-1' : 'text-red ml-1'}>
+                              {f.last_direction > 0 ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {missing.map(m => (
+                      <tr key={m.name} className="opacity-70">
+                        <td className="py-1.5 pr-3 text-dim">{m.name}</td>
+                        <td className="py-1.5 pr-3 text-right text-dim">?</td>
+                        <td className="py-1.5 pr-3 text-right text-dim">?</td>
+                        <td className="py-1.5 pr-3">
+                          <span
+                            className={`text-xs ${STANDING_COLORS[m.base] ?? 'text-dim'}`}
+                            title="Estimated base standing from race/class — deity not tracked yet; /con in-game to pin it"
+                          >
+                            est. base: {m.base}
+                          </span>
+                        </td>
+                        <td className="py-1.5 text-dim text-xs">—</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
         )}
       </section>
 
