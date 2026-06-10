@@ -3575,14 +3575,12 @@ function buildTrayMenu() {
           pushStatus();
         } },
     ] : []),
-    { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
     connectItem,
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
-    updateItem,
     updatePopupItem,
     betaChannelItem,
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
@@ -3590,11 +3588,15 @@ function buildTrayMenu() {
     // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
     ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
     { type: 'separator' },
-    // Restart agent → Settings → Quit. Settings sits directly above Quit per
-    // request (the two safe, common bottom actions nearest the cursor).
+    // Bottom block per user request: Overlays sits right above Restart agent
+    // (the tray opens upward, so this puts the most-used submenu nearest the
+    // cursor), then Check for updates directly below Restart, then Settings →
+    // Quit as the two safe bottom actions.
+    { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'Restart agent', click: async () => {
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
       } },
+    updateItem,
     { label: 'Settings…', click: openSettings },
     { label: 'Quit Mimic', click: () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } app.quit(); } },
   ]);
