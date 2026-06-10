@@ -1934,6 +1934,11 @@ function recordPetBuffLanding(bcEvt) {
       if (_categorizeBuff(b && b.name) === newCat) mp.delete(k);
     }
   }
+  // Resist ladders — same-school replacement on the pet too (the pet card
+  // showed "Endure Disease (fell off — rebuff)" under a fresh Resist Disease).
+  const ladderFx = _resistLadderEffect(mp, bcEvt.spell_name);
+  if (ladderFx && ladderFx.skip) return;
+  if (ladderFx) for (const k2 of ladderFx.drop) mp.delete(k2);
   mp.set(newKey, {
     name: bcEvt.spell_name,
     dur_ticks: durTicks,
@@ -1971,6 +1976,43 @@ const _BUFF_KEYWORDS = {
   ds:        ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
 };
 const _BUFF_CAT_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds'];
+
+// Per-school resist LADDERS (low → high). Resists were uncategorized, so a
+// fresh Resist Disease sat NEXT TO the Endure Disease it had just replaced
+// in-game (and Jasinth next to both). Same-school lines occupy one slot:
+// landing a higher link removes every lower one; a lower cast over a higher
+// existing buff is BLOCKED in-game, so we skip recording it. Schools are
+// independent — Resist Disease never touches Endure Magic. Values per the
+// spell catalog: flowers +10 < endure ~20 < resist ~40 < talisman/CoS +55.
+// (White/Green Petals stack in later slots and are deliberately absent.)
+const _RESIST_LADDERS = [
+  ['aura of black petals', 'endure disease', 'resist disease', 'talisman of jasinth', 'talisman of epuration'],   // DR
+  ['endure poison',  'resist poison',  'talisman of shadoo', 'talisman of epuration'],                            // PR
+  ['aura of blue petals', 'endure magic', 'resist magic', 'group resistance to magic'],                           // MR
+  ['aura of red petals',  'endure fire',  'resist fire',  'circle of seasons'],                                   // FR
+  ['endure cold', 'resist cold', 'circle of seasons'],                                                            // CR
+];
+// Returns { skip:true } when an existing strictly-higher same-ladder buff
+// blocks the new cast, else { drop:[keys...] } — the lower links to delete.
+function _resistLadderEffect(mp, spellName) {
+  const n = String(spellName || '').toLowerCase();
+  const drop = [];
+  let inAnyLadder = false;
+  for (const ladder of _RESIST_LADDERS) {
+    const rank = ladder.findIndex(k => n.includes(k));
+    if (rank === -1) continue;
+    inAnyLadder = true;
+    for (const [k2, b] of mp) {
+      const bn = String((b && b.name) || '').toLowerCase();
+      if (bn === n) continue;
+      const r2 = ladder.findIndex(k => bn.includes(k));
+      if (r2 === -1) continue;
+      if (r2 > rank) return { skip: true };   // higher link already on — cast was blocked
+      drop.push(k2);                          // lower (or equal-rank alias) link — replaced
+    }
+  }
+  return inAnyLadder ? { drop } : null;
+}
 function _categorizeBuff(name) {
   const n = String(name || '').toLowerCase();
   if (!n) return null;
@@ -2065,6 +2107,12 @@ function recordTargetBuffLanding(bcEvt) {
       if (_categorizeBuff(b && b.name) === newCat) mp.delete(k2);
     }
   }
+  // Resist ladders — same-school replacement (Resist Disease drops Endure
+  // Disease + its fell-off linger; Jasinth drops both). A cast over a
+  // strictly-higher link was blocked in-game, so do not record it.
+  const ladderFx = _resistLadderEffect(mp, bcEvt.spell_name);
+  if (ladderFx && ladderFx.skip) return;
+  if (ladderFx) for (const k2 of ladderFx.drop) mp.delete(k2);
   mp.set(newKey, {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
