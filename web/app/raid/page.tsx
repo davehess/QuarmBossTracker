@@ -113,7 +113,12 @@ export default async function RaidHubPage() {
   const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
 
   const admin = supabaseAdmin();
-  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }] = await Promise.all([
+  // MGB AA: Quarmy AA index 35 (eqemu_altadv_vars.eqmacid). character_aas only
+  // has entries for raiders whose owners run the Quarmy export — absence ≠
+  // untrained, just unknown. We pass the SET of trained characters to the view
+  // for a small badge on the raid card.
+  const MGB_AA_INDEX = 35;
+  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }] = await Promise.all([
     admin.from('character_live_state')
       .select('character, zone_name, self_hp_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
       .eq('guild_id', 'wolfpack')
@@ -132,7 +137,15 @@ export default async function RaidHubPage() {
       .select('discord_id')
       .eq('user_id', user.id)
       .maybeSingle(),
+    admin.from('character_aas')
+      .select('character')
+      .eq('guild_id', 'wolfpack')
+      .eq('aa_index', MGB_AA_INDEX)
+      .gte('rank', 1),
   ]);
+  const mgbSet = new Set(((mgbRows ?? []) as { character: string }[])
+    .map(r => String(r.character || '').toLowerCase())
+    .filter(Boolean));
   const meDiscordId = memberRow?.discord_id ?? null;
 
   // EQ corpses ("<Owner>'s corpse1234") register as live characters — drop them.
@@ -364,6 +377,7 @@ export default async function RaidHubPage() {
       buffs: live?.buffs ?? [],
       pet: petFor(live),
       isMe: !!(meDiscordId && discordIdFor(rr.name) === meDiscordId),
+      hasMgb: mgbSet.has(lower) || undefined,
     });
   }
   // 2. Anyone with live state but NOT in the roster (parked alt running Mimic,
@@ -402,6 +416,7 @@ export default async function RaidHubPage() {
       buffs: r.buffs ?? [],
       pet: petFor(r),
       isMe: !!(meDiscordId && discordIdFor(r.character) === meDiscordId),
+      hasMgb: mgbSet.has(lower) || undefined,
     });
   }
 

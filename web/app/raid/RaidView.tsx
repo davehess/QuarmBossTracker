@@ -59,6 +59,7 @@ export type RaidRow = {
   buffs: { name: string; ticks: number | null }[];
   pet: PetState | null;          // live charm/summoned pet snapshot (Zeal)
   isMe: boolean;                 // the signed-in user's character
+  hasMgb?: boolean;              // Mass Group Buff AA trained (from Quarmy export)
 };
 
 export type PetState = {
@@ -480,6 +481,7 @@ export default function RaidView({
                           {isLeader && <span title="Raid leader" className="text-gold">👑 </span>}
                           {isGrpLead && <span title="Group leader" className="text-blue">⭐ </span>}
                           {r.name}
+                          {r.hasMgb && <span title="Mass Group Buff AA trained — Quarmy export" className="text-purple ml-1 text-[10px]">MGB</span>}
                           {r.isMe && <span title="That&apos;s you" className="text-blue ml-1">·</span>}
                           {r.swappedTo && (
                             <span className="text-dim font-normal ml-1.5" title={`This client logged ${r.swappedTo} in — ${r.name} is no longer playing`}>
@@ -1144,6 +1146,21 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
 // night and the pitch writes itself.
 function CoverageUnlocks({ raidSize, mimicCovered }: { raidSize: number; mimicCovered: number }) {
   const pct = raidSize > 0 ? Math.round((mimicCovered / raidSize) * 100) : 0;
+  // Collapsed by default once we've passed the 50% mark — the pitch ladder has
+  // diminishing real-time value when most of the raid is already on Mimic, and
+  // the header card stays useful at a glance.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const v = window.localStorage.getItem('wp:raid:coverage:collapsed');
+    if (v === '1') return true;
+    if (v === '0') return false;
+    return pct >= 50;
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('wp:raid:coverage:collapsed', collapsed ? '1' : '0');
+    }
+  }, [collapsed]);
   type Cap = {
     icon: string;
     name: string;
@@ -1166,7 +1183,7 @@ function CoverageUnlocks({ raidSize, mimicCovered }: { raidSize: number; mimicCo
 
   return (
     <section className="bg-gradient-to-br from-[#0d1117] to-[#161b22] border border-border rounded-lg p-4">
-      {dramatic && (
+      {dramatic && !collapsed && (
         <div className="text-sm text-text leading-6 italic mb-3">
           <span className="text-gold">Imagine</span> a world where your buffs were
           always accounted for and your buffing duties were crystal clear without
@@ -1176,26 +1193,39 @@ function CoverageUnlocks({ raidSize, mimicCovered }: { raidSize: number; mimicCo
       )}
 
       <div className="flex items-baseline justify-between gap-2 mb-2">
-        <div>
-          <div className="text-xs uppercase tracking-widest text-dim">Mimic coverage</div>
-          <div className="text-2xl text-text">{mimicCovered}<span className="text-dim text-sm"> / {raidSize || '?'}</span>
-            {' '}<span className={['text-sm', pct >= 80 ? 'text-green' : pct >= 50 ? 'text-[#d4a72c]' : pct >= 25 ? 'text-orange' : 'text-red-400'].join(' ')}>({pct}%)</span>
+        <button
+          type="button"
+          onClick={() => setCollapsed(v => !v)}
+          aria-expanded={!collapsed}
+          className="flex items-baseline gap-2 text-left hover:opacity-90"
+          title={collapsed ? 'Expand Mimic coverage' : 'Collapse Mimic coverage'}
+        >
+          <span className="text-dim text-xs leading-none" aria-hidden>{collapsed ? '▸' : '▾'}</span>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-dim">Mimic coverage</div>
+            <div className="text-2xl text-text">{mimicCovered}<span className="text-dim text-sm"> / {raidSize || '?'}</span>
+              {' '}<span className={['text-sm', pct >= 80 ? 'text-green' : pct >= 50 ? 'text-[#d4a72c]' : pct >= 25 ? 'text-orange' : 'text-red-400'].join(' ')}>({pct}%)</span>
+            </div>
           </div>
-        </div>
-        <div className="text-[11px] text-dim text-right max-w-[20rem]">
-          Mimic is free and silent. Install from{' '}
-          <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">wolfpack.quest/mimic</a>.
-          Settings + token persist across upgrades.
-        </div>
+        </button>
+        {!collapsed && (
+          <div className="text-[11px] text-dim text-right max-w-[20rem]">
+            Mimic is free and silent. Install from{' '}
+            <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">wolfpack.quest/mimic</a>.
+            Settings + token persist across upgrades.
+          </div>
+        )}
       </div>
 
-      {/* Big coverage bar */}
-      <div className="h-2 bg-bg rounded-full overflow-hidden mb-3">
+      {/* Big coverage bar — kept visible even when collapsed; it's the headline number. */}
+      <div className={['h-2 bg-bg rounded-full overflow-hidden', collapsed ? '' : 'mb-3'].join(' ')}>
         <div
           className={['h-full transition-all', pct >= 80 ? 'bg-green' : pct >= 50 ? 'bg-[#d4a72c]' : pct >= 25 ? 'bg-orange' : 'bg-red-500'].join(' ')}
           style={{ width: pct + '%' }}
         />
       </div>
+
+      {collapsed ? null : (<>
 
       {/* Capability ladder */}
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
@@ -1237,6 +1267,7 @@ function CoverageUnlocks({ raidSize, mimicCovered }: { raidSize: number; mimicCo
           })()}
         </div>
       )}
+      </>)}
     </section>
   );
 }

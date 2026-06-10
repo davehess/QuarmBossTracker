@@ -5323,6 +5323,61 @@ async function _handleAgentTargetBuffs(req, res) {
   }
 }
 
+// Who has the Mass Group Buff AA trained — Quarmy AA index 35 (eqemu_altadv_vars
+// eqmacid). Source is the members' own Quarmy exports via /api/agent/quarmy, so
+// it only knows characters whose owners run the gear sync; absence ≠ untrained.
+// Refreshed every 10 min (AA purchases are rare).
+const _MGB_AA_INDEX = 35;
+let _mgbCache = { at: 0, names: new Set() };
+async function _mgbTrainedSet(supabase, guildId) {
+  if (Date.now() - _mgbCache.at < 10 * 60 * 1000) return _mgbCache.names;
+  try {
+    const rows = await supabase.select('character_aas',
+      `guild_id=eq.${encodeURIComponent(guildId)}&aa_index=eq.${_MGB_AA_INDEX}&rank=gte.1&select=character`);
+    _mgbCache = { at: Date.now(), names: new Set((rows || []).map(r => String(r.character || '').toLowerCase()).filter(Boolean)) };
+  } catch (e) {
+    console.warn('[raid-buff-queue] MGB AA fetch failed:', e && e.message);
+    _mgbCache.at = Date.now();   // don't hammer on failure
+  }
+  return _mgbCache.names;
+}
+
+// Website-style per-raider buff breakdown (mirrors /raid's detail panel) so
+// the dashboard Raid card can render the same sections instead of a flat chip
+// list. Entries are {n: name, s: remaining seconds | null}. Songs are placed
+// in `songs` AND credited to resist schools (a Psalm covers its school).
+function _buffDetailFor(rb, buffs) {
+  const names = (buffs || []).map(b => b && b.name).filter(Boolean);
+  const hpSlots = rb.analyzeHpSlots(names);
+  const slotted = new Set([hpSlots.A, hpSlots.B, hpSlots.C].filter(Boolean).map(n => String(n).toLowerCase()));
+  const cats = {}; const resists = {}; const ds = []; const songs = []; const other = [];
+  for (const b of (buffs || [])) {
+    if (!b || !b.name) continue;
+    const name = String(b.name);
+    const secs = (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks < 6000) ? Math.round(b.ticks * 6) : null;
+    const entry = { n: name.slice(0, 60), s: secs };
+    const isSong = rb.isSongBuff(name, typeof b.song === 'boolean' ? b.song : undefined);
+    const rTypes = rb.resistTypesFor(name);
+    for (const t of rTypes) (resists[t] = resists[t] || []).push(entry);
+    if (isSong) { songs.push(entry); continue; }
+    if (rTypes.length) continue;
+    const cat = rb.categorizeBuff(name);
+    if (cat === 'ds') { ds.push(entry); continue; }
+    if (cat === 'hp' && slotted.has(name.toLowerCase())) continue;   // shown on its HP slot row
+    if (cat) { (cats[cat] = cats[cat] || []).push(entry); }
+    else other.push(entry);
+    // Secondary credits (VoG→attack, POTG/POTC→manaRegen) so the detail rows
+    // match the queue's "not missing" logic.
+    for (const sec of rb.secondaryCategoriesFor(name)) {
+      if (sec !== cat) (cats[sec] = cats[sec] || []).push(entry);
+    }
+  }
+  return {
+    hp: { A: hpSlots.A || null, B: hpSlots.B || null, C: hpSlots.C || null },
+    cats, resists, ds, songs, other,
+  };
+}
+
 // GET /api/agent/raid-buff-queue?class=<class>&character=<self>
 // Powers the Mimic buff-queue overlay. Returns two lists:
 //   buff_queue   — raiders missing buffs the buffer's class can provide,
@@ -5435,8 +5490,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
     }
     const classFor = (n) => classByName.get(String(n).toLowerCase()) || (rosterByName.get(String(n).toLowerCase()) || {}).class || null;
 
+    // Same "online" pulse as /raid's auto-hide: a live-state row whose last
+    // Mimic heartbeat is older than 15 minutes is someone who logged off —
+    // their stale buff array must not put them on tonight's queue.
     const liveByName = new Map();
-    for (const r of (liveRows || [])) if (r && r.character && !rb.isCorpse(r.character)) liveByName.set(r.character.toLowerCase(), r);
+    const liveCutoffMs = Date.now() - ROSTER_FRESH_MS;
+    for (const r of (liveRows || [])) {
+      if (!r || !r.character || rb.isCorpse(r.character)) continue;
+      const at = r.updated_at ? (Date.parse(r.updated_at) || 0) : 0;
+      if (at < liveCutoffMs) continue;
+      liveByName.set(r.character.toLowerCase(), r);
+    }
 
     // Observed buff landings → per-target buff inference for raiders NOT
     // running Mimic. Filters out anything (a) past its catalog duration and
@@ -5512,16 +5576,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
 
     // Only include characters who are demonstrably ONLINE right now:
     //   • In the current raid_roster window (Zeal type-5 snapshot, 15min fresh)
-    //   • OR streaming live state (Mimic running with Zeal pipe up)
+    //   • OR streaming live state within the same 15-min window (groupMode)
     // Pure buff_casts inference is dropped — those are buffs WE'VE seen on
     // someone over the last 3h, which is not the same as "they're online".
-    // groupMode (no raid roster) falls back to "anyone with live state" so
-    // a group of Mimic users sees each other without needing a /raid.
-    const allKeys = new Set([
-      ...rosterByName.keys(),
-      ...liveByName.keys(),
-    ]);
+    // When a raid roster IS active, candidates are the roster — a fresh live
+    // streamer who isn't in the buffer's raid doesn't belong on its queue.
+    // groupMode (no raid roster) falls back to "anyone with fresh live state"
+    // so a group of Mimic users sees each other without needing a /raid.
     const groupMode = rosterByName.size === 0;
+    const allKeys = groupMode
+      ? new Set([...liveByName.keys()])
+      : new Set([...rosterByName.keys()]);
     // Buffer's current zone — drives same-zone-first sort. Fall back to
     // "no zone" when we don't know who's asking; the sort degrades to
     // just-by-tier in that case.
@@ -5764,6 +5829,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // raid only (same scoping as the queue). HP rides the Zeal group-gauge
     // broadcasts captured in raid_roster; buffs/zone from live state; tier
     // mirrors /raid's severity intent.
+    const mgbTrained = await _mgbTrainedSet(supabase, guildId);
     const rosterOut = [];
     for (const [k, rr] of rosterByName) {
       const live = liveByName.get(k);
@@ -5796,6 +5862,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
         .map(b => ({ n: String(b.name).slice(0, 60), t: (typeof b.ticks === 'number') ? b.ticks : null }));
       rosterOut.push({
         buffs:      buffsOut,
+        detail:     noSignal ? null : _buffDetailFor(rb, buffs),
         hp_missing: missingHp,
         name:       rr.name,
         class:      cls,
@@ -5806,6 +5873,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
         buff_count: buffs.filter(b => b && b.name).length,
         mimic:      !!live,
         inferred:   !live && !!(inferred && inferred.length),
+        mgb:        mgbTrained.has(k) || undefined,
         zone:       live && live.zone_name ? String(live.zone_name) : null,
         tier,
       });

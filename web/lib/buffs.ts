@@ -83,11 +83,12 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat', 'damage shield', 'legacy of', 'shield of barbs'],
   // Levitation — situational but worth a visible row (Hate trenches, Sky).
   levitate: ['levitat', 'dead men floating', 'dead man floating', 'flying'],
-  // Resist buffs (single + group). "Circle of Seasons" is the Druid all-resist
-  // group buff seen in raid dumps.
+  // Resist buffs (single + group). Circle of Seasons = Fire + Cold only;
+  // Epuration > Jasinth > Shadoo is the shaman Poison+Disease line.
   resists: [
     'resist', 'endure', 'protection of', 'talisman of altuna', 'talisman of jasinth',
-    'talisman of shadoo', 'circle of', 'aegis of bathezid', 'colossal', 'elemental',
+    'talisman of shadoo', 'talisman of epuration', 'circle of', 'aegis of bathezid',
+    'colossal', 'elemental',
   ],
 };
 
@@ -207,15 +208,14 @@ export const RESIST_LABELS: Record<ResistType, string> = {
 // Bard psalms: Warmth = cold (a warming song), Cooling = fire, Purity =
 // poison, Vitality = disease, Guardian Rhythms = magic+all-ish (kept MR).
 const RESIST_ALL_KEYWORDS = [
-  'circle of seasons', 'aegis of bathezid', 'talisman of jasinth',
-  'protection of the cabbage', 'mark of karn',
+  'aegis of bathezid', 'protection of the cabbage', 'mark of karn',
 ];
 const RESIST_TYPE_KEYWORDS: Record<ResistType, string[]> = {
   MR: ['magic', 'guardian rhythms', 'psalm of veeshan', 'group resistance'],
-  FR: ['fire', 'flame', 'psalm of cooling', 'inferno'],
-  CR: ['cold', 'frost', 'psalm of warmth', 'ice'],
-  PR: ['poison', 'psalm of purity', 'talisman of shadoo', 'venom'],
-  DR: ['disease', 'psalm of vitality', 'talisman of shadoo', 'plague'],
+  FR: ['fire', 'flame', 'psalm of cooling', 'inferno', 'circle of seasons'],
+  CR: ['cold', 'frost', 'psalm of warmth', 'ice', 'circle of seasons'],
+  PR: ['poison', 'psalm of purity', 'talisman of shadoo', 'talisman of jasinth', 'talisman of epuration', 'venom'],
+  DR: ['disease', 'psalm of vitality', 'talisman of shadoo', 'talisman of jasinth', 'talisman of epuration', 'plague'],
 };
 
 /** Which resist schools a buff covers — empty when it isn't a resist buff. */

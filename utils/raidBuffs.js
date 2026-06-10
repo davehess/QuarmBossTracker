@@ -24,7 +24,7 @@ const KEYWORDS = {
   attack: ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
   ds: ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
   levitate: ['levitat','dead men floating','dead man floating','flying'],
-  resists: ['resist','endure','protection of','talisman of altuna','talisman of jasinth','talisman of shadoo','circle of','aegis of bathezid','colossal','elemental'],
+  resists: ['resist','endure','protection of','talisman of altuna','talisman of jasinth','talisman of shadoo','talisman of epuration','circle of','aegis of bathezid','colossal','elemental'],
 };
 
 // Buffs crediting a SECOND category beyond their primary: VoG/Bihli carry
@@ -108,6 +108,42 @@ function analyzeHpSlots(buffNames) {
   return out;
 }
 
+// ── Resist schools + songs (synced from web/lib/buffs.ts) ────────────────────
+const RESIST_TYPES = ['MR', 'FR', 'CR', 'PR', 'DR'];
+const RESIST_LABELS = { MR: 'Magic', FR: 'Fire', CR: 'Cold', PR: 'Poison', DR: 'Disease' };
+const RESIST_ALL_KEYWORDS = [
+  'aegis of bathezid', 'protection of the cabbage', 'mark of karn',
+];
+const RESIST_TYPE_KEYWORDS = {
+  MR: ['magic', 'guardian rhythms', 'psalm of veeshan', 'group resistance'],
+  FR: ['fire', 'flame', 'psalm of cooling', 'inferno', 'circle of seasons'],
+  CR: ['cold', 'frost', 'psalm of warmth', 'ice', 'circle of seasons'],
+  PR: ['poison', 'psalm of purity', 'talisman of shadoo', 'talisman of jasinth', 'talisman of epuration', 'venom'],
+  DR: ['disease', 'psalm of vitality', 'talisman of shadoo', 'talisman of jasinth', 'talisman of epuration', 'plague'],
+};
+function resistTypesFor(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return [];
+  const isResistBuff = KEYWORDS.resists.some(k => n.includes(k))
+    || RESIST_ALL_KEYWORDS.some(k => n.includes(k))
+    || /psalm of|guardian rhythms/.test(n);
+  if (!isResistBuff) return [];
+  if (RESIST_ALL_KEYWORDS.some(k => n.includes(k))) return RESIST_TYPES.slice();
+  const out = [];
+  for (const t of RESIST_TYPES) {
+    if (RESIST_TYPE_KEYWORDS[t].some(k => n.includes(k))) out.push(t);
+  }
+  if (out.length === 0 && /elemental/.test(n)) return ['FR', 'CR'];
+  return out;
+}
+
+const SONG_NAME_RX = /psalm of|chant|chorus|melody|cantata|aria of|verses of|warsong|battlecry|guardian rhythms|selo|hymn|march of|anthem|jonthan|niv's|niv`s|cassindra|kelin|tuyen|denon|crission|lyssa|mcvaxius|vilia|solon|brusco/i;
+function isSongBuff(name, songFlag) {
+  if (songFlag === true) return true;
+  if (songFlag === false) return false;   // authoritative Zeal song-window tag
+  return SONG_NAME_RX.test(String(name || ''));
+}
+
 const CURSE_KEYWORDS = ['gravel rain','sand storm','sandstorm','curse of',"innoruuk's curse",'venom of','envenomed','plague','pestilence','splurt','word of'];
 function isCurseBuff(name) {
   const n = String(name || '').toLowerCase().trim();
@@ -124,4 +160,5 @@ module.exports = {
   CATEGORY_ORDER, CATEGORY_LABELS,
   categorizeBuff, secondaryCategoriesFor, classToRole, classProvides, ROLE_TARGETS,
   analyzeHpSlots, HP_SLOTS, isCurseBuff, isCorpse,
+  RESIST_TYPES, RESIST_LABELS, resistTypesFor, isSongBuff,
 };
