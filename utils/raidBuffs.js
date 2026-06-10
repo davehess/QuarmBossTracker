@@ -211,9 +211,55 @@ function isCorpse(name) {
   return !!name && CORPSE_RX.test(String(name).trim());
 }
 
+// Upgrade chains — surfaced as "Focus line ↑" / "Aego line ↑" hints on a
+// queue row when the raider carries a lower link than the buffer's class
+// can cast. Each chain ENDS at the realistic raid-cast max (e.g. Aegolism,
+// Khura's Focusing); rare quest-spell tops like Blessing of Aegolism or
+// Ancient: Gift aren't in the chain so a cleric who landed standard Aego
+// isn't nagged. Kept in sync with web/lib/buffs.ts UPGRADE_CHAINS.
+const UPGRADE_CHAINS = [
+  {
+    key: 'aego', label: 'Aego line',
+    chain: ['courage','center','daring','bravery','valor','resolution',
+            'heroism','heroic bond','fortitude','temperance','aegolism'],
+    classes: ['cleric'],
+  },
+  {
+    key: 'symbol', label: 'Symbol line',
+    chain: ['symbol of transal','symbol of ryltan','symbol of pinzarn',
+            'symbol of naltron','symbol of marzin'],
+    classes: ['cleric'],
+  },
+  {
+    key: 'focus', label: 'Focus line',
+    chain: ['inner fire','talisman of tnarg','talisman of kragg',
+            'focus of spirit','khura'],
+    classes: ['shaman'],
+  },
+  {
+    key: 'bihli', label: 'Run speed + ATK',
+    chain: ['journeyman','spirit of bihli'],
+    classes: ['shaman'],
+    roles: ['melee','tank'],
+  },
+];
+// Highest chain link present in a buff list (-1 = none).
+function chainPosition(chain, buffNames) {
+  let best = -1;
+  for (const raw of (buffNames || [])) {
+    const n = String(raw || '').toLowerCase();
+    if (!n) continue;
+    for (let i = chain.length - 1; i >= 0; i--) {
+      if (n.includes(chain[i]) && i > best) { best = i; break; }
+    }
+  }
+  return best;
+}
+
 module.exports = {
   CATEGORY_ORDER, CATEGORY_LABELS,
   categorizeBuff, secondaryCategoriesFor, classToRole, classProvides, ROLE_TARGETS,
   analyzeHpSlots, HP_SLOTS, classHpSlots, isCurseBuff, isCorpse,
   RESIST_TYPES, RESIST_LABELS, resistTypesFor, isSongBuff,
+  UPGRADE_CHAINS, chainPosition,
 };

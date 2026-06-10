@@ -5619,17 +5619,12 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // path if we get curses or damage from them later.
       const noAgent = !live && !isInferred;
 
-      // Avatar / Celestial Tranquility / SK Touch of Hate Recourse detection —
-      // useful on EVERY queue row, not just the burst queue. Especially:
-      //   • Avatar present → likely benefits from Feral Avatar (near-cap proxy
-      //     until the worn-item parser lands).
-      //   • Celestial Tranquility (+40 atk) is a slot that Avatar overwrites.
-      //   • SK T. of Hate Recourse (+35 atk) is the slot Savagery overwrites.
-      const avatarBuff = buffs.find(b => b && b.name && /\b(feral avatar|primal avatar|avatar)\b/i.test(b.name));
-      const celestial  = buffs.find(b => b && b.name && /celestial tranquility/i.test(b.name));
-      const skRecourse = (cls && /shadow ?knight|^sk$/i.test(cls))
-                         ? buffs.find(b => b && b.name && /t\.?\s*of hate recourse|touch of hate recourse/i.test(b.name))
-                         : null;
+      // Avatar / Celestial Tranquility / SK Touch of Hate Recourse detection
+      // is now BURST-only — on a "Haste missing" row the 🪶 chip read as
+      // "Avatar is providing the haste", which is wrong (Ancient: Feral
+      // Avatar has no haste component). The chip's real signal is "skip
+      // this raider for Feral Avatar / Savagery; they already have it",
+      // which only applies to the burst queue.
 
       // Same-zone-as-buffer flag — drives "near you first" sort. Falls back
       // to false (treated equal) when we don't know the buffer's zone.
@@ -5662,9 +5657,6 @@ async function _handleAgentRaidBuffQueue(req, res) {
           max_counters:          maxCounters,
           same_zone:             sameZone,
           inferred: isInferred,
-          avatar_buff:           avatarBuff ? avatarBuff.name : null,
-          celestial_tranquility: !!celestial,
-          sk_recourse:           skRecourse ? skRecourse.name : null,
           casting: _castingOnTarget(name),
         });
       }
@@ -5692,16 +5684,30 @@ async function _handleAgentRaidBuffQueue(req, res) {
       const fillsSlots = rb.classHpSlots(bufferClass);
       const missingHp = provides.includes('hp') ? fillsSlots.filter(s => !hpSlots[s]) : [];
 
-      if (missing.length === 0 && missingHp.length === 0) continue;
+      // Upgrade chains the buffer's class can improve: present-but-lower-
+      // link spells (Daring vs Aegolism, Kragg vs Khura, Journeyman vs
+      // Spirit of Bih`Li). Surfaced as "Focus line ↑" chips so the queue
+      // nudges a recast even when the slot itself reads filled.
+      const buffNames = buffs.map(b => b && b.name).filter(Boolean);
+      const upgrades = [];
+      for (const ch of rb.UPGRADE_CHAINS) {
+        if (ch.classes && !ch.classes.includes(bufferClass.toLowerCase())) continue;
+        if (ch.roles && !ch.roles.includes(role)) continue;
+        const pos = rb.chainPosition(ch.chain, buffNames);
+        if (pos >= 0 && pos < ch.chain.length - 1) upgrades.push(ch.label);
+      }
+      if (missing.length === 0 && missingHp.length === 0 && upgrades.length === 0) continue;
 
       // Severity tier — same intent as /raid: any HP gap or caster/priest no
-      // mana/regen → orange; otherwise yellow.
+      // mana/regen → orange; missing category → yellow; only an upgrade
+      // available (no real gap) → light-green "upgradable".
       const totalBuffs = buffs.filter(b => b && b.name).length;
       let tier;
       if (totalBuffs === 0) tier = 'red';
       else if (missingHp.length > 0) tier = 'orange';
       else if ((role === 'caster' || role === 'priest') && (missing.includes('mana') || missing.includes('manaRegen'))) tier = 'orange';
-      else tier = 'yellow';
+      else if (missing.length > 0) tier = 'yellow';
+      else tier = 'upgradable';
 
       // POTG/POTC fills HP slot A *instead of* group Aegolism — clerics
       // should single-target the Symbol instead of group-casting Aego over
@@ -5715,14 +5721,12 @@ async function _handleAgentRaidBuffQueue(req, res) {
         hp_a: slotA,
         skip_group_aego: hasPotg,
         missing: missing.map(c => rb.CATEGORY_LABELS[c]).concat(missingHp.map(s => 'HP ' + s)),
+        upgrades,
         // Tank HP gap = priority cue for the buff queue's sort. A naked
         // warrior needs Symbol before a naked wizard does.
         needs_tank_hp:         (role === 'tank' && missingHp.length > 0),
         same_zone:             sameZone,
         inferred: isInferred,
-        avatar_buff:           avatarBuff ? avatarBuff.name : null,
-        celestial_tranquility: !!celestial,
-        sk_recourse:           skRecourse ? skRecourse.name : null,
         casting: _castingOnTarget(name),
       });
     }
@@ -5918,14 +5922,15 @@ function _castingOnTarget(name) {
   const now = Date.now();
   const out = [];
   for (const c of mp.values()) {
-    // Override the agent-supplied cast_secs with the bot's catalog when the
-    // agent shipped an obviously-stub value (≤ 4s default). Older agents
-    // whose cached catalog predates the cast_ms field default to 4 for any
-    // spell, which made a real 14s Aegolism cast read as 0s remaining after
-    // four seconds.
+    // Override the agent-supplied cast_secs with the bot's catalog ONLY when
+    // the agent shipped the 4s stub default (older catalog cache without
+    // cast_ms). Trust any non-stub value — that includes focus-haste-
+    // adjusted casts (e.g. Utoh with Enhancement Haste III casts Focus of
+    // Spirit in 8.4s instead of 12s; the agent already knows that, and the
+    // bot must not clobber it back to the raw catalog 12.
+    const isStubDefault = Math.abs((Number(c.cast_secs) || 0) - 4) < 0.05;
     const catSecs = _catalogCastSecs(c.spell);
-    const effSecs = (catSecs > 0 && (c.cast_secs <= 4 + 0.01 || c.cast_secs !== catSecs))
-      ? catSecs : c.cast_secs;
+    const effSecs = (isStubDefault && catSecs > 0) ? catSecs : c.cast_secs;
     const endsAt = c.started_at_ms + effSecs * 1000;
     const rem = Math.round((endsAt - now) / 1000);
     if (rem <= 0) continue;
