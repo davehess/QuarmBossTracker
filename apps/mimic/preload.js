@@ -13,6 +13,47 @@ const { contextBridge, ipcRenderer } = require('electron');
 function _hoverOn()  { try { ipcRenderer.invoke('overlay-hover-interactive', true);  } catch (e) {} }
 function _hoverOff() { try { ipcRenderer.invoke('overlay-hover-interactive', false); } catch (e) {} }
 
+// ── Document-level hover-interact (the windowed-fullscreen fix) ─────────────
+// Locked overlays are click-through with {forward:true}, so the renderer
+// still sees mousemove while EQ keeps the cursor. Only the corner controls
+// (✕ / ✥ / ⚙) had per-element arm/disarm wiring — every OTHER control
+// (Mob Info's Stats/Loot/Spells tabs, the HUD's DPS/Tank tabs, charm
+// buttons, melody toggles…) never armed the window, so players in windowed
+// fullscreen had to alt-tab to Mimic before any overlay click would land.
+// One capture-phase mousemove in the preload covers every overlay at once:
+// cursor over anything interactive → arm; off it → restore the lock state.
+// The legacy per-element handlers stay (harmless — the IPC is idempotent).
+let _wpHoverArmed = false;
+function _wpIsInteractive(el) {
+  while (el && el.nodeType === 1 && el !== document.body) {
+    try {
+      if (el.matches('button, a, input, select, textarea, [role="button"], [data-wp-interact]')) return true;
+    } catch (e) { return false; }
+    el = el.parentElement;
+  }
+  return false;
+}
+let _wpLastAssert = 0;
+document.addEventListener('mousemove', function (ev) {
+  const want = _wpIsInteractive(ev.target);
+  const now = Date.now();
+  if (want) {
+    // Re-assert every 150ms while over a control — a legacy per-element
+    // mouseleave (button → button hop) may have disarmed behind our back,
+    // and the IPC is cheap enough to keep this authoritative.
+    if (!_wpHoverArmed || (now - _wpLastAssert) > 150) { _hoverOn(); _wpLastAssert = now; }
+    _wpHoverArmed = true;
+  } else if (_wpHoverArmed) {
+    _wpHoverArmed = false;
+    _hoverOff();
+  }
+}, { capture: true, passive: true });
+// Cursor left the window entirely (possible straight off a button edge) —
+// make sure the click-through state is restored for the game.
+document.addEventListener('mouseout', function (ev) {
+  if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
+}, { capture: true, passive: true });
+
 // Build the right-click menu: 5 width presets + 2 setup-mode entries.
 // Identical structure + styling on every overlay so the muscle memory carries.
 function _buildOverlayMenu(onClose) {
