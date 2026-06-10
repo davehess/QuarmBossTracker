@@ -5342,39 +5342,131 @@ async function _mgbTrainedSet(supabase, guildId) {
   return _mgbCache.names;
 }
 
+// ── Spell-effects catalog cache (SPA decode) ────────────────────────────────
+// nameLower → { res:{MR,FR,CR,PR,DR: n}, ds, haste, atk, hp, mana, regen,
+// cha } decoded from eqemu_spells.raw.eff/base. Authoritative per-school
+// resist values + song multi-category credit for the detail breakdown — the
+// same decode web/app/raid/page.tsx does, ported bot-side so the Mimic
+// dashboard's raid card shows identical numbers. Lazy, 1h TTL, paged fetch.
+let _spellFxByName = null;
+let _spellFxAt = 0;
+const _SPELL_FX_TTL_MS = 60 * 60 * 1000;
+const _RESIST_SPA = { 46: 'FR', 47: 'CR', 48: 'PR', 49: 'DR', 50: 'MR' };
+async function _spellFxMap() {
+  if (_spellFxByName && (Date.now() - _spellFxAt) < _SPELL_FX_TTL_MS) return _spellFxByName;
+  const supabase = require('./utils/supabase');
+  try {
+    const m = new Map();
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const rows = await supabase.select('eqemu_spells',
+        `select=name,raw&order=id.asc&offset=${from}&limit=${PAGE}`);
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const sp of rows) {
+        if (!sp || !sp.name || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
+        const fx = m.get(sp.name.toLowerCase()) || { res: {} };
+        for (let i = 0; i < sp.raw.eff.length; i++) {
+          const eff = sp.raw.eff[i];
+          const base = (sp.raw.base && sp.raw.base[i]) || 0;
+          const school = _RESIST_SPA[eff];
+          if (school && base > 0 && base > (fx.res[school] || 0)) fx.res[school] = base;
+          if (eff === 10 && base > 0) fx.cha = true;
+          if (eff === 0  && base > 0 && base > (fx.hp || 0))            fx.hp = base;
+          if (eff === 2  && base > 0 && base > (fx.atk || 0))           fx.atk = base;
+          if (eff === 11 && Math.abs(base) > (fx.haste || 0))           fx.haste = Math.abs(base);
+          if (eff === 15 && base > 0 && base > (fx.mana || 0))          fx.mana = base;
+          if (eff === 59 && Math.abs(base) > (fx.ds || 0))              fx.ds = Math.abs(base);
+          if (eff === 79 && base > 0 && base > (fx.regen || 0))         fx.regen = base;
+        }
+        m.set(sp.name.toLowerCase(), fx);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+    _spellFxByName = m;
+    _spellFxAt = Date.now();
+  } catch (e) {
+    console.warn('[spell-fx] catalog fetch failed:', e && e.message);
+    _spellFxAt = Date.now();   // back off; retry after TTL
+  }
+  return _spellFxByName || new Map();
+}
+
 // Website-style per-raider buff breakdown (mirrors /raid's detail panel) so
 // the dashboard Raid card can render the same sections instead of a flat chip
-// list. Entries are {n: name, s: remaining seconds | null}. Songs are placed
-// in `songs` AND credited to resist schools (a Psalm covers its school).
-function _buffDetailFor(rb, buffs) {
+// list. Entries are {n: name, s: remaining secs | null, v: magnitude | undef}.
+// Songs are placed in `songs` AND credited to every category their SPA
+// effects touch (McVaxius' Rondo → haste + attack + ds), each with the
+// catalog magnitude, exactly like the website's detail panel.
+function _buffDetailFor(rb, buffs, fx) {
   const names = (buffs || []).map(b => b && b.name).filter(Boolean);
   const hpSlots = rb.analyzeHpSlots(names);
   const slotted = new Set([hpSlots.A, hpSlots.B, hpSlots.C].filter(Boolean).map(n => String(n).toLowerCase()));
   const cats = {}; const resists = {}; const ds = []; const songs = []; const other = [];
+  let di = false, cha = false;
+  const pushCat = (cat, entry) => {
+    const arr = (cats[cat] = cats[cat] || []);
+    if (!arr.some(e => e.n === entry.n)) arr.push(entry);
+  };
   for (const b of (buffs || [])) {
     if (!b || !b.name) continue;
     const name = String(b.name);
+    const lower = name.toLowerCase();
     const secs = (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks < 6000) ? Math.round(b.ticks * 6) : null;
-    const entry = { n: name.slice(0, 60), s: secs };
     const isSong = rb.isSongBuff(name, typeof b.song === 'boolean' ? b.song : undefined);
-    const rTypes = rb.resistTypesFor(name);
-    for (const t of rTypes) (resists[t] = resists[t] || []).push(entry);
-    if (isSong) { songs.push(entry); continue; }
-    if (rTypes.length) continue;
+    const mk = (v) => {
+      const e = { n: name.slice(0, 60), s: secs };
+      if (v != null) e.v = v;
+      if (isSong) e.song = true;
+      return e;
+    };
+    if (lower.includes('divine intervention')) di = true;
+    const meta = fx ? fx.get(lower) : null;
+    if (meta && meta.cha) cha = true;
+    // Resists: catalog schools + values win; keyword fallback when the name
+    // misses the catalog (rank suffixes etc.).
+    let rTypes = [];
+    if (meta && meta.res && Object.keys(meta.res).length) {
+      for (const [school, v] of Object.entries(meta.res)) {
+        (resists[school] = resists[school] || []).push(mk(v));
+      }
+      rTypes = Object.keys(meta.res);
+    } else {
+      rTypes = rb.resistTypesFor(name);
+      for (const t of rTypes) (resists[t] = resists[t] || []).push(mk(null));
+    }
+    // Catalog multi-category credit — applies to songs AND regular buffs
+    // (Fiery Might = HP + DS from one cast).
+    if (meta) {
+      if (meta.haste != null) pushCat('haste',  mk(meta.haste));
+      if (meta.atk   != null) pushCat('attack', mk(meta.atk));
+      if (meta.ds    != null) ds.some(e => e.n === name.slice(0, 60)) || ds.push(mk(meta.ds));
+      if (meta.mana  != null) pushCat('mana',   mk(meta.mana));
+      if (meta.regen != null) pushCat('regen',  mk(meta.regen));
+    }
+    if (isSong) { songs.push(mk(null)); continue; }
+    if (rTypes.length && !meta) continue;   // pure keyword-resist buff — done
     const cat = rb.categorizeBuff(name);
-    if (cat === 'ds') { ds.push(entry); continue; }
-    if (cat === 'hp' && slotted.has(name.toLowerCase())) continue;   // shown on its HP slot row
-    if (cat) { (cats[cat] = cats[cat] || []).push(entry); }
-    else other.push(entry);
+    if (cat === 'resists') continue;        // already on its school rows
+    if (cat === 'ds') { ds.some(e => e.n === name.slice(0, 60)) || ds.push(mk(meta && meta.ds != null ? meta.ds : null)); continue; }
+    if (cat === 'hp' && slotted.has(lower)) continue;   // shown on its HP slot row
+    if (cat) pushCat(cat, mk(null));
+    else if (!(meta && (meta.haste != null || meta.atk != null || meta.ds != null || meta.mana != null || meta.regen != null))) other.push(mk(null));
     // Secondary credits (VoG→attack, POTG/POTC→manaRegen) so the detail rows
     // match the queue's "not missing" logic.
     for (const sec of rb.secondaryCategoriesFor(name)) {
-      if (sec !== cat) (cats[sec] = cats[sec] || []).push(entry);
+      if (sec !== cat) pushCat(sec, mk(null));
     }
   }
+  // Songs sink below primaries within each category (songs stack on top; the
+  // slot-1 primary is what overwrite rules apply to).
+  for (const c of Object.keys(cats)) cats[c].sort((a, b2) => Number(!!a.song) - Number(!!b2.song));
+  for (const t of Object.keys(resists)) resists[t].sort((a, b2) => (b2.v || 0) - (a.v || 0));
   return {
     hp: { A: hpSlots.A || null, B: hpSlots.B || null, C: hpSlots.C || null },
     cats, resists, ds, songs, other,
+    di, cha,
   };
 }
 
@@ -5841,6 +5933,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // broadcasts captured in raid_roster; buffs/zone from live state; tier
     // mirrors /raid's severity intent.
     const mgbTrained = await _mgbTrainedSet(supabase, guildId);
+    const spellFx = await _spellFxMap();
     const rosterOut = [];
     for (const [k, rr] of rosterByName) {
       const live = liveByName.get(k);
@@ -5873,7 +5966,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
         .map(b => ({ n: String(b.name).slice(0, 60), t: (typeof b.ticks === 'number') ? b.ticks : null }));
       rosterOut.push({
         buffs:      buffsOut,
-        detail:     noSignal ? null : _buffDetailFor(rb, buffs),
+        detail:     noSignal ? null : _buffDetailFor(rb, buffs, spellFx),
         hp_missing: missingHp,
         name:       rr.name,
         class:      cls,
