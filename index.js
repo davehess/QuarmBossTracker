@@ -5254,6 +5254,10 @@ function _CURSE_COUNTERS_FOR(name) {
   for (const [k, c] of _CURSE_COUNTERS) if (n.includes(k)) return c;
   return 0;
 }
+// Cure-type display/priority order (per user): curse → blind → poison →
+// disease. Lower rank = handled first; drives both the per-raider chip order
+// and the cross-raider debuff-queue sort.
+const _CURE_RANK = { curse: 0, blind: 1, poison: 2, disease: 3 };
 
 // GET /api/agent/target-buffs?name=<target>
 // Returns recent active buff_casts on a given target so OTHER Mimic users
@@ -5765,12 +5769,15 @@ async function _handleAgentRaidBuffQueue(req, res) {
       for (const b of buffs) {
         if (!b || !b.name) continue;
         const fxB = spellFx.get(String(b.name).toLowerCase());
+        // Cure-type precedence (per user): curse → blind → poison → disease.
+        // When a debuff carries more than one cure category (rare), name the
+        // highest-priority one.
         let cure = null, cnt = 0;
         if (fxB && fxB.good === 0) {
           if (fxB.cc) { cure = 'curse';   cnt = fxB.cc; }
+          else if (fxB.blind) { cure = 'blind'; }
           else if (fxB.pc) { cure = 'poison';  cnt = fxB.pc; }
           else if (fxB.dc) { cure = 'disease'; cnt = fxB.dc; }
-          else if (fxB.blind) { cure = 'blind'; }
         }
         if (!cure && rb.isCurseBuff(b.name)) { cure = 'curse'; cnt = _CURSE_COUNTERS_FOR(b.name) || 0; }
         if (!cure) continue;
@@ -5788,13 +5795,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
         });
       }
       if (curses.length > 0) {
-        // Within a single raider's curses list, also surface highest-counter
-        // first so the UI's right-side chip row reads worst → least.
-        curses.sort((a, b) => (b.counters || 0) - (a.counters || 0));
+        // Cure-type priority order (per user): curse → blind → poison →
+        // disease. Within a raider's chips, order by that, then by counters.
+        curses.sort((a, b) =>
+          (_CURE_RANK[a.cure] - _CURE_RANK[b.cure]) || ((b.counters || 0) - (a.counters || 0)));
         debuffQueue.push({
           name, class: cls, role, group: rr ? rr.group_num : null,
           curses,
           max_counters:          maxCounters,
+          // Top cure rank on this raider — drives the cross-raider sort so the
+          // section reads curse-afflicted first, then blind, poison, disease.
+          cure_rank:             Math.min(...curses.map(c => _CURE_RANK[c.cure])),
           same_zone:             sameZone,
           inferred: isInferred,
           casting: _castingOnTarget(name),
@@ -5889,10 +5900,12 @@ async function _handleAgentRaidBuffQueue(req, res) {
       || a.name.localeCompare(b.name));
     // Debuff queue sort:
     //   1. same zone (you can actually cure them)
-    //   2. highest curse-counter count (Gravel Rain = 12 outranks 1-counter)
-    //   3. group → name
+    //   2. cure-type priority: curse → blind → poison → disease
+    //   3. highest counter count (Gravel Rain = 12 outranks 1-counter)
+    //   4. group → name
     debuffQueue.sort((a, b) =>
       (Number(!!b.same_zone) - Number(!!a.same_zone))
+      || ((a.cure_rank ?? 9) - (b.cure_rank ?? 9))
       || ((b.max_counters || 0) - (a.max_counters || 0))
       || ((a.group || 99) - (b.group || 99))
       || a.name.localeCompare(b.name));
