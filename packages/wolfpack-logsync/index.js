@@ -4427,6 +4427,7 @@ function _endpointForKind(kind, botUrl) {
     case 'fun_event':       return base + '/fun_event';
     case 'faction':         return base + '/faction';
     case 'pop_flag':        return base + '/pop_flags';
+    case 'quarmy':          return base + '/quarmy';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -11716,6 +11717,140 @@ function refreshInventories() {
   catch { /* non-fatal */ }
 }
 
+// ── Quarmy export ingest ─────────────────────────────────────────────────────
+// <Name>Quarmy.txt is the in-game export members generate for quarmy.com
+// (TSV: Character row, Location/Name/ID/Count/Slots inventory, AAIndex/Rank,
+// Checksum). Format verified against three real exports (monk/cleric/bard).
+//
+// PRIVACY — the whole point of parsing it HERE instead of fetching the
+// quarmy.com profile bot-side: Bank, SharedBank, and coin rows (which are
+// account-level and include bank totals) are dropped in parseQuarmyExport
+// before they reach any buffer. They never leave this machine. The bot strips
+// them again server-side as defense in depth, and exclude_inventory /
+// exclude_from_stats on /me stop the upload entirely — scanQuarmyExports
+// refuses to run before the prefs poll has answered at least once, so the
+// gate is enforced on KNOWN prefs, never assumed ones.
+const QUARMY_FILENAME_RX = /^([A-Za-z]+)[-_ ]?Quarmy\.txt$/i;
+const _quarmyUploaded = {};   // char(lower) → export checksum already enqueued
+
+function parseQuarmyExport(text) {
+  const out = { profile: null, equipped: [], bags: [], aas: [], checksum: null };
+  const slotSeen = {};
+  let section = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    if (!raw) continue;
+    const cols = raw.split('\t');
+    const c0 = (cols[0] || '').trim();
+    if (!c0) continue;
+    if (c0 === 'Character') {
+      if ((cols[1] || '').trim() === 'Name') continue;          // header row
+      out.profile = {
+        name:      (cols[1] || '').trim(),
+        last_name: (cols[2] || '').trim() || null,
+        level:     parseInt(cols[3], 10) || null,
+        class_id:  parseInt(cols[4], 10) || null,
+        race_id:   parseInt(cols[5], 10) || null,
+        deity_id:  parseInt(cols[7], 10) || null,   // fixes the faction page's deity gap
+        guild:     (cols[8] || '').trim() || null,
+      };
+      continue;
+    }
+    if (c0 === 'Location') { section = 'inv'; continue; }
+    if (c0 === 'AAIndex')  { section = 'aa';  continue; }
+    if (c0 === 'Checksum') { out.checksum = (cols[1] || '').trim() || null; section = null; continue; }
+    if (section === 'inv') {
+      // PRIVACY: bank, shared bank, currency, and the cursor slot never
+      // leave this machine — dropped here, before any buffer.
+      if (/^(Bank|SharedBank)/i.test(c0) || /Coin/i.test(c0) || c0 === 'Held') continue;
+      const itemName = (cols[1] || '').trim();
+      const itemId   = parseInt(cols[2], 10);
+      const count    = parseInt(cols[3], 10) || 1;
+      if (!itemName || itemName.toLowerCase() === 'empty') continue;
+      if (!Number.isFinite(itemId) || itemId <= 0) continue;
+      if (/^General\d+(-Slot\d+)?$/.test(c0)) {
+        out.bags.push({ slot: c0, item_id: itemId, item_name: itemName, count });
+      } else {
+        // Worn slots. Ear/Wrist/Fingers appear twice — number them so each
+        // lands on its own row (the bot's PK is per-slot).
+        let slot = c0;
+        if (slot === 'Ear' || slot === 'Wrist' || slot === 'Fingers') {
+          slotSeen[slot] = (slotSeen[slot] || 0) + 1;
+          slot = slot + slotSeen[slot];
+        }
+        out.equipped.push({ slot, item_id: itemId, item_name: itemName, count });
+      }
+      continue;
+    }
+    if (section === 'aa') {
+      const idx = parseInt(c0, 10), rank = parseInt(cols[1], 10);
+      if (Number.isFinite(idx) && Number.isFinite(rank) && rank > 0) out.aas.push({ index: idx, rank });
+    }
+  }
+  return out;
+}
+
+function _quarmyPrefsBlock(lowerName) {
+  const p = stats.characterPrefs && stats.characterPrefs[lowerName];
+  return !!(p && (p.exclude_inventory || p.exclude_from_stats));
+}
+
+function scanQuarmyExports() {
+  // Hard gate: prefs must have loaded at least once this session so
+  // exclude_inventory is KNOWN before any gear leaves the box. (No botUrl →
+  // no prefs poll → no uploads, which is also correct.)
+  if (!stats.characterPrefsCheckedAt) return;
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return;
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+
+  const envExcluded = new Set(
+    (process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+
+  for (const name of entries) {
+    const m = name.match(QUARMY_FILENAME_RX);
+    if (!m) continue;
+    const fileChar = m[1].toLowerCase();
+    if (envExcluded.has(fileChar) || _quarmyPrefsBlock(fileChar)) continue;
+    const fullPath = path.join(dir, name);
+    try {
+      const parsed = parseQuarmyExport(fs.readFileSync(fullPath, 'utf8'));
+      // The Character row inside the file is authoritative over the filename
+      // (renamed copies happen) — re-check prefs under the real name too.
+      const profName = parsed.profile && parsed.profile.name;
+      const character = (profName && /^[A-Za-z]{2,}$/.test(profName))
+        ? profName
+        : m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      const lower = character.toLowerCase();
+      if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
+      if (parsed.equipped.length === 0 && parsed.bags.length === 0 && parsed.aas.length === 0) continue;
+      const checksum = parsed.checksum || ('mtime-' + fs.statSync(fullPath).mtime.getTime());
+      if (_quarmyUploaded[lower] === checksum) continue;
+      if (dryRun) {
+        console.log(`[quarmy] DRY RUN — would upload ${character}: ${parsed.equipped.length} equipped, ${parsed.bags.length} bagged, ${parsed.aas.length} AAs (checksum ${checksum})`);
+        continue;
+      }
+      _quarmyUploaded[lower] = checksum;
+      enqueueUpload('quarmy', {
+        agent_version: AGENT_VERSION,
+        character,
+        level:    parsed.profile?.level    ?? null,
+        class_id: parsed.profile?.class_id ?? null,
+        race_id:  parsed.profile?.race_id  ?? null,
+        deity_id: parsed.profile?.deity_id ?? null,
+        checksum,
+        equipped: parsed.equipped,
+        bags:     parsed.bags,
+        aas:      parsed.aas,
+      });
+      console.log(`[quarmy] queued gear upload for ${character} (${parsed.equipped.length} equipped, ${parsed.bags.length} bagged, ${parsed.aas.length} AAs)`);
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
 function _scanOptInFiles() {
   _loadOptInState();
   _optinState.files   = [];
@@ -16113,6 +16248,14 @@ async function main() {
   // against a proc database for theoretical TPS.
   refreshInventories();
   setInterval(refreshInventories, 5 * 60_000);
+
+  // Quarmy export ingest — <Name>Quarmy.txt in the same dir (the file
+  // members generate for quarmy.com). Parsed locally; bank/sharedbank/coin
+  // rows are dropped at parse and never leave the machine. The scan no-ops
+  // until the character-prefs poll has answered once (exclude_inventory must
+  // be known, not assumed), so the first useful pass is the 30s one.
+  setTimeout(scanQuarmyExports, 30_000);
+  setInterval(scanQuarmyExports, 10 * 60_000);
 
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter
