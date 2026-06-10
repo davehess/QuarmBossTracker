@@ -6185,7 +6185,7 @@ body.wp-overlay-mode .wp-overlay-target table td {
 body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
-<h1>🐺 Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
+<h1><img src="data:image/png;base64,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" alt="" style="height:22px;width:22px;vertical-align:-4px;margin-right:7px"> Wolf Pack EQ — Parser <span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? (process.env.WOLFPACK_CLIENT === 'mimic' ? 'Mimic' : 'App') + ' v' + process.env.WOLFPACK_APP_VERSION + ' · ' : ''}agent v${AGENT_VERSION}</span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks">
   <span>Jump to wolfpack.quest:</span>
@@ -6199,10 +6199,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 </div>
 <div class="nav">
   <button class="active" data-tab="dash">Dashboard</button>
-  <button data-tab="tanks">Tanks</button>
-  <button data-tab="healers">Healers</button>
-  <button data-tab="deeps">DEEPS</button>
-  <button data-tab="pets">Pets</button>
+  <button data-tab="tanks">Tanks / Healers</button>
+  <button data-tab="deeps">DPS</button>
+  <button data-tab="raid">⚔ Buffs / Raid</button>
   <button data-tab="triggers">⚡ Triggers</button>
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="info">Info / Stats</button>
@@ -6224,9 +6223,8 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <div id="dash" class="section active"></div>
 <div id="tanks" class="section"></div>
-<div id="healers" class="section"></div>
 <div id="deeps" class="section"></div>
-<div id="pets" class="section"></div>
+<div id="raid" class="section"></div>
 <div id="triggers" class="section"></div>
 <div id="overlays" class="section"></div>
 <div id="info" class="section"></div>
@@ -6841,6 +6839,69 @@ function renderTanks(s) {
     h += '</table></div>';
   }
 
+  // (Weapon Loadouts moved to Info / Stats — buildLoadoutsHtml.)
+
+  const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
+  h += '<div class="card wide"><h2>Incoming Damage</h2>';
+  if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
+  else {
+    h += '<table><tr><th>Tank</th><th>Dmg Taken</th><th>Hits</th><th>Ramp Hits</th><th>Ramp Dmg</th><th>Invuln Avoided</th><th>Riposted For</th></tr>';
+    for (const [n, d] of defs.slice(0,12)) {
+      h += '<tr><td class="name">' + esc(n) + '</td>' +
+           '<td class="num">' + fmtK(d.damageTaken) + '</td>' +
+           '<td class="num">' + (d.hits||0) + '</td>' +
+           '<td class="num">' + (d.rampageHits ? '<span class="tag ramp">'+d.rampageHits+'</span>' : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (d.rampageDmg ? fmtK(d.rampageDmg) : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + (d.invulnAvoidedDmg ? '<span class="tag invuln">'+fmtK(d.invulnAvoidedDmg)+'</span>' : '<span class="dim">—</span>') + '</td>' +
+           '<td class="num">' + fmtK(d.ripostedFor||0) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
+  // Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
+  // by total damage descending so heavy DS wearers float to the top; expand a
+  // row to see the spell/song breakdown that's feeding it.
+  const ds = s.damageShield || {};
+  const dsTotals = Object.entries(ds).map(function(kv){
+    const name = kv[0];
+    const sources = kv[1] || {};
+    var total = 0, hits = 0;
+    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
+    return { name: name, total: total, hits: hits, sources: sources };
+  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
+  h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
+  if (dsTotals.length === 0) {
+    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes thorns / brambles / spikes / sanity shield / symbol of naltron / cassindra / halo of light / reflect and similar. Open a new pattern? Let an officer know.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
+    for (const t of dsTotals.slice(0, 12)) {
+      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
+      const srcSummary = srcEntries.map(function(kv){
+        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
+      }).join(' · ');
+      h += '<tr><td class="name">' + esc(t.name) + '</td>' +
+           '<td class="num">' + fmtK(t.total) + '</td>' +
+           '<td class="num">' + t.hits + '</td>' +
+           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+  // Deaths
+  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
+  h += '<div class="card"><h2>Deaths This Session</h2>';
+  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
+  else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
+  h += '</div>';
+  h += '</div>';
+  // Healers fold in below the tank cards — one combat-support tab.
+  h += buildHealersHtml(s);
+  if (!setSectionHTML('tanks', h)) return;
+}
+
+function buildLoadoutsHtml(s) {
+  let h = '';
   // ── Character loadouts — parsed from <Char>-Inventory.txt files in EQ dir
   const invsAll = Object.entries(s.characterInventories || {});
   const hidden = new Set((s.hiddenLoadoutChars || []).map(c => c.toLowerCase()));
@@ -6939,61 +7000,10 @@ function renderTanks(s) {
     h += '</div>';
   }
 
-  const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
-  h += '<div class="card wide"><h2>Incoming Damage</h2>';
-  if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
-  else {
-    h += '<table><tr><th>Tank</th><th>Dmg Taken</th><th>Hits</th><th>Ramp Hits</th><th>Ramp Dmg</th><th>Invuln Avoided</th><th>Riposted For</th></tr>';
-    for (const [n, d] of defs.slice(0,12)) {
-      h += '<tr><td class="name">' + esc(n) + '</td>' +
-           '<td class="num">' + fmtK(d.damageTaken) + '</td>' +
-           '<td class="num">' + (d.hits||0) + '</td>' +
-           '<td class="num">' + (d.rampageHits ? '<span class="tag ramp">'+d.rampageHits+'</span>' : '<span class="dim">—</span>') + '</td>' +
-           '<td class="num">' + (d.rampageDmg ? fmtK(d.rampageDmg) : '<span class="dim">—</span>') + '</td>' +
-           '<td class="num">' + (d.invulnAvoidedDmg ? '<span class="tag invuln">'+fmtK(d.invulnAvoidedDmg)+'</span>' : '<span class="dim">—</span>') + '</td>' +
-           '<td class="num">' + fmtK(d.ripostedFor||0) + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
-  // Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
-  // by total damage descending so heavy DS wearers float to the top; expand a
-  // row to see the spell/song breakdown that's feeding it.
-  const ds = s.damageShield || {};
-  const dsTotals = Object.entries(ds).map(function(kv){
-    const name = kv[0];
-    const sources = kv[1] || {};
-    var total = 0, hits = 0;
-    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
-    return { name: name, total: total, hits: hits, sources: sources };
-  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
-  h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
-  if (dsTotals.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes thorns / brambles / spikes / sanity shield / symbol of naltron / cassindra / halo of light / reflect and similar. Open a new pattern? Let an officer know.</div>';
-  } else {
-    h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
-    for (const t of dsTotals.slice(0, 12)) {
-      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
-      const srcSummary = srcEntries.map(function(kv){
-        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
-      }).join(' · ');
-      h += '<tr><td class="name">' + esc(t.name) + '</td>' +
-           '<td class="num">' + fmtK(t.total) + '</td>' +
-           '<td class="num">' + t.hits + '</td>' +
-           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // Deaths
-  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
-  h += '<div class="card"><h2>Deaths This Session</h2>';
-  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
-  else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
-  h += '</div>';
-  h += '</div>';
-  if (!setSectionHTML('tanks', h)) return;
+  return h;
+}
+
+function wireLoadoutControls() {
   // Wire the hide/show character buttons in the Weapon Loadouts table.
   // Idempotent under morph (nodes persist across polls).
   document.querySelectorAll('[data-hide-char]').forEach(b => _bindOnce(b, 'click', async () => {
@@ -7035,7 +7045,7 @@ function renderTanks(s) {
   });
 }
 
-function renderHealers(s) {
+function buildHealersHtml(s) {
   let h = '<div class="grid"><div class="card wide">' +
           '<h2>Healers This Session ' +
           '<span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span>' +
@@ -7073,7 +7083,7 @@ function renderHealers(s) {
     ch += '</table></div></div>';
     h += ch;
   }
-  setSectionHTML('healers', h);
+  return h;
 }
 
 function renderDeeps(s) {
@@ -7143,13 +7153,13 @@ function renderDeeps(s) {
   setSectionHTML('deeps', h);
 }
 
-function renderPets(s) {
+function buildPetsHtml(s) {
   let h = '<div class="card"><h2>Known Pets This Session</h2>';
   const pets = (s.knownPets||[]);
   if (!pets.length) h += '<div class="dim">No pets observed yet.</div>';
   else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>'; for (const p of pets) h += '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; h += '</table>'; }
   h += '</div>';
-  setSectionHTML('pets', h);
+  return h;
 }
 
 // ── Triggers tab ───────────────────────────────────────────────────────────
@@ -7627,6 +7637,15 @@ function renderOverlays(s) {
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
   // Stated here once so it's discoverable from the dashboard instead of having
   // to read the icons' tooltips.
+  // Show/hide-ALL hotkey — current binding + rebind capture. The accelerator
+  // is registered globally by Mimic (registerHideAllHotkey); saving
+  // hideAllHotkey via saveConfig re-registers live.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">Show / hide ALL overlays:</b>'
+    + '<code id="wpHideHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpHideHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<span id="wpHideHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
     + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
     + '</div>';
@@ -7652,6 +7671,54 @@ function renderOverlays(s) {
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
+  wpWireHideHotkey();
+}
+
+// Hotkey row wiring — read the current accelerator from config, and capture a
+// new combo on demand. Electron accelerator format (Ctrl/Alt/Shift + key);
+// at least one modifier required so a bare letter cannot eat normal typing.
+var _wpHotkeyCapturing = false;
+function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+function wpWireHideHotkey() {
+  var cur = document.getElementById('wpHideHotkeyCur');
+  var btn = document.getElementById('wpHideHotkeyBtn');
+  var hint = document.getElementById('wpHideHotkeyHint');
+  if (!cur || !btn || !window.mimic || !window.mimic.getConfig) return;
+  window.mimic.getConfig().then(function(cfg){
+    var a = (cfg && typeof cfg.hideAllHotkey === 'string' && cfg.hideAllHotkey.trim()) ? cfg.hideAllHotkey.trim() : 'CommandOrControl+Shift+H';
+    cur.textContent = _wpFmtAccel(a);
+  }).catch(function(){ cur.textContent = 'Ctrl+Shift+H'; });
+  _bindOnce(btn, 'click', function(){
+    if (_wpHotkeyCapturing) return;
+    _wpHotkeyCapturing = true;
+    if (hint) hint.textContent = 'Press the new key combo now (needs Ctrl, Alt or Shift — Esc cancels)…';
+    function done(msg) {
+      _wpHotkeyCapturing = false;
+      document.removeEventListener('keydown', onKey, true);
+      if (hint) hint.textContent = msg || '';
+      if (msg) setTimeout(function(){ if (hint) hint.textContent = ''; }, 4000);
+    }
+    function onKey(e) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { done('Cancelled.'); return; }
+      var k = e.key;
+      if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return;  // wait for the real key
+      if (!e.ctrlKey && !e.altKey && !e.shiftKey) { if (hint) hint.textContent = 'Add Ctrl, Alt or Shift — a bare key would eat normal typing.'; return; }
+      var key = k.length === 1 ? k.toUpperCase() : k;                // letters → upper; F1-F12 etc. pass through
+      if (key === ' ') key = 'Space';
+      var parts = [];
+      if (e.ctrlKey)  parts.push('CommandOrControl');
+      if (e.altKey)   parts.push('Alt');
+      if (e.shiftKey) parts.push('Shift');
+      parts.push(key);
+      var accel = parts.join('+');
+      window.mimic.saveConfig({ hideAllHotkey: accel }).then(function(){
+        cur.textContent = _wpFmtAccel(accel);
+        done('Saved — active immediately.');
+      }).catch(function(){ done('Save failed.'); });
+    }
+    document.addEventListener('keydown', onKey, true);
+  });
 }
 
 // Flip an overlay via the Mimic IPC bridge, then refresh button states.
@@ -7899,7 +7966,103 @@ function renderInfo(s) {
   }
 
   h += '</div>';
+  // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
+  h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
   setSectionHTML('info', h);
+  wireLoadoutControls();
+}
+
+
+// ── Buffs / Raid tab ─────────────────────────────────────────────────────────
+// Same data as the buff-queue overlay + wolfpack.quest/raid, but full-page and
+// on the agent's 3s cache instead of the website's 15s refresh — "review this
+// outside the main site, faster". Class picker persists with the overlay's key.
+var _raidTabCls = '';
+try { _raidTabCls = localStorage.getItem('wp:bufferClass') || ''; } catch (e) {}
+function _raidTierColor(t) {
+  if (t === 'red') return 'var(--red)';
+  if (t === 'orange') return 'var(--orange)';
+  if (t === 'yellow') return 'var(--gold)';
+  return 'var(--blue)';
+}
+function renderRaidTab(q) {
+  var root = document.getElementById('raid');
+  if (!root) return;
+  var h = '<div class="grid">';
+  h += '<div class="card wide"><h2>⚔ Buffs / Raid '
+    + '<span class="dim" style="font-size:11px;font-weight:normal">(live from the bot — 3s cache; the website refreshes slower)</span></h2>';
+  h += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0 10px;font-size:12px">'
+    + '<span class="dim">Buffing as</span>'
+    + '<select id="wpRaidCls" style="background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font:inherit">'
+    + '<option value="">(any class)</option>'
+    + ['Cleric','Druid','Shaman','Enchanter','Bard','Paladin','Ranger','Beastlord','Magician'].map(function(c){
+        return '<option' + (c === _raidTabCls ? ' selected' : '') + '>' + c + '</option>';
+      }).join('')
+    + '</select>'
+    + '<a href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer" style="margin-left:auto;color:var(--orange)">full raid hub ↗</a>'
+    + '</div>';
+  if (!q) {
+    h += '<div class="dim">Loading the queue from the bot…</div></div></div>';
+    morphInto(root, h);
+    return;
+  }
+  var bq = q.buff_queue || [], dq = q.debuff_queue || [];
+  var burst = q.feral_queue || q.savagery_queue || [];
+  h += '<h3 style="color:var(--green);margin:8px 0 4px">🛡 Buff queue <span class="dim" style="font-size:11px;font-weight:normal">' + bq.length + ' · severity first</span></h3>';
+  if (!bq.length) h += '<div class="dim" style="font-size:12px">No gaps' + (_raidTabCls ? ' a ' + esc(_raidTabCls) + ' can fix' : '') + ' right now.</div>';
+  else {
+    h += '<table style="font-size:12px"><tr><th>Raider</th><th>Grp</th><th>Class</th><th>Missing</th></tr>';
+    for (var i = 0; i < bq.length; i++) {
+      var r = bq[i];
+      h += '<tr><td class="name" style="border-left:3px solid ' + _raidTierColor(r.tier) + ';padding-left:6px">' + esc(r.name)
+        + (r.inferred ? ' <span class="dim" title="Inferred from observed casts — not running Mimic">🔍</span>' : '')
+        + (r.skip_group_aego ? ' <span title="POTG/POTC fills HP slot A — single-target the Symbol, do not group-cast Aego">🌿</span>' : '')
+        + '</td>'
+        + '<td class="num">' + (r.group != null ? r.group : '—') + '</td>'
+        + '<td class="dim">' + esc(r.class || '?') + '</td>'
+        + '<td style="font-size:11px">' + esc((r.missing || []).join(' · ')) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '<h3 style="color:var(--red);margin:14px 0 4px">🩸 Debuff queue <span class="dim" style="font-size:11px;font-weight:normal">' + dq.length + ' · cures needed</span></h3>';
+  if (!dq.length) h += '<div class="dim" style="font-size:12px">No active curses across the raid.</div>';
+  else {
+    h += '<table style="font-size:12px"><tr><th>Raider</th><th>Grp</th><th>Curses</th></tr>';
+    for (var j = 0; j < dq.length; j++) {
+      var d = dq[j];
+      var chips = (d.curses || []).map(function(c){
+        return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '');
+      }).join(' · ');
+      h += '<tr><td class="name">' + esc(d.name) + '</td><td class="num">' + (d.group != null ? d.group : '—') + '</td>'
+        + '<td style="font-size:11px;color:var(--red)">' + chips + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  if (burst.length && q.burst_label) {
+    h += '<h3 style="color:var(--gold);margin:14px 0 4px">⚡ ' + esc(q.burst_label) + ' queue <span class="dim" style="font-size:11px;font-weight:normal">damage descending</span></h3>';
+    h += '<table style="font-size:12px"><tr><th>Raider</th><th>Grp</th><th>Class</th><th>Damage</th></tr>';
+    for (var k = 0; k < burst.length; k++) {
+      var b2 = burst[k];
+      h += '<tr><td class="name">' + esc(b2.name) + '</td><td class="num">' + (b2.group != null ? b2.group : '—') + '</td>'
+        + '<td class="dim">' + esc(b2.class || '?') + '</td><td class="num">' + (b2.damage ? fmtK(b2.damage) : '<span class="dim">no data</span>') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div></div>';
+  morphInto(root, h);
+  var sel = document.getElementById('wpRaidCls');
+  if (sel) _bindOnce(sel, 'change', function(){
+    _raidTabCls = sel.value || '';
+    try { localStorage.setItem('wp:bufferClass', _raidTabCls); } catch (e) {}
+    refreshRaidTab();
+  });
+}
+async function refreshRaidTab() {
+  try {
+    var qs = _raidTabCls ? ('?class=' + encodeURIComponent(_raidTabCls)) : '';
+    var r = await fetch('/api/buff-queue' + qs, { cache: 'no-store' });
+    renderRaidTab(await r.json());
+  } catch (e) { renderRaidTab(null); }
 }
 
 let _optinPane = 'active';   // 'active' | 'ignored' — UI-only, server uses its own
@@ -8216,8 +8379,8 @@ async function refresh() {
                      ['triggeralerts', renderTriggerAlertsCard], ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
-                     ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
-                     ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['tanks', renderTanks], ['deeps', renderDeeps],
+                     ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['charmdiag', renderCharmDiag],
                      ['overlays', renderOverlays], ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
@@ -8283,10 +8446,12 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   b.classList.add('active');
   document.getElementById(b.dataset.tab).classList.add('active');
   if (b.dataset.tab === 'optin') refreshOptin();
+  if (b.dataset.tab === 'raid') refreshRaidTab();
 }));
 refresh(); setInterval(refresh, 2000);
 // Refresh opt-in every 3s while its tab is active (for live backfill progress)
 setInterval(() => { if (document.getElementById('optin').classList.contains('active')) refreshOptin(); }, 3000);
+setInterval(() => { var r = document.getElementById('raid'); if (r && r.classList.contains('active')) refreshRaidTab(); }, 3000);
 
 // UI Studio nav button — opens the standalone editor window via Electron IPC.
 // Available only when the dashboard is running inside Mimic's main window
