@@ -5686,7 +5686,11 @@ async function _handleAgentRaidBuffQueue(req, res) {
       }
       const missing = provides.filter(cat => expected.includes(cat) && !(byCategory[cat] || []).length);
       const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
-      const missingHp = provides.includes('hp') ? rb.HP_SLOTS.filter(s => !hpSlots[s]) : [];
+      // Only nag the buffer about HP slots THEIR class can actually fill —
+      // a Cleric provides slots A+B but not C (Khura/Brell/Arch are Shaman/
+      // Wizard lines), so listing C in their queue is a false ask.
+      const fillsSlots = rb.classHpSlots(bufferClass);
+      const missingHp = provides.includes('hp') ? fillsSlots.filter(s => !hpSlots[s]) : [];
 
       if (missing.length === 0 && missingHp.length === 0) continue;
 

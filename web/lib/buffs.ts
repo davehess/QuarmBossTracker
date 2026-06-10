@@ -161,13 +161,32 @@ export const UPGRADE_CHAINS: UpgradeChain[] = [
   {
     key: 'aego',
     label: 'Aego line',
-    chain: ['aegolism', 'blessing of aegolism', 'ancient: gift of aegolism'],
+    // Bottom-up Cleric "Type One" HP+AC line (Hitya-confirmed), then group
+    // versions: Courage L1 → Center L9 → Daring L19 → Bravery L24 → Valor
+    // L34 → Resolution L44 → Heroism L49 → Heroic Bond L54 → Fortitude L55
+    // → Temperance (group) → Aegolism (group, A+B) → Blessing of Aegolism
+    // → Ancient: Gift of Aegolism.
+    chain: ['courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
+            'heroism', 'heroic bond', 'fortitude',
+            'temperance', 'aegolism', 'blessing of aegolism', 'ancient: gift of aegolism'],
+    classes: ['cleric'],
+  },
+  {
+    key: 'symbol',
+    label: 'Symbol line',
+    // Bottom-up cleric Symbol line: Transal L14 → Ryltan L24 → Pinzarn L34
+    // → Naltron L44 → Marzin L54. Lower-level casts show as upgradable.
+    chain: ['symbol of transal', 'symbol of ryltan', 'symbol of pinzarn',
+            'symbol of naltron', 'symbol of marzin'],
     classes: ['cleric'],
   },
   {
     key: 'focus',
     label: 'Focus line',
-    chain: ['focus of spirit', 'khura'],
+    // Bottom-up: Inner Fire (L1) → Tnarg (L49) → Kragg (L55) → Focus of Spirit
+    // (L57 group HP/AC) → Khura's Focusing (L60 top-end single-target). The
+    // queue flags any link below the buffer's class max as "upgradable".
+    chain: ['inner fire', 'talisman of tnarg', 'talisman of kragg', 'focus of spirit', 'khura'],
     classes: ['shaman'],
   },
   {
@@ -353,13 +372,31 @@ export const HP_SLOT_LABELS: Record<HpSlot, string> = {
 export const HP_SLOT_PROVIDER: Record<HpSlot, string> = {
   A: 'Druid (POTG/POTC) · Cleric (Aego) · Shaman (ToW)',
   B: 'Cleric (Symbol)',
-  C: 'Shaman (Khura/FoS) · Cleric (Brell) · Wizard (Arch)',
+  C: 'Shaman (Khura/Kragg/Tnarg/Inner Fire) · Cleric (Brell) · Wizard (Arch)',
 };
 
+// EQ HP buff slots (canonical, confirmed by Hitya):
+//   A — Cleric "Type One" HP+AC line:
+//        Courage (L1) → Center (L9) → Daring (L19) → Bravery (L24) →
+//        Valor (L34) → Resolution (L44) → Heroism (L49) → Heroic Bond (L54)
+//        → Fortitude (L55) → Aegolism (L60 group, fills A+B) →
+//        Blessing of Aegolism (L60 group).
+//        Druid POTG/POTC (group) and Shaman Wunshi/Temperance (group) live
+//        here too.
+//   B — Cleric "Symbol of" line: Transal (L14) → Ryltan (L24) →
+//        Pinzarn (L34) → Naltron (L44) → Marzin (L54). All match "symbol of".
+//   C — Shaman HP line: Inner Fire (L1) → Tnarg (L49) → Kragg (L55) →
+//        Focus of Spirit (L57 group) → Khura's Focusing (L60). Plus
+//        Cleric Brell's line + Wizard Arch Shielding.
+// UPGRADE_CHAINS flags lower-link versions as "upgradable" (light green) so
+// the queue nudges a buffer to recast at their class max.
 const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
-  A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi'],
+  A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
+      'temperance', 'courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
+      'heroism', 'heroic bond', 'fortitude'],
   B: ['symbol of'],
-  C: ['khura', 'focus of spirit', 'brell', 'arch shielding'],
+  C: ['khura', 'focus of spirit', 'talisman of kragg', 'talisman of tnarg', 'inner fire',
+      'brell', 'arch shielding'],
 };
 const AEGOLISM_KEYWORDS = ['aegolism'];
 

@@ -6,23 +6,31 @@
 // is cursed" view is available locally without each overlay re-fetching the
 // full live-state table. Update both together when adding a keyword.
 
-const CATEGORY_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate', 'resists'];
+const CATEGORY_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'survival', 'levitate', 'resists'];
 const CATEGORY_LABELS = {
   hp: 'HP', regen: 'HP Regen', mana: 'Mana', manaRegen: 'Mana Regen',
-  haste: 'Haste', runSpeed: 'Run Speed', attack: 'Attack', ds: 'Dmg Shield', levitate: 'Levitate', resists: 'Resists',
+  haste: 'Haste', runSpeed: 'Run Speed', attack: 'Attack', ds: 'Dmg Shield', survival: 'Survival', levitate: 'Levitate', resists: 'Resists',
 };
 
 const KEYWORDS = {
   // MUST cover everything analyzeHpSlots recognizes (drift = Khura's in
   // 'Other'); potg/potc here so resists' 'protection of' can't steal them.
-  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroic bond','virtue','health','center','fortitude','khura','focus of spirit','arch shielding','protection of the glades','protection of the cabbage','talisman of wunshi'],
-  regen: ['regrowth','regenerat','chloroplast','replenish','pack regen'],
+  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroism','heroic bond','virtue','health','center','fortitude','khura','focus of spirit','arch shielding','talisman of kragg','talisman of tnarg','protection of the glades','protection of the cabbage','talisman of wunshi'],
+  // HoT (long-duration heal-over-time) is its own EQ buff slot — healers
+  // want to know if it's open. Elixir family = Celestial/Ethereal/Supernal
+  // (cleric + bard song HoTs).
+  regen: ['regrowth','regenerat','chloroplast','replenish','pack regen','elixir'],
   mana: ['brilliance','iridescence','gift of brilliance'],
   manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
   haste: ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
   runSpeed: ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
   attack: ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
   ds: ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
+  // Survival / absorption slots: Divine Aura (cleric self-invuln), Kazumi's
+  // Note of Preservation (bard absorption song), Bestowal of Divinity (group
+  // DA-flag), Quivering Veil of Xarn (necro lich-save). Each occupies a real
+  // buff-window slot — surface them so the healer/bard knows "DA slot open".
+  survival: ['divine aura','kazumi','bestowal of divinity','quivering veil','death pact','divine intervention'],
   levitate: ['levitat','dead men floating','dead man floating','flying'],
   resists: ['resist','endure','protection of','talisman of altuna','talisman of jasinth','talisman of shadoo','talisman of epuration','circle of','aegis of bathezid','colossal','elemental'],
 };
@@ -91,10 +99,48 @@ function classProvides(c) {
 }
 
 const HP_SLOTS = ['A', 'B', 'C'];
+// Which HP slots a class can FILL — drives the queue's "missing" detection
+// so a Cleric isn't nagged about slot C they can't provide. Slot membership
+// in HP_SLOT_KEYWORDS still recognizes any slot-C buff as FILLED if a
+// Shaman/Wizard cast it; this list is purely "what gaps to surface".
+//   Cleric:   A (Aego line), B (Symbol line) — no C in our setup
+//   Druid:    A (POTG/POTC)
+//   Shaman:   A (Wunshi), C (Khura/Kragg/Tnarg/Inner Fire/Focus of Spirit)
+//   Wizard:   C (Arch Shielding)
+//   Paladin:  A, B (lower-level Cleric line + Symbol)
+//   Magician: none — they provide DS, not HP
+const CLASS_HP_SLOTS = {
+  cleric:   ['A', 'B'],
+  druid:    ['A'],
+  shaman:   ['A', 'C'],
+  wizard:   ['C'],
+  paladin:  ['A', 'B'],
+  magician: [],
+  enchanter: [],
+  necromancer: [],
+};
+function classHpSlots(c) {
+  return CLASS_HP_SLOTS[String(c || '').toLowerCase().trim()] || [];
+}
 const HP_SLOT_KEYWORDS = {
-  A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi'],
+  // Slot A — Cleric "Type One" HP+AC line (per user spec):
+  //   Courage L1 → Center L9 → Daring L19 → Bravery L24 → Valor L34 →
+  //   Resolution L44 → Heroism L49 → Heroic Bond L54 → Fortitude L55 →
+  //   Aegolism L60 (group; fills A+B via AEGOLISM_KEYWORDS) →
+  //   Blessing of Aegolism L60 (group, higher).
+  // Plus druid POTG/POTC (group) and shaman Wunshi/Temperance (group).
+  A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
+      'temperance', 'courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
+      'heroism', 'heroic bond', 'fortitude'],
+  // Slot B — Cleric "Symbol of" line: Transal (L14) → Ryltan (L24) →
+  // Pinzarn (L34) → Naltron (L44) → Marzin (L54). All match "symbol of".
   B: ['symbol of'],
-  C: ['khura', 'brell', 'arch shielding'],
+  // Slot C — Shaman HP single-target line ascending: Inner Fire (L1) →
+  // Talisman of Tnarg (L49) → Talisman of Kragg (L55) → Focus of Spirit
+  // (L57 group) → Khura's Focusing (L60). Plus Cleric Brell's line + Wizard
+  // Arch Shielding. All same slot; higher overwrites lower.
+  C: ['khura', 'focus of spirit', 'talisman of kragg', 'talisman of tnarg', 'inner fire',
+      'brell', 'arch shielding'],
 };
 const AEGOLISM_KEYWORDS = ['aegolism'];
 function analyzeHpSlots(buffNames) {
@@ -159,6 +205,6 @@ function isCorpse(name) {
 module.exports = {
   CATEGORY_ORDER, CATEGORY_LABELS,
   categorizeBuff, secondaryCategoriesFor, classToRole, classProvides, ROLE_TARGETS,
-  analyzeHpSlots, HP_SLOTS, isCurseBuff, isCorpse,
+  analyzeHpSlots, HP_SLOTS, classHpSlots, isCurseBuff, isCorpse,
   RESIST_TYPES, RESIST_LABELS, resistTypesFor, isSongBuff,
 };
