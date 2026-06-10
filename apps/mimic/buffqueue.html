@@ -378,6 +378,13 @@
     }
     empty.style.display = 'none';
     var html = '';
+    // Debuff / cure queue FIRST (per user) — cures are time-critical and the
+    // bot already orders them curse → blind → poison → disease.
+    if (dq.length) {
+      html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dq.length+'</span><span class="hint">cures needed · curse → blind → poison → disease</span></div>';
+      for (var di = 0; di < dq.length; di++) html += renderRow(dq[di], 'd');
+      html += '</div>';
+    }
     if (bq.length) {
       var hint = bufferClass ? ('severity-first · gaps a '+esc(bufferClass)+' can fix') : 'pick a class to filter';
       html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+bq.length+'</span><span class="hint">'+hint+'</span></div>';
@@ -413,11 +420,6 @@
         }
         html += '</div>';
       }
-      html += '</div>';
-    }
-    if (dq.length) {
-      html += '<div class="sec debuffs"><div class="hdr"><span class="lab">🩸 Debuff queue</span><span class="ct">'+dq.length+'</span><span class="hint">cures needed</span></div>';
-      for (var i = 0; i < dq.length; i++) html += renderRow(dq[i], 'd');
       html += '</div>';
     }
     if (burst.length && burstLabel) {
