@@ -40,7 +40,7 @@ const CLASS_ID: Record<string, number> = {
 // ({eff, base, max} arrays, populated by sync-from-eqmac); the 3 dedicated
 // columns are the fallback until the next catalog sync lands.
 type SpellRaw = { eff: (number | null)[]; base: (number | null)[]; max: (number | null)[] } | null;
-type Fx = { atk: number; hastePct: number; ft: number; focus: string | null };
+type Fx = { atk: number; ft: number; focus: string | null };
 
 const RESIST_NAME: Record<number, string> = { 1: 'magic', 2: 'fire', 3: 'cold', 4: 'poison', 5: 'disease' };
 const TARGET_NAME: Record<number, string> = { 3: 'group', 4: 'PB AE', 5: 'single-target', 6: 'self', 8: 'targeted AE', 14: 'pet', 41: 'group' };
@@ -61,13 +61,17 @@ function decodeSpell(s: any): Fx {
       slots.push({ eff, base: s?.[`effect_base_value_${i}`] ?? 0, max: 0 });
     }
   }
-  const fx: Fx = { atk: 0, hastePct: 0, ft: 0, focus: null };
+  const fx: Fx = { atk: 0, ft: 0, focus: null };
   let primary: string | null = null;
   const quals: string[] = [];
   for (const { eff, base, max } of slots) {
     switch (eff) {
       case 2:   fx.atk += base; break;
-      case 11: { const pct = Math.max(base, max) - 100; if (pct > 0) fx.hastePct = Math.max(fx.hastePct, pct); break; }
+      // Haste is a per-item percentage (Yelinak's 41, Hierophant's 27, …),
+      // NOT derivable from the worn spell — the spell carries the family
+      // cap, not the per-item value. Honored from eqemu_items.haste in the
+      // totals loop. The quarmy.com harvester populates the column (eqmac
+      // dump leaves it NULL on every row).
       case 15:  fx.ft += base; break;
       // Focus primaries
       case 124: primary = `Increased spell damage up to ${Math.max(base, max)}%`; break;
@@ -203,17 +207,20 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   // +ATK, haste %, and Flowing Thought ride the worn-effect SPELL on this
   // era's items (the item catalog has no columns for them), decoded above.
   let acSum = 0, hpSum = 0, manaSum = 0, atkSum = 0, hasteMax = 0, ftSum = 0;
+  let hasteUnknownItems = 0;
   for (const g of equipped) {
     const it = items[g.item_id];
     if (!it) continue;
     acSum += it.ac ?? 0; hpSum += it.hp ?? 0; manaSum += it.mana ?? 0; atkSum += it.attack ?? 0;
+    // Per-item haste %, not derived. In-game the highest worn haste wins —
+    // they don't stack — so max across slots.
     if ((it.haste ?? 0) > hasteMax) hasteMax = it.haste ?? 0;
     const wfx = it.worneffect && it.worneffect > 0 ? spellFx[it.worneffect] : null;
-    if (wfx) {
-      atkSum += wfx.atk;
-      ftSum  += wfx.ft;
-      if (wfx.hastePct > hasteMax) hasteMax = wfx.hastePct;
-    }
+    if (wfx) { atkSum += wfx.atk; ftSum += wfx.ft; }
+    // Flag haste-spell items lacking a recorded %: the harvester populates
+    // it from quarmy.com itemsMap; until it lands we can't sum truthfully.
+    const wornNameLower = it.worneffect && spellNames[it.worneffect] ? spellNames[it.worneffect].toLowerCase() : '';
+    if ((!it.haste || it.haste <= 0) && /\bhaste\b/.test(wornNameLower)) hasteUnknownItems++;
   }
 
   const wornEffects = [...new Set(
@@ -314,9 +321,12 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
               ))}
             </div>
             <p className="text-xs text-dim mt-2">
-              Item stats plus what their worn effects grant (+ATK, haste %, Flowing Thought) — this
-              era delivers those via the worn spell, not item columns. The full calculator (base
-              stats, softcaps, self-buffs, clicky layers, PvP best-practice buffs) is on the roadmap.
+              Item stats plus what their worn effects grant (+ATK, Flowing Thought) — this era
+              delivers those via the worn spell, not item columns.
+              {hasteUnknownItems > 0 && (
+                <> Haste % is per-item (Yelinak&apos;s 41, Hierophant&apos;s 27, …) and our eqmac mirror leaves the column empty — {hasteUnknownItems} worn-haste item{hasteUnknownItems === 1 ? '' : 's'} are missing their % until the quarmy.com harvester populates them.</>
+              )}
+              {' '}The full calculator (base stats, softcaps, self-buffs, clicky layers, PvP best-practice buffs) is on the roadmap.
             </p>
           </section>
 
