@@ -5739,7 +5739,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // Highest damage first; raiders with no damage signal yet sink (they may
       // be new arrivals, but a buffer shouldn't rank them above proven DPS).
       burstQueue.sort((a, b) => (b.damage || 0) - (a.damage || 0) || a.name.localeCompare(b.name));
-      burstQueue = burstQueue.slice(0, 20);
+      // Not everyone gets the burst buff — cap at ~4 targets per provider of
+      // the buffer's class in this raid (1 shaman → top 4, 2 shamans → top 8).
+      let providers = 0;
+      for (const [k2] of rosterByName) {
+        const c2 = classFor((rosterByName.get(k2) || {}).name || k2);
+        if (c2 && String(c2).toLowerCase() === bufferClass.toLowerCase()) providers++;
+      }
+      burstQueue = burstQueue.slice(0, Math.min(20, Math.max(4, providers * 4)));
     }
 
     // Compact live-roster view for the dashboard's Raid card — the buffer's
@@ -5771,7 +5778,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
           tier = exp2.some(c2 => !(byCat2[c2] || []).length) ? 'yellow' : 'green';
         }
       }
+      // Trimmed buff list for the dashboard's click-to-expand raider detail.
+      const buffsOut = buffs
+        .filter(b => b && b.name)
+        .slice(0, 30)
+        .map(b => ({ n: String(b.name).slice(0, 60), t: (typeof b.ticks === 'number') ? b.ticks : null }));
       rosterOut.push({
+        buffs:      buffsOut,
+        hp_missing: missingHp,
         name:       rr.name,
         class:      cls,
         group:      rr.group_num != null ? rr.group_num : null,
