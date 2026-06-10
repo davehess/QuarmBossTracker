@@ -46,6 +46,11 @@ export type RaidRow = {
   hpPct: number | null;          // live HP%: roster broadcast (any Mimic groupmate) or self-state HP
   buffCount: number;
   byCategory: Record<string, string[]>;
+  // Rich per-category entries — { name, value, isSong }. A song like
+  // McVaxius' Rousing Rondo contributes to haste / attack / ds with its
+  // catalog magnitude so the detail panel can show "♪ song: Rondo +20%"
+  // under each row it actually affects.
+  categoryEntries: Record<string, { name: string; value: number | null; isSong: boolean }[]>;
   other: string[];
   // Per-school coverage, decoded from the spell catalog (SPA 46-50). value =
   // the resist amount; stacking = rides a non-colliding slot (White/Green
@@ -981,24 +986,46 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
           </div>
 
           {/* Categories — only those expected for the role, with the missing
-              ones flagged. Resists get their own per-school section below. */}
+              ones flagged. Resists get their own per-school section below.
+              Songs that contribute via SPA effects (Rondo → haste+attack+DS,
+              Psalm of Warmth → CR+DS+AC, …) appear as sub-lines under each
+              category they actually touch, with their catalog magnitude. */}
           <div>
             <div className="text-[10px] uppercase tracking-widest text-dim mb-1">Buff categories</div>
             <ul className="space-y-1">
               {(['regen','mana','manaRegen','haste','runSpeed','attack','levitate'] as BuffCategory[]).map(cat => {
+                const entries = row.categoryEntries?.[cat] || [];
                 const names = row.byCategory[cat] || [];
+                const primaries = entries.filter(e => !e.isSong);
+                const songs     = entries.filter(e => e.isSong);
                 const present = names.length > 0;
                 const exp = expected.includes(cat);
                 if (!exp && !present) return null;
+                const isHasteLike = cat === 'haste';
+                const fmtVal = (v: number | null) => v != null
+                  ? '+' + v + (isHasteLike ? '%' : '')
+                  : '';
                 return (
-                  <li key={cat} className="flex items-center gap-2 text-[11px]">
-                    <span className="text-dim w-20 shrink-0">{CATEGORY_LABELS[cat]}</span>
-                    {present
-                      ? <span className="flex items-center gap-1 min-w-0" title={names.join(', ')}>
-                          <BuffChip name={names[0]} />
-                          {names.length > 1 ? <span className="text-green shrink-0">+{names.length - 1}</span> : null}
-                        </span>
-                      : <span className="text-red-400">— missing</span>}
+                  <li key={cat} className="text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-dim w-20 shrink-0">{CATEGORY_LABELS[cat]}</span>
+                      {present
+                        ? primaries.length > 0
+                          ? <span className="flex items-center gap-1 min-w-0" title={names.join(', ')}>
+                              <BuffChip name={primaries[0].name} />
+                              {primaries[0].value != null && <span className="text-green tabular-nums shrink-0">{fmtVal(primaries[0].value)}</span>}
+                              {primaries.length > 1 ? <span className="text-green shrink-0">+{primaries.length - 1}</span> : null}
+                            </span>
+                          : <span className="text-dim italic">song only ↓</span>
+                        : <span className="text-red-400">— missing</span>}
+                    </div>
+                    {songs.map((e, i) => (
+                      <div key={'song:' + e.name + ':' + i} className="flex items-center gap-2 pl-20 ml-2 text-[10px]">
+                        <span className="text-purple" title="Bard song — stacks on top of the slot-1 primary buff">♪ song:</span>
+                        <BuffChip name={e.name} />
+                        {e.value != null && <span className="text-green tabular-nums">{fmtVal(e.value)}</span>}
+                      </div>
+                    ))}
                   </li>
                 );
               })}

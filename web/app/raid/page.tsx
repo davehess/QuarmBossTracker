@@ -293,7 +293,30 @@ export default async function RaidHubPage() {
   // and White Petals share the same placeholder-then-resist shape but only
   // the flowers stack) — curated per the in-game stacking behavior.
   const STACKING_RESIST = ['aura of white petals', 'aura of green petals'];
-  type SpellMeta = { resists: Partial<Record<ResistType, number>>; cha: boolean };
+  // Multi-effect categories from the SPA dump — drives "song: X +N" sub-lines
+  // under each Buff Categories row. Songs like McVaxius' Rousing Rondo provide
+  // haste +20%, attack +12, and DS +8 from one spell; without decoding all
+  // three the detail panel only credited it to one bucket. SPA codes:
+  //   0  = Max HP (positive base)
+  //   1  = AC (positive base) — not categorized
+  //   2  = ATK (positive base) → attack
+  //   11 = Attack Speed (positive base) → haste
+  //   15 = Mana / Mana Regen (positive base) → mana (a few SPA 15 entries
+  //        represent FT/mana regen; the SPA 0 vs 15 distinction in Quarm
+  //        practice means SPA 15 positive = max mana boost)
+  //   59 = Damage Shield (NEGATIVE base = magnitude; the absolute value is
+  //        the DS amount)
+  //   79 = HP over time (positive base) → regen
+  type SpellMeta = {
+    resists: Partial<Record<ResistType, number>>;
+    cha: boolean;
+    haste?: number;
+    attack?: number;
+    ds?: number;
+    hp?: number;
+    mana?: number;
+    regen?: number;
+  };
   const spellMeta = new Map<string, SpellMeta>();
   {
     const allNames = [...new Set(
@@ -313,6 +336,14 @@ export default async function RaidHubPage() {
           const school = effId != null ? RESIST_SPA[effId] : undefined;
           if (school && base > 0 && base > (meta.resists[school] ?? 0)) meta.resists[school] = base;
           if (effId === 10 && base > 0) meta.cha = true;
+          // Take max-magnitude entry per category — most useful when the
+          // song has multiple SPA 11 slots at different bases (rare).
+          if (effId === 0  && base > 0 && base > (meta.hp ?? 0))     meta.hp = base;
+          if (effId === 2  && base > 0 && base > (meta.attack ?? 0)) meta.attack = base;
+          if (effId === 11 && Math.abs(base) > (meta.haste ?? 0))    meta.haste = Math.abs(base);
+          if (effId === 15 && base > 0 && base > (meta.mana ?? 0))   meta.mana = base;
+          if (effId === 59 && Math.abs(base) > (meta.ds ?? 0))       meta.ds = Math.abs(base);
+          if (effId === 79 && base > 0 && base > (meta.regen ?? 0))  meta.regen = base;
         }
         spellMeta.set(sp.name.toLowerCase(), meta);
       }
@@ -320,12 +351,24 @@ export default async function RaidHubPage() {
   }
 
   type ResistEntry = { name: string; value: number | null; stacking: boolean; isSong: boolean };
+  // Per-category entries — name + magnitude + song flag — so the detail
+  // panel can render "song: McVaxius' Rousing Rondo +20%" UNDER Haste while
+  // also showing it under Attack (+12) and DS (+8). byCategory[cat] (string[])
+  // stays for callers that just want names; categoryEntries[cat] is the rich
+  // shape used by RaidView's CharacterDetail.
+  type CatEntry = { name: string; value: number | null; isSong: boolean };
   function bucketBuffs(buffs: { name: string; ticks: number | null; song?: boolean }[] | null) {
     const byCategory: Record<string, string[]> = {};
+    const categoryEntries: Record<string, CatEntry[]> = {};
     const other: string[] = [];
     const resists: Record<ResistType, ResistEntry[]> = { MR: [], FR: [], CR: [], PR: [], DR: [] };
     const songs: { name: string; ticks: number | null }[] = [];
     let hasDI = false, chaCovered = false;
+    const pushCat = (cat: string, name: string, value: number | null, isSong: boolean) => {
+      if (!(byCategory[cat] ||= []).includes(name)) byCategory[cat].push(name);
+      const entries = (categoryEntries[cat] ||= []);
+      if (!entries.some(e => e.name === name)) entries.push({ name, value, isSong });
+    };
     for (const b of (buffs ?? [])) {
       if (!b || !b.name) continue;
       const lower = b.name.toLowerCase();
@@ -339,25 +382,38 @@ export default async function RaidHubPage() {
         for (const [school, value] of Object.entries(meta.resists) as [ResistType, number][]) {
           resists[school].push({ name: b.name, value, stacking, isSong });
         }
+        // Catalog-decoded SPA contributions to every category they touch —
+        // means a song like Rondo lights up Haste, Attack, AND DS rows.
+        if (meta.haste  != null) pushCat('haste',  b.name, meta.haste,  isSong);
+        if (meta.attack != null) pushCat('attack', b.name, meta.attack, isSong);
+        if (meta.ds     != null) pushCat('ds',     b.name, meta.ds,     isSong);
+        if (meta.hp     != null) pushCat('hp',     b.name, meta.hp,     isSong);
+        if (meta.mana   != null) pushCat('mana',   b.name, meta.mana,   isSong);
+        if (meta.regen  != null) pushCat('regen',  b.name, meta.regen,  isSong);
       } else {
         // Name missing from the catalog (rank suffixes, typo'd dumps) — fall
         // back to the keyword map with no value.
         for (const t of resistTypesFor(b.name)) resists[t].push({ name: b.name, value: null, stacking: false, isSong });
       }
       const cat = categorizeBuff(b.name);
-      if (cat) (byCategory[cat] ||= []).push(b.name);
+      if (cat) pushCat(cat, b.name, null, isSong);
       else other.push(b.name);
       // Secondary credits — VoG/Bihli carry an ATK component beyond their
       // primary category, so "Attack — missing" doesn't lie about them.
       for (const sec of secondaryCategoriesFor(b.name)) {
-        if (sec !== cat && !(byCategory[sec] ||= []).includes(b.name)) byCategory[sec].push(b.name);
+        if (sec !== cat) pushCat(sec, b.name, null, isSong);
       }
     }
     // Strongest first per school so the card leads with the real coverage.
     for (const school of Object.keys(resists) as ResistType[]) {
       resists[school].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
     }
-    return { byCategory, other, resists, songs, hasDI, chaCovered };
+    // Songs sink to the bottom of each category so the primary buff leads
+    // (it overwrites/blocks; songs stack on top regardless).
+    for (const cat of Object.keys(categoryEntries)) {
+      categoryEntries[cat].sort((a, b) => Number(a.isSong) - Number(b.isSong));
+    }
+    return { byCategory, categoryEntries, other, resists, songs, hasDI, chaCovered };
   }
 
   // Build rows: every roster member (or live-state character) gets one. Roster
@@ -395,7 +451,7 @@ export default async function RaidHubPage() {
     const buffsForRow: { name: string; ticks: number | null }[] = live?.buffs ?? (
       inferred ? inferred.map(i => ({ name: i.name, ticks: i.ticks })) : []
     );
-    const { byCategory, other, resists, songs, hasDI, chaCovered } = bucketBuffs(buffsForRow);
+    const { byCategory, categoryEntries, other, resists, songs, hasDI, chaCovered } = bucketBuffs(buffsForRow);
     const hpSlots = analyzeHpSlots(buffsForRow.map(b => b?.name).filter(Boolean) as string[]);
     const isInferred = !live && !!(inferred && inferred.length);
     const noAgent = !live && !isInferred;
@@ -419,6 +475,7 @@ export default async function RaidHubPage() {
       hpPct: rr.hp_pct ?? live?.self_hp_pct ?? null,
       buffCount: live?.buff_count ?? buffsForRow.length,
       byCategory,
+      categoryEntries,
       other,
       resists,
       songs,
@@ -441,7 +498,7 @@ export default async function RaidHubPage() {
     seen.add(lower);
     const className = classFor(r.character);
     const role = classToRole(className);
-    const { byCategory, other, resists, songs, hasDI, chaCovered } = bucketBuffs(r.buffs);
+    const { byCategory, categoryEntries, other, resists, songs, hasDI, chaCovered } = bucketBuffs(r.buffs);
     const hpSlots = analyzeHpSlots((r.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
     rows.push({
       name: r.character,
@@ -459,6 +516,7 @@ export default async function RaidHubPage() {
       hpPct: r.self_hp_pct ?? null,
       buffCount: r.buff_count ?? (r.buffs?.length ?? 0),
       byCategory,
+      categoryEntries,
       other,
       resists,
       songs,
