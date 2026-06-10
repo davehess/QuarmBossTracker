@@ -120,7 +120,7 @@
     <div class="title">
       <span id="conn" class="conn bad">○</span>
       <span>🛡 Buff queue</span>
-      <select id="clsPick" class="clsPick" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
+      <select id="clsPick" class="clsPick" style="margin-right:30px" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
         <option value="">(any class)</option>
         <option>Cleric</option><option>Druid</option><option>Shaman</option>
         <option>Enchanter</option><option>Bard</option><option>Paladin</option>
@@ -143,9 +143,22 @@
 
   var hideBtn = document.getElementById('hide-btn');
   if (hideBtn) {
-    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
-    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
-    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+    // Stray-click guard — the class dropdown's native popup dismisses with a
+    // click that frequently lands on ✕ ("buff queue keeps disappearing even
+    // though I have it enabled"). A deliberate hide hovers the button first;
+    // a drive-by click arrives with ~0ms of hover. Require 250ms on-button
+    // before the click counts; a blocked click flashes the ✕ as the cue.
+    var _hideHoverAt = 0;
+    hideBtn.addEventListener('mouseenter', function(){ _hideHoverAt = Date.now(); try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ _hideHoverAt = 0; try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){
+      if (!_hideHoverAt || (Date.now() - _hideHoverAt) < 250) {
+        hideBtn.style.opacity = '1'; hideBtn.style.borderColor = '#f87171'; hideBtn.style.color = '#f87171';
+        setTimeout(function(){ hideBtn.style.opacity = ''; hideBtn.style.borderColor = ''; hideBtn.style.color = ''; }, 600);
+        return;
+      }
+      try { window.mimic.hideThisOverlay(); } catch (e) {}
+    });
   }
 
   // Manual drag — same workaround as the other overlays.
