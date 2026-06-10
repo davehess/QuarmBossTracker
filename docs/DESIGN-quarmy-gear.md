@@ -38,41 +38,62 @@ migration) is the kill switch — **no Quarmy fetch fires for an excluded
 character**, no row written, page section shows "opted out" instead of
 blanks. Same agent-side gate as `exclude_from_stats`.
 
+## Source shape — CONFIRMED 2026-06-10 (v1 SHIPPED)
+
+The owner supplied the page source + three real export files
+(Hitya/monk, Manamana/cleric, Melting/bard). Two viable feeds:
+
+1. **The local export file `<Name>Quarmy.txt`** (in the EQ folder; the same
+   file members feed to quarmy.com — its "verified" badge means "imported
+   from an unmodified Quarmy export"). Plain TSV, stable across classes:
+   - `Character` header + row: Name, LastName, Level, Class, Race, Gender,
+     **Deity**, Guild, GuildRank, base stats. (Deity! — fixes the faction
+     page's "deity isn't tracked" caveat.)
+   - `Location / Name / ID / Count / Slots` rows: equipped slots (Ear/Wrist/
+     Fingers repeat — number them Ear1/Ear2 etc.), `GeneralN` bags +
+     `GeneralN-SlotM` contents, `General-Coin`, `Held`, then `BankN…`,
+     `SharedBankN…`, `Bank-Coin`. Bank + shared bank + coin are
+     **account-level** (identical across same-account exports).
+   - `AAIndex / Rank` rows: purchased AAs by in-game index.
+   - `Checksum <n>` — perfect change-detection key.
+   **This is the primary feed** — the agent reads it locally, which means
+   bank/coin rows are dropped BEFORE upload: they never leave the machine
+   (stronger than "never public").
+
+2. **quarmy.com page** — Next.js RSC flight payload in `self.__next_f.push`
+   script chunks; the chunk containing `"buildData"` carries gear sets
+   (incl. PoP BIS planning sets, each with its own visibility flag!), buff
+   sets, AA selections, bags, plus a fully-resolved `itemsMap`. Anonymous
+   fetches only see what Quarmy itself marks shared, so a bot-side fetcher
+   inherits Quarmy's own privacy model. **Follow-up** for members who keep
+   a profile but don't run Mimic.
+
 ## Phased plan
 
 1. **URL collection** — already done: `/quarmy set <char> <url>` writes to
-   roster chunks. Add a `quarmy_url` column on `characters` (mirror) so
-   the bot has a single source instead of re-parsing roster on each fetch.
+   roster chunks; `characters.quarmy_url` column exists.
 
-2. **Bot-side fetcher** — Railway has full outbound; the bot polls quarmy.com
-   on a sane cadence (every N days per character, plus on-demand when a
-   member runs `/quarmy refresh`). Honors `exclude_inventory` strictly: no
-   request fires for opted-out chars. Failure modes (URL 404, layout
-   change) record the error, retry with backoff, never delete prior data.
+2. **Agent-side file ingest — SHIPPED** (agent v3.1.10 / bot v3.0.68).
+   Scans the log dir for `<Name>Quarmy.txt` on startup + every 10 min,
+   parses locally, drops Bank/SharedBank/coin at parse, gates on
+   `exclude_inventory`/`exclude_from_stats` (and refuses to upload before
+   the prefs poll has answered at least once), dedups by export checksum,
+   ships via the durable queue to `POST /api/agent/quarmy`. The bot
+   re-checks the opt-out server-side and strips banned slots again.
 
-3. **Parser** — the actual code is one focused session of work once we know
-   Quarmy's shape:
-   - **If quarmy.com serves a JSON API** (e.g. `/api/b/<id>` or `?format=json`)
-     — trivial, structured extract.
-   - **If it's server-rendered HTML** — parse with `cheerio` against the
-     screenshot-confirmed sections (Inventory / Stats / AAs / Spells /
-     Discs).
-   - **If it's a SPA with embedded JSON** — pull `window.__PRELOADED_STATE__`
-     or equivalent from a `<script>` tag.
+3. **Bot-side quarmy.com fetcher** — follow-up (shape known, see above);
+   only needed for members without Mimic.
 
-   ⚠ I cannot determine which from this dev sandbox (outbound HTTP blocked
-   network-wide — same reason TAKP wiki, PQDI pages, eqprogression all
-   403'd this session). **Unblocker**: paste the raw response body from
-   `curl https://quarmy.com/b/q3taYC-VMyau5jEq` (or the page source via
-   browser DevTools → Sources / "View page source"). The head section plus
-   a representative chunk of gear + AA markup is enough to write the parser.
-
-4. **Storage** — `character_gear` (slot → item_id, latest-state overwrite,
-   compact like faction v2), `character_aas` (aa_key → current_rank /
-   max_rank), `character_spellbook` (spell_id only — `eqemu_spells` joins
-   the rest). All overwrite-in-place; ~25–80 rows per character, total a
-   few MB, zero growth. No bank inventory persisted to DB at all — the
-   parser drops bank slots on the floor before write.
+4. **Storage — SHIPPED** (migration 20260610210000): `character_gear`
+   (guild, character, loc equipped|bag, slot → item_id, name, count) +
+   `character_aas` (aa_index → rank), both latest-state delete-and-replace;
+   `characters` gains deity_id / quarmy_checksum / quarmy_synced_at;
+   `eqemu_items` gains worneffect/worntype/attack/haste/regen/manaregen/
+   damageshield (populated by the next weekly sync — sync-from-eqmac.js
+   updated). No bank data persisted anywhere, by construction.
+   Web: `/character/<name>/gear` (BETA) — equipped table with
+   focus/worn/click/proc joins, item-sum totals, vision-item callout,
+   clicky list, raw AA ranks.
 
 5. **Effects analysis** (read-time, no new tables) — join `character_gear`
    to `eqemu_items.focuseffect` / `worneffect` / `proceffect` / `clickeffect`.
@@ -97,20 +118,25 @@ blanks. Same agent-side gate as `exclude_from_stats`.
 
 | Table | Rows | Size |
 |---|---|---|
-| `character_gear` | ~25 × ~120 raiders = 3k | <5 MB, never grows |
-| `character_aas` | ~80 × 120 = 10k | <10 MB, never grows |
-| `character_spellbook` | ~60 × 120 = 7k | <5 MB, never grows |
+| `character_gear` | ~130 (equipped + bags) × ~120 raiders = 16k | <10 MB, never grows |
+| `character_aas` | ~20 × 120 = 2.4k | <2 MB, never grows |
 
-Negligible. All three follow the faction v2 "latest-state overwrite"
-philosophy — counters/timelines kept only where they earn it.
-
-## Blocked on the one thing
-
-Owner pasting **one Quarmy profile's HTML** (or confirming a JSON endpoint
-exists) so the parser shape is known. Everything else is already decided.
+Negligible. Both follow the faction v2 "latest-state overwrite" philosophy.
+(`character_spellbook` was cut from v1 — the local export carries no spell
+book; that data only exists on quarmy.com and rides the bot-side fetcher
+follow-up.)
 
 ## Roadmap follow-ups (not v1)
 
+- **AA index → name catalog** — the export carries in-game AA table
+  indices; the gear page shows raw `AA #n rank r` until a catalog lands
+  (Quarmy's own AA names live in its client JS chunks, or mirror
+  `aa_actions` from the eqemu dump in the weekly sync).
+- **Focus/+ATK gap recommendations** — join gaps against `eqemu_npc_drops`
+  (drop source) + OpenDKP auction history + private wishlist cross-ref.
+- **Stat calculator** — base by race/class/level (+ the export's BaseSTR…
+  columns), worn sums (shipped), self-buffs, clickies, PvP best-practice.
+- Bot-side quarmy.com fetcher for non-Mimic members (RSC flight parse).
 - Spells/AAs *missing*: cross-reference observed casts (`stats.castCounts`)
   against `eqemu_spells` × class/level — the `/me` missing-spells advisor
   already in CLAUDE.md roadmap.

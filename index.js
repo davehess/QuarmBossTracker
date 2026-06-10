@@ -4471,6 +4471,115 @@ async function _handleAgentPopFlags(req, res) {
   res.end(JSON.stringify({ ok: true, written }));
 }
 
+// POST /api/agent/quarmy
+//
+// Quarmy export ingest (docs/DESIGN-quarmy-gear.md, table 20260610210000).
+// The agent parses <Name>Quarmy.txt locally and ships equipped slots +
+// general-bag items + AA ranks + profile facts. Bank/SharedBank/coin rows
+// were dropped at the agent BEFORE upload (they never leave the machine);
+// this handler strips them again as defense in depth and refuses to write
+// anything for a character whose owner set exclude_inventory on /me.
+// Latest-state overwrite: each upload replaces the character's rows.
+const _QUARMY_BANNED_SLOT_RX = /^(bank|sharedbank)|coin/i;
+async function _handleAgentQuarmy(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 1024 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const character = typeof payload?.character === 'string' ? payload.character.trim().slice(0, 64) : '';
+  if (!/^[A-Za-z]{2,}$/.test(character)) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'bad character' }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  // Owner opt-out is enforced server-side too — a stale agent that missed the
+  // prefs poll cannot write an excluded character's gear.
+  const charRows = await supabase
+    .select('characters', `select=name,exclude_inventory,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .catch(() => null);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  if (charRow && charRow.exclude_inventory) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'opted_out' }));
+  }
+  const checksum = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
+  if (checksum && charRow && charRow.quarmy_checksum === checksum) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
+  }
+
+  const cleanItem = (e, loc) => {
+    if (!e || typeof e.slot !== 'string' || _QUARMY_BANNED_SLOT_RX.test(e.slot)) return null;
+    const itemId = parseInt(e.item_id, 10);
+    if (!Number.isFinite(itemId) || itemId <= 0 || !e.item_name) return null;
+    return {
+      guild_id: guildId, character, loc,
+      slot: e.slot.slice(0, 32),
+      item_id: itemId,
+      item_name: String(e.item_name).slice(0, 96),
+      count: Math.max(1, parseInt(e.count, 10) || 1),
+      updated_at: new Date().toISOString(),
+    };
+  };
+  const gearRows = [];
+  for (const e of Array.isArray(payload.equipped) ? payload.equipped : []) {
+    const r = cleanItem(e, 'equipped'); if (r) gearRows.push(r);
+  }
+  for (const e of Array.isArray(payload.bags) ? payload.bags : []) {
+    const r = cleanItem(e, 'bag'); if (r) gearRows.push(r);
+  }
+  const aaRows = [];
+  for (const a of Array.isArray(payload.aas) ? payload.aas : []) {
+    const idx = parseInt(a?.index, 10), rank = parseInt(a?.rank, 10);
+    if (!Number.isFinite(idx) || !Number.isFinite(rank) || rank <= 0) continue;
+    aaRows.push({ guild_id: guildId, character, aa_index: idx, rank, updated_at: new Date().toISOString() });
+  }
+
+  // Replace wholesale — delete-then-insert handles unequipped slots, emptied
+  // bag slots, and AA respecs that an upsert would leave behind as ghosts.
+  const charQ = `guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(character)}`;
+  await supabase.del('character_gear', charQ).catch(() => {});
+  await supabase.del('character_aas', charQ).catch(() => {});
+  let written = 0;
+  if (gearRows.length) {
+    const r = await supabase.insert('character_gear', gearRows)
+      .catch(err => { console.warn('[quarmy] gear insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  if (aaRows.length) {
+    const r = await supabase.insert('character_aas', aaRows)
+      .catch(err => { console.warn('[quarmy] aa insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+
+  // Profile facts — only update an EXISTING characters row (rows are created
+  // by the roster/link flows; gear ingest shouldn't invent membership).
+  // deity_id finally pins the faction page's deity-shifted base estimates.
+  if (charRow) {
+    const patch = { quarmy_synced_at: new Date().toISOString() };
+    if (checksum) patch.quarmy_checksum = checksum;
+    const deity = parseInt(payload.deity_id, 10);
+    if (Number.isFinite(deity) && deity > 0) patch.deity_id = deity;
+    await supabase
+      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`, patch)
+      .catch(err => console.warn('[quarmy] characters update failed:', err?.message));
+  }
+
+  _trackUpload({ endpoint: 'quarmy', character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
 // POST /api/agent/buff_casts
 //
 // Observed buff landings on other players (see migration 20260605120000). The
@@ -8163,6 +8272,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentPopFlags(req, res); }
     catch (err) {
       console.error('[pop-flags] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/quarmy') {
+    try { return await _handleAgentQuarmy(req, res); }
+    catch (err) {
+      console.error('[quarmy] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

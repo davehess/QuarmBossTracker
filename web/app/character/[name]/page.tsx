@@ -293,11 +293,19 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           )}
         </div>
 
-        <div className="text-xs mt-1">
-          <Link href={`/character/${encodeURIComponent(displayName)}/factions`} className="text-blue hover:underline">
-            🤝 Factions
-          </Link>
-          <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+        <div className="text-xs mt-1 flex items-center gap-3">
+          <span>
+            <Link href={`/character/${encodeURIComponent(displayName)}/factions`} className="text-blue hover:underline">
+              🤝 Factions
+            </Link>
+            <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+          </span>
+          <span>
+            <Link href={`/character/${encodeURIComponent(displayName)}/gear`} className="text-blue hover:underline">
+              🛡️ Gear
+            </Link>
+            <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+          </span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">

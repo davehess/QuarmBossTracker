@@ -359,7 +359,7 @@ const TRANSFORMS = {
     return { ...r, zone_id: r.zoneidnumber, zoneidnumber: undefined };
   },
   items: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel']);
+    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel', 'worneffect', 'worntype', 'attack', 'haste', 'regen', 'manaregen', 'damageshield']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lore: r.lore,
@@ -381,6 +381,11 @@ const TRANSFORMS = {
       // the bar fills at the wrong rate for every clicky.
       casttime: r.casttime, clickeffect: r.clickeffect,
       clicktype: r.clicktype, clicklevel: r.clicklevel,
+      // Worn/stat columns for the Quarmy gear analysis (character gear pages:
+      // worn effects like Fire Fist / infravision, +ATK recommendations).
+      worneffect: r.worneffect, worntype: r.worntype,
+      attack: r.attack, haste: r.haste,
+      regen: r.regen, manaregen: r.manaregen, damageshield: r.damageshield,
     };
   },
   npc_types: (cols, row) => {
