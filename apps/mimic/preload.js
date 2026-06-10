@@ -24,6 +24,21 @@ function _hoverOff() { try { ipcRenderer.invoke('overlay-hover-interactive', fal
 // cursor over anything interactive → arm; off it → restore the lock state.
 // The legacy per-element handlers stay (harmless — the IPC is idempotent).
 let _wpHoverArmed = false;
+// OVERLAY DOCUMENTS ONLY. This preload also loads in the MAIN window,
+// settings, and UI Studio — none of which are ever click-through, and on a
+// solid (non-transparent) window an accidental setIgnoreMouseEvents(true) is
+// UNRECOVERABLE: mouse forwarding only works on transparent windows, so no
+// mousemove ever reaches the page again to re-arm it (the "Mimic window
+// completely dead" bug). Every overlay HTML carries the ✥ #move-btn; gate on
+// its presence, cached once the DOM can answer. main.js refuses the IPC from
+// non-overlay windows too — this just stops the wasted invoke traffic.
+let _wpIsOverlayDoc = null;
+function _wpOverlayDoc() {
+  if (_wpIsOverlayDoc === null && document.body) {
+    _wpIsOverlayDoc = !!document.getElementById('move-btn');
+  }
+  return _wpIsOverlayDoc === true;
+}
 function _wpIsInteractive(el) {
   while (el && el.nodeType === 1 && el !== document.body) {
     try {
@@ -35,6 +50,7 @@ function _wpIsInteractive(el) {
 }
 let _wpLastAssert = 0;
 document.addEventListener('mousemove', function (ev) {
+  if (!_wpOverlayDoc()) return;
   const want = _wpIsInteractive(ev.target);
   const now = Date.now();
   if (want) {
@@ -51,6 +67,7 @@ document.addEventListener('mousemove', function (ev) {
 // Cursor left the window entirely (possible straight off a button edge) —
 // make sure the click-through state is restored for the game.
 document.addEventListener('mouseout', function (ev) {
+  if (!_wpOverlayDoc()) return;
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
 }, { capture: true, passive: true });
 
