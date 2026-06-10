@@ -8373,7 +8373,14 @@ function renderRaidTab(q) {
             var cuCol = c.cure === 'poison' ? 'var(--green)' : c.cure === 'disease' ? 'var(--gold)' : c.cure === 'blind' ? 'var(--dim)' : 'var(--orange)';
             cu = ' <span style="color:' + cuCol + '" title="Cure type: ' + esc(c.cure) + (c.counters ? ' — ' + c.counters + ' counters' : '') + '">' + esc(c.cure) + '</span>';
           }
-          return esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '') + cu + sl;
+          // Being cured (bot v3.0.90+) — a matching cure is in flight; show the
+          // curer and strike the chip so a second curer skips it.
+          var cured = '', open = '', close = '';
+          if (c.being_cured) {
+            open = '<span style="opacity:0.5;text-decoration:line-through">'; close = '</span>';
+            cured = ' <span style="color:#7ee787" title="' + esc(c.cured_by || 'someone') + ' is curing this">✓ ' + esc(c.cured_by || 'curing') + (c.cure_secs ? ' ' + c.cure_secs + 's' : '') + '</span>';
+          }
+          return open + esc(c.name) + (c.remaining_secs != null ? ' <span class="dim">' + Math.round(c.remaining_secs) + 's</span>' : '') + cu + sl + close + cured;
         }).join(' · ');
         h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--red);margin-bottom:1px">'
           + '<span style="color:var(--text);font-weight:600">' + esc(d.name) + '</span>'

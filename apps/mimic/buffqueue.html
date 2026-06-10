@@ -338,7 +338,16 @@
           var cuCol = c.cure === 'poison' ? '#56d364' : c.cure === 'disease' ? '#d4a72c' : c.cure === 'blind' ? '#8b949e' : '#f0883e';
           cu = ' <span style="color:'+cuCol+'" title="Cure type: '+esc(c.cure)+(c.counters ? ' — '+c.counters+' counters' : '')+'">'+esc(c.cure)+'</span>';
         }
-        chips += '<span class="ch">'+esc(c.name)+t+cu+sl+'</span>';
+        // Being cured (bot v3.0.90+): a matching cure is in flight on this
+        // target — show who + secs and dim/strike the chip so a second curer
+        // skips it. The chip vanishes on its own the moment the cure lands.
+        var cured = '';
+        var chipStyle = '';
+        if (c.being_cured) {
+          chipStyle = 'opacity:0.5;text-decoration:line-through';
+          cured = ' <span style="color:#7ee787;text-decoration:none" title="'+esc(c.cured_by||'someone')+' is curing this — skip it">✓ '+esc(c.cured_by||'curing')+(c.cure_secs ? ' '+c.cure_secs+'s' : '')+'</span>';
+        }
+        chips += '<span class="ch" style="'+chipStyle+'">'+esc(c.name)+t+cu+sl+cured+'</span>';
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {
