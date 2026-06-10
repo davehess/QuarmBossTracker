@@ -2912,8 +2912,16 @@ class EncounterBuilder {
         procDetail: t.procDetail || {},
       };
     }
+    // Fight label for the overlays: the catalog-matched boss when known,
+    // else the most-damaged defender this encounter — so trash/named pulls
+    // still say WHAT we're fighting instead of a generic "current fight".
+    let _topTarget = null, _topTargetDmg = 0;
+    for (const [tname, tdmg] of this.targets) {
+      if (tdmg > _topTargetDmg) { _topTargetDmg = tdmg; _topTarget = tname; }
+    }
     const snap = {
-      bossName:  this.bossName,
+      bossName:   this.bossName,
+      targetName: this.bossName || _topTarget,
       startedAt: this.startedAt,
       flushedAt: null,
       // The character whose log file this builder is reading. Lets the
@@ -5620,20 +5628,19 @@ function _serializeForDashboard() {
         // "Is this character a Bard?" — Mimic never populates zealSt.class
         // (only HP / zone / buffs / casting flow through the pipe), so the
         // original `zealSt.class === 'Bard'` check was always false in
-        // practice. Fall through three sources, most authoritative first:
+        // practice. AUTHORITATIVE sources only:
         //   1. whoData class — captured from a real /who line or inferred
-        //      from a class-specific ability (e.g. Snare = ranger/druid,
-        //      Selo's = bard). Survives across sessions.
+        //      from a class-specific ability (Selo's = bard). Survives
+        //      across sessions, so real bards resolve within one song.
         //   2. zealSt.class — kept for forward-compat in case Mimic ever
         //      starts populating it.
-        //   3. state.kind === 'song' — observed-via-singing fallback.
-        //      Slightly sticky (the comment above warns that switching
-        //      character keeps the flag), but harmless inside this builder
-        //      because we're already keyed on the bard's character.
+        // `state.kind === 'song'` used to be a third fallback, but it's
+        // sticky across casts and a single mis-tagged line flipped the whole
+        // bard UI (Melody title + utility strip) on for non-bards — the
+        // overlay then NEVER reverted to "Spell Casting". Class or nothing.
         const wd = (whoData && whoData.get) ? whoData.get(k) : null;
         const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
-                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
-                         ||   state.kind === 'song';
+                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')));
         // Buff → info shape. When ticks is unknown (null/0) we still emit
         // `observed:true` so the overlay can render "on" instead of "off" —
         // surfacing buff presence even without a countdown. Source flag
@@ -10318,6 +10325,16 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(body); }
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
         const character = String(payload?.character || '').trim();
+        // Logout/character-switch: Mimic retires the character (pipe closed,
+        // same-client character swap, or 2m idle at char select). Drop the
+        // entry so Mob Info / triggers stop acting on the camped character's
+        // last target — without this, _currentTargetState() keeps returning
+        // the stale entry forever ("shows Dafeet after switching characters").
+        if (character && payload?.disconnected === true) {
+          delete _zealState[character];
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, retired: true }));
+        }
         const st = payload?.state;
         if (character && st && typeof st === 'object') {
           // Detect a CAST START via Zeal label 134 transition. /melody on
@@ -15141,9 +15158,16 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
 // The freshest watched character's Zeal target (name + live HP%).
 function _currentTargetState() {
   let best = null;
+  // Staleness backstop: Zeal streams continuously while a character is
+  // in-game, so an entry that hasn't updated in minutes belongs to a camped
+  // character (or an old Mimic that doesn't send the explicit
+  // `disconnected` retirement). Without the cutoff, Mob Info keeps showing
+  // the camped character's last target after a character switch.
+  const cutoff = Date.now() - 2 * 60_000;
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || !st.target_name) continue;
+    if ((st.updatedAt || 0) < cutoff) continue;
     if (!best || (st.updatedAt || 0) > (best.updatedAt || 0)) best = st;
   }
   return best;

@@ -918,20 +918,49 @@ function _flushZealToAgent() {
 // Drives gauge-condition triggers. We keep the running state here in Mimic
 // (cheap — updated per event) and push a condensed snapshot to the agent at a
 // throttled cadence rather than forwarding 225 raw events/sec.
-const _zealLiveByChar = new Map();   // character → { snapshot, dirty }
+const _zealLiveByChar = new Map();   // character → { snapshot, dirty, pid, lastSeen }
 function _zealParseData(obj) {
   // Pipe payload wraps the real data in obj.data as a JSON string.
   let inner = obj && obj.data;
   if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch { return null; } }
   return inner;
 }
-function _zealAbsorb(obj) {
+// Character logged off (camped, client closed, or someone else logged in on
+// the same client). Drop the local live state AND tell the agent to forget
+// its _zealState entry — otherwise Mob Info keeps showing the camped
+// character's last target forever (the "stale Dafeet" bug: switch characters
+// with no target on the new one → the old entry stays the freshest WITH a
+// target and wins _currentTargetState()).
+function _retireZealChar(character, why) {
+  if (!_zealLiveByChar.has(character)) return;
+  _zealLiveByChar.delete(character);
+  appendAgentLog(`[zeal] retired live state for ${character}${why ? ' (' + why + ')' : ''}\n`);
+  if (!agentPort) return;
+  const body = JSON.stringify({ character, disconnected: true });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/zeal-state', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+function _zealAbsorb(obj, pid) {
   const character = obj && obj.character;
   if (!character) return;
   const type = obj.type;
   let cur = _zealLiveByChar.get(character);
   if (!cur) { cur = { snapshot: {}, dirty: false }; _zealLiveByChar.set(character, cur); }
   cur.lastSeen = Date.now();   // liveness for UI Studio's "apply on logout" watcher
+  if (pid != null && cur.pid !== pid) {
+    cur.pid = pid;
+    // One client runs one character at a time: if another character's state
+    // is still pinned to this pid, that character just logged off (character
+    // switch on the same eqgame.exe — the pipe never closes for that case).
+    for (const [name, other] of _zealLiveByChar) {
+      if (name !== character && other.pid === pid) _retireZealChar(name, `pid ${pid} now ${character}`);
+    }
+  }
   const s = cur.snapshot;
   if (type === 2) {                                   // gauge — HP per-mille (0..1000)
     const inner = _zealParseData(obj);
@@ -1257,6 +1286,14 @@ function startZealCapture() {
         zealLastConnectedPids = s.connectedPids || [];
         if (zealLastConnectedPids.length > 0 && !_zealFirstEqAt) _zealFirstEqAt = Date.now();
         if (zealLastConnectedPids.length === 0) _zealFirstEqAt = 0;   // EQ closed — reset window
+        // Pipe closed → its character logged off (or the whole client exited).
+        // Retire every character pinned to a pid that's no longer connected so
+        // Mob Info / triggers don't keep acting on a camped character's state.
+        // A transient pipe drop re-populates within seconds of reconnect.
+        const live = new Set(zealLastConnectedPids);
+        for (const [name, cur] of [..._zealLiveByChar]) {
+          if (cur.pid != null && !live.has(cur.pid)) _retireZealChar(name, 'pipe closed');
+        }
         _flushZealToAgent();              // push connection change immediately
       },
       onEvent: (pid, obj) => {
@@ -1282,11 +1319,23 @@ function startZealCapture() {
         // Cap pending so a runaway pipe can't grow the buffer unbounded.
         if (_zealPending.events.length > 2000) _zealPending.events.splice(0, 1000);
         // Absorb gauge/player into live state for gauge-condition triggers.
-        try { _zealAbsorb(obj); } catch (e) { void e; }
+        // pid rides along so a character switch on the same client retires
+        // the previous character's state (see _zealAbsorb/_retireZealChar).
+        try { _zealAbsorb(obj, pid); } catch (e) { void e; }
       },
     });
     setInterval(_flushZealToAgent, 2000);
     setInterval(_flushZealStateToAgent, 300);   // gauge-condition snapshots
+    // Idle sweep — covers sitting at character select: the pipe stays open
+    // (same pid) but the camped character stops streaming. After 2 minutes
+    // of silence, retire it so overlays clear instead of showing the last
+    // target from the previous session.
+    setInterval(() => {
+      const now = Date.now();
+      for (const [name, cur] of [..._zealLiveByChar]) {
+        if (cur.lastSeen && (now - cur.lastSeen) > 120_000) _retireZealChar(name, 'idle 2m');
+      }
+    }, 30_000);
     // Hint check: every 15s, look at the EQ-running window vs zeal traffic.
     // Suppressed after the first fire (a single user session shouldn't get
     // nagged repeatedly) AND after any zeal event has arrived (proves pipe
@@ -3367,12 +3416,12 @@ function buildTrayMenu() {
         if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
         pushStatus();
       } },
-    { label: 'Melody (bard /melody)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
         if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
         pushStatus();
       } },
-    { label: '  ↳ Bard only (hide for non-bards)', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
+    { label: '  ↳ Only show on bard characters', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
         const cfg = loadConfig(); cfg.melodyBardOnly = mi.checked; saveConfig(cfg);
         pushStatus();
       } },

@@ -251,7 +251,7 @@
     }
     emptyEl.style.display = 'none';
     legendEl.style.display = 'flex';
-    bossEl.textContent = et.bossName || 'current fight';
+    bossEl.textContent = et.bossName || et.targetName || 'current fight';
     var startedAt = et.startedAt ? new Date(et.startedAt).getTime() : 0;
     var endMs = et.flushedAt || Date.now();
     var secs  = startedAt > 0 ? Math.round((endMs - startedAt) / 1000) : 0;

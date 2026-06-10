@@ -293,7 +293,9 @@
         _otherCharFight = et.uploader;
         et = null;
       }
-      const boss = (et && et.bossName) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
+      // targetName = catalog boss when matched, else the most-damaged
+      // defender — so trash pulls still name what's being fought.
+      const boss = (et && (et.bossName || et.targetName)) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
       // Tell the user when an OTHER character's fight is being hidden, so the
       // empty meter isn't mysterious. Updates the empty-state in-place.
