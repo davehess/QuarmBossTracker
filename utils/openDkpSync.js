@@ -746,6 +746,19 @@ async function syncCharacters() {
     if (c?.CharacterId && c?.Name) idToName.set(c.CharacterId, c.Name);
   }
 
+  // Officer family-link overrides (/admin/links). OpenDKP parentage is
+  // routinely incomplete — rank "Raid Alt" with ParentId 0 (Adiwen) splits
+  // one human into two families. When main_name_override is set, it wins
+  // over the ParentId resolution so the officer's fix survives every sync.
+  const overrideByName = new Map();
+  try {
+    const ov = await supabase.select('characters',
+      `select=name,main_name_override&guild_id=eq.${encodeURIComponent(guildId)}&main_name_override=not.is.null`);
+    for (const r of Array.isArray(ov) ? ov : []) {
+      if (r?.name && r?.main_name_override) overrideByName.set(String(r.name).toLowerCase(), r.main_name_override);
+    }
+  } catch { /* overrides unavailable — fall back to OpenDKP parentage */ }
+
   // Keep Deleted=true characters in the upsert. OpenDKP keeps historical
   // loot pointing at deleted CharacterIds; dropping them here used to make
   // 45% of auction winner_character_ids unresolvable, which made the loot
@@ -756,7 +769,8 @@ async function syncCharacters() {
     .filter(c => c && c.Name)
     .map(c => {
       const isRoot = c.ParentId === 0 || c.ParentId == null;
-      const mainName = isRoot ? c.Name : (idToName.get(c.ParentId) || null);
+      const mainName = overrideByName.get(c.Name.toLowerCase())
+        || (isRoot ? c.Name : (idToName.get(c.ParentId) || null));
       return {
         guild_id:   guildId,
         name:       c.Name,

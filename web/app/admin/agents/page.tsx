@@ -237,6 +237,10 @@ type Family = {
   anyFight: boolean;
   anyForeign: boolean;
   linked: boolean;            // any member uploads with a per-user Discord token
+  // Other family mains whose streams ride the SAME per-user token as this
+  // family's — almost always one human whose alts were never parented in
+  // OpenDKP (Adiwen/Wabumkin). Fixable from /admin/links → Family links.
+  sameUploaderAs: string[];
 };
 
 // Group uploading characters into one family per owner. Discord-auth aware:
@@ -303,7 +307,7 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
 
     let f = fams.get(key);
     if (!f) {
-      f = { mainName, discordId: mainDiscord.get(key) ?? null, ownerNick: null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false, anyForeign: false, linked: false };
+      f = { mainName, discordId: mainDiscord.get(key) ?? null, ownerNick: null, members: [], latestMs: 0, latestUpload: '', totalUploads: 0, totalErrors: 0, versions: [], queueMax: 0, anyFight: false, anyForeign: false, linked: false, sameUploaderAs: [] };
       fams.set(key, f);
     }
     f.members.push(s);
@@ -326,6 +330,30 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
       if (nick && nick.toLowerCase() !== f.mainName.toLowerCase()) f.ownerNick = nick;
     }
   }
+
+  // Same-token detection: when one per-user Discord token uploads for
+  // MULTIPLE families, flag each so officers spot the un-parented-alt split
+  // (the Adiwen/Wabumkin case) instead of believing two separate people are
+  // running agents. The fix lives at /admin/links → Family links.
+  const famsByToken = new Map<string, Family[]>();
+  for (const f of fams.values()) {
+    const tokens = new Set<string>();
+    for (const s of f.members) if (s.uploadedBy) tokens.add(s.uploadedBy);
+    for (const t of tokens) {
+      const list = famsByToken.get(t) ?? [];
+      list.push(f);
+      famsByToken.set(t, list);
+    }
+  }
+  for (const list of famsByToken.values()) {
+    if (list.length < 2) continue;
+    for (const f of list) {
+      for (const other of list) {
+        if (other !== f && !f.sameUploaderAs.includes(other.mainName)) f.sameUploaderAs.push(other.mainName);
+      }
+    }
+  }
+
   return [...fams.values()].sort((a, b) => b.latestMs - a.latestMs);
 }
 
@@ -760,6 +788,15 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
         )}
         {fam.anyForeign && (
           <span className="text-gold text-sm shrink-0" title="Includes a toon being run by someone other than its owner — expand for details">*</span>
+        )}
+        {fam.sameUploaderAs.length > 0 && (
+          <Link
+            href="/admin/links"
+            className="text-orange text-[10px] border border-orange/50 rounded px-1.5 py-0.5 shrink-0 no-underline hover:bg-orange/10"
+            title={`Same Mimic install also uploads ${fam.sameUploaderAs.join(', ')} — probably one person whose alts aren't parented in OpenDKP. Fix under /admin/links → Family links.`}
+          >
+            ⚠ same uploader as {fam.sameUploaderAs.join(', ')}
+          </Link>
         )}
         <span className="text-dim text-xs ml-auto whitespace-nowrap">{rel(fam.latestUpload)}</span>
         {/* Version chip — visible on every breakpoint (was hidden on mobile).

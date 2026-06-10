@@ -30,6 +30,7 @@ type Character = {
   guild_id: string;
   name: string;
   main_name: string | null;
+  main_name_override: string | null;
   class: string | null;
   rank: string | null;
   active: boolean;
@@ -165,6 +166,55 @@ async function applyAllAutoMatches() {
   revalidatePath('/admin/links');
 }
 
+// ── Family links (main/alt overrides) ───────────────────────────────────────
+
+// Set (or clear) an officer family-link override. Writes BOTH columns:
+// main_name_override is the durable intent the OpenDKP sync respects;
+// main_name makes the fix take effect immediately everywhere that folds
+// families today. Re-points the character's existing alts too, so a whole
+// mis-rooted family moves in one action. Clearing the override leaves
+// main_name as-is — the next OpenDKP sync restores OpenDKP's view.
+async function setFamilyLink(formData: FormData) {
+  'use server';
+  const ok = await actionAssertOfficer();
+  if (!ok) redirect('/?error=admin_required');
+  const name = String(formData.get('name') || '').trim();
+  const main = String(formData.get('main') || '').trim();
+  if (!name || !/^[A-Za-z]{2,}$/.test(name)) return;
+  const admin = supabaseAdmin();
+
+  if (!main) {
+    await admin.from('characters')
+      .update({ main_name_override: null })
+      .eq('guild_id', 'wolfpack')
+      .ilike('name', name);
+    revalidatePath('/admin/links');
+    return;
+  }
+  if (!/^[A-Za-z]{2,}$/.test(main) || main.toLowerCase() === name.toLowerCase()) return;
+
+  // Resolve canonical casing + guard against linking under a non-existent or
+  // cyclic target (target must not itself resolve back to `name`).
+  const { data: targetRows } = await admin
+    .from('characters')
+    .select('name, main_name')
+    .eq('guild_id', 'wolfpack')
+    .ilike('name', main)
+    .limit(1);
+  const target = (targetRows ?? [])[0] as { name: string; main_name: string | null } | undefined;
+  if (!target) return;
+  if ((target.main_name || target.name).toLowerCase() === name.toLowerCase()) return;
+
+  // The character itself + anything currently rooted at it (its alts).
+  await admin.from('characters')
+    .update({ main_name_override: target.name, main_name: target.name })
+    .eq('guild_id', 'wolfpack')
+    .neq('name', target.name)
+    .or(`name.ilike.${name},main_name.ilike.${name}`);
+  revalidatePath('/admin/links');
+  revalidatePath('/admin/agents');
+}
+
 // ── Family-link requests (from Mimic UI-Studio uploads of unlinked toons) ───
 
 type LinkRequest = {
@@ -232,6 +282,16 @@ async function approveLinkRequest(formData: FormData) {
     });
   }
 
+  // Stamp the override too — without it the next OpenDKP sync resets
+  // main_name to ParentId resolution (self for un-parented toons) and the
+  // approved family link silently unwinds.
+  if (mainName) {
+    await admin.from('characters')
+      .update({ main_name_override: mainName })
+      .eq('guild_id', 'wolfpack')
+      .ilike('name', req.character_name);
+  }
+
   // Merge in the held backups — clear the pending flag so they're restorable.
   await admin.from('ui_snapshots')
     .update({ pending_link: false })
@@ -273,10 +333,10 @@ export default async function AdminLinksPage({
   const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
-  const [{ data: chars }, { data: members }, { data: reqs }] = await Promise.all([
+  const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }] = await Promise.all([
     admin
       .from('characters')
-      .select('guild_id, name, main_name, class, rank, active, discord_id, link_ignored')
+      .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored')
       .eq('guild_id', 'wolfpack')
       .order('active', { ascending: false })
       .order('name'),
@@ -291,6 +351,12 @@ export default async function AdminLinksPage({
       .eq('guild_id', 'wolfpack')
       .eq('status', 'pending')
       .order('created_at', { ascending: true }),
+    admin
+      .from('agent_upload_stats')
+      .select('character, uploaded_by_discord_id')
+      .not('uploaded_by_discord_id', 'is', null)
+      .not('character', 'is', null)
+      .limit(3000),
   ]);
   const pendingRequests = (reqs ?? []) as LinkRequest[];
 
@@ -298,6 +364,49 @@ export default async function AdminLinksPage({
   const memberList = (members ?? []) as Member[];
   const ix = buildTokenIndex(memberList);
   const memberById = new Map(memberList.map(m => [m.discord_id, m] as const));
+
+  // ── Same-uploader family candidates ──────────────────────────────────────
+  // One Mimic install = one per-user Discord token across every watched log.
+  // When that token's uploads span MULTIPLE rostered families, it's almost
+  // always one human whose alts were never parented in OpenDKP (rank "Raid
+  // Alt", ParentId 0). Surface those groups for one-click linking. The
+  // exception — someone regularly running a friend's toon — is exactly why
+  // this is an officer review list and not an auto-merge.
+  const charByLower = new Map(allChars.map(c => [c.name.toLowerCase(), c] as const));
+  const effectiveMain = (n: string): Character | null => {
+    const c = charByLower.get(n.toLowerCase());
+    if (!c) return null;
+    const main = (c.main_name && c.main_name.trim()) || c.name;
+    return charByLower.get(main.toLowerCase()) ?? c;
+  };
+  type FamGroup = { did: string; families: { main: Character; uploaders: string[]; isHome: boolean }[] };
+  const byToken = new Map<string, Map<string, Set<string>>>(); // did → mainLower → uploading chars
+  for (const u of (uploads ?? []) as { character: string | null; uploaded_by_discord_id: string | null }[]) {
+    if (!u.character || !u.uploaded_by_discord_id) continue;
+    const main = effectiveMain(u.character);
+    if (!main) continue;          // un-rostered — /admin/agents already folds these by token
+    let fams = byToken.get(u.uploaded_by_discord_id);
+    if (!fams) { fams = new Map(); byToken.set(u.uploaded_by_discord_id, fams); }
+    let set = fams.get(main.name.toLowerCase());
+    if (!set) { set = new Set(); fams.set(main.name.toLowerCase(), set); }
+    set.add(u.character);
+  }
+  const familyGroups: FamGroup[] = [];
+  for (const [did, fams] of byToken) {
+    if (fams.size < 2) continue;
+    const families = [...fams.entries()].map(([mainLower, ups]) => {
+      const main = charByLower.get(mainLower)!;
+      // "Home" = the family that actually owns this Discord account (any
+      // member of the family carries the link). The other families are the
+      // candidates to fold under it.
+      const isHome = allChars.some(c =>
+        c.discord_id === did
+        && (((c.main_name && c.main_name.trim()) || c.name).toLowerCase() === mainLower));
+      return { main, uploaders: [...ups].sort(), isHome };
+    }).sort((a, b) => Number(b.isHome) - Number(a.isHome) || a.main.name.localeCompare(b.main.name));
+    familyGroups.push({ did, families });
+  }
+  familyGroups.sort((a, b) => b.families.length - a.families.length);
 
   // Dismissed (link_ignored) characters are parked in their own view and
   // excluded from every other list + the auto-match logic.
@@ -401,6 +510,80 @@ export default async function AdminLinksPage({
             </tbody>
           </table>
         )}
+      </section>
+
+      {/* Same-uploader family candidates (main/alt overrides) */}
+      <section className="bg-panel border border-border rounded-lg">
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
+          👥 Same uploader, separate families {familyGroups.length > 0 && <span className="text-gold">({familyGroups.length})</span>}
+        </h3>
+        <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
+          Each row group is one Mimic install (one member&apos;s Discord token) whose uploads span
+          multiple roster families — usually alts never parented in OpenDKP. Linking sets an
+          officer override that <b>survives the OpenDKP sync</b> and re-points the whole family
+          at once. Leave it alone if the member genuinely runs someone else&apos;s toon.
+        </div>
+        {familyGroups.length === 0 ? (
+          <div className="p-4 text-xs text-dim">No candidates — every uploader&apos;s characters fold into one family. 🎉</div>
+        ) : (
+          <div className="divide-y divide-border/40">
+            {familyGroups.map(g => {
+              const m = memberById.get(g.did);
+              return (
+                <div key={g.did} className="p-4">
+                  <div className="text-sm text-text mb-2">
+                    {m ? memberLabel(m) : <span className="text-dim">Discord {g.did}</span>}
+                    <span className="text-dim text-xs ml-2">uploads {g.families.length} families</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {g.families.map(f => (
+                      <div key={f.main.name} className="flex flex-col sm:flex-row sm:items-center gap-1.5 text-xs">
+                        <div className="sm:w-64">
+                          <span className="text-text font-medium">{f.main.name}</span>
+                          {f.isHome && <span className="ml-2 text-[10px] tracking-wide px-1.5 py-0.5 rounded bg-green/20 border border-green/60 text-green uppercase">home</span>}
+                          {f.main.main_name_override && <span className="ml-2 text-[10px] text-gold" title="Officer override active">override</span>}
+                          <div className="text-dim text-[10px]">
+                            uploads: {f.uploaders.join(', ')}{f.main.rank ? ` · ${f.main.rank}` : ''}
+                          </div>
+                        </div>
+                        {!f.isHome && (
+                          <form action={setFamilyLink} className="flex items-center gap-1.5">
+                            <input type="hidden" name="name" value={f.main.name} />
+                            <span className="text-dim">link as alt of</span>
+                            <select name="main" defaultValue={g.families.find(o => o.isHome)?.main.name ?? g.families.find(o => o.main.name !== f.main.name)?.main.name ?? ''} className="bg-bg border border-border rounded px-2 py-1 text-xs">
+                              {g.families.filter(o => o.main.name !== f.main.name).map(o => (
+                                <option key={o.main.name} value={o.main.name}>{o.main.name}{o.isHome ? ' (home)' : ''}</option>
+                              ))}
+                            </select>
+                            <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">Link</button>
+                          </form>
+                        )}
+                        {f.main.main_name_override && (
+                          <form action={setFamilyLink}>
+                            <input type="hidden" name="name" value={f.main.name} />
+                            <input type="hidden" name="main" value="" />
+                            <button type="submit" title="Clear the officer override — the next OpenDKP sync restores OpenDKP's parentage" className="px-2 py-1 rounded border border-border text-dim text-xs hover:border-orange hover:text-orange">
+                              Clear override
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {/* Manual one-off: link any character under any main */}
+        <form action={setFamilyLink} className="p-4 border-t border-border/40 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-dim">Manual:</span>
+          <input name="name" placeholder="Character" className="bg-bg border border-border rounded px-2 py-1 text-xs w-32" />
+          <span className="text-dim">is an alt of</span>
+          <input name="main" placeholder="Main" className="bg-bg border border-border rounded px-2 py-1 text-xs w-32" />
+          <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">Link</button>
+          <span className="text-dim">(leave Main empty to clear an override)</span>
+        </form>
       </section>
 
       {/* View toggles */}
