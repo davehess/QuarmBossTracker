@@ -5327,6 +5327,38 @@ function _serializeForDashboard() {
       targets: [...(s.targets || [])],
     };
   }
+
+// Zeal writes zeal.ini into the EQ folder; the "Export data on /camp" option
+// persists as ExportOnCamp=TRUE. Reading it lets the Setup checklist verify
+// the gear/AA export is actually enabled instead of just reminding. EQ dirs
+// come from WOLFPACK_EQ_DIR plus every watched log's folder (Logs/ parent).
+let _zealCampAt = 0;
+let _zealCampVal = null;
+function _zealExportOnCampState() {
+  if (Date.now() - _zealCampAt < 60_000) return _zealCampVal;
+  _zealCampAt = Date.now();
+  try {
+    const dirs = new Set();
+    if (process.env.WOLFPACK_EQ_DIR) dirs.add(process.env.WOLFPACK_EQ_DIR);
+    for (const w of (stats.watchedLogs || [])) {
+      if (!w || !w.logPath) continue;
+      let d = path.dirname(w.logPath);
+      if (/^logs$/i.test(path.basename(d))) d = path.dirname(d);
+      dirs.add(d);
+    }
+    let found = 0, on = 0;
+    for (const d of dirs) {
+      const ini = path.join(d, 'zeal.ini');
+      if (!fs.existsSync(ini)) continue;
+      found++;
+      const txt = fs.readFileSync(ini, 'utf8');
+      if (/^\s*ExportOnCamp\s*=\s*(true|1)\s*$/im.test(txt)) on++;
+    }
+    _zealCampVal = found === 0 ? null : (on === found);
+  } catch { _zealCampVal = null; }
+  return _zealCampVal;
+}
+
   // Active-character signal — the watched character whose Zeal pipe most
   // recently sent a sample (i.e. the EQ window the user is currently in).
   // Lets overlays focus on JUST the focused character — clears pet/charm/
@@ -5379,6 +5411,11 @@ function _serializeForDashboard() {
     // doesn't prove the token is still valid, so the badge uses identity.
     mimicSignedIn:      !!_mimicSessionToken,
     mimicIdentity:      _mimicIdentity,
+    // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
+    // each known EQ folder (60s cache). true = every found zeal.ini has
+    // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
+    // found (can't tell). Drives the Setup-checklist row.
+    zealExportOnCamp:   _zealExportOnCampState(),
     // Prefer the focused character's encounter when the agent is watching
     // multiple logs (multi-boxer). Falls back to the last-write-wins global
     // when no per-character entry exists, preserving single-character UX.
@@ -6234,25 +6271,21 @@ body.wp-overlay-mode .wp-overlay-target table td {
 body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
-<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
+<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>' : ''}</h1>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
-  <span>Jump to wolfpack.quest:</span>
+  <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
+     style="color:var(--blue);border:1px solid var(--border);border-radius:5px;padding:3px 9px;text-decoration:none;font-weight:600"
+     title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a><span>:</span>
   <a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" title="Your /me dashboard — stats, settings, recent">/me</a>
   <a href="https://wolfpack.quest/parses" target="_blank" rel="noreferrer" title="Recent parses (last 30 days)">parses</a>
   <a href="https://wolfpack.quest/pvp" target="_blank" rel="noreferrer" title="PvP leaderboard">pvp</a>
   <a href="https://wolfpack.quest/leaderboards" target="_blank" rel="noreferrer" title="Damage leaderboards">leaderboards</a>
   <a href="https://wolfpack.quest/fun" target="_blank" rel="noreferrer" title="Fun counters (Peopleslayer LD, Longest Dire Charm, etc.)">fun</a>
   <span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">
-    <a id="wpAdminLink" href="https://wolfpack.quest/admin" target="_blank" rel="noreferrer"
-       style="display:none;color:var(--red);border:1px solid var(--red);border-radius:5px;padding:3px 9px;text-decoration:none"
-       title="Officer admin — links, agents, triggers, audits">🛡 Admin ↗</a>
     <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
        style="color:var(--orange);border:1px solid var(--orange);border-radius:5px;padding:3px 9px;text-decoration:none"
        title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
-    <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
-       style="color:var(--blue);border:1px solid var(--border);border-radius:5px;padding:3px 9px;text-decoration:none"
-       title="Open wolfpack.quest in a new tab (hotkey: W)">wolfpack.quest ↗</a>
     <button id="wpUiStudioBtn" type="button"
        style="background:transparent;border:1px solid var(--green);color:var(--green);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
        title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
@@ -6536,7 +6569,8 @@ function renderHeader(s) {
   // Click-to-reset for officers who want a clean board between raid nights
   // or after testing. Wipes session counters and Recent Parses; lifetime
   // totals and persisted resume state for opt-in backfills are preserved.
-  const resetBtn = '<button id="resetSessionBtn" style="margin-left:8px;background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px" title="Zero out the session counters and Recent Parses on this dashboard">⟲ Reset dashboard</button>';
+  // (Reset dashboard moved to the Settings window — Settings → Reset
+  // dashboard. POSTs the same /api/reset-session endpoint.)
   // Upload-queue chip — visible only when there's pending work or a recent
   // permanent drop. Shows pending count + the last-retry summary so a
   // network blip is obvious without scrolling.
@@ -6565,15 +6599,21 @@ function renderHeader(s) {
     const display = s.mimicIdentity.display_name || s.mimicIdentity.discord_id || 'Discord account';
     const officer = s.mimicIdentity.is_officer ? ' <span style="color:var(--gold)" title="Officer">👑</span>' : '';
     identityChip = ' · <span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked Mimic install — Settings → Wolf Pack account to manage">⛓ ' + esc(display) + officer + '</span>';
-    // Officers get a direct Admin link in the top-right quicklinks cluster.
-    try {
-      const adm = document.getElementById('wpAdminLink');
-      if (adm) adm.style.display = s.mimicIdentity.is_officer ? '' : 'none';
-    } catch (e2) { /* */ }
+    // Officers: Admin link rides right next to the username chip.
+    if (s.mimicIdentity.is_officer) {
+      identityChip += ' <a href="https://wolfpack.quest/admin" target="_blank" rel="noreferrer" style="color:var(--red);border:1px solid var(--red);border-radius:3px;font-size:11px;padding:2px 6px;text-decoration:none" title="Officer admin — links, agents, triggers, audits">🛡 Admin ↗</a>';
+    }
   } else if (s.mimicSignedIn) {
     identityChip = ' · <span style="background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
   }
-  h += '<div>' + (versionStr ? versionStr + ' · ' : '') + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + alwaysBtn + resetBtn + '</div>';
+  h += '<div>' + (versionStr ? versionStr + ' · ' : '') + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + '</div>';
+  // Update button lives in the H1 next to "(agent x.y.z)" — fill its slot
+  // BEFORE the byte-stable early-return below (the slot is outside #header).
+  // Only rewrite when changed so the button isn't recreated every poll.
+  try {
+    const updSlot = document.getElementById('wpUpdSlot');
+    if (updSlot && updSlot.innerHTML !== alwaysBtn) updSlot.innerHTML = alwaysBtn;
+  } catch (e3) { /* */ }
   if (!setSectionHTML('header', h)) return;
   // Stale-backfill banner has a one-click hop to the Opt-in Logs pane.
   // Drives directly at the nav button so we reuse its tab-switching glue
@@ -6654,16 +6694,8 @@ function renderHeader(s) {
     try { if (window.mimic && window.mimic.openSettings) window.mimic.openSettings(); } catch (e) { void e; }
   });
 
-  // Reset-dashboard click — zeros session counters server-side, then we
-  // re-pull /api/state so the UI refreshes immediately without a hard reload.
-  const r = document.getElementById('resetSessionBtn');
-  _bindOnce(r, 'click', async () => {
-    if (!confirm('Reset session counters? Recent Parses, top damage and per-class panes go back to empty. Lifetime totals and opt-in backfill progress are preserved.')) return;
-    r.disabled = true; r.textContent = 'Resetting...';
-    try { await fetch('/api/reset-session', { method: 'POST' }); } catch {}
-    try { const fresh = await (await fetch('/api/state')).json(); refresh(); void fresh; } catch {}
-    r.disabled = false; r.textContent = '⟲ Reset dashboard';
-  });
+  // (Reset-dashboard click wiring removed — the button lives in the Mimic
+  // Settings window now and POSTs /api/reset-session directly.)
 }
 
 function renderDash(s) {
@@ -6793,12 +6825,26 @@ function renderSetupChecks(s) {
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">' + esc(r.label) + '</td>'
        + '<td class="dim" style="font-size:11px">' + esc(r.info || detail) + '</td></tr>';
   }
-  // Export-on-/camp is a Zeal toggle we can't read from here — surface it as a
-  // reminder so members enable it for the gear/Quarmy sync (cast-time accuracy,
-  // MGB AA detection, etc.).
+  // Export-on-/camp — real check when zeal.ini is readable (agent scans each
+  // EQ folder for ExportOnCamp=TRUE), reminder row when it is not.
+  if (s.zealExportOnCamp === true) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
+       + '<td class="dim" style="font-size:11px">ExportOnCamp=TRUE in zeal.ini — gear + AAs sync on every /camp (accurate cast bars + MGB detection).</td></tr>';
+  } else if (s.zealExportOnCamp === false) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
+       + '<td class="dim" style="font-size:11px">zeal.ini found but ExportOnCamp is OFF — in Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync.</td></tr>';
+  } else {
+    h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
+       + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
+  }
+  // UI backups — point at UI Studio so a reinstall / new PC restores the EQ
+  // window layout + eqclient.ini in one click.
   h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
-     + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
-     + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
+     + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Back up your UI</td>'
+     + '<td class="dim" style="font-size:11px">Open <b>UI Studio</b> (top right) and capture your EQ window layout + eqclient.ini — restores in one click on a reinstall or a new PC.</td></tr>';
   h += '</table>';
   morphInto(el, h);
 }
