@@ -4288,6 +4288,89 @@ async function _handleAgentFunEvent(req, res) {
   res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
 }
 
+// POST /api/agent/faction
+//
+// Per-character faction tracking (migration 20260610120000). Two event kinds
+// ride one payload from the agent's self-only log lines:
+//   {kind:'hit', character, faction, direction ±1, capped, ts}
+//     — "Your faction standing with X got better/worse." Classic prints no
+//       numeric delta; magnitudes marry to PQDI faction pages at display
+//       time. capped=true is the at-cap form ("could not possibly get any
+//       better/worse") — it pins the character's absolute min/max position.
+//   {kind:'con',  character, mob, standing, rank, ts}
+//     — a /consider standing TRANSITION (agent dedups unchanged cons).
+// Unique constraints make complete-log backfill crawls idempotent. Known
+// undercount: two same-second hits on the SAME faction (AE kill of twin
+// mobs) collapse into one row — acceptable for v1 tallies.
+async function _handleAgentFaction(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 512 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  if (events.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const hits = [];
+  const cons = [];
+  for (const e of events) {
+    if (!e || !e.character || !e.ts) continue;
+    const ts = new Date(e.ts);
+    if (isNaN(ts.getTime())) continue;
+    if (e.kind === 'hit' && e.faction) {
+      hits.push({
+        guild_id:  guildId,
+        character: String(e.character).slice(0, 64),
+        faction:   String(e.faction).slice(0, 96),
+        direction: e.direction > 0 ? 1 : -1,
+        capped:    !!e.capped,
+        event_ts:  ts.toISOString(),
+        uploaded_by_discord_id: identity.discord_id,
+      });
+    } else if (e.kind === 'con' && e.mob && e.standing) {
+      cons.push({
+        guild_id:  guildId,
+        character: String(e.character).slice(0, 64),
+        mob:       String(e.mob).slice(0, 64),
+        standing:  String(e.standing).slice(0, 24),
+        rank:      Number.isFinite(e.rank) ? Math.trunc(e.rank) : null,
+        event_ts:  ts.toISOString(),
+        uploaded_by_discord_id: identity.discord_id,
+      });
+    }
+  }
+
+  let written = 0;
+  if (hits.length) {
+    const r = await supabase.upsert('faction_hits', hits, 'guild_id,character,faction,event_ts,direction')
+      .catch(err => { console.warn('[faction] hits upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  if (cons.length) {
+    const r = await supabase.upsert('faction_cons', cons, 'guild_id,character,mob,event_ts')
+      .catch(err => { console.warn('[faction] cons upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  _trackUpload({ endpoint: 'faction', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
 // POST /api/agent/buff_casts
 //
 // Observed buff landings on other players (see migration 20260605120000). The
@@ -7962,6 +8045,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentBuffCasts(req, res); }
     catch (err) {
       console.error('[buff-casts] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/faction') {
+    try { return await _handleAgentFaction(req, res); }
+    catch (err) {
+      console.error('[faction] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
