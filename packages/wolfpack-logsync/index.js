@@ -214,6 +214,9 @@ const CAST_HATE = {
   'voice of quellious':             -2500,
   'quivering veil of xarn':         -2000,
   'fading memories':                -1500,
+  // Classic wizard/caster de-aggro nukes — flat hate reduction per cast.
+  'jolt':                            -400,
+  'cinder jolt':                     -570,
 };
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -405,6 +408,13 @@ const KEEP_PATTERNS = [
   /\byou have taunted\b/i,
   /\byou have stunned\b/i,
   /\byou stun\s+\w/i,
+  // Aggro DUMPS — the other direction. Feign Death (monk ability + SK/necro
+  // spell land both print the fall line) and rogue Evade (mid-fight Hide).
+  // The threat meter zeroes / halves the player's buckets on these.
+  /\bhas fallen to the ground\b/i,
+  /\byou have fallen to the ground\b/i,
+  /\byou have momentarily ducked away from the main combat\b/i,
+  /\byour attempts at ducking clear of combat fail\b/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -914,6 +924,27 @@ function parseEvent(line, ts) {
   if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
   m = line.match(/\]\s+You stun (.+?)\./i);
   if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
+
+  // ── Aggro dumps ──────────────────────────────────────────────────────────
+  // Feign Death — monk ability AND the SK/necro spell landing both print the
+  // same fall line ("You have fallen to the ground." self / "<Name> has
+  // fallen to the ground." bystander). The line prints whether the FD
+  // succeeded or failed; we can't tell from the log alone, so the threat
+  // meter assumes success (raid-skill FD rarely fails, and a failed FD's
+  // continued combat rebuilds the meter anyway).
+  if (/\]\s+You have fallen to the ground\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'feign_death', attacker: null };
+  }
+  m = line.match(/\]\s+(\w+) has fallen to the ground\.\s*$/i);
+  if (m) return { ts: tsIso, type: 'feign_death', attacker: m[1] };
+  // Rogue Evade (mid-fight Hide) — SELF-ONLY lines, so only the rogue's own
+  // agent sees them. Success cuts hate roughly in half on TAKP-era servers.
+  if (/\]\s+You have momentarily ducked away from the main combat\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'evade', attacker: null, success: true };
+  }
+  if (/\]\s+Your attempts at ducking clear of combat fail\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'evade', attacker: null, success: false };
+  }
 
   // ── Sourceless spell cast detection (bard dirges & similar) ──────────────
   // Walks the SOURCELESS_SPELLS catalog and emits a `dirge_cast` event with
@@ -3500,6 +3531,37 @@ class EncounterBuilder {
         t.proc += Math.max(1, maxThreat + 1 - current);
       } else {
         t.proc += PROC_HATE[event.type] || 0;
+      }
+    }
+
+    // Aggro dumps — Feign Death and rogue Evade pull the player DOWN the
+    // threat meter. Only the threat buckets (swing/proc/spell/heal) are
+    // touched; dmg/healRaw/took are damage-meter numbers and must survive
+    // a dump untouched (FDing doesn't un-deal your damage).
+    if (event.type === 'feign_death' || event.type === 'evade') {
+      // FD bystander form carries the faller's name; self forms resolve to
+      // the uploader. Single-capitalized-word gate keeps NPC corpses and
+      // multi-word mobs out (mobs don't FD, but belt-and-suspenders).
+      const who = event.attacker || this.character;
+      if (who && /^[A-Z][a-zA-Z]{2,19}$/.test(who) && this.threatBy.has(who)) {
+        const t = this.threatBy.get(who);
+        if (event.type === 'feign_death') {
+          // Successful FD = off the hate list. We can't distinguish a failed
+          // FD from the log line, so assume success — a failed FD's continued
+          // combat rebuilds the buckets within seconds anyway.
+          t.procDetail['Feign Death'] = (t.procDetail['Feign Death'] || 0) + 1;
+          t.swing = 0; t.proc = 0; t.spell = 0; t.heal = 0;
+        } else if (event.success) {
+          // Successful Evade ≈ a big flat cut; TAKP-era servers model it as
+          // roughly half your hate. Halve every bucket so the breakdown bar
+          // keeps its shape while the row drops down the meter.
+          t.procDetail['Evade'] = (t.procDetail['Evade'] || 0) + 1;
+          t.swing *= 0.5; t.proc *= 0.5; t.spell *= 0.5; t.heal *= 0.5;
+        } else {
+          // Failed evade — no hate change, but count the attempt so a rogue
+          // can see their evade success rate in the breakdown column.
+          t.procDetail['Evade (failed)'] = (t.procDetail['Evade (failed)'] || 0) + 1;
+        }
       }
     }
 
