@@ -8182,7 +8182,7 @@ function renderRaidTab(q) {
     }
     var burst = q.feral_queue || q.savagery_queue || [];
     if (burst.length && q.burst_label) {
-      h += '<div style="margin:12px 0 3px;padding:3px 8px;background:rgba(240,180,41,0.10);border-radius:4px;font-size:11px;color:var(--gold);font-weight:600">⚡ ' + esc(q.burst_label) + ' <span class="dim" style="font-weight:normal">top targets only — ~4 per ' + esc(_raidTabCls || 'caster') + ' in raid</span></div>';
+      h += '<div style="margin:12px 0 3px;padding:3px 8px;background:rgba(240,180,41,0.10);border-radius:4px;font-size:11px;color:var(--gold);font-weight:600">⚡ ' + esc(q.burst_label) + ' <span class="dim" style="font-weight:normal">top targets only — ~3 per ' + esc(_raidTabCls || 'caster') + ' in raid</span></div>';
       for (var bk = 0; bk < burst.length; bk++) {
         var b2 = burst[bk];
         h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid var(--gold);margin-bottom:1px">'
