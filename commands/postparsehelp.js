@@ -26,7 +26,7 @@ module.exports = {
     // gets their own ephemeral walkthrough.
     await interaction.channel.send({
       embeds: [buildParseHelpEmbed()],
-      components: buildParseHelpComponents(),
+      components: await buildParseHelpComponents(),
     });
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: '✅ Posted the setup instructions here.' });
   },

@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.73': [
+    '**One-tap Mimic downloads** — `/parsehelp` (and the public `/postparsehelp` board) now has **🐺 Download Mimic** and **Beta** buttons that link straight to the installer .exe of the latest release on each channel — no landing page hop. Resolved live from GitHub, so they always point at the newest build.',
+  ],
   '3.0.70': [
     '**/raid got sharper** — the raider card now breaks Resists into all five schools (so a missing Group Resist Magic shows even when Circle of Seasons is up), shows landed bard **songs** separately, auto-refreshes every 15s, and hides parked characters unseen >15 min (toggle to show). The buffer queue flags the specific resist school your class covers. Mimic 1.0.69 betas add "Buffs n/15 · Songs n/6" to Mob Info for player targets.',
   ],

@@ -16,6 +16,7 @@ const {
 } = require('discord.js');
 
 const MIMIC_URL = 'https://wolfpack.quest/mimic';
+const { getMimicDownloadUrls } = require('../utils/mimicReleases');
 
 // ── Simple top-level message ────────────────────────────────────────────────
 function buildParseHelpEmbed() {
@@ -34,14 +35,18 @@ function buildParseHelpEmbed() {
     .setFooter({ text: 'Wolf Pack EQ (Quarm) • auto-updates once installed' });
 }
 
-// Buttons under the top message: open the guide + a direct download link.
-function buildParseHelpComponents() {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('parsehelp_guide').setLabel('📖 Step-by-step guide').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setURL(MIMIC_URL).setLabel('📥 Download Mimic Parser').setStyle(ButtonStyle.Link),
-    ),
-  ];
+// Buttons under the top message: the guide + DIRECT installer downloads —
+// "🐺 Download Mimic" (stable) and "Beta", matching the dashboard header's
+// pair. Resolved live from GitHub releases (5-min cache); falls back to the
+// wolfpack.quest/mimic landing page if resolution fails.
+async function buildParseHelpComponents() {
+  const { stable, beta } = await getMimicDownloadUrls();
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('parsehelp_guide').setLabel('📖 Step-by-step guide').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setURL(stable || MIMIC_URL).setLabel('🐺 Download Mimic').setStyle(ButtonStyle.Link),
+  );
+  if (beta) row.addComponents(new ButtonBuilder().setURL(beta).setLabel('Beta').setStyle(ButtonStyle.Link));
+  return [row];
 }
 
 // ── Paged walkthrough ───────────────────────────────────────────────────────
@@ -134,7 +139,7 @@ module.exports = {
     return interaction.reply({
       flags: MessageFlags.Ephemeral,
       embeds: [buildParseHelpEmbed()],
-      components: buildParseHelpComponents(),
+      components: await buildParseHelpComponents(),
     });
   },
 
