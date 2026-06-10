@@ -60,6 +60,7 @@ export type RaidRow = {
   pet: PetState | null;          // live charm/summoned pet snapshot (Zeal)
   isMe: boolean;                 // the signed-in user's character
   hasMgb?: boolean;              // Mass Group Buff AA trained (from Quarmy export)
+  isInferred?: boolean;          // buffs from observed casts (no Mimic), not Zeal-authoritative
 };
 
 export type PetState = {
@@ -510,6 +511,8 @@ export default function RaidView({
                         )}
                         {r.noAgent
                           ? <span className="text-dim italic text-[10px] ml-auto">no Mimic</span>
+                          : r.isInferred
+                          ? <span className="text-blue italic text-[10px] ml-auto" title="Buffs inferred from observed casts a groupmate's Mimic witnessed — not Zeal-authoritative">inferred</span>
                           : (
                               <>
                                 <span className="text-dim text-[10px] ml-auto">{r.buffCount} buffs</span>
@@ -945,6 +948,13 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
         </div>
       ) : (
         <>
+          {row.isInferred && (
+            <div className="text-blue text-[11px] italic border border-blue/30 bg-blue/5 rounded p-2">
+              Not running Mimic — these buffs are inferred from observed casts a groupmate&apos;s Mimic witnessed.
+              Group V2 buffs that landed on a Mimic raider in this group are credited to {row.name} too.
+              Timers are accurate; anything cast outside the group&apos;s Mimic coverage stays invisible.
+            </div>
+          )}
           {row.zone && (
             <div className="text-[11px]">
               <span className="text-dim">Zone:</span> <span className="text-text">{row.zone}</span>

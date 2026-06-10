@@ -118,7 +118,14 @@ export default async function RaidHubPage() {
   // untrained, just unknown. We pass the SET of trained characters to the view
   // for a small badge on the raid card.
   const MGB_AA_INDEX = 35;
-  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }] = await Promise.all([
+  // buff_casts window for inference. A group V2 cast (Talisman of Epuration,
+  // Aegolism, …) lands a buff_casts row PER TARGET, so if any Mimic raider
+  // in the group caught the cast we have rows for every groupmate — that
+  // gives us a real timer for a non-Mimic raider in the group. 3h covers
+  // every extended-duration group buff in era without dragging in stale
+  // observations.
+  const buffCastsSince = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }] = await Promise.all([
     admin.from('character_live_state')
       .select('character, zone_name, self_hp_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
       .eq('guild_id', 'wolfpack')
@@ -142,7 +149,40 @@ export default async function RaidHubPage() {
       .eq('guild_id', 'wolfpack')
       .eq('aa_index', MGB_AA_INDEX)
       .gte('rank', 1),
+    admin.from('buff_casts')
+      .select('target, spell_name, dur_ticks, cast_at')
+      .eq('guild_id', 'wolfpack')
+      .gte('cast_at', buffCastsSince)
+      .order('cast_at', { ascending: false })
+      .limit(3000),
   ]);
+  // Per-target, per-spell: most recent cast still within its catalog duration
+  // becomes an inferred buff entry. Two Mimic raiders in the same group can
+  // both witness the same group cast — last-write-wins on castMs dedups them.
+  type InferredBuff = { name: string; ticks: number | null; castMs: number };
+  const inferredBuffsByName = new Map<string, InferredBuff[]>();
+  {
+    const now = Date.now();
+    const byKey = new Map<string, { name: string; ticks: number | null; castMs: number; target: string }>();
+    for (const c of ((buffCastRows ?? []) as { target: string; spell_name: string; dur_ticks: number | null; cast_at: string }[])) {
+      if (!c || !c.target || !c.spell_name) continue;
+      const castMs = Date.parse(c.cast_at) || 0;
+      if (!castMs) continue;
+      const durSecs = (Number(c.dur_ticks) || 0) * 6;
+      if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;
+      const k = String(c.target).toLowerCase() + '|' + String(c.spell_name).toLowerCase();
+      const prev = byKey.get(k);
+      if (!prev || castMs > prev.castMs) byKey.set(k, { name: c.spell_name, ticks: c.dur_ticks, castMs, target: c.target });
+    }
+    for (const v of byKey.values()) {
+      const remSecs = (Number(v.ticks) || 0) * 6 - (now - v.castMs) / 1000;
+      const remTicks = remSecs > 0 ? Math.ceil(remSecs / 6) : 0;
+      if (remTicks <= 0) continue;
+      const k = String(v.target).toLowerCase();
+      if (!inferredBuffsByName.has(k)) inferredBuffsByName.set(k, []);
+      inferredBuffsByName.get(k)!.push({ name: v.name, ticks: remTicks, castMs: v.castMs });
+    }
+  }
   const mgbSet = new Set(((mgbRows ?? []) as { character: string }[])
     .map(r => String(r.character || '').toLowerCase())
     .filter(Boolean));
@@ -344,9 +384,19 @@ export default async function RaidHubPage() {
     const live = liveByName.get(lower);
     const className = classFor(rr.name);
     const role = classToRole(className);
-    const { byCategory, other, resists, songs, hasDI, chaCovered } = bucketBuffs(live?.buffs ?? null);
-    const hpSlots = analyzeHpSlots((live?.buffs ?? []).map(b => b?.name).filter(Boolean) as string[]);
-    const noAgent = !live;
+    // Non-Mimic raiders use observed buff_casts as the buff list — a group
+    // V2 cast (Talisman of Epuration, Aegolism, …) creates one row per
+    // target, so if a groupmate's Mimic caught the cast we know what
+    // Arakhan got and when. Marked `inferred:true` so the UI can say
+    // "from observed casts" rather than pretending it's Zeal-authoritative.
+    const inferred = inferredBuffsByName.get(lower) ?? null;
+    const buffsForRow: { name: string; ticks: number | null }[] = live?.buffs ?? (
+      inferred ? inferred.map(i => ({ name: i.name, ticks: i.ticks })) : []
+    );
+    const { byCategory, other, resists, songs, hasDI, chaCovered } = bucketBuffs(buffsForRow);
+    const hpSlots = analyzeHpSlots(buffsForRow.map(b => b?.name).filter(Boolean) as string[]);
+    const isInferred = !live && !!(inferred && inferred.length);
+    const noAgent = !live && !isInferred;
     const swappedTo = swapFor(live);
     rows.push({
       name: rr.name,
@@ -365,7 +415,7 @@ export default async function RaidHubPage() {
       // own-self HP from character_live_state fills in when this raider runs
       // Mimic themselves and their group has no other broadcaster yet.
       hpPct: rr.hp_pct ?? live?.self_hp_pct ?? null,
-      buffCount: live?.buff_count ?? (live?.buffs?.length ?? 0),
+      buffCount: live?.buff_count ?? buffsForRow.length,
       byCategory,
       other,
       resists,
@@ -373,10 +423,11 @@ export default async function RaidHubPage() {
       hasDI,
       chaCovered,
       hpSlots,
-      tier: colorTier(role, byCategory, hpSlots, live?.buffs ?? null, noAgent),
-      buffs: live?.buffs ?? [],
+      tier: colorTier(role, byCategory, hpSlots, buffsForRow, noAgent),
+      buffs: buffsForRow,
       pet: petFor(live),
       isMe: !!(meDiscordId && discordIdFor(rr.name) === meDiscordId),
+      isInferred,
       hasMgb: mgbSet.has(lower) || undefined,
     });
   }
