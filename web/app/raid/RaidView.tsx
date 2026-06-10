@@ -35,6 +35,7 @@ export type RaidRow = {
   className: string | null;
   role: Role;
   raidGroup: number | null;
+  raidIdx: number | null;        // which concurrent raid (0-based, biggest first)
   level: number | null;
   rank: string | null;           // '2' raid leader, '1' group leader
   inRaid: boolean;
@@ -151,14 +152,10 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
 }
 
 export default function RaidView({
-  rows, raidSize, mimicCovered, leaderName, leaderClass, groupLeaders, myClass, dsValues,
+  rows, raidLabels, myClass, dsValues,
 }: {
   rows: RaidRow[];
-  raidSize: number;
-  mimicCovered: number;
-  leaderName: string | null;
-  leaderClass: string | null;
-  groupLeaders: Record<number, string>;
+  raidLabels: string[];
   myClass: string | null;
   dsValues: Record<string, number>;
 }) {
@@ -172,6 +169,33 @@ export default function RaidView({
   // Tracked here so the user can flip mid-pull without losing the side panel
   // selection; the cure caster's whole flow is on /raid?view=cursed.
   const [view, setView] = useState<'roster' | 'cursed'>('roster');
+  // Concurrent raids → one tab each (Raid 1 = biggest). Defaults to the raid
+  // containing the signed-in user's character.
+  const [activeRaid, setActiveRaid] = useState<number>(() => {
+    const mine = rows.find(r => r.isMe && r.raidIdx != null);
+    return mine?.raidIdx ?? 0;
+  });
+  const multiRaid = raidLabels.length > 1;
+  // Rows visible under the active tab: the tab's raid + everything parked.
+  const tabRows = useMemo(
+    () => (multiRaid ? rows.filter(r => !r.inRaid || r.raidIdx === activeRaid || r.raidIdx == null) : rows),
+    [rows, activeRaid, multiRaid],
+  );
+  // Headline counters for the ACTIVE raid (previously page-computed globals,
+  // which is exactly how two concurrent raids blended together).
+  const inRaidRows   = useMemo(() => tabRows.filter(r => r.inRaid), [tabRows]);
+  const raidSize     = inRaidRows.length;
+  const mimicCovered = inRaidRows.filter(r => !r.noAgent).length;
+  const leaderRow    = inRaidRows.find(r => r.rank === '2') ?? null;
+  const leaderName   = leaderRow?.name ?? null;
+  const leaderClass  = leaderRow?.className ?? null;
+  const groupLeaders = useMemo(() => {
+    const m: Record<number, string> = {};
+    for (const r of inRaidRows) {
+      if (r.rank === '1' && r.raidGroup != null && m[r.raidGroup] == null) m[r.raidGroup] = r.name;
+    }
+    return m;
+  }, [inRaidRows]);
   // "Not in raid" parking lot: hide characters unseen for >15 min by default
   // (logged-off alts pile up fast) — the toggle brings them back.
   const [showStale, setShowStale] = useState(false);
@@ -193,12 +217,12 @@ export default function RaidView({
   // Counted separately so the tab can show a live badge ("Cursed · 3").
   const cursedRows = useMemo(() => {
     const out: { row: RaidRow; curses: { name: string; ticks: number | null }[] }[] = [];
-    for (const r of rows) {
+    for (const r of tabRows) {
       const curses = (r.buffs || []).filter(b => isCurseBuff(b && b.name));
       if (curses.length > 0) out.push({ row: r, curses });
     }
     return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
-  }, [rows]);
+  }, [tabRows]);
 
   // Group by raid group. Parked alts → "Not in raid" bucket sorted last.
   // Stale parked characters (no live-state update in >15 min — logged off)
@@ -208,12 +232,12 @@ export default function RaidView({
   const isStale = (r: RaidRow) =>
     !r.inRaid && !r.swappedTo
     && (!r.updatedAt || (Date.now() - new Date(r.updatedAt).getTime()) > STALE_MS);
-  const staleHidden = useMemo(() => rows.filter(isStale).length, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  const staleHidden = useMemo(() => tabRows.filter(isStale).length, [tabRows]); // eslint-disable-line react-hooks/exhaustive-deps
   const groups = useMemo(() => {
     const m = new Map<string, RaidRow[]>();
     const keyFor = (r: RaidRow) =>
       r.raidGroup != null ? `Group ${r.raidGroup}` : 'Not in raid';
-    for (const r of rows) {
+    for (const r of tabRows) {
       if (!showStale && isStale(r)) continue;
       const k = keyFor(r);
       const arr = m.get(k);
@@ -227,9 +251,9 @@ export default function RaidView({
       if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi;
       return a[0].localeCompare(b[0]);
     });
-  }, [rows, showStale]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tabRows, showStale]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selected = selectedName ? rows.find(r => r.name === selectedName) ?? null : null;
+  const selected = selectedName ? rows.find(r => r.name === selectedName) ?? null : null;   // any raid — detail follows the click
 
   // Buffer-mode queue: rows missing a buff this class provides. Sorted by tier
   // severity (red → orange → yellow). PREVIEW — needs real timers to be useful.
@@ -241,7 +265,7 @@ export default function RaidView({
     if (provides.length === 0 && providesResists.length === 0) return [];
     const severity = { red: 0, orange: 1, yellow: 2, upgradable: 3, green: 4, unknown: 5 } as const;
     const out: { row: RaidRow; missing: BuffCategory[]; missingResists: ResistType[]; upgrades: string[]; diNeedsCha: boolean }[] = [];
-    for (const r of rows) {
+    for (const r of tabRows) {
       if (!r.inRaid || r.noAgent) continue;
       const expected = ROLE_TARGETS[r.role] || [];
       const buffNames = r.buffs.map(b => b?.name).filter(Boolean) as string[];
@@ -288,19 +312,19 @@ export default function RaidView({
       return severity[a.row.tier] - severity[b.row.tier];
     });
     return out.slice(0, 30);
-  }, [bufferClass, rows]);
+  }, [bufferClass, tabRows]);
 
   // Class counts — for the sidebar AND for the buffer-mode auto-detection of
   // useful classes. Only count in-raid characters.
   const classCounts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const r of rows) {
+    for (const r of tabRows) {
       if (!r.inRaid) continue;
       const k = r.className || 'Unknown';
       m.set(k, (m.get(k) ?? 0) + 1);
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [rows]);
+  }, [tabRows]);
 
   const focused = bufferClass !== '';
 
@@ -318,6 +342,21 @@ export default function RaidView({
         </div>
         <a href="/buffs" className="text-xs text-blue hover:underline">← classic /buffs view</a>
       </div>
+
+      {/* Concurrent raids — one tab each. Only rendered when Zeal snapshots
+          cluster into MORE than one raid (two crews running at once). */}
+      {multiRaid && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {raidLabels.map((label, i) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setActiveRaid(i)}
+              className={`px-3 py-1.5 text-xs rounded border transition-colors ${activeRaid === i ? 'bg-[#1f6feb33] text-blue border-blue' : 'bg-panel text-dim border-border hover:border-blue'}`}
+            >⚔️ {label}</button>
+          ))}
+        </div>
+      )}
 
       {/* Coverage unlocks first — the "more Mimics = more capabilities" pitch.
           Front-and-center so it's the first thing a guildie sees. */}

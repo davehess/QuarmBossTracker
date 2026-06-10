@@ -5365,7 +5365,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,last_zone,updated_at`),
       supabase.select('raid_roster',
-        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
       supabase.select('buff_casts',
@@ -5376,8 +5376,52 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
     const classByName = new Map();
     for (const c of (charRows || [])) if (c && c.name && c.class) classByName.set(c.name.toLowerCase(), c.class);
+    // Per-uploader snapshots → cluster into distinct raids (two raids can
+    // run at once; snapshots sharing any member are the same raid). The
+    // queue scopes to the BUFFER'S raid: their own agent is the requester,
+    // so identity.discord_id's snapshot pins it; fall back to the cluster
+    // containing bufferCharacter, then to everything (no roster signal).
+    const snapsByUploader = new Map();
+    for (const r of (rosterRows || [])) {
+      if (!r || !r.name || rb.isCorpse(r.name)) continue;
+      const up = String(r.uploaded_by_discord_id || '');
+      if (!snapsByUploader.has(up)) snapsByUploader.set(up, []);
+      snapsByUploader.get(up).push(r);
+    }
+    const uploaders = [...snapsByUploader.keys()];
+    const clusterOf = new Map(uploaders.map((u, i) => [u, i]));
+    const find = (u) => { let r = clusterOf.get(u); return r; };
+    // Union snapshots sharing a member.
+    const byMember = new Map();   // member(lower) → first uploader seen
+    for (const [up, rows] of snapsByUploader) {
+      for (const r of rows) {
+        const m = r.name.toLowerCase();
+        if (!byMember.has(m)) { byMember.set(m, up); continue; }
+        const other = byMember.get(m);
+        const a = find(up), b = find(other);
+        if (a !== b) for (const [u2, c] of clusterOf) if (c === a) clusterOf.set(u2, b);
+      }
+    }
+    let scopedUploaders = null;
+    if (identity.discord_id && snapsByUploader.has(identity.discord_id)) {
+      const c = find(identity.discord_id);
+      scopedUploaders = uploaders.filter(u => find(u) === c);
+    } else if (bufferCharacter) {
+      const owner = byMember.get(bufferCharacter.toLowerCase());
+      if (owner != null) {
+        const c = find(owner);
+        scopedUploaders = uploaders.filter(u => find(u) === c);
+      }
+    }
     const rosterByName = new Map();
-    for (const r of (rosterRows || [])) if (r && r.name && !rb.isCorpse(r.name)) rosterByName.set(r.name.toLowerCase(), r);
+    for (const [up, rows] of snapsByUploader) {
+      if (scopedUploaders && !scopedUploaders.includes(up)) continue;
+      for (const r of rows) {
+        const k = r.name.toLowerCase();
+        const prev = rosterByName.get(k);
+        if (!prev || String(r.captured_at || '') > String(prev.captured_at || '')) rosterByName.set(k, r);
+      }
+    }
     const classFor = (n) => classByName.get(String(n).toLowerCase()) || (rosterByName.get(String(n).toLowerCase()) || {}).class || null;
 
     const liveByName = new Map();
@@ -6457,7 +6501,13 @@ async function _handleAgentRaidRoster(req, res) {
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
   try {
-    await supabase.upsert('raid_roster', rows, 'guild_id,name');
+    // SNAPSHOT semantics per uploader (pk guild,uploader,name): replace this
+    // uploader's whole view so members who left their raid don't linger as
+    // phantom rows. Readers cluster overlapping snapshots into distinct
+    // raids — two concurrent raids stay separate instead of merging.
+    await supabase.del('raid_roster',
+      `guild_id=eq.${encodeURIComponent(guildId)}&uploaded_by_discord_id=eq.${encodeURIComponent(identity.discord_id)}`);
+    await supabase.upsert('raid_roster', rows, 'guild_id,uploaded_by_discord_id,name');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: rows.length }));
   } catch (err) {

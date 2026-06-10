@@ -52,6 +52,8 @@ type RosterRow = {
   level: number | null;
   rank: string | null;
   hp_pct: number | null;
+  uploaded_by_discord_id: string | null;
+  captured_at: string | null;
 };
 
 // Color tier — at-a-glance triage signal, per the user's spec:
@@ -120,7 +122,7 @@ export default async function RaidHubPage() {
       .select('name, class, main_name, discord_id')
       .eq('guild_id', 'wolfpack'),
     admin.from('raid_roster')
-      .select('name, class, group_num, level, rank, hp_pct, captured_at')
+      .select('name, class, group_num, level, rank, hp_pct, captured_at, uploaded_by_discord_id')
       .eq('guild_id', 'wolfpack')
       .gte('captured_at', rosterSince),
     // Signed-in user → discord_id so we can find THEIR character in the raid.
@@ -137,9 +139,52 @@ export default async function RaidHubPage() {
   const liveClean   = ((liveRows ?? []) as LiveStateRow[]).filter(r => !isCorpse(r.character));
   const rosterClean = ((rosterRows ?? []) as RosterRow[]).filter(r => !isCorpse(r.name));
 
-  const rosterByName = new Map<string, RosterRow>(
-    rosterClean.map(r => [r.name.toLowerCase(), r]),
-  );
+  // ── Concurrent-raid clustering ─────────────────────────────────────────────
+  // raid_roster now holds one SNAPSHOT per uploader (pk guild,uploader,name).
+  // Snapshots sharing any member are the same raid; disjoint snapshots are
+  // separate raids running at once (the Dafeet/Utoh "Raid 2" report). Union-
+  // find over uploaders via shared members → cluster ordinals, biggest first.
+  const snapsByUploader = new Map<string, RosterRow[]>();
+  for (const r of rosterClean) {
+    const up = String(r.uploaded_by_discord_id || '');
+    if (!snapsByUploader.has(up)) snapsByUploader.set(up, []);
+    snapsByUploader.get(up)!.push(r);
+  }
+  const uploaders = [...snapsByUploader.keys()];
+  const clusterOf = new Map<string, number>(uploaders.map((u, i) => [u, i]));
+  const memberFirstUp = new Map<string, string>();
+  for (const [up, rws] of snapsByUploader) {
+    for (const r of rws) {
+      const m = r.name.toLowerCase();
+      const other = memberFirstUp.get(m);
+      if (other == null) { memberFirstUp.set(m, up); continue; }
+      const a = clusterOf.get(up)!, b = clusterOf.get(other)!;
+      if (a !== b) for (const [u2, c] of clusterOf) if (c === a) clusterOf.set(u2, b);
+    }
+  }
+  // Cluster id → ordinal (0-based), ordered by member count desc so "Raid 1"
+  // is the big one. memberRaidIdx: member(lower) → ordinal.
+  const clusterMembers = new Map<number, Set<string>>();
+  for (const [up, rws] of snapsByUploader) {
+    const c = clusterOf.get(up)!;
+    if (!clusterMembers.has(c)) clusterMembers.set(c, new Set());
+    for (const r of rws) clusterMembers.get(c)!.add(r.name.toLowerCase());
+  }
+  const ordered = [...clusterMembers.entries()].sort((a, b) => b[1].size - a[1].size);
+  const ordinalOf = new Map<number, number>(ordered.map(([c], i) => [c, i]));
+  const memberRaidIdx = new Map<string, number>();
+  for (const [c, members] of clusterMembers) {
+    for (const m of members) memberRaidIdx.set(m, ordinalOf.get(c)!);
+  }
+
+  // Per-member freshest row across snapshots (HP comes from whichever
+  // group-mate broadcast most recently).
+  const rosterByName = new Map<string, RosterRow>();
+  for (const r of rosterClean) {
+    const k = r.name.toLowerCase();
+    const prev = rosterByName.get(k);
+    if (!prev || String(r.captured_at || '') > String(prev.captured_at || '')) rosterByName.set(k, r);
+  }
   const classByName = new Map<string, string | null>(
     ((charRows ?? []) as { name: string; class: string | null }[])
       .map(c => [c.name.toLowerCase(), c.class]),
@@ -285,6 +330,7 @@ export default async function RaidHubPage() {
       className,
       role,
       raidGroup: swappedTo ? null : (rr.group_num ?? null),
+      raidIdx: swappedTo ? null : (memberRaidIdx.get(lower) ?? null),
       level: rr.level ?? null,
       rank: rr.rank ?? null,        // '2' raid leader, '1' group leader, else member
       inRaid: !swappedTo,
@@ -325,6 +371,7 @@ export default async function RaidHubPage() {
       className,
       role,
       raidGroup: null,
+      raidIdx: null,
       level: null,
       rank: null,
       inRaid: false,
@@ -369,31 +416,29 @@ export default async function RaidHubPage() {
     }
   }
 
+  // Tab labels per raid cluster — "Raid 1 — <leader> (N)" when the Zeal rank
+  // marks a leader, else just the ordinal + size.
+  const raidLabels: string[] = ordered.map(([c], i) => {
+    const members = clusterMembers.get(c)!;
+    let leaderName: string | null = null;
+    for (const m of members) {
+      const rr = rosterByName.get(m);
+      if (rr && rr.rank === '2') { leaderName = rr.name; break; }
+    }
+    return 'Raid ' + (i + 1) + (leaderName ? ' — ' + leaderName : '') + ' (' + members.size + ')';
+  });
+
   // The signed-in user's class as they appear in the current raid (if any) —
   // used as the default Buffer-mode class. They can override.
   const myInRaid = rows.find(r => r.inRaid && r.isMe) || rows.find(r => r.isMe);
   const myClass  = myInRaid?.className || null;
 
-  // Headline counters (raid leader name, coverage, etc.) computed here so the
-  // client component just renders.
-  const inRaid       = rows.filter(r => r.inRaid);
-  const mimicCovered = inRaid.filter(r => !r.noAgent).length;
-  const leader       = inRaid.find(r => r.rank === '2') ?? null;
-  const groupLeaders = new Map<number, string>();
-  for (const r of inRaid) {
-    if (r.rank === '1' && r.raidGroup != null && !groupLeaders.has(r.raidGroup)) {
-      groupLeaders.set(r.raidGroup, r.name);
-    }
-  }
-
+  // Headline counters (leader, coverage, group leads) are computed in
+  // RaidView per ACTIVE raid tab now that concurrent raids stay separate.
   return (
     <RaidView
       rows={rows}
-      raidSize={inRaid.length}
-      mimicCovered={mimicCovered}
-      leaderName={leader?.name ?? null}
-      leaderClass={leader?.className ?? null}
-      groupLeaders={Object.fromEntries(groupLeaders)}
+      raidLabels={raidLabels}
       myClass={myClass}
       dsValues={dsValues}
     />
