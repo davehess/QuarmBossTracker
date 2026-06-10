@@ -6844,6 +6844,12 @@ function renderSetupChecks(s) {
   h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
      + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Back up your UI</td>'
      + '<td class="dim" style="font-size:11px">Open <b>UI Studio</b> (top right) and capture your EQ window layout + eqclient.ini — restores in one click on a reinstall or a new PC.</td></tr>';
+  // Tray pin — Windows tucks new tray icons behind the hidden-icons chevron,
+  // where the Overlays / Restart / update menu is easy to forget exists.
+  // Not detectable from here, so it stays a reminder row.
+  h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+     + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">miMIC in the Windows taskbar</td>'
+     + '<td class="dim" style="font-size:11px">Drag the miMIC icon out of the hidden-icons arrow (the <b>^</b> next to the clock) onto the taskbar tray so it is always visible — Overlays, Restart agent, and updates all live in that tray menu.</td></tr>';
   h += '</table>';
   morphInto(el, h);
 }
