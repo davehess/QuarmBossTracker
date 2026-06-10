@@ -5815,14 +5815,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // Highest damage first; raiders with no damage signal yet sink (they may
       // be new arrivals, but a buffer shouldn't rank them above proven DPS).
       burstQueue.sort((a, b) => (b.damage || 0) - (a.damage || 0) || a.name.localeCompare(b.name));
-      // Not everyone gets the burst buff — cap at ~4 targets per provider of
-      // the buffer's class in this raid (1 shaman → top 4, 2 shamans → top 8).
+      // Not everyone gets the burst buff — cap at 3 targets per provider of
+      // the buffer's class in this raid (1 shaman → top 3, 2 shamans → top 6).
+      // Slightly tighter than the original ~4: in practice each shaman cycles
+      // ~2-3 targets between Feral Avatar cooldowns, so the longer queue was
+      // showing names that would never actually get the buff.
       let providers = 0;
       for (const [k2] of rosterByName) {
         const c2 = classFor((rosterByName.get(k2) || {}).name || k2);
         if (c2 && String(c2).toLowerCase() === bufferClass.toLowerCase()) providers++;
       }
-      burstQueue = burstQueue.slice(0, Math.min(20, Math.max(4, providers * 4)));
+      burstQueue = burstQueue.slice(0, Math.min(15, Math.max(3, providers * 3)));
     }
 
     // Compact live-roster view for the dashboard's Raid card — the buffer's
