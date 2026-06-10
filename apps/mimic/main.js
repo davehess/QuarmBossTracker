@@ -4403,7 +4403,23 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
     try { registerHideAllHotkey(); } catch {}
   }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyOverlayInteractivity();
+  // Create any newly-enabled overlay window that doesn't exist yet — windows
+  // are only created at startup when their pref was already on, so a flip
+  // from onboarding/settings was a silent no-op until restart (the apply*
+  // functions return early on a missing window). Mirrors toggle-overlay.
+  try {
+    if (merged.showHud          && !overlayWindow)   createOverlayWindow();
+    if (merged.enableTriggerTts && !triggerWindow)   createTriggerOverlay();
+    if (merged.showCharm        && !charmWindow)     createCharmOverlay();
+    if (merged.showPets         && !petsWindow)      createPetsOverlay();
+    if (merged.showMobInfo      && !mobInfoWindow)   createMobInfoOverlay();
+    if (merged.showBuffQueue    && !buffQueueWindow) createBuffQueueOverlay();
+    if (merged.showWho          && !whoWindow)       createWhoOverlay();
+    if (merged.showMelody       && !melodyWindow)    createMelodyOverlay();
+    if (merged.showZeal         && !zealWindow)      createZealHealthOverlay();
+    if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
+  } catch (e) { void e; }
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
