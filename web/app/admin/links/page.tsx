@@ -333,7 +333,7 @@ export default async function AdminLinksPage({
   const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
-  const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }] = await Promise.all([
+  const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }, { data: whoRows }] = await Promise.all([
     admin
       .from('characters')
       .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored')
@@ -353,9 +353,15 @@ export default async function AdminLinksPage({
       .order('created_at', { ascending: true }),
     admin
       .from('agent_upload_stats')
-      .select('character, uploaded_by_discord_id')
+      .select('character, uploaded_by_discord_id, last_uploaded_at')
       .not('uploaded_by_discord_id', 'is', null)
       .not('character', 'is', null)
+      .limit(3000),
+    admin
+      .from('who_observations')
+      .select('character, level, class, observed_at')
+      .eq('guild_id', 'wolfpack')
+      .order('observed_at', { ascending: false })
       .limit(3000),
   ]);
   const pendingRequests = (reqs ?? []) as LinkRequest[];
@@ -407,6 +413,40 @@ export default async function AdminLinksPage({
     familyGroups.push({ did, families });
   }
   familyGroups.sort((a, b) => b.families.length - a.families.length);
+
+  // ── Unregistered characters ────────────────────────────────────────────────
+  // Characters streaming from a member's Mimic (their log files are registered
+  // on that machine, so the per-user token names the owner) that have NO row
+  // in the OpenDKP mirror at all. Surface them with the owner + observed
+  // level/class and a ready-to-paste /register command. Rank rule: Raid Alts
+  // require level 46+; anything below is a Non-raid Alt or Trader.
+  type UnregRow = { name: string; did: string; level: number | null; cls: string | null; lastUpload: string | null };
+  const whoByName = new Map<string, { level: number | null; cls: string | null }>();
+  for (const w of (whoRows ?? []) as { character: string; level: number | null; class: string | null }[]) {
+    const k = (w.character || '').toLowerCase();
+    if (k && !whoByName.has(k)) whoByName.set(k, { level: w.level ?? null, cls: w.class ?? null });
+  }
+  const unregistered: UnregRow[] = [];
+  {
+    const seenU = new Set<string>();
+    for (const u of (uploads ?? []) as { character: string | null; uploaded_by_discord_id: string | null; last_uploaded_at: string | null }[]) {
+      const name = (u.character || '').trim();
+      if (!name || !u.uploaded_by_discord_id) continue;
+      if (!/^[A-Za-z]{3,20}$/.test(name)) continue;          // operator streams / junk
+      const k = name.toLowerCase();
+      if (seenU.has(k) || charByLower.has(k)) continue;       // already in the mirror
+      seenU.add(k);
+      const who = whoByName.get(k);
+      unregistered.push({
+        name,
+        did: u.uploaded_by_discord_id,
+        level: who?.level ?? null,
+        cls: who?.cls ?? null,
+        lastUpload: u.last_uploaded_at ?? null,
+      });
+    }
+    unregistered.sort((a, b) => String(b.lastUpload || '').localeCompare(String(a.lastUpload || '')));
+  }
 
   // Dismissed (link_ignored) characters are parked in their own view and
   // excluded from every other list + the auto-match logic.
@@ -584,6 +624,51 @@ export default async function AdminLinksPage({
           <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">Link</button>
           <span className="text-dim">(leave Main empty to clear an override)</span>
         </form>
+      </section>
+
+      {/* Unregistered characters — uploading via a member's Mimic but absent
+          from OpenDKP entirely. Surfaced with a ready-to-paste /register. */}
+      <section className="bg-panel border border-border rounded-lg">
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
+          🆕 Not in OpenDKP {unregistered.length > 0 && <span className="text-gold">({unregistered.length})</span>}
+        </h3>
+        <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
+          Characters streaming from a member&apos;s Mimic with no OpenDKP entry. The owner comes
+          from the upload token; level/class from <code>/who</code> sightings. Register with the
+          suggested command — <b>Raid Alt requires level 46+</b>; below that they&apos;re a
+          Non-raid Alt (or Trader).
+        </div>
+        {unregistered.length === 0 ? (
+          <div className="p-4 text-xs text-dim">Every uploading character is in OpenDKP. 🎉</div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="text-dim hidden sm:table-header-group">
+              <tr className="border-b border-border">
+                <th className="text-left px-3 py-2 font-normal">Character</th>
+                <th className="text-left px-3 py-2 font-normal">Owner</th>
+                <th className="text-left px-3 py-2 font-normal">Lvl / Class</th>
+                <th className="text-left px-3 py-2 font-normal">Suggested rank</th>
+                <th className="text-left px-3 py-2 font-normal">Register</th>
+              </tr>
+            </thead>
+            <tbody>
+              {unregistered.slice(0, 30).map(u => {
+                const m = memberById.get(u.did);
+                const rank = u.level == null ? '?' : (u.level >= 46 ? 'Raid Alt' : 'Non-raid Alt / Trader');
+                const cmd = `/register name:${u.name}${u.cls ? ` class:${u.cls}` : ''}${u.level != null ? ` rank:${u.level >= 46 ? 'Raid Alt' : 'Non-raid Alt'}` : ''}`;
+                return (
+                  <tr key={u.name} className="border-b border-border/40 hover:bg-[#1a212c]">
+                    <td className="px-3 py-2 text-text font-medium">{u.name}</td>
+                    <td className="px-3 py-2 text-dim">{m ? memberLabel(m) : u.did}</td>
+                    <td className="px-3 py-2 text-dim">{u.level != null ? `L${u.level}` : '?'}{u.cls ? ` ${u.cls}` : ''}</td>
+                    <td className={`px-3 py-2 ${rank === 'Raid Alt' ? 'text-green' : 'text-dim'}`}>{rank}</td>
+                    <td className="px-3 py-2"><code className="text-[10px] bg-bg border border-border rounded px-1.5 py-0.5 select-all" title="Paste in Discord (officer /register command)">{cmd}</code></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </section>
 
       {/* View toggles */}
