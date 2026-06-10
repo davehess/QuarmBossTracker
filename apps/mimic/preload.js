@@ -1,6 +1,98 @@
 // Preload — minimal contextBridge surface. No nodeIntegration in renderers.
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ── Shared overlay chrome helpers ──────────────────────────────────────────
+// Every built-in overlay used to inline ~35 lines of right-click menu HTML +
+// styling + hover-interactive handshake. They drifted over time ("alignment
+// is all different across each one"), and small windows clipped the bottom
+// of the menu. Centralized here so one fix lands on every overlay at once.
+
+// Inner-menu hover handshake — same forward-true click-through pattern as
+// the corner controls: flip the window briefly interactive while the cursor
+// is over an item, then restore the lock state on mouseleave.
+function _hoverOn()  { try { ipcRenderer.invoke('overlay-hover-interactive', true);  } catch (e) {} }
+function _hoverOff() { try { ipcRenderer.invoke('overlay-hover-interactive', false); } catch (e) {} }
+
+// Build the right-click menu: 5 width presets + 2 setup-mode entries.
+// Identical structure + styling on every overlay so the muscle memory carries.
+function _buildOverlayMenu(onClose) {
+  const prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
+  const menu = document.createElement('div');
+  menu.id = 'wpResizeMenu';
+  menu.style.cssText = [
+    'position:fixed', 'top:30px', 'left:6px', 'z-index:200',
+    'background:rgba(14,17,22,0.95)', 'border:1px solid rgba(88,166,255,0.4)',
+    'border-radius:5px', 'padding:4px',
+    'display:flex', 'flex-direction:column', 'gap:2px',
+    'font-family:ui-monospace,Menlo,Consolas,monospace',
+    'min-width:180px', 'box-shadow:0 4px 12px rgba(0,0,0,0.6)',
+  ].join(';');
+  const mkItem = (label, accent, onClick) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = [
+      'background:#21262d', 'color:#c9d1d9', 'border:1px solid #30363d',
+      'border-radius:3px', 'padding:5px 10px', 'cursor:pointer',
+      'text-align:left', 'font-family:inherit', 'font-size:11px',
+      'white-space:nowrap',
+    ].join(';');
+    b.onmouseenter = function() { b.style.background = accent; b.style.color = '#fff'; _hoverOn(); };
+    b.onmouseleave = function() { b.style.background = '#21262d'; b.style.color = '#c9d1d9'; };
+    b.onclick      = function() { try { onClick(); } catch (e) {} menu.remove(); _hoverOff(); if (onClose) onClose(); };
+    return b;
+  };
+  // "Setup ALL" first — the most-used entry sits at the top.
+  menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
+  menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
+  // Thin divider before the size presets so the menu reads "actions / sizes".
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
+  menu.appendChild(sep);
+  [['xs','XS · 200px wide'], ['sm','S · 260px'], ['md','M · 320px'],
+   ['lg','L · 400px'],       ['xl','XL · 500px']].forEach(([key, label]) => {
+    menu.appendChild(mkItem(label, '#1f6feb', () => ipcRenderer.invoke('overlay-resize-preset', key)));
+  });
+  document.body.appendChild(menu);
+  return menu;
+}
+
+function _attachOverlayMenu(moveBtn) {
+  if (!moveBtn || moveBtn._wpMenuAttached) return;
+  moveBtn._wpMenuAttached = true;
+  moveBtn.addEventListener('contextmenu', function(ev) {
+    ev.preventDefault();
+    // Grow window first so the menu doesn't clip on tiny overlays. Menu is
+    // ~250 px tall (7 items + paddings + divider); use 290 to leave a buffer.
+    try { ipcRenderer.invoke('overlay-ensure-min-height', 290); } catch (e) {}
+    const menu = _buildOverlayMenu(_hoverOff);
+    _hoverOn();
+    // Dismiss on outside click. Defer so the click that opened the menu
+    // doesn't immediately close it on the same event loop tick.
+    setTimeout(function() {
+      document.addEventListener('mousedown', function closer(e) {
+        if (!menu.contains(e.target)) {
+          menu.remove();
+          document.removeEventListener('mousedown', closer);
+          _hoverOff();
+        }
+      });
+    }, 0);
+  });
+}
+
+// Ask main to size the window to the renderer's content height. Pass the
+// wrap element whose scrollHeight defines the desired height; falls back to
+// document.body if nothing's passed. Adds a small buffer so the bottom of
+// the last card isn't flush against the window edge.
+function _autoFitOverlay(wrapEl) {
+  try {
+    const w = wrapEl || document.getElementById('wrap') || document.body;
+    if (!w) return;
+    const h = (w.scrollHeight || 0) + 12;
+    if (h > 0) ipcRenderer.invoke('overlay-auto-height', h);
+  } catch (e) {}
+}
+
 contextBridge.exposeInMainWorld('mimic', {
   openSettings:        ()         => ipcRenderer.invoke('open-settings'),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
@@ -49,6 +141,17 @@ contextBridge.exposeInMainWorld('mimic', {
   // right-click context menu on each overlay's ✥ move icon so users can size
   // a single overlay without diving into Setup mode.
   overlayResizePreset: (preset) => ipcRenderer.invoke('overlay-resize-preset', preset),
+  // Grow the window vertically to at least `h` px before showing the shared
+  // right-click chrome menu — keeps the bottom of the menu from being clipped
+  // when an XS-preset overlay is shorter than the menu DOM. Overlay's regular
+  // overlayAutoHeight call shrinks back to content size after the menu closes.
+  overlayEnsureMinHeight: (h) => ipcRenderer.invoke('overlay-ensure-min-height', h),
+  // Shared chrome — wires the right-click "resize presets + Setup THIS/ALL"
+  // menu on the ✥ move icon and a content-size auto-fit helper. Every overlay
+  // calls these instead of re-implementing them, so they're guaranteed to
+  // align + behave identically across the suite.
+  attachOverlayMenu: (moveBtn) => _attachOverlayMenu(moveBtn),
+  autoFitOverlay:    (wrapEl)  => _autoFitOverlay(wrapEl),
 
   // Click-through overlays: ask main to momentarily make THIS window
   // interactive while the cursor is over a corner control, so the click lands

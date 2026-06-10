@@ -49,25 +49,45 @@
      progress. One row per active timer in the agent's _activeTimers map.
      Top-left corner so the centered alert flash stays unblocked. Soonest-
      to-expire is on top (the agent sorts that way).                      */
-  #timers{position:fixed;top:34px;left:8px;display:flex;flex-direction:column;
-    gap:2px;z-index:40;min-width:180px;max-width:320px;pointer-events:none;
+  #timers{position:fixed;top:34px;left:8px;right:8px;display:flex;flex-direction:column;
+    gap:3px;z-index:40;min-width:180px;pointer-events:none;
     font-family:ui-monospace,Menlo,Consolas,monospace}
-  .timer-row{display:flex;align-items:baseline;gap:8px;
-    padding:2px 8px;background:rgba(0,0,0,0.6);border-radius:3px;
+  .timer-row{position:relative;display:flex;align-items:baseline;gap:8px;
+    padding:3px 8px 5px;background:rgba(0,0,0,0.66);border-radius:4px;
     color:#fff;font-size:13px;line-height:1.25;
-    text-shadow:0 1px 2px #000;border-left:2px solid #f6c365}
+    text-shadow:0 1px 2px #000;border-left:3px solid #f6c365;
+    animation:timer-pop .25s ease-out;overflow:hidden}
+  @keyframes timer-pop{
+    0%   {opacity:0;transform:translateX(-6px) scale(0.96)}
+    60%  {opacity:1;transform:translateX(0)     scale(1.02)}
+    100% {opacity:1;transform:translateX(0)     scale(1)}
+  }
   .timer-row .timer-remain{color:#f6c365;font-variant-numeric:tabular-nums;
-    font-weight:600;flex-shrink:0;min-width:3.5em}
+    font-weight:700;flex-shrink:0;min-width:3.5em;font-size:14px}
   .timer-row .timer-label{flex:1;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap}
-  .timer-row .timer-target{color:#fff;font-weight:500}
+  .timer-row .timer-target{color:#fff;font-weight:600}
   .timer-row .timer-sep{color:rgba(255,255,255,0.45);margin:0 4px}
   .timer-row .timer-effect{color:#c9d1d9}
+  /* Progress bar at the bottom of each row — visual countdown so duration is
+     readable at a glance without parsing the digits. Width tweened in JS so
+     the 100 ms paint loop keeps it smooth between 700 ms server polls. */
+  .timer-row .timer-bar{position:absolute;left:0;bottom:0;height:2px;
+    background:linear-gradient(to right,#f6c365,#ffaa3a);width:100%;
+    transform-origin:left;transition:transform 100ms linear,background 250ms linear}
   .timer-row.test{border-left-color:#d69922}
   .timer-row.test .timer-label::after{content:' TEST';color:#d69922;
     font-size:10px;margin-left:6px}
-  .timer-row.warn{background:rgba(60,16,16,0.7);border-left-color:#ff8a65}
-  .timer-row.warn .timer-remain{color:#ff8a65}
+  /* Last 5s — amber background AND a pulse to drag the eye. The warning row's
+     "do something NOW" should be impossible to miss during a fight. */
+  .timer-row.warn{background:rgba(80,28,8,0.78);border-left-color:#ff8a65;
+    animation:timer-warn-pulse 0.5s ease-in-out infinite}
+  .timer-row.warn .timer-remain{color:#ffae6e}
+  .timer-row.warn .timer-bar{background:linear-gradient(to right,#ff8a65,#ff5252)}
+  @keyframes timer-warn-pulse{
+    0%,100%{box-shadow:0 0 0 0 rgba(255,138,101,0)}
+    50%    {box-shadow:0 0 0 2px rgba(255,138,101,0.7), 0 0 12px rgba(255,82,82,0.6)}
+  }
   /* Setup mode pushes the timer stack down so the orange status bar at
      top doesn't sit on top of it. */
   body.setup #timers{top:58px}
@@ -146,42 +166,8 @@
     moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     moveBtn.addEventListener('mouseleave', function(){ if (!_isDragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
     moveBtn.addEventListener('mousedown', _beginDrag);
-    moveBtn.addEventListener('contextmenu', function(ev){
-      ev.preventDefault();
-      var prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
-      var menu = document.createElement('div');
-      menu.id = 'wpResizeMenu';
-      menu.style.cssText = 'position:fixed;top:30px;left:6px;z-index:200;background:rgba(14,17,22,0.95);border:1px solid rgba(88,166,255,0.4);border-radius:5px;padding:4px;display:flex;flex-direction:column;gap:2px;font-family:ui-monospace,Menlo,Consolas,monospace';
-      [['xs','XS · 200×100'],['sm','S · 260×140'],['md','M · 320×200'],['lg','L · 400×260'],['xl','XL · 500×320']].forEach(function(s){
-        var b = document.createElement('button');
-        b.textContent = s[1];
-        b.style.cssText = 'background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px';
-        b.onmouseenter = function(){ b.style.background = '#1f6feb'; b.style.color = '#fff'; try { window.mimic.overlayHoverInteractive(true); } catch (e) {} };
-        b.onmouseleave = function(){ b.style.background = '#21262d'; b.style.color = '#c9d1d9'; };
-        b.onclick = function(){ try { window.mimic.overlayResizePreset(s[0]); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-        menu.appendChild(b);
-      });
-      var setupBtn = document.createElement('button');
-      setupBtn.textContent = '🛠 Setup mode (place + opacity)';
-      setupBtn.style.cssText = 'background:#2a1d3d;color:#d2a8ff;border:1px solid #a371f7;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
-      setupBtn.onmouseenter = function(){ setupBtn.style.background='#3d2a57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
-      setupBtn.textContent = '🛠 Setup THIS overlay';
-      setupBtn.onclick = function(){ try { window.mimic.setSetupModeThis(); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      var setupAllBtn = document.createElement('button');
-      setupAllBtn.textContent = '🛠 Setup ALL overlays';
-      setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
-      setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
-      setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      menu.insertBefore(setupAllBtn, setupBtn.nextSibling);
-      menu.insertBefore(setupBtn, menu.firstChild);
-      document.body.appendChild(menu);
-      try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
-      setTimeout(function(){
-        document.addEventListener('mousedown', function closer(e){
-          if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', closer); try { window.mimic.overlayHoverInteractive(false); } catch (e2) {} }
-        });
-      }, 0);
-    });
+    // Right-click ✥ → shared chrome menu (resize presets + Setup THIS/ALL).
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
   }
   document.addEventListener('mouseup', function() {
     if (_isDragging) {
@@ -305,19 +291,22 @@
       if (!n){
         const row = document.createElement('div');
         row.className = 'timer-row' + (t.test ? ' test' : '');
-        // GINA-style row: [remain] [Boss - Effect] on one line. No progress
-        // bar; the countdown is the progress. Pad the remain cell so the
-        // labels line up across rows of different durations.
+        // GINA-style row: [remain] [Boss - Effect] on one line, with a thin
+        // progress bar pinned to the bottom edge so the visual countdown
+        // reads at a glance even when the digits are off-screen. The bar is
+        // shrunk via scaleX in paintTimers (cheap, no layout thrash).
         row.innerHTML =
           '<span class="timer-remain"></span>'
           + '<span class="timer-label">'
           + (target ? '<span class="timer-target">' + _esc(target) + '</span><span class="timer-sep">-</span>' : '')
           + '<span class="timer-effect">' + _esc(effect) + '</span>'
-          + '</span>';
+          + '</span>'
+          + '<div class="timer-bar"></div>';
         timersEl.appendChild(row);
         n = {
           row,
           remain:  row.querySelector('.timer-remain'),
+          bar:     row.querySelector('.timer-bar'),
           target:  target,
           effect:  effect,
           duration_sec: t.duration_sec || 1,
@@ -351,10 +340,18 @@
   }
   function paintTimers(){
     const now = Date.now();
+    let painted = 0;
     for (const [id, n] of timerNodes){
       const remMs = n.ends_at_local - now;
       if (remMs <= 0){ n.row.remove(); timerNodes.delete(id); continue; }
       n.remain.textContent = fmtRemain(remMs);
+      // Progress bar: width drops linearly from 100% at fire to 0% at expiry.
+      // scaleX leaves layout untouched (no reflow per tick) and the 100 ms
+      // paint loop in the renderer keeps the bar smooth between the 700 ms
+      // server polls.
+      const durMs = Math.max(1, (n.duration_sec || 1) * 1000);
+      const ratio = Math.max(0, Math.min(1, remMs / durMs));
+      if (n.bar) n.bar.style.transform = 'scaleX(' + ratio.toFixed(4) + ')';
       // Pre-end warning callout: fire once when the countdown crosses into the
       // warning window. Reset the latch if the timer restarts (remaining climbs
       // back above the threshold) so a re-pulled timer warns again.
@@ -362,10 +359,24 @@
         if (remMs > n.warn_ms){ n.warned = false; }
         else if (!n.warned){ n.warned = true; fire({ text: n.warn_text, tts: n.warn_text }); }
       }
-      // Last 5s → amber accent + background so the row visually pops.
+      // Last 5s → amber accent + background + pulse to drag the eye.
       if (remMs < 5000) n.row.classList.add('warn');
       else              n.row.classList.remove('warn');
+      painted++;
     }
+    // Resize the window to fit the timer stack so we never crop a row off
+    // the bottom — and shrink it back when the stack is empty (the overlay
+    // is invisible while idle, then grows just enough to hold what's live).
+    try {
+      if (window.mimic && window.mimic.autoFitOverlay) {
+        const el = document.getElementById('timers');
+        // 50 px baseline keeps room for the centered alert flash when no
+        // timers are active; otherwise pin to the timer stack height + the
+        // 34 px top inset + a small bottom buffer.
+        const wanted = painted > 0 ? (el.offsetTop + el.scrollHeight + 8) : 50;
+        window.mimic.overlayAutoHeight && window.mimic.overlayAutoHeight(wanted);
+      }
+    } catch (e) {}
   }
 
   async function tick(){

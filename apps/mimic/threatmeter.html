@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>threat</title>
+<style>
+  /* Threat Meter overlay — transparent, always-on-top. Per-fight threat per
+     player: stacked breakdown bar (swing / proc / spell / heal) so a tank
+     can SEE where their hate is coming from at a glance, with the total
+     hate number on the right. Reads stats.currentEncounterThreat — same
+     data the dashboard's Tanks tab uses. Auto-fits to row count via
+     window.mimic.autoFitOverlay (preload helper). */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;min-width:280px;}
+  .head{display:flex;align-items:baseline;gap:8px;
+    font-size:12px;color:#ff8a65;text-shadow:0 1px 2px #000;margin-bottom:4px;
+    padding-left:22px;padding-right:22px;}
+  .head .icon{flex-shrink:0}
+  .head .boss{color:#f6c365;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  .head .elapsed{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
+  .head .conn{font-size:11px;flex-shrink:0}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .rows{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.45);
+    border-radius:5px;padding:5px 6px}
+  .row{position:relative;display:grid;
+    grid-template-columns:1.4em minmax(0,1fr) auto;
+    align-items:center;gap:6px;font-size:11px;line-height:1.3;
+    padding:3px 6px;border-radius:3px;background:rgba(255,255,255,0.03);
+    text-shadow:0 1px 2px #000;border-left:2px solid transparent;
+    transition:background 200ms ease}
+  .row.me{background:rgba(246,195,101,0.10);border-left-color:#f6c365}
+  .row.leader{background:rgba(248,113,113,0.10);border-left-color:#f87171}
+  .row .rank{color:#6e7681;text-align:right;font-size:10px;font-variant-numeric:tabular-nums}
+  .row .nm-wrap{min-width:0;overflow:hidden}
+  .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+  .row.me .nm{color:#f6c365}
+  .row.leader .nm{color:#fca5a5}
+  .row .nm .pet-tag{color:#a371f7;font-size:9px;font-style:italic;margin-left:4px;font-weight:500}
+  .row .nm .with-pet{color:#a371f7;font-size:9px;margin-left:5px;font-variant-numeric:tabular-nums}
+  /* Stacked breakdown bar — swing (green) / proc (blue) / spell (purple) /
+     heal (amber). Width relative to the leader's total so the eye reads
+     "second place at 70% of top" immediately. */
+  .bar{grid-column:1 / -1;height:5px;background:rgba(255,255,255,0.06);
+    border-radius:2px;overflow:hidden;display:flex;margin-top:3px}
+  .bar .seg{height:100%;transition:width 250ms ease}
+  .bar .seg.sw{background:#56d364}
+  .bar .seg.pr{background:#58a6ff}
+  .bar .seg.sp{background:#a371f7}
+  .bar .seg.hl{background:#f0b429}
+  .row .total{color:#56d364;font-variant-numeric:tabular-nums;font-weight:600;font-size:11px;text-align:right}
+  .row.me     .total{color:#f6c365}
+  .row.leader .total{color:#fca5a5}
+  /* Negative spell totals (Quivering Veil / Voice of Quellious etc.) render
+     in a muted blue so the row stays readable instead of going darkly red. */
+  .row .total.neg{color:#79c0ff}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
+  /* Stale fight (the last fight ended N min ago, no new fight started) —
+     dim the whole stack so the user knows the numbers are post-mortem. */
+  .rows.stale{opacity:0.55}
+  /* drag/lock/setup chrome — same pattern as every other overlay. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(248,113,113,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(248,113,113,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(248,113,113,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #move-btn{top:30px}
+  /* Legend strip under the rows so the user can decode the colors without
+     hovering. Hidden when empty (no fight to interpret). */
+  .legend{display:flex;gap:8px;margin-top:4px;font-size:9px;color:#8b949e;
+    padding:0 4px;align-items:center}
+  .legend .sw,.legend .pr,.legend .sp,.legend .hl{display:inline-flex;align-items:center;gap:3px}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:1px}
+  .legend .sw i{background:#56d364}
+  .legend .pr i{background:#58a6ff}
+  .legend .sp i{background:#a371f7}
+  .legend .hl i{background:#f0b429}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>
+  <button id="hide-btn" title="Hide the threat meter (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Threat</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="head">
+      <span id="conn" class="conn bad">○</span>
+      <span class="icon">🎯</span>
+      <span class="boss" id="boss">no active fight</span>
+      <span class="elapsed" id="elapsed"></span>
+    </div>
+    <div id="rows" class="rows"></div>
+    <div id="empty">waiting for combat…</div>
+    <div class="legend" id="legend" style="display:none">
+      <span class="sw"><i></i>swing</span>
+      <span class="pr"><i></i>proc</span>
+      <span class="sp"><i></i>spell/AA</span>
+      <span class="hl"><i></i>heal</span>
+    </div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging  = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){
+      _overlayKey = p && p.overlayKey;
+      if (p && p.scope) _setupScope = p.scope;
+      else if (p && p.active) _setupScope = 'all';
+      document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){
+    try { document.body.classList.remove('setup'); } catch (e) {}
+    try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {}
+    _setupScope = null;
+  });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  // Compact number — k for thousand, M for million. Handles negative AA hate
+  // (Quivering Veil etc.) so the sign carries through the formatter.
+  function fmtK(n){
+    var sign = n < 0 ? '-' : '';
+    var a = Math.abs(+n) || 0;
+    if (a >= 1e6) return sign + (a/1e6).toFixed(1) + 'M';
+    if (a >= 1e3) return sign + Math.round(a/1e3) + 'k';
+    return sign + Math.round(a);
+  }
+  function fmtElapsed(secs){
+    secs = Math.max(0, Math.round(secs));
+    var m = Math.floor(secs / 60), s = secs - m * 60;
+    return m + ':' + String(s).padStart(2, '0');
+  }
+
+  // Render one row of the threat stack: rank · name (+pet tag / +pet rollup)
+  // · stacked breakdown bar · total. `meName` is the buffer's own character
+  // (lowercased) so the row can highlight as 'me'; the leader (rank #1)
+  // gets a red accent so a tank can see when they're FIRST at a glance.
+  function rowHtml(rank, name, t, leaderTotal, meName) {
+    var sw = Math.max(0, +t.swing || 0);
+    var pr = Math.max(0, +t.proc  || 0);
+    var sp = +t.spell || 0;     // can be negative (Quivering Veil etc.)
+    var hl = Math.max(0, +t.heal  || 0);
+    var total = +t.total || 0;
+    // Bar width is row total / leader total (clamped to 100). Negative
+    // categories are dropped from the visual bar (rendered as zero width)
+    // but still affect the numeric total so the row's position is honest.
+    var visTotal = Math.max(1, leaderTotal);
+    var bw = Math.max(0, Math.min(100, (Math.max(0, total) / visTotal) * 100));
+    // Each segment width = (category / row total) * bar width, with negatives
+    // clipped to 0. spell can be negative; if so visualize sp as zero so the
+    // bar reads "the positive part of your threat".
+    var spVis = Math.max(0, sp);
+    var denom = Math.max(1, sw + pr + spVis + hl);
+    function w(cat){ return ((cat / denom) * bw).toFixed(2) + '%'; }
+    var petTag    = t.pet_owner ? '<span class="pet-tag">' + esc(t.pet_owner) + '\'s pet</span>' : '';
+    var withPet   = t.pet_threat_total ? '<span class="with-pet">+pet ' + fmtK(t.pet_threat_total) + '</span>' : '';
+    var rowClass  = 'row' + (meName && name.toLowerCase() === meName ? ' me' : '')
+                          + (rank === 1 ? ' leader' : '');
+    var totalCls  = (total < 0 ? ' neg' : '');
+    return '<div class="' + rowClass + '">'
+      +    '<span class="rank">' + rank + '.</span>'
+      +    '<span class="nm-wrap"><span class="nm">' + esc(name) + petTag + withPet + '</span></span>'
+      +    '<span class="total' + totalCls + '">' + fmtK(total) + '</span>'
+      +    '<div class="bar">'
+      +      '<div class="seg sw" style="width:' + w(sw) + '"></div>'
+      +      '<div class="seg pr" style="width:' + w(pr) + '"></div>'
+      +      '<div class="seg sp" style="width:' + w(spVis) + '"></div>'
+      +      '<div class="seg hl" style="width:' + w(hl) + '"></div>'
+      +    '</div>'
+      +  '</div>';
+  }
+
+  function render(s){
+    var rowsEl   = document.getElementById('rows');
+    var emptyEl  = document.getElementById('empty');
+    var legendEl = document.getElementById('legend');
+    var bossEl   = document.getElementById('boss');
+    var elapsedEl= document.getElementById('elapsed');
+    var et = s && s.currentEncounterThreat;
+    if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) {
+      rowsEl.innerHTML = '';
+      rowsEl.classList.remove('stale');
+      legendEl.style.display = 'none';
+      bossEl.textContent = 'no active fight';
+      elapsedEl.textContent = '';
+      emptyEl.style.display = 'block';
+      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+      return;
+    }
+    emptyEl.style.display = 'none';
+    legendEl.style.display = 'flex';
+    bossEl.textContent = et.bossName || et.targetName || 'current fight';
+    var startedAt = et.startedAt ? new Date(et.startedAt).getTime() : 0;
+    var endMs = et.flushedAt || Date.now();
+    var secs  = startedAt > 0 ? Math.round((endMs - startedAt) / 1000) : 0;
+    elapsedEl.textContent = fmtElapsed(secs) + (et.flushedAt ? ' · ended' : '');
+
+    // Rank rows by total, top 8. Filter out pet rows (we roll them up into
+    // owner via pet_threat_total above) so the user sees one row per player
+    // — except when a pet has no owner row in the fight (orphan charm), in
+    // which case keep it visible so its hate doesn't vanish.
+    var ownerNames = new Set();
+    var entries = Object.entries(et.perPlayer);
+    for (var i = 0; i < entries.length; i++) {
+      var t = entries[i][1];
+      if (t.pet_owner) ownerNames.add(String(t.pet_owner).toLowerCase());
+    }
+    var rows = entries
+      .filter(function(e){
+        var t = e[1];
+        if (!t.pet_owner) return true;
+        // If the owner is in the fight, hide the pet (its hate is already
+        // shown on the owner's row via pet_threat_total). Otherwise keep
+        // the orphan pet visible.
+        return !ownerNames.has(String(t.pet_owner).toLowerCase());
+      })
+      .map(function(e){ return [e[0], e[1]]; })
+      .sort(function(a, b){ return (b[1].total || 0) - (a[1].total || 0); })
+      .slice(0, 8);
+
+    var leaderTotal = rows.length ? (rows[0][1].total || 0) : 1;
+    var me = (s.character || s.uploaderCharacter || s.self || '').toLowerCase();
+    var html = '';
+    for (var j = 0; j < rows.length; j++) {
+      html += rowHtml(j + 1, rows[j][0], rows[j][1], leaderTotal, me);
+    }
+    rowsEl.innerHTML = html;
+    rowsEl.classList.toggle('stale', !!et.flushedAt);
+    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+  }
+
+  async function tick(){
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/state', { cache: 'no-store' });
+      var s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      render(s);
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  tick(); setInterval(tick, 700);
+</script>
+</body></html>

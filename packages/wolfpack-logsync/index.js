@@ -192,6 +192,33 @@ const PROC_HATE = {
   'shock of dyn`leth':   250,
 };
 
+// Self-cast flat-hate proxy for AAs and direct-hate spells that don't show
+// a damage line — without this they're invisible to the threat meter even
+// though they're a real chunk of a tank's TPS. Lowercased spell/AA name →
+// hate per cast. Bumps the caster's `spell` bucket so the breakdown reads
+// honestly. Community-sourced PoP-era ballparks; correct as observed.
+const CAST_HATE = {
+  // Knight aggro AAs
+  'voice of thule':                  3000,   // SHD AA — pulls a single mob hard
+  'disruptive persecution':          1500,   // PAL AA — burst aggro
+  'projection of fury':               750,   // SHD AA — burst aggro
+  // Warrior provocation chain
+  'provocation':                     1000,   // WAR AA — boosted taunt
+  'bellow of the mastruq':           2000,   // WAR AA — AoE taunt
+  // Hate-add nukes (named hate procs from clickies / disciplines)
+  "hate's attraction":               2500,
+  'corrupt taunting':                 600,
+  // Negative-hate / fade — let them surface as a *spell* row so the user
+  // can see them in the breakdown even though they reduce hate. Negative
+  // values shrink the spell bucket; the row still shows but doesn't lead.
+  'voice of quellious':             -2500,
+  'quivering veil of xarn':         -2000,
+  'fading memories':                -1500,
+  // Classic wizard/caster de-aggro nukes — flat hate reduction per cast.
+  'jolt':                            -400,
+  'cinder jolt':                     -570,
+};
+
 // ── Config ───────────────────────────────────────────────────────────────────
 // These regexes match RAW log lines that should never be parsed, much less
 // uploaded. Match-and-discard happens before any other processing.
@@ -381,6 +408,13 @@ const KEEP_PATTERNS = [
   /\byou have taunted\b/i,
   /\byou have stunned\b/i,
   /\byou stun\s+\w/i,
+  // Aggro DUMPS — the other direction. Feign Death (monk ability + SK/necro
+  // spell land both print the fall line) and rogue Evade (mid-fight Hide).
+  // The threat meter zeroes / halves the player's buckets on these.
+  /\bhas fallen to the ground\b/i,
+  /\byou have fallen to the ground\b/i,
+  /\byou have momentarily ducked away from the main combat\b/i,
+  /\byour attempts at ducking clear of combat fail\b/i,
   // /who output — needed so these survive shouldKeep() and reach parseEvent.
   // Matches '[60 Druid] Bob (Human) <Wolf Pack>' and the AFK/LFG/ANON/GM forms.
   /^\[.+?\]\s+(?:AFK\s+|LFG\s+)?\[\s*(?:\d+\s+\w|ANONYMOUS|GM)\b/i,
@@ -891,6 +925,27 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+You stun (.+?)\./i);
   if (m) return { ts: tsIso, type: 'stun', attacker: null, target: m[1] };
 
+  // ── Aggro dumps ──────────────────────────────────────────────────────────
+  // Feign Death — the fall line is the FAILURE tell: "You have fallen to the
+  // ground." prints when the FD did NOT take and you're still on the hate
+  // table. A SUCCESSFUL FD is silent in the log — the only way to know it
+  // stuck is mob behavior (stops attacking / re-engages someone else / cons
+  // non-scowling on positive faction). So these events are failure counters
+  // only; the threat meter must NOT zero anyone's threat from them.
+  if (/\]\s+You have fallen to the ground\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'feign_death', attacker: null, success: false };
+  }
+  m = line.match(/\]\s+(\w+) has fallen to the ground\.\s*$/i);
+  if (m) return { ts: tsIso, type: 'feign_death', attacker: m[1], success: false };
+  // Rogue Evade (mid-fight Hide) — SELF-ONLY lines, so only the rogue's own
+  // agent sees them. Success cuts hate roughly in half on TAKP-era servers.
+  if (/\]\s+You have momentarily ducked away from the main combat\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'evade', attacker: null, success: true };
+  }
+  if (/\]\s+Your attempts at ducking clear of combat fail\.\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'evade', attacker: null, success: false };
+  }
+
   // ── Sourceless spell cast detection (bard dirges & similar) ──────────────
   // Walks the SOURCELESS_SPELLS catalog and emits a `dirge_cast` event with
   // the spell name. EncounterBuilder uses the cast timestamp to attribute the
@@ -1169,6 +1224,73 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     duration_sec: (opts && opts.duration_sec != null) ? opts.duration_sec
                 : (prev ? prev.duration_sec : null),
   });
+  // Mirror the charm spell into _buffLandingsByTarget so the Mob Info debuff
+  // section shows e.g. "Allure (Hopeya)" with a live countdown — Allure's
+  // cast_on_other is NULL in eqemu_spells, so the log-driven path can't
+  // surface it; the charm-land event is the only signal we have. Only on
+  // 'land' (the synthesis represents the active charm), and only when the
+  // caller knows the actual spell + duration (i.e. a real cast was staged —
+  // gauge-only re-charms without a fresh cast carry the previous session's
+  // values forward without re-bumping the debuff).
+  if (eventKind === 'land' && opts && opts.charm_spell_name) {
+    const dur = (opts.duration_sec != null) ? opts.duration_sec : (prev ? prev.duration_sec : 0);
+    if (dur > 0) _recordCharmSpellOnTarget(pet, owner, opts.charm_spell_name, dur);
+  }
+  // Capture pre-charm debuffs into the Charm tracker. When you debuff a
+  // mob THEN charm it (the only practical sequence — EQ won't let you
+  // debuff your own pet), the debuff lands in _buffLandingsByTarget keyed
+  // by the target NAME, but never in _petBuffLandings keyed by the OWNER
+  // (because at land time the mob wasn't yet a pet, so _petOwnerByName
+  // returned null and recordPetBuffLanding bailed). Mob Info shows them
+  // (it keys by target), but the Charm tracker doesn't. On a fresh land,
+  // sweep _buffLandingsByTarget[pet] into _petBuffLandings[owner] so the
+  // Tashanian / Mez / etc. you cast pre-charm carry over to the Charm
+  // tracker too. Skip worn-off and expired entries.
+  if (eventKind === 'land' && owner) {
+    _captureTargetBuffsOnCharm(pet, owner);
+  }
+}
+// Copy any active (not-expired, not-worn-off) entries from
+// _buffLandingsByTarget[pet] into _petBuffLandings[owner] so a charm-land
+// "inherits" the debuffs already on the mob. Pre-charm debuff lands
+// previously had no owner to attach to, so they only existed in
+// _buffLandingsByTarget — Mob Info saw them, Charm tracker didn't.
+function _captureTargetBuffsOnCharm(pet, owner) {
+  if (!pet || !owner) return;
+  const petLower   = String(pet).toLowerCase();
+  const ownerLower = String(owner).toLowerCase();
+  const tgtBuffs = _buffLandingsByTarget.get(petLower);
+  if (!tgtBuffs || tgtBuffs.size === 0) return;
+  let petBuffs = _petBuffLandings.get(ownerLower);
+  if (!petBuffs) { petBuffs = new Map(); _petBuffLandings.set(ownerLower, petBuffs); }
+  const now = Date.now();
+  let captured = 0;
+  for (const [spellKey, b] of tgtBuffs) {
+    if (!b || !b.name) continue;
+    if (b.worn_off_at) continue;                          // already gone
+    const durSecs = (Number(b.dur_ticks) || 0) * 6;
+    if (durSecs > 0 && (now - (b.landed_at || now)) / 1000 > durSecs) continue;   // expired
+    // Don't clobber a more-recent pet-side entry for the same spell.
+    // Tie-breaker on equal landed_at: prefer whichever has the longer
+    // dur_ticks. This heals pre-v3.1.1 entries where recordPetBuffLanding
+    // computed dur_ticks=0 for level-formula buffs (missing era-cap
+    // fallback) — the target-side entry's correct dur_ticks wins.
+    const existing = petBuffs.get(spellKey);
+    if (existing) {
+      const ex = existing.landed_at || 0;
+      const nw = b.landed_at || 0;
+      if (ex > nw) continue;
+      if (ex === nw && (existing.dur_ticks || 0) >= (b.dur_ticks || 0)) continue;
+    }
+    petBuffs.set(spellKey, {
+      name:        b.name,
+      dur_ticks:   b.dur_ticks,
+      dur_formula: b.dur_formula,
+      landed_at:   b.landed_at,
+    });
+    captured++;
+  }
+  if (captured > 0) _savePetStateSoon();
 }
 
 // If a self charm-spell cast is staged and still fresh, return its {cls,dur}
@@ -1182,7 +1304,55 @@ function _consumePendingCharmSpell(owner, nowMs) {
   // resolves the same way, so this holds for self charm.
   if (p.owner && owner && String(p.owner).toLowerCase() !== String(owner).toLowerCase()) return null;
   _pendingCharmSpell = null;
-  return { charm_class: p.cls, duration_sec: p.dur };
+  return { charm_class: p.cls, duration_sec: p.dur, charm_spell_name: p.name || null };
+}
+
+// Synthesize a "charm spell" entry in _buffLandingsByTarget so the charm shows
+// as a timed DEBUFF on the pet's Mob Info card, e.g. "Allure (Hopeya)".
+// Charm spells have good_effect=0 in eqemu_spells, so they naturally land in
+// the debuff section of renderTargetBuffs without extra coloring logic. The
+// `owner` field is rendered in parens by the Mob Info overlay so other Mimic
+// users targeting the same mob can see who's charming it. Cleared when the
+// charm session ends (break / re-charm refresh) by the same overwrite-by-name
+// logic that handles every other landed buff.
+function _recordCharmSpellOnTarget(pet, owner, spellName, durSec) {
+  if (!pet || !spellName || !(durSec > 0)) return;
+  const k = String(pet).toLowerCase();
+  let mp = _buffLandingsByTarget.get(k);
+  if (!mp) { mp = new Map(); _buffLandingsByTarget.set(k, mp); }
+  const newKey = String(spellName).toLowerCase();
+  const durTicks = Math.max(1, Math.round(durSec / 6));
+  const landedAt = Date.now();
+  // dur_ticks stored as ticks (catalog-native unit) since targetBuffsFor
+  // computes durSecs as dur_ticks * 6.
+  mp.set(newKey, {
+    name: spellName,
+    dur_ticks: durTicks,
+    landed_at: landedAt,
+    owner: owner ? String(owner) : null,
+    is_charm_spell: true,
+  });
+  _savePetStateSoon();
+  // Cross-client mirror: push a synthesized buff-landing event so the bot
+  // stores it in buff_casts AND relays it to OTHER Mimic users targeting
+  // the same pet via /api/agent/target-buffs. Without this, Allure /
+  // Beguile / Charm have no cross-client visibility at all — their
+  // cast_on_other is NULL, so the log path can never produce a
+  // landing row.
+  const spellEntry = _spellByNameLower.get(newKey) || null;
+  if (typeof buffCastBuffer !== 'undefined' && Array.isArray(buffCastBuffer)) {
+    buffCastBuffer.push({
+      target:         String(pet),
+      spell_id:       spellEntry ? (spellEntry.id || 0) : 0,
+      spell_name:     spellName,
+      landing_text:   '',                                 // no log line for charm
+      dur_ticks:      durTicks,
+      dur_formula:    spellEntry ? (spellEntry.durf || 0) : 0,
+      cast_at:        new Date(landedAt).toISOString(),
+      observer:       owner || null,                      // observer == caster for self-cast charm
+      is_charm_spell: true,
+    });
+  }
 }
 
 // Reconcile the charm tracker against the LIVE Zeal pet gauge (slot 16). On
@@ -1669,6 +1839,13 @@ function applyPetHealthLine(line, character) {
 // looks stronger." is OUR pet getting buffed (vs another player).
 function _petOwnerByName(petLower) {
   if (!petLower) return null;
+  // Charm-tracker first — debounced and authoritative for charm pets, and it
+  // survives the brief slot-16 dropouts that happen during a re-charm cast
+  // (~3s window). Without this fallback, recordPetBuffLanding misses any buff
+  // landing that coincides with that window, and the pet's buffs stay
+  // "(fell off — rebuff)" on the Charm tracker even after a fresh recast.
+  const ct = _charmTickTracker.get(petLower);
+  if (ct && ct.is_active && ct.owner) return String(ct.owner).toLowerCase();
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || !Array.isArray(st.gauges)) continue;
@@ -1736,7 +1913,14 @@ function recordPetBuffLanding(bcEvt) {
   if (!owner) return;
   let mp = _petBuffLandings.get(owner);
   if (!mp) { mp = new Map(); _petBuffLandings.set(owner, mp); }
-  const ownerLevel = (whoData.get(owner) || {}).level || null;
+  // Caster level for duration scaling: prefer the owner's real /who level,
+  // fall back to the era cap (60 in Luclin, 65 in PoP) when whoData is empty.
+  // Without this fallback, level-driven formulas (Boon of the Garou = formula
+  // 7, t = lvl) compute t = 0 — which makes the buff land "already expired"
+  // → the Charm tracker immediately shows it as "fell off — rebuff" even
+  // while Mob Info (which already uses the era-cap fallback in
+  // recordTargetBuffLanding) shows it ticking down correctly.
+  const ownerLevel = (whoData.get(owner) || {}).level || _assumedCasterLevel();
   const durTicks   = _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, ownerLevel);
   const newKey     = String(bcEvt.spell_name).toLowerCase();
   // Slot-based overwrite — if the new buff has a known category (haste / hp /
@@ -1816,7 +2000,12 @@ function petBuffsForOwner(ownerLower) {
       // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
       // the 5-min rebuff cue. HoTs are short and re-applied frequently — a
       // long-lingering 'fell off' is noise, not signal.
-      const lingerMs = _isHotBuff(b && b.name) ? 6_000 : FELL_OFF_LINGER_MS;
+      // Stuns + other sub-minute effects (Color Flux 12s, mez breakers, instant
+      // procs) don't deserve the 5-min "fell off — rebuff" cue — you don't
+      // rebuff a stun, you re-stun. Cap the linger at one tick (6s) for any
+      // catalog-duration < 60s, same as HoTs.
+      const _shortFx = ((Number(b && b.dur_ticks) || 0) * 6) > 0 && ((Number(b && b.dur_ticks) || 0) * 6) < 60;
+      const lingerMs = (_isHotBuff(b && b.name) || _shortFx) ? 6_000 : FELL_OFF_LINGER_MS;
       if (b.worn_off_at) {                                   // explicit "worn off"
         if (now - b.worn_off_at > lingerMs) { lm.delete(k); continue; }
         fellOff = true; rem = 0;
@@ -1912,8 +2101,16 @@ function targetBuffsFor(targetLower) {
       if (rem < -(lingerMs / 1000)) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
     }
+    // Charm-spell entries carry the owner name so Mob Info can render
+    // "Allure (Hopeya)" — the only path for tracking a charm whose
+    // cast_on_other is NULL in the catalog. Always treat as a debuff
+    // (good=0) so it lands in the Debuff section regardless of catalog
+    // lookup.
+    const isCharm = !!(b && b.is_charm_spell);
     out.push({ name: b.name, remaining_secs: Math.max(0, Math.round(rem)),
-      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at, good: _spellGood(b.name), fell_off: fellOff });
+      total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: b.landed_at,
+      good: isCharm ? 0 : _spellGood(b.name), fell_off: fellOff,
+      owner: (b && b.owner) ? b.owner : null });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -1950,11 +2147,20 @@ function noteSelfCast(line, character) {
   // able to match any recent cast, not only the most recent.
   let arr = _recentSelfCast.get(cl);
   if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
-  arr.push({ spellLower: m[1].trim().toLowerCase(), name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  const spellLower = m[1].trim().toLowerCase();
+  arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // Prune old / cap length.
   const cutoff = atMs - SELF_CAST_WINDOW_MS;
   while (arr.length && arr[0].atMs < cutoff) arr.shift();
   if (arr.length > 8) arr.splice(0, arr.length - 8);
+  // Stage charm-spell duration here too. The other staging path (parseEvent
+  // cast pipeline) depends on parseEvent emitting a `cast` event for the
+  // line — which it sometimes doesn't for the self "You begin casting" form.
+  // When that path misses, the charm overlay falls back to its 60s estimate
+  // ("tick N/10~"). Doing it here covers the gap with no extra cost: same
+  // regex match we just did, same character context.
+  const ci = CHARM_SPELLS.get(spellLower);
+  if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
 // so anyone with that target up sees it in Mob Info's "Casting" section. Only
@@ -1996,38 +2202,49 @@ function resolveSelfCastLanding(line, observer) {
   const nowMs = ts ? ts.getTime() : Date.now();
   const m = line.match(/^\[(.+?)\]\s+(.+)$/);
   if (!m) return null;
-  const body = m[2];
-  // Same target/suffix split as parseBuffLanding (possessive OR first space).
-  const candidates = [];
-  const apos = body.indexOf("'s");
-  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);
-  const sp = body.indexOf(' ');
-  if (sp > 0) candidates.push([body.slice(0, sp), body.slice(sp + 1)]);
-  if (!candidates.length) return null;
+  const body = m[2].replace(/\s+$/, '');     // strip trailing whitespace
+  const bodyLower = body.toLowerCase();
   // Newest cast first so the most recent matching spell wins.
   for (let i = arr.length - 1; i >= 0; i--) {
     const rc = arr[i];
     if (nowMs - rc.atMs > SELF_CAST_WINDOW_MS) continue;
     const e = _spellByNameLower.get(rc.spellLower);
     if (!e || !e.other) continue;
-    const expected = String(e.other).trim().toLowerCase();
-    for (const [name, suffixRaw] of candidates) {
-      if (suffixRaw.trim().toLowerCase() !== expected) continue;
-      // Attribute only to the target we were casting at (when known) so we
-      // don't mis-name a bystander's same-message buff.
-      if (rc.target && String(rc.target).toLowerCase() !== String(name).toLowerCase()) continue;
-      return {
-        target:      name,
-        spell_id:    e.id || 0,
-        spell_name:  e.name,
-        landing_text: suffixRaw.trim().slice(0, 200),
-        dur_ticks:   e.dur,
-        dur_formula: e.durf,
-        cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
-        observer:    observer,
-        _selfCast:   true,
-      };
+    // We know the spell we cast, so we know the EXACT cast_on_other suffix EQ
+    // will print. Match by "body ends with expected" instead of guessing where
+    // the target name ends — the old first-space split broke multi-word NPC
+    // names ("A Soriz Slave slows down." → split at "A | Soriz Slave slows
+    // down." → suffix didn't match "slows down.", so the debuff never
+    // registered on Mob Info). Possessive form ("Bonkur's eye gleams ...")
+    // leaves the "'s" attached to the suffix and needs no separator; space
+    // form requires the char before the suffix to be a space.
+    const expected = String(e.other).trim();
+    const expectedLower = expected.toLowerCase();
+    if (!expectedLower || !bodyLower.endsWith(expectedLower)) continue;
+    const cut = body.length - expected.length;
+    let nameEnd;
+    if (expected.startsWith("'")) {
+      nameEnd = cut;                          // "<name>'s ..." — no separator
+    } else {
+      if (cut === 0 || body[cut - 1] !== ' ') continue;
+      nameEnd = cut - 1;
     }
+    const name = body.slice(0, nameEnd).trim();
+    if (!name) continue;
+    // Attribute only to the target we were casting at (when known) so we
+    // don't mis-name a bystander's same-message buff.
+    if (rc.target && String(rc.target).toLowerCase() !== name.toLowerCase()) continue;
+    return {
+      target:      name,
+      spell_id:    e.id || 0,
+      spell_name:  e.name,
+      landing_text: body.slice(cut).slice(0, 200),
+      dur_ticks:   e.dur,
+      dur_formula: e.durf,
+      cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
+      observer:    observer,
+      _selfCast:   true,
+    };
   }
   return null;
 }
@@ -2071,6 +2288,123 @@ function notePetBuffWornOff(line, character) {
 // { next_quake_at, detected_at, source_text } or null.
 const _EARTHQUAKE_RX = /the next earthquake will begin in\s+(.+?)\.?\s*$/i;
 let _lastQuakeSig = null;
+// ── Faction tracking detectors ──────────────────────────────────────────────
+// Two self-only line families feed the per-character faction picture
+// (surfaced on wolfpack.quest /character/<name>/factions, BETA):
+//
+//  1. Faction HITS — printed on kills and quest turn-ins:
+//       "Your faction standing with VeliumHounds got worse."
+//       "Your faction standing with KaladimCitizens got better."
+//     At the cap the server says so — gold data, it pins the character's
+//     absolute position on that faction:
+//       "Your faction standing with X could not possibly get any better."
+//       "Your faction standing with X could not possibly get any worse."
+//     Classic prints no numeric delta; we store direction + cap flag and
+//     marry magnitudes to PQDI's faction pages (per-mob/per-quest values)
+//     on the web side. Base standing by class/race/deity is a follow-up.
+//
+//  2. CON standings — every /consider prints the mob's faction tier toward
+//     YOU as the leading phrase ("scowls at you, ready to attack" … "regards
+//     you as an ally"). We log standing TRANSITIONS per (character, mob), so
+//     a complete-log crawl charts when each faction tier moved — and a mob
+//     that cons non-scowling is also the only log-visible evidence that a
+//     Feign Death actually stuck (success is silent; see the FD handler).
+const CON_STANDINGS = [
+  ['regards you as an ally',         'ally',           8],
+  ['looks upon you warmly',          'warmly',         7],
+  ['kindly considers you',           'kindly',         6],
+  ['judges you amiably',             'amiably',        5],
+  ['regards you indifferently',      'indifferently',  4],
+  ['looks your way apprehensively',  'apprehensively', 3],
+  ['glowers at you dubiously',       'dubiously',      2],
+  ['glares at you threateningly',    'threateningly',  1],
+  ['scowls at you, ready to attack', 'scowls',         0],
+];
+// Phrases are plain prose (no regex metacharacters), so a straight join is
+// safe — keep it that way if new tiers are ever added.
+const _CON_RX = new RegExp('\\]\\s+(.+?)\\s+(' + CON_STANDINGS.map(([p]) => p).join('|') + ')', 'i');
+function parseFactionLine(line, character) {
+  if (!character || line.indexOf('Your faction standing with') === -1) return null;
+  const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)|could not possibly get any (better|worse))\.\s*$/i);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  const dirWord = (m[2] || m[3] || '').toLowerCase();
+  return {
+    kind:      'hit',
+    character,
+    faction:   m[1].trim().slice(0, 96),
+    direction: dirWord === 'better' ? 1 : -1,
+    capped:    !!m[3],
+    ts:        ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+// Standing-change dedup so /con spam doesn't flood the upload buffer: emit
+// only when the standing for (character, mob) differs from the last one seen
+// this session. Backfill crawls therefore record TRANSITIONS — exactly the
+// history we want ("when did Thurgadin stop scowling at me").
+const _lastConStanding = new Map();   // charLower|mobLower → standing
+function parseConsiderLine(line, character) {
+  if (!character || line.indexOf(' you') === -1) return null;
+  const m = line.match(_CON_RX);
+  if (!m) return null;
+  const mob = m[1].trim();
+  // Sanity: mob names are short; a chat line that happens to contain a con
+  // phrase would carry a long prefix ("Soandso says, 'that gnoll ...") —
+  // reject anything with quotes or implausible length.
+  if (!mob || mob.length > 64 || /['"‘’]/.test(mob) || /\b(?:says|tells|shouts|auctions)\b/i.test(mob)) return null;
+  const phrase = m[2].toLowerCase();
+  const entry = CON_STANDINGS.find(([p]) => p === phrase);
+  if (!entry) return null;
+  const key = String(character).toLowerCase() + '|' + mob.toLowerCase();
+  if (_lastConStanding.get(key) === entry[1]) return null;   // unchanged → skip
+  _lastConStanding.set(key, entry[1]);
+  if (_lastConStanding.size > 4000) {
+    _lastConStanding.delete(_lastConStanding.keys().next().value);
+  }
+  // HOSTILE cons never upload. An engaged mob cons scowls/threateningly
+  // regardless of base faction (every raid pull spams them), so they carry
+  // no faction signal — the server keeps only the latest NON-hostile
+  // standing per mob. The dedup map above still recorded the hostile tier,
+  // which is exactly what makes the next non-hostile con re-emit: the
+  // scowls→amiably TRANSITION (mob dropped you from hate — e.g. a Feign
+  // Death finally stuck) registers instead of being suppressed as
+  // "unchanged amiably".
+  if (entry[2] <= 1) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    kind:      'con',
+    character,
+    mob:       mob.slice(0, 64),
+    standing:  entry[1],
+    rank:      entry[2],
+    ts:        ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
+// PoP flag grant — "You have received a character flag!" The line never
+// names the flag, so attach context: the character's current zone (Zeal)
+// and the most recent boss kill (threat snapshot). The bot maps
+// (zone, boss) -> flag_key; unmapped combos are preserved for launch-week
+// catalog fixes. Pre-built for the 2026-10-01 PoP unlock — harmless before.
+function parsePopFlagLine(line, character) {
+  if (!character || line.indexOf('received a character flag') === -1) return null;
+  if (!/\]\s+You have received a character flag!/i.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  const cl = String(character).toLowerCase();
+  let zone = null;
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+  }
+  const enc = (stats.currentEncounterThreatByChar || {})[cl] || stats.currentEncounterThreat;
+  const boss = enc && enc.bossName ? String(enc.bossName) : null;
+  return {
+    character,
+    zone:  zone ? String(zone).slice(0, 64) : null,
+    boss:  boss ? boss.slice(0, 64) : null,
+    ts:    ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
 function parseEarthquake(line) {
   if (!line || line.toLowerCase().indexOf('earthquake') === -1) return null;
   const m = line.match(_EARTHQUAKE_RX);
@@ -2546,7 +2880,18 @@ class EncounterBuilder {
       // Defense-in-depth: even if a name slipped past the writer-side
       // NPC check, drop it here if it shows up as a damage target — the
       // mob we're fighting can't simultaneously be on our threat table.
-      if (this.targets.has(name)) continue;
+      // EXCEPTION: our own pets. A charm pet is usually a mob we damaged
+      // BEFORE charming it (mez → tash → charm), so its name lives in
+      // this.targets from the pre-charm fight — but post-charm it's on
+      // OUR side and its damage rows are exactly what the DPS HUD's pet
+      // rows need. Same-named trash ambiguity is accepted (mobs rarely
+      // hit our targets unless charmed).
+      const nl = String(name).toLowerCase();
+      const petOwner = this.petLeaders[nl]
+        || (this._activeCharms?.get(nl)?.owner)
+        || (_charmTickTracker.get(nl)?.is_active ? _charmTickTracker.get(nl).owner : null)
+        || null;
+      if (this.targets.has(name) && !petOwner) continue;
       perPlayer[name] = {
         swing:      Math.round(t.swing),
         proc:       Math.round(t.proc),
@@ -2560,11 +2905,23 @@ class EncounterBuilder {
         // Inbound damage taken (from mobs) — Tank tab on the damage overlay.
         took:       Math.round(t.took || 0),
         tookMax:    Math.round(t.tookMax || 0),
+        // Set for OUR pet rows (charm or summoned) — lets the DPS HUD allow
+        // the multi-word name past its anti-NPC filter and label the row
+        // "A Fungoid Sporeling (Hopeya)".
+        pet_owner:  petOwner,
         procDetail: t.procDetail || {},
       };
     }
+    // Fight label for the overlays: the catalog-matched boss when known,
+    // else the most-damaged defender this encounter — so trash/named pulls
+    // still say WHAT we're fighting instead of a generic "current fight".
+    let _topTarget = null, _topTargetDmg = 0;
+    for (const [tname, tdmg] of this.targets) {
+      if (tdmg > _topTargetDmg) { _topTargetDmg = tdmg; _topTarget = tname; }
+    }
     const snap = {
-      bossName:  this.bossName,
+      bossName:   this.bossName,
+      targetName: this.bossName || _topTarget,
       startedAt: this.startedAt,
       flushedAt: null,
       // The character whose log file this builder is reading. Lets the
@@ -2574,6 +2931,24 @@ class EncounterBuilder {
       uploader:  this.character || null,
       perPlayer,
     };
+    // Pet aggro rollup — every charm or summoned pet that has a row in
+    // perPlayer with a known pet_owner contributes its total threat back to
+    // its OWNER's row as `pet_threat_total`. Lets the threat overlay show
+    // "Hopeya 18.2k +pet 12.0k" so an enchanter can see their COMBINED hate
+    // signature (the mob doesn't separate pet-hate from owner-hate when
+    // deciding who to chew on).
+    for (const t of Object.values(perPlayer)) {
+      if (!t.pet_owner) continue;
+      // Case-insensitive owner lookup (perPlayer keys are original case;
+      // pet_owner field is also original case but the threat builder may
+      // capitalize differently if the agent saw the name in multiple spots).
+      const ownerLower = String(t.pet_owner).toLowerCase();
+      const ownerKey = Object.keys(perPlayer).find(k => k.toLowerCase() === ownerLower);
+      const ownerRow = ownerKey ? perPlayer[ownerKey] : null;
+      if (ownerRow) {
+        ownerRow.pet_threat_total = (ownerRow.pet_threat_total || 0) + (t.total || 0);
+      }
+    }
     stats.currentEncounterThreat = snap;
     // Per-character mirror so a multi-boxer can see THEIR focused character's
     // fight even when another character's log just landed an update. Keyed
@@ -3153,9 +3528,20 @@ class EncounterBuilder {
       // filter: anyone we've been DAMAGING this encounter (this.targets)
       // is by definition an NPC, so reject them too.
       const attackerIsKnownNpc = attacker && this.targets.has(attacker);
-      if (!pvpHit && attacker && !attackerIsKnownNpc
+      // OUR pets (charm or summoned) bypass both the multi-word anti-NPC
+      // filter AND the known-NPC check — a charm pet is usually a mob we
+      // damaged before charming, so it's in this.targets, and its name has
+      // spaces ("A Fungoid Sporeling"). Without this bypass, pet damage
+      // never reached threatBy and the DPS HUD showed only the owner's own
+      // swings. Pet identity: encounter petLeaders, open charm session, or
+      // the gauge-driven module tracker's active entry.
+      const _atkL = attacker ? attacker.toLowerCase() : '';
+      const attackerIsOurPet = !!(attacker && (this.petLeaders[_atkL]
+        || this._activeCharms?.has(_atkL)
+        || _charmTickTracker.get(_atkL)?.is_active));
+      if (!pvpHit && attacker && (!attackerIsKnownNpc || attackerIsOurPet)
           && (attacker === this.character || isPlausibleAttacker(attacker))
-          && (!/\s/.test(attacker) || attacker === this.character)) {
+          && (!/\s/.test(attacker) || attacker === this.character || attackerIsOurPet)) {
         if (!this.threatBy.has(attacker)) {
           this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
         }
@@ -3228,7 +3614,14 @@ class EncounterBuilder {
         : atkRaw;
       const defenderIsPlayer = defender && (defender === this.character || isConfirmedPlayer(defender));
       const attackerIsPlayer = attacker && (attacker === this.character || isConfirmedPlayer(attacker));
-      if (defenderIsPlayer && !attackerIsPlayer && defender !== attacker) {
+      // OUR pet eating hits IS tanking — the whole point of charm play.
+      // Without this, an enchanter's Tank tab stayed empty because the
+      // defender (the pet) is never a confirmed player.
+      const _defL = defender ? defender.toLowerCase() : '';
+      const defenderIsOurPet = !!(defender && (this.petLeaders[_defL]
+        || this._activeCharms?.has(_defL)
+        || _charmTickTracker.get(_defL)?.is_active));
+      if ((defenderIsPlayer || defenderIsOurPet) && !attackerIsPlayer && defender !== attacker) {
         if (!this.threatBy.has(defender)) {
           this.threatBy.set(defender, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, took: 0, tookMax: 0, procDetail: {} });
         }
@@ -3263,6 +3656,41 @@ class EncounterBuilder {
         t.proc += Math.max(1, maxThreat + 1 - current);
       } else {
         t.proc += PROC_HATE[event.type] || 0;
+      }
+    }
+
+    // Aggro dumps — rogue Evade pulls the player DOWN the threat meter; the
+    // Feign Death fall line is the FAILURE signal (a successful FD is silent
+    // in the log — only the mob's behavior reveals it), so FD lines are
+    // counted as failed attempts and never reduce anyone's threat. Only the
+    // threat buckets (swing/proc/spell/heal) are touched by evade;
+    // dmg/healRaw/took are damage-meter numbers and must survive untouched
+    // (evading doesn't un-deal your damage).
+    if (event.type === 'feign_death' || event.type === 'evade') {
+      // FD bystander form carries the faller's name; self forms resolve to
+      // the uploader. Single-capitalized-word gate keeps NPC corpses and
+      // multi-word mobs out (mobs don't FD, but belt-and-suspenders).
+      const who = event.attacker || this.character;
+      if (who && /^[A-Z][a-zA-Z]{2,19}$/.test(who) && this.threatBy.has(who)) {
+        const t = this.threatBy.get(who);
+        if (event.type === 'feign_death') {
+          // The fall line = failed FD; the player is still on the hate
+          // table at full threat. Count it so monks can see their FD
+          // fail rate in the breakdown column. (Successful FDs leave no
+          // log line; inferring them from mob con/disengage behavior is
+          // the faction-consider work — see parseConsiderLine.)
+          t.procDetail['Feign Death (failed)'] = (t.procDetail['Feign Death (failed)'] || 0) + 1;
+        } else if (event.success) {
+          // Successful Evade ≈ a big flat cut; TAKP-era servers model it as
+          // roughly half your hate. Halve every bucket so the breakdown bar
+          // keeps its shape while the row drops down the meter.
+          t.procDetail['Evade'] = (t.procDetail['Evade'] || 0) + 1;
+          t.swing *= 0.5; t.proc *= 0.5; t.spell *= 0.5; t.heal *= 0.5;
+        } else {
+          // Failed evade — no hate change, but count the attempt so a rogue
+          // can see their evade success rate in the breakdown column.
+          t.procDetail['Evade (failed)'] = (t.procDetail['Evade (failed)'] || 0) + 1;
+        }
       }
     }
 
@@ -3347,8 +3775,27 @@ class EncounterBuilder {
       // (no attacker = the builder's own character cast it); matched to the land
       // by a short time window, mirroring _pendingDireCharm.
       if (!event.attacker) {
-        const ci = CHARM_SPELLS.get(String(spell).toLowerCase());
-        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, owner: this.character || null, ts: Date.now() };
+        const sl = String(spell).toLowerCase();
+        const ci = CHARM_SPELLS.get(sl);
+        // The `name` field on _pendingCharmSpell lets the charm overlay show
+        // which spell opened the session (Allure / Boltran's / …) in its
+        // "pending charm staged?" diagnostic line.
+        if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
+        // Direct-hate AAs / spells — Voice of Thule, Disruptive Persecution,
+        // Hate's Attraction, etc. — never produce a damage line, so they're
+        // invisible to the rest of the threat math. Bump the caster's spell
+        // bucket by the catalog hate so the Threat overlay reads honestly.
+        // procDetail also records the cast so a tank can see WHAT AA they're
+        // leaning on across the fight.
+        const ch = CAST_HATE[sl];
+        if (ch !== undefined && this.character) {
+          if (!this.threatBy.has(this.character)) {
+            this.threatBy.set(this.character, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
+          }
+          const ct = this.threatBy.get(this.character);
+          ct.spell += ch;
+          ct.procDetail[spell] = (ct.procDetail[spell] || 0) + 1;
+        }
       }
       // Bard melody tracker — singing-only (the parseEvent split tags bard
       // songs with event.singing=true). Move-to-front a song-name cycle per
@@ -3986,6 +4433,9 @@ function _endpointForKind(kind, botUrl) {
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
+    case 'faction':         return base + '/faction';
+    case 'pop_flag':        return base + '/pop_flags';
+    case 'quarmy':          return base + '/quarmy';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -4917,6 +5367,90 @@ function _serializeForDashboard() {
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
+    // Charm-tracking diagnostic — surfaces the four checkpoints the charm
+    // detection has to pass through (cast seen → pending staged → slot 16
+    // populated → tracker entry created), so a user can SEE where the
+    // pipeline stopped if their charm isn't lighting up. Renders on the
+    // Triggers tab as a small "🐺 Charm diagnostic" card.
+    charmDiag: (() => {
+      const now = Date.now();
+      const out = {
+        now,
+        recent_self_casts: [],
+        pending_charm:     null,
+        charm_pending_window_ms: PENDING_CHARM_WINDOW_MS,
+        slot16_by_char:    [],
+        tracker:           [],
+        charm_spell_names: [],
+      };
+      // Recent self-casts across every watched character (newest last so
+      // the dashboard renders newest first when reversed). Only entries
+      // matching a CHARM_SPELLS spell are surfaced — keeps the panel small
+      // and focused. 30s window.
+      const CHARM_NAMES = new Set();
+      for (const k of CHARM_SPELLS.keys()) CHARM_NAMES.add(k);
+      out.charm_spell_names = Array.from(CHARM_NAMES).sort();
+      for (const [chLower, arr] of _recentSelfCast.entries()) {
+        for (const rc of (arr || [])) {
+          if (!rc || !rc.spellLower) continue;
+          if (now - rc.atMs > 30_000) continue;
+          out.recent_self_casts.push({
+            character:   chLower,
+            spell:       rc.name,
+            spell_lower: rc.spellLower,
+            is_charm:    CHARM_NAMES.has(rc.spellLower),
+            cast_at_ms:  rc.atMs,
+            ago_secs:    Math.round((now - rc.atMs) / 1000),
+            target:      rc.target || null,
+          });
+        }
+      }
+      out.recent_self_casts.sort((a, b) => b.cast_at_ms - a.cast_at_ms);
+      out.recent_self_casts = out.recent_self_casts.slice(0, 8);
+      // Pending charm — what was staged by the last cast detection.
+      if (_pendingCharmSpell) {
+        const age = now - _pendingCharmSpell.ts;
+        out.pending_charm = {
+          spell:    _pendingCharmSpell.name || '(unknown)',
+          class:    _pendingCharmSpell.cls,
+          dur_sec:  _pendingCharmSpell.dur,
+          owner:    _pendingCharmSpell.owner,
+          age_ms:   age,
+          expires_in_ms: Math.max(0, PENDING_CHARM_WINDOW_MS - age),
+          expired:  age > PENDING_CHARM_WINDOW_MS,
+        };
+      }
+      // Zeal slot 16 per character + whether it would pass the
+      // article-prefix filter that _reconcileGaugeCharms uses to decide
+      // "this is a charm pet".
+      for (const ch of Object.keys(_zealState)) {
+        const st = _zealState[ch];
+        if (!st || !Array.isArray(st.gauges)) continue;
+        const petG = st.gauges.find(g => g && g.slot === 16 && g.text);
+        out.slot16_by_char.push({
+          character:  ch,
+          slot16_text: petG ? String(petG.text) : null,
+          passes_article_filter: petG ? /^an?\s+/i.test(String(petG.text)) : false,
+          updated_age_secs: st.updatedAt ? Math.round((now - st.updatedAt) / 1000) : null,
+        });
+      }
+      // Active charm tracker entries.
+      for (const [k, info] of _charmTickTracker.entries()) {
+        out.tracker.push({
+          key:           k,
+          pet:           info.pet,
+          owner:         info.owner,
+          is_active:     info.is_active,
+          is_dire:       !!info.is_dire_charm,
+          charm_class:   info.charm_class,
+          duration_sec:  info.duration_sec,
+          started_at:    info.started_at,
+          last_tick_at:  info.last_tick_at,
+          broke_at:      info.broke_at,
+        });
+      }
+      return out;
+    })(),
     // Bard melody — per watched character, the songs in /melody slot order
     // + the current cast position. Powers the melody overlay's vertical
     // list with ▶ play icon, casting bar, and the "stopped here" marker
@@ -5094,20 +5628,19 @@ function _serializeForDashboard() {
         // "Is this character a Bard?" — Mimic never populates zealSt.class
         // (only HP / zone / buffs / casting flow through the pipe), so the
         // original `zealSt.class === 'Bard'` check was always false in
-        // practice. Fall through three sources, most authoritative first:
+        // practice. AUTHORITATIVE sources only:
         //   1. whoData class — captured from a real /who line or inferred
-        //      from a class-specific ability (e.g. Snare = ranger/druid,
-        //      Selo's = bard). Survives across sessions.
+        //      from a class-specific ability (Selo's = bard). Survives
+        //      across sessions, so real bards resolve within one song.
         //   2. zealSt.class — kept for forward-compat in case Mimic ever
         //      starts populating it.
-        //   3. state.kind === 'song' — observed-via-singing fallback.
-        //      Slightly sticky (the comment above warns that switching
-        //      character keeps the flag), but harmless inside this builder
-        //      because we're already keyed on the bard's character.
+        // `state.kind === 'song'` used to be a third fallback, but it's
+        // sticky across casts and a single mis-tagged line flipped the whole
+        // bard UI (Melody title + utility strip) on for non-bards — the
+        // overlay then NEVER reverted to "Spell Casting". Class or nothing.
         const wd = (whoData && whoData.get) ? whoData.get(k) : null;
         const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
-                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
-                         ||   state.kind === 'song';
+                         || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')));
         // Buff → info shape. When ticks is unknown (null/0) we still emit
         // `observed:true` so the overlay can render "on" instead of "off" —
         // surfacing buff presence even without a countdown. Source flag
@@ -6769,6 +7302,123 @@ function renderZealCard(s) {
   }
   morphInto(el, h);
 }
+// 🐺 Charm diagnostic — shows the four-stage charm-detection pipeline so a
+// user can see WHERE their charm dropped if the tracker isn\\'t lighting up:
+//   1. Did the agent see the cast? (recent_self_casts row matching CHARM_SPELLS)
+//   2. Did it stage the pending charm? (pending_charm)
+//   3. Did the gauge get the pet? (slot16_by_char rows + article-filter pass)
+//   4. Did the tracker open a session? (tracker entries)
+// Hidden when there\\'s nothing to show; surfaces a "Detected ✓ / Missing ✗"
+// row per stage when there is.
+function renderCharmDiag(s) {
+  const el = document.getElementById('wpCharmDiag');
+  if (!el) return;   // Triggers tab not painted yet
+  const d = s && s.charmDiag;
+  if (!d) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  // Only render if there\\'s actionable data: any charm cast in the last 30s,
+  // any pending charm, any slot 16 entry, or any tracker row.
+  const hasData = (d.recent_self_casts && d.recent_self_casts.some(c => c.is_charm))
+               || d.pending_charm
+               || (d.tracker && d.tracker.length)
+               || (d.slot16_by_char && d.slot16_by_char.some(r => r.slot16_text));
+  if (!hasData) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+
+  const chk = (ok) => ok ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>';
+  let h = '<h2>🐺 Charm diagnostic <span class="dim" style="font-size:11px;font-weight:normal">(why isn\\'t my charm tracker lighting up?)</span></h2>';
+
+  // Recent charm casts
+  const charmCasts = (d.recent_self_casts || []).filter(c => c.is_charm);
+  const otherCasts = (d.recent_self_casts || []).filter(c => !c.is_charm);
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>1. Cast seen?</b> ';
+  if (charmCasts.length === 0) {
+    h += chk(false) + ' <span class="dim">no charm-spell "You begin casting" line in the last 30s on any watched character.</span>';
+    if (otherCasts.length > 0) {
+      h += '<div class="dim" style="font-size:10px;margin-top:2px">' + otherCasts.length + ' other cast(s) seen — confirms log tail is working. Check spell name spelling against CHARM_SPELLS map.</div>';
+    }
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>When</th><th>Character</th><th>Spell</th><th>Target (Zeal)</th></tr>';
+    for (const c of charmCasts) {
+      h += '<tr><td class="dim">' + c.ago_secs + 's ago</td>'
+         +   '<td>' + esc(c.character) + '</td>'
+         +   '<td style="color:var(--orange)">' + esc(c.spell) + '</td>'
+         +   '<td class="dim">' + esc(c.target || '—') + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  // Pending charm
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>2. Pending charm staged?</b> ';
+  if (!d.pending_charm) {
+    h += chk(false) + ' <span class="dim">_pendingCharmSpell is empty (already consumed by a land OR never staged).</span>';
+  } else {
+    const p = d.pending_charm;
+    h += p.expired ? chk(false) : chk(true);
+    h += ' <span style="color:var(--blue)">' + esc(p.spell) + '</span> · <span class="dim">' + esc(p.class) + '</span>'
+       + ' · ' + p.dur_sec + 's duration · owner <b>' + esc(p.owner || '?') + '</b>'
+       + ' · staged ' + Math.round(p.age_ms / 1000) + 's ago'
+       + (p.expired ? ' <span style="color:var(--red)">(EXPIRED — window is ' + Math.round(d.charm_pending_window_ms / 1000) + 's; the gauge took too long)</span>'
+                    : ' · expires in ' + Math.round(p.expires_in_ms / 1000) + 's');
+  }
+  h += '</div>';
+
+  // Zeal gauge slot 16
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>3. Zeal slot 16 (pet gauge)?</b> ';
+  const slot16Rows = (d.slot16_by_char || []).filter(r => r.slot16_text);
+  if (slot16Rows.length === 0) {
+    h += chk(false) + ' <span class="dim">No character is reporting slot 16 — Zeal pipe may be disconnected, or the charm hasn\\'t landed yet (gauge populates ~2s after).</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Character</th><th>slot 16 text</th><th>Article filter</th><th>Updated</th></tr>';
+    for (const r of slot16Rows) {
+      h += '<tr><td>' + esc(r.character) + '</td>'
+         +   '<td><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(r.slot16_text) + '</code></td>'
+         +   '<td>' + (r.passes_article_filter
+              ? '<span style="color:var(--green)">passes</span>'
+              : '<span style="color:var(--red)">FAILS — needs to start with "a "/"an "</span>') + '</td>'
+         +   '<td class="dim">' + (r.updated_age_secs != null ? r.updated_age_secs + 's ago' : '?') + '</td></tr>';
+    }
+    h += '</table>';
+    if (slot16Rows.some(r => !r.passes_article_filter)) {
+      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ The article-prefix filter in _reconcileGaugeCharms only opens a charm session when the slot 16 text starts with "a " or "an ". If your charmed mob doesn\\'t have an article in its name, this filter rejects it — flag the case so we can relax the rule.</div>';
+    }
+  }
+  h += '</div>';
+
+  // Tracker entries
+  h += '<div style="font-size:11px;margin-bottom:8px"><b>4. Tracker session opened?</b> ';
+  if (!d.tracker || d.tracker.length === 0) {
+    h += chk(false) + ' <span class="dim">_charmTickTracker is empty. If steps 1-3 are ✓ but this is ✗, the gauge debounce (1.5s) hasn\\'t fired yet — wait a couple of seconds. If it stays empty, the owner mismatch in _consumePendingCharmSpell is the next thing to check.</span>';
+  } else {
+    h += chk(true);
+    h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Pet</th><th>Owner</th><th>Active</th><th>Class</th><th>Duration</th><th>Up</th></tr>';
+    const now = d.now || Date.now();
+    for (const t of d.tracker) {
+      const up = t.started_at ? Math.round((now - t.started_at) / 1000) : 0;
+      h += '<tr><td>' + esc(t.pet || '?') + '</td>'
+         +   '<td>' + esc(t.owner || '?') + '</td>'
+         +   '<td>' + (t.is_active ? '<span style="color:var(--green)">active</span>'
+                                   : '<span class="dim">broken</span>') + '</td>'
+         +   '<td class="dim">' + esc(t.charm_class || '(estimate)') + '</td>'
+         +   '<td>' + (t.duration_sec ? t.duration_sec + 's' : '<span class="dim">(60s est)</span>') + '</td>'
+         +   '<td class="dim">' + up + 's</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div>';
+
+  morphInto(el, h);
+}
 function renderTriggers(s) {
   let h = '';
   h += '<div class="grid">';
@@ -6788,6 +7438,9 @@ function renderTriggers(s) {
   // the volatile card means the HTML below stays byte-stable when triggers
   // don't change, so setSectionHTML short-circuits and only the card repaints.
   h += '<div id="wpZealCard" class="card wide" style="display:none"></div>';
+  // Charm-tracking diagnostic card — filled by renderCharmDiag(). Hidden
+  // until there's data to show (no watched character casting charms, etc.).
+  h += '<div id="wpCharmDiag" class="card wide" style="display:none"></div>';
 
   // Active overlays (recent matches) — top of the page so the user can see
   // their triggers actually firing as they tune them. The "Clear" buttons
@@ -6905,6 +7558,8 @@ var WP_OVERLAY_ROWS = [
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
+  ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
+  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
 ];
 
 function renderOverlays(s) {
@@ -6967,8 +7622,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody };
-      var btns = document.querySelectorAll('.wp-ov-toggle');
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal };      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat };      var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
         b.textContent = isOn ? 'ON' : 'OFF';
@@ -7516,6 +8170,7 @@ async function refresh() {
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['healers', renderHealers], ['deeps', renderDeeps],
                      ['pets', renderPets], ['triggers', renderTriggers], ['zealcard', renderZealCard],
+                     ['charmdiag', renderCharmDiag],
                      ['overlays', renderOverlays], ['info', renderInfo]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
@@ -9446,8 +10101,24 @@ function startWebDashboard(port) {
       if (req.url && req.url.indexOf('/api/buff-queue') === 0) {
         let bufferClass = '';
         try { bufferClass = new URL(req.url, 'http://x').searchParams.get('class') || ''; } catch { /* */ }
-        fetchRaidBuffQueue(bufferClass);
-        const cached = _buffQueueCache.get(String(bufferClass || '').toLowerCase());
+        // Use the currently-active EQ window's character so the bot can
+        // sort the queue with same-zone raiders at the top + filter to
+        // who's actually online. Falls back to the freshest Zeal client
+        // when there's no signal from Mimic about the active window.
+        let bufferCharacter = '';
+        try {
+          const active = (stats && stats.activeCharacter) ? String(stats.activeCharacter) : '';
+          if (active) bufferCharacter = active;
+          else {
+            const st = _currentTargetState();
+            for (const ch of Object.keys(_zealState)) {
+              if (_zealState[ch] === st) { bufferCharacter = ch; break; }
+            }
+          }
+        } catch { /* */ }
+        fetchRaidBuffQueue(bufferClass, bufferCharacter);
+        const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
+        const cached = _buffQueueCache.get(cacheKey);
         const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
@@ -9654,6 +10325,16 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(body); }
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
         const character = String(payload?.character || '').trim();
+        // Logout/character-switch: Mimic retires the character (pipe closed,
+        // same-client character swap, or 2m idle at char select). Drop the
+        // entry so Mob Info / triggers stop acting on the camped character's
+        // last target — without this, _currentTargetState() keeps returning
+        // the stale entry forever ("shows Dafeet after switching characters").
+        if (character && payload?.disconnected === true) {
+          delete _zealState[character];
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, retired: true }));
+        }
         const st = payload?.state;
         if (character && st && typeof st === 'object') {
           // Detect a CAST START via Zeal label 134 transition. /melody on
@@ -11053,6 +11734,140 @@ function refreshInventories() {
   catch { /* non-fatal */ }
 }
 
+// ── Quarmy export ingest ─────────────────────────────────────────────────────
+// <Name>Quarmy.txt is the in-game export members generate for quarmy.com
+// (TSV: Character row, Location/Name/ID/Count/Slots inventory, AAIndex/Rank,
+// Checksum). Format verified against three real exports (monk/cleric/bard).
+//
+// PRIVACY — the whole point of parsing it HERE instead of fetching the
+// quarmy.com profile bot-side: Bank, SharedBank, and coin rows (which are
+// account-level and include bank totals) are dropped in parseQuarmyExport
+// before they reach any buffer. They never leave this machine. The bot strips
+// them again server-side as defense in depth, and exclude_inventory /
+// exclude_from_stats on /me stop the upload entirely — scanQuarmyExports
+// refuses to run before the prefs poll has answered at least once, so the
+// gate is enforced on KNOWN prefs, never assumed ones.
+const QUARMY_FILENAME_RX = /^([A-Za-z]+)[-_ ]?Quarmy\.txt$/i;
+const _quarmyUploaded = {};   // char(lower) → export checksum already enqueued
+
+function parseQuarmyExport(text) {
+  const out = { profile: null, equipped: [], bags: [], aas: [], checksum: null };
+  const slotSeen = {};
+  let section = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    if (!raw) continue;
+    const cols = raw.split('\t');
+    const c0 = (cols[0] || '').trim();
+    if (!c0) continue;
+    if (c0 === 'Character') {
+      if ((cols[1] || '').trim() === 'Name') continue;          // header row
+      out.profile = {
+        name:      (cols[1] || '').trim(),
+        last_name: (cols[2] || '').trim() || null,
+        level:     parseInt(cols[3], 10) || null,
+        class_id:  parseInt(cols[4], 10) || null,
+        race_id:   parseInt(cols[5], 10) || null,
+        deity_id:  parseInt(cols[7], 10) || null,   // fixes the faction page's deity gap
+        guild:     (cols[8] || '').trim() || null,
+      };
+      continue;
+    }
+    if (c0 === 'Location') { section = 'inv'; continue; }
+    if (c0 === 'AAIndex')  { section = 'aa';  continue; }
+    if (c0 === 'Checksum') { out.checksum = (cols[1] || '').trim() || null; section = null; continue; }
+    if (section === 'inv') {
+      // PRIVACY: bank, shared bank, currency, and the cursor slot never
+      // leave this machine — dropped here, before any buffer.
+      if (/^(Bank|SharedBank)/i.test(c0) || /Coin/i.test(c0) || c0 === 'Held') continue;
+      const itemName = (cols[1] || '').trim();
+      const itemId   = parseInt(cols[2], 10);
+      const count    = parseInt(cols[3], 10) || 1;
+      if (!itemName || itemName.toLowerCase() === 'empty') continue;
+      if (!Number.isFinite(itemId) || itemId <= 0) continue;
+      if (/^General\d+(-Slot\d+)?$/.test(c0)) {
+        out.bags.push({ slot: c0, item_id: itemId, item_name: itemName, count });
+      } else {
+        // Worn slots. Ear/Wrist/Fingers appear twice — number them so each
+        // lands on its own row (the bot's PK is per-slot).
+        let slot = c0;
+        if (slot === 'Ear' || slot === 'Wrist' || slot === 'Fingers') {
+          slotSeen[slot] = (slotSeen[slot] || 0) + 1;
+          slot = slot + slotSeen[slot];
+        }
+        out.equipped.push({ slot, item_id: itemId, item_name: itemName, count });
+      }
+      continue;
+    }
+    if (section === 'aa') {
+      const idx = parseInt(c0, 10), rank = parseInt(cols[1], 10);
+      if (Number.isFinite(idx) && Number.isFinite(rank) && rank > 0) out.aas.push({ index: idx, rank });
+    }
+  }
+  return out;
+}
+
+function _quarmyPrefsBlock(lowerName) {
+  const p = stats.characterPrefs && stats.characterPrefs[lowerName];
+  return !!(p && (p.exclude_inventory || p.exclude_from_stats));
+}
+
+function scanQuarmyExports() {
+  // Hard gate: prefs must have loaded at least once this session so
+  // exclude_inventory is KNOWN before any gear leaves the box. (No botUrl →
+  // no prefs poll → no uploads, which is also correct.)
+  if (!stats.characterPrefsCheckedAt) return;
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return;
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+
+  const envExcluded = new Set(
+    (process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+
+  for (const name of entries) {
+    const m = name.match(QUARMY_FILENAME_RX);
+    if (!m) continue;
+    const fileChar = m[1].toLowerCase();
+    if (envExcluded.has(fileChar) || _quarmyPrefsBlock(fileChar)) continue;
+    const fullPath = path.join(dir, name);
+    try {
+      const parsed = parseQuarmyExport(fs.readFileSync(fullPath, 'utf8'));
+      // The Character row inside the file is authoritative over the filename
+      // (renamed copies happen) — re-check prefs under the real name too.
+      const profName = parsed.profile && parsed.profile.name;
+      const character = (profName && /^[A-Za-z]{2,}$/.test(profName))
+        ? profName
+        : m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      const lower = character.toLowerCase();
+      if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
+      if (parsed.equipped.length === 0 && parsed.bags.length === 0 && parsed.aas.length === 0) continue;
+      const checksum = parsed.checksum || ('mtime-' + fs.statSync(fullPath).mtime.getTime());
+      if (_quarmyUploaded[lower] === checksum) continue;
+      if (dryRun) {
+        console.log(`[quarmy] DRY RUN — would upload ${character}: ${parsed.equipped.length} equipped, ${parsed.bags.length} bagged, ${parsed.aas.length} AAs (checksum ${checksum})`);
+        continue;
+      }
+      _quarmyUploaded[lower] = checksum;
+      enqueueUpload('quarmy', {
+        agent_version: AGENT_VERSION,
+        character,
+        level:    parsed.profile?.level    ?? null,
+        class_id: parsed.profile?.class_id ?? null,
+        race_id:  parsed.profile?.race_id  ?? null,
+        deity_id: parsed.profile?.deity_id ?? null,
+        checksum,
+        equipped: parsed.equipped,
+        bags:     parsed.bags,
+        aas:      parsed.aas,
+      });
+      console.log(`[quarmy] queued gear upload for ${character} (${parsed.equipped.length} equipped, ${parsed.bags.length} bagged, ${parsed.aas.length} AAs)`);
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
 function _scanOptInFiles() {
   _loadOptInState();
   _optinState.files   = [];
@@ -11288,6 +12103,15 @@ function runOptinBackfill(files, opts = {}) {
             if (dpEvt) funEventBuffer.push(dpEvt);
             const dirgeEvt = parseDirgeCast(line, f.character);
             if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+            // Faction hits + /con standing transitions — self-only lines; rides
+            // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
+            // complete-log backfill crawls idempotent.
+            const facEvt = parseFactionLine(line, f.character);
+            if (facEvt) factionBuffer.push(facEvt);
+            const conFacEvt = parseConsiderLine(line, f.character);
+            if (conFacEvt) factionBuffer.push(conFacEvt);
+            const pfEvt = parsePopFlagLine(line, f.character);
+            if (pfEvt) popFlagBuffer.push(pfEvt);
             // Feral Avatar cast-begin (caster-side AND bystander-side).
             // Complementary to parseFeralAvatarReceived below — that one fires
             // on the buff land, this one on the cast begin. Both push so the
@@ -12343,6 +13167,8 @@ const pvpBuffer         = [];   // pending PVP broadcast lines
 const pvpAssistBuffer   = [];   // pending PvP assist correlations (us → player damage + their death by someone else)
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
+const factionBuffer     = [];   // pending faction hits + /con standing transitions
+const popFlagBuffer     = [];   // pending PoP flag grants (zone+boss context attached)
 const buffCastBuffer    = [];   // pending observed buff landings on other players
 const tellBuffer        = [];   // pending /tell relay (opt-in via characters.tell_relay)
 
@@ -12392,6 +13218,10 @@ function startChatRelay() {
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
     if (funEventBuffer.length > 0)
       uploadFunEvents(funEventBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (factionBuffer.length > 0)
+      uploadFaction(factionBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (popFlagBuffer.length > 0)
+      uploadPopFlags(popFlagBuffer.splice(0), _uploadOpts).catch(() => {});
     if (buffCastBuffer.length > 0)
       uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts).catch(() => {});
     // Tell relay drains per-character — the endpoint requires one character
@@ -14245,22 +15075,64 @@ function fetchTargetCasts(name) {
   } catch { _targetCastsInflight.delete(key); }
 }
 
+// Cross-client target_buffs on the current target — pulled from buff_casts via
+// the bot's /api/agent/target-buffs relay. Same shape as target_casts: short
+// TTL, per-target cache, lazy-fetched from buildMobInfo. Lets us see e.g. who
+// is charming the same mob we're targeting, and any tracked buff anyone has
+// landed on it. Merged with the LOCAL _buffLandingsByTarget for display.
+const _targetBuffsByName  = new Map();   // nameLower → { at, buffs }
+const _targetBuffsInflight = new Set();
+const TARGET_BUFFS_TTL_MS = 5000;
+function fetchTargetBuffs(name) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(name || '').trim().toLowerCase();
+  if (!key || _targetBuffsInflight.has(key)) return;
+  const cached = _targetBuffsByName.get(key);
+  if (cached && (Date.now() - cached.at) < TARGET_BUFFS_TTL_MS) return;
+  _targetBuffsInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 6000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _targetBuffsInflight.delete(key);
+        try { const j = JSON.parse(body); _targetBuffsByName.set(key, { at: Date.now(), buffs: (j && j.buffs) || [] }); }
+        catch { _targetBuffsByName.set(key, { at: Date.now(), buffs: [] }); }
+      });
+    });
+    req.on('error',   () => { _targetBuffsInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _targetBuffsInflight.delete(key); });
+    req.end();
+  } catch { _targetBuffsInflight.delete(key); }
+}
+
 // Buff queue cache (per buffer-class). Mimic's buff-queue overlay polls the
 // local agent which proxies to the bot's /api/agent/raid-buff-queue. The TTL is
 // tuned so a roomful of Mimics doesn't hammer Supabase but the overlay still
 // feels live (~3-5s between full refreshes).
-const _buffQueueCache = new Map();   // classLower → { at, payload }
+const _buffQueueCache = new Map();   // classLower|character → { at, payload }
 const _buffQueueInflight = new Set();
 const BUFF_QUEUE_TTL_MS = 3000;
-function fetchRaidBuffQueue(bufferClass) {
+function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
-  const key = String(bufferClass || '').trim().toLowerCase();
+  const key = String(bufferClass || '').trim().toLowerCase() + '|' + String(bufferCharacter || '').trim().toLowerCase();
   if (_buffQueueInflight.has(key)) return;
   const cached = _buffQueueCache.get(key);
   if (cached && (Date.now() - cached.at) < BUFF_QUEUE_TTL_MS) return;
   _buffQueueInflight.add(key);
-  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-buff-queue') + (bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '');
+  const qs = [];
+  if (bufferClass)     qs.push('class=' + encodeURIComponent(bufferClass));
+  if (bufferCharacter) qs.push('character=' + encodeURIComponent(bufferCharacter));
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-buff-queue') + (qs.length ? '?' + qs.join('&') : '');
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -14286,9 +15158,16 @@ function fetchRaidBuffQueue(bufferClass) {
 // The freshest watched character's Zeal target (name + live HP%).
 function _currentTargetState() {
   let best = null;
+  // Staleness backstop: Zeal streams continuously while a character is
+  // in-game, so an entry that hasn't updated in minutes belongs to a camped
+  // character (or an old Mimic that doesn't send the explicit
+  // `disconnected` retirement). Without the cutoff, Mob Info keeps showing
+  // the camped character's last target after a character switch.
+  const cutoff = Date.now() - 2 * 60_000;
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || !st.target_name) continue;
+    if ((st.updatedAt || 0) < cutoff) continue;
     if (!best || (st.updatedAt || 0) > (best.updatedAt || 0)) best = st;
   }
   return best;
@@ -14331,12 +15210,35 @@ function buildMobInfo() {
   // countdown). Refresh on a short TTL; bystanders we can't name are absent.
   const ctc = _targetCastsByName.get(tnameLower);
   if (!ctc || (Date.now() - ctc.at) >= TARGET_CASTS_TTL_MS) fetchTargetCasts(st.target_name);
+  // Cross-client target_buffs — fetched from the bot's relay so charm
+  // spells (Allure, etc.) and other buff landings cast by OTHER Mimic
+  // users on the same target show up here too. Merged with locally-
+  // observed buffs by spell name (local wins — most accurate timer
+  // when we saw it ourselves; remote fills the gap when we didn't).
+  const ctb = _targetBuffsByName.get(tnameLower);
+  if (!ctb || (Date.now() - ctb.at) >= TARGET_BUFFS_TTL_MS) fetchTargetBuffs(st.target_name);
+  let buffs;
+  if (zealBuffs !== null) {
+    buffs = zealBuffs;
+  } else {
+    const local  = targetBuffsFor(tnameLower);
+    const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
+    const seen = new Set(local.map(b => String(b.name || '').toLowerCase()));
+    buffs = local.slice();
+    for (const b of remote) {
+      if (!b || !b.name) continue;
+      const k = String(b.name).toLowerCase();
+      if (seen.has(k)) continue;
+      buffs.push(b);
+      seen.add(k);
+    }
+  }
   return {
     target_name:    st.target_name,
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
     mob:            cached ? cached.mob : null,   // null until the lookup returns
     loading:        !cached,
-    target_buffs:   zealBuffs !== null ? zealBuffs : targetBuffsFor(tnameLower),
+    target_buffs:   buffs,
     target_is_pc:   zealBuffs !== null,
     target_casting: ctc ? ctc.casts : [],
   };
@@ -14951,6 +15853,40 @@ function uploadLockouts(entries, { botUrl, token, dryRun, character }) {
   return Promise.resolve();
 }
 
+// Faction events upload → bot's /api/agent/faction. Two kinds ride the same
+// payload: 'hit' (a "Your faction standing with X got better/worse" line,
+// incl. the at-cap forms) and 'con' (a /consider standing TRANSITION for a
+// mob). Bot-side unique constraints make backfill replays idempotent, so
+// crawling a complete log history is safe to re-run.
+function uploadPopFlags(events, { dryRun } = {}) {
+  if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const e of events) console.log(`[pop-flag] ${e.character} · ${e.zone || '?'} · ${e.boss || '?'} · ${e.ts}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('pop_flag', { agent_version: AGENT_VERSION, events });
+  return Promise.resolve();
+}
+
+function uploadFaction(events, { dryRun } = {}) {
+  if (!Array.isArray(events) || events.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const e of events) console.log(`[faction] ${e.kind} · ${e.character} · ${e.faction || e.mob} · ${e.direction != null ? (e.direction > 0 ? 'better' : 'worse') : e.standing} · ${e.ts}`);
+    return Promise.resolve();
+  }
+  // CHUNK the payload. Live flushes carry a handful of events, but a
+  // complete-log backfill accumulates the whole history in factionBuffer and
+  // drains it ONCE at the end — a heavy character's multi-year crawl is
+  // 50k+ hit events (~7MB JSON), which would blow the bot endpoint's 512KB
+  // body cap (413 → the queue retries a permanently-oversized payload) and
+  // bloat logsync.queue.json. 1,500 events ≈ 200KB — comfortable margin.
+  const CHUNK = 1500;
+  for (let i = 0; i < events.length; i += CHUNK) {
+    enqueueUpload('faction', { agent_version: AGENT_VERSION, events: events.slice(i, i + CHUNK) });
+  }
+  return Promise.resolve();
+}
+
 // Fun-events upload (Peopleslayer LD counter, future CoH/DI/Aegolism). Each
 // event is a tagged occurrence the bot stores in the fun_events table with
 // a unique constraint on (guild_id, event_type, caster, event_ts) so re-
@@ -15337,6 +16273,14 @@ async function main() {
   refreshInventories();
   setInterval(refreshInventories, 5 * 60_000);
 
+  // Quarmy export ingest — <Name>Quarmy.txt in the same dir (the file
+  // members generate for quarmy.com). Parsed locally; bank/sharedbank/coin
+  // rows are dropped at parse and never leave the machine. The scan no-ops
+  // until the character-prefs poll has answered once (exclude_inventory must
+  // be known, not assumed), so the first useful pass is the 30s one.
+  setTimeout(scanQuarmyExports, 30_000);
+  setInterval(scanQuarmyExports, 10 * 60_000);
+
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter
   // upload to surface latest_agent_version).
@@ -15542,6 +16486,15 @@ async function main() {
         if (dpEvt) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+        // Faction hits + /con standing transitions — self-only lines; rides
+        // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
+        // complete-log backfill crawls idempotent.
+        const facEvt = parseFactionLine(line, b.character);
+        if (facEvt) factionBuffer.push(facEvt);
+        const conFacEvt = parseConsiderLine(line, b.character);
+        if (conFacEvt) factionBuffer.push(conFacEvt);
+        const pfEvt = parsePopFlagLine(line, b.character);
+        if (pfEvt) popFlagBuffer.push(pfEvt);
         const faCastEvt = parseFeralAvatar(line, b.character);
         if (faCastEvt) funEventBuffer.push(faCastEvt);
         const faEvt = parseFeralAvatarReceived(line, b.character);
@@ -15576,6 +16529,14 @@ async function main() {
     if (funEventBuffer.length > 0) {
       await uploadFunEvents(funEventBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
         console.warn(`[fun-event backfill] ${err.message}`));
+    }
+    if (factionBuffer.length > 0) {
+      await uploadFaction(factionBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[faction backfill] ${err.message}`));
+    }
+    if (popFlagBuffer.length > 0) {
+      await uploadPopFlags(popFlagBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
+        console.warn(`[pop-flag backfill] ${err.message}`));
     }
     if (buffCastBuffer.length > 0) {
       await uploadBuffCasts(buffCastBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun }).catch(err =>
@@ -15781,6 +16742,15 @@ async function main() {
         if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
+        // Faction hits + /con standing transitions — self-only lines; rides
+        // the 5s relay flush to /api/agent/faction. Honors the per-character
+        // exclude_from_stats opt-out like every other upload stream.
+        const facEvt = parseFactionLine(line, b.character);
+        if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
+        const conFacEvt = parseConsiderLine(line, b.character);
+        if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
+        const pfEvt = parsePopFlagLine(line, b.character);
+        if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
         // Feral Avatar — caster-side fires only on the BL's own log; bystander
         // form fires on anyone in zone. Both push so the bot's (guild_id,
         // event_type, caster, event_ts) dedup collapses overlap.

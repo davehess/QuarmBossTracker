@@ -12,7 +12,11 @@
     font-size:12px;color:#79c0ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
   .title .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .clsPick{margin-left:auto;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
+  /* margin-right reserves a gutter so the class picker doesn't sit UNDER the
+     ✕ hide button (top:6/right:6, 18px wide) — selecting a class from the
+     dropdown lands the cursor right next to ✕, and one stray click hides
+     the whole overlay. 30px = X width + breathing room. */
+  .clsPick{margin-left:auto;margin-right:30px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
     border-radius:3px;font-size:10px;padding:1px 4px;font-family:inherit;cursor:pointer;}
   .clsPick:focus{outline:1px solid #58a6ff}
   /* Two stacked sections — buff queue on top, debuff queue below. Each section
@@ -157,6 +161,8 @@
     moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
     moveBtn.addEventListener('mousedown', _beginDrag);
+    // Right-click ✥ → shared chrome menu (resize presets + Setup THIS/ALL).
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
   }
   document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
   window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
@@ -318,6 +324,9 @@
       html += '</div>';
     }
     body.innerHTML = html;
+    // Auto-fit window height to the queue so 30 raiders worth of rows don't
+    // clip and an empty queue shrinks back to its empty-state line.
+    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
   async function tick(){
     try {

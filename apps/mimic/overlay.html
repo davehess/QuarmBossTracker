@@ -181,42 +181,8 @@
     moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     moveBtn.addEventListener('mouseleave', function(){ if (!_isDragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
     moveBtn.addEventListener('mousedown', _beginDrag);
-    moveBtn.addEventListener('contextmenu', function(ev){
-      ev.preventDefault();
-      var prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
-      var menu = document.createElement('div');
-      menu.id = 'wpResizeMenu';
-      menu.style.cssText = 'position:fixed;top:30px;left:6px;z-index:200;background:rgba(14,17,22,0.95);border:1px solid rgba(88,166,255,0.4);border-radius:5px;padding:4px;display:flex;flex-direction:column;gap:2px;font-family:ui-monospace,Menlo,Consolas,monospace';
-      [['xs','XS · 200×100'],['sm','S · 260×140'],['md','M · 320×200'],['lg','L · 400×260'],['xl','XL · 500×320']].forEach(function(s){
-        var b = document.createElement('button');
-        b.textContent = s[1];
-        b.style.cssText = 'background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px';
-        b.onmouseenter = function(){ b.style.background = '#1f6feb'; b.style.color = '#fff'; try { window.mimic.overlayHoverInteractive(true); } catch (e) {} };
-        b.onmouseleave = function(){ b.style.background = '#21262d'; b.style.color = '#c9d1d9'; };
-        b.onclick = function(){ try { window.mimic.overlayResizePreset(s[0]); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-        menu.appendChild(b);
-      });
-      var setupBtn = document.createElement('button');
-      setupBtn.textContent = '🛠 Setup mode (place + opacity)';
-      setupBtn.style.cssText = 'background:#2a1d3d;color:#d2a8ff;border:1px solid #a371f7;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
-      setupBtn.onmouseenter = function(){ setupBtn.style.background='#3d2a57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
-      setupBtn.textContent = '🛠 Setup THIS overlay';
-      setupBtn.onclick = function(){ try { window.mimic.setSetupModeThis(); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      var setupAllBtn = document.createElement('button');
-      setupAllBtn.textContent = '🛠 Setup ALL overlays';
-      setupAllBtn.style.cssText = 'background:#1a2a3d;color:#79c0ff;border:1px solid #2a3d57;border-radius:3px;padding:4px 10px;cursor:pointer;text-align:left;font-family:inherit;font-size:11px;margin-bottom:3px';
-      setupAllBtn.onmouseenter = function(){ setupAllBtn.style.background='#2a3d57'; try { window.mimic.overlayHoverInteractive(true); } catch(e){} };
-      setupAllBtn.onclick = function(){ try { window.mimic.setSetupMode(true); } catch (e) {} menu.remove(); try { window.mimic.overlayHoverInteractive(false); } catch (e) {} };
-      menu.insertBefore(setupAllBtn, setupBtn.nextSibling);
-      menu.insertBefore(setupBtn, menu.firstChild);
-      document.body.appendChild(menu);
-      try { window.mimic.overlayHoverInteractive(true); } catch (e) {}
-      setTimeout(function(){
-        document.addEventListener('mousedown', function closer(e){
-          if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', closer); try { window.mimic.overlayHoverInteractive(false); } catch (e2) {} }
-        });
-      }, 0);
-    });
+    // Right-click ✥ → shared chrome menu (resize presets + Setup THIS/ALL).
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
   }
   document.addEventListener('mouseup', function() {
     if (_isDragging) {
@@ -294,6 +260,15 @@
     if (tabDpsBtn)  tabDpsBtn .classList.remove('on');
     if (tabTankBtn) tabTankBtn.classList.add('on');
   }
+  // Hover-interact handshake — when the overlay is LOCKED (click-through),
+  // mouse events pass through to EQ. Flip the window interactive while the
+  // cursor is over a tab so the click lands. Same fix the Mob Info tabs
+  // needed ("Tank button doesn't do anything" = this exact failure mode).
+  [tabDpsBtn, tabTankBtn].forEach(function(btn){
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  });
   if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
   if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
 
@@ -318,7 +293,9 @@
         _otherCharFight = et.uploader;
         et = null;
       }
-      const boss = (et && et.bossName) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
+      // targetName = catalog boss when matched, else the most-damaged
+      // defender — so trash pulls still name what's being fought.
+      const boss = (et && (et.bossName || et.targetName)) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
       // Tell the user when an OTHER character's fight is being hidden, so the
       // empty meter isn't mysterious. Updates the empty-state in-place.
@@ -351,9 +328,12 @@
       const pp = et && et.perPlayer;
       if (pp && typeof pp === 'object') {
         const field = TAB_MODE === 'tank' ? 'took' : 'dmg';
+        // The no-spaces filter drops NPC noise — but OUR pets have multi-word
+        // names ("A Fungoid Sporeling"). The agent stamps pet rows with
+        // pet_owner, which both whitelists them here and labels the row.
         rows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0])
-          .filter(x => x[0] && !/\s/.test(x[0]) && x[1] > 0)
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null])
+          .filter(x => x[0] && (!/\s/.test(x[0]) || x[3]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0))
           .slice(0,8);
       }
@@ -367,10 +347,15 @@
 
       const ul = document.getElementById('deeps');
       ul.innerHTML = rows.map(function(row, i){
-        var n = row[0], d = row[1], mx = row[2];
+        var n = row[0], d = row[1], mx = row[2], petOwner = row[3];
         var pct = sumDmg > 0 ? (d / sumDmg) * 100 : 0;
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
+        // Pet rows carry their owner in dim parens — same convention as the
+        // Mob Info "Allure (Hopeya)" charm label.
+        var ownerHtml = petOwner
+          ? ' <span style="color:#8b949e;font-size:9px;font-style:italic">(' + esc(petOwner) + ')</span>'
+          : '';
         // In Tank mode, show the biggest single hit absorbed under the
         // row name as a small subscript — "max 4.1K" makes spike-tank
         // damage stand out vs the running total. Suppressed in DPS mode
@@ -381,7 +366,7 @@
           : '';
         return '<li' + (isMe ? ' class="me"' : '') + '>'
              + '<span class="r">' + (i+1) + '.</span>'
-             + '<span class="n">' + esc(n) + maxHitHtml + '</span>'
+             + '<span class="n">' + esc(n) + ownerHtml + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d) + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
@@ -390,6 +375,9 @@
       }).join('');
       document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
       document.getElementById('colhdr').style.display = rows.length ? 'grid' : 'none';
+      // Auto-fit the window height to the rendered scoreboard so a long fight
+      // (8 rows) doesn't clip the bottom and an empty meter shrinks back.
+      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.querySelector('.hud')); } catch (e) {}
       // Header labels track tab mode so the user can tell DPS vs Tank apart
       // even without looking at the tab buttons (e.g. screenshots).
       var colD   = document.getElementById('colD');
