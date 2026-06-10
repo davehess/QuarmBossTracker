@@ -8011,6 +8011,7 @@ function _raidTierColor(t) {
   if (t === 'red') return 'var(--red)';
   if (t === 'orange') return 'var(--orange)';
   if (t === 'yellow') return 'var(--gold)';
+  if (t === 'upgradable') return '#7ee787';   // light green — present but a higher cast is available
   return 'var(--blue)';
 }
 var _raidSelName = null;   // click-to-expand raider in the Raid card
@@ -8137,7 +8138,17 @@ function renderRaidTab(q) {
     var bq = q.buff_queue || [];
     var byCat = {};
     for (var i2 = 0; i2 < bq.length; i2++) {
-      var labels = (bq[i2].missing && bq[i2].missing.length) ? bq[i2].missing : ['Other'];
+      var labels = [];
+      if (bq[i2].missing && bq[i2].missing.length) labels = labels.concat(bq[i2].missing);
+      // Upgrade chains (Focus line ↑, Aego line ↑, Symbol line ↑) — a
+      // raider with a lower link than the buffer's class can cast lands in
+      // its own labeled section so the buffer can recast at max rank.
+      if (bq[i2].upgrades && bq[i2].upgrades.length) {
+        for (var ui = 0; ui < bq[i2].upgrades.length; ui++) {
+          labels.push(bq[i2].upgrades[ui] + ' ↑');
+        }
+      }
+      if (!labels.length) labels = ['Other'];
       for (var j2 = 0; j2 < labels.length; j2++) {
         (byCat[labels[j2]] = byCat[labels[j2]] || []).push(bq[i2]);
       }
@@ -8154,8 +8165,13 @@ function renderRaidTab(q) {
     for (var ci = 0; ci < cats.length; ci++) {
       var label = cats[ci], rows = byCat[label] || [];
       var covered = rows.length === 0;
-      h += '<div style="margin:8px 0 3px;padding:3px 8px;background:' + (covered ? 'rgba(86,211,100,0.07)' : 'rgba(88,166,255,0.08)') + ';border-radius:4px;font-size:11px;color:' + (covered ? 'var(--green)' : 'var(--blue)') + ';font-weight:600">'
-        + esc(label) + ' ' + (covered ? '<span style="font-weight:normal">✓ covered across the raid</span>' : '<span class="dim" style="font-weight:normal">' + rows.length + ' missing</span>') + '</div>';
+      var isUpgrade = label.indexOf(' ↑') !== -1;
+      var bg, color, suffix;
+      if (covered) { bg = 'rgba(86,211,100,0.07)'; color = 'var(--green)'; suffix = '<span style="font-weight:normal">✓ covered across the raid</span>'; }
+      else if (isUpgrade) { bg = 'rgba(126,231,135,0.10)'; color = '#7ee787'; suffix = '<span class="dim" style="font-weight:normal">' + rows.length + ' upgradable</span>'; }
+      else { bg = 'rgba(88,166,255,0.08)'; color = 'var(--blue)'; suffix = '<span class="dim" style="font-weight:normal">' + rows.length + ' missing</span>'; }
+      h += '<div style="margin:8px 0 3px;padding:3px 8px;background:' + bg + ';border-radius:4px;font-size:11px;color:' + color + ';font-weight:600">'
+        + esc(label) + ' ' + suffix + '</div>';
       for (var ri = 0; ri < rows.length; ri++) {
         var r = rows[ri];
         h += '<div style="display:flex;align-items:baseline;gap:7px;padding:2px 8px;font-size:12px;border-left:3px solid ' + _raidTierColor(r.tier) + ';margin-bottom:1px">'
