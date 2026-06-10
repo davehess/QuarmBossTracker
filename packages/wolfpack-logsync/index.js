@@ -15666,7 +15666,16 @@ function uploadFaction(events, { dryRun } = {}) {
     for (const e of events) console.log(`[faction] ${e.kind} · ${e.character} · ${e.faction || e.mob} · ${e.direction != null ? (e.direction > 0 ? 'better' : 'worse') : e.standing} · ${e.ts}`);
     return Promise.resolve();
   }
-  enqueueUpload('faction', { agent_version: AGENT_VERSION, events });
+  // CHUNK the payload. Live flushes carry a handful of events, but a
+  // complete-log backfill accumulates the whole history in factionBuffer and
+  // drains it ONCE at the end — a heavy character's multi-year crawl is
+  // 50k+ hit events (~7MB JSON), which would blow the bot endpoint's 512KB
+  // body cap (413 → the queue retries a permanently-oversized payload) and
+  // bloat logsync.queue.json. 1,500 events ≈ 200KB — comfortable margin.
+  const CHUNK = 1500;
+  for (let i = 0; i < events.length; i += CHUNK) {
+    enqueueUpload('faction', { agent_version: AGENT_VERSION, events: events.slice(i, i + CHUNK) });
+  }
   return Promise.resolve();
 }
 
