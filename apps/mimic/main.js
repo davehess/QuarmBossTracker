@@ -1361,7 +1361,7 @@ function startZealCapture() {
       try {
         if (Notification.isSupported()) {
           const n = new Notification({
-            title: 'Wolf Pack Mimic — Zeal pipes look off',
+            title: 'Wolf Pack miMIC — Zeal pipes look off',
             body:  'EQ is running but no Zeal data is flowing. Open Zeal in-game → Settings → Pipes and enable all data types. Need to verify? Tray → Overlays → Zeal health (diagnostic).',
           });
           n.on('click', () => {
@@ -1614,7 +1614,7 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
-    title: 'Wolf Pack Mimic — Main window (Dashboard)',
+    title: 'Wolf Pack miMIC — Main window (Dashboard)',
     show: !_autoStarted,
     // Window + taskbar icon while running. build/icon.ico is buildResources
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
@@ -1680,7 +1680,7 @@ function createMainWindow() {
       try {
         if (Notification.isSupported()) {
           new Notification({
-            title: '⚠ Wolf Pack Mimic — setup needed',
+            title: '⚠ Wolf Pack miMIC — setup needed',
             body:  issue + ' — Mimic is staying visible until setup is complete. Click "Open Settings" in the banner.',
             silent: false,
           }).show();
@@ -1881,7 +1881,7 @@ function createPanelOverlay(panelKey) {
     // Descriptive title so this process is identifiable in Task Manager /
     // Alt-Tab (e.g. "Wolf Pack Mimic — DEEPS panel overlay") instead of a
     // wall of identical "Wolf Pack Mimic" entries.
-    title: `Wolf Pack Mimic — ${panelKey} panel overlay`,
+    title: `Wolf Pack miMIC — ${panelKey} panel overlay`,
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -1910,7 +1910,7 @@ function createPanelOverlay(panelKey) {
 function createOverlayWindow() {
   const b = _resolveBounds('hudBounds', 'hudBoundsSig', { x: 40, y: 40, width: 320, height: 220 });
   overlayWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — HUD overlay',
+    title: 'Wolf Pack miMIC — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 180, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -1935,7 +1935,7 @@ function createOverlayWindow() {
 function createTriggerOverlay() {
   const b = _resolveBounds('triggerBounds', 'triggerBoundsSig', { x: 700, y: 200, width: 600, height: 200 });
   triggerWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Triggers overlay',
+    title: 'Wolf Pack miMIC — Triggers overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -1975,7 +1975,7 @@ function openSettings() {
 function openUiStudio() {
   if (uiStudioWindow) { uiStudioWindow.focus(); return; }
   uiStudioWindow = new BrowserWindow({
-    width: 1200, height: 780, title: 'Wolf Pack Mimic — UI Studio',
+    width: 1200, height: 780, title: 'Wolf Pack miMIC — UI Studio',
     backgroundColor: '#0d1117',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
@@ -2807,7 +2807,7 @@ function applyTriggerVisibility() {
 function createCharmOverlay() {
   const b = _resolveBounds('charmBounds', 'charmBoundsSig', { x: 700, y: 420, width: 300, height: 180 });
   charmWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Charm tracker overlay',
+    title: 'Wolf Pack miMIC — Charm tracker overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -2841,7 +2841,7 @@ function applyCharmVisibility() {
 function createPetsOverlay() {
   const b = _resolveBounds('petsBounds', 'petsBoundsSig', { x: 700, y: 620, width: 300, height: 160 });
   petsWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Pet tracker overlay',
+    title: 'Wolf Pack miMIC — Pet tracker overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 70,
     frame: false, transparent: true, resizable: true,
@@ -2875,7 +2875,7 @@ function applyPetsVisibility() {
 function createBuffQueueOverlay() {
   const b = _resolveBounds('buffQueueBounds', 'buffQueueBoundsSig', { x: 1020, y: 60, width: 330, height: 260 });
   buffQueueWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Buff queue overlay',
+    title: 'Wolf Pack miMIC — Buff queue overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -2908,7 +2908,7 @@ function applyBuffQueueVisibility() {
 function createMobInfoOverlay() {
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
   mobInfoWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Target Info overlay',
+    title: 'Wolf Pack miMIC — Target Info overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 230, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -2939,7 +2939,7 @@ function applyMobInfoVisibility() {
 function createWhoOverlay() {
   const b = _resolveBounds('whoBounds', 'whoBoundsSig', { x: 40, y: 300, width: 320, height: 280 });
   whoWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — /who overlay',
+    title: 'Wolf Pack miMIC — /who overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -2971,7 +2971,7 @@ function applyWhoVisibility() {
 function createMelodyOverlay() {
   const b = _resolveBounds('melodyBounds', 'melodyBoundsSig', { x: 40, y: 600, width: 280, height: 180 });
   melodyWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Melody overlay',
+    title: 'Wolf Pack miMIC — Melody overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -3006,7 +3006,7 @@ function applyMelodyVisibility() {
 function createZealHealthOverlay() {
   const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
   zealWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Zeal health overlay',
+    title: 'Wolf Pack miMIC — Zeal health overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -3042,7 +3042,7 @@ function applyZealVisibility() {
 function createThreatMeterOverlay() {
   const b = _resolveBounds('threatBounds', 'threatBoundsSig', { x: 40, y: 320, width: 320, height: 200 });
   threatWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Threat meter overlay',
+    title: 'Wolf Pack miMIC — Threat meter overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 240, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -3296,16 +3296,16 @@ function pushStatus() {
 }
 function tooltipFor(s) {
   const v = `v${app.getVersion()}`;
-  if (!s.agentRunning) return `Wolf Pack Mimic ${v} — agent starting…`;
+  if (!s.agentRunning) return `Wolf Pack miMIC ${v} — agent starting…`;
   // Setup state wins the tooltip when something's wrong — the tray icon is the
   // last visible Mimic surface for users who hide the window, so the tooltip
   // should call out what to fix when they finally hover.
   const issue = _setupIssue();
-  if (issue) return `⚠ Wolf Pack Mimic ${v} — SETUP NEEDED: ${issue}`;
+  if (issue) return `⚠ Wolf Pack miMIC ${v} — SETUP NEEDED: ${issue}`;
   const mode = s.localOnly ? 'Local only' : 'Uploading';
   const quiet = s.quietMode ? ' · Quiet mode' : '';
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
-  return `Wolf Pack Mimic ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
+  return `Wolf Pack miMIC ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
 }
 
 // ── Self-uninstall ──────────────────────────────────────────────────────────
@@ -3799,7 +3799,7 @@ function wireAutoUpdater() {
         buttons: ['Restart now', 'Later'],
         defaultId: 0,
         cancelId: 1,
-        title: 'Wolf Pack Mimic — update ready',
+        title: 'Wolf Pack miMIC — update ready',
         message: `Mimic v${updatePending.version} is ready to install.`,
         detail: 'Restart now to apply the update. Your settings and agent state are preserved.',
       }).then(({ response }) => {
@@ -4606,7 +4606,7 @@ app.whenReady().then(async () => {
     try {
       if (Notification.isSupported()) {
         new Notification({
-          title: '⚠ Wolf Pack Mimic — setup needed',
+          title: '⚠ Wolf Pack miMIC — setup needed',
           body:  issue + ' — open Mimic to finish.',
           silent: false,
         }).show();
