@@ -620,19 +620,19 @@ function parseEvent(line, ts) {
   // for direct nukes ("is hit by YOUR Whirlwind for 250"), so the spell name
   // must match the DS allow-list — otherwise we'd over-tag every spell hit.
   //
-  // Known DS sources (extend here as new ones are discovered in logs):
-  //   thorns / Thorns of the Whitewood   (Druid)
-  //   brambles / bramblecoat              (Druid)
-  //   spikes / spikecoat                  (Druid)
-  //   symbol of Naltron / Holy Armor      (Cleric)
-  //   sanity shield                       (Cleric, Necro)
-  //   reflect-style                       (Enchanter, Magician items)
-  //   mind wrack                          (Necro)
-  //   halo of light                       (item proc)
-  //   barbs                               (Beastlord, Druid epic line)
-  //   cassindra's chant                   (Bard)
-  //   Tooth of the Earth                  (item)
-  const DS_SOURCE_RX = /(?:thorns?\b|brambl|spike|sanity\s*shield|mind\s*wrack|reflect\b|symbol\s+of\s+naltron|cassindra|halo\s+of\s+light|tooth\s+of\s+the\s+earth|fangs?\b|barbs?\b|burn(?:ing)?\s+aura|chant\s+of\s+battle)/i;
+  // Known DS sources — CURATED 2026-06-11 (owner review: halo of light /
+  // cassindra / symbol of naltron / sanity shield were NOT damage shields and
+  // polluted the Tanks card). Real lines only:
+  //   thorns / thistles / brambles / spikes / barbs + the -coat self line   (Druid, Ranger)
+  //   Shield of Fire/Flame/Lava + Inferno Shield / Barrier of Combustion /
+  //     Boon of Immolation / Cadeau of Flame                                 (Magician)
+  //   Legacy of Thorn / Legacy of Spike                                      (Druid group)
+  //   Feedback                                                               (Enchanter)
+  //   Psalm of Warmth / Cooling / Purity / Vitality (resist + DS component)  (Bard)
+  //   Spikecoat-style clickies (Girdle of Living Thorns etc. cast the same
+  //     named spells, so the keywords cover them)
+  //   Tooth of the Earth / fangs                                             (item procs)
+  const DS_SOURCE_RX = /(?:thorns?\b|thistl|brambl|spikes?\b|spikecoat|barbs?\b|legacy\s+of\s+(?:thorn|spike)|shield\s+of\s+(?:fire|flames?|lava|blades?|thistles?|brambles?|spikes?|thorns?|barbs?)|inferno\s+shield|barrier\s+of\s+combustion|boon\s+of\s+immolation|cadeau\s+of\s+flame|feedback\b|psalm\s+of\s+(?:warmth|cooling|purity|vitality)|tooth\s+of\s+the\s+earth|fangs?\b)/i;
   m = line.match(/\]\s+(.+?)\s+is\s+\w+\s+by\s+(YOUR|.+?(?:'s|`s))\s+(.+?)\s+for\s+(\d+)\s+points?\s+of\s+non-melee\s+damage/i);
   if (m && DS_SOURCE_RX.test(m[3])) {
     const source = m[2];
@@ -6877,7 +6877,7 @@ function renderTanks(s) {
   }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
   h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
   if (dsTotals.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes thorns / brambles / spikes / sanity shield / symbol of naltron / cassindra / halo of light / reflect and similar. Open a new pattern? Let an officer know.</div>';
+    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes the druid/ranger thorn lines (thorns, thistles, brambles, spikes, barbs, the -coat selfs, Legacy of Thorn/Spike), the magician fire shields (Shield of Fire/Flame/Lava, Inferno Shield, Barrier of Combustion, Boon of Immolation, Cadeau of Flame), enchanter Feedback, the bard Psalms, and DS clickies casting those lines. Missing one? Let an officer know.</div>';
   } else {
     h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
     for (const t of dsTotals.slice(0, 12)) {
