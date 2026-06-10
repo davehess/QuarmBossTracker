@@ -5363,7 +5363,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
 
     const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,last_zone,self_hp_pct,updated_at`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,zone_name,self_hp_pct,updated_at`),
       supabase.select('raid_roster',
         `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
@@ -5414,13 +5414,24 @@ async function _handleAgentRaidBuffQueue(req, res) {
       }
     }
     const rosterByName = new Map();
+    const hpByName = new Map();   // member → freshest row that actually has hp_pct
     for (const [up, rows] of snapsByUploader) {
       if (scopedUploaders && !scopedUploaders.includes(up)) continue;
       for (const r of rows) {
         const k = r.name.toLowerCase();
         const prev = rosterByName.get(k);
         if (!prev || String(r.captured_at || '') > String(prev.captured_at || '')) rosterByName.set(k, r);
+        if (r.hp_pct != null) {
+          const ph = hpByName.get(k);
+          if (!ph || String(r.captured_at || '') > String(ph.captured_at || '')) hpByName.set(k, r);
+        }
       }
+    }
+    // Backfill: an uploader whose Zeal gauges miss a member writes hp_pct
+    // null; without this, "freshest row wins" flickered HP on/off as the
+    // two Mimics alternated heartbeats.
+    for (const [k, r] of rosterByName) {
+      if (r.hp_pct == null && hpByName.has(k)) r.hp_pct = hpByName.get(k).hp_pct;
     }
     const classFor = (n) => classByName.get(String(n).toLowerCase()) || (rosterByName.get(String(n).toLowerCase()) || {}).class || null;
 
@@ -5517,7 +5528,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
     const bufferKey = bufferCharacter.toLowerCase();
     const bufferZone = (() => {
       const lv = bufferKey ? liveByName.get(bufferKey) : null;
-      if (lv && lv.last_zone) return String(lv.last_zone);
+      if (lv && lv.zone_name) return String(lv.zone_name);
       return null;
     })();
     const seen = new Set();
@@ -5557,7 +5568,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
 
       // Same-zone-as-buffer flag — drives "near you first" sort. Falls back
       // to false (treated equal) when we don't know the buffer's zone.
-      const rowZone   = live && live.last_zone ? String(live.last_zone) : null;
+      const rowZone   = live && live.zone_name ? String(live.zone_name) : null;
       const sameZone  = !!(bufferZone && rowZone && bufferZone === rowZone);
 
       // Curses → debuff queue. Each curse line carries the buffer's casting
@@ -5795,7 +5806,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
         buff_count: buffs.filter(b => b && b.name).length,
         mimic:      !!live,
         inferred:   !live && !!(inferred && inferred.length),
-        zone:       live && live.last_zone ? String(live.last_zone) : null,
+        zone:       live && live.zone_name ? String(live.zone_name) : null,
         tier,
       });
     }

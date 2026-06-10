@@ -177,13 +177,23 @@ export default async function RaidHubPage() {
     for (const m of members) memberRaidIdx.set(m, ordinalOf.get(c)!);
   }
 
-  // Per-member freshest row across snapshots (HP comes from whichever
-  // group-mate broadcast most recently).
+  // Per-member freshest row across snapshots. The freshest row wins membership
+  // (group, rank, level), but HP backfills from the freshest row that actually
+  // HAS hp_pct — older agents (and out-of-group uploaders) send null hp, and
+  // letting a null-hp snapshot win outright makes HP flicker between refreshes.
   const rosterByName = new Map<string, RosterRow>();
+  const hpByName = new Map<string, RosterRow>();
   for (const r of rosterClean) {
     const k = r.name.toLowerCase();
     const prev = rosterByName.get(k);
     if (!prev || String(r.captured_at || '') > String(prev.captured_at || '')) rosterByName.set(k, r);
+    if (r.hp_pct != null) {
+      const ph = hpByName.get(k);
+      if (!ph || String(r.captured_at || '') > String(ph.captured_at || '')) hpByName.set(k, r);
+    }
+  }
+  for (const [k, r] of rosterByName) {
+    if (r.hp_pct == null && hpByName.has(k)) r.hp_pct = hpByName.get(k)!.hp_pct;
   }
   const classByName = new Map<string, string | null>(
     ((charRows ?? []) as { name: string; class: string | null }[])
