@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>ch chain</title>
+<style>
+  /* CH Chain overlay — cleric Complete Heal rotation, read from the zone-
+     visible shout/raid callouts ("004 - CH - Naggato - Mana: 52%" /
+     "005 GO GO GO"). One row per chain slot: number, cleric, mana%, and
+     either a live 10s cast bar (the slot that just called CH) or how long
+     ago they last cast. Footer: NEXT slot + beat countdown. Reads
+     /api/state.chChain — fully local, every client sees the same calls. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;min-width:240px;}
+  .head{display:flex;align-items:baseline;gap:8px;
+    font-size:12px;color:#7ee787;text-shadow:0 1px 2px #000;margin-bottom:4px;
+    padding-left:22px;padding-right:22px;}
+  .head .icon{flex-shrink:0}
+  .head .tgt{color:#f6c365;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  .head .beat{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
+  .head .conn{font-size:11px;flex-shrink:0}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .rows{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.45);
+    border-radius:5px;padding:5px 6px}
+  .row{position:relative;display:grid;
+    grid-template-columns:2.6em minmax(0,1fr) 3em auto;
+    align-items:center;gap:6px;font-size:11px;line-height:1.3;
+    padding:3px 6px;border-radius:3px;background:rgba(255,255,255,0.03);
+    text-shadow:0 1px 2px #000;border-left:2px solid transparent;
+    transition:background 200ms ease}
+  .row .num{color:#6e7681;font-size:10px;font-variant-numeric:tabular-nums}
+  .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
+  .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
+  .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
+  /* Casting row — green accent + a 10s CH cast bar under the row. */
+  .row.casting{background:rgba(86,211,100,0.12);border-left-color:#56d364}
+  .row.casting .nm{color:#7ee787}
+  .row.casting .stat{color:#7ee787;font-weight:600}
+  /* Next-up row — amber accent, like the GO call it's about to get. */
+  .row.next{background:rgba(240,180,41,0.12);border-left-color:#f0b429}
+  .row.next .nm{color:#f6c365}
+  .row.next .stat{color:#f6c365;font-weight:700}
+  .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
+    border-radius:2px;overflow:hidden;margin-top:3px}
+  .bar .fill{height:100%;background:#56d364;transition:width 120ms linear}
+  /* Footer — NEXT slot + countdown to when the next cast is due (beat-based). */
+  .nextrow{display:flex;align-items:center;gap:8px;margin-top:4px;
+    background:rgba(0,0,0,0.45);border-radius:5px;padding:5px 8px;
+    font-size:11px;font-weight:700;text-shadow:0 1px 2px #000}
+  .nextrow .lbl{color:#f6c365;white-space:nowrap}
+  .nextrow .cd-bar{flex:1;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden}
+  .nextrow .cd-bar .fill{height:100%;background:#f0b429;transition:width 120ms linear}
+  .nextrow .cd{color:#f0b429;font-variant-numeric:tabular-nums;min-width:2.6em;text-align:right}
+  .nextrow.due .lbl,.nextrow.due .cd{color:#f87171}
+  .nextrow.due .cd-bar .fill{background:#f87171}
+  /* GAP SOON alert row — sits ABOVE the slot list when the chain is about
+     to slip (the late cleric hasn't called yet and the beat is running out).
+     Amber when imminent, red + pulsing when already overdue. This is the
+     row that screams "spot heal incoming target". */
+  .gaprow{display:none;align-items:center;gap:6px;margin-bottom:5px;
+    background:rgba(240,180,41,0.18);border:1px solid rgba(240,180,41,0.55);
+    border-radius:4px;padding:4px 7px;font-size:11px;font-weight:700;
+    text-shadow:0 1px 2px #000;color:#f6c365;letter-spacing:0.03em}
+  .gaprow.show{display:flex}
+  .gaprow .label{color:#f6c365}
+  .gaprow .sep{color:#6e7681;font-weight:400}
+  .gaprow .tank{color:#fde68a}
+  .gaprow .cleric{color:#c9d1d9;font-weight:600}
+  .gaprow.late{background:rgba(248,113,113,0.22);border-color:rgba(248,113,113,0.65);
+    color:#fca5a5;animation:gappulse 0.5s infinite alternate}
+  .gaprow.late .label,.gaprow.late .tank{color:#fca5a5}
+  .gaprow.late .cleric{color:#fed7aa}
+  @keyframes gappulse{from{box-shadow:0 0 0 rgba(248,113,113,0)}to{box-shadow:0 0 8px rgba(248,113,113,0.7)}}
+  /* Mute button — sits next to the hide button. Click to silence the TTS
+     callouts without turning the whole overlay off. Persists via
+     localStorage. */
+  #mute-btn{position:fixed;top:6px;right:26px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.6;transition:opacity .12s}
+  #mute-btn:hover{opacity:1;color:#f6c365;border-color:#f6c365}
+  #mute-btn.muted{color:#f87171;border-color:#f87171;opacity:0.9}
+  body.setup #mute-btn{top:30px}
+  #cfg-btn{position:fixed;top:6px;right:46px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:10px;line-height:1;cursor:pointer;opacity:0.6;transition:opacity .12s}
+  #cfg-btn:hover{opacity:1;color:#79c0ff;border-color:#79c0ff}
+  body.setup #cfg-btn{top:30px}
+  /* Inline settings panel — appears when the ⚙ button is clicked. Currently
+     just the lead-time slider; room to grow for future knobs. Sits at the
+     top of #wrap so it pushes the rotation down instead of overlapping. */
+  #cfg-panel{display:none;background:rgba(13,17,22,0.92);
+    border:1px solid var(--border, #30363d);border-radius:5px;padding:6px 8px;
+    margin-bottom:5px;font-size:10px;color:#c9d1d9}
+  #cfg-panel.show{display:block}
+  #cfg-panel .row{display:flex;align-items:center;gap:6px}
+  #cfg-panel label{color:#8b949e;font-size:10px;white-space:nowrap}
+  #cfg-panel input[type=range]{flex:1;cursor:pointer}
+  #cfg-panel .val{color:#f6c365;font-variant-numeric:tabular-nums;min-width:2.6em;text-align:right;font-weight:600}
+  #cfg-panel .hint{color:#6e7681;font-size:9px;margin-top:3px;line-height:1.3}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
+  /* Chain idle (no call in 60s+) — dim so post-fight numbers read as stale. */
+  .rows.stale,.nextrow.stale{opacity:0.5}
+  /* drag/lock/setup chrome — same pattern as every other overlay. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(126,231,135,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(86,211,100,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(86,211,100,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#7ee787;border-color:#7ee787}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>
+  <button id="cfg-btn"  title="Settings — alert lead time">⚙</button>
+  <button id="mute-btn" title="Mute audible gap callouts">🔊</button>
+  <button id="hide-btn" title="Hide the CH chain overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 CH Chain</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="head">
+      <span id="conn" class="conn bad">○</span>
+      <span class="icon">⛑</span>
+      <span class="tgt" id="tgt">CH chain</span>
+      <span class="beat" id="beat"></span>
+    </div>
+    <div id="cfg-panel">
+      <div class="row">
+        <label for="leadSlider">Alert lead</label>
+        <input id="leadSlider" type="range" min="0.3" max="3.0" step="0.1" value="1.5" />
+        <span class="val" id="leadVal">1.5s</span>
+      </div>
+      <div class="hint">Fires <b>CH GAP SOON</b> this many seconds before the next cleric is due. Tight chains (3–4s beat) want 0.5–1s; loose chains 1.5–2s. Persists per-machine.</div>
+    </div>
+    <div id="gaprow" class="gaprow">
+      <span class="label" id="gaplbl">CH GAP SOON</span>
+      <span class="sep">|</span>
+      <span class="tank" id="gaptank"></span>
+      <span class="sep">|</span>
+      <span class="cleric" id="gapcleric"></span>
+    </div>
+    <div id="rows" class="rows"></div>
+    <div id="nextrow" class="nextrow" style="display:none">
+      <span class="lbl" id="nextlbl"></span>
+      <div class="cd-bar"><div class="fill" id="cdfill"></div></div>
+      <span class="cd" id="cd"></span>
+    </div>
+    <div id="empty">waiting for CH calls…</div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  // Mute toggle for the audible gap callouts. Persists per-machine via
+  // localStorage so the choice survives Mimic restarts (the overlay reloads
+  // its HTML on every show). Visual swap 🔊↔🔇 + .muted class on the button.
+  var _muted = false;
+  try { _muted = localStorage.getItem('chchain_mute') === '1'; } catch (e) {}
+  var muteBtn = document.getElementById('mute-btn');
+  function paintMute(){
+    if (!muteBtn) return;
+    muteBtn.textContent = _muted ? '🔇' : '🔊';
+    muteBtn.classList.toggle('muted', _muted);
+    muteBtn.title = _muted ? 'Unmute audible gap callouts' : 'Mute audible gap callouts';
+  }
+  paintMute();
+  if (muteBtn) {
+    muteBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    muteBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    muteBtn.addEventListener('click', function(){
+      _muted = !_muted;
+      try { localStorage.setItem('chchain_mute', _muted ? '1' : '0'); } catch (e) {}
+      paintMute();
+      if (_muted) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+    });
+  }
+
+  // Alert-lead knob — how many seconds BEFORE the next cleric is due we
+  // start screaming. Default 1.5s. On a 4s beat, 1.5s leaves the relay
+  // ~2.5s into the beat before alerting, which is the right tradeoff for
+  // most chains. Tight chains (3s beat, fast clerics) want 0.5–1s so the
+  // alert doesn't fire on every single call. Persists in localStorage.
+  var _leadSec = 1.5;
+  try {
+    var v = parseFloat(localStorage.getItem('chchain_lead_sec'));
+    if (v >= 0.3 && v <= 3.0) _leadSec = v;
+  } catch (e) {}
+  var cfgPanel  = document.getElementById('cfg-panel');
+  var cfgBtn    = document.getElementById('cfg-btn');
+  var leadSlider = document.getElementById('leadSlider');
+  var leadVal    = document.getElementById('leadVal');
+  function paintLead(){ if (leadVal) leadVal.textContent = _leadSec.toFixed(1) + 's'; if (leadSlider) leadSlider.value = _leadSec; }
+  paintLead();
+  if (cfgBtn) {
+    cfgBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    cfgBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    cfgBtn.addEventListener('click', function(){ if (cfgPanel) cfgPanel.classList.toggle('show'); });
+  }
+  if (leadSlider) {
+    // Slider needs the overlay to be interactive while it's being dragged —
+    // same pattern as the setup-mode opacity slider.
+    leadSlider.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    leadSlider.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    leadSlider.addEventListener('input', function(){
+      var v = parseFloat(leadSlider.value || '1.5');
+      if (!(v >= 0.3 && v <= 3.0)) return;
+      _leadSec = v;
+      try { localStorage.setItem('chchain_lead_sec', String(v)); } catch (e) {}
+      paintLead();
+    });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging  = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){
+      _overlayKey = p && p.overlayKey;
+      if (p && p.scope) _setupScope = p.scope;
+      else if (p && p.active) _setupScope = 'all';
+      document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){
+    try { document.body.classList.remove('setup'); } catch (e) {}
+    try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {}
+    _setupScope = null;
+  });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  function pad3(n){ return String(n).padStart(3, '0'); }
+  function manaCls(m){
+    if (m == null) return 'unk';
+    if (m >= 60) return 'hi';
+    if (m >= 40) return 'mid';
+    return 'lo';
+  }
+  function fmtAgo(secs){
+    if (secs < 60) return Math.round(secs) + 's';
+    var m = Math.floor(secs / 60);
+    return m + 'm' + String(Math.round(secs - m * 60)).padStart(2, '0');
+  }
+
+  // Complete Heal cast time — 10s base. The cast bar runs from the slot's
+  // callout; with cast-time focus items it lands a bit early, which reads
+  // fine (the bar simply completes ahead of the land).
+  var CH_CAST_SECS = 10;
+  var STALE_MS = 60 * 1000;     // no call in 60s → dim (agent clears at 5m)
+  // Gap-alert thresholds. SOON fires when the running beat has _leadSec
+  // worth of ms LEFT — long enough that a sleeping cleric or a spot healer
+  // can react before the tank actually takes the unhealed shot. The user
+  // tunes the lead via the ⚙ panel (chchain_lead_sec localStorage). LATE
+  // fires once the beat has run OUT (overdue) — escalation tone, pulses red.
+  var GAP_LATE_GRACE_MS = 3000; // stop announcing once it's this far overdue
+  //                              (the chain is broken; nothing more to alert)
+
+  var _last = null;             // last fetched chChain snapshot
+  // TTS dedup — track which gap event we've already spoken for, so a single
+  // late call doesn't trigger the alert dozens of times per second. Keyed on
+  // (last_ch.atMs, next_num) so a NEW chain step resets cleanly.
+  var _gapKey  = null;          // current gap-event key being tracked
+  var _spokeSoon = false;       // have we said "CH GAP SOON" for this key
+  var _spokeLate = false;       // have we said "CH GAP" (overdue) for this key
+
+  function speakGap(text){
+    if (_muted) return;
+    try {
+      if (!window.speechSynthesis) return;
+      var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.15; u.pitch = 1.0; u.volume = 1.0;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+
+  function render(){
+    var rowsEl  = document.getElementById('rows');
+    var emptyEl = document.getElementById('empty');
+    var nextEl  = document.getElementById('nextrow');
+    var gapEl   = document.getElementById('gaprow');
+    var tgtEl   = document.getElementById('tgt');
+    var beatEl  = document.getElementById('beat');
+    var c = _last;
+    if (!c || !c.slots || Object.keys(c.slots).length === 0) {
+      rowsEl.innerHTML = '';
+      nextEl.style.display = 'none';
+      gapEl.classList.remove('show', 'late');
+      tgtEl.textContent = 'CH chain';
+      beatEl.textContent = '';
+      emptyEl.style.display = 'block';
+      _gapKey = null; _spokeSoon = false; _spokeLate = false;
+      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+      return;
+    }
+    emptyEl.style.display = 'none';
+    var now = Date.now();
+    var stale = (now - (c.updated_at || 0)) > STALE_MS;
+    tgtEl.textContent = c.target ? ('CH → ' + c.target) : 'CH chain';
+    var beatSecs = c.beat_ms ? (c.beat_ms / 1000) : null;
+    beatEl.textContent = beatSecs ? ('beat ' + beatSecs.toFixed(1) + 's') : '';
+
+    var castingNum = null;
+    if (c.last_ch && (now - c.last_ch.atMs) < CH_CAST_SECS * 1000) castingNum = c.last_ch.num;
+
+    var nums = Object.keys(c.slots).map(Number).sort(function(a, b){ return a - b; });
+    var html = '';
+    for (var i = 0; i < nums.length; i++) {
+      var n = nums[i], s = c.slots[n];
+      var isCasting = (n === castingNum);
+      var isNext    = !isCasting && c.next_num === n;
+      var cls = 'row' + (isCasting ? ' casting' : '') + (isNext ? ' next' : '');
+      var stat, bar = '';
+      if (isCasting) {
+        var el = (now - c.last_ch.atMs) / 1000;
+        var remain = Math.max(0, CH_CAST_SECS - el);
+        stat = remain.toFixed(1);
+        bar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (el / CH_CAST_SECS) * 100).toFixed(1) + '%"></div></div>';
+      } else if (isNext) {
+        stat = 'NEXT';
+      } else {
+        stat = s.lastAtMs ? fmtAgo((now - s.lastAtMs) / 1000) : '—';
+      }
+      html += '<div class="' + cls + '">'
+        +   '<span class="num">' + pad3(n) + '</span>'
+        +   '<span class="nm">' + esc(s.name || '?') + '</span>'
+        +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
+        +   '<span class="stat">' + stat + '</span>'
+        +   bar
+        + '</div>';
+    }
+    rowsEl.innerHTML = html;
+    rowsEl.classList.toggle('stale', stale);
+
+    // Footer: NEXT <last> → <next> with a beat-based countdown — due when the
+    // last CH call + one beat elapses. Overdue flips red ("GO!").
+    var gapState = 'idle';     // 'idle' | 'soon' | 'late' — drives the alert row + TTS
+    var gapTank = c.target || 'tank';
+    var gapCleric = '';
+    if (c.next_num != null && c.last_ch && beatSecs) {
+      var dueMs = c.last_ch.atMs + c.beat_ms;
+      var remMs = dueMs - now;
+      var remSec = remMs / 1000;
+      var due = remMs <= 0;
+      nextEl.style.display = 'flex';
+      nextEl.classList.toggle('due', due);
+      nextEl.classList.toggle('stale', stale);
+      document.getElementById('nextlbl').textContent = 'NEXT ' + pad3(c.last_ch.num) + ' → ' + pad3(c.next_num);
+      document.getElementById('cd').textContent = due ? 'GO!' : remSec.toFixed(1);
+      document.getElementById('cdfill').style.width = due ? '100%' : Math.max(0, Math.min(100, (1 - remSec / beatSecs) * 100)).toFixed(1) + '%';
+      // Resolve the next-up cleric: prefer the slot's tracked name, fall back
+      // to "slot NNN" if we haven't seen them call CH yet this fight.
+      var nextSlot = c.slots[c.next_num];
+      gapCleric = (nextSlot && nextSlot.name) ? (pad3(c.next_num) + ' ' + nextSlot.name) : ('slot ' + pad3(c.next_num));
+      if (!stale) {
+        if (remMs <= -GAP_LATE_GRACE_MS) gapState = 'idle';   // chain broke, give up
+        else if (remMs <= 0)              gapState = 'late';
+        else if (remMs <= _leadSec * 1000) gapState = 'soon';
+      }
+    } else {
+      nextEl.style.display = 'none';
+    }
+
+    // Drive the GAP SOON / GAP alert row + the audible callout. Reset the
+    // TTS dedup whenever the underlying chain step advances (new last_ch).
+    var stepKey = (c.last_ch ? c.last_ch.atMs : 0) + ':' + (c.next_num || 0);
+    if (stepKey !== _gapKey) { _gapKey = stepKey; _spokeSoon = false; _spokeLate = false; }
+    if (gapState === 'idle') {
+      gapEl.classList.remove('show', 'late');
+    } else {
+      gapEl.classList.add('show');
+      gapEl.classList.toggle('late', gapState === 'late');
+      document.getElementById('gaplbl').textContent = gapState === 'late' ? 'CH GAP' : 'CH GAP SOON';
+      document.getElementById('gaptank').textContent = gapTank;
+      document.getElementById('gapcleric').textContent = gapCleric;
+      // Speak once per state transition per chain step. SOON first, LATE
+      // escalates if the gap actually slips. Tank name is what matters for
+      // a spot heal call, so it leads the spoken message.
+      if (gapState === 'soon' && !_spokeSoon) { _spokeSoon = true; speakGap('CH gap soon on ' + gapTank); }
+      if (gapState === 'late' && !_spokeLate) { _spokeLate = true; speakGap('CH gap on ' + gapTank); }
+    }
+    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+  }
+
+  async function tick(){
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/state', { cache: 'no-store' });
+      var s = await r.json();
+      document.getElementById('conn').className = 'conn ok';
+      document.getElementById('conn').textContent = '●';
+      _last = s && s.chChain;
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  tick(); setInterval(tick, 600);
+  // Render on a faster local clock so cast bars + countdowns tick smoothly
+  // between fetches (timestamps come from the same machine's log, so local
+  // Date.now() math is exact).
+  render(); setInterval(render, 150);
+</script>
+</body></html>

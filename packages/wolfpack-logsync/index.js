@@ -219,6 +219,21 @@ const CAST_HATE = {
   'cinder jolt':                     -570,
 };
 
+// Resisted detrimental spells STILL generate aggro on EQ — the spell's base
+// hate lands when the cast resolves; a resist stops the EFFECT (damage,
+// debuff, stun) but NOT the hate. So a paladin spamming Holy Might off the
+// Forlorn Totem of Rolfron Zek for aggro keeps building threat even when the
+// mob resists every one. Without the spell-hate catalog client-side we credit
+// a flat per-resist proxy to the caster's `spell` bucket. Named aggro clickies
+// that are cast FOR threat get a higher override; everything else (a resisted
+// slow / snare / debuff still tags you on the hate list) uses the default.
+const RESIST_HATE_DEFAULT = 120;
+const RESIST_HATE = {
+  'holy might':            320,   // PAL stun/nuke aggro clicky (Forlorn Totem of Rolfron Zek)
+  'force of akera':        320,   // PAL directed-hate clicky variant
+  'ancient: hastening death': 320,
+};
+
 // ── Config ───────────────────────────────────────────────────────────────────
 // These regexes match RAW log lines that should never be parsed, much less
 // uploaded. Match-and-discard happens before any other processing.
@@ -379,6 +394,7 @@ const KEEP_PATTERNS = [
   /\bbegins? to cast/i,
   /\byou cast /i,
   /\bresisted your/i,
+  /\byour target resisted the .+ spell/i,         // OUTGOING resist — our detrimental spell was resisted (still makes hate)
   /\byou resist the .+ spell/i,                   // incoming spell we resisted (names the spell)
   / (?:is|are) (?:an?|the) (?:leader|officer|member) of /i,  // /guildstatus rank line
   /\byour .+ has worn off/i,
@@ -831,6 +847,23 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+You resist the\s+(.+?)\s+spell!/i);
   if (m) {
     return { ts: tsIso, type: 'resist', spell: m[1].trim() };
+  }
+
+  // OUTGOING resist — OUR detrimental spell was resisted by the target. Two
+  // forms on Quarm:
+  //   "Your target resisted the Holy Might spell."   (self, no mob name)
+  //   "Diabo Xi Xin resisted your Holy Might spell." (third-person, names mob)
+  // A resisted detrimental spell still generates the spell's base hate, so the
+  // threat meter must credit the caster (see RESIST_HATE). Self-cast only —
+  // EQ never logs a bystander's outgoing resists — so attacker resolves to the
+  // uploading character in add().
+  m = line.match(/\]\s+Your target resisted the\s+(.+?)\s+spell\./i);
+  if (m) {
+    return { ts: tsIso, type: 'spell_resisted', ability: m[1].trim(), defender: null };
+  }
+  m = line.match(/\]\s+(.+?)\s+resisted your\s+(.+?)\s+spell\./i);
+  if (m) {
+    return { ts: tsIso, type: 'spell_resisted', ability: m[2].trim(), defender: m[1].trim() };
   }
 
   // ── Death events ──────────────────────────────────────────────────────────
@@ -2514,6 +2547,96 @@ function parseEarthquake(line) {
   };
 }
 
+// ── CH chain tracker ─────────────────────────────────────────────────────────
+// Cleric Complete Heal rotations call their slot number in shout / raid chat:
+//   "004 - CH - Naggato - Mana: 52%"        (slot 004 casting CH on Naggato)
+//   "003 ---> CH on Naggato - mana -> 66%"  (punctuation varies per cleric)
+//   "005 - CH: Naggato - Mana: 61%"
+// ...each followed by the NEXT slot's go-cue: "005 GO GO GO" / "001 - go go go".
+// These lines are zone-visible, so EVERY Mimic user sees the full chain in
+// their own log — the tracker is purely local, no bot relay. Feeds the Mimic
+// CH Chain overlay (chchain.html) via /api/state.chChain: rotation order,
+// caller + mana per slot, who's casting, who's next, and the chain beat
+// (median gap between CH calls) for the "next cast due" countdown.
+let _chChain = null;
+const CH_CHAIN_IDLE_RESET_MS = 5 * 60 * 1000;
+// Speaker + quoted body from public-channel lines (shout/say/raid/guild,
+// incoming and outgoing — outgoing resolves "You" to the watched character).
+const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of character)?|tells?\s+(?:the|your)\s+(?:raid|guild|group|party))[^,']*,\s*'(.+)'\s*$/i;
+// "CH" is matched case-sensitively — lowercase "ch" inside normal chat is too
+// common, but nobody types their chain call in lowercase per the observed logs.
+const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
+const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
+const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
+
+function trackChChainLine(line, character) {
+  if (!line) return;
+  // Cheap pre-filter before any regex work — the tail loop runs this on
+  // every line of every watched log.
+  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line)) return;
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
+  const text = m[2].trim();
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+
+  const call = text.match(_CH_CALL_RX);
+  if (call) {
+    const num = parseInt(call[1], 10);
+    if (!num || num > 30) return;          // sanity: chains are small
+    _chChainEnsure(atMs);
+    const c = _chChain;
+    if (call[2]) c.target = call[2];
+    const manaM = text.match(_CH_MANA_RX);
+    const mana = manaM ? Math.min(100, parseInt(manaM[1], 10)) : null;
+    // Beat = gap between consecutive CH calls from DIFFERENT slots. Median of
+    // the last 10 gaps absorbs one-off stutters (a late call, a duplicate).
+    if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
+      const gap = atMs - c.lastCh.atMs;
+      if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
+    }
+    const prev = c.slots[num] || {};
+    c.slots[num] = { name: speaker, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1 };
+    c.lastCh = { num, name: speaker, mana, atMs };
+    // Default next = numeric successor, wrapping at the highest slot seen.
+    // The explicit GO cue (below) overrides when it arrives.
+    const nums = Object.keys(c.slots).map(Number);
+    c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
+    c.updatedAt = atMs;
+    return;
+  }
+  // GO cue only steers an EXISTING chain — a stray "3 go go go" in chat must
+  // not conjure a phantom chain with no slots.
+  if (_chChain) {
+    const go = text.match(_CH_GO_RX);
+    if (go) {
+      const num = parseInt(go[1], 10);
+      if (!num || num > 30) return;
+      _chChain.nextNum = num;
+      _chChain.updatedAt = atMs;
+    }
+  }
+}
+function _chChainEnsure(atMs) {
+  if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
+  if (!_chChain) _chChain = { target: null, slots: {}, lastCh: null, nextNum: null, beats: [], startedAt: atMs, updatedAt: atMs };
+}
+function chChainSnapshot() {
+  if (!_chChain) return null;
+  if ((Date.now() - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) { _chChain = null; return null; }
+  const beats = _chChain.beats.slice().sort((a, b) => a - b);
+  return {
+    target:     _chChain.target,
+    slots:      _chChain.slots,
+    last_ch:    _chChain.lastCh,
+    next_num:   _chChain.nextNum,
+    beat_ms:    beats.length ? beats[Math.floor(beats.length / 2)] : null,
+    started_at: _chChain.startedAt,
+    updated_at: _chChain.updatedAt,
+  };
+}
+
 // Long-term who_data registry filter — anonymous rows + level 50+. The
 // transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
 // persistent uploads only carry threat-relevant entries: low-level bank
@@ -3519,14 +3642,40 @@ class EncounterBuilder {
       try { this._publishLiveThreat(); } catch {}
     }
 
+    // Confirm a PLAYER from OUTGOING damage — the broadest, earliest signal (far
+    // more raiders deal damage than ever show up in /who). A single-word
+    // capitalized attacker hitting a mob-shaped defender (multi-word,
+    // lowercase-led, or an already-tracked target) is a player. Crucially, drop
+    // them from this.targets if the boss had parked them there by hitting them:
+    // otherwise their own outgoing DPS is silently excluded as "NPC damage" and
+    // whole raiders vanish from the live parse vs EQLogParser.
+    if (event.type === 'damage' && (event.amount || 0) > 0 && event.attacker
+        && event.attacker !== this.character && !/^you$/i.test(event.attacker)
+        && !/\s/.test(event.attacker) && /^[A-Z]/.test(event.attacker)
+        && !this.petLeaders[event.attacker.toLowerCase()]) {
+      const dn = event.defender || '';
+      const defenderIsMobish = dn && !/^you$/i.test(dn)
+        && (/\s/.test(dn) || /^[a-z]/.test(dn) || this.targets.has(dn))
+        && dn.toLowerCase() !== event.attacker.toLowerCase();
+      if (defenderIsMobish) {
+        const al = event.attacker.toLowerCase();
+        confirmedPlayers.add(al);
+        if (this.targets.has(event.attacker)) this.targets.delete(event.attacker);
+      }
+    }
+
     // Track damage dealt TO targets — exclude "YOU" / "you", confirmed players
-    // (PvP), and self-hits (pet reclaim/dismiss generates attacker === defender).
+    // (PvP), self-hits (pet reclaim/dismiss generates attacker === defender),
+    // and DEFENDERS HIT BY A MOB WE'RE ALREADY FIGHTING (the boss hitting a
+    // raider means that raider is a player, NOT a new mob target — recording
+    // them here was what parked unconfirmed raiders in this.targets).
     if (event.type === 'damage' && event.defender
         && !/^you$/i.test(event.defender)
         && !isConfirmedPlayer(event.defender)) {
       const rawAtk0 = event.attacker;
       const isSelfHit = rawAtk0 && rawAtk0.toLowerCase() === event.defender.toLowerCase();
-      if (!isSelfHit) {
+      const attackerIsTarget = rawAtk0 && this.targets.has(rawAtk0);
+      if (!isSelfHit && !attackerIsTarget) {
         this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
       }
     }
@@ -3745,6 +3894,25 @@ class EncounterBuilder {
       } else {
         t.proc += PROC_HATE[event.type] || 0;
       }
+    }
+
+    // Resisted detrimental spell — OUR cast got resisted but still generated
+    // hate (resist stops the effect, not the aggro). Credit the uploader's
+    // spell bucket so a paladin spamming Holy Might off the Forlorn Totem for
+    // threat still climbs the meter even when the boss resists every one.
+    // Self-only line, so attacker = this.character. procDetail records it as
+    // "<Spell> (resisted)" so the breakdown shows the contribution honestly.
+    if (event.type === 'spell_resisted' && this.character) {
+      const attacker = this.character;
+      const sl = String(event.ability || '').toLowerCase();
+      const hate = RESIST_HATE[sl] != null ? RESIST_HATE[sl] : RESIST_HATE_DEFAULT;
+      if (!this.threatBy.has(attacker)) {
+        this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
+      }
+      const t = this.threatBy.get(attacker);
+      t.spell += hate;
+      const label = `${event.ability} (resisted)`;
+      t.procDetail[label] = (t.procDetail[label] || 0) + 1;
     }
 
     // Aggro dumps — rogue Evade pulls the player DOWN the threat meter; the
@@ -3978,12 +4146,25 @@ class EncounterBuilder {
     }
 
     if (event.type === 'death' && event.defender && !/^you$/i.test(event.defender)) {
-      // If we just killed the most-damaged target, end the encounter
-      let top = null, topDmg = -1;
+      // End the encounter when a BOSS-CLASS mob dies — the most-damaged target,
+      // OR a mob that absorbed a damage share comparable to it (a co-boss /
+      // named, not a trash add). Two earlier extremes both misbehaved:
+      //   • "|| topDmg > 1000" flushed on EVERY add death once a fight was
+      //     underway → perPlayer restarted mid-fight → undercount (whole pull
+      //     scored as just the post-add tail).
+      //   • flushing ONLY on the exact top-target death over-merged
+      //     back-to-back boss pulls inside the 120s idle window → overcount
+      //     (one agent's encounter spanned two kills, doubling the damage).
+      // Share-based threading splits real boss kills while ignoring add deaths.
+      let top = null, topDmg = -1, deadDmg = 0;
+      const _defL = event.defender.toLowerCase();
       for (const [name, dmg] of this.targets) {
         if (dmg > topDmg) { top = name; topDmg = dmg; }
+        if (name.toLowerCase() === _defL) deadDmg = dmg;
       }
-      if (top && (event.defender.toLowerCase() === top.toLowerCase() || topDmg > 1000)) {
+      const isTop      = top && _defL === top.toLowerCase();
+      const isBossLike = deadDmg > 10000 && topDmg > 0 && deadDmg >= topDmg * 0.5;
+      if (top && (isTop || isBossLike)) {
         this.bossName = event.defender;
         this.bossKillConfirmed = true;
         this.flush();
@@ -5426,6 +5607,9 @@ function _zealExportOnCampState() {
       return stats.currentEncounterThreat;
     })(),
     currentEncounterThreatByChar: stats.currentEncounterThreatByChar || {},
+    // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
+    // no chain has called in the last 5 minutes. Drives chchain.html.
+    chChain: chChainSnapshot(),
     // Cross-instance uploader status. active=true → this instance is the one
     // sending data to the bot; false → another Parser/Mimic on this machine
     // owns the upload lock and we're read-only (local dashboard still live).
@@ -7783,6 +7967,7 @@ var WP_OVERLAY_ROWS = [
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
+  ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
 ];
 
 function renderOverlays(s) {
@@ -7902,7 +8087,8 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal };      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat };      var btns = document.querySelectorAll('.wp-ov-toggle');
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain };
+      var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
         b.textContent = isOn ? 'ON' : 'OFF';
@@ -14699,20 +14885,37 @@ function _isTimedDurationFormula(f) {
 // landing message ("looks very tranquil." etc.); when that happens the parser
 // reports the cast as ambiguous (spell_id 0) rather than guessing wrong.
 let _buffLandingBySuffix = new Map();
+// Detrimental-landing matcher — Tash / Malo / slows / Shadow Poison, etc. The
+// beneficial matcher above is keyword-gated (debuffs carry no buff keyword), so
+// every good===0 timed spell's landing message is indexed here separately.
+// Powers (a) Target Info showing debuffs ON the mob and (b) the bot's cure queue
+// for raiders not running Mimic (player-target debuffs upload to buff_casts).
+let _debuffLandingBySuffix = new Map();
 function _rebuildBuffMatchers() {
   const m = new Map();
+  const dm = new Map();
   for (const e of _spellByNameLower.values()) {
     if (!e || !e.other || !e.name) continue;
-    if (!_isTrackedBuffName(e.name)) continue;
     if (!_isTimedDurationFormula(e.durf)) continue;
     const suffix = String(e.other).trim().toLowerCase();
     if (!suffix || suffix.length < 6) continue;   // too short → false positives
-    const arr = m.get(suffix) || [];
-    arr.push({ id: e.id, name: e.name, dur: e.dur, durf: e.durf });
-    m.set(suffix, arr);
+    const rec = { id: e.id, name: e.name, dur: e.dur, durf: e.durf };
+    if (_isTrackedBuffName(e.name)) {
+      const arr = m.get(suffix) || [];
+      arr.push(rec);
+      m.set(suffix, arr);
+    }
+    // good===0 → detrimental. (null/unknown good is NOT indexed as a debuff —
+    // avoids false positives from un-enriched catalog rows.)
+    if (e.good === 0) {
+      const arr = dm.get(suffix) || [];
+      arr.push(rec);
+      dm.set(suffix, arr);
+    }
   }
   _buffLandingBySuffix = m;
-  if (m.size) console.log(`[buff-landing] indexed ${m.size} tracked-buff landing messages`);
+  _debuffLandingBySuffix = dm;
+  if (m.size || dm.size) console.log(`[buff-landing] indexed ${m.size} buff + ${dm.size} debuff landing messages`);
 }
 
 // EQ first names: a single capitalized word. Rejects "You", pets ("`s warder"),
@@ -14785,6 +14988,68 @@ function parseBuffLanding(line, observer) {
       dur_formula: resolved ? resolved.durf : null,
       cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
       observer:    observer || null,
+    };
+  }
+  return null;
+}
+
+// Target name for a DEBUFF landing — looser than _looksLikePlayerName because
+// debuffs land on MOBS too (multi-word, article/backtick names: "Thall Xundraux
+// Diabo", "A Shissar Taskmaster", "Vulak`Aerr"). The exact-suffix match against
+// the detrimental catalog already gates false positives, so we just sanity-check
+// the leading token(s) look name-shaped.
+function _looksLikeTargetName(s) {
+  s = String(s || '').trim();
+  if (s.length < 3 || s.length > 48) return false;
+  if (/^(you|your)$/i.test(s)) return false;
+  if (!/^[A-Za-z`'][A-Za-z`'\- ]*$/.test(s)) return false;   // letters / ` / ' / - / space
+  return /^[A-Z]/.test(s) || /^(a|an|the)\s/i.test(s);       // capital, or article-led mob
+}
+
+// Parse a DETRIMENTAL debuff landing (Tash, Malo, slow, Shadow Poison, …) on a
+// mob or player from a BYSTANDER's log. The beneficial parseBuffLanding skips
+// these (no buff keyword) and resolveSelfCastLanding only catches our OWN casts,
+// so without this a debuff cast by someone else never registers on the target.
+// Multi-word mob names resolve by peeling 1..5 leading words and looking up the
+// remainder. Ambiguous landings (Tash's "glances nervously about." is shared by
+// 7 spells, Malo's "looks very uncomfortable." by 6) resolve to a representative
+// of the family — the longest-duration variant — so the debuff still SHOWS with
+// a sensible timer instead of being dropped. Same return shape as
+// parseBuffLanding.
+function parseDebuffLanding(line, observer) {
+  if (!_debuffLandingBySuffix.size) return null;
+  const m = line.match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2].replace(/\s+$/, '');
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // possessive
+  const words = body.split(' ');
+  for (let k = 1; k <= Math.min(5, words.length - 1); k++) {
+    candidates.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
+  }
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikeTargetName(name)) continue;
+    const hits = _debuffLandingBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    // Unique name → that spell; ambiguous family → longest-duration
+    // representative (deterministic + a sensible timer; all share the cure type).
+    const names = new Set(hits.map(h => h.name));
+    let resolved = hits[0];
+    if (names.size > 1) {
+      resolved = hits.reduce((best, h) => ((Number(h.dur) || 0) > (Number(best.dur) || 0) ? h : best), hits[0]);
+    }
+    const ts = parseEqTimestamp(line);
+    return {
+      target:       name,
+      spell_id:     names.size === 1 ? (resolved.id || 0) : 0,
+      spell_name:   resolved ? resolved.name : null,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      dur_ticks:    resolved ? resolved.dur : null,
+      dur_formula:  resolved ? resolved.durf : null,
+      cast_at:      ts ? ts.toISOString() : new Date().toISOString(),
+      observer:     observer || null,
+      detrimental:  true,
     };
   }
   return null;
@@ -15988,6 +16253,10 @@ function buildMobInfo() {
       if (!b || !b.name) continue;
       const k = String(b.name).toLowerCase();
       if (seen.has(k)) continue;
+      // The relay sends good=null for non-charm spells (buff_casts doesn't carry
+      // good_effect). Resolve it from our own catalog so relayed DEBUFFS land in
+      // the red debuff section instead of being mislabeled as buffs.
+      if (b.good == null) { const e = _spellByNameLower.get(k); if (e && (e.good === 0 || e.good === 1)) b.good = e.good; }
       buffs.push(b);
       seen.add(k);
     }
@@ -17556,6 +17825,29 @@ async function main() {
           // whatever we're targeting (mob or player).
           recordTargetBuffLanding(bcEvt);
         }
+        // Detrimental debuff landed by SOMEONE ELSE (bystander view) — Tash/Malo
+        // on the boss, a slow/poison on a raider. Our OWN debuffs are already
+        // resolved above (resolveSelfCastLanding) and beneficial buffs by
+        // parseBuffLanding, so this only fires when neither produced an event.
+        if (!_sourceExcluded && !bcEvt) {
+          const dbEvt = parseDebuffLanding(line, b.character);
+          if (dbEvt && dbEvt.spell_name) {
+            // Local Target Info — show the debuff on whatever's targeted (mob or
+            // player), timed from the land. This is the emote-based path, so it
+            // does NOT depend on a Zeal target-name match (the caster-self-cast
+            // path does, and that breaks on instanced mob names like
+            // "#Diabo_Xi_Va_Temariel" vs the emote's "Diabo Xi Va Temariel").
+            recordTargetBuffLanding(dbEvt);
+            // Upload BOTH mob and player debuffs so the bot's target-buffs relay
+            // shows them cross-client — everyone targeting the boss sees
+            // Tash/Malo/Turgur's even if they didn't personally witness the land
+            // — and the cure queue still gets raider debuffs (Shadow Poison on
+            // Malthur). The bot upserts by (target, spell, cast_at), so every
+            // observer of the SAME land collapses to one row — no flood.
+            const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
+            if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
+          }
+        }
 
         // Server-wide PvP earthquake announcement → register the next-quake
         // time so the bot can show a countdown above the PvP timers (Discord +
@@ -17567,6 +17859,10 @@ async function main() {
             enqueueUpload('quake', { agent_version: AGENT_VERSION, quake: quakeEvt });
           }
         }
+        // CH chain rotation — cleric "00N - CH - <target>" + "GO GO GO"
+        // callouts in shout/raid chat. Local-only (zone-visible lines);
+        // feeds the Mimic CH Chain overlay via /api/state.chChain.
+        if (!_sourceExcluded) { try { trackChChainLine(line, b.character); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
@@ -17651,6 +17947,7 @@ module.exports = {
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename,
+  trackChChainLine, chChainSnapshot,
 };
 
 if (require.main === module) {

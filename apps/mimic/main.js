@@ -85,6 +85,7 @@ let whoWindow     = null;
 let melodyWindow  = null;
 let zealWindow    = null;
 let threatWindow  = null;
+let chChainWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -639,6 +640,7 @@ function _boundsKeyForWindow(win) {
   if (win === melodyWindow)  return 'melodyBounds';
   if (win === zealWindow)    return 'zealBounds';
   if (win === threatWindow)  return 'threatBounds';
+  if (win === chChainWindow) return 'chChainBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1771,6 +1773,7 @@ function _overlayEntries() {
   if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
   if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
   if (threatWindow  && !threatWindow.isDestroyed())  out.push(['threat',  threatWindow]);
+  if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1834,6 +1837,7 @@ function applySetupMode(on) {
     if (!melodyWindow)  createMelodyOverlay();
     if (!zealWindow)    createZealHealthOverlay();
     if (!threatWindow)  createThreatMeterOverlay();
+    if (!chChainWindow) createChChainOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -3071,6 +3075,41 @@ function applyThreatVisibility() {
   if (shouldShow) threatWindow.showInactive(); else threatWindow.hide();
 }
 
+// CH chain overlay — cleric Complete Heal rotation read from the zone-visible
+// shout/raid callouts ("004 - CH - Naggato - Mana: 52%" / "005 GO GO GO").
+// Slot order, caller + mana, live cast bar, NEXT cue + beat countdown.
+// Reads stats.chChain via /api/state — fully local, no relay. Opt-in.
+function createChChainOverlay() {
+  const b = _resolveBounds('chChainBounds', 'chChainBoundsSig', { x: 40, y: 540, width: 280, height: 240 });
+  chChainWindow = new BrowserWindow({
+    title: 'Wolf Pack Mimic — CH chain overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 220, minHeight: 90,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  chChainWindow.setAlwaysOnTop(true, 'screen-saver');
+  chChainWindow.setVisibleOnAllWorkspaces(true);
+  chChainWindow.loadFile('chchain.html');
+  chChainWindow.on('moved',  () => _persistBounds('chChainBounds', chChainWindow));
+  chChainWindow.on('resize', () => _persistBounds('chChainBounds', chChainWindow));
+  chChainWindow.once('ready-to-show', () => {
+    chChainWindow.webContents.send('agent-port', agentPort);
+    applyChChainVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(chChainWindow, 'chchain');
+  });
+}
+function applyChChainVisibility() {
+  if (!chChainWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off) — healers + raid leads watching the rotation. EQ-gated.
+  const shouldShow = unlocked || (cfg.showChChain && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) chChainWindow.showInactive(); else chChainWindow.hide();
+}
+
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
 // presence poller (on running ↔ not-running flips) and by config toggles.
 function applyAllVisibility() {
@@ -3084,6 +3123,7 @@ function applyAllVisibility() {
   applyMelodyVisibility();
   applyZealVisibility();
   applyThreatVisibility();
+  applyChChainVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -3117,6 +3157,7 @@ function toggleHideAllOverlays() {
       showMelody:       !!cfg.showMelody,
       showZeal:         !!cfg.showZeal,
       showThreat:       !!cfg.showThreat,
+      showChChain:      !!cfg.showChChain,
     };
     cfg.showHud = false;
     cfg.enableTriggerTts = false;
@@ -3128,6 +3169,7 @@ function toggleHideAllOverlays() {
     cfg.showMelody = false;
     cfg.showZeal = false;
     cfg.showThreat = false;
+    cfg.showChChain = false;
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -3266,6 +3308,7 @@ function currentStatus() {
     melodyBardOnly: !!cfg.melodyBardOnly,
     showZeal: !!cfg.showZeal,
     showThreat: !!cfg.showThreat,
+    showChChain: !!cfg.showChChain,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -3446,6 +3489,11 @@ function buildTrayMenu() {
     { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showThreat = mi.checked; saveConfig(cfg);
         if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
+        pushStatus();
+      } },
+    { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showChChain = mi.checked; saveConfig(cfg);
+        if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -3989,6 +4037,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showThreat = !cfg.showThreat; saveConfig(cfg);
       if (cfg.showThreat && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
       break;
+    case 'chchain':
+      cfg.showChChain = !cfg.showChChain; saveConfig(cfg);
+      if (cfg.showChChain && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
+      break;
     default:
       return null;
   }
@@ -4036,6 +4088,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === threatWindow) {
       cfg.showThreat = false; saveConfig(cfg);
       try { threatWindow.hide(); } catch {}
+    } else if (win === chChainWindow) {
+      cfg.showChChain = false; saveConfig(cfg);
+      try { chChainWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -4413,8 +4468,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showMelody       && !melodyWindow)    createMelodyOverlay();
     if (merged.showZeal         && !zealWindow)      createZealHealthOverlay();
     if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
+    if (merged.showChChain      && !chChainWindow)   createChChainOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -4587,6 +4643,7 @@ app.whenReady().then(async () => {
   createWhoOverlay();
   createMelodyOverlay();
   createZealHealthOverlay();
+  createChChainOverlay();
   pushStatus();
   startZealCapture();
 
@@ -4628,6 +4685,7 @@ app.whenReady().then(async () => {
       [mobInfoWindow, { x: 700, y: 60,  width: 320, height: 200 }],
       [whoWindow,     { x: 40,  y: 300, width: 320, height: 280 }],
       [melodyWindow,  { x: 40,  y: 600, width: 280, height: 180 }],
+      [chChainWindow, { x: 40,  y: 540, width: 280, height: 240 }],
     ]) {
       if (!win || win.isDestroyed()) continue;
       try {
