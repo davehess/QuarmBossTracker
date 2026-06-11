@@ -4056,21 +4056,25 @@ class EncounterBuilder {
     }
 
     if (event.type === 'death' && event.defender && !/^you$/i.test(event.defender)) {
-      // End the encounter only when the MOST-DAMAGED target dies — i.e. the
-      // thing we were actually fighting (the boss). The old "|| topDmg > 1000"
-      // also fired on ANY mob death once a real fight was underway, so killing
-      // an ADD during a boss fight (VT sub-mobs, charmed pets, trash in the
-      // pull) flushed the encounter and restarted perPlayer MID-FIGHT. The live
-      // DPS/Tank overlay then scored only the post-add segment and badly
-      // undercounted everyone vs EQLogParser. Now adds that aren't the top
-      // target don't split the fight; a boss death that isn't quite top falls
-      // through to the 120s idle flush (and the separate bosskill broadcast
-      // still drives timers), so nothing is lost.
-      let top = null, topDmg = -1;
+      // End the encounter when a BOSS-CLASS mob dies — the most-damaged target,
+      // OR a mob that absorbed a damage share comparable to it (a co-boss /
+      // named, not a trash add). Two earlier extremes both misbehaved:
+      //   • "|| topDmg > 1000" flushed on EVERY add death once a fight was
+      //     underway → perPlayer restarted mid-fight → undercount (whole pull
+      //     scored as just the post-add tail).
+      //   • flushing ONLY on the exact top-target death over-merged
+      //     back-to-back boss pulls inside the 120s idle window → overcount
+      //     (one agent's encounter spanned two kills, doubling the damage).
+      // Share-based threading splits real boss kills while ignoring add deaths.
+      let top = null, topDmg = -1, deadDmg = 0;
+      const _defL = event.defender.toLowerCase();
       for (const [name, dmg] of this.targets) {
         if (dmg > topDmg) { top = name; topDmg = dmg; }
+        if (name.toLowerCase() === _defL) deadDmg = dmg;
       }
-      if (top && event.defender.toLowerCase() === top.toLowerCase()) {
+      const isTop      = top && _defL === top.toLowerCase();
+      const isBossLike = deadDmg > 10000 && topDmg > 0 && deadDmg >= topDmg * 0.5;
+      if (top && (isTop || isBossLike)) {
         this.bossName = event.defender;
         this.bossKillConfirmed = true;
         this.flush();
