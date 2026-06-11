@@ -6317,12 +6317,31 @@ async function _handleAgentMobInfo(req, res) {
             const itemIds  = loot.map(it => it.id);
             if (itemIds.length > 0) {
               // a) Total Wolf Pack win counts per item across all OpenDKP sources.
+              //    Matched by item_id OR item_name (case-insensitive). The NAME
+              //    fallback is essential on Quarm: the server re-itemizes some
+              //    drops under a NEW item_id, so the same real item exists twice
+              //    in eqemu_items (e.g. Bow of Shadows is 28989 on the VT drop
+              //    table but its OpenDKP wins ingested under the classic
+              //    duplicate 7904). An id-only join silently showed those as
+              //    "0× won"; matching by name too recovers them. We take the max
+              //    of the two counts so neither key alone can hide a win.
+              const names    = [...new Set(loot.map(it => String(it.name || '')).filter(Boolean))];
+              const nameList = names.map(n => '"' + n.replace(/"/g, '""') + '"').join(',');
               const obs = await supabase.select('loot_observations',
-                `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&item_id=in.(${itemIds.join(',')})&select=item_id&limit=50000`);
+                `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)` +
+                `&or=(item_id.in.(${itemIds.join(',')}),item_name.in.(${encodeURIComponent(nameList)}))` +
+                `&select=item_id,item_name&limit=50000`);
               if (Array.isArray(obs)) {
-                const cnt = new Map();
-                for (const row of obs) cnt.set(row.item_id, (cnt.get(row.item_id) || 0) + 1);
-                for (const it of loot) { const n = cnt.get(it.id); if (n) it.seen = n; }
+                const byId = new Map(), byName = new Map();
+                for (const row of obs) {
+                  if (row.item_id != null) byId.set(row.item_id, (byId.get(row.item_id) || 0) + 1);
+                  const nk = String(row.item_name || '').toLowerCase();
+                  if (nk) byName.set(nk, (byName.get(nk) || 0) + 1);
+                }
+                for (const it of loot) {
+                  const n = Math.max(byId.get(it.id) || 0, byName.get(String(it.name || '').toLowerCase()) || 0);
+                  if (n) it.seen = n;
+                }
               }
               // b) Per-item "how many NPCs drop this" → exposes uniqueness so
               //    the overlay can ⭐ items unique to THIS mob and dim items
