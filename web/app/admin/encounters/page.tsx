@@ -50,10 +50,42 @@ type EncounterRow = {
   // Characters likely to have useful log coverage for THIS encounter that
   // aren't already in encounter_players — i.e., who could fill the gap if
   // they re-run the agent over their old logs. Computed from raid_roster +
-  // who_observations within ±15 min of started_at. Excludes characters
-  // already in encounter_players and any flagged exclude_from_stats.
+  // who_observations within ±15 min of started_at, then INTERSECTED with the
+  // guild-membership set (who_observations is /who-all data full of Zek
+  // PvPers + other guilds — only Wolf Pack members can re-run logs for us).
+  // Excludes characters already in encounter_players and any exclude_from_stats.
   backfill_candidates: string[];
+  // Subset of backfill_candidates that already have a pending/acked backfill
+  // request for this window — so the UI can mark them "already pinged" instead
+  // of silently re-offering them (which made the button feel like a no-op).
+  pending_backfill: string[];
 };
+
+// Guild-membership name set — the predicate CLAUDE.md defines: a character
+// "counts" as a guild member if it's linked to a CURRENT Discord guild member
+// (wolfpack_members.is_member) OR carries an OpenDKP raid rank. This is what
+// keeps /who-all sightings (who_observations) from injecting non-guildies
+// (Zek PvPers, other guilds, passers-by) into the backfill candidate list.
+const RAID_RANKS = new Set(['Raid Pack', 'Raid Alt', 'Officer', 'Pack Leader']);
+async function loadGuildMemberNames(admin: ReturnType<typeof supabaseAdmin>): Promise<Set<string>> {
+  const [charsRes, membersRes] = await Promise.all([
+    admin.from('characters').select('name, rank, discord_id, deleted').range(0, 9999),
+    admin.from('wolfpack_members').select('discord_id, is_member').range(0, 9999),
+  ]);
+  const memberDiscord = new Set(
+    (membersRes.data ?? [])
+      .filter((m: any) => m.is_member === true)
+      .map((m: any) => String(m.discord_id)),
+  );
+  const names = new Set<string>();
+  for (const c of (charsRes.data ?? []) as any[]) {
+    if (c.deleted || !c.name) continue;
+    const isMember = c.discord_id && memberDiscord.has(String(c.discord_id));
+    const raidRank = c.rank && RAID_RANKS.has(String(c.rank));
+    if (isMember || raidRank) names.add(String(c.name));
+  }
+  return names;
+}
 
 type DuplicatePair = {
   a: EncounterRow;
@@ -121,15 +153,19 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
   // who aren't already in encounter_players. Sources:
   //   - raid_roster.captured_at within ±15 min of started_at (strongest)
   //   - who_observations.observed_at within ±15 min of started_at (broader)
-  // Minus encounter_players, minus characters.exclude_from_stats.
+  // Minus encounter_players, minus characters.exclude_from_stats, then
+  // INTERSECTED with guild membership — who_observations is /who-all data so
+  // it's full of Zek PvPers / other guilds / random passers-by who can't and
+  // won't re-run logs for us. Only Wolf Pack members belong in this list.
   const candByEnc = new Map<string, Set<string>>();
+  const pendingByEnc = new Map<string, Set<string>>();
   if ((encs ?? []).length > 0) {
     const starts = (encs ?? []).map((e: any) => e.started_at).filter((s: string | null) => !!s);
     if (starts.length > 0) {
       const minStart = new Date(Math.min(...starts.map((s: string) => new Date(s).getTime())) - 15 * 60 * 1000).toISOString();
       const maxStart = new Date(Math.max(...starts.map((s: string) => new Date(s).getTime())) + 15 * 60 * 1000).toISOString();
       // PostgREST will silently cap selects — explicit range to be safe.
-      const [rosterRes, whoRes, excludedRes] = await Promise.all([
+      const [rosterRes, whoRes, excludedRes, guildNames, pendingRes] = await Promise.all([
         admin
           .from('raid_roster')
           .select('name, captured_at')
@@ -143,8 +179,27 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
           .lte('observed_at', maxStart)
           .range(0, 9999),
         admin.from('characters').select('name').eq('exclude_from_stats', true).range(0, 999),
+        loadGuildMemberNames(admin),
+        // Already-filed requests — so the UI can grey out who's already been
+        // pinged for this window instead of silently re-offering them.
+        admin
+          .from('agent_backfill_requests')
+          .select('character, scope')
+          .in('status', ['pending', 'acked'])
+          .range(0, 9999),
       ]);
       const excludedSet = new Set((excludedRes.data ?? []).map((r: any) => String(r.name)));
+      // Pending requests keyed by the start_iso they were filed against — the
+      // backfill form posts the encounter's started_at verbatim as
+      // scope.start_iso, so an exact-string match re-associates them.
+      const pendingByStart = new Map<string, Set<string>>();
+      for (const r of (pendingRes.data ?? []) as any[]) {
+        const si = r?.scope?.start_iso ? String(r.scope.start_iso) : '';
+        if (!si || !r.character) continue;
+        const set = pendingByStart.get(si) ?? new Set<string>();
+        set.add(String(r.character));
+        pendingByStart.set(si, set);
+      }
       // Bucket roster + who sightings into 15-min windows around each encounter.
       const WINDOW_MS = 15 * 60 * 1000;
       const sightings: Array<{ name: string; at: number }> = [];
@@ -163,9 +218,11 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
           if (Math.abs(s.at - t0) > WINDOW_MS) continue;
           if (present.has(s.name)) continue;
           if (excludedSet.has(s.name)) continue;
+          if (!guildNames.has(s.name)) continue;   // Wolf Pack members only
           cands.add(s.name);
         }
         candByEnc.set(e.id, cands);
+        pendingByEnc.set(e.id, pendingByStart.get(String(e.started_at)) ?? new Set<string>());
       }
     }
   }
@@ -173,6 +230,8 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
   return (encs ?? []).map((e: any) => {
     const npc = e.npc_id != null ? npcById.get(e.npc_id) : null;
     const cands = candByEnc.get(e.id);
+    const pend = pendingByEnc.get(e.id);
+    const candList = cands ? Array.from(cands).sort() : [];
     return {
       id: e.id,
       npc_id: e.npc_id,
@@ -187,7 +246,8 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
       data_incomplete_reason: e.data_incomplete_reason,
       contribs: contribByEnc.get(e.id) ?? 0,
       players: (playersByEnc.get(e.id) ?? new Set()).size,
-      backfill_candidates: cands ? Array.from(cands).sort() : [],
+      backfill_candidates: candList,
+      pending_backfill: pend ? candList.filter(n => pend.has(n)) : [],
     };
   });
 }
@@ -566,6 +626,14 @@ export default async function AdminEncountersPage({
               const ratio = hpRatio(r);
               const badge = hpBadge(ratio);
               const flagged = r.data_incomplete || (r.total_damage ?? 0) === 0 || (ratio != null && ratio < 0.75) || (ratio != null && ratio > 1.10);
+              // Backfill request state for this encounter. `pendingSet` = names
+              // already pinged for this window; `newCands` = candidates not yet
+              // requested (rendered green, checked). When every candidate is
+              // already requested the submit button greys out + reads
+              // "Backfill requested".
+              const pendingSet = new Set(r.pending_backfill);
+              const newCands = r.backfill_candidates.filter(n => !pendingSet.has(n));
+              const allRequested = r.backfill_candidates.length > 0 && newCands.length === 0;
               return (
                 <tr key={r.id} className={`border-b border-border/40 hover:bg-[#1a212c] ${dupeIds.has(r.id) ? 'bg-[#3a1e1e22]' : ''}`}>
                   <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap hidden sm:table-cell">{fmtTs(r.started_at)}</td>
@@ -611,21 +679,36 @@ export default async function AdminEncountersPage({
                           {r.backfill_candidates.length > 0 ? (
                             <div className="space-y-1">
                               <div className="text-dim text-[10px] uppercase tracking-wide">
-                                Likely there ({r.backfill_candidates.length}) — ping all that should re-run their logs
+                                Likely there ({r.backfill_candidates.length}) — Wolf Pack members only · ping all that should re-run their logs
+                                {pendingSet.size > 0 && (
+                                  <span className="text-dim normal-case"> · {pendingSet.size} already requested</span>
+                                )}
                               </div>
                               <div className="max-h-32 overflow-y-auto bg-bg border border-border rounded p-1 flex flex-wrap gap-1">
-                                {r.backfill_candidates.map((name) => (
-                                  <label key={name} className="inline-flex items-center gap-1 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-panel">
-                                    <input
-                                      type="checkbox"
-                                      name="characters"
-                                      value={name}
-                                      defaultChecked
-                                      className="accent-blue"
-                                    />
-                                    <span>{name}</span>
-                                  </label>
-                                ))}
+                                {r.backfill_candidates.map((name) => {
+                                  // Already requested → dim + ✓, unchecked (don't
+                                  // re-file). New (not yet requested) → green name,
+                                  // checked — these are what the button submits.
+                                  const already = pendingSet.has(name);
+                                  return (
+                                    <label
+                                      key={name}
+                                      className={`inline-flex items-center gap-1 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-panel ${already ? 'opacity-70' : ''}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        name="characters"
+                                        value={name}
+                                        defaultChecked={!already}
+                                        className="accent-blue"
+                                      />
+                                      <span className={already ? 'text-dim' : 'text-green'}>{name}</span>
+                                      {already && (
+                                        <span className="text-dim text-[9px]" title="A backfill request is already pending for this character">✓</span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
                               </div>
                             </div>
                           ) : (
@@ -636,8 +719,18 @@ export default async function AdminEncountersPage({
                             />
                           )}
                           <input name="reason" placeholder="reason (optional)" className="bg-bg border border-border rounded px-2 py-0.5 text-xs w-full" />
-                          <button type="submit" className="px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white text-xs">
-                            Request backfill from selected
+                          <button
+                            type="submit"
+                            disabled={allRequested}
+                            className={
+                              allRequested
+                                ? 'px-2 py-0.5 rounded border border-border bg-panel text-dim text-xs cursor-not-allowed'
+                                : 'px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white text-xs'
+                            }
+                          >
+                            {allRequested
+                              ? 'Backfill requested ✓'
+                              : `Request backfill${newCands.length > 0 ? ` (${newCands.length})` : ''}`}
                           </button>
                         </form>
                         <form
