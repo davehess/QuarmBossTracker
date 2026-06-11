@@ -256,13 +256,13 @@
   // changes how they target:
   //   🔍 inferred   — buff state came from observed casts, not Zeal (no Mimic).
   //   🪶 Avatar     — already has Feral/Primal/proc Avatar (worn-atk hint).
-  //   🦅 CT         — has Celestial Tranquility (+40 ATK; Avatar replaces it).
+  //   🦅 CT         — has Celestial Tranquility (+40 ATK; stacks with Avatar).
   //   ⚠ T.of Hate  — SK carrying T. of Hate Recourse (Savagery overwrites it).
   function stateChips(r){
     var bits = '';
     if (r.inferred)               bits += '<span class="chip inferred" title="Buffs inferred from observed casts — this raider isn\'t running Mimic">🔍</span>';
     if (r.avatar_buff)            bits += '<span class="chip avatar" title="'+esc(r.avatar_buff)+' is active">🪶</span>';
-    if (r.celestial_tranquility)  bits += '<span class="chip ct" title="Celestial Tranquility (+40 ATK) is active — Avatar will overwrite">🦅</span>';
+    if (r.celestial_tranquility)  bits += '<span class="chip ct" title="Celestial Tranquility (+40 ATK) is active — stacks with Avatar (not overwritten)">🦅</span>';
     if (r.sk_recourse)            bits += '<span class="chip rec" title="'+esc(r.sk_recourse)+' active — Savagery will overwrite">⚠</span>';
     if (r.skip_group_aego)        bits += '<span class="chip ct" title="'+esc(r.hp_a || 'POTG/POTC')+' fills HP slot A — single-target the Symbol, do NOT group-cast Aegolism over it">🌿</span>';
     return bits;

@@ -219,6 +219,21 @@ const CAST_HATE = {
   'cinder jolt':                     -570,
 };
 
+// Resisted detrimental spells STILL generate aggro on EQ — the spell's base
+// hate lands when the cast resolves; a resist stops the EFFECT (damage,
+// debuff, stun) but NOT the hate. So a paladin spamming Holy Might off the
+// Forlorn Totem of Rolfron Zek for aggro keeps building threat even when the
+// mob resists every one. Without the spell-hate catalog client-side we credit
+// a flat per-resist proxy to the caster's `spell` bucket. Named aggro clickies
+// that are cast FOR threat get a higher override; everything else (a resisted
+// slow / snare / debuff still tags you on the hate list) uses the default.
+const RESIST_HATE_DEFAULT = 120;
+const RESIST_HATE = {
+  'holy might':            320,   // PAL stun/nuke aggro clicky (Forlorn Totem of Rolfron Zek)
+  'force of akera':        320,   // PAL directed-hate clicky variant
+  'ancient: hastening death': 320,
+};
+
 // ── Config ───────────────────────────────────────────────────────────────────
 // These regexes match RAW log lines that should never be parsed, much less
 // uploaded. Match-and-discard happens before any other processing.
@@ -379,6 +394,7 @@ const KEEP_PATTERNS = [
   /\bbegins? to cast/i,
   /\byou cast /i,
   /\bresisted your/i,
+  /\byour target resisted the .+ spell/i,         // OUTGOING resist — our detrimental spell was resisted (still makes hate)
   /\byou resist the .+ spell/i,                   // incoming spell we resisted (names the spell)
   / (?:is|are) (?:an?|the) (?:leader|officer|member) of /i,  // /guildstatus rank line
   /\byour .+ has worn off/i,
@@ -831,6 +847,23 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+You resist the\s+(.+?)\s+spell!/i);
   if (m) {
     return { ts: tsIso, type: 'resist', spell: m[1].trim() };
+  }
+
+  // OUTGOING resist — OUR detrimental spell was resisted by the target. Two
+  // forms on Quarm:
+  //   "Your target resisted the Holy Might spell."   (self, no mob name)
+  //   "Diabo Xi Xin resisted your Holy Might spell." (third-person, names mob)
+  // A resisted detrimental spell still generates the spell's base hate, so the
+  // threat meter must credit the caster (see RESIST_HATE). Self-cast only —
+  // EQ never logs a bystander's outgoing resists — so attacker resolves to the
+  // uploading character in add().
+  m = line.match(/\]\s+Your target resisted the\s+(.+?)\s+spell\./i);
+  if (m) {
+    return { ts: tsIso, type: 'spell_resisted', ability: m[1].trim(), defender: null };
+  }
+  m = line.match(/\]\s+(.+?)\s+resisted your\s+(.+?)\s+spell\./i);
+  if (m) {
+    return { ts: tsIso, type: 'spell_resisted', ability: m[2].trim(), defender: m[1].trim() };
   }
 
   // ── Death events ──────────────────────────────────────────────────────────
@@ -3745,6 +3778,25 @@ class EncounterBuilder {
       } else {
         t.proc += PROC_HATE[event.type] || 0;
       }
+    }
+
+    // Resisted detrimental spell — OUR cast got resisted but still generated
+    // hate (resist stops the effect, not the aggro). Credit the uploader's
+    // spell bucket so a paladin spamming Holy Might off the Forlorn Totem for
+    // threat still climbs the meter even when the boss resists every one.
+    // Self-only line, so attacker = this.character. procDetail records it as
+    // "<Spell> (resisted)" so the breakdown shows the contribution honestly.
+    if (event.type === 'spell_resisted' && this.character) {
+      const attacker = this.character;
+      const sl = String(event.ability || '').toLowerCase();
+      const hate = RESIST_HATE[sl] != null ? RESIST_HATE[sl] : RESIST_HATE_DEFAULT;
+      if (!this.threatBy.has(attacker)) {
+        this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
+      }
+      const t = this.threatBy.get(attacker);
+      t.spell += hate;
+      const label = `${event.ability} (resisted)`;
+      t.procDetail[label] = (t.procDetail[label] || 0) + 1;
     }
 
     // Aggro dumps — rogue Evade pulls the player DOWN the threat meter; the
