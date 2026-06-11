@@ -12,7 +12,7 @@
   /* DPS / Tank tabs — ported from mobinfo.html so the surface reads the
      same across overlays. Same margin-right:28px clears the ✕ hide
      button at the top-right. */
-  .tabs{display:flex;gap:2px;margin-left:auto;margin-right:28px}
+  .tabs{display:flex;gap:2px;margin-left:6px;margin-right:28px}
   .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
        border-radius:4px;padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.5px}
   .tab:hover{color:#fff;border-color:#a371f7}
@@ -32,6 +32,18 @@
   li .dps{color:#58a6ff;text-align:right;font-variant-numeric:tabular-nums}
   li .sec{color:#6b7280;text-align:right;font-variant-numeric:tabular-nums;font-size:10px}
   li.me .n{color:#f6c365;font-weight:600}
+  /* Your row when it fell below the visible cutoff and got appended — a dashed
+     rule separates it from the contiguous top-N above. */
+  li.me-extra{border-top:1px dashed rgba(110,118,129,0.35);margin-top:1px;padding-top:2px}
+  /* Mob-total footer (EQLogParser's bottom line): solid rule, bold numbers. */
+  li.total{border-top:1px solid rgba(110,118,129,0.4);margin-top:2px;padding-top:3px}
+  li.total .n{color:#f6c365;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  li.total .d{color:#56d364;font-weight:600}
+  li.total .dps{color:#58a6ff;font-weight:600}
+  li.total .sec{color:#9aa4ad}
+  /* Row-count stepper in the title bar (− N +). */
+  .rowcfg{display:flex;align-items:center;gap:1px;margin-left:auto}
+  .rowcfg .rowsn{font-size:10px;color:#9aa4ad;min-width:15px;text-align:center;font-variant-numeric:tabular-nums}
   .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
   .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
@@ -117,6 +129,11 @@
            perPlayer[].dmg from the active encounter; Tank reads incoming damage
            (perPlayer[].took) so you can see who's eating the boss melee in
            real time. -->
+      <span class="rowcfg">
+        <button id="rowsDown" class="tab" type="button" title="Show fewer rows">−</button>
+        <span id="rowsN" class="rowsn">10</span>
+        <button id="rowsUp" class="tab" type="button" title="Show more rows">+</button>
+      </span>
       <span class="tabs">
         <button id="tabDps"  class="tab on" type="button">DPS</button>
         <button id="tabTank" class="tab"    type="button">Tank</button>
@@ -272,6 +289,29 @@
   if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
   if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
 
+  // Visible-row count — how many names the scoreboard shows (you're always
+  // shown on top of this; see the render). Persisted so a restart keeps it.
+  var ROWS_KEY = 'wp.deepsRows';
+  var ROW_LIMIT = 10;
+  try { var _rn = parseInt(localStorage.getItem(ROWS_KEY), 10); if (_rn >= 3 && _rn <= 50) ROW_LIMIT = _rn; } catch (e) {}
+  var rowsNEl = document.getElementById('rowsN');
+  if (rowsNEl) rowsNEl.textContent = ROW_LIMIT;
+  function _setRows(n) {
+    ROW_LIMIT = Math.max(3, Math.min(50, n));
+    try { localStorage.setItem(ROWS_KEY, String(ROW_LIMIT)); } catch (e) {}
+    if (rowsNEl) rowsNEl.textContent = ROW_LIMIT;
+    tick().catch(function(){});
+  }
+  var rowsDownBtn = document.getElementById('rowsDown');
+  var rowsUpBtn   = document.getElementById('rowsUp');
+  [rowsDownBtn, rowsUpBtn].forEach(function(btn){
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  });
+  if (rowsDownBtn) rowsDownBtn.addEventListener('click', function(){ _setRows(ROW_LIMIT - 1); });
+  if (rowsUpBtn)   rowsUpBtn  .addEventListener('click', function(){ _setRows(ROW_LIMIT + 1); });
+
   async function tick(){
     try{
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
@@ -324,31 +364,41 @@
       // Each row is [name, primary_value, max_hit].
       // DPS mode: primary = .dmg, max = 0 (no max-hit tracking for outgoing).
       // Tank mode: primary = .took, max = .tookMax (biggest single hit absorbed).
-      let rows = [];
+      var allRows = [];
       const pp = et && et.perPlayer;
       if (pp && typeof pp === 'object') {
         const field = TAB_MODE === 'tank' ? 'took' : 'dmg';
         // The no-spaces filter drops NPC noise — but OUR pets have multi-word
         // names ("A Fungoid Sporeling"). The agent stamps pet rows with
         // pet_owner, which both whitelists them here and labels the row.
-        rows = Object.entries(pp)
+        allRows = Object.entries(pp)
           .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null])
           .filter(x => x[0] && (!/\s/.test(x[0]) || x[3]) && x[1] > 0)
-          .sort((a,b)=>(b[1]||0)-(a[1]||0))
-          .slice(0,8);
+          .sort((a,b)=>(b[1]||0)-(a[1]||0));
       }
-      const sumDmg = rows.reduce((s, r) => s + r[1], 0);
+      // % is scored against the FULL fight total (every witnessed player), so
+      // the visible top-N sums to <100% just like EQLogParser — and the footer
+      // total below is the mob's whole incoming/outgoing number.
+      const totalDmg = allRows.reduce((s, r) => s + r[1], 0);
+      allRows.forEach(function(r, i){ r[4] = i + 1; });            // true rank
+      const me = s.character || s.uploaderCharacter || s.self || null;
+      let rows = allRows.slice(0, ROW_LIMIT);
+      // Always show YOU — if your row fell below the visible cutoff, append it
+      // with its REAL rank so you can always see where you stand.
+      if (me && !rows.some(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); })) {
+        var meRow = allRows.find(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); });
+        if (meRow) { meRow = meRow.slice(); meRow[5] = true; rows = rows.concat([meRow]); }
+      }
       const startedAt = et && et.startedAt ? new Date(et.startedAt).getTime() : 0;
       const flushedAt = et && et.flushedAt;
       const nowMs = Date.now();
       const endMs = flushedAt || nowMs;
       const secs  = startedAt > 0 ? Math.max(1, Math.round((endMs - startedAt) / 1000)) : 0;
-      const me    = s.character || s.uploaderCharacter || s.self || null;
 
       const ul = document.getElementById('deeps');
-      ul.innerHTML = rows.map(function(row, i){
-        var n = row[0], d = row[1], mx = row[2], petOwner = row[3];
-        var pct = sumDmg > 0 ? (d / sumDmg) * 100 : 0;
+      var bodyHtml = rows.map(function(row){
+        var n = row[0], d = row[1], mx = row[2], petOwner = row[3], rank = row[4], extra = row[5];
+        var pct = totalDmg > 0 ? (d / totalDmg) * 100 : 0;
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
         // Pet rows carry their owner in dim parens — same convention as the
@@ -364,8 +414,9 @@
         var maxHitHtml = (TAB_MODE === 'tank' && mx > 0)
           ? ' <span class="maxhit" title="biggest single hit absorbed">·' + fmt(mx) + '</span>'
           : '';
-        return '<li' + (isMe ? ' class="me"' : '') + '>'
-             + '<span class="r">' + (i+1) + '.</span>'
+        var cls = (isMe ? 'me' : '') + (extra ? ' me-extra' : '');
+        return '<li' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '>'
+             + '<span class="r">' + rank + '.</span>'
              + '<span class="n">' + esc(n) + ownerHtml + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d) + '</span>'
@@ -373,6 +424,21 @@
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';
       }).join('');
+      // Mob-total footer — EQLogParser's bottom line: <mob> · total · total DPS ·
+      // duration, scored over EVERY witnessed player this fight.
+      if (rows.length && totalDmg > 0) {
+        var totalDps = secs > 0 ? Math.round(totalDmg / secs) : 0;
+        var totLabel = boss || (TAB_MODE === 'tank' ? 'Raid taken' : 'Mob total');
+        bodyHtml += '<li class="total">'
+             + '<span class="r"></span>'
+             + '<span class="n">' + esc(totLabel) + '</span>'
+             + '<span class="p"></span>'
+             + '<span class="d">' + fmt(totalDmg) + '</span>'
+             + '<span class="dps">' + fmt(totalDps) + '</span>'
+             + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
+             + '</li>';
+      }
+      ul.innerHTML = bodyHtml;
       document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
       document.getElementById('colhdr').style.display = rows.length ? 'grid' : 'none';
       // Auto-fit the window height to the rendered scoreboard so a long fight
