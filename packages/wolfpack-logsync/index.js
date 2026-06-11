@@ -16128,6 +16128,10 @@ function buildMobInfo() {
       if (!b || !b.name) continue;
       const k = String(b.name).toLowerCase();
       if (seen.has(k)) continue;
+      // The relay sends good=null for non-charm spells (buff_casts doesn't carry
+      // good_effect). Resolve it from our own catalog so relayed DEBUFFS land in
+      // the red debuff section instead of being mislabeled as buffs.
+      if (b.good == null) { const e = _spellByNameLower.get(k); if (e && (e.good === 0 || e.good === 1)) b.good = e.good; }
       buffs.push(b);
       seen.add(k);
     }
@@ -17704,16 +17708,19 @@ async function main() {
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
             // Local Target Info — show the debuff on whatever's targeted (mob or
-            // player), timed from the land.
+            // player), timed from the land. This is the emote-based path, so it
+            // does NOT depend on a Zeal target-name match (the caster-self-cast
+            // path does, and that breaks on instanced mob names like
+            // "#Diabo_Xi_Va_Temariel" vs the emote's "Diabo Xi Va Temariel").
             recordTargetBuffLanding(dbEvt);
-            // Upload ONLY player-target debuffs — they feed the bot's cure queue
-            // for raiders not running Mimic (Shadow Poison on Malthur, a slow on
-            // a healer). Mob debuffs stay local so we don't flood buff_casts with
-            // the same boss debuff every observer in zone sees.
-            if (_looksLikePlayerName(dbEvt.target)) {
-              const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
-              if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
-            }
+            // Upload BOTH mob and player debuffs so the bot's target-buffs relay
+            // shows them cross-client — everyone targeting the boss sees
+            // Tash/Malo/Turgur's even if they didn't personally witness the land
+            // — and the cure queue still gets raider debuffs (Shadow Poison on
+            // Malthur). The bot upserts by (target, spell, cast_at), so every
+            // observer of the SAME land collapses to one row — no flood.
+            const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
+            if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
           }
         }
 
