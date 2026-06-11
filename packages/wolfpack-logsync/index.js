@@ -14751,20 +14751,37 @@ function _isTimedDurationFormula(f) {
 // landing message ("looks very tranquil." etc.); when that happens the parser
 // reports the cast as ambiguous (spell_id 0) rather than guessing wrong.
 let _buffLandingBySuffix = new Map();
+// Detrimental-landing matcher — Tash / Malo / slows / Shadow Poison, etc. The
+// beneficial matcher above is keyword-gated (debuffs carry no buff keyword), so
+// every good===0 timed spell's landing message is indexed here separately.
+// Powers (a) Target Info showing debuffs ON the mob and (b) the bot's cure queue
+// for raiders not running Mimic (player-target debuffs upload to buff_casts).
+let _debuffLandingBySuffix = new Map();
 function _rebuildBuffMatchers() {
   const m = new Map();
+  const dm = new Map();
   for (const e of _spellByNameLower.values()) {
     if (!e || !e.other || !e.name) continue;
-    if (!_isTrackedBuffName(e.name)) continue;
     if (!_isTimedDurationFormula(e.durf)) continue;
     const suffix = String(e.other).trim().toLowerCase();
     if (!suffix || suffix.length < 6) continue;   // too short → false positives
-    const arr = m.get(suffix) || [];
-    arr.push({ id: e.id, name: e.name, dur: e.dur, durf: e.durf });
-    m.set(suffix, arr);
+    const rec = { id: e.id, name: e.name, dur: e.dur, durf: e.durf };
+    if (_isTrackedBuffName(e.name)) {
+      const arr = m.get(suffix) || [];
+      arr.push(rec);
+      m.set(suffix, arr);
+    }
+    // good===0 → detrimental. (null/unknown good is NOT indexed as a debuff —
+    // avoids false positives from un-enriched catalog rows.)
+    if (e.good === 0) {
+      const arr = dm.get(suffix) || [];
+      arr.push(rec);
+      dm.set(suffix, arr);
+    }
   }
   _buffLandingBySuffix = m;
-  if (m.size) console.log(`[buff-landing] indexed ${m.size} tracked-buff landing messages`);
+  _debuffLandingBySuffix = dm;
+  if (m.size || dm.size) console.log(`[buff-landing] indexed ${m.size} buff + ${dm.size} debuff landing messages`);
 }
 
 // EQ first names: a single capitalized word. Rejects "You", pets ("`s warder"),
@@ -14837,6 +14854,68 @@ function parseBuffLanding(line, observer) {
       dur_formula: resolved ? resolved.durf : null,
       cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
       observer:    observer || null,
+    };
+  }
+  return null;
+}
+
+// Target name for a DEBUFF landing — looser than _looksLikePlayerName because
+// debuffs land on MOBS too (multi-word, article/backtick names: "Thall Xundraux
+// Diabo", "A Shissar Taskmaster", "Vulak`Aerr"). The exact-suffix match against
+// the detrimental catalog already gates false positives, so we just sanity-check
+// the leading token(s) look name-shaped.
+function _looksLikeTargetName(s) {
+  s = String(s || '').trim();
+  if (s.length < 3 || s.length > 48) return false;
+  if (/^(you|your)$/i.test(s)) return false;
+  if (!/^[A-Za-z`'][A-Za-z`'\- ]*$/.test(s)) return false;   // letters / ` / ' / - / space
+  return /^[A-Z]/.test(s) || /^(a|an|the)\s/i.test(s);       // capital, or article-led mob
+}
+
+// Parse a DETRIMENTAL debuff landing (Tash, Malo, slow, Shadow Poison, …) on a
+// mob or player from a BYSTANDER's log. The beneficial parseBuffLanding skips
+// these (no buff keyword) and resolveSelfCastLanding only catches our OWN casts,
+// so without this a debuff cast by someone else never registers on the target.
+// Multi-word mob names resolve by peeling 1..5 leading words and looking up the
+// remainder. Ambiguous landings (Tash's "glances nervously about." is shared by
+// 7 spells, Malo's "looks very uncomfortable." by 6) resolve to a representative
+// of the family — the longest-duration variant — so the debuff still SHOWS with
+// a sensible timer instead of being dropped. Same return shape as
+// parseBuffLanding.
+function parseDebuffLanding(line, observer) {
+  if (!_debuffLandingBySuffix.size) return null;
+  const m = line.match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2].replace(/\s+$/, '');
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // possessive
+  const words = body.split(' ');
+  for (let k = 1; k <= Math.min(5, words.length - 1); k++) {
+    candidates.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
+  }
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikeTargetName(name)) continue;
+    const hits = _debuffLandingBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    // Unique name → that spell; ambiguous family → longest-duration
+    // representative (deterministic + a sensible timer; all share the cure type).
+    const names = new Set(hits.map(h => h.name));
+    let resolved = hits[0];
+    if (names.size > 1) {
+      resolved = hits.reduce((best, h) => ((Number(h.dur) || 0) > (Number(best.dur) || 0) ? h : best), hits[0]);
+    }
+    const ts = parseEqTimestamp(line);
+    return {
+      target:       name,
+      spell_id:     names.size === 1 ? (resolved.id || 0) : 0,
+      spell_name:   resolved ? resolved.name : null,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      dur_ticks:    resolved ? resolved.dur : null,
+      dur_formula:  resolved ? resolved.durf : null,
+      cast_at:      ts ? ts.toISOString() : new Date().toISOString(),
+      observer:     observer || null,
+      detrimental:  true,
     };
   }
   return null;
@@ -17607,6 +17686,26 @@ async function main() {
           // Also stamp it under the target name so Mob Info can show buffs on
           // whatever we're targeting (mob or player).
           recordTargetBuffLanding(bcEvt);
+        }
+        // Detrimental debuff landed by SOMEONE ELSE (bystander view) — Tash/Malo
+        // on the boss, a slow/poison on a raider. Our OWN debuffs are already
+        // resolved above (resolveSelfCastLanding) and beneficial buffs by
+        // parseBuffLanding, so this only fires when neither produced an event.
+        if (!_sourceExcluded && !bcEvt) {
+          const dbEvt = parseDebuffLanding(line, b.character);
+          if (dbEvt && dbEvt.spell_name) {
+            // Local Target Info — show the debuff on whatever's targeted (mob or
+            // player), timed from the land.
+            recordTargetBuffLanding(dbEvt);
+            // Upload ONLY player-target debuffs — they feed the bot's cure queue
+            // for raiders not running Mimic (Shadow Poison on Malthur, a slow on
+            // a healer). Mob debuffs stay local so we don't flood buff_casts with
+            // the same boss debuff every observer in zone sees.
+            if (_looksLikePlayerName(dbEvt.target)) {
+              const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
+              if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
+            }
+          }
         }
 
         // Server-wide PvP earthquake announcement → register the next-quake
