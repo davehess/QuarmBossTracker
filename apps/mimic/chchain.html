@@ -52,6 +52,34 @@
   .nextrow .cd{color:#f0b429;font-variant-numeric:tabular-nums;min-width:2.6em;text-align:right}
   .nextrow.due .lbl,.nextrow.due .cd{color:#f87171}
   .nextrow.due .cd-bar .fill{background:#f87171}
+  /* GAP SOON alert row — sits ABOVE the slot list when the chain is about
+     to slip (the late cleric hasn't called yet and the beat is running out).
+     Amber when imminent, red + pulsing when already overdue. This is the
+     row that screams "spot heal incoming target". */
+  .gaprow{display:none;align-items:center;gap:6px;margin-bottom:5px;
+    background:rgba(240,180,41,0.18);border:1px solid rgba(240,180,41,0.55);
+    border-radius:4px;padding:4px 7px;font-size:11px;font-weight:700;
+    text-shadow:0 1px 2px #000;color:#f6c365;letter-spacing:0.03em}
+  .gaprow.show{display:flex}
+  .gaprow .label{color:#f6c365}
+  .gaprow .sep{color:#6e7681;font-weight:400}
+  .gaprow .tank{color:#fde68a}
+  .gaprow .cleric{color:#c9d1d9;font-weight:600}
+  .gaprow.late{background:rgba(248,113,113,0.22);border-color:rgba(248,113,113,0.65);
+    color:#fca5a5;animation:gappulse 0.5s infinite alternate}
+  .gaprow.late .label,.gaprow.late .tank{color:#fca5a5}
+  .gaprow.late .cleric{color:#fed7aa}
+  @keyframes gappulse{from{box-shadow:0 0 0 rgba(248,113,113,0)}to{box-shadow:0 0 8px rgba(248,113,113,0.7)}}
+  /* Mute button — sits next to the hide button. Click to silence the TTS
+     callouts without turning the whole overlay off. Persists via
+     localStorage. */
+  #mute-btn{position:fixed;top:6px;right:26px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.6;transition:opacity .12s}
+  #mute-btn:hover{opacity:1;color:#f6c365;border-color:#f6c365}
+  #mute-btn.muted{color:#f87171;border-color:#f87171;opacity:0.9}
+  body.setup #mute-btn{top:30px}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   /* Chain idle (no call in 60s+) — dim so post-fight numbers read as stale. */
   .rows.stale,.nextrow.stale{opacity:0.5}
@@ -84,6 +112,7 @@
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>
+  <button id="mute-btn" title="Mute audible gap callouts">🔊</button>
   <button id="hide-btn" title="Hide the CH chain overlay (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
@@ -100,6 +129,13 @@
       <span class="icon">⛑</span>
       <span class="tgt" id="tgt">CH chain</span>
       <span class="beat" id="beat"></span>
+    </div>
+    <div id="gaprow" class="gaprow">
+      <span class="label" id="gaplbl">CH GAP SOON</span>
+      <span class="sep">|</span>
+      <span class="tank" id="gaptank"></span>
+      <span class="sep">|</span>
+      <span class="cleric" id="gapcleric"></span>
     </div>
     <div id="rows" class="rows"></div>
     <div id="nextrow" class="nextrow" style="display:none">
@@ -125,6 +161,30 @@
     hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
     hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  // Mute toggle for the audible gap callouts. Persists per-machine via
+  // localStorage so the choice survives Mimic restarts (the overlay reloads
+  // its HTML on every show). Visual swap 🔊↔🔇 + .muted class on the button.
+  var _muted = false;
+  try { _muted = localStorage.getItem('chchain_mute') === '1'; } catch (e) {}
+  var muteBtn = document.getElementById('mute-btn');
+  function paintMute(){
+    if (!muteBtn) return;
+    muteBtn.textContent = _muted ? '🔇' : '🔊';
+    muteBtn.classList.toggle('muted', _muted);
+    muteBtn.title = _muted ? 'Unmute audible gap callouts' : 'Mute audible gap callouts';
+  }
+  paintMute();
+  if (muteBtn) {
+    muteBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    muteBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    muteBtn.addEventListener('click', function(){
+      _muted = !_muted;
+      try { localStorage.setItem('chchain_mute', _muted ? '1' : '0'); } catch (e) {}
+      paintMute();
+      if (_muted) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+    });
   }
 
   var moveHandle = document.getElementById('move-handle');
@@ -185,22 +245,49 @@
   // fine (the bar simply completes ahead of the land).
   var CH_CAST_SECS = 10;
   var STALE_MS = 60 * 1000;     // no call in 60s → dim (agent clears at 5m)
+  // Gap-alert thresholds. SOON fires when the running beat has this many ms
+  // LEFT (default 1.5s) — long enough that a sleeping cleric or a spot healer
+  // can react before the tank actually takes the unhealed shot. LATE fires
+  // once the beat has run OUT (overdue) — escalation tone, pulses red.
+  var GAP_SOON_LEAD_MS = 1500;
+  var GAP_LATE_GRACE_MS = 3000; // stop announcing once it's this far overdue
+  //                              (the chain is broken; nothing more to alert)
 
   var _last = null;             // last fetched chChain snapshot
+  // TTS dedup — track which gap event we've already spoken for, so a single
+  // late call doesn't trigger the alert dozens of times per second. Keyed on
+  // (last_ch.atMs, next_num) so a NEW chain step resets cleanly.
+  var _gapKey  = null;          // current gap-event key being tracked
+  var _spokeSoon = false;       // have we said "CH GAP SOON" for this key
+  var _spokeLate = false;       // have we said "CH GAP" (overdue) for this key
+
+  function speakGap(text){
+    if (_muted) return;
+    try {
+      if (!window.speechSynthesis) return;
+      var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.15; u.pitch = 1.0; u.volume = 1.0;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  }
 
   function render(){
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var nextEl  = document.getElementById('nextrow');
+    var gapEl   = document.getElementById('gaprow');
     var tgtEl   = document.getElementById('tgt');
     var beatEl  = document.getElementById('beat');
     var c = _last;
     if (!c || !c.slots || Object.keys(c.slots).length === 0) {
       rowsEl.innerHTML = '';
       nextEl.style.display = 'none';
+      gapEl.classList.remove('show', 'late');
       tgtEl.textContent = 'CH chain';
       beatEl.textContent = '';
       emptyEl.style.display = 'block';
+      _gapKey = null; _spokeSoon = false; _spokeLate = false;
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
       return;
     }
@@ -245,18 +332,50 @@
 
     // Footer: NEXT <last> → <next> with a beat-based countdown — due when the
     // last CH call + one beat elapses. Overdue flips red ("GO!").
+    var gapState = 'idle';     // 'idle' | 'soon' | 'late' — drives the alert row + TTS
+    var gapTank = c.target || 'tank';
+    var gapCleric = '';
     if (c.next_num != null && c.last_ch && beatSecs) {
       var dueMs = c.last_ch.atMs + c.beat_ms;
-      var rem = (dueMs - now) / 1000;
-      var due = rem <= 0;
+      var remMs = dueMs - now;
+      var remSec = remMs / 1000;
+      var due = remMs <= 0;
       nextEl.style.display = 'flex';
       nextEl.classList.toggle('due', due);
       nextEl.classList.toggle('stale', stale);
       document.getElementById('nextlbl').textContent = 'NEXT ' + pad3(c.last_ch.num) + ' → ' + pad3(c.next_num);
-      document.getElementById('cd').textContent = due ? 'GO!' : rem.toFixed(1);
-      document.getElementById('cdfill').style.width = due ? '100%' : Math.max(0, Math.min(100, (1 - rem / beatSecs) * 100)).toFixed(1) + '%';
+      document.getElementById('cd').textContent = due ? 'GO!' : remSec.toFixed(1);
+      document.getElementById('cdfill').style.width = due ? '100%' : Math.max(0, Math.min(100, (1 - remSec / beatSecs) * 100)).toFixed(1) + '%';
+      // Resolve the next-up cleric: prefer the slot's tracked name, fall back
+      // to "slot NNN" if we haven't seen them call CH yet this fight.
+      var nextSlot = c.slots[c.next_num];
+      gapCleric = (nextSlot && nextSlot.name) ? (pad3(c.next_num) + ' ' + nextSlot.name) : ('slot ' + pad3(c.next_num));
+      if (!stale) {
+        if (remMs <= -GAP_LATE_GRACE_MS) gapState = 'idle';   // chain broke, give up
+        else if (remMs <= 0)              gapState = 'late';
+        else if (remMs <= GAP_SOON_LEAD_MS) gapState = 'soon';
+      }
     } else {
       nextEl.style.display = 'none';
+    }
+
+    // Drive the GAP SOON / GAP alert row + the audible callout. Reset the
+    // TTS dedup whenever the underlying chain step advances (new last_ch).
+    var stepKey = (c.last_ch ? c.last_ch.atMs : 0) + ':' + (c.next_num || 0);
+    if (stepKey !== _gapKey) { _gapKey = stepKey; _spokeSoon = false; _spokeLate = false; }
+    if (gapState === 'idle') {
+      gapEl.classList.remove('show', 'late');
+    } else {
+      gapEl.classList.add('show');
+      gapEl.classList.toggle('late', gapState === 'late');
+      document.getElementById('gaplbl').textContent = gapState === 'late' ? 'CH GAP' : 'CH GAP SOON';
+      document.getElementById('gaptank').textContent = gapTank;
+      document.getElementById('gapcleric').textContent = gapCleric;
+      // Speak once per state transition per chain step. SOON first, LATE
+      // escalates if the gap actually slips. Tank name is what matters for
+      // a spot heal call, so it leads the spoken message.
+      if (gapState === 'soon' && !_spokeSoon) { _spokeSoon = true; speakGap('CH gap soon on ' + gapTank); }
+      if (gapState === 'late' && !_spokeLate) { _spokeLate = true; speakGap('CH gap on ' + gapTank); }
     }
     try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
