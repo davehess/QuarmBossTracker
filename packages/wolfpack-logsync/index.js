@@ -2547,6 +2547,96 @@ function parseEarthquake(line) {
   };
 }
 
+// ── CH chain tracker ─────────────────────────────────────────────────────────
+// Cleric Complete Heal rotations call their slot number in shout / raid chat:
+//   "004 - CH - Naggato - Mana: 52%"        (slot 004 casting CH on Naggato)
+//   "003 ---> CH on Naggato - mana -> 66%"  (punctuation varies per cleric)
+//   "005 - CH: Naggato - Mana: 61%"
+// ...each followed by the NEXT slot's go-cue: "005 GO GO GO" / "001 - go go go".
+// These lines are zone-visible, so EVERY Mimic user sees the full chain in
+// their own log — the tracker is purely local, no bot relay. Feeds the Mimic
+// CH Chain overlay (chchain.html) via /api/state.chChain: rotation order,
+// caller + mana per slot, who's casting, who's next, and the chain beat
+// (median gap between CH calls) for the "next cast due" countdown.
+let _chChain = null;
+const CH_CHAIN_IDLE_RESET_MS = 5 * 60 * 1000;
+// Speaker + quoted body from public-channel lines (shout/say/raid/guild,
+// incoming and outgoing — outgoing resolves "You" to the watched character).
+const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of character)?|tells?\s+(?:the|your)\s+(?:raid|guild|group|party))[^,']*,\s*'(.+)'\s*$/i;
+// "CH" is matched case-sensitively — lowercase "ch" inside normal chat is too
+// common, but nobody types their chain call in lowercase per the observed logs.
+const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
+const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
+const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
+
+function trackChChainLine(line, character) {
+  if (!line) return;
+  // Cheap pre-filter before any regex work — the tail loop runs this on
+  // every line of every watched log.
+  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line)) return;
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
+  const text = m[2].trim();
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+
+  const call = text.match(_CH_CALL_RX);
+  if (call) {
+    const num = parseInt(call[1], 10);
+    if (!num || num > 30) return;          // sanity: chains are small
+    _chChainEnsure(atMs);
+    const c = _chChain;
+    if (call[2]) c.target = call[2];
+    const manaM = text.match(_CH_MANA_RX);
+    const mana = manaM ? Math.min(100, parseInt(manaM[1], 10)) : null;
+    // Beat = gap between consecutive CH calls from DIFFERENT slots. Median of
+    // the last 10 gaps absorbs one-off stutters (a late call, a duplicate).
+    if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
+      const gap = atMs - c.lastCh.atMs;
+      if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
+    }
+    const prev = c.slots[num] || {};
+    c.slots[num] = { name: speaker, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1 };
+    c.lastCh = { num, name: speaker, mana, atMs };
+    // Default next = numeric successor, wrapping at the highest slot seen.
+    // The explicit GO cue (below) overrides when it arrives.
+    const nums = Object.keys(c.slots).map(Number);
+    c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
+    c.updatedAt = atMs;
+    return;
+  }
+  // GO cue only steers an EXISTING chain — a stray "3 go go go" in chat must
+  // not conjure a phantom chain with no slots.
+  if (_chChain) {
+    const go = text.match(_CH_GO_RX);
+    if (go) {
+      const num = parseInt(go[1], 10);
+      if (!num || num > 30) return;
+      _chChain.nextNum = num;
+      _chChain.updatedAt = atMs;
+    }
+  }
+}
+function _chChainEnsure(atMs) {
+  if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
+  if (!_chChain) _chChain = { target: null, slots: {}, lastCh: null, nextNum: null, beats: [], startedAt: atMs, updatedAt: atMs };
+}
+function chChainSnapshot() {
+  if (!_chChain) return null;
+  if ((Date.now() - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) { _chChain = null; return null; }
+  const beats = _chChain.beats.slice().sort((a, b) => a - b);
+  return {
+    target:     _chChain.target,
+    slots:      _chChain.slots,
+    last_ch:    _chChain.lastCh,
+    next_num:   _chChain.nextNum,
+    beat_ms:    beats.length ? beats[Math.floor(beats.length / 2)] : null,
+    started_at: _chChain.startedAt,
+    updated_at: _chChain.updatedAt,
+  };
+}
+
 // Long-term who_data registry filter — anonymous rows + level 50+. The
 // transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
 // persistent uploads only carry threat-relevant entries: low-level bank
@@ -5517,6 +5607,9 @@ function _zealExportOnCampState() {
       return stats.currentEncounterThreat;
     })(),
     currentEncounterThreatByChar: stats.currentEncounterThreatByChar || {},
+    // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
+    // no chain has called in the last 5 minutes. Drives chchain.html.
+    chChain: chChainSnapshot(),
     // Cross-instance uploader status. active=true → this instance is the one
     // sending data to the bot; false → another Parser/Mimic on this machine
     // owns the upload lock and we're read-only (local dashboard still live).
@@ -7874,6 +7967,7 @@ var WP_OVERLAY_ROWS = [
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
+  ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
 ];
 
 function renderOverlays(s) {
@@ -7993,7 +8087,8 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal };      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat };      var btns = document.querySelectorAll('.wp-ov-toggle');
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain };
+      var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
         b.textContent = isOn ? 'ON' : 'OFF';
@@ -17764,6 +17859,10 @@ async function main() {
             enqueueUpload('quake', { agent_version: AGENT_VERSION, quake: quakeEvt });
           }
         }
+        // CH chain rotation — cleric "00N - CH - <target>" + "GO GO GO"
+        // callouts in shout/raid chat. Local-only (zone-visible lines);
+        // feeds the Mimic CH Chain overlay via /api/state.chChain.
+        if (!_sourceExcluded) { try { trackChChainLine(line, b.character); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
@@ -17848,6 +17947,7 @@ module.exports = {
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   SOURCELESS_SPELLS, BARD_SONGS,
   EncounterBuilder, characterFromFilename,
+  trackChChainLine, chChainSnapshot,
 };
 
 if (require.main === module) {
