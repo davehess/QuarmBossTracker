@@ -4030,12 +4030,21 @@ class EncounterBuilder {
     }
 
     if (event.type === 'death' && event.defender && !/^you$/i.test(event.defender)) {
-      // If we just killed the most-damaged target, end the encounter
+      // End the encounter only when the MOST-DAMAGED target dies — i.e. the
+      // thing we were actually fighting (the boss). The old "|| topDmg > 1000"
+      // also fired on ANY mob death once a real fight was underway, so killing
+      // an ADD during a boss fight (VT sub-mobs, charmed pets, trash in the
+      // pull) flushed the encounter and restarted perPlayer MID-FIGHT. The live
+      // DPS/Tank overlay then scored only the post-add segment and badly
+      // undercounted everyone vs EQLogParser. Now adds that aren't the top
+      // target don't split the fight; a boss death that isn't quite top falls
+      // through to the 120s idle flush (and the separate bosskill broadcast
+      // still drives timers), so nothing is lost.
       let top = null, topDmg = -1;
       for (const [name, dmg] of this.targets) {
         if (dmg > topDmg) { top = name; topDmg = dmg; }
       }
-      if (top && (event.defender.toLowerCase() === top.toLowerCase() || topDmg > 1000)) {
+      if (top && event.defender.toLowerCase() === top.toLowerCase()) {
         this.bossName = event.defender;
         this.bossKillConfirmed = true;
         this.flush();
