@@ -3552,14 +3552,40 @@ class EncounterBuilder {
       try { this._publishLiveThreat(); } catch {}
     }
 
+    // Confirm a PLAYER from OUTGOING damage — the broadest, earliest signal (far
+    // more raiders deal damage than ever show up in /who). A single-word
+    // capitalized attacker hitting a mob-shaped defender (multi-word,
+    // lowercase-led, or an already-tracked target) is a player. Crucially, drop
+    // them from this.targets if the boss had parked them there by hitting them:
+    // otherwise their own outgoing DPS is silently excluded as "NPC damage" and
+    // whole raiders vanish from the live parse vs EQLogParser.
+    if (event.type === 'damage' && (event.amount || 0) > 0 && event.attacker
+        && event.attacker !== this.character && !/^you$/i.test(event.attacker)
+        && !/\s/.test(event.attacker) && /^[A-Z]/.test(event.attacker)
+        && !this.petLeaders[event.attacker.toLowerCase()]) {
+      const dn = event.defender || '';
+      const defenderIsMobish = dn && !/^you$/i.test(dn)
+        && (/\s/.test(dn) || /^[a-z]/.test(dn) || this.targets.has(dn))
+        && dn.toLowerCase() !== event.attacker.toLowerCase();
+      if (defenderIsMobish) {
+        const al = event.attacker.toLowerCase();
+        confirmedPlayers.add(al);
+        if (this.targets.has(event.attacker)) this.targets.delete(event.attacker);
+      }
+    }
+
     // Track damage dealt TO targets — exclude "YOU" / "you", confirmed players
-    // (PvP), and self-hits (pet reclaim/dismiss generates attacker === defender).
+    // (PvP), self-hits (pet reclaim/dismiss generates attacker === defender),
+    // and DEFENDERS HIT BY A MOB WE'RE ALREADY FIGHTING (the boss hitting a
+    // raider means that raider is a player, NOT a new mob target — recording
+    // them here was what parked unconfirmed raiders in this.targets).
     if (event.type === 'damage' && event.defender
         && !/^you$/i.test(event.defender)
         && !isConfirmedPlayer(event.defender)) {
       const rawAtk0 = event.attacker;
       const isSelfHit = rawAtk0 && rawAtk0.toLowerCase() === event.defender.toLowerCase();
-      if (!isSelfHit) {
+      const attackerIsTarget = rawAtk0 && this.targets.has(rawAtk0);
+      if (!isSelfHit && !attackerIsTarget) {
         this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
       }
     }
