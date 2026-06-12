@@ -85,6 +85,16 @@ Then rebuild on the true head.
   catalog (sync doesn't pull spawn data). Historical rows were backfilled from
   `data/bosses.json`; `find_or_create_encounter` still doesn't set zone on
   insert — new encounters land NULL until the RPC/call-site passes it.
+- **Zeal pipe carries no spawn id — same-name mobs are NOT disambiguable.**
+  The named pipe's mob surface is the target (gauge slot 6) + pet (slot 16)
+  gauges: display **name + HP per-mille only**, no entity id, level, or loc
+  (confirmed against a live 71.5s raw capture — four `an orc warrior` spawns
+  were byte-identical). So ≥2 identically-named mobs alive at once can't be
+  told apart from the pipe; consumer-side correlation (death-boundary
+  segmentation, HP-continuity) only resolves *sequential* same-name kills. Do
+  NOT design features that need N≥3 simultaneous same-name identities — the
+  data can't support it. The clean fix is upstream: `docs/zeal-spawn-id-request.md`
+  is the drafted ask to CoastalRedwood/Zeal to add `spawn_id` to those two gauges.
 
 ---
 

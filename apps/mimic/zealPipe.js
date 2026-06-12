@@ -15,6 +15,12 @@
 // We ship this first to CAPTURE real traffic on a live machine before wiring
 // Zeal events into the trigger evaluator — the exact field names per type and
 // the gem/recast timer payloads need ground truth, not inference.
+//
+// KNOWN CEILING: the pipe's mob surface is the target(gauge slot 6) + pet(16)
+// gauges — name + HP per-mille only, NO spawn/entity id. Identically-named
+// mobs (`an orc warrior` xN) are indistinguishable here; same-name
+// disambiguation past 2 simultaneous (target+pet) isn't possible from this
+// data. Upstream ask to add `spawn_id`: docs/zeal-spawn-id-request.md.
 
 'use strict';
 const net  = require('net');
