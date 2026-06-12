@@ -47,7 +47,26 @@ type Contribution = {
   duration_sec: number | null;
   raw_parse: RawParse | null;
   created_at: string;
+  agent_version: string | null;
+  has_ability_detail: boolean | null;
 };
+
+// Compare two semver-ish version strings ("3.1.38" vs "3.1.45"). Returns
+// -1 / 0 / +1. Tolerates extra dot segments and non-numeric tails (e.g.
+// "1.0.70-beta.3") by truncating to numeric prefix only — sufficient for the
+// "current at upload time?" check, which only cares about major.minor.patch.
+function cmpVer(a: string | null | undefined, b: string | null | undefined): number {
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+  const norm = (s: string) => s.split('.').map(p => parseInt(p, 10)).filter(n => Number.isFinite(n));
+  const A = norm(a), B = norm(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i] ?? 0, y = B[i] ?? 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
 type EncounterDetail = {
   id: string;
   started_at: string;
@@ -83,9 +102,34 @@ async function load(id: string) {
 
     const { data: contribs } = await sb
       .from('contributions')
-      .select('id, contributor_character, contributor_discord_id, source, total_damage, player_count, duration_sec, raw_parse, created_at')
+      .select('id, contributor_character, contributor_discord_id, source, total_damage, player_count, duration_sec, raw_parse, created_at, agent_version, has_ability_detail')
       .eq('encounter_id', id)
       .order('created_at', { ascending: true });
+
+    // "Current at the time" baseline — the highest agent_version seen across
+    // ANY contribution uploaded within ±7 days of this encounter's started_at.
+    // Anyone uploading on an older version while peers were on a newer one
+    // was demonstrably stale at the time, regardless of today's latest. We do
+    // a windowed query (not lifetime-MAX) so an encounter from 2025 isn't
+    // judged against 2026 versions.
+    let latestAtTime: string | null = null;
+    if (enc?.started_at) {
+      const t = new Date((enc as { started_at: string }).started_at).getTime();
+      const lo = new Date(t - 7 * 86400_000).toISOString();
+      const hi = new Date(t + 7 * 86400_000).toISOString();
+      const { data: peers } = await sb
+        .from('contributions')
+        .select('agent_version')
+        .gte('created_at', lo)
+        .lte('created_at', hi)
+        .not('agent_version', 'is', null)
+        .range(0, 9999);
+      for (const r of (peers ?? []) as { agent_version: string | null }[]) {
+        if (r.agent_version && cmpVer(r.agent_version, latestAtTime) > 0) {
+          latestAtTime = r.agent_version;
+        }
+      }
+    }
 
     const { data: zoneRows } = await sb
       .from('eqemu_zone')
@@ -172,6 +216,7 @@ async function load(id: string) {
       bossLocalZone,
       petSet,
       date,
+      latestAtTime,
       error: null as string | null,
     };
   } catch (err: unknown) {
@@ -193,7 +238,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       </div>
     );
   }
-  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date } = data;
+  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime } = data;
   // Pet detection: explicit pet_names table first, then a name-pattern
   // fallback for pets we don't track by name yet. Wizard familiars
   // ("X's familiar", generic "familiar") and the "an air/earth/fire/water
@@ -237,6 +282,42 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     const who = c.contributor_character ? whoMap.get(c.contributor_character.toLowerCase()) : null;
     return who?.class && TANK_CLASSES.has(who.class);
   });
+
+  // Inline renderer for "what agent uploaded this and was it current at the time?"
+  // Replaces the raw `source: local_agent_v1` we used to print, which carried no
+  // information once everyone moved to the unified agent. Shows `agent v3.1.38`
+  // with a green ✓ when it matches the highest version seen across peer uploads
+  // in the ±7-day window, or an amber chip ("← v3.1.45") when it was stale at
+  // the time. Manual / chat-extracted contributions render with their source
+  // label since they don't carry an agent_version. Null version on an
+  // agent-source row means a pre-watermark upload that lacked the field.
+  const renderContribSource = (c: Contribution) => {
+    if (!c.agent_version) {
+      // Manual / paste / chat-extracted — keep the source label since there's
+      // no agent version to compare. local_agent_v1 with null version is the
+      // pre-watermark case; flag it so officers can tell it's legacy data.
+      const label = c.source === 'local_agent_v1' ? 'legacy upload' : c.source;
+      return (
+        <span className="text-dim text-[10px]" title={`source: ${c.source}`}>
+          {label}
+        </span>
+      );
+    }
+    const cmp = cmpVer(c.agent_version, latestAtTime);
+    const current = cmp >= 0 || !latestAtTime;
+    return (
+      <span className="text-dim text-[10px]" title={`source: ${c.source}${c.has_ability_detail ? ' · ability detail' : ''}`}>
+        agent v{c.agent_version}
+        {current ? (
+          <span className="text-green ml-1" title="Up to date with peer uploads in this window">✓ current</span>
+        ) : (
+          <span className="text-orange ml-1" title={`Behind peers — latest at the time was v${latestAtTime}`}>
+            · stale (latest v{latestAtTime})
+          </span>
+        )}
+      </span>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -414,7 +495,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                 <span> — </span>
                 <span>{(t.raw_parse?.players ?? []).length} players parsed, </span>
                 <span>{fmtDmg(t.raw_parse?.totalDamage ?? 0)} total</span>
-                <span className="opacity-60"> · source: {t.source}</span>
+                <span className="mx-1 opacity-60">·</span>
+                {renderContribSource(t)}
               </li>
             ))}
           </ul>
@@ -436,7 +518,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                     {c.contributor_character}
                   </Link>
                 ) : <span className="text-text">(anonymous)</span>}
-                <span className="text-dim ml-1 text-[10px]">{c.source}</span>
+                <span className="ml-1">{renderContribSource(c)}</span>
               </span>
               <span className="text-dim whitespace-nowrap">{fmtDmg(c.total_damage)}</span>
             </li>
