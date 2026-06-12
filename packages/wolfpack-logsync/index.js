@@ -11230,6 +11230,20 @@ function startWebDashboard(port) {
         // the stale entry forever ("shows Dafeet after switching characters").
         if (character && payload?.disconnected === true) {
           delete _zealState[character];
+          // A camped/logged-off character's charm pet despawns with them. Drop
+          // any charm session they owned so it doesn't dangle with a stale
+          // started_at: _reconcileGaugeCharms skips a session whose owner is no
+          // longer streaming a gauge (treats it as a log-managed bystander), so
+          // without this the session never breaks and resurfaces as a phantom
+          // "charm breaking in 30 seconds" callout on relogin ("up 35:52" on a
+          // 12-min charm). Silent delete — not a 'break' — so we don't fire a
+          // recharm alert at someone who just logged out.
+          const _cl = character.toLowerCase();
+          for (const [k, info] of _charmTickTracker) {
+            if (info && String(info.owner || '').toLowerCase() === _cl) {
+              _charmTickTracker.delete(k);
+            }
+          }
           // Same-client swap: forward "<character> swapped to <X>" to the
           // bot so /raid moves them to "Not in raid (swapped to X)" instead
           // of showing both characters as live raiders. Fire-and-forget on

@@ -420,7 +420,14 @@
           if (warnAt > 0 && !p.is_dire_charm && !mem.warned && elapsed >= warnAt * 1000) {
             mem.warned = true; warnHit = true; speak('recharm pet');
           }
-          if (!durEst && !p.is_dire_charm && !mem.durWarned && durRemMs <= warnLeadMs) {
+          // durRemMs > 0 guard: a session whose elapsed has run PAST its max
+          // duration (durRemMs clamped to 0) is stale, not imminent — Quarm
+          // charms break EARLY, never late, so "already past max" means the
+          // data is zombie (e.g. a session that survived a logout). Without
+          // this, "up 35:52" on a 12-min charm shouts "charm breaking in 30
+          // seconds" on relogin. The real last-30s warn always fires while
+          // durRemMs is still > 0, so this never suppresses a legit callout.
+          if (!durEst && !p.is_dire_charm && !mem.durWarned && durRemMs <= warnLeadMs && durRemMs > 0) {
             mem.durWarned = true; warnHit = true;
             speak(isBard ? 'charm breaking' : 'charm breaking in 30 seconds');
           }
