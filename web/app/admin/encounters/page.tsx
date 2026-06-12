@@ -417,11 +417,25 @@ async function fileBackfillRequest(formData: FormData) {
   const multi  = formData.getAll('characters').map(v => String(v).trim()).filter(Boolean);
   const characters = Array.from(new Set([...(single ? [single] : []), ...multi]));
   const encounterId  = String(formData.get('encounter_id') || '');
+  const npcName      = String(formData.get('npc_name') || '').trim();
   const startIso     = String(formData.get('start_iso') || '');
   const endIso       = String(formData.get('end_iso') || '');
   const reason       = String(formData.get('reason') || '').slice(0, 300);
   if (characters.length === 0 || !startIso || !endIso) return;
   const admin = supabaseAdmin();
+  // Attribute the request to the officer's Discord server profile name
+  // (guild nickname → global_name) rather than their email, which the agent
+  // dashboard surfaces verbatim. Falls back to email if no member row.
+  const { data: pack } = await admin
+    .from('wolfpack_members')
+    .select('discord_id, nickname, global_name')
+    .eq('user_id', u!.id)
+    .maybeSingle();
+  const requestedByName = pack?.nickname || pack?.global_name || u!.email || null;
+  const requestedByDiscordId = pack?.discord_id || u!.id;
+  // Default reason names the mob; fall back to the encounter id when the
+  // npc_id never resolved to a name.
+  const defaultReason = `data gap on ${npcName || `encounter ${encounterId}`}`;
   // Insert one request per character. Duplicate-key (unique index per
   // guild/character/scope) is benign — that character already has a pending
   // request for this window.
@@ -429,9 +443,9 @@ async function fileBackfillRequest(formData: FormData) {
     await admin.from('agent_backfill_requests').insert({
       guild_id: 'wolfpack',
       character,
-      requested_by_discord_id: u!.id,
-      requested_by_name: u!.email || null,
-      reason: reason || `data gap on encounter ${encounterId}`,
+      requested_by_discord_id: requestedByDiscordId,
+      requested_by_name: requestedByName,
+      reason: reason || defaultReason,
       scope: { start_iso: startIso, end_iso: endIso, types: ['encounter'] },
     }).then(({ error }) => {
       if (error && !/duplicate key|unique/i.test(error.message)) throw error;
@@ -674,6 +688,7 @@ export default async function AdminEncountersPage({
                         )}
                         <form action={fileBackfillRequest} className="space-y-1">
                           <input type="hidden" name="encounter_id" value={r.id} />
+                          <input type="hidden" name="npc_name" value={r.npc_name || ''} />
                           <input type="hidden" name="start_iso" value={r.started_at || ''} />
                           <input type="hidden" name="end_iso"   value={new Date(new Date(r.started_at || Date.now()).getTime() + 10 * 60 * 1000).toISOString()} />
                           {r.backfill_candidates.length > 0 ? (
