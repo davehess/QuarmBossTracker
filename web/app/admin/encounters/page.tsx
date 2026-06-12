@@ -425,13 +425,14 @@ async function fileBackfillRequest(formData: FormData) {
   const admin = supabaseAdmin();
   // Attribute the request to the officer's Discord server profile name
   // (guild nickname → global_name) rather than their email, which the agent
-  // dashboard surfaces verbatim. Falls back to email if no member row.
+  // dashboard surfaces verbatim — emailing it would dox the officer. Leave
+  // null if no member row resolves; never fall back to email.
   const { data: pack } = await admin
     .from('wolfpack_members')
     .select('discord_id, nickname, global_name')
     .eq('user_id', u!.id)
     .maybeSingle();
-  const requestedByName = pack?.nickname || pack?.global_name || u!.email || null;
+  const requestedByName = pack?.nickname || pack?.global_name || null;
   const requestedByDiscordId = pack?.discord_id || u!.id;
   // Default reason names the mob; fall back to the encounter id when the
   // npc_id never resolved to a name.
