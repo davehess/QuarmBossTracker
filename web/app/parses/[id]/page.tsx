@@ -10,8 +10,11 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isOfficer } from '@/lib/officer';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
+import { ClassificationChip } from '@/components/KillCard';
+import { classifyEncounter, clearClassification } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,6 +78,9 @@ type EncounterDetail = {
   total_dps: number;
   zone_short: string | null;
   npc_id: number | null;
+  classification: string | null;
+  classification_reason: string | null;
+  classification_by: string | null;
   eqemu_npc_types: NpcRef | null;
   encounter_players: PlayerRow[];
 };
@@ -93,6 +99,7 @@ async function load(id: string) {
       .from('encounters')
       .select(`
         id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
+        classification, classification_reason, classification_by,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
       `)
@@ -238,6 +245,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       </div>
     );
   }
+  const officer = await isOfficer(user.id);
   const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime } = data;
   // Pet detection: explicit pet_names table first, then a name-pattern
   // fallback for pets we don't track by name yet. Wizard familiars
@@ -327,15 +335,25 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
-          <h2 className="text-2xl text-gold">
-            {bossId ? (
-              <Link href={`/boss/${bossId}`} className="hover:underline">{bossName}</Link>
-            ) : bossName}
+          <h2 className="text-2xl text-gold flex items-center gap-3 min-w-0">
+            <span className="truncate">
+              {bossId ? (
+                <Link href={`/boss/${bossId}`} className="hover:underline">{bossName}</Link>
+              ) : bossName}
+            </span>
+            <ClassificationChip classification={enc.classification} />
           </h2>
           <div className="text-dim text-sm">
             {dayLabel(date)} · {fmtTime(enc.started_at)}
           </div>
         </div>
+        {enc.classification && (
+          <div className="text-xs text-dim mb-3 italic">
+            Not counted as a guild kill
+            {enc.classification_reason ? <> — <span className="text-text">{enc.classification_reason}</span></> : null}
+            {enc.classification_by ? <span className="opacity-70"> · marked by {enc.classification_by}</span> : null}
+          </div>
+        )}
         <div className="text-sm text-dim flex flex-wrap gap-x-4 gap-y-1">
           <span><span className="text-orange">📍</span> {zoneLong}</span>
           <span>{fmtDuration(enc.duration_sec)}</span>
@@ -353,6 +371,47 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             {contribs.length} contribution{contribs.length === 1 ? '' : 's'}
           </span>
         </div>
+
+        {officer && (
+          <div className="mt-4 pt-3 border-t border-border flex flex-wrap items-center gap-2">
+            <span className="text-[10px] text-dim uppercase tracking-wide mr-1">officer admin</span>
+            {[
+              { val: 'wipe', label: 'Mark Wipe', cls: 'border-orange/50 text-orange',
+                desc: 'Engaged but did not kill — excluded from kill counts + stats' },
+              { val: 'live', label: 'Mark Live', cls: 'border-blue/50 text-blue',
+                desc: 'Live server, not guild instance — excluded from kill counts + stats' },
+              { val: 'pvp',  label: 'Mark PvP',  cls: 'border-red/50 text-red',
+                desc: 'PvP / Zek server — excluded from kill counts + stats' },
+              { val: 'test', label: 'Mark Test', cls: 'border-dim/60 text-dim',
+                desc: 'Practice / dummy pull — excluded from kill counts + stats' },
+            ].map(b => (
+              <form key={b.val} action={classifyEncounter} className="contents">
+                <input type="hidden" name="id" value={enc.id} />
+                <input type="hidden" name="classification" value={b.val} />
+                <button
+                  type="submit"
+                  title={b.desc}
+                  disabled={enc.classification === b.val}
+                  className={`px-2 py-1 rounded text-xs border ${b.cls} ${enc.classification === b.val ? 'font-semibold' : 'opacity-80 hover:opacity-100'}`}
+                >
+                  {b.label}
+                </button>
+              </form>
+            ))}
+            {enc.classification && (
+              <form action={clearClassification} className="ml-auto">
+                <input type="hidden" name="id" value={enc.id} />
+                <button
+                  type="submit"
+                  title="Clear classification — back to default (guild kill)"
+                  className="px-2 py-1 rounded text-xs border border-border text-text hover:bg-bg"
+                >
+                  Clear classification
+                </button>
+              </form>
+            )}
+          </div>
+        )}
       </section>
 
       {/* Damage by class */}

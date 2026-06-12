@@ -9,10 +9,12 @@
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isOfficer } from '@/lib/officer';
 import KillCard, { type KillCardData } from '@/components/KillCard';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
 import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
+import { classifyEncounter, clearClassification } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +27,7 @@ type EncounterRow = {
   total_damage: number;
   total_dps: number;
   zone_short: string | null;
+  classification: string | null;
   eqemu_npc_types: NpcRef | null;
   encounter_players: PlayerRow[];
 };
@@ -61,7 +64,7 @@ async function loadAll(): Promise<{
     const { data: encs, error: encErr } = await sb
       .from('encounters')
       .select(`
-        id, started_at, duration_sec, total_damage, total_dps, zone_short,
+        id, started_at, duration_sec, total_damage, total_dps, zone_short, classification,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, rank )
       `)
@@ -168,12 +171,56 @@ function toCardData(enc: EncounterRow): KillCardData {
     total_dps: enc.total_dps,
     boss_name: cleanBossName(enc.eqemu_npc_types?.name),
     player_count: players.length,
+    classification: enc.classification,
     top_players: players.slice(0, 5).map(p => ({
       character_name: p.character_name,
       total_damage: p.total_damage,
       dps: p.dps,
     })),
   };
+}
+
+// Inline admin strip rendered under each KillCard for officers — the four
+// classification buttons + a clear-back-to-default. Compact so it doesn't
+// dominate the card; uses the shared server actions so the listing + detail
+// page stay in lockstep. Sits OUTSIDE the card's <Link> so form submits don't
+// bubble into a page navigation.
+function CardAdminBar({ encId, current }: { encId: string; current: string | null }) {
+  const btn = (label: string, value: string, color: string) => (
+    <form action={classifyEncounter}>
+      <input type="hidden" name="id" value={encId} />
+      <input type="hidden" name="classification" value={value} />
+      <button
+        type="submit"
+        title={`Mark as ${label.toLowerCase()} — excluded from kill counts`}
+        disabled={current === value}
+        className={`px-1.5 py-0.5 rounded text-[10px] border ${color} ${current === value ? 'opacity-100 font-semibold' : 'opacity-70 hover:opacity-100'}`}
+      >
+        {label}
+      </button>
+    </form>
+  );
+  return (
+    <div className="border-t border-border/60 px-2 py-1.5 flex items-center gap-1 flex-wrap">
+      <span className="text-[9px] text-dim uppercase tracking-wide mr-1">admin</span>
+      {btn('Wipe', 'wipe', 'border-orange/50 text-orange')}
+      {btn('Live', 'live', 'border-blue/50   text-blue')}
+      {btn('PvP',  'pvp',  'border-red/50    text-red')}
+      {btn('Test', 'test', 'border-dim/50    text-dim')}
+      {current && (
+        <form action={clearClassification} className="ml-auto">
+          <input type="hidden" name="id" value={encId} />
+          <button
+            type="submit"
+            title="Clear classification — back to default (guild kill)"
+            className="px-1.5 py-0.5 rounded text-[10px] border border-border text-text hover:bg-bg"
+          >
+            Clear
+          </button>
+        </form>
+      )}
+    </div>
+  );
 }
 
 type ZoneBucket = { label: string; encounters: EncounterRow[] };
@@ -239,6 +286,7 @@ function computeNightStats(day: DayBucket, dayDate: string): NightStats {
 export default async function ParsesPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/parses');
+  const officer = await isOfficer(user.id);
 
   const { rows, zones, loot, attendance, error } = await loadAll();
   const days = bucket(rows, zones);
@@ -293,25 +341,42 @@ export default async function ParsesPage() {
               )}
             </div>
 
-            {[...day.zones.entries()].map(([zKey, zone]) => (
-              <div key={zKey} className="space-y-2">
-                <h4 className="text-sm text-orange flex items-center gap-2">
-                  <span aria-hidden>📍</span>
-                  <span>{zone.label}</span>
-                  <span className="text-dim text-xs">
-                    · {zone.encounters.length} kill{zone.encounters.length === 1 ? '' : 's'}
-                    {zone.encounters.length > 1 && (
-                      <span> · {fmtDmg(zone.encounters.reduce((s, e) => s + e.total_damage, 0))} total</span>
-                    )}
-                  </span>
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {zone.encounters.map((enc) => (
-                    <KillCard key={enc.id} kill={toCardData(enc)} />
-                  ))}
+            {[...day.zones.entries()].map(([zKey, zone]) => {
+              // Kill count + total damage excludes classified rows (wipes,
+              // Live, PvP, test) — they're still rendered (with their chip +
+              // dimmed) so the night's full history is visible, but they
+              // don't pollute the "we killed N bosses" headline. Showing the
+              // excluded count parenthetically so the math is transparent.
+              const kills    = zone.encounters.filter(e => !e.classification);
+              const excluded = zone.encounters.length - kills.length;
+              const killDamage = kills.reduce((s, e) => s + e.total_damage, 0);
+              return (
+                <div key={zKey} className="space-y-2">
+                  <h4 className="text-sm text-orange flex items-center gap-2">
+                    <span aria-hidden>📍</span>
+                    <span>{zone.label}</span>
+                    <span className="text-dim text-xs">
+                      · {kills.length} kill{kills.length === 1 ? '' : 's'}
+                      {kills.length > 1 && <span> · {fmtDmg(killDamage)} total</span>}
+                      {excluded > 0 && (
+                        <span title="Wipes / Live / PvP / Test pulls — not counted as guild kills">
+                          {' '}· +{excluded} other
+                        </span>
+                      )}
+                    </span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {zone.encounters.map((enc) => (
+                      <KillCard
+                        key={enc.id}
+                        kill={toCardData(enc)}
+                        adminBar={officer ? <CardAdminBar encId={enc.id} current={enc.classification} /> : null}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {nightLoot.length > 0 && (
               <LootBlock loot={nightLoot as LootRow[]} />
