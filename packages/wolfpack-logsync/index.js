@@ -8143,6 +8143,22 @@ function renderInfo(s) {
   h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
   if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
   h += '</div>';
+  // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
+  // capture itself runs in Mimic (it owns the pipe); we drive it through the
+  // window.mimic config bridge. wpWireZealCapture wires the buttons after render.
+  var _underMimic = !!(window.mimic && window.mimic.getConfig);
+  h += '<div class="card"><h2>🩺 Raw Zeal Capture <span class="dim" style="font-size:11px;font-weight:normal">(diagnostic)</span></h2>';
+  if (_underMimic) {
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:8px">Dumps every raw Zeal pipe object &mdash; full and untruncated &mdash; to <code>zeal-raw.ndjson</code>. Turn it on, reproduce, then open the file. Leave off for normal play; it is capped + rotated so it cannot fill the disk.</div>';
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    h += '<button type="button" id="wpZealCapBtn" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--text)">&hellip;</button>';
+    h += '<button type="button" id="wpZealCapOpen" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--blue)">Open capture file&hellip;</button>';
+    h += '</div>';
+    h += '<div id="wpZealCapHint" class="dim" style="font-size:11px;margin-top:6px"></div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px">Requires Mimic &mdash; open this dashboard from the desktop app to capture raw Zeal traffic.</div>';
+  }
+  h += '</div>';
   // Top abilities
   const abs = Object.entries(s.abilityStats||{}).sort((a,b)=>b[1].total-a[1].total).slice(0,20);
   h += '<div class="card wide"><h2>Top Abilities (uploader)</h2>';
@@ -8326,6 +8342,43 @@ function renderInfo(s) {
   h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
   setSectionHTML('info', h);
   wireLoadoutControls();
+  wpWireZealCapture();
+}
+
+// Wire the Info-tab raw-Zeal-capture buttons to the Mimic config bridge. The
+// flag lives in Mimic config (zealRawCapture); toggling saveConfig flips the
+// live capture in main.js without a restart. No-op in a plain browser (no
+// window.mimic). Uses _bindOnce so re-renders don't stack listeners.
+function wpWireZealCapture() {
+  var btn  = document.getElementById('wpZealCapBtn');
+  var open = document.getElementById('wpZealCapOpen');
+  if (!btn || !window.mimic || !window.mimic.getConfig) return;
+  function paint(on) {
+    btn.textContent      = on ? 'Capturing — click to stop' : 'Start capture';
+    btn.style.background  = on ? '#3d1d1d' : '#21262d';
+    btn.style.color       = on ? '#fca5a5' : 'var(--text)';
+    btn.style.borderColor = on ? '#5a2a2a' : 'var(--border)';
+  }
+  window.mimic.getConfig().then(function(cfg){ paint(!!(cfg && cfg.zealRawCapture)); }).catch(function(){});
+  _bindOnce(btn, 'click', function(){
+    window.mimic.getConfig().then(function(cfg){
+      var next = !(cfg && cfg.zealRawCapture);
+      return window.mimic.saveConfig({ zealRawCapture: next }).then(function(){
+        paint(next);
+        var hint = document.getElementById('wpZealCapHint');
+        if (hint) hint.textContent = next
+          ? 'Capturing to zeal-raw.ndjson — reproduce now, then open the file.'
+          : 'Stopped.';
+      });
+    }).catch(function(){});
+  });
+  if (open) _bindOnce(open, 'click', function(){
+    if (!window.mimic.openZealCapture) return;
+    window.mimic.openZealCapture().then(function(ok){
+      var hint = document.getElementById('wpZealCapHint');
+      if (hint && !ok) hint.textContent = 'No capture file yet — start a capture first.';
+    }).catch(function(){});
+  });
 }
 
 

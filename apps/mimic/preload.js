@@ -174,6 +174,7 @@ contextBridge.exposeInMainWorld('mimic', {
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),
+  openZealCapture: ()     => ipcRenderer.invoke('open-zeal-capture'),
 
   // Overlay lock state — main pushes this to overlay renderers so they can
   // show/hide their drag handle.
