@@ -243,6 +243,14 @@ always-on-top `BrowserWindow` per overlay; `preload.js` exposes the
 `window.mimic` IPC bridge; `zealPipe.js` bridges Zeal's named-pipe stream
 into the local agent.
 
+**Field issue (n=1, 2026-06-12):** if Mimic can't detect Zeal at all, the fix
+is reinstalling Mimic *outside* the EQ folder. Pipe detection is
+path-independent (tasklist → connect by PID), so it's environmental (Mimic's
+DLLs shadowing Zeal's DX hook, or AV on the in-game-dir exe), not a code bug —
+no fix beyond the workaround. Details in `zealPipe.js` header. Note the friction:
+`detectEqDir()` intentionally supports in-EQ-folder installs for *log* detection,
+which can steer users into the layout that breaks *Zeal* detection.
+
 Overlays (each an `.html` file): DPS HUD (`overlay.html`, DPS/Tank tabs),
 Trigger alerts + countdown timers (`triggers.html`), Charm tracker, Pet
 tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Zeal

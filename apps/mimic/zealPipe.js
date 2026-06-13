@@ -21,6 +21,17 @@
 // mobs (`an orc warrior` xN) are indistinguishable here; same-name
 // disambiguation past 2 simultaneous (target+pet) isn't possible from this
 // data. Upstream ask to add `spawn_id`: docs/zeal-spawn-id-request.md.
+//
+// FIELD ISSUE (n=1, Ashieron, 2026-06-12): if Mimic can't detect Zeal at all,
+// reinstalling Mimic OUTSIDE the EQ folder fixes it. This detection is
+// path-independent (tasklist eqgame.exe -> connect pipe by PID), so it's NOT a
+// bug here — the likely cause is environmental: Mimic's files next to
+// eqgame.exe shadow Zeal's DLL/DX hook (Electron ships its own d3dcompiler_47/
+// libGLESv2/libEGL/vulkan-1 .dll), or AV quarantines the unsigned exe dropped
+// in the game dir, so Zeal never creates its pipe. No code fix; workaround =
+// install elsewhere. NB detectEqDir() (main.js) intentionally SUPPORTS in-EQ-
+// folder installs for log detection, which can steer users into this — revisit
+// a soft install-location warning if more reports land.
 
 'use strict';
 const net  = require('net');
