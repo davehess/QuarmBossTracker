@@ -4,6 +4,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { normalizeClass } = require('./classTitles');
 const STATE_FILE = path.join(__dirname, '../data/state.json');
 
 function _empty() {
@@ -670,7 +671,12 @@ function clearPetOwners() { const s = loadState(); s.petOwners = {}; saveState(s
 function getWhoData()      { return loadState().whoData || {}; }
 function getWhoEntry(name) {
   if (!name) return null;
-  return loadState().whoData?.[String(name).toLowerCase()] || null;
+  const e = loadState().whoData?.[String(name).toLowerCase()] || null;
+  if (!e) return null;
+  // Fold the stored class to its base — older rows captured the raw level title
+  // (e.g. "Savage Lord", "Overlord"). Return a copy so we don't mutate the
+  // cached state object; callers are read-only.
+  return e.class ? { ...e, class: normalizeClass(e.class) } : e;
 }
 
 // In-memory mirror of who_overrides (officer-curated class + Zek edited on the
@@ -729,7 +735,9 @@ function mergeWhoData(rows) {
     const autoZek = (r.guild && /^(zek|rise of zek)$/i.test(r.guild)) ? true : false;
     s.whoData[k] = {
       name:       r.name,
-      class:      (r.class && r.class !== 'ANONYMOUS') ? r.class : (old.class || null),
+      // Fold level titles ("Savage Lord" → "Beastlord") to the base class so
+      // storage is canonical regardless of source (agent /who, /whoimport).
+      class:      (r.class && r.class !== 'ANONYMOUS') ? normalizeClass(r.class) : (old.class || null),
       level:      r.level ?? old.level ?? null,
       race:       r.race  ?? old.race  ?? null,
       guild:      r.guild ?? old.guild ?? null,
