@@ -530,28 +530,30 @@ const CHARM_SPELLS = new Map([
 
 // ── EQ class-title → base class ───────────────────────────────────────────────
 // A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
-// Enchanter reads "[55 Phantasmist]", a level-60 Ranger "[60 Warder]"), not the
-// base class. We normalize titles back to the base class so the /who overlay
-// shows "Enchanter", not "Phantasmist", and so class-gated logic (e.g. bard
-// detection, which checks class === 'Bard') works for titled high-levels too.
-// Classic/Titanium-era titles at 51/55/60; the base name (sub-51) passes
-// through unchanged, as does anything we don't recognize.
+// Enchanter reads "[55 Beguiler]", a level-60 Ranger "[60 Warder]", a level-60
+// Beastlord "[60 Savage Lord]"), not the base class. We normalize titles back
+// to the base class so the /who overlay shows "Enchanter", not "Beguiler", and
+// so class-gated logic (e.g. bard detection, which checks class === 'Bard')
+// works for titled high-levels too. Covers every title tier a Quarm character
+// can reach — 51 / 55 / 60 (Kunark) and 65 (Planes of Power); the base name
+// (sub-51) passes through unchanged, as does anything we don't recognize.
 const CLASS_TITLES = (() => {
-  const byClass = {
-    Warrior:       ['Champion', 'Myrmidon', 'Warlord'],
-    Cleric:        ['Vicar', 'Templar', 'High Priest'],
-    Paladin:       ['Cavalier', 'Knight', 'Crusader'],
-    Ranger:        ['Pathfinder', 'Outrider', 'Warder'],
-    'Shadow Knight': ['Reaver', 'Revenant', 'Grave Lord'],
-    Druid:         ['Wanderer', 'Preserver', 'Hierophant'],
-    Monk:          ['Disciple', 'Master', 'Grandmaster'],
-    Bard:          ['Minstrel', 'Troubadour', 'Virtuoso'],
-    Rogue:         ['Rake', 'Blackguard', 'Assassin'],
-    Shaman:        ['Mystic', 'Luminary', 'Oracle'],
-    Necromancer:   ['Heretic', 'Defiler', 'Warlock'],
-    Wizard:        ['Channeler', 'Evoker', 'Sorcerer'],
-    Magician:      ['Elementalist', 'Conjurer', 'Arch Mage'],
-    Enchanter:     ['Illusionist', 'Phantasmist', 'Coercer'],
+  const byClass = {                           // [51, 55, 60, 65]
+    Warrior:         ['Champion', 'Myrmidon', 'Warlord', 'Overlord'],
+    Cleric:          ['Vicar', 'Templar', 'High Priest', 'Archon'],
+    Paladin:         ['Cavalier', 'Knight', 'Crusader', 'Lord Protector'],
+    Ranger:          ['Pathfinder', 'Outrider', 'Warder', 'Forest Stalker'],
+    'Shadow Knight': ['Reaver', 'Revenant', 'Grave Lord', 'Dread Lord'],
+    Druid:           ['Wanderer', 'Preserver', 'Hierophant', 'Storm Warden'],
+    Monk:            ['Disciple', 'Master', 'Grandmaster', 'Transcendent'],
+    Bard:            ['Minstrel', 'Troubadour', 'Virtuoso', 'Maestro'],
+    Rogue:           ['Rake', 'Blackguard', 'Assassin', 'Deceiver'],
+    Shaman:          ['Mystic', 'Luminary', 'Oracle', 'Prophet'],
+    Necromancer:     ['Heretic', 'Defiler', 'Warlock', 'Arch Lich'],
+    Wizard:          ['Channeler', 'Evoker', 'Sorcerer', 'Arcanist'],
+    Magician:        ['Elementalist', 'Conjurer', 'Arch Mage', 'Arch Convoker'],
+    Enchanter:       ['Illusionist', 'Beguiler', 'Phantasmist', 'Coercer'],
+    Beastlord:       ['Primalist', 'Animist', 'Savage Lord', 'Feral Lord'],
   };
   const map = new Map();
   for (const [base, titles] of Object.entries(byClass)) {
