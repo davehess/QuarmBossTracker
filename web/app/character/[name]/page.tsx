@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import { eraForTimestamp } from '@/lib/eras';
+import { classDisplay } from '@/lib/class-titles';
 import LootBrowser, { type LootCategory, type LootEntry } from '@/components/LootBrowser';
 import {
   loadFamily,
@@ -285,7 +286,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
             <div className="text-sm text-dim">
               {who.level && <span>{who.level} </span>}
               {who.race && <span>{who.race} </span>}
-              {who.class && <span className="text-text">{who.class}</span>}
+              {who.class && <span className="text-text">{classDisplay(who.class, who.level)}</span>}
               {who.guild_name && (
                 <span className="ml-2">{'<'}<span className="text-orange">{who.guild_name}</span>{'>'}</span>
               )}
