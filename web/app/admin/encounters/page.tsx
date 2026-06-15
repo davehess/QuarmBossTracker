@@ -87,9 +87,9 @@ async function loadGuildMemberNames(admin: ReturnType<typeof supabaseAdmin>): Pr
   return names;
 }
 
-type DuplicatePair = {
-  a: EncounterRow;
-  b: EncounterRow;
+type DuplicateCluster = {
+  members: EncounterRow[];   // 2+ rows, same npc_id, chained within the window
+  primaryId: string;         // the row everything else should fold into
 };
 
 async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
@@ -252,12 +252,28 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
   });
 }
 
-// Two encounters are "candidate duplicates" if they share npc_id and their
-// started_at is within 60 seconds. Worth showing side-by-side with a merge
-// button — covers the Seru-twice case and the "two parses created two rows"
-// case both.
-function findDuplicates(rows: EncounterRow[]): DuplicatePair[] {
-  const pairs: DuplicatePair[] = [];
+// Encounters of the same npc_id whose started_at chain together within
+// DUP_WINDOW_MS form a duplicate CLUSTER — one kill that raced into multiple
+// rows (see find_or_create_encounter's advisory lock). Cluster-based, not
+// pairwise: a 3-way race surfaces all three rows with one merge target. The old
+// pairwise/60s detector showed only the closest two and orphaned the rest (e.g.
+// Arch Lich rows at 21:08 / 21:11 / 21:12 — the 21:08 row fell out of the 60s
+// window and was never offered for merge).
+const DUP_WINDOW_MS = 10 * 60 * 1000;
+
+// The row a cluster should collapse INTO: most contributions wins (most
+// complete), then most players, then earliest start, then id for stability.
+function pickPrimary(members: EncounterRow[]): string {
+  return [...members].sort((a, b) =>
+    (b.contribs - a.contribs)
+    || (b.players - a.players)
+    || (new Date(a.started_at!).getTime() - new Date(b.started_at!).getTime())
+    || (a.id < b.id ? -1 : 1)
+  )[0].id;
+}
+
+function findDuplicateClusters(rows: EncounterRow[]): DuplicateCluster[] {
+  const clusters: DuplicateCluster[] = [];
   const byNpc = new Map<number, EncounterRow[]>();
   for (const r of rows) {
     if (r.npc_id == null || r.started_at == null) continue;
@@ -267,13 +283,21 @@ function findDuplicates(rows: EncounterRow[]): DuplicatePair[] {
   }
   for (const list of byNpc.values()) {
     list.sort((a, b) => (a.started_at! < b.started_at! ? -1 : 1));
-    for (let i = 0; i < list.length - 1; i++) {
-      const a = list[i], b = list[i + 1];
-      const dt = Math.abs(new Date(b.started_at!).getTime() - new Date(a.started_at!).getTime());
-      if (dt <= 60 * 1000) pairs.push({ a, b });
+    let group: EncounterRow[] = [];
+    let prevMs = -Infinity;
+    const flush = () => {
+      if (group.length > 1) clusters.push({ members: group, primaryId: pickPrimary(group) });
+      group = [];
+    };
+    for (const r of list) {
+      const ms = new Date(r.started_at!).getTime();
+      if (group.length && ms - prevMs > DUP_WINDOW_MS) flush();  // gap from the prior row breaks the chain
+      group.push(r);
+      prevMs = ms;
     }
+    flush();
   }
-  return pairs;
+  return clusters;
 }
 
 function hpRatio(r: EncounterRow): number | null {
@@ -355,52 +379,26 @@ async function clearIncomplete(formData: FormData) {
   revalidatePath('/admin/encounters');
 }
 
-// Merge two encounters: move all contributions + encounter_players from
-// `source` into `target`, then delete `source`. We do NOT recompute totals
-// here because merge_encounter_players() RPC already exists and gets called
-// elsewhere; we invoke it after the move.
+// Merge a duplicate cluster into one target in a single action. Accepts either
+// `sources` (comma-separated ids, for cluster merges) or a single `source` (for
+// backward-compatible pairwise forms). We move every source's contributions
+// onto the target and delete the sources — FK cascade clears their now-stale
+// encounter_players / combat_rollup — then rebuild the target from the combined
+// contributions: merge_encounter_players() fully recomputes encounter_players
+// (max damage per player) and totals, so there's no need to hand-move player
+// rows or untangle PK collisions.
 async function mergeEncounters(formData: FormData) {
   'use server';
   const u = await actionAssertOfficer();
   if (!u) redirect('/?error=admin_required');
   const target = String(formData.get('target') || '');
-  const source = String(formData.get('source') || '');
-  if (!target || !source || target === source) return;
+  const raw = String(formData.get('sources') || formData.get('source') || '');
+  const sources = raw.split(',').map(s => s.trim()).filter(s => s && s !== target);
+  if (!target || sources.length === 0) return;
   const admin = supabaseAdmin();
 
-  // Move contributions
-  await admin.from('contributions').update({ encounter_id: target }).eq('encounter_id', source);
-
-  // Move encounter_players — but watch for PK collision (same character on
-  // both encounters). For safety: delete the duplicate from source first,
-  // then move. encounter_players PK is presumably (encounter_id, character).
-  const { data: tgtPlayers } = await admin
-    .from('encounter_players')
-    .select('character_name')
-    .eq('encounter_id', target);
-  const tgtSet = new Set((tgtPlayers ?? []).map((p: any) => p.character_name));
-  const { data: srcPlayers } = await admin
-    .from('encounter_players')
-    .select('character_name, total_damage, dps, duration_sec, rank, has_pets')
-    .eq('encounter_id', source);
-  for (const p of (srcPlayers ?? []) as any[]) {
-    if (tgtSet.has(p.character_name)) {
-      // Same character on both — drop source row, target keeps its existing
-      // figure (the safer choice; merge_encounter_players will recompute
-      // from contributions JSONB anyway).
-      await admin.from('encounter_players').delete()
-        .eq('encounter_id', source).eq('character_name', p.character_name);
-    } else {
-      await admin.from('encounter_players')
-        .update({ encounter_id: target })
-        .eq('encounter_id', source).eq('character_name', p.character_name);
-    }
-  }
-
-  // Delete the now-empty source row
-  await admin.from('encounters').delete().eq('id', source);
-
-  // Recompute target totals from the new contributions set
+  await admin.from('contributions').update({ encounter_id: target }).in('encounter_id', sources);
+  await admin.from('encounters').delete().in('id', sources);
   try { await admin.rpc('merge_encounter_players', { p_encounter_id: target }); } catch {}
 
   revalidatePath('/admin/encounters');
@@ -493,9 +491,11 @@ export default async function AdminEncountersPage({
   const showReviewable = show === 'reviewable';
 
   const allRows = await loadEncounters(since.toISOString());
-  const dupes = findDuplicates(allRows);
+  const dupeClusters = findDuplicateClusters(allRows);
+  // "duplicate rows" = every clustered row beyond the one keeper.
+  const dupeRowCount = dupeClusters.reduce((n, c) => n + c.members.length - 1, 0);
   const dupeIds = new Set<string>();
-  for (const p of dupes) { dupeIds.add(p.a.id); dupeIds.add(p.b.id); }
+  for (const c of dupeClusters) for (const m of c.members) dupeIds.add(m.id);
 
   // Always count from the full set so the chips reflect totals; the table
   // below filters when ?show=reviewable.
@@ -505,7 +505,7 @@ export default async function AdminEncountersPage({
     low:  allRows.filter(r => { const x = hpRatio(r); return x != null && x < 0.75; }).length,
     over: allRows.filter(r => { const x = hpRatio(r); return x != null && x > 1.10; }).length,
     incomplete: allRows.filter(r => r.data_incomplete).length,
-    duplicates: dupes.length,
+    duplicates: dupeRowCount,
     reviewable: allRows.filter(r => !r.npc_name).length,
   };
 
@@ -564,22 +564,27 @@ export default async function AdminEncountersPage({
       </section>
 
       {/* Duplicates */}
-      {dupes.length > 0 && (
+      {dupeClusters.length > 0 && (
         <section className="bg-panel border border-border rounded-lg">
           <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-            🚨 Possible duplicates ({dupes.length}) — same NPC, started within 60s
+            🚨 Possible duplicates ({dupeClusters.length} {dupeClusters.length === 1 ? 'cluster' : 'clusters'}, {dupeRowCount} extra {dupeRowCount === 1 ? 'row' : 'rows'}) — same NPC, started within 10 min
           </h3>
           <div className="p-3 space-y-3">
-            {dupes.map((p, i) => {
-              const bothEmpty = (p.a.total_damage ?? 0) === 0 && (p.b.total_damage ?? 0) === 0
-                              && p.a.contribs === 0 && p.b.contribs === 0;
+            {dupeClusters.map((cl, i) => {
+              const allEmpty = cl.members.every(e => (e.total_damage ?? 0) === 0 && e.contribs === 0);
+              const sources = cl.members.filter(e => e.id !== cl.primaryId).map(e => e.id).join(',');
+              const primaryLabel = String.fromCharCode(65 + cl.members.findIndex(e => e.id === cl.primaryId));
               return (
               <div key={i} className="bg-bg border border-border rounded p-3">
                 <div className="grid grid-cols-2 gap-3 text-xs">
-                  {[{ label: 'A', enc: p.a }, { label: 'B', enc: p.b }].map(({ label, enc: e }) => (
+                  {cl.members.map((e, idx) => {
+                    const isPrimary = e.id === cl.primaryId;
+                    return (
                     <div key={e.id} className="space-y-1">
                       <div className="text-text">
-                        <span className="text-orange font-bold mr-1">[{label}]</span>
+                        <span className={`font-bold mr-1 ${isPrimary ? 'text-green' : 'text-orange'}`}>
+                          [{String.fromCharCode(65 + idx)}]{isPrimary ? ' ★' : ''}
+                        </span>
                         {e.npc_name || `npc ${e.npc_id}`}
                         {e.npc_id && <span className="text-dim text-[10px]"> · npc_id {e.npc_id}</span>}
                       </div>
@@ -587,29 +592,23 @@ export default async function AdminEncountersPage({
                       <div className="text-dim">{(e.total_damage ?? 0).toLocaleString()} dmg <span className={hpBadge(hpRatio(e)).cls}>{hpBadge(hpRatio(e)).label}</span></div>
                       <div className="text-dim text-[10px]">id <code>{e.id.slice(0, 8)}</code></div>
                     </div>
-                  ))}
+                  );})}
                 </div>
-                {bothEmpty && (
+                {allEmpty && (
                   <div className="text-dim text-[11px] italic mt-2">
-                    Both rows are empty (0 contributions, 0 players, 0 damage) — merging won&apos;t change anything.
-                    Use <b>Mark incomplete</b> on each below, or delete one as a ghost row.
+                    All rows are empty (0 contributions, 0 players, 0 damage) — merging won&apos;t change anything.
+                    Use <b>Mark incomplete</b>, or delete them as ghost rows.
                   </div>
                 )}
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-2 mt-2 items-center">
                   <form action={mergeEncounters}>
-                    <input type="hidden" name="target" value={p.a.id} />
-                    <input type="hidden" name="source" value={p.b.id} />
+                    <input type="hidden" name="target" value={cl.primaryId} />
+                    <input type="hidden" name="sources" value={sources} />
                     <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">
-                      Merge B → A
+                      Merge all → [{primaryLabel}] ★
                     </button>
                   </form>
-                  <form action={mergeEncounters}>
-                    <input type="hidden" name="target" value={p.b.id} />
-                    <input type="hidden" name="source" value={p.a.id} />
-                    <button type="submit" className="px-2 py-1 rounded border border-border bg-bg text-text text-xs">
-                      Merge A → B
-                    </button>
-                  </form>
+                  <span className="text-dim text-[10px]">keeps ★ (most contributions); the other {cl.members.length - 1} fold in</span>
                 </div>
               </div>
             );
