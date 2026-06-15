@@ -4234,6 +4234,42 @@ class EncounterBuilder {
       this.reset();
       return;
     }
+    // ── 2% engage gate ─────────────────────────────────────────────────────
+    // Anchor started_at to when the boss began taking REAL damage, not the
+    // first incidental hit. Some bosses are spawned and interacting (meleeing
+    // the tank, eating AoE / damage-shield splash) long before they are
+    // killable — e.g. Emperor Ssraeshza is untargetable until ~2 min after the
+    // Blood add dies, yet its name is in the log from the pull, anchoring a
+    // bogus 20+ min "fight" that then sorts/labels ahead of bosses it actually
+    // outlived. Walk boss-damage events in time order and advance the start to
+    // the first one at which cumulative damage TO THE BOSS exceeds 2% of the
+    // fight's total boss damage. On a kill that total ≈ the boss's HP, so this
+    // is "2% of HP" without a catalog lookup; trivial leading splash (well under
+    // 2%) is trimmed, while a normal fight crosses 2% in its first second so the
+    // start is unchanged. Only ever advances the start, never rewinds it.
+    let _engageStartMs = 0;
+    {
+      const _bossHits = this.events
+        .filter(e => e.type === 'damage' && e.defender
+                  && e.defender.toLowerCase() === _bnLower && (Number(e.amount) || 0) > 0)
+        .map(e => ({ ms: Date.parse(e.ts) || 0, amt: Number(e.amount) || 0 }))
+        .filter(e => e.ms)
+        .sort((a, b) => a.ms - b.ms);
+      const _bossTotal = _bossHits.reduce((s, e) => s + e.amt, 0);
+      if (_bossTotal > 0 && _bossHits.length > 1) {
+        const _gate = 0.02 * _bossTotal;
+        let _cum = 0, _engageMs = _bossHits[0].ms;
+        for (const h of _bossHits) {
+          _cum += h.amt;
+          if (_cum > _gate) { _engageMs = h.ms; break; }
+        }
+        const _origMs = this.startedAt ? new Date(this.startedAt).getTime() : _engageMs;
+        if (_engageMs > _origMs) {
+          this.startedAt  = new Date(_engageMs).toISOString();
+          _engageStartMs  = _engageMs;   // active-duration below trims to this
+        }
+      }
+    }
     // ── Heal chain gap analysis ────────────────────────────────────────────
     // Identify stretches where the primary tank went >8s without a heal while
     // actively taking damage. CH chains should tick every 3-4s in Luclin; a gap
@@ -4321,9 +4357,12 @@ class EncounterBuilder {
     // "time the mob was on screen including charm downtime".
     //
     // Falls back to the naive wall-clock range when fewer than 2 combat events exist.
+    // Honor the 2% engage gate: events before the boss took real damage (gate-
+    // period splash) don't count toward active combat time either.
     const _allEventTimes = this.events
       .filter(e => e.type === 'damage' || e.type === 'avoid')
-      .map(e => Date.parse(e.ts) || 0).filter(Boolean).sort((a, b) => a - b);
+      .map(e => Date.parse(e.ts) || 0)
+      .filter(t => t && t >= _engageStartMs).sort((a, b) => a - b);
     const _startMs = this.startedAt ? new Date(this.startedAt).getTime() : Date.now();
     const _endMs   = this.lastEvent  ? new Date(this.lastEvent).getTime()  : _startMs;
     let _activeDurationMs = 0;
