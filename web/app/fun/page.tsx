@@ -4,6 +4,7 @@
 // chat_messages table). Future tenants will join as the agent ships their
 // detectors: CotH Pearl (Magician), DI Emerald, Aegolism/Rune Peridot, etc.
 
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -16,7 +17,7 @@ async function loadCounters() {
   // value is `number | string` so cards like "Longest Dire Charm" can show
   // a pre-formatted "4h 23m" string while normal counter cards stay numeric.
   // The renderer calls value.toLocaleString() which works for both.
-  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string }[] = [];
+  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string; href?: string }[] = [];
 
   // Standalone — fetched separately so the Kyinen execution card can render
   // with its own gold-frame styling above the normal counter grid.
@@ -413,6 +414,7 @@ async function loadCounters() {
         emoji: '😈',
         value: total,
         sub: subParts.join(' · '),
+        href: '/fun/lord-of-ire',
       });
     } else {
       counters.push({
@@ -464,7 +466,11 @@ export default async function FunPage() {
               <div className="text-xs text-dim uppercase tracking-wide">{c.label}</div>
               <span aria-hidden className="text-2xl shrink-0">{c.emoji}</span>
             </div>
-            <div className="text-3xl text-gold font-bold mt-2">{c.value.toLocaleString()}</div>
+            <div className="text-3xl text-gold font-bold mt-2">
+              {c.href
+                ? <Link href={c.href} className="text-gold hover:underline" title="View full breakdown">{c.value.toLocaleString()}</Link>
+                : c.value.toLocaleString()}
+            </div>
             {c.sub && <div className="text-xs text-dim mt-1">{c.sub}</div>}
           </div>
         ))}
