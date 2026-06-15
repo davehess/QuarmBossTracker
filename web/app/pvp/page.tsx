@@ -537,12 +537,12 @@ export default async function PvpPage({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/pvp/boxers-deeps-pit.gif"
-            alt="Wolf Pack taking down boxers before they jump into the Deep's pit"
+            alt="Malthur and Timberowl of the Wolf Pack taking down boxers before they jump into the Deep's pit"
             className="w-full h-auto rounded border border-border"
             loading="lazy"
           />
           <figcaption className="text-xs text-dim mt-2">
-            Taking down boxers before they jump into the Deep&apos;s pit.
+            Malthur and Timberowl, taking down boxers before they jump into the Deep&apos;s pit.
           </figcaption>
         </figure>
       </section>
