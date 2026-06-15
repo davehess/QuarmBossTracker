@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.92': [
+    '**Trash announces stay trash** — `/announce <zone>` with a note containing "trash" (e.g. *TRASH LOOT!*) no longer adds the zone\'s bosses as kill targets — no boss cards, kill buttons, or auto-tracked timers. The takedown still posts the zone, time, and note for the run.',
+  ],
   '3.0.73': [
     '**One-tap Mimic downloads** — `/parsehelp` (and the public `/postparsehelp` board) now has **🐺 Download Mimic** and **Beta** buttons that link straight to the installer .exe of the latest release on each channel — no landing page hop. Resolved live from GitHub, so they always point at the newest build.',
   ],

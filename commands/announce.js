@@ -264,7 +264,11 @@ module.exports = {
     if (bossId && !boss)
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Unknown boss.' });
 
-    const zoneBosses = zone ? bosses.filter(b => b.zone === zone) : (boss ? [boss] : []);
+    // A zone takedown flagged as trash (note like "TRASH LOOT!") is a trash run,
+    // not a boss raid — don't expand the zone into its bosses, so none of the
+    // zone's bosses get added as targets / kill buttons / PQDI cards.
+    const isTrashRun = !bossId && !!note && /\btrash\b/i.test(note);
+    const zoneBosses = (zone && !isTrashRun) ? bosses.filter(b => b.zone === zone) : (boss ? [boss] : []);
     const announceName = boss ? boss.name : zone;
     const announceZone = boss ? boss.zone : zone;
 
@@ -353,7 +357,7 @@ const targets = boss ? [boss.id] : zoneBosses.map(b => b.id);
     if (note) descLines.push(`**Note:** ${note}`);
     if (raidThread) descLines.push(`\n📋 **Raid thread:** <#${raidThread.id}>`);
     if (eventUrl)   descLines.push(`📅 **Event:** [Click Interested!](${eventUrl})`);
-    descLines.push('\nUse the button below to record the kill when it happens.');
+    if (targets.length) descLines.push('\nUse the button below to record the kill when it happens.');
 
     const announceEmbed = new EmbedBuilder()
       .setColor(0xf5a623)
