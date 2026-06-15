@@ -2923,6 +2923,12 @@ class EncounterBuilder {
     // decide whether to auto-set a respawn timer — engaged-but-survived
     // fights (pull-and-flee, wipes) must not move boards.
     this.bossKillConfirmed = false;
+    // The name on the killing-blow "X has been slain by Y!" line for the boss
+    // (Y). When Y is one of OUR charmed pets, the kill belongs to the charmer,
+    // not whoever topped the damage meter — an enchanter charm-farming Lord of
+    // Ire never tops their own parse (the charmed mob does the killing), so the
+    // credit was landing on a groupmate/box. Resolved to the owner in flush().
+    this.killSlayer = null;
     // Mob → last player it landed a hit on, for DS correlation. On Quarm a
     // damage-shield proc logs as the anonymous "<mob> was hit by non-melee
     // for N" without naming the wearer, so we credit it to whoever the mob
@@ -4169,6 +4175,7 @@ class EncounterBuilder {
       if (top && (isTop || isBossLike)) {
         this.bossName = event.defender;
         this.bossKillConfirmed = true;
+        this.killSlayer = event.attacker || null;   // who landed the killing blow (may be a charm pet)
         this.flush();
       }
     }
@@ -4434,6 +4441,20 @@ class EncounterBuilder {
       ? { by_char: _rollupByChar }
       : undefined;
 
+    // Resolve the killing blow to a credit. If the slayer is one of our charmed
+    // pets, the kill belongs to the charm owner (the enchanter), not the
+    // top-damage box. Falls back to the raw slayer (a player got the blow) and
+    // is null when no "slain by" line was seen. '__SELF__' owner = the uploader.
+    let killCredit = null;
+    if (this.killSlayer) {
+      const _sl = this.killSlayer.toLowerCase();
+      let _owner = this.petLeaders[_sl]
+        || (this._activeCharms && this._activeCharms.get(_sl) && this._activeCharms.get(_sl).owner)
+        || (_charmTickTracker.get(_sl) && _charmTickTracker.get(_sl).is_active ? _charmTickTracker.get(_sl).owner : null);
+      if (_owner === '__SELF__') _owner = this.character;
+      killCredit = _owner || this.killSlayer;
+    }
+
     const payload = {
       agent_version: AGENT_VERSION,
       character:     this.character,
@@ -4441,6 +4462,11 @@ class EncounterBuilder {
         started_at:    this.startedAt,
         ended_at:      this.lastEvent,
         boss_name:     this.bossName,
+        // Killing-blow attribution: kill_slayer is the raw name on the "slain
+        // by" line; kill_credit resolves a charmed-pet slayer to its owner so a
+        // charm-farmed boss kill credits the enchanter, not the top-damage box.
+        kill_slayer:   this.killSlayer || undefined,
+        kill_credit:   killCredit || undefined,
         // True only when the boss's death log line was observed for
         // bossName. False when bossName was guessed from top-damaged target
         // after a 120s idle flush (= "engaged but didn't die"). The bot
