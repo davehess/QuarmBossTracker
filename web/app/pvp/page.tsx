@@ -531,6 +531,20 @@ export default async function PvpPage({
             </figcaption>
           </figure>
         </div>
+        <figure className="m-0 mt-4">
+          {/* GIFs are not optimized through next/image — use a plain <img> so
+              the animation plays. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/pvp/boxers-deeps-pit.gif"
+            alt="Wolf Pack taking down boxers before they jump into the Deep's pit"
+            className="w-full h-auto rounded border border-border"
+            loading="lazy"
+          />
+          <figcaption className="text-xs text-dim mt-2">
+            Taking down boxers before they jump into the Deep&apos;s pit.
+          </figcaption>
+        </figure>
       </section>
     </div>
   );
