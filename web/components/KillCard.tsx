@@ -52,6 +52,14 @@ export default function KillCard({ kill, adminBar }: { kill: KillCardData; admin
   const extra = kill.player_count - top.length;
   const dim = !!kill.classification;   // not a guild kill — visually de-emphasize
 
+  // Show when the boss DIED (fight start + duration), not when it was engaged.
+  // started_at is fight-START, which mis-orders gated/overlapping fights (e.g.
+  // Emperor Ssraeshza is engaged before the Blood add that gates it but dies
+  // after). No stored ended_at, so we derive it.
+  const killAt = kill.duration_sec
+    ? new Date(new Date(kill.started_at).getTime() + kill.duration_sec * 1000).toISOString()
+    : kill.started_at;
+
   return (
     <div className={`bg-panel border border-border rounded-lg ${dim ? 'opacity-75' : ''}`}>
       <Link
@@ -63,7 +71,12 @@ export default function KillCard({ kill, adminBar }: { kill: KillCardData; admin
             <span className="truncate">{kill.boss_name}</span>
             <ClassificationChip classification={kill.classification} />
           </div>
-          <div className="text-dim text-xs whitespace-nowrap">{fmtTime(kill.started_at)}</div>
+          <div
+            className="text-dim text-xs whitespace-nowrap"
+            title={`killed ~${fmtTime(killAt)} · engaged ${fmtTime(kill.started_at)} (${fmtDuration(kill.duration_sec)})`}
+          >
+            {fmtTime(killAt)}
+          </div>
         </div>
 
         <div className="text-xs text-dim mb-2 flex gap-3">

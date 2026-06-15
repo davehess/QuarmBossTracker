@@ -237,13 +237,16 @@ function bucket(rows: EncounterRow[], zones: Map<string, ZoneRow>) {
     if (!day.zones.has(zKey)) day.zones.set(zKey, { label: long, encounters: [] });
     day.zones.get(zKey)!.encounters.push(enc);
   }
-  // Within each zone, sort by started_at ASCENDING so we render in kill order
-  // (top of the zone = the first kill of the night there).
+  // Within each zone, sort by KILL time (started_at + duration) ascending so we
+  // render in true kill order. started_at alone is fight-START, which inverts
+  // gated/overlapping fights — e.g. Emperor Ssraeshza is engaged before the
+  // Blood add that gates its kill, so a start-sort wrongly lists it first even
+  // though it died last.
+  const killAtMs = (e: EncounterRow) =>
+    new Date(e.started_at).getTime() + (e.duration_sec ?? 0) * 1000;
   for (const day of days.values()) {
     for (const z of day.zones.values()) {
-      z.encounters.sort((a, b) =>
-        new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
-      );
+      z.encounters.sort((a, b) => killAtMs(a) - killAtMs(b));
     }
   }
   return days;
