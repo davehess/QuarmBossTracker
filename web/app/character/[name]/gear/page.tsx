@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isMustEquipClicky, usableByClass, pickSlot, buildClickyMacro } from '@/lib/clicky-macros';
 
 export const dynamic = 'force-dynamic';
 
@@ -96,6 +97,7 @@ type ItemRow = {
   id: number; name: string; ac: number | null; hp: number | null; mana: number | null;
   damage: number | null; delay: number | null; attack: number | null; haste: number | null;
   focus_effect: number | null; proc_effect: number | null; clickeffect: number | null; worneffect: number | null;
+  clicktype: number | null; casttime: number | null; slots: number | null; classes: number | null;
 };
 
 const SLOT_ORDER = [
@@ -140,7 +142,7 @@ async function load(decoded: string) {
   if (itemIds.length) {
     const { data: itemRows } = await sb
       .from('eqemu_items')
-      .select('id, name, ac, hp, mana, damage, delay, attack, haste, focus_effect, proc_effect, clickeffect, worneffect')
+      .select('id, name, ac, hp, mana, damage, delay, attack, haste, focus_effect, proc_effect, clickeffect, worneffect, clicktype, casttime, slots, classes')
       .in('id', itemIds);
     for (const it of (itemRows ?? []) as ItemRow[]) items[it.id] = it;
     const spellIds = [...new Set(
@@ -201,6 +203,43 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
 
   const equipped = gear.filter(g => g.loc === 'equipped').sort((a, b) => slotRank(a.slot) - slotRank(b.slot));
   const bagged = gear.filter(g => g.loc === 'bag' && /-Slot\d+$/.test(g.slot));
+
+  // ── Suggested clicky-swap macros ───────────────────────────────────────────
+  // Must-equip clickies (clicktype 4) sitting in bags get a generated swap
+  // macro: equip → /use → wait the cast → swap the worn piece back. We can only
+  // see bags + worn (bank is privacy-stripped on the user's machine). slot # and
+  // /pause derive from the catalog; bard melody handling is in clicky-macros.ts.
+  const wornBySlotName: Record<string, string> = {};
+  for (const g of equipped) if (!wornBySlotName[g.slot]) wornBySlotName[g.slot] = g.item_name;
+
+  const clickyMacros = (() => {
+    const seen = new Set<number>();
+    const out: { clicky: string; slotName: string; spell: string | null; castS: number; lines: string[] }[] = [];
+    for (const g of bagged) {
+      if (seen.has(g.item_id)) continue;          // one macro per distinct item
+      const it = items[g.item_id];
+      if (!it || !isMustEquipClicky(it) || !usableByClass(it.classes, char?.class)) continue;
+      const slot = pickSlot(it.slots, wornBySlotName);
+      if (!slot) continue;
+      seen.add(g.item_id);
+      const spellName = it.clickeffect ? (spellNames[it.clickeffect] || null) : null;
+      out.push({
+        clicky:   it.name,
+        slotName: slot.name,
+        spell:    spellName,
+        castS:    Math.round((it.casttime ?? 0) / 1000),
+        lines: buildClickyMacro({
+          className: char?.class,
+          clickyName: it.name,
+          slot,
+          wornName: wornBySlotName[slot.name] || null,
+          castMs: it.casttime,
+          spellName,
+        }),
+      });
+    }
+    return out.sort((a, b) => a.slotName.localeCompare(b.slotName) || a.clicky.localeCompare(b.clicky));
+  })();
 
   // Item-sum totals — worn contribution only; the full calculator (race/class
   // base, softcaps, self-buffs, clicky layers) is the design doc's phase 7.
@@ -295,6 +334,36 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
           {synced && <> Last sync: {synced.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.</>}
         </p>
       </section>
+
+      {clickyMacros.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-sm text-orange mb-1 flex items-center gap-2">
+            <span>🪄 Suggested clicky macros</span>
+            <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+          </h3>
+          <p className="text-xs text-dim mb-3">
+            Must-equip clickies in {decoded}&apos;s bags. Each macro equips the item, clicks it,
+            waits the cast, then swaps the worn piece back — paste into an EQ Social.
+            {char?.class?.toLowerCase() === 'bard' && <> Bard macros <code>/stopsong</code> first and <code>/melody resume</code> after (invis/travel clicks skip the resume).</>}
+          </p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {clickyMacros.map(m => (
+              <div key={m.clicky} className="bg-bg border border-border rounded p-3">
+                <div className="text-sm text-gold">{m.clicky}</div>
+                <div className="text-xs text-dim mb-2">
+                  {m.spell ? <>{m.spell} · </> : null}{m.castS}s cast · {m.slotName}
+                  {!wornBySlotName[m.slotName] && <span className="text-orange"> · nothing worn there — no swap-back</span>}
+                </div>
+                <pre className="text-xs bg-panel border border-border rounded p-2 overflow-x-auto whitespace-pre text-text">{m.lines.join('\n')}</pre>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-dim mt-2">
+            Slot numbers follow Zeal&apos;s <code>/swap</code> (chest = 16); item names are case-sensitive for <code>/use</code>.
+            Bank items aren&apos;t included (stripped before upload).
+          </p>
+        </section>
+      )}
 
       {equipped.length === 0 ? (
         <section className="bg-panel border border-border rounded-lg p-6">
