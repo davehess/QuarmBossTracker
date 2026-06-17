@@ -13820,6 +13820,18 @@ const PVP_BARE_NPC_RX            = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)>
 const PVP_BARE_PLAYER_ACTIVE_RX  = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (\w+) of <(.+?)> in (.+?)!$/;
 const PVP_BARE_BOSS_ACTIVE_RX    = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (.+?)(?: in (.+?))?!$/;
 
+// Guildless boss kill — an UNGUILDED player rushing an open-world spawn
+// broadcasts WITHOUT an "of <Guild>" tag ("Xyz has killed Lord of Ire!"). Every
+// matcher above requires the guild clause, so these were lost silently — the
+// recurring "the bot misses ire" reports are non-guild groups grabbing the
+// open-world post-quake spawn at off hours. killerGuild stays null, so the bot
+// credits no Wolf Pack member and fires no PvP ping; the boss respawn timer
+// still records (it keys on the victim name matching data/bosses.json). The
+// BARE form REQUIRES the literal [PVP] channel tag — with no guild clause to
+// anchor it, we can't risk matching arbitrary "X has killed Y!" log noise.
+const PVP_BOSS_KILL_GUILDLESS_RX = /^(\w+) has killed (.+?)(?: in (.+?))?!$/;
+const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?)(?: in (.+?))?!$/;
+
 function parseDruzzilKill(line) {
   const m = DRUZZIL_KILL_RX.exec(line);
   if (!m) return null;
@@ -13892,6 +13904,20 @@ function parsePvpBroadcast(line) {
       };
     }
 
+    // Guildless killer-first boss kill: "Xyz has killed Lord of Ire!" — an
+    // unguilded player on the open-world spawn. Broadest pattern; try last.
+    // Safe inside the Druzzil wrapper (already known to be a broadcast).
+    const bossG = PVP_BOSS_KILL_GUILDLESS_RX.exec(text);
+    if (bossG) {
+      if (/\(Instanced\)/i.test(text)) return null;
+      return {
+        ts: tsOf(), text, killType: 'pvp',
+        killer: bossG[1], killerGuild: null,
+        victim: bossG[2], victimGuild: null,
+        zone:   bossG[3] || null,
+      };
+    }
+
     // Wrapper matched but no inner pattern fit. Return null instead of a
     // partially-filled row (the pre-2.4.32 fallthrough emitted killType='npc'
     // with everything null, which the bot silently dropped but logs still
@@ -13945,7 +13971,48 @@ function parsePvpBroadcast(line) {
     };
   }
 
+  // Guildless bare boss kill in the [PVP] channel — "[PVP] Xyz has killed
+  // Lord of Ire!" (requires the [PVP] tag; see regex note above).
+  const bossBareG = PVP_BARE_BOSS_GUILDLESS_RX.exec(line);
+  if (bossBareG) {
+    if (/\(Instanced\)/i.test(line)) return null;
+    return {
+      ts: tsOf(),
+      text: `${bossBareG[2]} has killed ${bossBareG[3]}${bossBareG[4] ? ` in ${bossBareG[4]}` : ''}!`,
+      killType:    'pvp',
+      killer:      bossBareG[2], killerGuild: null,
+      victim:      bossBareG[3], victimGuild: null,
+      zone:        bossBareG[4] || null,
+    };
+  }
+
   return null;
+}
+
+// Diagnostic capture for kill-shaped PvP broadcasts that no pattern above
+// matched. Persists the raw line (capped, newest-last) to
+// logsync.pvp-unmatched.json so a novel broadcast phrasing — e.g. an
+// open-world post-quake boss kill we haven't seen — can be retrieved and
+// turned into a parser rule instead of vanishing silently.
+const PVP_UNMATCHED_FILE = path.join(__dirname, 'logsync.pvp-unmatched.json');
+const PVP_UNMATCHED_CAP  = 200;
+function captureUnmatchedPvpKill(line) {
+  if (!/PVP Druzzil Ro BROADCASTS|\[PVP\]/.test(line)) return;   // broadcast context only
+  if (!/\bhas killed\b/.test(line)) return;                       // kill-shaped only
+  if (/\(Instanced\)/i.test(line)) return;                        // instance kills are handled elsewhere
+  console.warn(`[pvp-unmatched] kill-shaped broadcast not parsed: ${line.trim()}`);
+  try {
+    let arr = [];
+    if (fs.existsSync(PVP_UNMATCHED_FILE)) {
+      try { arr = JSON.parse(fs.readFileSync(PVP_UNMATCHED_FILE, 'utf8')) || []; } catch { arr = []; }
+    }
+    if (!Array.isArray(arr)) arr = [];
+    arr.push({ ts: new Date().toISOString(), line: line.trim() });
+    if (arr.length > PVP_UNMATCHED_CAP) arr = arr.slice(-PVP_UNMATCHED_CAP);
+    const tmp = PVP_UNMATCHED_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(arr));
+    fs.renameSync(tmp, PVP_UNMATCHED_FILE);
+  } catch (e) { void e; }
 }
 
 // EQ in-game item links land in the log as `\x12<hex blob>\x12Item Name\x12`.
@@ -17864,6 +17931,9 @@ async function main() {
           }
           return;
         }
+        // No pattern matched — if it still looks like a kill broadcast, capture
+        // the raw line for diagnosis (guildless/novel boss-kill phrasings).
+        if (!_sourceExcluded) captureUnmatchedPvpKill(line);
 
         // Fun-event detection (Peopleslayer LD, Malthur provisions, future
         // CoH/DI/etc). Don't `return` after a match — fun events are pure
