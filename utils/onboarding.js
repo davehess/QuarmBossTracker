@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.94': [
+    '**`/parse` no longer chokes on backtick boss names** — pasting an EQLogParser line for `VulakˋAerr`, `Vyzhˋdra`, and friends used to fail with "Could not identify boss" when the paste carried a grave-accent or smart-quote lookalike instead of a plain backtick, silently dropping the whole fight. Those characters now all normalize to the catalog name so the parse lands on the board.',
+  ],
   '3.0.93': [
     '**Lord of Ire counter self-heals** — when the live broadcast relay misses a Lord of Ire kill (no agent online with the broadcast in its log — the 1am open-world gap), the killers\' parse encounter now credits the counter automatically every midnight, deduped so nothing double-counts. Officers can also run `/backfillfunevents` (with optional `dry_run`) anytime.',
   ],
