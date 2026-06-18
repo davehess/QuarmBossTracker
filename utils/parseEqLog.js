@@ -49,21 +49,36 @@ function parseEQLog(str) {
 // Thall Va Xakra): when EQ logs the unqualified name, both (North) and (South)
 // variants are equally-good partial matches. Prefer (South) so the bot's auto-
 // kill / parse routing is deterministic — south goes first this raid era.
+
+// Canonicalize a mob/boss name for matching. EQEmu scripted names carry a
+// leading '#' and underscores ("#Vulak`Aerr", "#Grieg_Veneficus") that block a
+// match against the clean bosses.json name. Separately, the apostrophe in names
+// like Vulak`Aerr / Vyzh`dra is an ASCII backtick (U+0060) in the catalog and
+// EQ log, but EQLogParser pastes (and some clipboards/fonts) emit a grave-accent
+// or smart-quote lookalike instead (U+02CB ˋ, U+00B4 ´, U+2018/2019 ' ', …). Left
+// un-normalized those fail every match path and /parse rejects the whole paste
+// ("Could not identify boss VulakˋAerr") — so collapse all of them to ASCII `.
+function _canonBossName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/^#/, '')
+    .replace(/_/g, ' ')
+    .replace(/[`´‘’‛＇ʻʼʹˋˊʻʼ′‵]/g, '`')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function findBossFromName(parsedName, bosses) {
-  // Normalize EQEmu scripted-mob names: a leading '#' and underscores
-  // ("#Vulak`Aerr", "#Grieg_Veneficus", "Lord_Inquisitor_Seru") otherwise
-  // block the match against the clean bosses.json name. Strip them so the
-  // scripted raid target resolves to its boss entry.
-  const nl = parsedName.toLowerCase().replace(/^#/, '').replace(/_/g, ' ').trim();
-  const exact = bosses.find(b => b.name.toLowerCase() === nl);
+  const nl = _canonBossName(parsedName);
+  const exact = bosses.find(b => _canonBossName(b.name) === nl);
   if (exact) return exact;
-  const nick = bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl));
+  const nick = bosses.find(b => (b.nicknames || []).some(n => _canonBossName(n) === nl));
   if (nick) return nick;
   const partials = bosses
-    .filter(b => { const bn = b.name.toLowerCase(); return bn.includes(nl) || nl.includes(bn); })
+    .filter(b => { const bn = _canonBossName(b.name); return bn.includes(nl) || nl.includes(bn); })
     .sort((a, b) => {
-      const da = Math.abs(a.name.length - nl.length);
-      const db = Math.abs(b.name.length - nl.length);
+      const da = Math.abs(_canonBossName(a.name).length - nl.length);
+      const db = Math.abs(_canonBossName(b.name).length - nl.length);
       if (da !== db) return da - db;
       // Length-distance tie: prefer South over North for the Vex Thal pair.
       const aSouth = /\(south\)/i.test(a.name);
@@ -78,4 +93,4 @@ function findBossFromName(parsedName, bosses) {
   return partials[0] || null;
 }
 
-module.exports = { parseEQLog, findBossFromName, kmToInt };
+module.exports = { parseEQLog, findBossFromName, kmToInt, _canonBossName };
