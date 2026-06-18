@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.93': [
+    '**Lord of Ire counter self-heals** — when the live broadcast relay misses a Lord of Ire kill (no agent online with the broadcast in its log — the 1am open-world gap), the killers\' parse encounter now credits the counter automatically every midnight, deduped so nothing double-counts. Officers can also run `/backfillfunevents` (with optional `dry_run`) anytime.',
+  ],
   '3.0.92': [
     '**Trash announces stay trash** — `/announce <zone>` with a note containing "trash" (e.g. *TRASH LOOT!*) no longer adds the zone\'s bosses as kill targets — no boss cards, kill buttons, or auto-tracked timers. The takedown still posts the zone, time, and note for the run.',
   ],

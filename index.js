@@ -2288,6 +2288,20 @@ function scheduleMidnightSummary(readyClient) {
       // ── Consolidate nightly parses ───────────────────────────────────────
       await consolidateNightlyParses(readyClient).catch(console.error);
 
+      // ── Backfill encounter-backed fun counters (Lord of Ire) ─────────────
+      // The live PvP/Druzzil relay misses kills when no agent is online with
+      // the broadcast in its log (the 1am open-world gap), but the killers'
+      // agents still upload the encounter. Reconcile any uncredited kill off
+      // encounters so the /fun counters self-heal without a manual run. Fully
+      // deduped in the RPC (fight-window + encounter_id), so a full scan is safe.
+      try {
+        const { reconcileFunEventsFromEncounters } = require('./utils/reconcileFunEvents');
+        const { inserted } = await reconcileFunEventsFromEncounters({});
+        if (inserted > 0) console.log(`[midnight] backfilled ${inserted} fun event(s) from encounters`);
+      } catch (err) {
+        console.warn('[midnight] fun-event backfill skipped:', err?.message);
+      }
+
       // ── Compact Supabase contributions (null out raw_parse blobs > 7 days) ─
       // encounter_players already holds the merged per-player totals permanently.
       // The contributions.raw_parse JSONB blobs are only needed for debugging
