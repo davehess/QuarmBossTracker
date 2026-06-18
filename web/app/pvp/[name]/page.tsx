@@ -367,6 +367,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
           <div className="text-sm text-dim italic">No kills recorded.</div>
         ) : (
           <>
+          <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="text-dim text-left">
               <tr className="border-b border-border">
@@ -382,11 +383,11 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
                   <td className="py-1 pr-2 text-dim whitespace-nowrap">
                     {dayLabel(dayKey(k.killed_at))} · {fmtTime(k.killed_at)}
                   </td>
-                  <td className="py-1 pr-2 text-text">
+                  <td className="py-1 pr-2 text-text whitespace-nowrap">
                     {k.victim}{k.victim_guild ? <span className="text-dim"> {'<'}{k.victim_guild}{'>'}</span> : null}
                     {k.via_pet && <span className="text-orange ml-1" title={k.pet_name ? `pet: ${k.pet_name}` : 'pet kill'}>*</span>}
                   </td>
-                  <td className="py-1 pr-2 text-dim">{k.zone || '—'}</td>
+                  <td className="py-1 pr-2 text-dim whitespace-nowrap">{k.zone || '—'}</td>
                   {officer && (
                     <td className="py-1 pr-2 text-right">
                       <form action={deletePvpKill} className="inline">
@@ -404,6 +405,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
               ))}
             </tbody>
           </table>
+          </div>
           {officer && (
             <div className="text-[10px] text-dim mt-2">Officer: removing a kill deletes it from the ledger and recomputes the leaderboard. There is no undo — re-running the killer&apos;s log backfill restores any real kill.</div>
           )}
@@ -422,6 +424,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
         {assistRows.length === 0 ? (
           <div className="text-sm text-dim italic">No assists recorded.</div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="text-dim text-left">
               <tr className="border-b border-border">
@@ -445,7 +448,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
                           : <Link href={`/pvp/${encodeURIComponent(a.killer)}`} className="text-text hover:text-blue hover:underline">{a.killer}</Link>)
                       : <span className="text-dim italic">an NPC</span>}
                   </td>
-                  <td className="py-1 pr-2 text-text">
+                  <td className="py-1 pr-2 text-text whitespace-nowrap">
                     {a.victim}{a.victim_guild ? <span className="text-dim"> {'<'}{a.victim_guild}{'>'}</span> : null}
                   </td>
                   <td className="py-1 pr-2 text-dim">
@@ -458,11 +461,12 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
                           </span>
                         ))}
                   </td>
-                  <td className="py-1 pr-2 text-dim">{a.zone || '—'}</td>
+                  <td className="py-1 pr-2 text-dim whitespace-nowrap">{a.zone || '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 

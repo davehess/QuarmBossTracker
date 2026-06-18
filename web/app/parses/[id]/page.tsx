@@ -465,16 +465,17 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           <span>Damage breakdown</span>
           <span className="text-dim text-xs">· max-damage-per-player across {contribs.length} parser upload{contribs.length === 1 ? '' : 's'}</span>
         </h3>
+        <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="text-dim text-left">
             <tr className="border-b border-border">
               <th className="py-1 pr-2 w-8">#</th>
               <th className="py-1 pr-2">Character</th>
               <th className="py-1 pr-2">Class</th>
-              <th className="py-1 pr-2 text-right">Damage</th>
-              <th className="py-1 pr-2 text-right">DPS</th>
-              <th className="py-1 pr-2 text-right">Duration</th>
-              <th className="py-1 pl-2">Share</th>
+              <th className="py-1 pr-2 text-right whitespace-nowrap">Damage</th>
+              <th className="py-1 pr-2 text-right whitespace-nowrap">DPS</th>
+              <th className="py-1 pr-2 text-right whitespace-nowrap">Duration</th>
+              <th className="py-1 pl-2 min-w-[80px]">Share</th>
             </tr>
           </thead>
           <tbody>
@@ -492,10 +493,10 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       {p.character_name}
                     </Link>
                   </td>
-                  <td className="py-1 pr-2 text-dim">{klass}</td>
-                  <td className="py-1 pr-2 text-right text-text">{fmtDmg(p.total_damage)}</td>
-                  <td className="py-1 pr-2 text-right text-dim">{p.dps ? `${fmtDmg(p.dps)}/s` : '—'}</td>
-                  <td className="py-1 pr-2 text-right text-dim">{fmtDuration(p.duration_sec)}</td>
+                  <td className="py-1 pr-2 text-dim whitespace-nowrap">{klass}</td>
+                  <td className="py-1 pr-2 text-right text-text whitespace-nowrap">{fmtDmg(p.total_damage)}</td>
+                  <td className="py-1 pr-2 text-right text-dim whitespace-nowrap">{p.dps ? `${fmtDmg(p.dps)}/s` : '—'}</td>
+                  <td className="py-1 pr-2 text-right text-dim whitespace-nowrap">{fmtDuration(p.duration_sec)}</td>
                   <td className="py-1 pl-2">
                     <div className="w-full bg-bg rounded h-2 overflow-hidden">
                       <div
@@ -512,6 +513,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             )}
           </tbody>
         </table>
+        </div>
       </section>
 
       {/* Deaths */}
