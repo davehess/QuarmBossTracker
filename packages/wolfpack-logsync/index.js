@@ -11088,6 +11088,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
+      // "Buffs feel laggy" click from the buff-queue overlay. Drops the agent
+      // into snappy mode for 60s AND forwards the click to the bot for audit.
+      if (req.url === '/api/buff-lag-report' && req.method === 'POST') {
+        let character = '';
+        try {
+          if (stats && stats.activeCharacter) character = String(stats.activeCharacter);
+        } catch { /* */ }
+        reportBuffLag(character);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, snappy_until: _buffQueueSnappyUntil }));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -16217,6 +16228,15 @@ function fetchTargetBuffs(name) {
 // feels live (~3-5s between full refreshes).
 const _buffQueueCache = new Map();   // classLower|character → { at, payload }
 const _buffQueueInflight = new Set();
+// "Buffs feel laggy" snappy mode — when the user clicks the lag-report button
+// in the overlay we drop the effective cache TTL to 500ms for 60s so the next
+// dozen overlay ticks (at 1.5s) get fresh data. The local agent is the only
+// gating layer between the overlay's 1.5s loop and the bot's Supabase query,
+// so flipping this alone is enough to make the queue feel snappy without any
+// overlay-side change.
+let _buffQueueSnappyUntil = 0;
+const SNAPPY_TTL_MS  = 500;
+const SNAPPY_WINDOW  = 60_000;
 // 8s (was 3s). The overlay polls every 1.5s; with the 3s TTL roughly every
 // other poll missed the cache and triggered a fresh bot fetch (which then
 // pulled 3000 buff_casts rows). 8s aligns with the overlay polling cadence
@@ -16229,7 +16249,8 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const key = String(bufferClass || '').trim().toLowerCase() + '|' + String(bufferCharacter || '').trim().toLowerCase();
   if (_buffQueueInflight.has(key)) return;
   const cached = _buffQueueCache.get(key);
-  if (cached && (Date.now() - cached.at) < BUFF_QUEUE_TTL_MS) return;
+  const ttl = (Date.now() < _buffQueueSnappyUntil) ? SNAPPY_TTL_MS : BUFF_QUEUE_TTL_MS;
+  if (cached && (Date.now() - cached.at) < ttl) return;
   _buffQueueInflight.add(key);
   const qs = [];
   if (bufferClass)     qs.push('class=' + encodeURIComponent(bufferClass));
@@ -16255,6 +16276,45 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
     req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
     req.end();
   } catch { _buffQueueInflight.delete(key); }
+}
+
+// "Buffs feel laggy" click from the buff-queue overlay. Two effects:
+//   1. Drop into snappy mode locally for 60s (fetchRaidBuffQueue picks up
+//      the lowered TTL on the next overlay tick — no flush needed).
+//   2. Forward the click to the bot so we can audit lag-felt timestamps
+//      vs the throttle config in Supabase. Fire-and-forget; if the bot is
+//      down the local snappy mode still works.
+function reportBuffLag(character) {
+  _buffQueueSnappyUntil = Date.now() + SNAPPY_WINDOW;
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  try {
+    const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/buff-lag-report');
+    const u   = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify({
+      character: character || null,
+      client_settings: {
+        agent_version:        AGENT_VERSION,
+        buff_queue_ttl_ms:    BUFF_QUEUE_TTL_MS,
+        target_buffs_ttl_ms:  TARGET_BUFFS_TTL_MS,
+        snappy_window_ms:     SNAPPY_WINDOW,
+      },
+    });
+    const req = mod.request({
+      method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
+      headers: {
+        'Authorization': 'Bearer ' + opts.token,
+        'Content-Type':  'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      },
+      timeout: 5000,
+    }, (res) => { res.on('data', () => {}); res.on('end', () => {}); });
+    req.on('error',   () => {});
+    req.on('timeout', () => req.destroy());
+    req.write(body); req.end();
+  } catch { /* swallow — local snappy mode already took effect */ }
 }
 
 // The freshest watched character's Zeal target (name + live HP%).

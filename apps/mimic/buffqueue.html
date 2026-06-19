@@ -103,6 +103,16 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
+  /* "Buffs feel laggy" reporter — sits inside the title bar. Quiet by default
+     so it doesn't compete with the live queue; pulses green for 60s after a
+     click to confirm snappy mode kicked in. */
+  #lag-btn{font-size:9px;line-height:1;padding:2px 5px;border-radius:3px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.4);
+    cursor:pointer;opacity:0.6;transition:opacity .12s,color .12s,border-color .12s;
+    white-space:nowrap}
+  #lag-btn:hover{opacity:1;color:#fde68a;border-color:#fde68a}
+  #lag-btn.active{opacity:1;color:#86efac;border-color:#86efac;
+    background:rgba(34,197,94,0.12)}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
@@ -120,12 +130,13 @@
     <div class="title">
       <span id="conn" class="conn bad">○</span>
       <span>🛡 Buff queue</span>
-      <select id="clsPick" class="clsPick" style="margin-right:30px" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
+      <select id="clsPick" class="clsPick" title="The class you're buffing as. Filters the buff list to gaps you can fill.">
         <option value="">(any class)</option>
         <option>Cleric</option><option>Druid</option><option>Shaman</option>
         <option>Enchanter</option><option>Bard</option><option>Paladin</option>
         <option>Ranger</option><option>Beastlord</option><option>Magician</option>
       </select>
+      <button id="lag-btn" style="margin-right:30px" title="Buff queue feeling stale? Click to log it AND switch to fast refresh for 60s.">lag?</button>
     </div>
     <div id="body"></div>
     <div id="empty">no raid roster yet — start any Mimic in raid and the queue fills in within seconds</div>
@@ -220,6 +231,34 @@
       try { localStorage.setItem('wp:bufferClass', bufferClass); } catch (e) {}
       tick();    // refresh immediately so the user sees the new queue
     });
+  }
+
+  // "Buffs feel laggy" button. POST to local agent → drops the agent's
+  // BUFF_QUEUE_TTL into 500ms-snappy mode for 60s AND forwards the click to
+  // the bot for audit. The overlay's own 1.5s tick is unchanged — the cache
+  // dropping is what makes ticks fetch fresh data.
+  var lagBtn = document.getElementById('lag-btn');
+  if (lagBtn) {
+    lagBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    lagBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    var _lagActiveUntil = 0;
+    lagBtn.addEventListener('click', function(){
+      try {
+        fetch('http://127.0.0.1:'+PORT+'/api/buff-lag-report', { method: 'POST', cache: 'no-store' })
+          .catch(function(){});
+      } catch (e) {}
+      _lagActiveUntil = Date.now() + 60000;
+      lagBtn.classList.add('active');
+      lagBtn.textContent = 'fast 60s';
+      tick();  // immediate fetch — don't make the user wait 1.5s for proof it worked
+    });
+    setInterval(function(){
+      if (_lagActiveUntil && Date.now() > _lagActiveUntil) {
+        _lagActiveUntil = 0;
+        lagBtn.classList.remove('active');
+        lagBtn.textContent = 'lag?';
+      }
+    }, 1000);
   }
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }

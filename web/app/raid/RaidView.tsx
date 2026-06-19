@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import BuffLagButton from '@/components/BuffLagButton';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS, HP_SLOTS, HP_SLOT_LABELS,
   RESIST_TYPES, RESIST_LABELS, UPGRADE_CHAINS, chainPosition, hasteRank,
@@ -353,7 +354,10 @@ export default function RaidView({
             <span className="text-orange text-xs">[mockup — stage 1 of <code>docs/raid-hub-roadmap.md</code>]</span>
           </p>
         </div>
-        <a href="/buffs" className="text-xs text-blue hover:underline">← classic /buffs view</a>
+        <div className="flex items-center gap-3 flex-wrap">
+          <BuffLagButton source="web_raid" />
+          <a href="/buffs" className="text-xs text-blue hover:underline">← classic /buffs view</a>
+        </div>
       </div>
 
       {/* Concurrent raids — one tab each. Only rendered when Zeal snapshots

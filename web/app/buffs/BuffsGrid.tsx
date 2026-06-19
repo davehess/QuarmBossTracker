@@ -7,6 +7,7 @@ import {
   shortBuffName, fmtBuffRemaining, buffTimeTone,
   type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
+import BuffLagButton from '@/components/BuffLagButton';
 
 export type BuffRow = {
   name: string;
@@ -188,11 +189,14 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl text-gold">🧪 Buffs</h1>
-        <p className="text-sm text-dim mt-1">
-          Who&apos;s carrying what, right now — so buffers can see the gaps at a glance.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl text-gold">🧪 Buffs</h1>
+          <p className="text-sm text-dim mt-1">
+            Who&apos;s carrying what, right now — so buffers can see the gaps at a glance.
+          </p>
+        </div>
+        <BuffLagButton source="web_buffs" />
       </div>
 
       {/* Accuracy caveat — load-bearing. There is NO way to read another

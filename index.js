@@ -4660,6 +4660,42 @@ async function _handleAgentBuffCasts(req, res) {
   res.end(JSON.stringify({ ok: true, written }));
 }
 
+// "Buffs feel laggy" report from the Mimic buff-queue overlay. Tiny payload —
+// just the current client throttle knobs so we can correlate UX-felt lag
+// against the actual cache TTL + bot poll limit. Returning { ok: true } is
+// the contract; the overlay drops into snappy mode on its own based on the
+// click, not on the response.
+async function _handleAgentBuffLagReport(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 8 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload = {};
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
+  catch { /* tolerate garbage; we still log the click */ }
+
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const row = {
+    guild_id:        guildId,
+    source:          'mimic_overlay',
+    discord_id:      identity.discord_id || null,
+    character:       payload?.character ? String(payload.character).slice(0, 64) : null,
+    client_settings: payload?.client_settings && typeof payload.client_settings === 'object'
+                       ? payload.client_settings : null,
+    user_agent:      req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 256) : null,
+  };
+  await supabase.insert('buff_lag_reports', [row])
+    .catch(err => console.warn('[buff-lag] insert failed:', err?.message));
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true }));
+}
+
 async function _handleAgentHistoricalChat(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -8923,6 +8959,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentBuffCasts(req, res); }
     catch (err) {
       console.error('[buff-casts] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/buff-lag-report') {
+    try { return await _handleAgentBuffLagReport(req, res); }
+    catch (err) {
+      console.error('[buff-lag] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
