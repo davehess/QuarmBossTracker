@@ -2869,6 +2869,8 @@ const ABILITY_CLASS = {
   'dragon punch': 'Monk',
   'eagle strike': 'Monk',
   'tail rake':    'Monk',  // iksar monk equivalent of Dragon Punch
+  'subversion':   'Necromancer',  // the "twitch" mana-share line (Rapacious/Covetous/Sedulous)
+  'mind wrack':   'Necromancer',  // enemy mana burn w/ group-mana recourse
 };
 function inferClassFromAbility(character, ability) {
   if (!character || !ability) return;
@@ -13122,6 +13124,10 @@ function runOptinBackfill(files, opts = {}) {
             if (dpEvt) funEventBuffer.push(dpEvt);
             const dirgeEvt = parseDirgeCast(line, f.character);
             if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+            // Necro mana share — Subversion twitches (mana donated) + Mind
+            // Wrack. Self-cast only (the spell name is invisible to bystanders).
+            const twitchEvt = parseNecroManaShare(line, f.character);
+            if (twitchEvt) funEventBuffer.push(twitchEvt);
             // Faction hits + /con standing transitions — self-only lines; rides
             // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
             // complete-log backfill crawls idempotent.
@@ -14431,6 +14437,56 @@ function parseDirgeCast(line, selfName) {
   };
 }
 
+// ── ⚡ Necromancer mana share — "Subversion" twitches + Mind Wrack ────────────
+// Necros are mana batteries: their Subversion line converts the necro's own
+// (Lich-fed) mana into instant mana for a caster ("twitching"), and Mind Wrack
+// burns an enemy's mana with a group-mana recourse. None of this shows on the
+// damage meter, and it's only visible on the NECRO'S OWN log — bystanders just
+// see "<target> twitches." with no caster, spell, or amount. So this is a
+// caster-side ("You begin casting …") detector, like Feral Avatar / Dirge.
+//
+// We count cast-starts (matching the dirge / feral-avatar convention); a rare
+// fizzle/interrupt over-counts slightly, acceptable for a fun stat. The mana
+// gifted per twitch is fixed per spell (catalog effect SPA 15 base value),
+// carried in reagent_qty so /fun can sum "mana donated to casters". Mind Wrack
+// carries no fixed per-target number, so it's a separate count-only curio.
+const TWITCH_MANA = {
+  'rapacious subversion':  60,
+  'covetous subversion':  100,
+  'sedulous subversion':  150,
+};
+const NECRO_TWITCH_RX = /^\[(.+?)\]\s+You\s+begin\s+casting\s+((?:Rapacious|Covetous|Sedulous)\s+Subversion)\.?\s*$/i;
+const MIND_WRACK_RX   = /^\[(.+?)\]\s+You\s+begin\s+casting\s+(Mind\s+Wrack)\.?\s*$/i;
+function parseNecroManaShare(line, selfName) {
+  if (!selfName) return null;
+  let m = NECRO_TWITCH_RX.exec(line);
+  if (m) {
+    const spell = m[2].trim();
+    inferClassFromAbility(selfName, 'subversion');  // necro-exclusive twitch line
+    const ts = parseEqTimestamp(line);
+    return {
+      type:        'mana_twitch',
+      caster:      selfName,
+      target:      spell,                                  // store the spell tier for analysis
+      reagent_qty: TWITCH_MANA[spell.toLowerCase()] || 0,  // mana gifted to the caster
+      ts:          ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text:    line.slice(0, 200),
+    };
+  }
+  m = MIND_WRACK_RX.exec(line);
+  if (m) {
+    inferClassFromAbility(selfName, 'mind wrack');  // necro-exclusive
+    const ts = parseEqTimestamp(line);
+    return {
+      type:     'mind_wrack_cast',
+      caster:   selfName,
+      ts:       ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text: line.slice(0, 200),
+    };
+  }
+  return null;
+}
+
 // ── Detector history (manifest of when each detector landed) ────────────────
 // Drives the "your backfill is stale" UI. Each entry: the agent version that
 // FIRST extracted that detector. When a file's recorded backfill version is
@@ -14446,6 +14502,8 @@ function parseDirgeCast(line, selfName) {
 const DETECTOR_HISTORY = [
   // v3.0.62 — bard Dirge of *.
   { version: '3.0.62', name: 'dirge_cast',           label: 'Dirge of * casts' },
+  // v3.1.50 — necro Subversion twitches (mana donated) + Mind Wrack burn.
+  { version: '3.1.50', name: 'mana_twitch',          label: 'Necro mana twitches / Mind Wrack' },
   // The earlier detectors (Peopleslayer LD, Malthur provisions, Dragon Punch,
   // Feral Avatar, etc.) shipped before this manifest existed. They're left
   // out intentionally — a backfill from any 3.x version already covered them,
@@ -17700,6 +17758,8 @@ async function main() {
         if (dpEvt) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+        const twitchEvt = parseNecroManaShare(line, b.character);
+        if (twitchEvt) funEventBuffer.push(twitchEvt);
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
         // complete-log backfill crawls idempotent.
@@ -17959,6 +18019,8 @@ async function main() {
         if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
+        const twitchEvt = parseNecroManaShare(line, b.character);
+        if (twitchEvt && !_sourceExcluded) funEventBuffer.push(twitchEvt);
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Honors the per-character
         // exclude_from_stats opt-out like every other upload stream.
