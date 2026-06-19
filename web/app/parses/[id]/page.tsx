@@ -30,6 +30,27 @@ type PlayerRow  = {
 };
 type RawPlayer    = { name: string; damage: number; dps: number; duration: number; hasPets?: boolean; rank?: number };
 type RawDeath     = { name: string; ts: string; class?: string | null; riposteDeath?: boolean };
+// Per-defender tanking stats from the agent's EncounterBuilder — what the
+// tank's log saw incoming on themselves (and any other defenders in range).
+// Matched to the contributor by name to render the "took 47 hits for 12.4k,
+// avoided 18 (6 dodge / 3 parry / 2 riposte / 1 block / 2 miss)" line.
+type RawDefender = {
+  name: string;
+  hits?: number;
+  damageTaken?: number;
+  misses?: number;
+  dodges?: number;
+  parries?: number;
+  ripostes?: number;
+  blocks?: number;
+  invulns?: number;
+  ripostedFor?: number;
+  rampageHits?: number;
+  rampageDmg?: number;
+};
+// Damage-shield procs the tank's gear/spells dealt back to attackers across
+// the fight. Keyed by ability name; total is what we sum for the tank line.
+type DsReflect   = { count: number; total: number; min?: number; max?: number };
 type RawParse     = {
   bossName?: string;
   duration?: number;
@@ -39,6 +60,8 @@ type RawParse     = {
   deaths?: RawDeath[];
   // Healers vary in shape across agent versions; tolerate either an array or null.
   healers?: { name: string; total: number }[] | null;
+  defenders?:   RawDefender[];
+  ds_reflects?: Record<string, DsReflect>;
 };
 type Contribution = {
   id: string;
@@ -545,21 +568,96 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             <span>Tank perspective</span>
             <span className="text-dim text-xs">· uploaded by {tanks.length} tank class character{tanks.length === 1 ? '' : 's'}</span>
           </h3>
-          <ul className="text-xs space-y-1">
-            {tanks.map((t) => (
-              <li key={t.id} className="text-dim">
-                {t.contributor_character ? (
-                  <Link href={`/character/${encodeURIComponent(t.contributor_character)}`} className="text-text hover:text-blue hover:underline">
-                    {t.contributor_character}
-                  </Link>
-                ) : <span className="text-text">(anonymous)</span>}
-                <span> — </span>
-                <span>{(t.raw_parse?.players ?? []).length} players parsed, </span>
-                <span>{fmtDmg(t.raw_parse?.totalDamage ?? 0)} total</span>
-                <span className="mx-1 opacity-60">·</span>
-                {renderContribSource(t)}
-              </li>
-            ))}
+          <ul className="text-xs space-y-2">
+            {tanks.map((t) => {
+              // Per-tank incoming swings + DS payback. The agent ships defenders
+              // keyed by name (string match — uploader is normally listed) and
+              // ds_reflects keyed by ability. Both undefined for older agent
+              // versions, in which case we silently drop the extra lines and
+              // keep the original "X players parsed, Y total" summary.
+              const selfName = t.contributor_character || '';
+              const selfDef  = (t.raw_parse?.defenders ?? []).find(
+                d => d.name?.toLowerCase() === selfName.toLowerCase(),
+              );
+              const dsMap = t.raw_parse?.ds_reflects || {};
+              const dsEntries = Object.entries(dsMap)
+                .map(([name, v]) => ({ name, total: v?.total || 0, count: v?.count || 0 }))
+                .filter(e => e.total > 0)
+                .sort((a, b) => b.total - a.total);
+              const dsTotal = dsEntries.reduce((s, e) => s + e.total, 0);
+              const avoidanceBits: string[] = [];
+              if (selfDef) {
+                if (selfDef.dodges)   avoidanceBits.push(`${selfDef.dodges} dodge`);
+                if (selfDef.parries)  avoidanceBits.push(`${selfDef.parries} parry`);
+                if (selfDef.ripostes) avoidanceBits.push(`${selfDef.ripostes} riposte`);
+                if (selfDef.blocks)   avoidanceBits.push(`${selfDef.blocks} block`);
+                if (selfDef.invulns)  avoidanceBits.push(`${selfDef.invulns} invuln`);
+                if (selfDef.misses)   avoidanceBits.push(`${selfDef.misses} miss`);
+              }
+              const totalAvoid = avoidanceBits.length
+                ? (selfDef?.misses || 0) + (selfDef?.dodges || 0) + (selfDef?.parries || 0)
+                  + (selfDef?.ripostes || 0) + (selfDef?.blocks || 0) + (selfDef?.invulns || 0)
+                : 0;
+              return (
+                <li key={t.id} className="text-dim">
+                  <div>
+                    {t.contributor_character ? (
+                      <Link href={`/character/${encodeURIComponent(t.contributor_character)}`} className="text-text hover:text-blue hover:underline">
+                        {t.contributor_character}
+                      </Link>
+                    ) : <span className="text-text">(anonymous)</span>}
+                    <span> — </span>
+                    <span>{(t.raw_parse?.players ?? []).length} players parsed, </span>
+                    <span>{fmtDmg(t.raw_parse?.totalDamage ?? 0)} total</span>
+                    <span className="mx-1 opacity-60">·</span>
+                    {renderContribSource(t)}
+                  </div>
+                  {selfDef && (selfDef.hits || totalAvoid) ? (
+                    <div className="ml-3 text-[11px] mt-0.5">
+                      <span className="opacity-50">↳ </span>
+                      <span>took </span>
+                      <span className="text-text">{selfDef.hits || 0} hit{selfDef.hits === 1 ? '' : 's'}</span>
+                      <span> for </span>
+                      <span className="text-text">{fmtDmg(selfDef.damageTaken || 0)}</span>
+                      {totalAvoid > 0 && (
+                        <>
+                          <span> · avoided </span>
+                          <span className="text-text">{totalAvoid}</span>
+                          <span className="opacity-70"> ({avoidanceBits.join(' / ')})</span>
+                        </>
+                      )}
+                      {(selfDef.ripostedFor || 0) > 0 && (
+                        <span title="Damage the boss took from this tank's ripostes">
+                          {' · riposted back '}
+                          <span className="text-text">{fmtDmg(selfDef.ripostedFor || 0)}</span>
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+                  {dsTotal > 0 ? (
+                    <div className="ml-3 text-[11px] mt-0.5" title={dsEntries.map(e => `${e.name}: ${e.count} procs, ${e.total} dmg`).join('\n')}>
+                      <span className="opacity-50">↳ </span>
+                      <span>DS dealt </span>
+                      <span className="text-text">{fmtDmg(dsTotal)}</span>
+                      <span> back</span>
+                      {dsEntries.length > 0 && (
+                        <span className="opacity-70">
+                          {' ('}
+                          {dsEntries.slice(0, 3).map((e, i) => (
+                            <span key={e.name}>
+                              {i > 0 ? ' / ' : ''}
+                              {e.name} {fmtDmg(e.total)}
+                            </span>
+                          ))}
+                          {dsEntries.length > 3 ? ` / +${dsEntries.length - 3} more` : ''}
+                          {')'}
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

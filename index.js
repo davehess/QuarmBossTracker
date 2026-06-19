@@ -8524,6 +8524,27 @@ async function _handleAgentUpload(req, res) {
         // on parse cards as "27.1k (+10k healed)" for Complete-Healing bosses.
         // Undefined for older agents (<2.5.3) so it gracefully no-ops.
         npcHealedTotal: encounter.npc_healed_total || undefined,
+        // Tank-perspective payload — the agent has been collecting per-defender
+        // hits / damageTaken / misses / dodges / parries / ripostes / blocks /
+        // invulns / ripostedFor for a long time, and ds_reflects (per-spell
+        // count + total of damage shield procs against attackers). They flowed
+        // into the merged Discord card but were dropped from the per-tank
+        // contribution row, so /parses/[id]'s Tank perspective could only show
+        // "X players parsed, Y damage." Persist them so the page can show "took
+        // 47 hits for 12.4k, avoided 18 (6 dodge / 3 parry / …); DS dealt 8.7k
+        // back" per tank uploader. Undefined for older agents that didn't ship
+        // these fields — page handles missing data gracefully.
+        defenders:   Array.isArray(encounter.defenders) && encounter.defenders.length > 0
+                       ? encounter.defenders : undefined,
+        ds_reflects: encounter.ds_reflects && Object.keys(encounter.ds_reflects).length > 0
+                       ? encounter.ds_reflects : undefined,
+        // Deaths + healers — already referenced by /parses/[id] and merged
+        // Discord cards. Persisting them on contributions means the detail page
+        // doesn't have to wait for the merged card path to backfill.
+        deaths:      Array.isArray(encounter.deaths)  && encounter.deaths.length  > 0
+                       ? encounter.deaths  : undefined,
+        healers:     Array.isArray(encounter.healers) && encounter.healers.length > 0
+                       ? encounter.healers : undefined,
       };
 
       // Prefer the bossId from bosses.json match; fall back to slugified name lookup
