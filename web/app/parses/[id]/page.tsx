@@ -47,6 +47,13 @@ type RawDefender = {
   ripostedFor?: number;
   rampageHits?: number;
   rampageDmg?: number;
+  // First / last incoming-swing timestamp from the tank's log (epoch ms).
+  // Lets us label MT and PIVOT by handover TIME instead of damage share —
+  // someone who briefly pulled aggro and got smacked harder than the MT
+  // shouldn't read as the MT, but the share-based heuristic would tag them
+  // that way. Undefined on uploads from agents < 3.1.50.
+  firstAttackAt?: number;
+  lastAttackAt?: number;
 };
 // Damage-shield procs the tank's gear/spells dealt back to attackers across
 // the fight. Keyed by ability name; total is what we sum for the tank line.
@@ -566,30 +573,81 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
 
       {/* Tank perspective */}
       {tanks.length > 0 && (() => {
-        // Pre-compute the per-tank damageTaken share so we can label MT and
-        // PIVOT in the loop below. Each tank's own perspective on themselves
-        // is authoritative (they always see every hit they take); we don't
-        // try to merge across tanks' views since the answer can only get
-        // noisier. MT = the tank who took the most damage. PIVOT = a second
-        // tank who took ≥20% of MT's load — i.e. someone who genuinely
-        // picked it up for a meaningful chunk, not just got tagged once.
-        // We also tally the biggest possible bossMaxMelee across the tank
-        // uploads since they may not all observe the same peak hit.
-        type TankAgg = { id: string; name: string; damageTaken: number };
+        // MT / PIVOT detection. Prefer time-based (per agent v3.1.50+ which
+        // ships firstAttackAt / lastAttackAt per defender): the tank with the
+        // earliest firstAttackAt is the MT. PIVOT is any other tank whose
+        // first hit lands ≥5s AFTER the MT's first hit AND who absorbed a
+        // meaningful share — share is the secondary tank's damageTaken /
+        // MT's damageTaken. This correctly handles "DPS pulled aggro and got
+        // smacked harder for a brief stretch" — the DPS's firstAttackAt is
+        // AFTER the MT's, so they never get [MT]; if they only ate a few
+        // hits, they also miss the PIVOT threshold. Falls back to pure share
+        // when timestamps are absent (older agent uploads).
+        const encStartMs = enc.started_at ? Date.parse(enc.started_at) : 0;
+        type TankAgg = {
+          id: string; name: string;
+          damageTaken: number;
+          firstAttackAt: number | null;
+          lastAttackAt: number | null;
+        };
         const tankAggs: TankAgg[] = tanks
           .map(t => {
             const n = t.contributor_character || '';
             const d = (t.raw_parse?.defenders ?? []).find(
               dd => dd.name?.toLowerCase() === n.toLowerCase(),
             );
-            return { id: t.id, name: n, damageTaken: d?.damageTaken || 0 };
+            return {
+              id: t.id,
+              name: n,
+              damageTaken:   d?.damageTaken   || 0,
+              firstAttackAt: d?.firstAttackAt ?? null,
+              lastAttackAt:  d?.lastAttackAt  ?? null,
+            };
           })
-          .filter(a => a.name && a.damageTaken > 0)
-          .sort((a, b) => b.damageTaken - a.damageTaken);
-        const mtId    = tankAggs[0]?.id;
-        const mtDmg   = tankAggs[0]?.damageTaken || 0;
-        const pivotId = (tankAggs[1] && mtDmg > 0 && (tankAggs[1].damageTaken / mtDmg) >= 0.20)
-          ? tankAggs[1].id : null;
+          .filter(a => a.name && a.damageTaken > 0);
+
+        const haveTimestamps = tankAggs.some(a => a.firstAttackAt !== null);
+        // Authoritative ordering. By time when we have it; by damage share otherwise.
+        const ranked = [...tankAggs].sort((a, b) => {
+          if (haveTimestamps) {
+            const af = a.firstAttackAt ?? Number.POSITIVE_INFINITY;
+            const bf = b.firstAttackAt ?? Number.POSITIVE_INFINITY;
+            if (af !== bf) return af - bf;
+          }
+          return b.damageTaken - a.damageTaken;
+        });
+        const mtId  = ranked[0]?.id;
+        const mtDmg = ranked[0]?.damageTaken || 0;
+        const mtFirst = ranked[0]?.firstAttackAt ?? null;
+        // PIVOT — secondary tank who picked up AFTER the MT. With timestamps:
+        // any other tank whose firstAttackAt is ≥5s after MT's AND took ≥15%
+        // of MT's damage (or covers a ≥10s window). Without timestamps: the
+        // share-based heuristic from before (second place, ≥20% of MT).
+        const pivotId = (() => {
+          if (haveTimestamps && mtFirst !== null) {
+            for (const t of ranked.slice(1)) {
+              if (t.firstAttackAt === null) continue;
+              const lateBy = t.firstAttackAt - mtFirst;
+              if (lateBy < 5_000) continue;
+              const window = (t.lastAttackAt && t.firstAttackAt)
+                ? t.lastAttackAt - t.firstAttackAt : 0;
+              const share  = mtDmg > 0 ? t.damageTaken / mtDmg : 0;
+              if (share >= 0.15 || window >= 10_000) return t.id;
+            }
+            return null;
+          }
+          return (ranked[1] && mtDmg > 0 && (ranked[1].damageTaken / mtDmg) >= 0.20)
+            ? ranked[1].id : null;
+        })();
+        // Format mm:ss from the fight start. Used for tanking windows + the
+        // inline death timestamp. Negative offsets shouldn't happen in
+        // practice; clamp to 0 so a clock-skew event still reads sanely.
+        const fmtOffset = (absMs: number | null | undefined) => {
+          if (!absMs || !encStartMs) return null;
+          const sec = Math.max(0, Math.round((absMs - encStartMs) / 1000));
+          const m = Math.floor(sec / 60), s = sec % 60;
+          return `${m}:${String(s).padStart(2, '0')}`;
+        };
         return (
         <section className="bg-panel border border-border rounded-lg p-4">
           <h3 className="text-sm text-blue mb-2 flex items-center gap-2">
@@ -641,11 +699,23 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                        ?? Math.max(...tanks.map(o => o.raw_parse?.bossMaxMelee || 0), 0);
               const invulnAvoided = (selfDef?.invulns || 0) * bmm;
               // Deaths this tank suffered in this fight. `deaths` is already
-              // merged + deduped above; one 💀 per occurrence so a 3-death
-              // wipe-and-rez run reads as 💀💀💀.
-              const tankDeaths = selfName
-                ? deaths.filter(d => d.name?.toLowerCase() === selfName.toLowerCase()).length
-                : 0;
+              // merged + deduped above. We attach the per-death offset so we
+              // can label "☠️ at 1:38" inline — useful for the "did they die
+              // during a rampage / right after handover" question.
+              const tankDeathRows = selfName
+                ? deaths.filter(d => d.name?.toLowerCase() === selfName.toLowerCase())
+                : [];
+              const tankDeaths = tankDeathRows.length;
+              const tankDeathOffsets = tankDeathRows
+                .map(d => fmtOffset(Date.parse(d.ts)))
+                .filter((x): x is string => !!x);
+              // Tanking window — first → last incoming swing, MM:SS from
+              // fight start. We render this even when the tank isn't MT/PIVOT
+              // because it answers the question "when were they actually
+              // being attacked." Falls back to undefined for older agents.
+              const windowFrom = fmtOffset(selfDef?.firstAttackAt);
+              const windowTo   = fmtOffset(selfDef?.lastAttackAt);
+              const windowStr  = (windowFrom && windowTo) ? `${windowFrom}–${windowTo}` : null;
               // Role tag — [MT] for top damageTaken, [PIVOT] for a meaningful
               // secondary. [ramp] when this tank ate a tagged rampage hit.
               // Tags only render when we have the underlying data — older
@@ -681,7 +751,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                     )}
                     {tankDeaths > 0 && (
                       <span
-                        title={`${tankDeaths} death${tankDeaths === 1 ? '' : 's'} during this fight.`}
+                        title={
+                          tankDeathOffsets.length > 0
+                            ? `Died at ${tankDeathOffsets.join(', ')}.`
+                            : `${tankDeaths} death${tankDeaths === 1 ? '' : 's'} during this fight.`
+                        }
                         className="text-red"
                         aria-label={`died ${tankDeaths} time${tankDeaths === 1 ? '' : 's'}`}
                       >
@@ -697,6 +771,15 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                   {selfDef && (selfDef.hits || totalAvoid) ? (
                     <div className="ml-3 text-[11px] mt-0.5">
                       <span className="opacity-50">↳ </span>
+                      {windowStr && (
+                        <span
+                          className="text-text"
+                          title="Time window the boss was actively swinging at this tank, from fight start. Helps see the handover: MT tanked 0:00–1:38, PIVOT picked up 1:39–end."
+                        >
+                          {windowStr}
+                          <span className="opacity-60"> · </span>
+                        </span>
+                      )}
                       <span>took </span>
                       <span className="text-text">{selfDef.hits || 0} hit{selfDef.hits === 1 ? '' : 's'}</span>
                       <span> for </span>

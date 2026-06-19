@@ -3006,7 +3006,7 @@ class EncounterBuilder {
     this._pendingDireCharm = null;
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
-  _bumpDefender(name, key, amount) {
+  _bumpDefender(name, key, amount, tsMs) {
     if (!name) return;
     if (!this.defenderStats.has(name)) {
       this.defenderStats.set(name, {
@@ -3017,6 +3017,17 @@ class EncounterBuilder {
     }
     const s = this.defenderStats.get(name);
     s[key] = (s[key] || 0) + (amount || 1);
+    // First/last incoming-swing timestamp — lets /parses/[id] tell MT from
+    // PIVOT by handover time (not just damage share, which fires the [MT]
+    // chip on the wrong tank when a DPS pulls aggro and gets smacked harder
+    // for a brief stretch). Only stamp when the caller passes tsMs — that's
+    // every real swing-attempt bump (hits, rampage hits, every avoidance);
+    // bookkeeping bumps like ripostedFor skip it on purpose so the window
+    // bounds stay clean.
+    if (tsMs) {
+      if (!s.firstAttackAt) s.firstAttackAt = tsMs;
+      if (!s.lastAttackAt || tsMs > s.lastAttackAt) s.lastAttackAt = tsMs;
+    }
 
     // Mirror to stats.sessionDefenders LIVE so the dashboard reflects damage
     // taken even when an encounter doesn't end in a kill. ONLY for confirmed
@@ -3603,7 +3614,7 @@ class EncounterBuilder {
       this.lastEvent = event.ts;
       if (event.defender) {
         const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
-        this._bumpDefender(def, 'rampageHits', 1);
+        this._bumpDefender(def, 'rampageHits', 1, Date.parse(event.ts) || Date.now());
         // Callout: announce who's taking the rampage (deduped per-target so a
         // multi-hit rampage / multi-box logs don't spam it). Silent builders
         // (opt-in backfill replays) must NOT speak old rampages.
@@ -3963,11 +3974,12 @@ class EncounterBuilder {
     // can compare incoming damage across parsers cleanly.
     if (event.type === 'damage' && event.defender) {
       const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
-      this._bumpDefender(def, 'hits',        1);
-      this._bumpDefender(def, 'damageTaken', event.amount || 0);
+      const ts = Date.parse(event.ts) || Date.now();
+      this._bumpDefender(def, 'hits',        1, ts);
+      this._bumpDefender(def, 'damageTaken', event.amount || 0, ts);
       if (event.isRampage) {
-        this._bumpDefender(def, 'rampageHits', 1);
-        this._bumpDefender(def, 'rampageDmg',  event.amount || 0);
+        this._bumpDefender(def, 'rampageHits', 1, ts);
+        this._bumpDefender(def, 'rampageDmg',  event.amount || 0, ts);
       }
     }
     if (event.type === 'avoid' && event.defender) {
@@ -3980,7 +3992,7 @@ class EncounterBuilder {
                 : k === 'block' ? 'blocks'
                 : k === 'invulnerable' ? 'invulns'
                 : null;
-      if (col) this._bumpDefender(def, col, 1);
+      if (col) this._bumpDefender(def, col, 1, Date.parse(event.ts) || Date.now());
 
       // On a riposte, the defender is about to counter-attack the original attacker.
       // Track that so we can credit the next damage event (def → attacker) as
