@@ -8545,6 +8545,11 @@ async function _handleAgentUpload(req, res) {
                        ? encounter.deaths  : undefined,
         healers:     Array.isArray(encounter.healers) && encounter.healers.length > 0
                        ? encounter.healers : undefined,
+        // Boss's largest single hit this fight — web multiplies by each tank's
+        // invulns count to estimate damage absorbed by Divine Aura / Holy
+        // Aegis / etc. Same calc the agent's dashboard Tanks tab uses.
+        bossMaxMelee: Number.isFinite(encounter.boss_max_melee) && encounter.boss_max_melee > 0
+                       ? encounter.boss_max_melee : undefined,
       };
 
       // Prefer the bossId from bosses.json match; fall back to slugified name lookup

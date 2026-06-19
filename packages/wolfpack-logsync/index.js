@@ -4553,6 +4553,11 @@ class EncounterBuilder {
         // encounter_combat_rollup and stamps contributions.has_ability_detail.
         // Absent on older agents → rollup tables stay empty for those uploads.
         rollup:      _rollup,
+        // Boss's largest single-hit damage this fight. The Tank perspective
+        // panel multiplies it by each tank's `invulns` to estimate damage
+        // their invulnerability windows absorbed. Same value the dashboard
+        // Tanks tab uses — `invulnAvoidedDmg = invulns × bossMaxMelee`.
+        boss_max_melee: this.bossMaxMelee > 0 ? this.bossMaxMelee : undefined,
         events:      this.events,
       },
     };

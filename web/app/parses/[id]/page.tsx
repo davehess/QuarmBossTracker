@@ -62,6 +62,10 @@ type RawParse     = {
   healers?: { name: string; total: number }[] | null;
   defenders?:   RawDefender[];
   ds_reflects?: Record<string, DsReflect>;
+  // Largest single hit the boss landed this fight — multiplied by each tank's
+  // invulns count to estimate damage absorbed by Divine Aura / Holy Aegis /
+  // similar. Undefined for fights uploaded by older agents.
+  bossMaxMelee?: number;
 };
 type Contribution = {
   id: string;
@@ -561,7 +565,32 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       )}
 
       {/* Tank perspective */}
-      {tanks.length > 0 && (
+      {tanks.length > 0 && (() => {
+        // Pre-compute the per-tank damageTaken share so we can label MT and
+        // PIVOT in the loop below. Each tank's own perspective on themselves
+        // is authoritative (they always see every hit they take); we don't
+        // try to merge across tanks' views since the answer can only get
+        // noisier. MT = the tank who took the most damage. PIVOT = a second
+        // tank who took ≥20% of MT's load — i.e. someone who genuinely
+        // picked it up for a meaningful chunk, not just got tagged once.
+        // We also tally the biggest possible bossMaxMelee across the tank
+        // uploads since they may not all observe the same peak hit.
+        type TankAgg = { id: string; name: string; damageTaken: number };
+        const tankAggs: TankAgg[] = tanks
+          .map(t => {
+            const n = t.contributor_character || '';
+            const d = (t.raw_parse?.defenders ?? []).find(
+              dd => dd.name?.toLowerCase() === n.toLowerCase(),
+            );
+            return { id: t.id, name: n, damageTaken: d?.damageTaken || 0 };
+          })
+          .filter(a => a.name && a.damageTaken > 0)
+          .sort((a, b) => b.damageTaken - a.damageTaken);
+        const mtId    = tankAggs[0]?.id;
+        const mtDmg   = tankAggs[0]?.damageTaken || 0;
+        const pivotId = (tankAggs[1] && mtDmg > 0 && (tankAggs[1].damageTaken / mtDmg) >= 0.20)
+          ? tankAggs[1].id : null;
+        return (
         <section className="bg-panel border border-border rounded-lg p-4">
           <h3 className="text-sm text-blue mb-2 flex items-center gap-2">
             <span aria-hidden>🛡️</span>
@@ -598,16 +627,69 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                 ? (selfDef?.misses || 0) + (selfDef?.dodges || 0) + (selfDef?.parries || 0)
                   + (selfDef?.ripostes || 0) + (selfDef?.blocks || 0) + (selfDef?.invulns || 0)
                 : 0;
+              // Boss accuracy against this tank — hits / (hits + every form of
+              // avoidance). Shown only when there are enough attempts (≥20) to
+              // make the percentage meaningful — for a 3-swing tag, "33%" is
+              // statistical noise.
+              const attempts = (selfDef?.hits || 0) + totalAvoid;
+              const accuracy = attempts >= 20 ? Math.round(((selfDef?.hits || 0) / attempts) * 100) : null;
+              // Invuln-avoided damage estimate. The agent doesn't ship this
+              // per-defender — same formula it uses in the dashboard Tanks
+              // tab: invulns × bossMaxMelee. Falls back to the merged-card
+              // bossMaxMelee if this contribution didn't carry one.
+              const bmm = t.raw_parse?.bossMaxMelee
+                       ?? Math.max(...tanks.map(o => o.raw_parse?.bossMaxMelee || 0), 0);
+              const invulnAvoided = (selfDef?.invulns || 0) * bmm;
+              // Deaths this tank suffered in this fight. `deaths` is already
+              // merged + deduped above; one 💀 per occurrence so a 3-death
+              // wipe-and-rez run reads as 💀💀💀.
+              const tankDeaths = selfName
+                ? deaths.filter(d => d.name?.toLowerCase() === selfName.toLowerCase()).length
+                : 0;
+              // Role tag — [MT] for top damageTaken, [PIVOT] for a meaningful
+              // secondary. [ramp] when this tank ate a tagged rampage hit.
+              // Tags only render when we have the underlying data — older
+              // agents pass through without any tag noise.
+              const isMt    = t.id === mtId    && (selfDef?.damageTaken || 0) > 0;
+              const isPivot = t.id === pivotId && (selfDef?.damageTaken || 0) > 0;
+              const isRamp  = (selfDef?.rampageHits || 0) > 0;
               return (
                 <li key={t.id} className="text-dim">
-                  <div>
+                  <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
                     {t.contributor_character ? (
                       <Link href={`/character/${encodeURIComponent(t.contributor_character)}`} className="text-text hover:text-blue hover:underline">
                         {t.contributor_character}
                       </Link>
                     ) : <span className="text-text">(anonymous)</span>}
-                    <span> — </span>
-                    <span>{(t.raw_parse?.players ?? []).length} players parsed, </span>
+                    {isMt && (
+                      <span
+                        title={`Took the most incoming damage (${fmtDmg(selfDef!.damageTaken!)}) — likely the main tank for this fight.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-blue/20 text-blue border-blue/40"
+                      >MT</span>
+                    )}
+                    {isPivot && (
+                      <span
+                        title={`Took ${Math.round((selfDef!.damageTaken! / mtDmg) * 100)}% of the MT's incoming damage — picked up a meaningful chunk of the fight.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-orange/20 text-orange border-orange/40"
+                      >PIVOT</span>
+                    )}
+                    {isRamp && (
+                      <span
+                        title={`Ate ${selfDef!.rampageHits} rampage hit${selfDef!.rampageHits === 1 ? '' : 's'} for ${fmtDmg(selfDef!.rampageDmg || 0)}.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-red/20 text-red border-red/40"
+                      >ramp</span>
+                    )}
+                    {tankDeaths > 0 && (
+                      <span
+                        title={`${tankDeaths} death${tankDeaths === 1 ? '' : 's'} during this fight.`}
+                        className="text-red"
+                        aria-label={`died ${tankDeaths} time${tankDeaths === 1 ? '' : 's'}`}
+                      >
+                        {'☠️'.repeat(Math.min(tankDeaths, 10))}
+                      </span>
+                    )}
+                    <span>—</span>
+                    <span>{(t.raw_parse?.players ?? []).length} players parsed,</span>
                     <span>{fmtDmg(t.raw_parse?.totalDamage ?? 0)} total</span>
                     <span className="mx-1 opacity-60">·</span>
                     {renderContribSource(t)}
@@ -619,12 +701,24 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       <span className="text-text">{selfDef.hits || 0} hit{selfDef.hits === 1 ? '' : 's'}</span>
                       <span> for </span>
                       <span className="text-text">{fmtDmg(selfDef.damageTaken || 0)}</span>
+                      {accuracy !== null && (
+                        <span className="opacity-60" title={`Boss connected on ${selfDef.hits || 0} of ${attempts} swings against this tank`}>
+                          {' ('}{accuracy}{'% accuracy)'}
+                        </span>
+                      )}
                       {totalAvoid > 0 && (
                         <>
                           <span> · avoided </span>
                           <span className="text-text">{totalAvoid}</span>
                           <span className="opacity-70"> ({avoidanceBits.join(' / ')})</span>
                         </>
+                      )}
+                      {invulnAvoided > 0 && (
+                        <span title={`Estimated damage absorbed by ${selfDef.invulns} invulnerability tick${selfDef.invulns === 1 ? '' : 's'} (invulns × boss's biggest single hit, ${fmtDmg(bmm)}).`}>
+                          {' · ~'}
+                          <span className="text-text">{fmtDmg(invulnAvoided)}</span>
+                          <span> absorbed</span>
+                        </span>
                       )}
                       {(selfDef.ripostedFor || 0) > 0 && (
                         <span title="Damage the boss took from this tank's ripostes">
@@ -660,7 +754,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             })}
           </ul>
         </section>
-      )}
+        );
+      })()}
 
       {/* Contributors */}
       <section className="bg-panel border border-border rounded-lg p-4">
