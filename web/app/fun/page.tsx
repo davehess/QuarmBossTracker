@@ -428,6 +428,61 @@ async function loadCounters() {
     void err;
   }
 
+  // ── ⚡ Mana donated to casters — necromancer "Subversion" twitches ─────────
+  // Each twitch lands as a `mana_twitch` fun_event with reagent_qty = the mana
+  // gifted to the caster (60 Rapacious / 100 Covetous / 150 Sedulous). Necros
+  // are mana batteries — this effort never shows on the damage meter and is
+  // only visible on the necro's OWN log, so it needs them running the agent.
+  try {
+    const { data: twRows } = await sb
+      .from('fun_events')
+      .select('caster, reagent_qty')
+      .eq('event_type', 'mana_twitch');
+    const rows = (twRows ?? []) as { caster: string | null; reagent_qty: number | null }[];
+    let totalMana = 0;
+    const byCaster = new Map<string, number>();
+    for (const r of rows) {
+      const mana = Number(r.reagent_qty) || 0;
+      totalMana += mana;
+      const k = r.caster || 'unknown';
+      byCaster.set(k, (byCaster.get(k) ?? 0) + mana);
+    }
+    const top = [...byCaster.entries()].sort((a, b) => b[1] - a[1])[0];
+    counters.push({
+      label: 'Mana donated to casters',
+      emoji: '⚡',
+      value: totalMana,
+      sub: rows.length > 0
+        ? `across ${rows.length.toLocaleString()} twitches${top ? ` · top battery: ${top[0]} (${top[1].toLocaleString()} mana)` : ''}`
+        : 'no twitches captured yet — agent v3.1.48+ ticks this up from each necro "Subversion" cast (needs the necro running the agent)',
+    });
+  } catch (err) { void err; }
+
+  // ── 🧠 Mind Wrack — enemy mana burned ─────────────────────────────────────
+  // Count-only curio (no fixed per-cast mana number). One `mind_wrack_cast`
+  // fun_event per necro cast; grouped by caster for the top burner.
+  try {
+    const { data: mwRows, count: mwTotal } = await sb
+      .from('fun_events')
+      .select('caster', { count: 'exact' })
+      .eq('event_type', 'mind_wrack_cast');
+    const tally = new Map<string, number>();
+    for (const r of (mwRows ?? []) as { caster: string | null }[]) {
+      const k = r.caster || 'unknown';
+      tally.set(k, (tally.get(k) ?? 0) + 1);
+    }
+    const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
+    const total = mwTotal ?? 0;
+    counters.push({
+      label: 'Mind Wracks — mana burned off mobs',
+      emoji: '🧠',
+      value: total,
+      sub: total > 0
+        ? (top ? `top burner: ${top[0]} ×${top[1]}` : undefined)
+        : 'no Mind Wracks captured yet — agent v3.1.48+ ticks this up (needs the necro running the agent)',
+    });
+  } catch (err) { void err; }
+
   return { counters, kyinen: { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone } };
 }
 
