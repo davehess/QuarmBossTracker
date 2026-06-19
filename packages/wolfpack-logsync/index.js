@@ -13128,6 +13128,8 @@ function runOptinBackfill(files, opts = {}) {
             // Wrack. Self-cast only (the spell name is invisible to bystanders).
             const twitchEvt = parseNecroManaShare(line, f.character);
             if (twitchEvt) funEventBuffer.push(twitchEvt);
+            const twitchRecvEvt = parseNecroManaReceived(line, f.character);
+            if (twitchRecvEvt) funEventBuffer.push(twitchRecvEvt);
             // Faction hits + /con standing transitions — self-only lines; rides
             // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
             // complete-log backfill crawls idempotent.
@@ -14487,6 +14489,31 @@ function parseNecroManaShare(line, selfName) {
   return null;
 }
 
+// ── Necro mana share, RECIPIENT side ──────────────────────────────────────────
+// Complements parseNecroManaShare (caster-side, exact, necro-only) with the
+// view from everyone the necro feeds — so we still capture the effort when the
+// necro ISN'T running the agent, as long as the casters/groupmates are (the
+// Malthur dual-detector pattern). The recipient line names neither the caster
+// nor the amount, so caster = the RECIPIENT (their own character) and there's
+// no reagent_qty (the /fun layer estimates from the per-tier mana table).
+//   • Subversion twitch landing : "A foreign surge of mana refreshes your mind."
+//   • Mind Wrack group recourse : "You feel foreign mana strengthen your mind."
+const TWITCH_RECV_RX     = /\ba foreign surge of mana refreshes your mind\b/i;
+const MINDWRACK_RECV_RX  = /\byou feel foreign mana strengthen your mind\b/i;
+function parseNecroManaReceived(line, character) {
+  let type = null;
+  if (TWITCH_RECV_RX.test(line))         type = 'mana_twitch_received';
+  else if (MINDWRACK_RECV_RX.test(line)) type = 'mind_wrack_recourse';
+  if (!type) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type,
+    caster:   character || null,   // the recipient — the line names no caster
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
 // ── Detector history (manifest of when each detector landed) ────────────────
 // Drives the "your backfill is stale" UI. Each entry: the agent version that
 // FIRST extracted that detector. When a file's recorded backfill version is
@@ -14504,6 +14531,8 @@ const DETECTOR_HISTORY = [
   { version: '3.0.62', name: 'dirge_cast',           label: 'Dirge of * casts' },
   // v3.1.50 — necro Subversion twitches (mana donated) + Mind Wrack burn.
   { version: '3.1.50', name: 'mana_twitch',          label: 'Necro mana twitches / Mind Wrack' },
+  // v3.1.51 — recipient-side capture (works even if the necro isn't on the agent).
+  { version: '3.1.51', name: 'mana_twitch_received', label: 'Necro mana share (recipient side)' },
   // The earlier detectors (Peopleslayer LD, Malthur provisions, Dragon Punch,
   // Feral Avatar, etc.) shipped before this manifest existed. They're left
   // out intentionally — a backfill from any 3.x version already covered them,
@@ -17760,6 +17789,8 @@ async function main() {
         if (dirgeEvt) funEventBuffer.push(dirgeEvt);
         const twitchEvt = parseNecroManaShare(line, b.character);
         if (twitchEvt) funEventBuffer.push(twitchEvt);
+        const twitchRecvEvt = parseNecroManaReceived(line, b.character);
+        if (twitchRecvEvt) funEventBuffer.push(twitchRecvEvt);
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
         // complete-log backfill crawls idempotent.
@@ -18021,6 +18052,8 @@ async function main() {
         if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
         const twitchEvt = parseNecroManaShare(line, b.character);
         if (twitchEvt && !_sourceExcluded) funEventBuffer.push(twitchEvt);
+        const twitchRecvEvt = parseNecroManaReceived(line, b.character);
+        if (twitchRecvEvt && !_sourceExcluded) funEventBuffer.push(twitchRecvEvt);
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Honors the per-character
         // exclude_from_stats opt-out like every other upload stream.
