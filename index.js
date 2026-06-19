@@ -4637,15 +4637,23 @@ async function _handleAgentBuffCasts(req, res) {
   }
 
   let written = 0;
+  // The `on_conflict=` PostgREST parameter requires a NON-partial unique
+  // constraint or index — but buff_casts dedups via PARTIAL uniques split
+  // on (spell_id <> 0) vs (spell_id = 0), which PostgREST can't reference
+  // by column list. The old `upsert(...)` 400'd on every call (Supabase
+  // egress culprit #3: error responses × retry storm + the silent-data-loss
+  // bug). insertIgnoreDuplicates skips on_conflict, sends
+  // `Prefer: resolution=ignore-duplicates`, and lets the partial indexes
+  // catch dups server-side as a normal ON CONFLICT DO NOTHING.
   if (resolved.length) {
-    const r = await supabase.upsert('buff_casts', resolved, 'guild_id,target,spell_id,cast_at')
-      .catch(err => { console.warn('[buff-casts] resolved upsert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length;
+    const r = await supabase.insertIgnoreDuplicates('buff_casts', resolved)
+      .catch(err => { console.warn('[buff-casts] resolved insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length; else if (r !== null) written += resolved.length;
   }
   if (ambiguous.length) {
-    const r = await supabase.upsert('buff_casts', ambiguous, 'guild_id,target,landing_text,cast_at')
-      .catch(err => { console.warn('[buff-casts] ambiguous upsert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length;
+    const r = await supabase.insertIgnoreDuplicates('buff_casts', ambiguous)
+      .catch(err => { console.warn('[buff-casts] ambiguous insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length; else if (r !== null) written += ambiguous.length;
   }
   _trackUpload({ endpoint: 'buff_cast', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
@@ -5539,9 +5547,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
         `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
+      // limit=400 (was 3000) — the buff-queue consumer only needs the most
+      // recent landings per target, and a 3h window with 30 active raiders
+      // peaks at ~300-400 distinct relevant rows. 3000 was shipping ~2 MB
+      // per call across every raid Mimic on ~3s cadence — Supabase egress
+      // culprit #2.
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=3000`),
+        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=400`),
     ]);
 
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.

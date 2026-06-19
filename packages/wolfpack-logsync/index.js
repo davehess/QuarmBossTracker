@@ -14233,7 +14233,11 @@ function startChatRelay() {
     if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) return;
     if (et.flushedAt) return; // fight already wrapped up
     const now = Date.now();
-    if (now - _lastSnapAt < 14_000) return; // safety: never faster than ~15s
+    // 29s safety floor (effectively a 30s cadence). Was 14s/15s — a roomful
+    // of Mimics pushing every 15s during a fight added up to ~120 inserts/min
+    // into encounter_threat_snapshots, each one a 1-2 KB response from
+    // Supabase. 30s halves that load and is still useful tank-threat detail.
+    if (now - _lastSnapAt < 29_000) return;
     _lastSnapAt = now;
     // pick the first watched character as the uploader; fall back to "?".
     let uploader = "?";
@@ -14250,7 +14254,7 @@ function startChatRelay() {
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
-  }, 15_000);
+  }, 30_000);
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -16170,7 +16174,12 @@ function fetchTargetCasts(name) {
 // landed on it. Merged with the LOCAL _buffLandingsByTarget for display.
 const _targetBuffsByName  = new Map();   // nameLower → { at, buffs }
 const _targetBuffsInflight = new Set();
-const TARGET_BUFFS_TTL_MS = 5000;
+// 12s — long enough that a roomful of Mimics doesn't multiplicatively hammer
+// the bot's /target-buffs relay (the same query firing every 2-3s across
+// every client visiting the same target was Supabase egress culprit #1).
+// Target Info still feels live: 12s of cross-client buff visibility is fine
+// for the "did anyone else just land Tash on this mob" question.
+const TARGET_BUFFS_TTL_MS = 12000;
 function fetchTargetBuffs(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -16208,7 +16217,12 @@ function fetchTargetBuffs(name) {
 // feels live (~3-5s between full refreshes).
 const _buffQueueCache = new Map();   // classLower|character → { at, payload }
 const _buffQueueInflight = new Set();
-const BUFF_QUEUE_TTL_MS = 3000;
+// 8s (was 3s). The overlay polls every 1.5s; with the 3s TTL roughly every
+// other poll missed the cache and triggered a fresh bot fetch (which then
+// pulled 3000 buff_casts rows). 8s aligns with the overlay polling cadence
+// so each overlay tick at most refreshes the queue once per ~8s; the queue
+// content doesn't change faster than that in practice.
+const BUFF_QUEUE_TTL_MS = 8000;
 function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
