@@ -3198,7 +3198,7 @@ class EncounterBuilder {
     }
   }
 
-  _bumpHealer(healer, target, amount) {
+  _bumpHealer(healer, target, amount, tsMs) {
     if (!healer || !amount) return;
     if (!this.healerStats.has(healer)) {
       this.healerStats.set(healer, { healed: 0, ticks: 0, targets: new Set() });
@@ -3207,6 +3207,14 @@ class EncounterBuilder {
     s.healed += amount;
     s.ticks  += 1;
     if (target) s.targets.add(target);
+    // First/last heal timestamp — lets /parses/[id] show the heal window
+    // ("Carol healed 0:00–2:54") parallel to the tank window. Optional
+    // — bookkeeping calls that don't represent a real heal tick can skip
+    // tsMs and the window just won't tighten.
+    if (tsMs) {
+      if (!s.firstHealAt) s.firstHealAt = tsMs;
+      if (!s.lastHealAt || tsMs > s.lastHealAt) s.lastHealAt = tsMs;
+    }
   }
   // Commit the buffered DS attribution to stats.damageShield. Called when
   // the flavor line arrives (with the real spell name retagged onto the
@@ -4105,7 +4113,7 @@ class EncounterBuilder {
 
     if (event.type === 'heal' && (event.attacker || this.character)) {
       const healer = event.attacker || this.character;
-      this._bumpHealer(healer, event.defender, event.amount || 0);
+      this._bumpHealer(healer, event.defender, event.amount || 0, Date.parse(event.ts) || Date.now());
       // Live threat: heals generate hate roughly 0.5 per heal point in Luclin-era
       if (healer && event.amount > 0 && (!/\s/.test(healer) || healer === this.character)) {
         if (!this.threatBy.has(healer)) {
@@ -4513,7 +4521,9 @@ class EncounterBuilder {
         // Lets the server build healer leaderboards (CH-chain visibility especially).
         healers:     this.healerStats.size > 0
           ? [...this.healerStats.entries()].map(([name, s]) => ({
-              name, healed: s.healed, ticks: s.ticks, targets: [...s.targets]
+              name, healed: s.healed, ticks: s.ticks, targets: [...s.targets],
+              firstHealAt: s.firstHealAt || undefined,
+              lastHealAt:  s.lastHealAt  || undefined,
             }))
           : undefined,
         // Player deaths in this encounter.

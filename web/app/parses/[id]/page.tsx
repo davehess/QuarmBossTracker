@@ -58,6 +58,21 @@ type RawDefender = {
 // Damage-shield procs the tank's gear/spells dealt back to attackers across
 // the fight. Keyed by ability name; total is what we sum for the tank line.
 type DsReflect   = { count: number; total: number; min?: number; max?: number };
+// Per-healer aggregate from the agent — used to build the Heal perspective
+// panel, mirror of Tank perspective. firstHealAt / lastHealAt land on agent
+// v3.1.51+; older uploads expose only the totals.
+type RawHealer    = {
+  name: string;
+  healed?: number;
+  ticks?: number;
+  targets?: string[];
+  firstHealAt?: number;
+  lastHealAt?: number;
+};
+// CH-chain gap analysis on the primary tank — agent fills in when it saw at
+// least one healing gap > 8s. `maxGapMs` is the longest dead air, surfaced
+// inline so the heal panel can say "max 14s gap — missed ~2 CH ticks."
+type HealGaps     = { tank: string; count: number; maxGapMs: number };
 type RawParse     = {
   bossName?: string;
   duration?: number;
@@ -65,10 +80,10 @@ type RawParse     = {
   totalDps?: number;
   players?: RawPlayer[];
   deaths?: RawDeath[];
-  // Healers vary in shape across agent versions; tolerate either an array or null.
-  healers?: { name: string; total: number }[] | null;
+  healers?: RawHealer[] | null;
   defenders?:   RawDefender[];
   ds_reflects?: Record<string, DsReflect>;
+  healGaps?:    HealGaps;
   // Largest single hit the boss landed this fight — multiplied by each tank's
   // invulns count to estimate damage absorbed by Divine Aura / Holy Aegis /
   // similar. Undefined for fights uploaded by older agents.
@@ -121,6 +136,11 @@ type EncounterDetail = {
 type WhoObs = { character: string; class: string | null; level: number | null };
 
 const TANK_CLASSES = new Set(['Warrior', 'Paladin', 'Shadow Knight']);
+// Heal-capable classes for the Heal perspective panel. Paladin double-shows
+// (also tags as a tank) — Knights heal as well, and the symmetry is what we
+// want. Hybrids stay included so a Beastlord/Ranger CH contributor isn't
+// silently dropped from the panel.
+const HEAL_CLASSES = new Set(['Cleric', 'Druid', 'Shaman', 'Paladin', 'Ranger', 'Beastlord']);
 
 // EQEmu names scripted/event mobs with a leading '#' and underscores
 // ("#Grieg_Veneficus", "Lord_Inquisitor_Seru"). Clean those for display so
@@ -323,6 +343,12 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const tanks = contribs.filter(c => {
     const who = c.contributor_character ? whoMap.get(c.contributor_character.toLowerCase()) : null;
     return who?.class && TANK_CLASSES.has(who.class);
+  });
+  // Heal perspective: same logic but heal-capable classes. Paladins land in
+  // both lists by design — they tank AND CH chain.
+  const healers = contribs.filter(c => {
+    const who = c.contributor_character ? whoMap.get(c.contributor_character.toLowerCase()) : null;
+    return who?.class && HEAL_CLASSES.has(who.class);
   });
 
   // Inline renderer for "what agent uploaded this and was it current at the time?"
@@ -829,6 +855,154 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                           {dsEntries.length > 3 ? ` / +${dsEntries.length - 3} more` : ''}
                           {')'}
                         </span>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+        );
+      })()}
+
+      {/* Heal perspective — mirror of Tank perspective. One row per heal-class
+          contributor; their own healers[] entry (matched by name) drives the
+          ↳ summary line. [MAIN HEAL] is the healer with the highest `healed`
+          total; [OFF HEAL] is a secondary contributor with ≥20% of MAIN's
+          output. Older agents that didn't ship firstHealAt/lastHealAt still
+          render the totals + targets cleanly; the inline heal window just
+          doesn't appear. */}
+      {healers.length > 0 && (() => {
+        const encStartMs = enc.started_at ? Date.parse(enc.started_at) : 0;
+        const fmtOffset = (absMs: number | null | undefined) => {
+          if (!absMs || !encStartMs) return null;
+          const sec = Math.max(0, Math.round((absMs - encStartMs) / 1000));
+          const m = Math.floor(sec / 60), s = sec % 60;
+          return `${m}:${String(s).padStart(2, '0')}`;
+        };
+        type HealAgg = { id: string; name: string; healed: number };
+        const healAggs: HealAgg[] = healers
+          .map(h => {
+            const n = h.contributor_character || '';
+            const entry = (h.raw_parse?.healers ?? []).find(
+              hh => hh.name?.toLowerCase() === n.toLowerCase(),
+            );
+            return { id: h.id, name: n, healed: entry?.healed || 0 };
+          })
+          .filter(a => a.name && a.healed > 0)
+          .sort((a, b) => b.healed - a.healed);
+        const mainId    = healAggs[0]?.id;
+        const mainTotal = healAggs[0]?.healed || 0;
+        const offIds    = new Set<string>(
+          healAggs.slice(1).filter(a => mainTotal > 0 && a.healed / mainTotal >= 0.20).map(a => a.id),
+        );
+        // CH-chain gap signal — surface once at the top if any contribution
+        // saw a meaningful gap on the tank. We don't try to attribute it to
+        // a specific healer (the agent doesn't either); a gap means "the
+        // chain dropped" and that's a raid-wide observation.
+        const chainGap = healers
+          .map(h => h.raw_parse?.healGaps)
+          .filter((g): g is HealGaps => !!g && g.maxGapMs >= 8000)
+          .sort((a, b) => b.maxGapMs - a.maxGapMs)[0] || null;
+        return (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-sm text-blue mb-2 flex items-center gap-2">
+            <span aria-hidden>🩹</span>
+            <span>Heal perspective</span>
+            <span className="text-dim text-xs">· uploaded by {healers.length} heal-class character{healers.length === 1 ? '' : 's'}</span>
+          </h3>
+          {chainGap && (
+            <div
+              className="text-[11px] text-orange mb-2"
+              title={`Longest heal-free stretch on ${chainGap.tank} = ${(chainGap.maxGapMs / 1000).toFixed(1)}s across ${chainGap.count} gap${chainGap.count === 1 ? '' : 's'} > 8s. CH ticks every ~12s; a 14s+ gap means the chain dropped at least once.`}
+            >
+              ⚠️ Chain gap on {chainGap.tank} — peak {(chainGap.maxGapMs / 1000).toFixed(1)}s
+              {chainGap.count > 1 && ` (${chainGap.count} stretches > 8s)`}
+            </div>
+          )}
+          <ul className="text-xs space-y-2">
+            {healers.map((h) => {
+              const selfName = h.contributor_character || '';
+              const selfHeal = (h.raw_parse?.healers ?? []).find(
+                hh => hh.name?.toLowerCase() === selfName.toLowerCase(),
+              );
+              const targets   = (selfHeal?.targets || []).slice(0, 5);
+              const moreCount = Math.max(0, (selfHeal?.targets || []).length - targets.length);
+              const healerDeathRows = selfName
+                ? deaths.filter(d => d.name?.toLowerCase() === selfName.toLowerCase())
+                : [];
+              const healerDeaths = healerDeathRows.length;
+              const healerDeathOffsets = healerDeathRows
+                .map(d => fmtOffset(Date.parse(d.ts)))
+                .filter((x): x is string => !!x);
+              const windowStr = (selfHeal?.firstHealAt && selfHeal?.lastHealAt)
+                ? `${fmtOffset(selfHeal.firstHealAt)}–${fmtOffset(selfHeal.lastHealAt)}`
+                : null;
+              const isMain = h.id === mainId && (selfHeal?.healed || 0) > 0;
+              const isOff  = offIds.has(h.id);
+              return (
+                <li key={h.id} className="text-dim">
+                  <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
+                    {h.contributor_character ? (
+                      <Link href={`/character/${encodeURIComponent(h.contributor_character)}`} className="text-text hover:text-blue hover:underline">
+                        {h.contributor_character}
+                      </Link>
+                    ) : <span className="text-text">(anonymous)</span>}
+                    {isMain && (
+                      <span
+                        title={`Top heal output on this fight (${fmtDmg(selfHeal!.healed!)}). Doesn't necessarily mean main CH — see the targets list to read role.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-green/20 text-green border-green/40"
+                      >MAIN HEAL</span>
+                    )}
+                    {isOff && (
+                      <span
+                        title={`${Math.round(((selfHeal?.healed || 0) / mainTotal) * 100)}% of the top healer's output — meaningful secondary contributor.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-blue/20 text-blue border-blue/40"
+                      >OFF HEAL</span>
+                    )}
+                    {healerDeaths > 0 && (
+                      <span
+                        title={
+                          healerDeathOffsets.length > 0
+                            ? `Died at ${healerDeathOffsets.join(', ')}.`
+                            : `${healerDeaths} death${healerDeaths === 1 ? '' : 's'} during this fight.`
+                        }
+                        className="text-red"
+                        aria-label={`died ${healerDeaths} time${healerDeaths === 1 ? '' : 's'}`}
+                      >
+                        {'☠️'.repeat(Math.min(healerDeaths, 10))}
+                      </span>
+                    )}
+                    <span>—</span>
+                    <span>{(h.raw_parse?.players ?? []).length} players parsed,</span>
+                    <span>{fmtDmg(h.raw_parse?.totalDamage ?? 0)} total</span>
+                    <span className="mx-1 opacity-60">·</span>
+                    {renderContribSource(h)}
+                  </div>
+                  {selfHeal && ((selfHeal.healed || 0) > 0 || (selfHeal.ticks || 0) > 0) ? (
+                    <div className="ml-3 text-[11px] mt-0.5">
+                      <span className="opacity-50">↳ </span>
+                      {windowStr && (
+                        <span
+                          className="text-text"
+                          title="Time window of observed heals from this caster, MM:SS from fight start. Quiet stretches inside the window mean they paused — not necessarily a chain drop."
+                        >
+                          {windowStr}
+                          <span className="opacity-60"> · </span>
+                        </span>
+                      )}
+                      <span>healed </span>
+                      <span className="text-text">{fmtDmg(selfHeal.healed || 0)}</span>
+                      {(selfHeal.ticks || 0) > 0 && (
+                        <span className="opacity-60"> ({selfHeal.ticks} tick{selfHeal.ticks === 1 ? '' : 's'})</span>
+                      )}
+                      {targets.length > 0 && (
+                        <>
+                          <span> on </span>
+                          <span className="text-text">{targets.join(', ')}</span>
+                          {moreCount > 0 && <span className="opacity-60">, +{moreCount} more</span>}
+                        </>
                       )}
                     </div>
                   ) : null}

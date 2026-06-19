@@ -8545,6 +8545,10 @@ async function _handleAgentUpload(req, res) {
                        ? encounter.deaths  : undefined,
         healers:     Array.isArray(encounter.healers) && encounter.healers.length > 0
                        ? encounter.healers : undefined,
+        // CH-chain visibility — { tank, count, maxGapMs } when the agent saw
+        // gaps > 8s in healing on the primary tank. Drives the "missed N CH
+        // ticks (peak 14s gap)" warning on the heal panel.
+        healGaps:    encounter.heal_gaps || undefined,
         // Boss's largest single hit this fight — web multiplies by each tank's
         // invulns count to estimate damage absorbed by Divine Aura / Holy
         // Aegis / etc. Same calc the agent's dashboard Tanks tab uses.
