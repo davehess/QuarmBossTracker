@@ -3089,7 +3089,7 @@ function createChChainOverlay() {
     alwaysOnTop: true, skipTaskbar: true,
     // focusable: false → on Windows this sets WS_EX_NOACTIVATE on the
     // overlay's native HWND, so clicks fire DOM events without bringing
-    // the window to the foreground. Reported by Vilnayar (2026-06-19) —
+    // the window to the foreground. Reported by Uilnayar (2026-06-19) —
     // clicking ⚙ / lock / move on the CH chain overlay pulled focus from
     // EQ, and missing-the-refocus-on-the-way-back cost real CH heals. We
     // don't take keyboard input on this overlay and drag is custom IPC
