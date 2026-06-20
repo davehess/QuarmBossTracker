@@ -360,19 +360,24 @@
     var beatSecs = c.beat_ms ? (c.beat_ms / 1000) : null;
     beatEl.textContent = beatSecs ? ('beat ' + beatSecs.toFixed(1) + 's') : '';
 
-    var castingNum = null;
-    if (c.last_ch && (now - c.last_ch.atMs) < CH_CAST_SECS * 1000) castingNum = c.last_ch.num;
-
+    // Per-slot casting detection (was: only the most recent caller). With an
+    // 8s beat and a 10s cast, slot N is still ~2s from landing when slot N+1
+    // gets the GO call — under the old "last_ch only" check, slot N's bar
+    // teleported to slot N+1 mid-cast, which read as "the bar moved down".
+    // Now each slot is independently casting while its own lastAtMs is
+    // within CH_CAST_SECS, so the chain renders with up to two overlapping
+    // bars during normal handoff and they each tick to 100% in place.
     var nums = Object.keys(c.slots).map(Number).sort(function(a, b){ return a - b; });
     var html = '';
     for (var i = 0; i < nums.length; i++) {
       var n = nums[i], s = c.slots[n];
-      var isCasting = (n === castingNum);
+      var slotElapsedMs = s.lastAtMs ? (now - s.lastAtMs) : Number.POSITIVE_INFINITY;
+      var isCasting = slotElapsedMs < CH_CAST_SECS * 1000;
       var isNext    = !isCasting && c.next_num === n;
       var cls = 'row' + (isCasting ? ' casting' : '') + (isNext ? ' next' : '');
       var stat, bar = '';
       if (isCasting) {
-        var el = (now - c.last_ch.atMs) / 1000;
+        var el = slotElapsedMs / 1000;
         var remain = Math.max(0, CH_CAST_SECS - el);
         stat = remain.toFixed(1);
         bar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (el / CH_CAST_SECS) * 100).toFixed(1) + '%"></div></div>';

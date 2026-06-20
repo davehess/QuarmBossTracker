@@ -3086,7 +3086,18 @@ function createChChainOverlay() {
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 90,
     frame: false, transparent: true, resizable: true,
-    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    alwaysOnTop: true, skipTaskbar: true,
+    // focusable: false → on Windows this sets WS_EX_NOACTIVATE on the
+    // overlay's native HWND, so clicks fire DOM events without bringing
+    // the window to the foreground. Reported by Vilnayar (2026-06-19) —
+    // clicking ⚙ / lock / move on the CH chain overlay pulled focus from
+    // EQ, and missing-the-refocus-on-the-way-back cost real CH heals. We
+    // don't take keyboard input on this overlay and drag is custom IPC
+    // (mousedown → setBounds), so neither relies on activation. Safe to
+    // extend to the other read-only overlays once we've validated this
+    // one in a live raid.
+    focusable: false,
+    show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
   chChainWindow.setAlwaysOnTop(true, 'screen-saver');
