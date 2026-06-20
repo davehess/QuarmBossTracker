@@ -13,10 +13,10 @@
 // conservative: first matching category wins, in CATEGORY_ORDER priority.
 
 export type BuffCategory =
-  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds' | 'resists';
+  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds' | 'levitate' | 'resists';
 
 export const CATEGORY_ORDER: BuffCategory[] = [
-  'hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'resists',
+  'hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate', 'resists',
 ];
 
 export const CATEGORY_LABELS: Record<BuffCategory, string> = {
@@ -28,6 +28,7 @@ export const CATEGORY_LABELS: Record<BuffCategory, string> = {
   runSpeed:  'Run Speed',
   attack:    'Attack',
   ds:        'Dmg Shield',
+  levitate:  'Levitate',
   resists:   'Resists',
 };
 
@@ -36,11 +37,16 @@ export const CATEGORY_LABELS: Record<BuffCategory, string> = {
 // more specific/important categories should come earlier when a name could
 // plausibly match two (e.g. "clarity" → manaRegen, never mana).
 const KEYWORDS: Record<BuffCategory, string[]> = {
-  // Max-HP / HP+stat group buffs.
+  // Max-HP / HP+stat group buffs. MUST cover everything analyzeHpSlots
+  // recognizes — Khura's filled slot C while leaking into "Other" because
+  // the two keyword lists drifted. POTG/POTC live here (hp wins first in
+  // CATEGORY_ORDER) so the resists list's 'protection of' can't steal them.
   hp: [
     'aegolism', 'symbol of', 'temperance', 'hand of conviction', 'blessing of',
     'brell', 'riotous health', 'inner fire', 'courage', 'daring', 'bravery',
     'valor', 'resolution', 'heroic bond', 'virtue', 'health', 'center', 'fortitude',
+    'khura', 'focus of spirit', 'arch shielding',
+    'protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
   ],
   // HP regeneration over time.
   regen: ['regrowth', 'regenerat', 'chloroplast', 'replenish', 'pack regen'],
@@ -73,13 +79,24 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'savage', 'brutal', 'might of', 'tumultuous', 'aggression', 'bull',
     'call of the predator', 'feral avatar', 'ancient: feral',
   ],
-  // Damage shields (buffs + bard DS songs).
-  ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat', 'damage shield', 'legacy of', 'shield of barbs'],
-  // Resist buffs (single + group). "Circle of Seasons" is the Druid all-resist
-  // group buff seen in raid dumps.
+  // Damage shields. Mage line: Shield of Flame / Cadeau of Flame /
+  // Inferno Shield. Cleric Barrier of Combustion / Boon of Immolation.
+  // Fiery Might is HP+DS combo. All have SPA 59 in eqemu_spells.raw.eff;
+  // catalog-driven detection is the eventual fix — this list is the
+  // safety net while it lands.
+  ds: ['thorn', 'thistle', 'shield of fire', 'shield of lava', 'bramblecoat',
+       'damage shield', 'legacy of', 'shield of barbs',
+       'cadeau of flame', 'shield of flame', 'inferno shield', 'fiery might',
+       'barrier of combustion', 'boon of immolation',
+       'aura of vinitras', 'aura of the defender'],
+  // Levitation — situational but worth a visible row (Hate trenches, Sky).
+  levitate: ['levitat', 'dead men floating', 'dead man floating', 'flying'],
+  // Resist buffs (single + group). Circle of Seasons = Fire + Cold only;
+  // Epuration > Jasinth > Shadoo is the shaman Poison+Disease line.
   resists: [
     'resist', 'endure', 'protection of', 'talisman of altuna', 'talisman of jasinth',
-    'talisman of shadoo', 'circle of', 'aegis of bathezid', 'colossal', 'elemental',
+    'talisman of shadoo', 'talisman of epuration', 'circle of', 'aegis of bathezid',
+    'colossal', 'elemental',
   ],
 };
 
@@ -91,6 +108,174 @@ export function categorizeBuff(name: string): BuffCategory | null {
     if (KEYWORDS[cat].some(k => n.includes(k))) return cat;
   }
   return null;
+}
+
+// Buffs that credit a SECOND category beyond their primary match. VoG is
+// primarily haste but carries an ATK component; Spirit of Bihli is run speed
+// with ATK. Single-category-wins kept them out of the Attack row, which made
+// "Attack — missing" lie on raiders carrying them.
+const SECONDARY_CATEGORY: [string, BuffCategory][] = [
+  ['visions of grandeur', 'attack'],
+  ['spirit of bihli',     'attack'],
+  // POTG/POTC carry a mana-regen component — the reason casters take the
+  // druid line over group Aego in HP slot A.
+  ['protection of the glades',  'manaRegen'],
+  ['protection of the cabbage', 'manaRegen'],
+];
+export function secondaryCategoriesFor(name: string): BuffCategory[] {
+  const n = (name || '').toLowerCase();
+  if (!n) return [];
+  return SECONDARY_CATEGORY.filter(([k]) => n.includes(k)).map(([, c]) => c);
+}
+
+// ── Haste ranking ────────────────────────────────────────────────────────────
+// EQ won't let a LOWER-tier haste land over a higher one — and some item/click
+// hastes are higher % than VoG, so suggesting VoG to those raiders is wrong
+// (they'd have to click the better buff off first!). Relative ordering only —
+// DRAFT, tune against in-era percentages; unknown haste names rank 0 so the
+// queue annotates instead of asserting.
+const HASTE_RANK: [string, number][] = [
+  ['quickness', 1],
+  ['alacrity', 2],
+  ['celerity', 3],
+  ['augmentation', 3],
+  ['swift like the wind', 4],
+  ['aanya', 5],
+  ['wonderous rapidity', 6],
+  ['visions of grandeur', 7],
+  ['speed of the shissar', 8],
+];
+export function hasteRank(name: string | null | undefined): number {
+  const n = String(name || '').toLowerCase();
+  if (!n) return 0;
+  for (const [k, r] of HASTE_RANK) if (n.includes(k)) return r;
+  return 0;   // unknown haste (item clicks, songs) — can't compare safely
+}
+
+// ── Upgrade chains ───────────────────────────────────────────────────────────
+// Same buff line, low → high. When a raider carries an earlier link and the
+// buffer's class can cast a later one, the queue shows a YELLOW upgrade item
+// instead of silence (the category was "covered", just not by the best
+// available — Aego when the cleric has Ancient: Gift of Aegolism, FoS when
+// the shaman has Khura's, JBoots when Bihli adds ATK for melee).
+export type UpgradeChain = {
+  key: string;
+  label: string;
+  chain: string[];                 // lowercased substrings, low → high
+  classes: string[];               // who can cast the top end
+  roles?: Role[];                  // limit to these roles (default: all)
+};
+export const UPGRADE_CHAINS: UpgradeChain[] = [
+  {
+    key: 'aego',
+    label: 'Aego line',
+    // Bottom-up Cleric "Type One" HP+AC line (Hitya-confirmed), then group
+    // versions: Courage L1 → Center L9 → Daring L19 → Bravery L24 → Valor
+    // L34 → Resolution L44 → Heroism L49 → Heroic Bond L54 → Fortitude L55
+    // → Temperance (group) → Aegolism (group, A+B) → Blessing of Aegolism
+    // → Ancient: Gift of Aegolism.
+    chain: ['courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
+            'heroism', 'heroic bond', 'fortitude',
+            'temperance', 'aegolism', 'blessing of aegolism', 'ancient: gift of aegolism'],
+    classes: ['cleric'],
+  },
+  {
+    key: 'symbol',
+    label: 'Symbol line',
+    // Bottom-up cleric Symbol line: Transal L14 → Ryltan L24 → Pinzarn L34
+    // → Naltron L44 → Marzin L54. Lower-level casts show as upgradable.
+    chain: ['symbol of transal', 'symbol of ryltan', 'symbol of pinzarn',
+            'symbol of naltron', 'symbol of marzin'],
+    classes: ['cleric'],
+  },
+  {
+    key: 'focus',
+    label: 'Focus line',
+    // Bottom-up: Inner Fire (L1) → Tnarg (L49) → Kragg (L55) → Focus of Spirit
+    // (L57 group HP/AC) → Khura's Focusing (L60 top-end single-target). The
+    // queue flags any link below the buffer's class max as "upgradable".
+    chain: ['inner fire', 'talisman of tnarg', 'talisman of kragg', 'focus of spirit', 'khura'],
+    classes: ['shaman'],
+  },
+  {
+    key: 'bihli',
+    label: 'Run speed + ATK',
+    chain: ['journeyman', 'spirit of bihli'],
+    classes: ['shaman'],
+    roles: ['melee', 'tank'],
+  },
+];
+
+// Index of the HIGHEST chain link a buff list carries (-1 = none). The chain
+// arrays put more-specific names later, so we scan from the top down.
+export function chainPosition(chain: string[], buffNames: string[]): number {
+  let best = -1;
+  for (const raw of buffNames) {
+    const n = (raw || '').toLowerCase();
+    for (let i = chain.length - 1; i >= 0; i--) {
+      if (n.includes(chain[i]) && i > best) { best = i; break; }
+    }
+  }
+  return best;
+}
+
+// ── Resist types ─────────────────────────────────────────────────────────────
+// The single "resists" category hid which of the FIVE schools a raider is
+// actually covered for — "Circle of Seasons" satisfied the bucket while a
+// missing Group Resist Magic stayed invisible. Per-buff school mapping so the
+// raid card can render MR/FR/CR/PR/DR rows and the buffer queue can flag the
+// specific school a buffer's class provides.
+export type ResistType = 'MR' | 'FR' | 'CR' | 'PR' | 'DR';
+export const RESIST_TYPES: ResistType[] = ['MR', 'FR', 'CR', 'PR', 'DR'];
+export const RESIST_LABELS: Record<ResistType, string> = {
+  MR: 'Magic', FR: 'Fire', CR: 'Cold', PR: 'Poison', DR: 'Disease',
+};
+
+// All-school buffs first (substring match); then per-school keyword lists.
+// Bard psalms: Warmth = cold (a warming song), Cooling = fire, Purity =
+// poison, Vitality = disease, Guardian Rhythms = magic+all-ish (kept MR).
+const RESIST_ALL_KEYWORDS = [
+  'aegis of bathezid', 'protection of the cabbage', 'mark of karn',
+];
+const RESIST_TYPE_KEYWORDS: Record<ResistType, string[]> = {
+  MR: ['magic', 'guardian rhythms', 'psalm of veeshan', 'group resistance'],
+  FR: ['fire', 'flame', 'psalm of cooling', 'inferno', 'circle of seasons'],
+  CR: ['cold', 'frost', 'psalm of warmth', 'ice', 'circle of seasons'],
+  PR: ['poison', 'psalm of purity', 'talisman of shadoo', 'talisman of jasinth', 'talisman of epuration', 'venom'],
+  DR: ['disease', 'psalm of vitality', 'talisman of shadoo', 'talisman of jasinth', 'talisman of epuration', 'plague'],
+};
+
+/** Which resist schools a buff covers — empty when it isn't a resist buff. */
+export function resistTypesFor(name: string): ResistType[] {
+  const n = (name || '').toLowerCase();
+  if (!n) return [];
+  // Only consider names the resists category already recognizes, plus the
+  // explicit all-school list — keeps "Fire Fist" (worn) etc. from matching
+  // the FR keyword.
+  const isResistBuff = KEYWORDS.resists.some(k => n.includes(k))
+    || RESIST_ALL_KEYWORDS.some(k => n.includes(k))
+    || /psalm of|guardian rhythms/.test(n);
+  if (!isResistBuff) return [];
+  if (RESIST_ALL_KEYWORDS.some(k => n.includes(k))) return [...RESIST_TYPES];
+  const out: ResistType[] = [];
+  for (const t of RESIST_TYPES) {
+    if (RESIST_TYPE_KEYWORDS[t].some(k => n.includes(k))) out.push(t);
+  }
+  // Recognized resist buff with no school keyword (e.g. "Elemental Shield")
+  // → conservative: fire + cold (the elemental pair).
+  if (out.length === 0 && /elemental/.test(n)) return ['FR', 'CR'];
+  return out;
+}
+
+// ── Bard songs ───────────────────────────────────────────────────────────────
+// Agent v3.1.12+ tags buffs from Zeal's 6-slot song window with song:true.
+// For older data we fall back to a name heuristic so the songs section isn't
+// empty for raiders on yesterday's Mimic.
+const SONG_NAME_RX = /psalm of|chant|chorus|melody|cantata|aria of|verses of|warsong|battlecry|guardian rhythms|selo|hymn|march of|anthem|jonthan|niv's|niv`s|cassindra|kelin|tuyen|denon|crission|lyssa|mcvaxius|vilia|solon|brusco/i;
+export function isSongBuff(name: string | null | undefined, songFlag?: boolean | null): boolean {
+  if (songFlag === true) return true;
+  if (songFlag === false) return false;   // authoritative tag says buff window
+  return SONG_NAME_RX.test(String(name || ''));
 }
 
 // ── Roles + "what good looks like" target profiles ──────────────────────────
@@ -105,11 +290,14 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 // HP is tracked separately via the three HP slots (every role wants all three),
 // so it's not repeated here. These are the NON-HP categories expected per role.
+// Mana (max-mana, Gift of Brilliance line) intentionally dropped: KEI /
+// Clarity covers the practical need so flagging it as a separate gap had
+// Enchanters queueing both Mana AND Mana Regen for the same target.
 export const ROLE_TARGETS: Record<Role, BuffCategory[]> = {
   tank:   ['haste', 'attack', 'ds', 'resists'],
   melee:  ['haste', 'attack', 'resists'],
-  priest: ['mana', 'manaRegen', 'resists'],
-  caster: ['mana', 'manaRegen', 'resists'],
+  priest: ['manaRegen', 'resists'],
+  caster: ['manaRegen', 'resists'],
   bard:   ['haste', 'resists'],
   other:  ['resists'],
 };
@@ -195,13 +383,31 @@ export const HP_SLOT_LABELS: Record<HpSlot, string> = {
 export const HP_SLOT_PROVIDER: Record<HpSlot, string> = {
   A: 'Druid (POTG/POTC) · Cleric (Aego) · Shaman (ToW)',
   B: 'Cleric (Symbol)',
-  C: 'Cleric (Khura/Brell) · Wizard (Arch)',
+  C: 'Shaman (Khura/Kragg/Tnarg/Inner Fire) · Cleric (Brell) · Wizard (Arch)',
 };
 
+// EQ HP buff slots (canonical, confirmed by Hitya):
+//   A — Cleric "Type One" HP+AC line:
+//        Courage (L1) → Center (L9) → Daring (L19) → Bravery (L24) →
+//        Valor (L34) → Resolution (L44) → Heroism (L49) → Heroic Bond (L54)
+//        → Fortitude (L55) → Aegolism (L60 group, fills A+B) →
+//        Blessing of Aegolism (L60 group).
+//        Druid POTG/POTC (group) and Shaman Wunshi/Temperance (group) live
+//        here too.
+//   B — Cleric "Symbol of" line: Transal (L14) → Ryltan (L24) →
+//        Pinzarn (L34) → Naltron (L44) → Marzin (L54). All match "symbol of".
+//   C — Shaman HP line: Inner Fire (L1) → Tnarg (L49) → Kragg (L55) →
+//        Focus of Spirit (L57 group) → Khura's Focusing (L60). Plus
+//        Cleric Brell's line + Wizard Arch Shielding.
+// UPGRADE_CHAINS flags lower-link versions as "upgradable" (light green) so
+// the queue nudges a buffer to recast at their class max.
 const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
-  A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi'],
+  A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
+      'temperance', 'courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
+      'heroism', 'heroic bond', 'fortitude'],
   B: ['symbol of'],
-  C: ['khura', 'brell', 'arch shielding'],
+  C: ['khura', 'focus of spirit', 'talisman of kragg', 'talisman of tnarg', 'inner fire',
+      'brell', 'arch shielding'],
 };
 const AEGOLISM_KEYWORDS = ['aegolism'];
 

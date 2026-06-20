@@ -83,6 +83,22 @@ async function upsert(table, rows, onConflict) {
   return _request(path, { method: 'POST', body: rows, prefer });
 }
 
+// Insert with silent dedup against ANY unique index/constraint that fires —
+// including PARTIAL unique indexes that PostgREST's `on_conflict=` can't
+// reference (buff_casts has two partial uniques split on spell_id, and
+// upsert(...) was 400-erroring on every call as a result). This sends
+// `Prefer: resolution=ignore-duplicates` with no on_conflict target, which
+// becomes an unqualified ON CONFLICT DO NOTHING server-side and works with
+// any unique storage. Drops `return=representation` so the response body is
+// empty (saves egress on what's typically a hot insert path).
+async function insertIgnoreDuplicates(table, rows) {
+  return _request(`/${table}`, {
+    method: 'POST',
+    body:   rows,
+    prefer: 'return=minimal,resolution=ignore-duplicates',
+  });
+}
+
 async function del(table, queryString) {
   return _request(`/${table}?${queryString}`, { method: 'DELETE', prefer: 'return=minimal' });
 }
@@ -424,7 +440,7 @@ async function upsertWhoOverride({ character, klass, isZek, setBy, setByName, no
 
 module.exports = {
   isEnabled,
-  select, insert, update, upsert, del, rpc,
+  select, insert, insertIgnoreDuplicates, update, upsert, del, rpc,
   getWhoOverrides, upsertWhoOverride,
   applyQuakeToPvpBoardMirror,
   getNpcIdForInternalId,

@@ -531,6 +531,24 @@ export default async function PvpPage({
             </figcaption>
           </figure>
         </div>
+        <figure className="m-0 mt-4">
+          {/* GIFs are not optimized through next/image — use a plain <img> so
+              the animation plays. The inline gif is downscaled (~4MB); clicking
+              opens the full-resolution original (~23MB) in a new tab. */}
+          <a href="/pvp/boxers-deeps-pit-full.gif" target="_blank" rel="noopener noreferrer" title="Open full resolution">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/pvp/boxers-deeps-pit.gif"
+              alt="Malthur and Timberowl of the Wolf Pack taking down boxers before they jump into the Deep's pit"
+              className="w-full h-auto rounded border border-border cursor-zoom-in"
+              loading="lazy"
+            />
+          </a>
+          <figcaption className="text-xs text-dim mt-2">
+            Malthur and Timberowl, taking down boxers before they jump into the Deep&apos;s pit.
+            {' '}<span className="text-dim">(click for full resolution)</span>
+          </figcaption>
+        </figure>
       </section>
     </div>
   );

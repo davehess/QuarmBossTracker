@@ -174,7 +174,39 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   return { discordId: pack.discord_id, nickname: pack.nickname ?? null, chars: family };
 }
 
-async function loadCharStats(name: string): Promise<CharStats> {
+type FloorRow    = { member_since: string | null; floor_source: string | null };
+type CoverageRow = { encounters_total: number | null; encounters_with_detail: number | null; encounters_resubmittable: number | null };
+
+// character_data_floor + character_rollup_coverage are VIEWS that re-aggregate
+// the WHOLE guild's chat + tick history on every call — the per-character WHERE
+// is applied only at the very end, so filtering doesn't make them cheaper
+// (measured ~3.5s for the floor view regardless of the name asked for). They
+// were previously queried once PER CHARACTER inside loadCharStats, so a member
+// with N alts paid N × 3.5s and /me crawled. Fetch each view ONCE for everyone
+// here and pass the resulting maps down; per-character lookup is then free.
+async function loadFloorAndCoverage(): Promise<{
+  floors: Map<string, FloorRow>;
+  coverage: Map<string, CoverageRow>;
+}> {
+  const admin = supabaseAdmin();
+  const floors = new Map<string, FloorRow>();
+  const coverage = new Map<string, CoverageRow>();
+  const [{ data: floorRows }, { data: covRows }] = await Promise.all([
+    admin.from('character_data_floor').select('character_name, member_since, floor_source').limit(5000),
+    admin.from('character_rollup_coverage').select('character_name, encounters_total, encounters_with_detail, encounters_resubmittable').limit(5000),
+  ]);
+  for (const r of (floorRows ?? []) as (FloorRow & { character_name: string | null })[]) {
+    if (r.character_name) floors.set(r.character_name.toLowerCase(), { member_since: r.member_since, floor_source: r.floor_source });
+  }
+  for (const r of (covRows ?? []) as (CoverageRow & { character_name: string | null })[]) {
+    if (r.character_name) coverage.set(r.character_name.toLowerCase(), {
+      encounters_total: r.encounters_total, encounters_with_detail: r.encounters_with_detail, encounters_resubmittable: r.encounters_resubmittable,
+    });
+  }
+  return { floors, coverage };
+}
+
+async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRow: CoverageRow | null): Promise<CharStats> {
   const admin = supabaseAdmin();
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const nameLower = name.toLowerCase();
@@ -189,8 +221,6 @@ async function loadCharStats(name: string): Promise<CharStats> {
     lootRes,
     wishlistRes,
     { data: rollupRows },
-    { data: floorRow },
-    { data: coverageRow },
   ] = await Promise.all([
     admin
       .from('encounter_players')
@@ -239,18 +269,9 @@ async function loadCharStats(name: string): Promise<CharStats> {
       .select('total_hits, total_damage, self_attack_count, by_skill')
       .eq('character_name', name)
       .limit(5000),
-    // Data floor row — single row per character_name (case-insensitive via the view).
-    admin
-      .from('character_data_floor')
-      .select('member_since, floor_source')
-      .ilike('character_name', name)
-      .maybeSingle(),
-    // Coverage — drives the "N raids could unlock a full skill breakdown; resubmit your logs" nudge.
-    admin
-      .from('character_rollup_coverage')
-      .select('encounters_total, encounters_with_detail, encounters_resubmittable')
-      .ilike('character_name', name)
-      .maybeSingle(),
+    // NOTE: character_data_floor + character_rollup_coverage are no longer
+    // queried here — they're whole-guild-aggregating views (see
+    // loadFloorAndCoverage) prefetched once for the family and passed in.
   ]);
 
   const parses = (parseRows ?? []) as { encounter_id: string; total_damage: number | null; dps: number | null }[];
@@ -451,10 +472,18 @@ export default async function MePage() {
   const chars         = allChars.filter(c => !c.exclude_from_stats);
   const excludedChars = allChars.filter(c =>  c.exclude_from_stats);
 
-  const scrap = chars.length > 0 ? await loadScrap(chars.map(c => c.name)) : null;
+  // The floor + coverage views aggregate the WHOLE guild on every call, so we
+  // fetch them ONCE here (not per-character) and overlap with the scrap
+  // leaderboard. This is the fix for /me crawling for members with many alts.
+  const [scrap, { floors, coverage }] = await Promise.all([
+    chars.length > 0 ? loadScrap(chars.map(c => c.name)) : Promise.resolve(null),
+    loadFloorAndCoverage(),
+  ]);
 
   // Build per-character stats in parallel
-  const stats = await Promise.all(chars.map(c => loadCharStats(c.name).then(s => [c.name, s] as const)));
+  const stats = await Promise.all(chars.map(c =>
+    loadCharStats(c.name, floors.get(c.name.toLowerCase()) ?? null, coverage.get(c.name.toLowerCase()) ?? null)
+      .then(s => [c.name, s] as const)));
   const byName = new Map(stats);
 
   // Order the cards: the MAIN (family root — its name equals its main_name)
@@ -553,13 +582,13 @@ export default async function MePage() {
               <div className="text-xs text-dim mt-0.5">{bannerSub}</div>
             </div>
             <a
-              href="http://localhost:7777"
+              href="http://localhost:7779"
               target="_blank"
               rel="noreferrer"
               className="text-xs text-blue hover:underline whitespace-nowrap"
               title="The local parser dashboard — only opens if your wolfpack-logsync agent is running on this machine."
             >
-              localhost:7777 ↗
+              localhost:7779 ↗
             </a>
           </div>
           {syncRows.length > 0 && (
@@ -882,7 +911,7 @@ export default async function MePage() {
               <Panel
                 title="Buffs & Zone"
                 badge="GUILD"
-                tooltip="What this character is currently carrying (buffs/songs) and the zone they were last seen in, synced from your local parser's Zeal feed. A snapshot updated when things change — open localhost:7777 for live, second-by-second buff timers."
+                tooltip="What this character is currently carrying (buffs/songs) and the zone they were last seen in, synced from your local parser's Zeal feed. A snapshot updated when things change — open localhost:7779 for live, second-by-second buff timers."
               >
                 {!live ? (
                   <div className="text-dim text-xs italic">
@@ -913,8 +942,8 @@ export default async function MePage() {
                     )}
                     <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim flex items-center justify-between gap-2 flex-wrap">
                       <span>{live.updatedAt ? <>synced {relTime(live.updatedAt)}</> : 'snapshot'}</span>
-                      <a href="http://localhost:7777" target="_blank" rel="noreferrer" className="text-blue hover:underline whitespace-nowrap">
-                        live on localhost:7777 ↗
+                      <a href="http://localhost:7779" target="_blank" rel="noreferrer" className="text-blue hover:underline whitespace-nowrap">
+                        live on localhost:7779 ↗
                       </a>
                     </div>
                   </>

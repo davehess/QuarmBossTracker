@@ -29,6 +29,18 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.92': [
+    '**Trash announces stay trash** — `/announce <zone>` with a note containing "trash" (e.g. *TRASH LOOT!*) no longer adds the zone\'s bosses as kill targets — no boss cards, kill buttons, or auto-tracked timers. The takedown still posts the zone, time, and note for the run.',
+  ],
+  '3.0.73': [
+    '**One-tap Mimic downloads** — `/parsehelp` (and the public `/postparsehelp` board) now has **🐺 Download Mimic** and **Beta** buttons that link straight to the installer .exe of the latest release on each channel — no landing page hop. Resolved live from GitHub, so they always point at the newest build.',
+  ],
+  '3.0.70': [
+    '**/raid got sharper** — the raider card now breaks Resists into all five schools (so a missing Group Resist Magic shows even when Circle of Seasons is up), shows landed bard **songs** separately, auto-refreshes every 15s, and hides parked characters unseen >15 min (toggle to show). The buffer queue flags the specific resist school your class covers. Mimic 1.0.69 betas add "Buffs n/15 · Songs n/6" to Mob Info for player targets.',
+  ],
+  '3.0.68': [
+    '**Quarmy gear ingest** — drop your in-game Quarmy export (`<Name>Quarmy.txt`) in the EQ folder and Mimic ships your equipped gear, clicky bags, and AA ranks to a new **Gear (beta)** page on your character at wolfpack.quest. Bank, shared bank, and coin rows are stripped on YOUR machine before anything uploads — they never leave it. `exclude_inventory` on /me opts a character out entirely (no file read, no upload).',
+  ],
   '3.0.51': [
     '**/who directory on wolfpack.quest** (officers) — every character ever seen in a `/who`, sortable + filterable, with inline class fill-in for `/anon` rows and a Zek flag toggle. Web-set class/Zek now flows back to the bot (and `/markzek` writes to the web), so `/whois` + PvP auto-zek stay in sync.',
     '**PvP fixes** — a guild **instance** Lord of Ire kill no longer mis-fires the PvP announce or double-records a PvP timer (only the real PvE instance timer is set). And a **quake** now keeps every PvP boss\'s kill date + latest spawn but opens the **earliest spawn to "available now"** instead of wiping the window.',

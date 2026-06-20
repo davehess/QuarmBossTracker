@@ -2,6 +2,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+// Feedback moved up to the header's account row (root layout) per user
+// request — keep the primary nav to destinations.
 const links = [
   { href: '/',              label: 'Home' },
   { href: '/boards',        label: 'Boards' },
@@ -11,7 +13,6 @@ const links = [
   { href: '/pvp',           label: 'PvP' },
   { href: '/leaderboards',  label: 'Ranks' },
   { href: '/fun',           label: '🎉 Fun' },
-  { href: '/feedback',      label: '💬 Feedback' },
 ];
 
 // showAdmin / showMe are computed server-side in the root layout (signed-in

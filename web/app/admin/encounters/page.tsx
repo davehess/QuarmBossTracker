@@ -50,14 +50,46 @@ type EncounterRow = {
   // Characters likely to have useful log coverage for THIS encounter that
   // aren't already in encounter_players — i.e., who could fill the gap if
   // they re-run the agent over their old logs. Computed from raid_roster +
-  // who_observations within ±15 min of started_at. Excludes characters
-  // already in encounter_players and any flagged exclude_from_stats.
+  // who_observations within ±15 min of started_at, then INTERSECTED with the
+  // guild-membership set (who_observations is /who-all data full of Zek
+  // PvPers + other guilds — only Wolf Pack members can re-run logs for us).
+  // Excludes characters already in encounter_players and any exclude_from_stats.
   backfill_candidates: string[];
+  // Subset of backfill_candidates that already have a pending/acked backfill
+  // request for this window — so the UI can mark them "already pinged" instead
+  // of silently re-offering them (which made the button feel like a no-op).
+  pending_backfill: string[];
 };
 
-type DuplicatePair = {
-  a: EncounterRow;
-  b: EncounterRow;
+// Guild-membership name set — the predicate CLAUDE.md defines: a character
+// "counts" as a guild member if it's linked to a CURRENT Discord guild member
+// (wolfpack_members.is_member) OR carries an OpenDKP raid rank. This is what
+// keeps /who-all sightings (who_observations) from injecting non-guildies
+// (Zek PvPers, other guilds, passers-by) into the backfill candidate list.
+const RAID_RANKS = new Set(['Raid Pack', 'Raid Alt', 'Officer', 'Pack Leader']);
+async function loadGuildMemberNames(admin: ReturnType<typeof supabaseAdmin>): Promise<Set<string>> {
+  const [charsRes, membersRes] = await Promise.all([
+    admin.from('characters').select('name, rank, discord_id, deleted').range(0, 9999),
+    admin.from('wolfpack_members').select('discord_id, is_member').range(0, 9999),
+  ]);
+  const memberDiscord = new Set(
+    (membersRes.data ?? [])
+      .filter((m: any) => m.is_member === true)
+      .map((m: any) => String(m.discord_id)),
+  );
+  const names = new Set<string>();
+  for (const c of (charsRes.data ?? []) as any[]) {
+    if (c.deleted || !c.name) continue;
+    const isMember = c.discord_id && memberDiscord.has(String(c.discord_id));
+    const raidRank = c.rank && RAID_RANKS.has(String(c.rank));
+    if (isMember || raidRank) names.add(String(c.name));
+  }
+  return names;
+}
+
+type DuplicateCluster = {
+  members: EncounterRow[];   // 2+ rows, same npc_id, chained within the window
+  primaryId: string;         // the row everything else should fold into
 };
 
 async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
@@ -121,15 +153,19 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
   // who aren't already in encounter_players. Sources:
   //   - raid_roster.captured_at within ±15 min of started_at (strongest)
   //   - who_observations.observed_at within ±15 min of started_at (broader)
-  // Minus encounter_players, minus characters.exclude_from_stats.
+  // Minus encounter_players, minus characters.exclude_from_stats, then
+  // INTERSECTED with guild membership — who_observations is /who-all data so
+  // it's full of Zek PvPers / other guilds / random passers-by who can't and
+  // won't re-run logs for us. Only Wolf Pack members belong in this list.
   const candByEnc = new Map<string, Set<string>>();
+  const pendingByEnc = new Map<string, Set<string>>();
   if ((encs ?? []).length > 0) {
     const starts = (encs ?? []).map((e: any) => e.started_at).filter((s: string | null) => !!s);
     if (starts.length > 0) {
       const minStart = new Date(Math.min(...starts.map((s: string) => new Date(s).getTime())) - 15 * 60 * 1000).toISOString();
       const maxStart = new Date(Math.max(...starts.map((s: string) => new Date(s).getTime())) + 15 * 60 * 1000).toISOString();
       // PostgREST will silently cap selects — explicit range to be safe.
-      const [rosterRes, whoRes, excludedRes] = await Promise.all([
+      const [rosterRes, whoRes, excludedRes, guildNames, pendingRes] = await Promise.all([
         admin
           .from('raid_roster')
           .select('name, captured_at')
@@ -143,8 +179,27 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
           .lte('observed_at', maxStart)
           .range(0, 9999),
         admin.from('characters').select('name').eq('exclude_from_stats', true).range(0, 999),
+        loadGuildMemberNames(admin),
+        // Already-filed requests — so the UI can grey out who's already been
+        // pinged for this window instead of silently re-offering them.
+        admin
+          .from('agent_backfill_requests')
+          .select('character, scope')
+          .in('status', ['pending', 'acked'])
+          .range(0, 9999),
       ]);
       const excludedSet = new Set((excludedRes.data ?? []).map((r: any) => String(r.name)));
+      // Pending requests keyed by the start_iso they were filed against — the
+      // backfill form posts the encounter's started_at verbatim as
+      // scope.start_iso, so an exact-string match re-associates them.
+      const pendingByStart = new Map<string, Set<string>>();
+      for (const r of (pendingRes.data ?? []) as any[]) {
+        const si = r?.scope?.start_iso ? String(r.scope.start_iso) : '';
+        if (!si || !r.character) continue;
+        const set = pendingByStart.get(si) ?? new Set<string>();
+        set.add(String(r.character));
+        pendingByStart.set(si, set);
+      }
       // Bucket roster + who sightings into 15-min windows around each encounter.
       const WINDOW_MS = 15 * 60 * 1000;
       const sightings: Array<{ name: string; at: number }> = [];
@@ -163,9 +218,11 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
           if (Math.abs(s.at - t0) > WINDOW_MS) continue;
           if (present.has(s.name)) continue;
           if (excludedSet.has(s.name)) continue;
+          if (!guildNames.has(s.name)) continue;   // Wolf Pack members only
           cands.add(s.name);
         }
         candByEnc.set(e.id, cands);
+        pendingByEnc.set(e.id, pendingByStart.get(String(e.started_at)) ?? new Set<string>());
       }
     }
   }
@@ -173,6 +230,8 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
   return (encs ?? []).map((e: any) => {
     const npc = e.npc_id != null ? npcById.get(e.npc_id) : null;
     const cands = candByEnc.get(e.id);
+    const pend = pendingByEnc.get(e.id);
+    const candList = cands ? Array.from(cands).sort() : [];
     return {
       id: e.id,
       npc_id: e.npc_id,
@@ -187,17 +246,34 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
       data_incomplete_reason: e.data_incomplete_reason,
       contribs: contribByEnc.get(e.id) ?? 0,
       players: (playersByEnc.get(e.id) ?? new Set()).size,
-      backfill_candidates: cands ? Array.from(cands).sort() : [],
+      backfill_candidates: candList,
+      pending_backfill: pend ? candList.filter(n => pend.has(n)) : [],
     };
   });
 }
 
-// Two encounters are "candidate duplicates" if they share npc_id and their
-// started_at is within 60 seconds. Worth showing side-by-side with a merge
-// button — covers the Seru-twice case and the "two parses created two rows"
-// case both.
-function findDuplicates(rows: EncounterRow[]): DuplicatePair[] {
-  const pairs: DuplicatePair[] = [];
+// Encounters of the same npc_id whose started_at chain together within
+// DUP_WINDOW_MS form a duplicate CLUSTER — one kill that raced into multiple
+// rows (see find_or_create_encounter's advisory lock). Cluster-based, not
+// pairwise: a 3-way race surfaces all three rows with one merge target. The old
+// pairwise/60s detector showed only the closest two and orphaned the rest (e.g.
+// Arch Lich rows at 21:08 / 21:11 / 21:12 — the 21:08 row fell out of the 60s
+// window and was never offered for merge).
+const DUP_WINDOW_MS = 10 * 60 * 1000;
+
+// The row a cluster should collapse INTO: most contributions wins (most
+// complete), then most players, then earliest start, then id for stability.
+function pickPrimary(members: EncounterRow[]): string {
+  return [...members].sort((a, b) =>
+    (b.contribs - a.contribs)
+    || (b.players - a.players)
+    || (new Date(a.started_at!).getTime() - new Date(b.started_at!).getTime())
+    || (a.id < b.id ? -1 : 1)
+  )[0].id;
+}
+
+function findDuplicateClusters(rows: EncounterRow[]): DuplicateCluster[] {
+  const clusters: DuplicateCluster[] = [];
   const byNpc = new Map<number, EncounterRow[]>();
   for (const r of rows) {
     if (r.npc_id == null || r.started_at == null) continue;
@@ -207,13 +283,21 @@ function findDuplicates(rows: EncounterRow[]): DuplicatePair[] {
   }
   for (const list of byNpc.values()) {
     list.sort((a, b) => (a.started_at! < b.started_at! ? -1 : 1));
-    for (let i = 0; i < list.length - 1; i++) {
-      const a = list[i], b = list[i + 1];
-      const dt = Math.abs(new Date(b.started_at!).getTime() - new Date(a.started_at!).getTime());
-      if (dt <= 60 * 1000) pairs.push({ a, b });
+    let group: EncounterRow[] = [];
+    let prevMs = -Infinity;
+    const flush = () => {
+      if (group.length > 1) clusters.push({ members: group, primaryId: pickPrimary(group) });
+      group = [];
+    };
+    for (const r of list) {
+      const ms = new Date(r.started_at!).getTime();
+      if (group.length && ms - prevMs > DUP_WINDOW_MS) flush();  // gap from the prior row breaks the chain
+      group.push(r);
+      prevMs = ms;
     }
+    flush();
   }
-  return pairs;
+  return clusters;
 }
 
 function hpRatio(r: EncounterRow): number | null {
@@ -295,52 +379,26 @@ async function clearIncomplete(formData: FormData) {
   revalidatePath('/admin/encounters');
 }
 
-// Merge two encounters: move all contributions + encounter_players from
-// `source` into `target`, then delete `source`. We do NOT recompute totals
-// here because merge_encounter_players() RPC already exists and gets called
-// elsewhere; we invoke it after the move.
+// Merge a duplicate cluster into one target in a single action. Accepts either
+// `sources` (comma-separated ids, for cluster merges) or a single `source` (for
+// backward-compatible pairwise forms). We move every source's contributions
+// onto the target and delete the sources — FK cascade clears their now-stale
+// encounter_players / combat_rollup — then rebuild the target from the combined
+// contributions: merge_encounter_players() fully recomputes encounter_players
+// (max damage per player) and totals, so there's no need to hand-move player
+// rows or untangle PK collisions.
 async function mergeEncounters(formData: FormData) {
   'use server';
   const u = await actionAssertOfficer();
   if (!u) redirect('/?error=admin_required');
   const target = String(formData.get('target') || '');
-  const source = String(formData.get('source') || '');
-  if (!target || !source || target === source) return;
+  const raw = String(formData.get('sources') || formData.get('source') || '');
+  const sources = raw.split(',').map(s => s.trim()).filter(s => s && s !== target);
+  if (!target || sources.length === 0) return;
   const admin = supabaseAdmin();
 
-  // Move contributions
-  await admin.from('contributions').update({ encounter_id: target }).eq('encounter_id', source);
-
-  // Move encounter_players — but watch for PK collision (same character on
-  // both encounters). For safety: delete the duplicate from source first,
-  // then move. encounter_players PK is presumably (encounter_id, character).
-  const { data: tgtPlayers } = await admin
-    .from('encounter_players')
-    .select('character_name')
-    .eq('encounter_id', target);
-  const tgtSet = new Set((tgtPlayers ?? []).map((p: any) => p.character_name));
-  const { data: srcPlayers } = await admin
-    .from('encounter_players')
-    .select('character_name, total_damage, dps, duration_sec, rank, has_pets')
-    .eq('encounter_id', source);
-  for (const p of (srcPlayers ?? []) as any[]) {
-    if (tgtSet.has(p.character_name)) {
-      // Same character on both — drop source row, target keeps its existing
-      // figure (the safer choice; merge_encounter_players will recompute
-      // from contributions JSONB anyway).
-      await admin.from('encounter_players').delete()
-        .eq('encounter_id', source).eq('character_name', p.character_name);
-    } else {
-      await admin.from('encounter_players')
-        .update({ encounter_id: target })
-        .eq('encounter_id', source).eq('character_name', p.character_name);
-    }
-  }
-
-  // Delete the now-empty source row
-  await admin.from('encounters').delete().eq('id', source);
-
-  // Recompute target totals from the new contributions set
+  await admin.from('contributions').update({ encounter_id: target }).in('encounter_id', sources);
+  await admin.from('encounters').delete().in('id', sources);
   try { await admin.rpc('merge_encounter_players', { p_encounter_id: target }); } catch {}
 
   revalidatePath('/admin/encounters');
@@ -357,11 +415,26 @@ async function fileBackfillRequest(formData: FormData) {
   const multi  = formData.getAll('characters').map(v => String(v).trim()).filter(Boolean);
   const characters = Array.from(new Set([...(single ? [single] : []), ...multi]));
   const encounterId  = String(formData.get('encounter_id') || '');
+  const npcName      = String(formData.get('npc_name') || '').trim();
   const startIso     = String(formData.get('start_iso') || '');
   const endIso       = String(formData.get('end_iso') || '');
   const reason       = String(formData.get('reason') || '').slice(0, 300);
   if (characters.length === 0 || !startIso || !endIso) return;
   const admin = supabaseAdmin();
+  // Attribute the request to the officer's Discord server profile name
+  // (guild nickname → global_name) rather than their email, which the agent
+  // dashboard surfaces verbatim — emailing it would dox the officer. Leave
+  // null if no member row resolves; never fall back to email.
+  const { data: pack } = await admin
+    .from('wolfpack_members')
+    .select('discord_id, nickname, global_name')
+    .eq('user_id', u!.id)
+    .maybeSingle();
+  const requestedByName = pack?.nickname || pack?.global_name || null;
+  const requestedByDiscordId = pack?.discord_id || u!.id;
+  // Default reason names the mob; fall back to the encounter id when the
+  // npc_id never resolved to a name.
+  const defaultReason = `data gap on ${npcName || `encounter ${encounterId}`}`;
   // Insert one request per character. Duplicate-key (unique index per
   // guild/character/scope) is benign — that character already has a pending
   // request for this window.
@@ -369,9 +442,9 @@ async function fileBackfillRequest(formData: FormData) {
     await admin.from('agent_backfill_requests').insert({
       guild_id: 'wolfpack',
       character,
-      requested_by_discord_id: u!.id,
-      requested_by_name: u!.email || null,
-      reason: reason || `data gap on encounter ${encounterId}`,
+      requested_by_discord_id: requestedByDiscordId,
+      requested_by_name: requestedByName,
+      reason: reason || defaultReason,
       scope: { start_iso: startIso, end_iso: endIso, types: ['encounter'] },
     }).then(({ error }) => {
       if (error && !/duplicate key|unique/i.test(error.message)) throw error;
@@ -418,9 +491,11 @@ export default async function AdminEncountersPage({
   const showReviewable = show === 'reviewable';
 
   const allRows = await loadEncounters(since.toISOString());
-  const dupes = findDuplicates(allRows);
+  const dupeClusters = findDuplicateClusters(allRows);
+  // "duplicate rows" = every clustered row beyond the one keeper.
+  const dupeRowCount = dupeClusters.reduce((n, c) => n + c.members.length - 1, 0);
   const dupeIds = new Set<string>();
-  for (const p of dupes) { dupeIds.add(p.a.id); dupeIds.add(p.b.id); }
+  for (const c of dupeClusters) for (const m of c.members) dupeIds.add(m.id);
 
   // Always count from the full set so the chips reflect totals; the table
   // below filters when ?show=reviewable.
@@ -430,7 +505,7 @@ export default async function AdminEncountersPage({
     low:  allRows.filter(r => { const x = hpRatio(r); return x != null && x < 0.75; }).length,
     over: allRows.filter(r => { const x = hpRatio(r); return x != null && x > 1.10; }).length,
     incomplete: allRows.filter(r => r.data_incomplete).length,
-    duplicates: dupes.length,
+    duplicates: dupeRowCount,
     reviewable: allRows.filter(r => !r.npc_name).length,
   };
 
@@ -489,22 +564,27 @@ export default async function AdminEncountersPage({
       </section>
 
       {/* Duplicates */}
-      {dupes.length > 0 && (
+      {dupeClusters.length > 0 && (
         <section className="bg-panel border border-border rounded-lg">
           <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-            🚨 Possible duplicates ({dupes.length}) — same NPC, started within 60s
+            🚨 Possible duplicates ({dupeClusters.length} {dupeClusters.length === 1 ? 'cluster' : 'clusters'}, {dupeRowCount} extra {dupeRowCount === 1 ? 'row' : 'rows'}) — same NPC, started within 10 min
           </h3>
           <div className="p-3 space-y-3">
-            {dupes.map((p, i) => {
-              const bothEmpty = (p.a.total_damage ?? 0) === 0 && (p.b.total_damage ?? 0) === 0
-                              && p.a.contribs === 0 && p.b.contribs === 0;
+            {dupeClusters.map((cl, i) => {
+              const allEmpty = cl.members.every(e => (e.total_damage ?? 0) === 0 && e.contribs === 0);
+              const sources = cl.members.filter(e => e.id !== cl.primaryId).map(e => e.id).join(',');
+              const primaryLabel = String.fromCharCode(65 + cl.members.findIndex(e => e.id === cl.primaryId));
               return (
               <div key={i} className="bg-bg border border-border rounded p-3">
                 <div className="grid grid-cols-2 gap-3 text-xs">
-                  {[{ label: 'A', enc: p.a }, { label: 'B', enc: p.b }].map(({ label, enc: e }) => (
+                  {cl.members.map((e, idx) => {
+                    const isPrimary = e.id === cl.primaryId;
+                    return (
                     <div key={e.id} className="space-y-1">
                       <div className="text-text">
-                        <span className="text-orange font-bold mr-1">[{label}]</span>
+                        <span className={`font-bold mr-1 ${isPrimary ? 'text-green' : 'text-orange'}`}>
+                          [{String.fromCharCode(65 + idx)}]{isPrimary ? ' ★' : ''}
+                        </span>
                         {e.npc_name || `npc ${e.npc_id}`}
                         {e.npc_id && <span className="text-dim text-[10px]"> · npc_id {e.npc_id}</span>}
                       </div>
@@ -512,29 +592,23 @@ export default async function AdminEncountersPage({
                       <div className="text-dim">{(e.total_damage ?? 0).toLocaleString()} dmg <span className={hpBadge(hpRatio(e)).cls}>{hpBadge(hpRatio(e)).label}</span></div>
                       <div className="text-dim text-[10px]">id <code>{e.id.slice(0, 8)}</code></div>
                     </div>
-                  ))}
+                  );})}
                 </div>
-                {bothEmpty && (
+                {allEmpty && (
                   <div className="text-dim text-[11px] italic mt-2">
-                    Both rows are empty (0 contributions, 0 players, 0 damage) — merging won&apos;t change anything.
-                    Use <b>Mark incomplete</b> on each below, or delete one as a ghost row.
+                    All rows are empty (0 contributions, 0 players, 0 damage) — merging won&apos;t change anything.
+                    Use <b>Mark incomplete</b>, or delete them as ghost rows.
                   </div>
                 )}
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-2 mt-2 items-center">
                   <form action={mergeEncounters}>
-                    <input type="hidden" name="target" value={p.a.id} />
-                    <input type="hidden" name="source" value={p.b.id} />
+                    <input type="hidden" name="target" value={cl.primaryId} />
+                    <input type="hidden" name="sources" value={sources} />
                     <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">
-                      Merge B → A
+                      Merge all → [{primaryLabel}] ★
                     </button>
                   </form>
-                  <form action={mergeEncounters}>
-                    <input type="hidden" name="target" value={p.b.id} />
-                    <input type="hidden" name="source" value={p.a.id} />
-                    <button type="submit" className="px-2 py-1 rounded border border-border bg-bg text-text text-xs">
-                      Merge A → B
-                    </button>
-                  </form>
+                  <span className="text-dim text-[10px]">keeps ★ (most contributions); the other {cl.members.length - 1} fold in</span>
                 </div>
               </div>
             );
@@ -566,6 +640,14 @@ export default async function AdminEncountersPage({
               const ratio = hpRatio(r);
               const badge = hpBadge(ratio);
               const flagged = r.data_incomplete || (r.total_damage ?? 0) === 0 || (ratio != null && ratio < 0.75) || (ratio != null && ratio > 1.10);
+              // Backfill request state for this encounter. `pendingSet` = names
+              // already pinged for this window; `newCands` = candidates not yet
+              // requested (rendered green, checked). When every candidate is
+              // already requested the submit button greys out + reads
+              // "Backfill requested".
+              const pendingSet = new Set(r.pending_backfill);
+              const newCands = r.backfill_candidates.filter(n => !pendingSet.has(n));
+              const allRequested = r.backfill_candidates.length > 0 && newCands.length === 0;
               return (
                 <tr key={r.id} className={`border-b border-border/40 hover:bg-[#1a212c] ${dupeIds.has(r.id) ? 'bg-[#3a1e1e22]' : ''}`}>
                   <td className="px-2 sm:px-3 py-2 text-dim whitespace-nowrap hidden sm:table-cell">{fmtTs(r.started_at)}</td>
@@ -606,26 +688,42 @@ export default async function AdminEncountersPage({
                         )}
                         <form action={fileBackfillRequest} className="space-y-1">
                           <input type="hidden" name="encounter_id" value={r.id} />
+                          <input type="hidden" name="npc_name" value={r.npc_name || ''} />
                           <input type="hidden" name="start_iso" value={r.started_at || ''} />
                           <input type="hidden" name="end_iso"   value={new Date(new Date(r.started_at || Date.now()).getTime() + 10 * 60 * 1000).toISOString()} />
                           {r.backfill_candidates.length > 0 ? (
                             <div className="space-y-1">
                               <div className="text-dim text-[10px] uppercase tracking-wide">
-                                Likely there ({r.backfill_candidates.length}) — ping all that should re-run their logs
+                                Likely there ({r.backfill_candidates.length}) — Wolf Pack members only · ping all that should re-run their logs
+                                {pendingSet.size > 0 && (
+                                  <span className="text-dim normal-case"> · {pendingSet.size} already requested</span>
+                                )}
                               </div>
                               <div className="max-h-32 overflow-y-auto bg-bg border border-border rounded p-1 flex flex-wrap gap-1">
-                                {r.backfill_candidates.map((name) => (
-                                  <label key={name} className="inline-flex items-center gap-1 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-panel">
-                                    <input
-                                      type="checkbox"
-                                      name="characters"
-                                      value={name}
-                                      defaultChecked
-                                      className="accent-blue"
-                                    />
-                                    <span>{name}</span>
-                                  </label>
-                                ))}
+                                {r.backfill_candidates.map((name) => {
+                                  // Already requested → dim + ✓, unchecked (don't
+                                  // re-file). New (not yet requested) → green name,
+                                  // checked — these are what the button submits.
+                                  const already = pendingSet.has(name);
+                                  return (
+                                    <label
+                                      key={name}
+                                      className={`inline-flex items-center gap-1 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-panel ${already ? 'opacity-70' : ''}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        name="characters"
+                                        value={name}
+                                        defaultChecked={!already}
+                                        className="accent-blue"
+                                      />
+                                      <span className={already ? 'text-dim' : 'text-green'}>{name}</span>
+                                      {already && (
+                                        <span className="text-dim text-[9px]" title="A backfill request is already pending for this character">✓</span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
                               </div>
                             </div>
                           ) : (
@@ -636,8 +734,18 @@ export default async function AdminEncountersPage({
                             />
                           )}
                           <input name="reason" placeholder="reason (optional)" className="bg-bg border border-border rounded px-2 py-0.5 text-xs w-full" />
-                          <button type="submit" className="px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white text-xs">
-                            Request backfill from selected
+                          <button
+                            type="submit"
+                            disabled={allRequested}
+                            className={
+                              allRequested
+                                ? 'px-2 py-0.5 rounded border border-border bg-panel text-dim text-xs cursor-not-allowed'
+                                : 'px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white text-xs'
+                            }
+                          >
+                            {allRequested
+                              ? 'Backfill requested ✓'
+                              : `Request backfill${newCands.length > 0 ? ` (${newCands.length})` : ''}`}
                           </button>
                         </form>
                         <form

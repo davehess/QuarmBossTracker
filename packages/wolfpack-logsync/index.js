@@ -530,28 +530,30 @@ const CHARM_SPELLS = new Map([
 
 // ── EQ class-title → base class ───────────────────────────────────────────────
 // A /who line shows the LEVEL TITLE for the character's class (e.g. a level-55
-// Enchanter reads "[55 Phantasmist]", a level-60 Ranger "[60 Warder]"), not the
-// base class. We normalize titles back to the base class so the /who overlay
-// shows "Enchanter", not "Phantasmist", and so class-gated logic (e.g. bard
-// detection, which checks class === 'Bard') works for titled high-levels too.
-// Classic/Titanium-era titles at 51/55/60; the base name (sub-51) passes
-// through unchanged, as does anything we don't recognize.
+// Enchanter reads "[55 Beguiler]", a level-60 Ranger "[60 Warder]", a level-60
+// Beastlord "[60 Savage Lord]"), not the base class. We normalize titles back
+// to the base class so the /who overlay shows "Enchanter", not "Beguiler", and
+// so class-gated logic (e.g. bard detection, which checks class === 'Bard')
+// works for titled high-levels too. Covers every title tier a Quarm character
+// can reach — 51 / 55 / 60 (Kunark) and 65 (Planes of Power); the base name
+// (sub-51) passes through unchanged, as does anything we don't recognize.
 const CLASS_TITLES = (() => {
-  const byClass = {
-    Warrior:       ['Champion', 'Myrmidon', 'Warlord'],
-    Cleric:        ['Vicar', 'Templar', 'High Priest'],
-    Paladin:       ['Cavalier', 'Knight', 'Crusader'],
-    Ranger:        ['Pathfinder', 'Outrider', 'Warder'],
-    'Shadow Knight': ['Reaver', 'Revenant', 'Grave Lord'],
-    Druid:         ['Wanderer', 'Preserver', 'Hierophant'],
-    Monk:          ['Disciple', 'Master', 'Grandmaster'],
-    Bard:          ['Minstrel', 'Troubadour', 'Virtuoso'],
-    Rogue:         ['Rake', 'Blackguard', 'Assassin'],
-    Shaman:        ['Mystic', 'Luminary', 'Oracle'],
-    Necromancer:   ['Heretic', 'Defiler', 'Warlock'],
-    Wizard:        ['Channeler', 'Evoker', 'Sorcerer'],
-    Magician:      ['Elementalist', 'Conjurer', 'Arch Mage'],
-    Enchanter:     ['Illusionist', 'Phantasmist', 'Coercer'],
+  const byClass = {                           // [51, 55, 60, 65]
+    Warrior:         ['Champion', 'Myrmidon', 'Warlord', 'Overlord'],
+    Cleric:          ['Vicar', 'Templar', 'High Priest', 'Archon'],
+    Paladin:         ['Cavalier', 'Knight', 'Crusader', 'Lord Protector'],
+    Ranger:          ['Pathfinder', 'Outrider', 'Warder', 'Forest Stalker'],
+    'Shadow Knight': ['Reaver', 'Revenant', 'Grave Lord', 'Dread Lord'],
+    Druid:           ['Wanderer', 'Preserver', 'Hierophant', 'Storm Warden'],
+    Monk:            ['Disciple', 'Master', 'Grandmaster', 'Transcendent'],
+    Bard:            ['Minstrel', 'Troubadour', 'Virtuoso', 'Maestro'],
+    Rogue:           ['Rake', 'Blackguard', 'Assassin', 'Deceiver'],
+    Shaman:          ['Mystic', 'Luminary', 'Oracle', 'Prophet'],
+    Necromancer:     ['Heretic', 'Defiler', 'Warlock', 'Arch Lich'],
+    Wizard:          ['Channeler', 'Evoker', 'Sorcerer', 'Arcanist'],
+    Magician:        ['Elementalist', 'Conjurer', 'Arch Mage', 'Arch Convoker'],
+    Enchanter:       ['Illusionist', 'Beguiler', 'Phantasmist', 'Coercer'],
+    Beastlord:       ['Primalist', 'Animist', 'Savage Lord', 'Feral Lord'],
   };
   const map = new Map();
   for (const [base, titles] of Object.entries(byClass)) {
@@ -2923,6 +2925,12 @@ class EncounterBuilder {
     // decide whether to auto-set a respawn timer — engaged-but-survived
     // fights (pull-and-flee, wipes) must not move boards.
     this.bossKillConfirmed = false;
+    // The name on the killing-blow "X has been slain by Y!" line for the boss
+    // (Y). When Y is one of OUR charmed pets, the kill belongs to the charmer,
+    // not whoever topped the damage meter — an enchanter charm-farming Lord of
+    // Ire never tops their own parse (the charmed mob does the killing), so the
+    // credit was landing on a groupmate/box. Resolved to the owner in flush().
+    this.killSlayer = null;
     // Mob → last player it landed a hit on, for DS correlation. On Quarm a
     // damage-shield proc logs as the anonymous "<mob> was hit by non-melee
     // for N" without naming the wearer, so we credit it to whoever the mob
@@ -3000,7 +3008,7 @@ class EncounterBuilder {
     this._pendingDireCharm = null;
     // petLeaders and lastDirgeCast intentionally NOT reset — persists for the agent's runtime
   }
-  _bumpDefender(name, key, amount) {
+  _bumpDefender(name, key, amount, tsMs) {
     if (!name) return;
     if (!this.defenderStats.has(name)) {
       this.defenderStats.set(name, {
@@ -3011,6 +3019,17 @@ class EncounterBuilder {
     }
     const s = this.defenderStats.get(name);
     s[key] = (s[key] || 0) + (amount || 1);
+    // First/last incoming-swing timestamp — lets /parses/[id] tell MT from
+    // PIVOT by handover time (not just damage share, which fires the [MT]
+    // chip on the wrong tank when a DPS pulls aggro and gets smacked harder
+    // for a brief stretch). Only stamp when the caller passes tsMs — that's
+    // every real swing-attempt bump (hits, rampage hits, every avoidance);
+    // bookkeeping bumps like ripostedFor skip it on purpose so the window
+    // bounds stay clean.
+    if (tsMs) {
+      if (!s.firstAttackAt) s.firstAttackAt = tsMs;
+      if (!s.lastAttackAt || tsMs > s.lastAttackAt) s.lastAttackAt = tsMs;
+    }
 
     // Mirror to stats.sessionDefenders LIVE so the dashboard reflects damage
     // taken even when an encounter doesn't end in a kill. ONLY for confirmed
@@ -3181,7 +3200,7 @@ class EncounterBuilder {
     }
   }
 
-  _bumpHealer(healer, target, amount) {
+  _bumpHealer(healer, target, amount, tsMs) {
     if (!healer || !amount) return;
     if (!this.healerStats.has(healer)) {
       this.healerStats.set(healer, { healed: 0, ticks: 0, targets: new Set() });
@@ -3190,6 +3209,14 @@ class EncounterBuilder {
     s.healed += amount;
     s.ticks  += 1;
     if (target) s.targets.add(target);
+    // First/last heal timestamp — lets /parses/[id] show the heal window
+    // ("Carol healed 0:00–2:54") parallel to the tank window. Optional
+    // — bookkeeping calls that don't represent a real heal tick can skip
+    // tsMs and the window just won't tighten.
+    if (tsMs) {
+      if (!s.firstHealAt) s.firstHealAt = tsMs;
+      if (!s.lastHealAt || tsMs > s.lastHealAt) s.lastHealAt = tsMs;
+    }
   }
   // Commit the buffered DS attribution to stats.damageShield. Called when
   // the flavor line arrives (with the real spell name retagged onto the
@@ -3597,7 +3624,7 @@ class EncounterBuilder {
       this.lastEvent = event.ts;
       if (event.defender) {
         const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
-        this._bumpDefender(def, 'rampageHits', 1);
+        this._bumpDefender(def, 'rampageHits', 1, Date.parse(event.ts) || Date.now());
         // Callout: announce who's taking the rampage (deduped per-target so a
         // multi-hit rampage / multi-box logs don't spam it). Silent builders
         // (opt-in backfill replays) must NOT speak old rampages.
@@ -3957,11 +3984,12 @@ class EncounterBuilder {
     // can compare incoming damage across parsers cleanly.
     if (event.type === 'damage' && event.defender) {
       const def = /^you$/i.test(event.defender) ? (this.character || 'You') : event.defender;
-      this._bumpDefender(def, 'hits',        1);
-      this._bumpDefender(def, 'damageTaken', event.amount || 0);
+      const ts = Date.parse(event.ts) || Date.now();
+      this._bumpDefender(def, 'hits',        1, ts);
+      this._bumpDefender(def, 'damageTaken', event.amount || 0, ts);
       if (event.isRampage) {
-        this._bumpDefender(def, 'rampageHits', 1);
-        this._bumpDefender(def, 'rampageDmg',  event.amount || 0);
+        this._bumpDefender(def, 'rampageHits', 1, ts);
+        this._bumpDefender(def, 'rampageDmg',  event.amount || 0, ts);
       }
     }
     if (event.type === 'avoid' && event.defender) {
@@ -3974,7 +4002,7 @@ class EncounterBuilder {
                 : k === 'block' ? 'blocks'
                 : k === 'invulnerable' ? 'invulns'
                 : null;
-      if (col) this._bumpDefender(def, col, 1);
+      if (col) this._bumpDefender(def, col, 1, Date.parse(event.ts) || Date.now());
 
       // On a riposte, the defender is about to counter-attack the original attacker.
       // Track that so we can credit the next damage event (def → attacker) as
@@ -4087,7 +4115,7 @@ class EncounterBuilder {
 
     if (event.type === 'heal' && (event.attacker || this.character)) {
       const healer = event.attacker || this.character;
-      this._bumpHealer(healer, event.defender, event.amount || 0);
+      this._bumpHealer(healer, event.defender, event.amount || 0, Date.parse(event.ts) || Date.now());
       // Live threat: heals generate hate roughly 0.5 per heal point in Luclin-era
       if (healer && event.amount > 0 && (!/\s/.test(healer) || healer === this.character)) {
         if (!this.threatBy.has(healer)) {
@@ -4169,6 +4197,7 @@ class EncounterBuilder {
       if (top && (isTop || isBossLike)) {
         this.bossName = event.defender;
         this.bossKillConfirmed = true;
+        this.killSlayer = event.attacker || null;   // who landed the killing blow (may be a charm pet)
         this.flush();
       }
     }
@@ -4434,6 +4463,20 @@ class EncounterBuilder {
       ? { by_char: _rollupByChar }
       : undefined;
 
+    // Resolve the killing blow to a credit. If the slayer is one of our charmed
+    // pets, the kill belongs to the charm owner (the enchanter), not the
+    // top-damage box. Falls back to the raw slayer (a player got the blow) and
+    // is null when no "slain by" line was seen. '__SELF__' owner = the uploader.
+    let killCredit = null;
+    if (this.killSlayer) {
+      const _sl = this.killSlayer.toLowerCase();
+      let _owner = this.petLeaders[_sl]
+        || (this._activeCharms && this._activeCharms.get(_sl) && this._activeCharms.get(_sl).owner)
+        || (_charmTickTracker.get(_sl) && _charmTickTracker.get(_sl).is_active ? _charmTickTracker.get(_sl).owner : null);
+      if (_owner === '__SELF__') _owner = this.character;
+      killCredit = _owner || this.killSlayer;
+    }
+
     const payload = {
       agent_version: AGENT_VERSION,
       character:     this.character,
@@ -4441,6 +4484,11 @@ class EncounterBuilder {
         started_at:    this.startedAt,
         ended_at:      this.lastEvent,
         boss_name:     this.bossName,
+        // Killing-blow attribution: kill_slayer is the raw name on the "slain
+        // by" line; kill_credit resolves a charmed-pet slayer to its owner so a
+        // charm-farmed boss kill credits the enchanter, not the top-damage box.
+        kill_slayer:   this.killSlayer || undefined,
+        kill_credit:   killCredit || undefined,
         // True only when the boss's death log line was observed for
         // bossName. False when bossName was guessed from top-damaged target
         // after a 120s idle flush (= "engaged but didn't die"). The bot
@@ -4475,7 +4523,9 @@ class EncounterBuilder {
         // Lets the server build healer leaderboards (CH-chain visibility especially).
         healers:     this.healerStats.size > 0
           ? [...this.healerStats.entries()].map(([name, s]) => ({
-              name, healed: s.healed, ticks: s.ticks, targets: [...s.targets]
+              name, healed: s.healed, ticks: s.ticks, targets: [...s.targets],
+              firstHealAt: s.firstHealAt || undefined,
+              lastHealAt:  s.lastHealAt  || undefined,
             }))
           : undefined,
         // Player deaths in this encounter.
@@ -4527,6 +4577,11 @@ class EncounterBuilder {
         // encounter_combat_rollup and stamps contributions.has_ability_detail.
         // Absent on older agents → rollup tables stay empty for those uploads.
         rollup:      _rollup,
+        // Boss's largest single-hit damage this fight. The Tank perspective
+        // panel multiplies it by each tank's `invulns` to estimate damage
+        // their invulnerability windows absorbed. Same value the dashboard
+        // Tanks tab uses — `invulnAvoidedDmg = invulns × bossMaxMelee`.
+        boss_max_melee: this.bossMaxMelee > 0 ? this.bossMaxMelee : undefined,
         events:      this.events,
       },
     };
@@ -11115,6 +11170,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
+      // "Buffs feel laggy" click from the buff-queue overlay. Drops the agent
+      // into snappy mode for 60s AND forwards the click to the bot for audit.
+      if (req.url === '/api/buff-lag-report' && req.method === 'POST') {
+        let character = '';
+        try {
+          if (stats && stats.activeCharacter) character = String(stats.activeCharacter);
+        } catch { /* */ }
+        reportBuffLag(character);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, snappy_until: _buffQueueSnappyUntil }));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -14347,7 +14413,11 @@ function startChatRelay() {
     if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) return;
     if (et.flushedAt) return; // fight already wrapped up
     const now = Date.now();
-    if (now - _lastSnapAt < 14_000) return; // safety: never faster than ~15s
+    // 29s safety floor (effectively a 30s cadence). Was 14s/15s — a roomful
+    // of Mimics pushing every 15s during a fight added up to ~120 inserts/min
+    // into encounter_threat_snapshots, each one a 1-2 KB response from
+    // Supabase. 30s halves that load and is still useful tank-threat detail.
+    if (now - _lastSnapAt < 29_000) return;
     _lastSnapAt = now;
     // pick the first watched character as the uploader; fall back to "?".
     let uploader = "?";
@@ -14364,7 +14434,7 @@ function startChatRelay() {
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
-  }, 15_000);
+  }, 30_000);
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -16363,7 +16433,12 @@ function fetchTargetCasts(name) {
 // landed on it. Merged with the LOCAL _buffLandingsByTarget for display.
 const _targetBuffsByName  = new Map();   // nameLower → { at, buffs }
 const _targetBuffsInflight = new Set();
-const TARGET_BUFFS_TTL_MS = 5000;
+// 12s — long enough that a roomful of Mimics doesn't multiplicatively hammer
+// the bot's /target-buffs relay (the same query firing every 2-3s across
+// every client visiting the same target was Supabase egress culprit #1).
+// Target Info still feels live: 12s of cross-client buff visibility is fine
+// for the "did anyone else just land Tash on this mob" question.
+const TARGET_BUFFS_TTL_MS = 12000;
 function fetchTargetBuffs(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -16401,14 +16476,29 @@ function fetchTargetBuffs(name) {
 // feels live (~3-5s between full refreshes).
 const _buffQueueCache = new Map();   // classLower|character → { at, payload }
 const _buffQueueInflight = new Set();
-const BUFF_QUEUE_TTL_MS = 3000;
+// "Buffs feel laggy" snappy mode — when the user clicks the lag-report button
+// in the overlay we drop the effective cache TTL to 500ms for 60s so the next
+// dozen overlay ticks (at 1.5s) get fresh data. The local agent is the only
+// gating layer between the overlay's 1.5s loop and the bot's Supabase query,
+// so flipping this alone is enough to make the queue feel snappy without any
+// overlay-side change.
+let _buffQueueSnappyUntil = 0;
+const SNAPPY_TTL_MS  = 500;
+const SNAPPY_WINDOW  = 60_000;
+// 8s (was 3s). The overlay polls every 1.5s; with the 3s TTL roughly every
+// other poll missed the cache and triggered a fresh bot fetch (which then
+// pulled 3000 buff_casts rows). 8s aligns with the overlay polling cadence
+// so each overlay tick at most refreshes the queue once per ~8s; the queue
+// content doesn't change faster than that in practice.
+const BUFF_QUEUE_TTL_MS = 8000;
 function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
   const key = String(bufferClass || '').trim().toLowerCase() + '|' + String(bufferCharacter || '').trim().toLowerCase();
   if (_buffQueueInflight.has(key)) return;
   const cached = _buffQueueCache.get(key);
-  if (cached && (Date.now() - cached.at) < BUFF_QUEUE_TTL_MS) return;
+  const ttl = (Date.now() < _buffQueueSnappyUntil) ? SNAPPY_TTL_MS : BUFF_QUEUE_TTL_MS;
+  if (cached && (Date.now() - cached.at) < ttl) return;
   _buffQueueInflight.add(key);
   const qs = [];
   if (bufferClass)     qs.push('class=' + encodeURIComponent(bufferClass));
@@ -16434,6 +16524,45 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
     req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
     req.end();
   } catch { _buffQueueInflight.delete(key); }
+}
+
+// "Buffs feel laggy" click from the buff-queue overlay. Two effects:
+//   1. Drop into snappy mode locally for 60s (fetchRaidBuffQueue picks up
+//      the lowered TTL on the next overlay tick — no flush needed).
+//   2. Forward the click to the bot so we can audit lag-felt timestamps
+//      vs the throttle config in Supabase. Fire-and-forget; if the bot is
+//      down the local snappy mode still works.
+function reportBuffLag(character) {
+  _buffQueueSnappyUntil = Date.now() + SNAPPY_WINDOW;
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  try {
+    const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/buff-lag-report');
+    const u   = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify({
+      character: character || null,
+      client_settings: {
+        agent_version:        AGENT_VERSION,
+        buff_queue_ttl_ms:    BUFF_QUEUE_TTL_MS,
+        target_buffs_ttl_ms:  TARGET_BUFFS_TTL_MS,
+        snappy_window_ms:     SNAPPY_WINDOW,
+      },
+    });
+    const req = mod.request({
+      method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
+      headers: {
+        'Authorization': 'Bearer ' + opts.token,
+        'Content-Type':  'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      },
+      timeout: 5000,
+    }, (res) => { res.on('data', () => {}); res.on('end', () => {}); });
+    req.on('error',   () => {});
+    req.on('timeout', () => req.destroy());
+    req.write(body); req.end();
+  } catch { /* swallow — local snappy mode already took effect */ }
 }
 
 // The freshest watched character's Zeal target (name + live HP%).

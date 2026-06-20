@@ -2887,7 +2887,7 @@ async function _handleAgentChat(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, posted }));
 }
@@ -3272,7 +3272,7 @@ async function _handleAgentPvp(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'pvp', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'pvp', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, posted, deduped, kills_recorded: pvpKillRows.length }));
 }
@@ -3594,7 +3594,7 @@ async function _handleAgentBossKill(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'bosskill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'bosskill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
 }
@@ -3944,7 +3944,7 @@ async function _handleAgentThreatSnapshot(req, res) {
   }
   await supabase.upsert('encounter_threat_snapshots', [row], 'guild_id,uploader,boss_name,snapshot_at')
     .catch(err => console.warn('[threat-snap] upsert failed:', err?.message));
-  _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, written: 1 }));
 }
@@ -4283,9 +4283,301 @@ async function _handleAgentFunEvent(req, res) {
   }
   const written = await supabase.upsert('fun_events', rows, 'guild_id,event_type,caster,event_ts')
     .catch(err => { console.warn('[fun-event] upsert failed:', err?.message); return null; });
-  _trackUpload({ endpoint: 'fun_event', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'fun_event', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
+}
+
+// POST /api/agent/faction
+//
+// Per-character faction tracking, COMPACT design (migration 20260610150000).
+// Two event kinds ride one payload from the agent's self-only log lines:
+//   {kind:'hit', character, faction, direction ±1, capped, ts}
+//     — "Your faction standing with X got better/worse." Aggregated here
+//       into ONE additive rollup row per (character, faction) via the
+//       bump_faction_standing RPC: counters add, at-cap timestamps pin the
+//       absolute min/max position, first/last hit track recency. No
+//       per-event rows — the table's size ceiling is characters × factions.
+//   {kind:'con',  character, mob, standing, rank, ts}
+//     — a /consider standing TRANSITION. Only NON-hostile standings matter
+//       (an engaged mob cons scowls/threateningly regardless of faction, so
+//       those are combat noise — and the agent already drops them); we keep
+//       the LATEST standing per (character, mob), overwritten in place.
+async function _handleAgentFaction(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 512 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  if (events.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  // Hits → one aggregate per (character, faction). A 1,500-event backfill
+  // chunk collapses to a handful of RPC rows.
+  const agg = new Map();   // charLower|factionLower → rollup row
+  // Cons → latest per (character, mob); a single upsert payload must not
+  // contain the same key twice (Postgres rejects double-update in one
+  // statement), so collapse here too.
+  const latestCon = new Map();
+
+  for (const e of events) {
+    if (!e || !e.character || !e.ts) continue;
+    const ts = new Date(e.ts);
+    if (isNaN(ts.getTime())) continue;
+    const iso = ts.toISOString();
+    if (e.kind === 'hit' && e.faction) {
+      const character = String(e.character).slice(0, 64);
+      const faction   = String(e.faction).slice(0, 96);
+      const key = character.toLowerCase() + '|' + faction.toLowerCase();
+      let a = agg.get(key);
+      if (!a) {
+        a = { guild_id: guildId, character, faction, better: 0, worse: 0,
+              capped_max_at: null, capped_min_at: null,
+              first_hit_at: iso, last_hit_at: iso, last_direction: null };
+        agg.set(key, a);
+      }
+      const dir = e.direction > 0 ? 1 : -1;
+      if (dir > 0) a.better++; else a.worse++;
+      if (e.capped && dir > 0 && (!a.capped_max_at || iso > a.capped_max_at)) a.capped_max_at = iso;
+      if (e.capped && dir < 0 && (!a.capped_min_at || iso > a.capped_min_at)) a.capped_min_at = iso;
+      if (iso < a.first_hit_at) a.first_hit_at = iso;
+      if (iso >= a.last_hit_at) { a.last_hit_at = iso; a.last_direction = dir; }
+    } else if (e.kind === 'con' && e.mob && e.standing) {
+      // Defense in depth — the agent drops hostile cons (rank ≤ 1) before
+      // upload, but never trust the wire.
+      const rank = Number.isFinite(e.rank) ? Math.trunc(e.rank) : null;
+      if (rank != null && rank <= 1) continue;
+      const character = String(e.character).slice(0, 64);
+      const mob       = String(e.mob).slice(0, 64);
+      const key = character.toLowerCase() + '|' + mob.toLowerCase();
+      const prev = latestCon.get(key);
+      if (!prev || iso > prev.event_ts) {
+        latestCon.set(key, {
+          guild_id: guildId, character, mob,
+          standing: String(e.standing).slice(0, 24),
+          rank, event_ts: iso,
+        });
+      }
+    }
+  }
+
+  let written = 0;
+  if (agg.size) {
+    const r = await supabase.rpc('bump_faction_standing', { p_rows: Array.from(agg.values()) })
+      .catch(err => { console.warn('[faction] standing bump failed:', err?.message); return null; });
+    if (Number.isFinite(r)) written += r;
+  }
+  if (latestCon.size) {
+    const r = await supabase.upsert('faction_cons', Array.from(latestCon.values()), 'guild_id,character,mob')
+      .catch(err => { console.warn('[faction] cons upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  _trackUpload({ endpoint: 'faction', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
+// POST /api/agent/pop_flags
+//
+// PoP flag grants (pre-built for the 2026-10-01 unlock; table
+// 20260610180000). The grant line never names the flag, so the agent sends
+// context -- {character, ts, zone, boss} -- and we resolve flag_key from the
+// DRAFT catalog below. Unrecognized combos store as 'unmapped' with zone +
+// boss preserved: launch-week catalog fixes are a map edit + one UPDATE.
+// KEEP IN SYNC with web/lib/popFlags.ts (zones/tiers live there). Verify
+// against wiki.takp.info + takp.info/flag-check before launch -- both were
+// network-blocked from the dev sandbox when this was written.
+const POP_FLAG_BY_BOSS = {
+  'grummus':                'cod_access',        // PoDisease -> Crypt of Decay
+  'aerin`dar':              'hoh_access',        // PoValor -> Halls of Honor
+  "aerin'dar":              'hoh_access',
+  'terris thule':           'tactics_access',    // Lair of Terris -> Drunder
+  'manaetic behemoth':      'mb_dead',           // PoInnovation
+  'saryrn':                 'saryrn_dead',       // PoTorment
+  'bertoxxulous':           'bert_dead',         // Crypt of Decay
+  'mithaniel marr':         'marr_dead',         // Temple of Marr
+  'rallos zek':             'earth_access',      // Tactics -> PoEarth
+  'agnarr the storm lord':  'agnarr_dead',       // Bastion of Thunder
+  'solusek ro':             'fire_access',       // SolRo Tower -> Doomfire
+  'fennin ro':              'fennin_dead',       // Doomfire
+  'coirnav':                'coirnav_dead',      // Reef of Coirnav
+  'the rathe council':      'rathe_dead',        // PoEarth
+  'xegony':                 'xegony_dead',       // PoAir
+  'quarm':                  'time_complete',     // Plane of Time
+};
+async function _handleAgentPopFlags(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  const supabase = require('./utils/supabase');
+  if (events.length === 0 || !supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = [];
+  const seen = new Set();
+  for (const e of events) {
+    if (!e || !e.character || !e.ts) continue;
+    const ts = new Date(e.ts);
+    if (isNaN(ts.getTime())) continue;
+    const bossLower = e.boss ? String(e.boss).toLowerCase() : '';
+    const flagKey = POP_FLAG_BY_BOSS[bossLower] || 'unmapped';
+    const key = `${String(e.character).toLowerCase()}|${flagKey}|${ts.toISOString()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      guild_id:  guildId,
+      character: String(e.character).slice(0, 64),
+      flag_key:  flagKey,
+      zone:      e.zone ? String(e.zone).slice(0, 64) : null,
+      boss:      e.boss ? String(e.boss).slice(0, 64) : null,
+      source:    'event',
+      earned_at: ts.toISOString(),
+    });
+  }
+  let written = 0;
+  if (rows.length) {
+    const r = await supabase.upsert('pop_flags', rows, 'guild_id,character,flag_key,earned_at')
+      .catch(err => { console.warn('[pop-flags] upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written = r.length;
+  }
+  _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
+// POST /api/agent/quarmy
+//
+// Quarmy export ingest (docs/DESIGN-quarmy-gear.md, table 20260610210000).
+// The agent parses <Name>Quarmy.txt locally and ships equipped slots +
+// general-bag items + AA ranks + profile facts. Bank/SharedBank/coin rows
+// were dropped at the agent BEFORE upload (they never leave the machine);
+// this handler strips them again as defense in depth and refuses to write
+// anything for a character whose owner set exclude_inventory on /me.
+// Latest-state overwrite: each upload replaces the character's rows.
+const _QUARMY_BANNED_SLOT_RX = /^(bank|sharedbank)|coin/i;
+async function _handleAgentQuarmy(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 1024 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const character = typeof payload?.character === 'string' ? payload.character.trim().slice(0, 64) : '';
+  if (!/^[A-Za-z]{2,}$/.test(character)) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'bad character' }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  // Owner opt-out is enforced server-side too — a stale agent that missed the
+  // prefs poll cannot write an excluded character's gear.
+  const charRows = await supabase
+    .select('characters', `select=name,exclude_inventory,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .catch(() => null);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  if (charRow && charRow.exclude_inventory) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'opted_out' }));
+  }
+  const checksum = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
+  if (checksum && charRow && charRow.quarmy_checksum === checksum) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
+  }
+
+  const cleanItem = (e, loc) => {
+    if (!e || typeof e.slot !== 'string' || _QUARMY_BANNED_SLOT_RX.test(e.slot)) return null;
+    const itemId = parseInt(e.item_id, 10);
+    if (!Number.isFinite(itemId) || itemId <= 0 || !e.item_name) return null;
+    return {
+      guild_id: guildId, character, loc,
+      slot: e.slot.slice(0, 32),
+      item_id: itemId,
+      item_name: String(e.item_name).slice(0, 96),
+      count: Math.max(1, parseInt(e.count, 10) || 1),
+      updated_at: new Date().toISOString(),
+    };
+  };
+  const gearRows = [];
+  for (const e of Array.isArray(payload.equipped) ? payload.equipped : []) {
+    const r = cleanItem(e, 'equipped'); if (r) gearRows.push(r);
+  }
+  for (const e of Array.isArray(payload.bags) ? payload.bags : []) {
+    const r = cleanItem(e, 'bag'); if (r) gearRows.push(r);
+  }
+  const aaRows = [];
+  for (const a of Array.isArray(payload.aas) ? payload.aas : []) {
+    const idx = parseInt(a?.index, 10), rank = parseInt(a?.rank, 10);
+    if (!Number.isFinite(idx) || !Number.isFinite(rank) || rank <= 0) continue;
+    aaRows.push({ guild_id: guildId, character, aa_index: idx, rank, updated_at: new Date().toISOString() });
+  }
+
+  // Replace wholesale — delete-then-insert handles unequipped slots, emptied
+  // bag slots, and AA respecs that an upsert would leave behind as ghosts.
+  const charQ = `guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(character)}`;
+  await supabase.del('character_gear', charQ).catch(() => {});
+  await supabase.del('character_aas', charQ).catch(() => {});
+  let written = 0;
+  if (gearRows.length) {
+    const r = await supabase.insert('character_gear', gearRows)
+      .catch(err => { console.warn('[quarmy] gear insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  if (aaRows.length) {
+    const r = await supabase.insert('character_aas', aaRows)
+      .catch(err => { console.warn('[quarmy] aa insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+
+  // Profile facts — only update an EXISTING characters row (rows are created
+  // by the roster/link flows; gear ingest shouldn't invent membership).
+  // deity_id finally pins the faction page's deity-shifted base estimates.
+  if (charRow) {
+    const patch = { quarmy_synced_at: new Date().toISOString() };
+    if (checksum) patch.quarmy_checksum = checksum;
+    const deity = parseInt(payload.deity_id, 10);
+    if (Number.isFinite(deity) && deity > 0) patch.deity_id = deity;
+    await supabase
+      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`, patch)
+      .catch(err => console.warn('[quarmy] characters update failed:', err?.message));
+  }
+
+  _trackUpload({ endpoint: 'quarmy', character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
 }
 
 // POST /api/agent/buff_casts
@@ -4345,19 +4637,63 @@ async function _handleAgentBuffCasts(req, res) {
   }
 
   let written = 0;
+  // The `on_conflict=` PostgREST parameter requires a NON-partial unique
+  // constraint or index — but buff_casts dedups via PARTIAL uniques split
+  // on (spell_id <> 0) vs (spell_id = 0), which PostgREST can't reference
+  // by column list. The old `upsert(...)` 400'd on every call (Supabase
+  // egress culprit #3: error responses × retry storm + the silent-data-loss
+  // bug). insertIgnoreDuplicates skips on_conflict, sends
+  // `Prefer: resolution=ignore-duplicates`, and lets the partial indexes
+  // catch dups server-side as a normal ON CONFLICT DO NOTHING.
   if (resolved.length) {
-    const r = await supabase.upsert('buff_casts', resolved, 'guild_id,target,spell_id,cast_at')
-      .catch(err => { console.warn('[buff-casts] resolved upsert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length;
+    const r = await supabase.insertIgnoreDuplicates('buff_casts', resolved)
+      .catch(err => { console.warn('[buff-casts] resolved insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length; else if (r !== null) written += resolved.length;
   }
   if (ambiguous.length) {
-    const r = await supabase.upsert('buff_casts', ambiguous, 'guild_id,target,landing_text,cast_at')
-      .catch(err => { console.warn('[buff-casts] ambiguous upsert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length;
+    const r = await supabase.insertIgnoreDuplicates('buff_casts', ambiguous)
+      .catch(err => { console.warn('[buff-casts] ambiguous insert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length; else if (r !== null) written += ambiguous.length;
   }
-  _trackUpload({ endpoint: 'buff_cast', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'buff_cast', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written }));
+}
+
+// "Buffs feel laggy" report from the Mimic buff-queue overlay. Tiny payload —
+// just the current client throttle knobs so we can correlate UX-felt lag
+// against the actual cache TTL + bot poll limit. Returning { ok: true } is
+// the contract; the overlay drops into snappy mode on its own based on the
+// click, not on the response.
+async function _handleAgentBuffLagReport(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 8 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload = {};
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
+  catch { /* tolerate garbage; we still log the click */ }
+
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const row = {
+    guild_id:        guildId,
+    source:          'mimic_overlay',
+    discord_id:      identity.discord_id || null,
+    character:       payload?.character ? String(payload.character).slice(0, 64) : null,
+    client_settings: payload?.client_settings && typeof payload.client_settings === 'object'
+                       ? payload.client_settings : null,
+    user_agent:      req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 256) : null,
+  };
+  await supabase.insert('buff_lag_reports', [row])
+    .catch(err => console.warn('[buff-lag] insert failed:', err?.message));
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true }));
 }
 
 async function _handleAgentHistoricalChat(req, res) {
@@ -4427,7 +4763,7 @@ async function _handleAgentHistoricalChat(req, res) {
     console.warn('[historical-chat] supabase mirror failed:', err?.message);
   }
 
-  _trackUpload({ endpoint: 'historical_chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'historical_chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, stored: lines.length }));
 }
@@ -4495,7 +4831,7 @@ async function _handleAgentLockout(req, res) {
     }
   }
 
-  _trackUpload({ endpoint: 'lockout', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'lockout', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
 }
@@ -4962,6 +5298,10 @@ function _CURSE_COUNTERS_FOR(name) {
   for (const [k, c] of _CURSE_COUNTERS) if (n.includes(k)) return c;
   return 0;
 }
+// Cure-type display/priority order (per user): curse → blind → poison →
+// disease. Lower rank = handled first; drives both the per-raider chip order
+// and the cross-raider debuff-queue sort.
+const _CURE_RANK = { curse: 0, blind: 1, poison: 2, disease: 3 };
 
 // GET /api/agent/target-buffs?name=<target>
 // Returns recent active buff_casts on a given target so OTHER Mimic users
@@ -5031,6 +5371,173 @@ async function _handleAgentTargetBuffs(req, res) {
   }
 }
 
+// Who has the Mass Group Buff AA trained — Quarmy AA index 35 (eqemu_altadv_vars
+// eqmacid). Source is the members' own Quarmy exports via /api/agent/quarmy, so
+// it only knows characters whose owners run the gear sync; absence ≠ untrained.
+// Refreshed every 10 min (AA purchases are rare).
+const _MGB_AA_INDEX = 35;
+let _mgbCache = { at: 0, names: new Set() };
+async function _mgbTrainedSet(supabase, guildId) {
+  if (Date.now() - _mgbCache.at < 10 * 60 * 1000) return _mgbCache.names;
+  try {
+    const rows = await supabase.select('character_aas',
+      `guild_id=eq.${encodeURIComponent(guildId)}&aa_index=eq.${_MGB_AA_INDEX}&rank=gte.1&select=character`);
+    _mgbCache = { at: Date.now(), names: new Set((rows || []).map(r => String(r.character || '').toLowerCase()).filter(Boolean)) };
+  } catch (e) {
+    console.warn('[raid-buff-queue] MGB AA fetch failed:', e && e.message);
+    _mgbCache.at = Date.now();   // don't hammer on failure
+  }
+  return _mgbCache.names;
+}
+
+// ── Spell-effects catalog cache (SPA decode) ────────────────────────────────
+// nameLower → { res:{MR,FR,CR,PR,DR: n}, ds, haste, atk, hp, mana, regen,
+// cha } decoded from eqemu_spells.raw.eff/base. Authoritative per-school
+// resist values + song multi-category credit for the detail breakdown — the
+// same decode web/app/raid/page.tsx does, ported bot-side so the Mimic
+// dashboard's raid card shows identical numbers. Lazy, 1h TTL, paged fetch.
+let _spellFxByName = null;
+let _spellFxAt = 0;
+const _SPELL_FX_TTL_MS = 60 * 60 * 1000;
+const _RESIST_SPA = { 46: 'FR', 47: 'CR', 48: 'PR', 49: 'DR', 50: 'MR' };
+async function _spellFxMap() {
+  if (_spellFxByName && (Date.now() - _spellFxAt) < _SPELL_FX_TTL_MS) return _spellFxByName;
+  const supabase = require('./utils/supabase');
+  try {
+    const m = new Map();
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const rows = await supabase.select('eqemu_spells',
+        `select=name,raw,buffduration,good_effect&order=id.asc&offset=${from}&limit=${PAGE}`);
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const sp of rows) {
+        if (!sp || !sp.name || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
+        const fx = m.get(sp.name.toLowerCase()) || { res: {} };
+        // Duration + beneficial flag ride along for the focus-haste limit
+        // checks (SPA 140 min-duration, 138 beneficial-only) and the cure
+        // detection (counters only matter on detrimentals).
+        if (sp.buffduration != null) fx.dur = Number(sp.buffduration) || 0;
+        if (sp.good_effect != null)  fx.good = Number(sp.good_effect) ? 1 : 0;
+        for (let i = 0; i < sp.raw.eff.length; i++) {
+          const eff = sp.raw.eff[i];
+          const base = (sp.raw.base && sp.raw.base[i]) || 0;
+          const school = _RESIST_SPA[eff];
+          if (school && base > 0 && base > (fx.res[school] || 0)) fx.res[school] = base;
+          if (eff === 10 && base > 0) fx.cha = true;
+          if (eff === 0  && base > 0 && base > (fx.hp || 0))            fx.hp = base;
+          if (eff === 2  && base > 0 && base > (fx.atk || 0))           fx.atk = base;
+          if (eff === 11 && Math.abs(base) > (fx.haste || 0))           fx.haste = Math.abs(base);
+          if (eff === 15 && base > 0 && base > (fx.mana || 0))          fx.mana = base;
+          if (eff === 59 && Math.abs(base) > (fx.ds || 0))              fx.ds = Math.abs(base);
+          if (eff === 79 && base > 0 && base > (fx.regen || 0))         fx.regen = base;
+          // Cure counters — what a cure spell has to chew through. SPA 35 =
+          // disease (Turgur's Insects carries 16, Tashani 1), 36 = poison
+          // (Envenomed Bolt 10), 116 = curse. SPA 20 = blindness. On a
+          // DETRIMENTAL these are POSITIVE (counters applied); on a CURE they
+          // are NEGATIVE (counters removed). Split the two so the same SPA
+          // both flags a cureable debuff AND identifies the cure spell.
+          if (eff === 35) { if (base > 0 && base > (fx.dc || 0)) fx.dc = base; else if (base < 0) fx.cureDisease = true; }
+          if (eff === 36) { if (base > 0 && base > (fx.pc || 0)) fx.pc = base; else if (base < 0) fx.curePoison = true; }
+          if (eff === 116) { if (base > 0 && base > (fx.cc || 0)) fx.cc = base; else if (base < 0) fx.cureCurse = true; }
+          // Blindness: the DEBUFF carries SPA 20 with base<0; the CURE (Cure
+          // Blindness) carries SPA 20 base>0 on a beneficial spell.
+          if (eff === 20) { if (base < 0) fx.blind = true; else if (base > 0) fx.cureBlindMaybe = true; }
+        }
+        // A SPA-20-positive spell is only a blindness CURE if it's beneficial
+        // (otherwise it's an unrelated stun/illusion effect).
+        if (fx.cureBlindMaybe && fx.good === 1) fx.cureBlind = true;
+        m.set(sp.name.toLowerCase(), fx);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+    _spellFxByName = m;
+    _spellFxAt = Date.now();
+  } catch (e) {
+    console.warn('[spell-fx] catalog fetch failed:', e && e.message);
+    _spellFxAt = Date.now();   // back off; retry after TTL
+  }
+  return _spellFxByName || new Map();
+}
+
+// Website-style per-raider buff breakdown (mirrors /raid's detail panel) so
+// the dashboard Raid card can render the same sections instead of a flat chip
+// list. Entries are {n: name, s: remaining secs | null, v: magnitude | undef}.
+// Songs are placed in `songs` AND credited to every category their SPA
+// effects touch (McVaxius' Rondo → haste + attack + ds), each with the
+// catalog magnitude, exactly like the website's detail panel.
+function _buffDetailFor(rb, buffs, fx) {
+  const names = (buffs || []).map(b => b && b.name).filter(Boolean);
+  const hpSlots = rb.analyzeHpSlots(names);
+  const slotted = new Set([hpSlots.A, hpSlots.B, hpSlots.C].filter(Boolean).map(n => String(n).toLowerCase()));
+  const cats = {}; const resists = {}; const ds = []; const songs = []; const other = [];
+  let di = false, cha = false;
+  const pushCat = (cat, entry) => {
+    const arr = (cats[cat] = cats[cat] || []);
+    if (!arr.some(e => e.n === entry.n)) arr.push(entry);
+  };
+  for (const b of (buffs || [])) {
+    if (!b || !b.name) continue;
+    const name = String(b.name);
+    const lower = name.toLowerCase();
+    const secs = (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks < 6000) ? Math.round(b.ticks * 6) : null;
+    const isSong = rb.isSongBuff(name, typeof b.song === 'boolean' ? b.song : undefined);
+    const mk = (v) => {
+      const e = { n: name.slice(0, 60), s: secs };
+      if (v != null) e.v = v;
+      if (isSong) e.song = true;
+      return e;
+    };
+    if (lower.includes('divine intervention')) di = true;
+    const meta = fx ? fx.get(lower) : null;
+    if (meta && meta.cha) cha = true;
+    // Resists: catalog schools + values win; keyword fallback when the name
+    // misses the catalog (rank suffixes etc.).
+    let rTypes = [];
+    if (meta && meta.res && Object.keys(meta.res).length) {
+      for (const [school, v] of Object.entries(meta.res)) {
+        (resists[school] = resists[school] || []).push(mk(v));
+      }
+      rTypes = Object.keys(meta.res);
+    } else {
+      rTypes = rb.resistTypesFor(name);
+      for (const t of rTypes) (resists[t] = resists[t] || []).push(mk(null));
+    }
+    // Catalog multi-category credit — applies to songs AND regular buffs
+    // (Fiery Might = HP + DS from one cast).
+    if (meta) {
+      if (meta.haste != null) pushCat('haste',  mk(meta.haste));
+      if (meta.atk   != null) pushCat('attack', mk(meta.atk));
+      if (meta.ds    != null) ds.some(e => e.n === name.slice(0, 60)) || ds.push(mk(meta.ds));
+      if (meta.mana  != null) pushCat('mana',   mk(meta.mana));
+      if (meta.regen != null) pushCat('regen',  mk(meta.regen));
+    }
+    if (isSong) { songs.push(mk(null)); continue; }
+    if (rTypes.length && !meta) continue;   // pure keyword-resist buff — done
+    const cat = rb.categorizeBuff(name);
+    if (cat === 'resists') continue;        // already on its school rows
+    if (cat === 'ds') { ds.some(e => e.n === name.slice(0, 60)) || ds.push(mk(meta && meta.ds != null ? meta.ds : null)); continue; }
+    if (cat === 'hp' && slotted.has(lower)) continue;   // shown on its HP slot row
+    if (cat) pushCat(cat, mk(null));
+    else if (!(meta && (meta.haste != null || meta.atk != null || meta.ds != null || meta.mana != null || meta.regen != null))) other.push(mk(null));
+    // Secondary credits (VoG→attack, POTG/POTC→manaRegen) so the detail rows
+    // match the queue's "not missing" logic.
+    for (const sec of rb.secondaryCategoriesFor(name)) {
+      if (sec !== cat) pushCat(sec, mk(null));
+    }
+  }
+  // Songs sink below primaries within each category (songs stack on top; the
+  // slot-1 primary is what overwrite rules apply to).
+  for (const c of Object.keys(cats)) cats[c].sort((a, b2) => Number(!!a.song) - Number(!!b2.song));
+  for (const t of Object.keys(resists)) resists[t].sort((a, b2) => (b2.v || 0) - (a.v || 0));
+  return {
+    hp: { A: hpSlots.A || null, B: hpSlots.B || null, C: hpSlots.C || null },
+    cats, resists, ds, songs, other,
+    di, cha,
+  };
+}
+
 // GET /api/agent/raid-buff-queue?class=<class>&character=<self>
 // Powers the Mimic buff-queue overlay. Returns two lists:
 //   buff_queue   — raiders missing buffs the buffer's class can provide,
@@ -5071,25 +5578,94 @@ async function _handleAgentRaidBuffQueue(req, res) {
 
     const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,last_zone,updated_at`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,zone_name,self_hp_pct,updated_at`),
       supabase.select('raid_roster',
-        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
+      // limit=400 (was 3000) — the buff-queue consumer only needs the most
+      // recent landings per target, and a 3h window with 30 active raiders
+      // peaks at ~300-400 distinct relevant rows. 3000 was shipping ~2 MB
+      // per call across every raid Mimic on ~3s cadence — Supabase egress
+      // culprit #2.
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=3000`),
+        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=400`),
     ]);
 
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
     const classByName = new Map();
     for (const c of (charRows || [])) if (c && c.name && c.class) classByName.set(c.name.toLowerCase(), c.class);
+    // Per-uploader snapshots → cluster into distinct raids (two raids can
+    // run at once; snapshots sharing any member are the same raid). The
+    // queue scopes to the BUFFER'S raid: their own agent is the requester,
+    // so identity.discord_id's snapshot pins it; fall back to the cluster
+    // containing bufferCharacter, then to everything (no roster signal).
+    const snapsByUploader = new Map();
+    for (const r of (rosterRows || [])) {
+      if (!r || !r.name || rb.isCorpse(r.name)) continue;
+      const up = String(r.uploaded_by_discord_id || '');
+      if (!snapsByUploader.has(up)) snapsByUploader.set(up, []);
+      snapsByUploader.get(up).push(r);
+    }
+    const uploaders = [...snapsByUploader.keys()];
+    const clusterOf = new Map(uploaders.map((u, i) => [u, i]));
+    const find = (u) => { let r = clusterOf.get(u); return r; };
+    // Union snapshots sharing a member.
+    const byMember = new Map();   // member(lower) → first uploader seen
+    for (const [up, rows] of snapsByUploader) {
+      for (const r of rows) {
+        const m = r.name.toLowerCase();
+        if (!byMember.has(m)) { byMember.set(m, up); continue; }
+        const other = byMember.get(m);
+        const a = find(up), b = find(other);
+        if (a !== b) for (const [u2, c] of clusterOf) if (c === a) clusterOf.set(u2, b);
+      }
+    }
+    let scopedUploaders = null;
+    if (identity.discord_id && snapsByUploader.has(identity.discord_id)) {
+      const c = find(identity.discord_id);
+      scopedUploaders = uploaders.filter(u => find(u) === c);
+    } else if (bufferCharacter) {
+      const owner = byMember.get(bufferCharacter.toLowerCase());
+      if (owner != null) {
+        const c = find(owner);
+        scopedUploaders = uploaders.filter(u => find(u) === c);
+      }
+    }
     const rosterByName = new Map();
-    for (const r of (rosterRows || [])) if (r && r.name && !rb.isCorpse(r.name)) rosterByName.set(r.name.toLowerCase(), r);
+    const hpByName = new Map();   // member → freshest row that actually has hp_pct
+    for (const [up, rows] of snapsByUploader) {
+      if (scopedUploaders && !scopedUploaders.includes(up)) continue;
+      for (const r of rows) {
+        const k = r.name.toLowerCase();
+        const prev = rosterByName.get(k);
+        if (!prev || String(r.captured_at || '') > String(prev.captured_at || '')) rosterByName.set(k, r);
+        if (r.hp_pct != null) {
+          const ph = hpByName.get(k);
+          if (!ph || String(r.captured_at || '') > String(ph.captured_at || '')) hpByName.set(k, r);
+        }
+      }
+    }
+    // Backfill: an uploader whose Zeal gauges miss a member writes hp_pct
+    // null; without this, "freshest row wins" flickered HP on/off as the
+    // two Mimics alternated heartbeats.
+    for (const [k, r] of rosterByName) {
+      if (r.hp_pct == null && hpByName.has(k)) r.hp_pct = hpByName.get(k).hp_pct;
+    }
     const classFor = (n) => classByName.get(String(n).toLowerCase()) || (rosterByName.get(String(n).toLowerCase()) || {}).class || null;
 
+    // Same "online" pulse as /raid's auto-hide: a live-state row whose last
+    // Mimic heartbeat is older than 15 minutes is someone who logged off —
+    // their stale buff array must not put them on tonight's queue.
     const liveByName = new Map();
-    for (const r of (liveRows || [])) if (r && r.character && !rb.isCorpse(r.character)) liveByName.set(r.character.toLowerCase(), r);
+    const liveCutoffMs = Date.now() - ROSTER_FRESH_MS;
+    for (const r of (liveRows || [])) {
+      if (!r || !r.character || rb.isCorpse(r.character)) continue;
+      const at = r.updated_at ? (Date.parse(r.updated_at) || 0) : 0;
+      if (at < liveCutoffMs) continue;
+      liveByName.set(r.character.toLowerCase(), r);
+    }
 
     // Observed buff landings → per-target buff inference for raiders NOT
     // running Mimic. Filters out anything (a) past its catalog duration and
@@ -5122,8 +5698,33 @@ async function _handleAgentRaidBuffQueue(req, res) {
         if (remTicks <= 0) continue;
         const k = String(v.target).toLowerCase();
         if (!inferredBuffsByName.has(k)) inferredBuffsByName.set(k, []);
-        inferredBuffsByName.get(k).push({ name: v.name, ticks: remTicks });
+        // castMs rides along so live-row merging can tell "landed AFTER the
+        // target's last Zeal flush" from stale history.
+        inferredBuffsByName.get(k).push({ name: v.name, ticks: remTicks, castMs: v.castMs });
       }
+    }
+
+    // Live buffs + NEWER observed landings, merged. Live state used to win
+    // outright — but it only flushes when the TARGET's Mimic sees a change,
+    // so a fresh Feral Avatar the CASTER's agent observed (buff_casts lands
+    // within ~5s) was ignored until the target's row caught up, and the
+    // burst queue kept listing an already-buffed raider. Any observed cast
+    // newer than the live row's updated_at joins the set.
+    function buffsFor(live, inferred) {
+      const liveBuffs = (live && Array.isArray(live.buffs)) ? live.buffs : null;
+      if (!liveBuffs) return inferred || [];
+      const liveAt = live.updated_at ? Date.parse(live.updated_at) || 0 : 0;
+      const merged = liveBuffs.slice();
+      const have = new Set(liveBuffs.map(b => b && b.name ? String(b.name).toLowerCase() : ''));
+      for (const inf of (inferred || [])) {
+        if (!inf || !inf.name) continue;
+        if ((inf.castMs || 0) <= liveAt) continue;
+        const nl = String(inf.name).toLowerCase();
+        if (have.has(nl)) continue;
+        merged.push({ name: inf.name, ticks: inf.ticks });
+        have.add(nl);
+      }
+      return merged;
     }
 
     // Build a row per in-raid raider (live state OR roster). Categorize buffs,
@@ -5137,27 +5738,42 @@ async function _handleAgentRaidBuffQueue(req, res) {
     const provides = rb.classProvides(bufferClass);
     const buffQueue = [];
     const debuffQueue = [];
+    // Spell-effects catalog up front — the cure detection in the per-raider
+    // loop reads counters (SPA 35/36/116/20) per debuff; the rosterOut detail
+    // build below reuses the same map.
+    const spellFx = await _spellFxMap();
 
     // Only include characters who are demonstrably ONLINE right now:
     //   • In the current raid_roster window (Zeal type-5 snapshot, 15min fresh)
-    //   • OR streaming live state (Mimic running with Zeal pipe up)
+    //   • OR streaming live state within the same 15-min window (groupMode)
     // Pure buff_casts inference is dropped — those are buffs WE'VE seen on
     // someone over the last 3h, which is not the same as "they're online".
-    // groupMode (no raid roster) falls back to "anyone with live state" so
-    // a group of Mimic users sees each other without needing a /raid.
-    const allKeys = new Set([
-      ...rosterByName.keys(),
-      ...liveByName.keys(),
-    ]);
+    // When a raid roster IS active, candidates are the roster — a fresh live
+    // streamer who isn't in the buffer's raid doesn't belong on its queue.
+    // groupMode (no raid roster) falls back to "anyone with fresh live state"
+    // so a group of Mimic users sees each other without needing a /raid.
     const groupMode = rosterByName.size === 0;
+    const allKeys = groupMode
+      ? new Set([...liveByName.keys()])
+      : new Set([...rosterByName.keys()]);
     // Buffer's current zone — drives same-zone-first sort. Fall back to
     // "no zone" when we don't know who's asking; the sort degrades to
     // just-by-tier in that case.
     const bufferKey = bufferCharacter.toLowerCase();
     const bufferZone = (() => {
       const lv = bufferKey ? liveByName.get(bufferKey) : null;
-      if (lv && lv.last_zone) return String(lv.last_zone);
+      if (lv && lv.zone_name) return String(lv.zone_name);
       return null;
+    })();
+    // Bard buffs are GROUP-ranged (GroupV2, 100 range) — Nature's Melody
+    // haste, levitate songs, Dance of the Blade all hit only their own
+    // group. A Bard's buff queue therefore scopes to their group; gaps in
+    // other groups aren't theirs to fix. Falls back to whole-raid when we
+    // can't resolve the buffer's group (no roster row).
+    const bardGroupScope = (() => {
+      if (bufferClass.toLowerCase() !== 'bard') return null;
+      const rrSelf = bufferKey ? rosterByName.get(bufferKey) : null;
+      return (rrSelf && rrSelf.group_num != null) ? rrSelf.group_num : null;
     })();
     const seen = new Set();
 
@@ -5166,15 +5782,15 @@ async function _handleAgentRaidBuffQueue(req, res) {
       seen.add(k);
       const live = liveByName.get(k);
       const rr   = rosterByName.get(k);
-      const inferred = !live ? inferredBuffsByName.get(k) : null;
-      const name = (rr && rr.name) || (live && live.character) || (inferred && inferred[0] && inferred[0].target) || k;
+      const inferred = inferredBuffsByName.get(k) || null;
+      const name = (rr && rr.name) || (live && live.character) || k;
       const cls  = classFor(name);
       const role = rb.classToRole(cls);
-      // Live buffs take precedence; otherwise use inferred. Either way, this
+      // Live buffs merged with NEWER observed landings (see buffsFor) — this
       // is the buff set we categorize from. `isInferred` flags rows whose
-      // buffs came from buff_casts (no Mimic on that player) so the overlay
-      // can render a "🔍 inferred" badge.
-      const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : (inferred || []);
+      // buffs came ONLY from buff_casts (no Mimic on that player) so the
+      // overlay can render a "🔍 inferred" badge.
+      const buffs = buffsFor(live, inferred);
       const isInferred = !live && (inferred && inferred.length > 0);
       // noAgent now means "we have NO signal at all" — neither live state nor
       // an inferred buff landing. Skip buff-queue analysis for these (we don't
@@ -5182,52 +5798,88 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // path if we get curses or damage from them later.
       const noAgent = !live && !isInferred;
 
-      // Avatar / Celestial Tranquility / SK Touch of Hate Recourse detection —
-      // useful on EVERY queue row, not just the burst queue. Especially:
-      //   • Avatar present → likely benefits from Feral Avatar (near-cap proxy
-      //     until the worn-item parser lands).
-      //   • Celestial Tranquility (+40 atk) is a slot that Avatar overwrites.
-      //   • SK T. of Hate Recourse (+35 atk) is the slot Savagery overwrites.
-      const avatarBuff = buffs.find(b => b && b.name && /\b(feral avatar|primal avatar|avatar)\b/i.test(b.name));
-      const celestial  = buffs.find(b => b && b.name && /celestial tranquility/i.test(b.name));
-      const skRecourse = (cls && /shadow ?knight|^sk$/i.test(cls))
-                         ? buffs.find(b => b && b.name && /t\.?\s*of hate recourse|touch of hate recourse/i.test(b.name))
-                         : null;
+      // Avatar / Celestial Tranquility / SK Touch of Hate Recourse detection
+      // is now BURST-only — on a "Haste missing" row the 🪶 chip read as
+      // "Avatar is providing the haste", which is wrong (Ancient: Feral
+      // Avatar has no haste component). The chip's real signal is "skip
+      // this raider for Feral Avatar / Savagery; they already have it",
+      // which only applies to the burst queue.
 
       // Same-zone-as-buffer flag — drives "near you first" sort. Falls back
       // to false (treated equal) when we don't know the buffer's zone.
-      const rowZone   = live && live.last_zone ? String(live.last_zone) : null;
+      const rowZone   = live && live.zone_name ? String(live.zone_name) : null;
       const sameZone  = !!(bufferZone && rowZone && bufferZone === rowZone);
 
-      // Curses → debuff queue. Each curse line carries the buffer's casting
-      // status from _castingByTarget so a second cure caster sees "Carol
-      // already casting Remove Curse on Bob, 2s". Counter count (how many
-      // RC ticks until cured) drives the "tippy-top" sort: high-counter
-      // curses outrank low-counter ones within the debuff section.
+      // Cureables → debuff queue. Catalog-driven: ANY detrimental carrying
+      // cure counters is listed — SPA 116 curse (Remove Curse), SPA 36
+      // poison (Counteract Poison — Shadow Poison etc.), SPA 35 disease
+      // (Counteract Disease — Turgur's/Togor's slows ride a disease
+      // component, so curing the disease strips the slow), and SPA 20
+      // blindness (Cure Blindness). The old keyword list (gravel rain /
+      // curse of / plague …) stays as a fallback for catalog misses.
+      // Counter count drives the "tippy-top" sort: high-counter afflictions
+      // outrank low-counter ones within the debuff section.
       const curses = [];
       let maxCounters = 0;
-      for (const b of buffs) if (b && b.name && rb.isCurseBuff(b.name)) {
-        const cnt = _CURSE_COUNTERS_FOR(b.name);
+      for (const b of buffs) {
+        if (!b || !b.name) continue;
+        const fxB = spellFx.get(String(b.name).toLowerCase());
+        // Cure-type precedence (per user): curse → blind → poison → disease.
+        // When a debuff carries more than one cure category (rare), name the
+        // highest-priority one.
+        let cure = null, cnt = 0;
+        if (fxB && fxB.good === 0) {
+          if (fxB.cc) { cure = 'curse';   cnt = fxB.cc; }
+          else if (fxB.blind) { cure = 'blind'; }
+          else if (fxB.pc) { cure = 'poison';  cnt = fxB.pc; }
+          else if (fxB.dc) { cure = 'disease'; cnt = fxB.dc; }
+        }
+        if (!cure && rb.isCurseBuff(b.name)) { cure = 'curse'; cnt = _CURSE_COUNTERS_FOR(b.name) || 0; }
+        if (!cure) continue;
         if (cnt > maxCounters) maxCounters = cnt;
         curses.push({
           name: b.name,
+          cure,
           counters: cnt || null,
           remaining_secs: (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks < 6000) ? Math.round(b.ticks * 6) : null,
+          // Zeal buff-window slot (1-15) when the target's own Mimic
+          // reported it. Slots 1-4 are cheap to dispel — a group member
+          // can strip the debuff without clipping many real buffs.
+          slot: (typeof b.slot === 'number' && b.slot >= 1) ? b.slot : null,
+          low_slot: (typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 4) || undefined,
         });
       }
-      if (curses.length > 0) {
-        // Within a single raider's curses list, also surface highest-counter
-        // first so the UI's right-side chip row reads worst → least.
-        curses.sort((a, b) => (b.counters || 0) - (a.counters || 0));
+      // Optimistic cure removal: when a cure that clears this affliction just
+      // LANDED on the target (cast completed within the suppress window),
+      // drop that chip from the list immediately rather than waiting for the
+      // target's next live-state flush to show it gone. A still-in-flight cure
+      // instead marks the chip "being cured" so a second curer skips it.
+      const activeCurses = [];
+      for (const c of curses) {
+        const cs = _cureStateFor(name, c.cure);
+        if (cs.state === 'done') continue;               // optimistically removed
+        if (cs.state === 'casting') { c.being_cured = true; c.cured_by = cs.caster; c.cure_secs = cs.secs; }
+        activeCurses.push(c);
+      }
+      if (activeCurses.length > 0) {
+        // Cure-type priority order (per user): curse → blind → poison →
+        // disease. Within a raider's chips, order by that, then by counters.
+        // Being-cured chips sink within their type (already handled).
+        activeCurses.sort((a, b) =>
+          (Number(!!a.being_cured) - Number(!!b.being_cured))
+          || (_CURE_RANK[a.cure] - _CURE_RANK[b.cure]) || ((b.counters || 0) - (a.counters || 0)));
         debuffQueue.push({
           name, class: cls, role, group: rr ? rr.group_num : null,
-          curses,
+          curses: activeCurses,
           max_counters:          maxCounters,
+          // Top cure rank on this raider — drives the cross-raider sort so the
+          // section reads curse-afflicted first, then blind, poison, disease.
+          cure_rank:             Math.min(...activeCurses.map(c => _CURE_RANK[c.cure])),
+          // Whole row is being handled if every remaining chip is in-flight —
+          // sinks it below un-handled rows in the cross-raider sort.
+          all_being_cured:       activeCurses.every(c => c.being_cured) || undefined,
           same_zone:             sameZone,
           inferred: isInferred,
-          avatar_buff:           avatarBuff ? avatarBuff.name : null,
-          celestial_tranquility: !!celestial,
-          sk_recourse:           skRecourse ? skRecourse.name : null,
           casting: _castingOnTarget(name),
         });
       }
@@ -5236,39 +5888,72 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // (b) we have no signal at all (no Mimic + no buff_casts), or (c) we
       // can't categorize their role.
       if (provides.length === 0 || noAgent) continue;
+      // Bard scope: only their own group's gaps (group-ranged songs). The
+      // curse path above intentionally ran first — knowing who's cursed is
+      // raid-wide information regardless of who can fix it.
+      if (bardGroupScope != null && rr && rr.group_num !== bardGroupScope) continue;
       const expected = rb.ROLE_TARGETS[role] || [];
       const byCategory = {};
       for (const b of buffs) if (b && b.name) {
         const cat = rb.categorizeBuff(b.name);
         if (cat) (byCategory[cat] = byCategory[cat] || []).push(b.name);
+        // Secondary credits — VoG/Bihli carry ATK; POTG/POTC carry mana
+        // regen (a POTG caster isn't "missing Mana Regen" to an enchanter).
+        for (const sec of rb.secondaryCategoriesFor(b.name)) {
+          if (sec !== cat && !(byCategory[sec] = byCategory[sec] || []).includes(b.name)) byCategory[sec].push(b.name);
+        }
       }
       const missing = provides.filter(cat => expected.includes(cat) && !(byCategory[cat] || []).length);
       const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
-      const missingHp = provides.includes('hp') ? rb.HP_SLOTS.filter(s => !hpSlots[s]) : [];
+      // Only nag the buffer about HP slots THEIR class can actually fill —
+      // a Cleric provides slots A+B but not C (Khura/Brell/Arch are Shaman/
+      // Wizard lines), so listing C in their queue is a false ask.
+      const fillsSlots = rb.classHpSlots(bufferClass);
+      const missingHp = provides.includes('hp') ? fillsSlots.filter(s => !hpSlots[s]) : [];
 
-      if (missing.length === 0 && missingHp.length === 0) continue;
+      // Upgrade chains the buffer's class can improve: present-but-lower-
+      // link spells (Daring vs Aegolism, Kragg vs Khura, Journeyman vs
+      // Spirit of Bih`Li). Surfaced as "Focus line ↑" chips so the queue
+      // nudges a recast even when the slot itself reads filled.
+      const buffNames = buffs.map(b => b && b.name).filter(Boolean);
+      const upgrades = [];
+      for (const ch of rb.UPGRADE_CHAINS) {
+        if (ch.classes && !ch.classes.includes(bufferClass.toLowerCase())) continue;
+        if (ch.roles && !ch.roles.includes(role)) continue;
+        const pos = rb.chainPosition(ch.chain, buffNames);
+        if (pos >= 0 && pos < ch.chain.length - 1) upgrades.push(ch.label);
+      }
+      if (missing.length === 0 && missingHp.length === 0 && upgrades.length === 0) continue;
 
       // Severity tier — same intent as /raid: any HP gap or caster/priest no
-      // mana/regen → orange; otherwise yellow.
+      // mana/regen → orange; missing category → yellow; only an upgrade
+      // available (no real gap) → light-green "upgradable".
       const totalBuffs = buffs.filter(b => b && b.name).length;
       let tier;
       if (totalBuffs === 0) tier = 'red';
       else if (missingHp.length > 0) tier = 'orange';
       else if ((role === 'caster' || role === 'priest') && (missing.includes('mana') || missing.includes('manaRegen'))) tier = 'orange';
-      else tier = 'yellow';
+      else if (missing.length > 0) tier = 'yellow';
+      else tier = 'upgradable';
 
+      // POTG/POTC fills HP slot A *instead of* group Aegolism — clerics
+      // should single-target the Symbol instead of group-casting Aego over
+      // someone's druid buff. Surface what fills slot A so the overlay can
+      // annotate.
+      const slotA = hpSlots.A ? String(hpSlots.A) : null;
+      const hasPotg = !!(slotA && /protection of the (glades|cabbage)/i.test(slotA));
       buffQueue.push({
         name, class: cls, role, group: rr ? rr.group_num : null,
         tier,
+        hp_a: slotA,
+        skip_group_aego: hasPotg,
         missing: missing.map(c => rb.CATEGORY_LABELS[c]).concat(missingHp.map(s => 'HP ' + s)),
+        upgrades,
         // Tank HP gap = priority cue for the buff queue's sort. A naked
         // warrior needs Symbol before a naked wizard does.
         needs_tank_hp:         (role === 'tank' && missingHp.length > 0),
         same_zone:             sameZone,
         inferred: isInferred,
-        avatar_buff:           avatarBuff ? avatarBuff.name : null,
-        celestial_tranquility: !!celestial,
-        sk_recourse:           skRecourse ? skRecourse.name : null,
         casting: _castingOnTarget(name),
       });
     }
@@ -5287,10 +5972,13 @@ async function _handleAgentRaidBuffQueue(req, res) {
       || a.name.localeCompare(b.name));
     // Debuff queue sort:
     //   1. same zone (you can actually cure them)
-    //   2. highest curse-counter count (Gravel Rain = 12 outranks 1-counter)
-    //   3. group → name
+    //   2. cure-type priority: curse → blind → poison → disease
+    //   3. highest counter count (Gravel Rain = 12 outranks 1-counter)
+    //   4. group → name
     debuffQueue.sort((a, b) =>
-      (Number(!!b.same_zone) - Number(!!a.same_zone))
+      (Number(!!a.all_being_cured) - Number(!!b.all_being_cured))
+      || (Number(!!b.same_zone) - Number(!!a.same_zone))
+      || ((a.cure_rank ?? 9) - (b.cure_rank ?? 9))
       || ((b.max_counters || 0) - (a.max_counters || 0))
       || ((a.group || 99) - (b.group || 99))
       || a.name.localeCompare(b.name));
@@ -5335,12 +6023,12 @@ async function _handleAgentRaidBuffQueue(req, res) {
       for (const k of allKeys) {
         const live = liveByName.get(k);
         const rr   = rosterByName.get(k);
-        const inferred = !live ? inferredBuffsByName.get(k) : null;
+        const inferred = inferredBuffsByName.get(k) || null;
         const name = (rr && rr.name) || (live && live.character) || k;
         const cls  = classFor(name);
         const role = rb.classToRole(cls);
         if (role !== 'tank' && role !== 'melee') continue;
-        const buffs = (live && Array.isArray(live.buffs)) ? live.buffs : (inferred || []);
+        const buffs = buffsFor(live, inferred);
         const isInferred = !live && (inferred && inferred.length > 0);
         const alreadyBuffed = buffs.some(b => b && b.name && burstSpec.carriesRx.test(b.name));
         if (alreadyBuffed) continue;
@@ -5365,12 +6053,78 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // Highest damage first; raiders with no damage signal yet sink (they may
       // be new arrivals, but a buffer shouldn't rank them above proven DPS).
       burstQueue.sort((a, b) => (b.damage || 0) - (a.damage || 0) || a.name.localeCompare(b.name));
-      burstQueue = burstQueue.slice(0, 20);
+      // Not everyone gets the burst buff — cap at 3 targets per provider of
+      // the buffer's class in this raid (1 shaman → top 3, 2 shamans → top 6).
+      // Slightly tighter than the original ~4: in practice each shaman cycles
+      // ~2-3 targets between Feral Avatar cooldowns, so the longer queue was
+      // showing names that would never actually get the buff.
+      let providers = 0;
+      for (const [k2] of rosterByName) {
+        const c2 = classFor((rosterByName.get(k2) || {}).name || k2);
+        if (c2 && String(c2).toLowerCase() === bufferClass.toLowerCase()) providers++;
+      }
+      burstQueue = burstQueue.slice(0, Math.min(15, Math.max(3, providers * 3)));
     }
+
+    // Compact live-roster view for the dashboard's Raid card — the buffer's
+    // raid only (same scoping as the queue). HP rides the Zeal group-gauge
+    // broadcasts captured in raid_roster; buffs/zone from live state; tier
+    // mirrors /raid's severity intent.
+    const mgbTrained = await _mgbTrainedSet(supabase, guildId);
+    const rosterOut = [];
+    for (const [k, rr] of rosterByName) {
+      const live = liveByName.get(k);
+      const inferred = inferredBuffsByName.get(k) || null;
+      const buffs = buffsFor(live, inferred);
+      const cls  = classFor(rr.name) || rr.class || null;
+      const role = rb.classToRole(cls);
+      const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
+      const missingHp = rb.HP_SLOTS.filter(sl => !hpSlots[sl]).length;
+      const noSignal = !live && !(inferred && inferred.length);
+      let tier = 'unknown';
+      if (!noSignal) {
+        const totalBuffs = buffs.filter(b => b && b.name).length;
+        if (totalBuffs === 0) tier = 'red';
+        else if (missingHp > 0) tier = 'orange';
+        else {
+          const byCat2 = {};
+          for (const b of buffs) if (b && b.name) {
+            const c2 = rb.categorizeBuff(b.name);
+            if (c2) (byCat2[c2] = byCat2[c2] || []).push(b.name);
+          }
+          const exp2 = rb.ROLE_TARGETS[role] || [];
+          tier = exp2.some(c2 => !(byCat2[c2] || []).length) ? 'yellow' : 'green';
+        }
+      }
+      // Trimmed buff list for the dashboard's click-to-expand raider detail.
+      const buffsOut = buffs
+        .filter(b => b && b.name)
+        .slice(0, 30)
+        .map(b => ({ n: String(b.name).slice(0, 60), t: (typeof b.ticks === 'number') ? b.ticks : null }));
+      rosterOut.push({
+        buffs:      buffsOut,
+        detail:     noSignal ? null : _buffDetailFor(rb, buffs, spellFx),
+        hp_missing: missingHp,
+        name:       rr.name,
+        class:      cls,
+        group:      rr.group_num != null ? rr.group_num : null,
+        rank:       rr.rank || null,
+        level:      rr.level != null ? rr.level : null,
+        hp_pct:     rr.hp_pct != null ? rr.hp_pct : (live && live.self_hp_pct != null ? live.self_hp_pct : null),
+        buff_count: buffs.filter(b => b && b.name).length,
+        mimic:      !!live,
+        inferred:   !live && !!(inferred && inferred.length),
+        mgb:        mgbTrained.has(k) || undefined,
+        zone:       live && live.zone_name ? String(live.zone_name) : null,
+        tier,
+      });
+    }
+    rosterOut.sort((a, b) => ((a.group != null ? a.group : 99) - (b.group != null ? b.group : 99)) || a.name.localeCompare(b.name));
 
     const out = {
       buff_queue:   buffQueue.slice(0, 40),
       debuff_queue: debuffQueue.slice(0, 40),
+      roster:       rosterOut.slice(0, 80),
       // group_mode is true when no raid_roster is fresh — the overlay shows
       // a slightly different header ("group" instead of "raid") and the
       // empty-state hint mentions groups.
@@ -5387,6 +6141,9 @@ async function _handleAgentRaidBuffQueue(req, res) {
 }
 // Casting status on a single target, for the queue rows (compact — first 2
 // in-flight casts, sorted soonest-finishing). Returns [] when nobody's casting.
+// Drops casts whose remaining time has hit 0 — the previous 3s grace window
+// surfaced "Aegolism 0s · Call of Sky 0s" rows that read as broken (the cast
+// was actually already done; the buff lands on the next live-state flush).
 function _castingOnTarget(name) {
   const tk = String(name || '').trim().toLowerCase();
   if (!tk) return [];
@@ -5395,12 +6152,146 @@ function _castingOnTarget(name) {
   const now = Date.now();
   const out = [];
   for (const c of mp.values()) {
-    const rem = Math.max(0, Math.round((c.started_at_ms + c.cast_secs * 1000 - now) / 1000));
-    if (rem <= 0 && now > c.started_at_ms + c.cast_secs * 1000 + 3000) continue;
-    out.push({ caster: c.caster, spell: c.spell, remaining_secs: rem, ends_at_ms: c.started_at_ms + c.cast_secs * 1000 });
+    // Override the agent-supplied cast_secs with the bot's catalog ONLY when
+    // the agent shipped the 4s stub default (older catalog cache without
+    // cast_ms).
+    const isStubDefault = Math.abs((Number(c.cast_secs) || 0) - 4) < 0.05;
+    const catSecs = _catalogCastSecs(c.spell);
+    let effSecs = (isStubDefault && catSecs > 0) ? catSecs : c.cast_secs;
+    // Focus spell haste from the caster's Quarmy gear (worn Enhancement
+    // Haste etc.). The agent relays the CATALOG cast time — it doesn't know
+    // the caster's gear — so Utoh's Khura's Focusing (26s catalog) ran ~7s
+    // past the real 18.2s cast (30% Enhancement Haste III). Apply the best
+    // applicable focus whenever the value we're about to use IS the catalog
+    // number (agent stub or catalog match); if a future agent ships a
+    // pre-hasted value it won't match the catalog and we leave it alone.
+    if (catSecs > 0 && Math.abs(effSecs - catSecs) < 0.05) {
+      const pct = _focusHastePctFor(c.caster, c.spell, catSecs);
+      if (pct > 0) effSecs = Math.round(effSecs * (1 - pct / 100) * 10) / 10;
+    }
+    const endsAt = c.started_at_ms + effSecs * 1000;
+    const rem = Math.round((endsAt - now) / 1000);
+    if (rem <= 0) continue;
+    out.push({ caster: c.caster, spell: c.spell, remaining_secs: rem, ends_at_ms: endsAt });
   }
   out.sort((a, b) => a.remaining_secs - b.remaining_secs);
   return out.slice(0, 2);
+}
+
+// ── Focus spell-haste from Quarmy gear ──────────────────────────────────────
+// characterLower → [{ pct, minCastMs, minDurTicks, beneficialOnly }] decoded
+// from equipped items' worn effects (SPA 127 + limit slots 138/140/143; the
+// max-spell-level limit 134 is skipped — we don't track per-class spell
+// levels, and in-era casts are below the cap anyway). Source: character_gear
+// (the member's own Quarmy export) ⨯ eqemu_items.worneffect ⨯ eqemu_spells.
+// Only known for raiders whose owners run the gear sync — absence = no
+// adjustment, which just leaves the old (catalog-speed) behavior.
+let _focusHasteByChar = null;
+let _focusHasteAt = 0;
+const _FOCUS_HASTE_TTL_MS = 10 * 60 * 1000;
+function _focusHastePctFor(caster, spell, baseCastSecs) {
+  if (!caster || !spell) return 0;
+  if (!_focusHasteByChar || (Date.now() - _focusHasteAt) > _FOCUS_HASTE_TTL_MS) {
+    _refreshFocusHaste();
+    if (!_focusHasteByChar) return 0;
+  }
+  const foci = _focusHasteByChar.get(String(caster).toLowerCase());
+  if (!foci || !foci.length) return 0;
+  const fx = _spellFxByName ? _spellFxByName.get(String(spell).toLowerCase()) : null;
+  const baseCastMs = baseCastSecs * 1000;
+  let best = 0;
+  for (const f of foci) {
+    if (f.beneficialOnly && !(fx && fx.good === 1)) continue;
+    if (f.minCastMs && baseCastMs < f.minCastMs) continue;
+    if (f.minDurTicks && !(fx && (fx.dur || 0) >= f.minDurTicks)) continue;
+    if (f.pct > best) best = f.pct;
+  }
+  return best;
+}
+function _refreshFocusHaste() {
+  _focusHasteAt = _focusHasteAt || Date.now();   // guard tight error loops
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  (async () => {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const gear = await supabase.select('character_gear',
+      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id&limit=10000`);
+    if (!Array.isArray(gear) || gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
+    const itemIds = [...new Set(gear.map(g => g && g.item_id).filter(Boolean))];
+    // item → worn-effect spell id (chunked in() lists keep the URLs sane)
+    const wornByItem = new Map();
+    for (let i = 0; i < itemIds.length; i += 150) {
+      const chunk = itemIds.slice(i, i + 150);
+      const rows = await supabase.select('eqemu_items',
+        `id=in.(${chunk.join(',')})&select=id,worneffect`);
+      for (const r of rows || []) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
+    }
+    const spellIds = [...new Set(wornByItem.values())];
+    const fociBySpell = new Map();   // spell id → focus decode (or null)
+    for (let i = 0; i < spellIds.length; i += 150) {
+      const chunk = spellIds.slice(i, i + 150);
+      const rows = await supabase.select('eqemu_spells',
+        `id=in.(${chunk.join(',')})&select=id,raw`);
+      for (const sp of rows || []) {
+        if (!sp || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
+        let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false;
+        for (let j = 0; j < sp.raw.eff.length; j++) {
+          const eff = sp.raw.eff[j];
+          const base = (sp.raw.base && sp.raw.base[j]) || 0;
+          if (eff === 127 && base > pct) pct = base;          // spell haste %
+          if (eff === 143 && base > 0) minCastMs = base;      // Limit: Min Cast Time (ms)
+          if (eff === 140 && base > 0) minDurTicks = base;    // Limit: Min Duration (ticks)
+          if (eff === 138 && base === 1) beneficialOnly = true;
+        }
+        if (pct > 0) fociBySpell.set(sp.id, { pct, minCastMs, minDurTicks, beneficialOnly });
+      }
+    }
+    const m = new Map();
+    for (const g of gear) {
+      if (!g || !g.character || !g.item_id) continue;
+      const focus = fociBySpell.get(wornByItem.get(g.item_id));
+      if (!focus) continue;
+      const k = String(g.character).toLowerCase();
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(focus);
+    }
+    _focusHasteByChar = m;
+    _focusHasteAt = Date.now();
+    console.log(`[focus-haste] refreshed: ${m.size} characters with worn spell-haste foci`);
+  })().catch(e => console.warn('[focus-haste] refresh failed:', e && e.message));
+}
+
+// Bot-side catalog cache for "real" cast time in seconds, keyed by lowercase
+// spell name. Populated lazily on first lookup from eqemu_spells. Refreshed
+// once an hour; weekly sync keeps the catalog stable.
+let _catalogCastSecsByName = null;   // Map<nameLower, secs>
+let _catalogCastSecsAt = 0;
+const _CATALOG_CAST_TTL_MS = 60 * 60 * 1000;
+function _catalogCastSecs(name) {
+  if (!name) return 0;
+  if (!_catalogCastSecsByName || (Date.now() - _catalogCastSecsAt) > _CATALOG_CAST_TTL_MS) {
+    _refreshCatalogCastSecs();
+    if (!_catalogCastSecsByName) return 0;
+  }
+  return _catalogCastSecsByName.get(String(name).toLowerCase()) || 0;
+}
+function _refreshCatalogCastSecs() {
+  const supabase = require('./utils/supabase');
+  // fire-and-forget refresh; subsequent callers use whatever's loaded
+  supabase.select('eqemu_spells', 'select=name,cast_time&order=id.asc&limit=10000')
+    .then(rows => {
+      const m = new Map();
+      for (const r of rows || []) {
+        if (!r || !r.name) continue;
+        const ms = Number(r.cast_time) || 0;
+        if (ms > 0) m.set(String(r.name).toLowerCase(), Math.round(ms / 100) / 10);
+      }
+      _catalogCastSecsByName = m;
+      _catalogCastSecsAt = Date.now();
+    })
+    .catch(e => console.warn('[catalog cast secs] refresh failed:', e && e.message));
+  // Mark touched so we don't refire on a tight error loop.
+  _catalogCastSecsAt = _catalogCastSecsAt || Date.now();
 }
 
 async function _handleAgentMobInfo(req, res) {
@@ -5475,12 +6366,31 @@ async function _handleAgentMobInfo(req, res) {
             const itemIds  = loot.map(it => it.id);
             if (itemIds.length > 0) {
               // a) Total Wolf Pack win counts per item across all OpenDKP sources.
+              //    Matched by item_id OR item_name (case-insensitive). The NAME
+              //    fallback is essential on Quarm: the server re-itemizes some
+              //    drops under a NEW item_id, so the same real item exists twice
+              //    in eqemu_items (e.g. Bow of Shadows is 28989 on the VT drop
+              //    table but its OpenDKP wins ingested under the classic
+              //    duplicate 7904). An id-only join silently showed those as
+              //    "0× won"; matching by name too recovers them. We take the max
+              //    of the two counts so neither key alone can hide a win.
+              const names    = [...new Set(loot.map(it => String(it.name || '')).filter(Boolean))];
+              const nameList = names.map(n => '"' + n.replace(/"/g, '""') + '"').join(',');
               const obs = await supabase.select('loot_observations',
-                `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)&item_id=in.(${itemIds.join(',')})&select=item_id&limit=50000`);
+                `guild_id=eq.${encodeURIComponent(guildId)}&source=in.(opendkp,opendkp_ambiguous,opendkp_unknown)` +
+                `&or=(item_id.in.(${itemIds.join(',')}),item_name.in.(${encodeURIComponent(nameList)}))` +
+                `&select=item_id,item_name&limit=50000`);
               if (Array.isArray(obs)) {
-                const cnt = new Map();
-                for (const row of obs) cnt.set(row.item_id, (cnt.get(row.item_id) || 0) + 1);
-                for (const it of loot) { const n = cnt.get(it.id); if (n) it.seen = n; }
+                const byId = new Map(), byName = new Map();
+                for (const row of obs) {
+                  if (row.item_id != null) byId.set(row.item_id, (byId.get(row.item_id) || 0) + 1);
+                  const nk = String(row.item_name || '').toLowerCase();
+                  if (nk) byName.set(nk, (byName.get(nk) || 0) + 1);
+                }
+                for (const it of loot) {
+                  const n = Math.max(byId.get(it.id) || 0, byName.get(String(it.name || '').toLowerCase()) || 0);
+                  if (n) it.seen = n;
+                }
               }
               // b) Per-item "how many NPCs drop this" → exposes uniqueness so
               //    the overlay can ⭐ items unique to THIS mob and dim items
@@ -5837,15 +6747,35 @@ async function _handleAgentLiveState(req, res) {
   const states      = Array.isArray(payload?.states) ? payload.states : [];
   const nowIso      = new Date().toISOString();
   const rows = [];
+  const swaps = [];   // {character, swapped_to} — targeted UPDATEs, not upserts
   for (const st of states) {
     const character = String(st?.character || '').trim();
     if (!character || character.length > 64) continue;
-    // Sanitize buffs → compact [{name, ticks}] and cap so a misbehaving agent
-    // can't store a huge blob. EQ tops out ~30 buff/song slots.
+    // Character-swap record (agent v3.1.13+): the same EQ client logged a
+    // different character in, so this one is gone. Stamp swapped_to WITHOUT
+    // touching the rest of the row (buffs etc. stay as the last-known
+    // snapshot) — /raid moves them to "Not in raid (swapped to X)".
+    if (st?.swapped_to && typeof st.swapped_to === 'string') {
+      swaps.push({ character, swapped_to: st.swapped_to.trim().slice(0, 64) });
+      continue;
+    }
+    // Sanitize buffs → compact [{name, ticks, song}] and cap so a misbehaving
+    // agent can't store a huge blob. EQ tops out ~30 buff/song slots. `song`
+    // (agent v3.1.12+) = the short-duration song window (Zeal ids 135-140, 6
+    // slots) vs the 15-slot buff window — /raid renders songs separately.
     let buffs = Array.isArray(st?.buffs) ? st.buffs : [];
     buffs = buffs.slice(0, 60).map(b => ({
       name:  String(b?.name || '').slice(0, 80),
       ticks: (b && typeof b.ticks === 'number') ? b.ticks : null,
+      // Only persist the flag when the agent SENT one — pre-3.1.12 agents
+      // don't tag songs, and coercing their absence to false would read as
+      // an authoritative "not a song" downstream (web falls back to a name
+      // heuristic when the flag is missing).
+      ...(b && typeof b.song === 'boolean' ? { song: b.song } : {}),
+      // Zeal buff-window slot (1-15, song window 1-6) — agent v3.1.24+.
+      // Powers the debuff "slot N · dispellable" callout: a detrimental in
+      // slots 1-4 can be stripped without clipping many real buffs.
+      ...(b && typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 30 ? { slot: Math.trunc(b.slot) } : {}),
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
@@ -5875,17 +6805,26 @@ async function _handleAgentLiveState(req, res) {
       pet_hp_pct:  petHp,
       pet_buffs:   petBuffs,
       uploaded_by: uploadedBy,
+      // A fresh snapshot supersedes any earlier swap stamp — they're back.
+      swapped_to:  null,
+      swapped_at:  null,
       updated_at:  nowIso,
     });
   }
-  if (rows.length === 0) {
+  if (rows.length === 0 && swaps.length === 0) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
   try {
-    await supabase.upsert('character_live_state', rows, 'guild_id,character');
+    if (rows.length) await supabase.upsert('character_live_state', rows, 'guild_id,character');
+    for (const s of swaps) {
+      await supabase.update('character_live_state',
+        `guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(s.character)}`,
+        { swapped_to: s.swapped_to, swapped_at: nowIso, updated_at: nowIso })
+        .catch(() => {});
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+    return res.end(JSON.stringify({ ok: true, stored: rows.length + swaps.length }));
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
@@ -6002,6 +6941,37 @@ function _pruneCasts(now) {
     }
     if (mp.size === 0) _castingByTarget.delete(tk);
   }
+  // Cure casts linger past completion for the optimistic-removal window so the
+  // debuff drops the instant the cure lands rather than waiting for the
+  // target's next live-state flush.
+  for (const [tk, arr] of _cureCastByTarget) {
+    const kept = arr.filter(e => now < e.ends_at_ms + _CURE_SUPPRESS_MS);
+    if (kept.length) _cureCastByTarget.set(tk, kept);
+    else _cureCastByTarget.delete(tk);
+  }
+}
+// targetLower → [{ cure, caster, ends_at_ms }] — cure spells observed in
+// flight on each target. Drives "being cured" marking + optimistic removal.
+const _cureCastByTarget = new Map();
+const _CURE_SUPPRESS_MS = 8000;   // hide a cured debuff this long after the cure lands
+// For a target + cure type: is a cure in flight (→ being_cured), or did one
+// just land (→ suppress the debuff)? Returns { state:'casting'|'done'|null,
+// caster, secs }.
+function _cureStateFor(target, cure) {
+  const arr = _cureCastByTarget.get(String(target || '').toLowerCase());
+  if (!arr || !arr.length) return { state: null };
+  const now = Date.now();
+  let best = { state: null };
+  for (const e of arr) {
+    if (e.cure !== cure) continue;
+    if (now < e.ends_at_ms) {
+      const secs = Math.max(0, Math.round((e.ends_at_ms - now) / 1000));
+      if (best.state !== 'casting' || secs < best.secs) best = { state: 'casting', caster: e.caster, secs };
+    } else if (now < e.ends_at_ms + _CURE_SUPPRESS_MS && best.state !== 'casting') {
+      best = { state: 'done', caster: e.caster, secs: 0 };
+    }
+  }
+  return best;
 }
 async function _handleAgentCasting(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -6025,11 +6995,32 @@ async function _handleAgentCasting(req, res) {
     const tk = target.toLowerCase();
     let mp = _castingByTarget.get(tk);
     if (!mp) { mp = new Map(); _castingByTarget.set(tk, mp); }
+    const startMs = Number.isFinite(startedMs) ? startedMs : now;
     mp.set(caster.toLowerCase(), {
       caster, spell, target,
-      started_at_ms: Number.isFinite(startedMs) ? startedMs : now,
+      started_at_ms: startMs,
       cast_secs: castSecs, received_at: now,
     });
+    // Cure-cast tracking → optimistic debuff removal. If this cast is a CURE
+    // (catalog SPA 35/36/116 negative or 20 beneficial), record which
+    // affliction it clears on this target + when the cast completes, so the
+    // debuff queue can mark the row "being cured" while in-flight and drop it
+    // promptly after the cast lands (instead of waiting ~5s for the target's
+    // next live-state flush to show the debuff gone).
+    const fxC = _spellFxByName ? _spellFxByName.get(spell.toLowerCase()) : null;
+    if (fxC) {
+      const cures = [];
+      if (fxC.cureCurse)   cures.push('curse');
+      if (fxC.cureBlind)   cures.push('blind');
+      if (fxC.curePoison)  cures.push('poison');
+      if (fxC.cureDisease) cures.push('disease');
+      if (cures.length) {
+        let cm = _cureCastByTarget.get(tk);
+        if (!cm) { cm = []; _cureCastByTarget.set(tk, cm); }
+        const endsAt = startMs + castSecs * 1000;
+        for (const cure of cures) cm.push({ cure, caster, ends_at_ms: endsAt });
+      }
+    }
     stored++;
   }
   // Bound memory: cap the number of tracked targets.
@@ -6102,7 +7093,13 @@ async function _handleAgentRaidRoster(req, res) {
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
   try {
-    await supabase.upsert('raid_roster', rows, 'guild_id,name');
+    // SNAPSHOT semantics per uploader (pk guild,uploader,name): replace this
+    // uploader's whole view so members who left their raid don't linger as
+    // phantom rows. Readers cluster overlapping snapshots into distinct
+    // raids — two concurrent raids stay separate instead of merging.
+    await supabase.del('raid_roster',
+      `guild_id=eq.${encodeURIComponent(guildId)}&uploaded_by_discord_id=eq.${encodeURIComponent(identity.discord_id)}`);
+    await supabase.upsert('raid_roster', rows, 'guild_id,uploaded_by_discord_id,name');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: rows.length }));
   } catch (err) {
@@ -6154,7 +7151,7 @@ async function _handleAgentTrigger(req, res) {
   try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
 
-  _trackUpload({ endpoint: 'trigger', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  _trackUpload({ endpoint: 'trigger', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
 
   const postCh  = process.env.TRIGGER_BROADCAST_CHANNEL_ID;
   const voiceCh = process.env.RAID_VOICE_CHANNEL_ID;
@@ -7527,6 +8524,36 @@ async function _handleAgentUpload(req, res) {
         // on parse cards as "27.1k (+10k healed)" for Complete-Healing bosses.
         // Undefined for older agents (<2.5.3) so it gracefully no-ops.
         npcHealedTotal: encounter.npc_healed_total || undefined,
+        // Tank-perspective payload — the agent has been collecting per-defender
+        // hits / damageTaken / misses / dodges / parries / ripostes / blocks /
+        // invulns / ripostedFor for a long time, and ds_reflects (per-spell
+        // count + total of damage shield procs against attackers). They flowed
+        // into the merged Discord card but were dropped from the per-tank
+        // contribution row, so /parses/[id]'s Tank perspective could only show
+        // "X players parsed, Y damage." Persist them so the page can show "took
+        // 47 hits for 12.4k, avoided 18 (6 dodge / 3 parry / …); DS dealt 8.7k
+        // back" per tank uploader. Undefined for older agents that didn't ship
+        // these fields — page handles missing data gracefully.
+        defenders:   Array.isArray(encounter.defenders) && encounter.defenders.length > 0
+                       ? encounter.defenders : undefined,
+        ds_reflects: encounter.ds_reflects && Object.keys(encounter.ds_reflects).length > 0
+                       ? encounter.ds_reflects : undefined,
+        // Deaths + healers — already referenced by /parses/[id] and merged
+        // Discord cards. Persisting them on contributions means the detail page
+        // doesn't have to wait for the merged card path to backfill.
+        deaths:      Array.isArray(encounter.deaths)  && encounter.deaths.length  > 0
+                       ? encounter.deaths  : undefined,
+        healers:     Array.isArray(encounter.healers) && encounter.healers.length > 0
+                       ? encounter.healers : undefined,
+        // CH-chain visibility — { tank, count, maxGapMs } when the agent saw
+        // gaps > 8s in healing on the primary tank. Drives the "missed N CH
+        // ticks (peak 14s gap)" warning on the heal panel.
+        healGaps:    encounter.heal_gaps || undefined,
+        // Boss's largest single hit this fight — web multiplies by each tank's
+        // invulns count to estimate damage absorbed by Divine Aura / Holy
+        // Aegis / etc. Same calc the agent's dashboard Tanks tab uses.
+        bossMaxMelee: Number.isFinite(encounter.boss_max_melee) && encounter.boss_max_melee > 0
+                       ? encounter.boss_max_melee : undefined,
       };
 
       // Prefer the bossId from bosses.json match; fall back to slugified name lookup
@@ -7962,6 +8989,42 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentBuffCasts(req, res); }
     catch (err) {
       console.error('[buff-casts] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/buff-lag-report') {
+    try { return await _handleAgentBuffLagReport(req, res); }
+    catch (err) {
+      console.error('[buff-lag] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/faction') {
+    try { return await _handleAgentFaction(req, res); }
+    catch (err) {
+      console.error('[faction] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/pop_flags') {
+    try { return await _handleAgentPopFlags(req, res); }
+    catch (err) {
+      console.error('[pop-flags] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/quarmy') {
+    try { return await _handleAgentQuarmy(req, res); }
+    catch (err) {
+      console.error('[quarmy] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

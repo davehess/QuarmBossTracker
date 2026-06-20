@@ -1,39 +1,39 @@
-# Quarm Raid Timer Bot
+# Wolf Pack EQ — bot · wolfpack.quest · miMIC
 
-A Discord bot for tracking instanced raid boss spawn timers on Project Quarm (EverQuest TLP server, Luclin era).
-Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances).
+The guild platform for **Wolf Pack** on Project Quarm (EverQuest emu, Luclin era):
 
-**Bot:** v3.0.62 · **Agent:** v3.0.94 · **Web:** v1.0.46 · **Mimic:** v1.0.67 · **Runtime:** Node.js 20, discord.js v14 · **Deployment:** Railway + Supabase + Vercel
+| Component | What it is | Where it runs |
+|---|---|---|
+| **Discord bot** | Raid timers, parse aggregation, DKP/loot, onboarding, the `/api/agent/*` ingest surface | Railway, ships from `main` |
+| **[wolfpack.quest](https://wolfpack.quest)** | Guild tracker site — `/raid` hub, parses, buffs, PvP, leaderboards, character pages, officer admin | Vercel, ships from `main` |
+| **Wolf Pack miMIC** | Desktop client for raid members — log parser + overlays + uploads | Member PCs, releases from this repo |
+
+Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances). Architecture map + release playbook: `CLAUDE.md`. Component versions live in each `package.json`; builds on the [Releases](https://github.com/davehess/QuarmBossTracker/releases) page.
 
 ---
 
-## End-user install (raid members)
+## Raid members — install miMIC
 
-Two paths — pick one. Both upload the same combat data to the bot.
+**One-click installer:** [**wolfpack.quest/mimic**](https://wolfpack.quest/mimic) (stable) · [beta channel](https://wolfpack.quest/mimic/beta)
 
-### ⭐ Wolf Pack Mimic (recommended)
+Electron desktop app; bundles its own Node runtime — nothing else to install. The installer is not code-signed, so Windows SmartScreen will warn: **More info → Run anyway** (in Edge: ⋯ → Keep → Keep anyway). Auto-updates in place after that.
 
-**One-click installer:** [**wolfpack.quest/mimic**](https://wolfpack.quest/mimic)
+**What you get:**
 
-Electron desktop app, **v1.0.0 stable**. Bundles its own Node runtime — nothing else to install. SmartScreen will warn (not code-signed yet) → *More info → Run anyway*. Auto-updates in place from here on.
+- **Buff & Debuff Queue** — who needs what, by your class, severity-sorted; cures with counter type + dispel-slot intel
+- **Buffs / Raid tab** — live raid roster with HP bars and a full per-raider buff breakdown, refreshing every 3s
+- **Overlays** — DPS/Tank HUD, trigger alerts with TTS + countdown timers, charm tracker, pet tracker, Target Info, buff queue, /who, melody/casting, threat meter
+- **Factions & Gear sync** — drop your `<Name>Quarmy.txt` export in your EQ folder (enable Zeal's *Export data on /camp*); gear, AAs and factions sync, powering accurate cast bars + MGB detection. Bank and coin are stripped on **your** machine and never uploaded
+- **`/tells` history** — synced privately to [wolfpack.quest/me](https://wolfpack.quest/me)
+- **UI Studio** — back up your EQ window layout, hotkeys, chat tabs and `eqclient.ini`; restore on any machine
 
-**What you get on top of uploads:** always-on-top DPS HUD overlay · trigger alerts with TTS + countdown timers · charm tracker (6s tick + recharm alarm) · `/tells` history synced privately to wolfpack.quest/me/tells · Buffs & Zone card (what every character is carrying + where they parked) · UI Studio (back up your EQ window layout, hotkeys, chat tabs, `eqclient.ini` → restore on any machine) · optional Discord sign-in that persists across upgrades.
+**After install:** sign in with Discord (Step 1 of onboarding), pick your EQ folder, launch. The dashboard's **Setup Checklist** tells you if anything needs attention (logging on, Zeal connected, export-on-camp, …). The local dashboard lives at `http://localhost:7779`.
 
-After install: run it once, paste your `/token` value into Settings → Agent token.
+<details>
+<summary>🧱 Parser.bat (minimal CLI alternative)</summary>
 
-### 🧱 Parser.bat (CLI agent)
-
-Original log-tail agent. Smaller footprint, no GUI. Good if you already have Node.js set up or want the minimal install.
-
-Double-click **`RUN-FIRST-for-Node.js.bat`** in the repo root (one time per machine, UAC approves Node.js 20), then double-click **`Parser.bat`**.
-
-**First run — Node.js not installed:**
-
-![Installing Node.js](docs/screenshot-install.png)
-
-**Node.js already installed:**
-
-![Node.js already present](docs/screenshot-already-installed.png)
+The original log-tail agent — no GUI, no overlays, same uploads. Double-click **`RUN-FIRST-for-Node.js.bat`** once per machine, then **`Parser.bat`**. Dashboard serves on `http://localhost:7777`.
+</details>
 
 ---
 
@@ -138,6 +138,8 @@ Every `/parse` submission is archived here as a JSON embed. This is the **source
 ---
 
 ## Commands
+
+The tables below cover the core raid-timer / parse / PvP set. The bot has ~80 slash commands total — run **`/raidbosshelp`** in Discord for the live, complete reference (DKP, loot, wishlists, triggers, roster, and admin commands included).
 
 ### Kill Tracking
 
@@ -413,129 +415,3 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 | Create Public Threads | Create announce and raid-night threads |
 
 ---
-
-## Version Log
-
-### v2.0.4 — shipped to `main`
-
-**Theme:** Supabase backend, sealed-bid wishlist system, parse pipeline, lockout-driven timer recovery, and DKP loot foundation. Versioned 2.0 because the data layer fundamentally changes — `bosses.json` and `parses.json` stop being the source of truth and become local-cache mirrors of Supabase tables.
-
-**What shipped:**
-- **Supabase backend** — Two-tier schema. Tier 1 mirrors EQMacEmu game data weekly via GitHub Actions. Tier 2 is guild-generated (encounters, contributions, loot drops, characters, wishlists, audit log). Full RLS — service_role only for writes, anon reads on public game data only.
-- **`/dkp`** — DKP lookup with family mode (main + alts), 60s cache.
-- **`/wishlist add|remove|show`** — Per-character BIS registration with AES-256-GCM encrypted sealed bids (`WISHLIST_BID_KEY`). Officers see bids during active auctions; other players see `🔒 sealed`.
-- **`/mywishlist`** — Self-only private view: decrypted bid amounts, previous drop history per item, DKP headroom vs current balance, overcommit warning.
-- **`/loot`** — Zeal paste parser, PQDI rarity labels (🆕 NEW / 💎 ULTRA RARE), officer-only wishlist match summary with sealed bids surfaced.
-- **`/parse`** — `type` option: `instance` (default, starts timer) / `open_world` / `pvp` (stats only). Multiple submissions for the same kill auto-merge. Completeness bar shown when Supabase has >1 contributor.
-- **`/parsehelp`** — Step-by-step EQLogParser setup guide, lockout confirmation, `/sll` recovery docs.
-- **`/sll`** — Paste `#showlootlockouts` output; bot parses every line, matches zone/boss names, shows preview with computed nextSpawn times, applies all on confirm. Lockout remaining = respawn remaining on Quarm exactly.
-- **`/encounter tonight|view|mine`** — Post-raid recap from Supabase encounter data.
-- **`wolfpack-logsync` agent** — Local Node.js log tail agent; privacy-filtered, zero npm deps, POSTs encounter data to bot's `/api/agent/encounter` endpoint.
-- **`parseTimeString()`** added to `utils/timer.js` (was imported but missing).
-- **`recordKill()` optional killedAt** — enables back-calculated kill time from lockout remaining.
-- **`/parsecontrib` deleted** — was redundant; `/parse` already auto-merges contributions via `find_or_create_encounter`.
-
-**Deferred to v2.1 (next raid Wednesday):**
-- **OpenDKP auction creation** — `createAuctions()` stubbed; need 3 cURL captures from the live Bidding Tool: create auction, submit bid, end/award. Capturing Wednesday night raid.
-- **`/bid`, `/bids`, `/award`** — In-raid tell-bid recording and loot award commands. Build immediately after API cURLs are captured.
-- **Quarmy wishlist import** — `parseQuarmyWishlist(url)` placeholder; implement once page format confirmed.
-- **Discord ↔ character mapping** — `/mycharacter <name>` for auto-resolved bidding.
-- **Web UI** — Next.js or static + Supabase anon-key reads, RLS-gated.
-
-**Shipped in this session (all on the feature branch, awaiting merge):**
-
-- `supabase/migrations/20260525120000_initial_schema.sql` — full Tier 1 + Tier 2 schema with RLS-by-default, completeness view, RPC helpers
-- `scripts/sync-from-eqmac.js` + `.github/workflows/sync-quarm.yml` — weekly auto-sync of `quarm_*.tar.gz` upstream dumps with idempotent skip-if-unchanged
-- `scripts/migrate-bosses-to-supabase.js` — one-shot bosses.json → bosses_local importer with fuzzy-match review file for ambiguous bosses
-- `/dkp [character] [family]` — ephemeral DKP lookup, defaults to your Discord display name, 60s cache, family mode shows main+alts with total
-- `/wishlist add|remove|show` — async BIS registration with per-item DKP ceiling, priority, notes; auto-bid hook lives in /loot
-- `/encounter tonight|view|mine` — post-raid recap: every encounter, completeness bars, who was in vs missed, loot won
-- `/parsecontrib` — multi-perspective parse contribution; merges into encounter_players with max-damage rule and live completeness score
-- `packages/wolfpack-logsync/` — tail-mode EQ log agent (zero npm deps, single file, gigabyte-safe). Filters officer chat / tells / custom channels at the byte level before parsing. Comprehensive damage parser covering all observed verbs (slash, crush, pierce, bite, claw, gore, slam, sting, tail-whip, etc.) with proper -es/-s normalization.
-- `POST /api/agent/encounter` on the bot's existing HTTP server — bearer-auth agent ingest, synthesizes contributions row from event stream, gracefully no-ops if Supabase or `bosses_local` not yet populated
-- `/loot` extension — wishlist match surfacing when items drop; officer-visible follow-up names wishlisters (auto-bid placement gated on OpenDKP auction API capture)
-
-**Not yet shipped this session (next pass):**
-
-- `/addboss` rewrite to use `eqemu_npc_types` (current PQDI scraping still works)
-- OpenDKP auction creation (still pending API capture from live Bidding Tool)
-- `parseQuarmyWishlist` (need a quarmy.com BIS URL to test against)
-- `parseQuarmyInventory` (TSV format identified from `HityaQuarmy.txt`; useful for "you already own this" hints later)
-
-### v1.3.14 (2026-05-25)
-- **`/loot` command (infrastructure):** New command for posting looted items for DKP bidding. Parses Zeal item paste (pipe, comma, or space-delimited; 7-digit EQ item IDs), checks guild drop history from OpenDKP (cached 1h), and optionally scrapes the boss's PQDI NPC page for drop rates.
-- **Item rarity labels:** `🆕 NEW` (first guild drop ever), `💎 ULTRA RARE` (seen once, drop rate in bottom quartile or ≤5% of boss's table). Both labels include context lines in the loot embed.
-- **`utils/loot.js`:** New utility with `parseZealLoot`, `fetchPqdiDropTable`, `getDropHistory`, `enrichLootItems`, `buildLootAnnounceEmbed`, and `parseQuarmyWishlist` (placeholder).
-- **`utils/opendkp.js` additions:** `_bearerHeaders()` (Authorization: Bearer for new API endpoints), `createAuctions()` and `getAuctions()` stubs (pending API capture — 500 error on test with fake ItemId; need real-item cURL from Bidding Tool).
-- **Quest turn-ins supported:** Items bid on for quest hand-ins (e.g., Remains of Vah Kerrath) work the same as loot — Zeal paste includes the real EQ item ID; PQDI link in embed shows full item/quest context.
-- **OpenDKP auction creation:** Pending API capture — command currently posts the loot embed and links to the OpenDKP Bidding Tool. To complete: capture a working auction creation cURL from the Bidding Tool with a real item ID.
-
-### v1.3.13 (2026-05-25)
-- **`/register` ParentId fix:** New alts now correctly use the family root's CharacterId as `ParentId` (the ParentId=0 root in OpenDKP's family tree), not the rank-priority main's ID. Fixes families like Canopy/Hitya where the root character is a Raid Alt but another member is the Officer/main.
-- **Roster stores `_rootId`:** `processOpenDkpExport` now stores `_rootId` (the family root CharacterId) on main entries. `_buildLookup` exposes it as `rootCharId`. Used by `/register` to resolve ParentId without an API roundtrip after the first `/rosterimport`.
-- **`/register` rank option:** Added optional `rank` parameter — `Non-raid Alt` (default) or `Trader level 1`.
-- **Future work noted in CLAUDE.md:** roster auto-sync, Discord↔character mapping, OpenDKP bidding integration.
-
-### v1.3.12 (2026-05-25)
-- **`/register` command:** Create a new character in OpenDKP directly from Discord. Accepts name, class (16 choices), race (14 choices), and optional main (autocomplete). Sets Level=10, Active=1, Rank='Non-raid Alt'. Automatically links the character as an alt if a main is specified (uses OpenDKP CharacterId as ParentId). Notifies `OFFICER_CHAT_CHANNEL_ID` and updates the in-memory roster + Discord threads immediately.
-- **OpenDKP character URLs in roster:** The `d` field on roster entries now stores the OpenDKP character profile URL (`https://wolfpack.opendkp.com/#/characters/{id}`). Generated automatically from CharacterId on `/rosterimport`. Persists across re-imports.
-- **`/who` + `/whoall` DKP links:** Both commands now show an `[OpenDKP]` link alongside the Quarmy link when a DKP URL is available.
-- **New env vars:** `OPENDKP_API_URL`, `OPENDKP_CLIENT_NAME`, `OFFICER_CHAT_CHANNEL_ID`.
-
-### v1.3.10 (2026-05-21)
-- **Fix parse rejection for low-DPS fights:** EQLogParser omits the K/M suffix on the DPS field when the value is a plain integer (e.g. `@716` instead of `@1.5K`). The header regex now accepts an optional suffix, matching the player-row regex which already handled this correctly. Parses for long fights like "A Shissar Observer in 2568s, 1.84M Damage @716" will no longer be rejected.
-
-### v1.3.9 (2026-05-20)
-- **"Mob Spawned" button on PVP spawn window alerts:** The "spawn window opens soon" alert now includes a `✅ Mob Spawned` button. Clicking it clears the kill timer, deletes the kill card from the kills thread, refreshes the hate board, and updates the alert message in place to confirm who marked it spawned.
-
-### v1.3.8 (2026-05-20)
-- **Fix stale PVP spawn alerts after redeploy:** `pvpAlertedSoon` and `pvpAlertedSpawned` are in-memory Sets that reset on every restart. The checker now suppresses the "spawn window opens soon" alert if the earliest time was more than 10 minutes ago, and suppresses the "definitely spawned" alert if the latest time was more than 15 minutes ago — preventing flood notifications when the bot comes back online mid-window.
-
-### v1.3.7 (2026-05-15)
-- **Hate tracker Discord persistence:** Live and PVP Plane of Hate kill state is now saved to hidden JSON embeds in the hate thread after every board refresh. On startup the bot restores any active entries missing from `state.json`, so hate tracker state survives redeploys even without a Railway volume.
-
-### v1.3.6 (2026-05-14)
-- **`/rosterclean`:** Deduplicates in-memory roster entries and normalizes roster thread messages in place (edits existing messages, deletes extra duplicate sets — no new sends, no notifications).
-- **Load-time dedup:** `loadRosterFromDiscord` now deduplicates entries by name after parsing all data-chunk messages, so a thread with multiple message sets no longer produces a multiplied roster on restart.
-
-### v1.3.5 (2026-05-14)
-- **`/unkill` daily summary edit:** `/unkill <boss> message:<link>` now removes an inaccurate kill from a specific daily summary message in place (no new message, no notification). Works even after the kill has expired. Always logged to the audit trail as `unkill_summary`.
-
-### v1.3.4 (2026-05-14)
-- **Roster saves edit in place:** `/quarmy set` and `/quarmy clear` now update roster thread messages in place (`.edit()`) instead of deleting and reposting, preventing Discord notifications for thread subscribers.
-
-### v1.3.3 (2026-05-14)
-- **Quarmy links persist in roster:** Quarmy URLs are now stored directly in roster entries (serialized in Discord thread chunks), so they survive bot restarts, redeploys, and roster re-imports without relying on `state.json`.
-
-### v1.3.2 (2026-05-14)
-- **Audit trail:** Every `/kill`, `/unkill`, `/updatetimer`, and board button click posts an entry to `AUDIT_TRAIL_THREAD_ID` with an officer-only Undo button. Undo restores the previous boss state and refreshes all boards.
-- **Quarmy links in roster:** Active and inactive roster thread embeds now hyperlink character names to their Quarmy profile when a link has been stored via `/who set`.
-- **Parse stats fix:** `/parsestats last N` now counts N kill sessions (grouped by respawn window) rather than N raw parse submissions.
-- **Raid night parse count + link:** The "Parses Tonight" summary now shows the parse count per boss and a clickable "view" link to the most recent parse in the log thread.
-
-### v1.3.1 (2026-05-13)
-- **`/who` family button:** `/who <character>` now includes a "Show Family" button that reveals all alts inline (ephemeral).
-- **Class emojis:** `/who` and `/whoall` display a class emoji next to each character's name.
-- **`/mystats <character>`:** Per-character DPS stats — kills, avg DPS, peak DPS, and per-boss breakdown (ephemeral).
-- **`/mystatsall <character>`:** Same as `/mystats` but aggregates across the full main + alt family.
-- **`/parseleaderboard`:** Officer command that posts/updates a pinned leaderboard in the parse log thread showing top parse submitters and boss kill coverage.
-
-### v1.3.0 (2026-05-12)
-- **Quarmy link storage:** `/who <character> set <url>` stores a Quarmy profile link in state; `/who` output displays it as a hyperlink.
-- **Raid night parse thread:** `/raidnight` opens a session thread with a live summary and parseboard that auto-updates on each `/parse`.
-- **`/parsenight`:** Post a combined full-night parse to the raid session thread; updates the parseboard.
-
-### v1.2.x (2026-05)
-- Expanded boss data to 133 bosses (Classic/Kunark/Velious/Luclin/PoP).
-- Added PoP expansion with hard lock until 2026-10-01.
-- `/addboss` and `/removeboss` for live boss management without restarts.
-- Audit-safe atomic state writes (`.tmp` rename).
-- `/restore` multi-link state recovery from any combination of cooldown/daily-summary messages.
-- PVP kill tracking, quake alerts, onboarding flow, suggest-host system.
-
-### v1.1.x (2026-04)
-- Thread-based layout: one thread per expansion for boards + zone kill cards.
-- Env-var anchoring for all fixed message slots (survives Railway redeploys).
-- `/cleanup` for removing stale/duplicate messages.
-- Spawn alert messages (⚠️ 30-minute warning, 🟢 spawned), edited in place.
-- Daily kill summary + midnight archive to Historic Kills thread.

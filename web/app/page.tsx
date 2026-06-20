@@ -45,7 +45,7 @@ export default async function HomePage() {
         <p className="text-sm leading-6">
           The guild-wide companion to the Wolf Pack Discord bot. Shared parses,
           per-character history, raid attendance, loot, leaderboards.
-          The local agent dashboard at <code>http://localhost:7777</code> still
+          The local agent dashboard at <code>http://localhost:7779</code> still
           runs your in-raid HUD; this site is where you compare against the rest
           of the pack between fights.
         </p>

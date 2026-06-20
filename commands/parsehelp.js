@@ -16,6 +16,7 @@ const {
 } = require('discord.js');
 
 const MIMIC_URL = 'https://wolfpack.quest/mimic';
+const { getMimicDownloadUrls } = require('../utils/mimicReleases');
 
 // ── Simple top-level message ────────────────────────────────────────────────
 function buildParseHelpEmbed() {
@@ -25,7 +26,9 @@ function buildParseHelpEmbed() {
     .setDescription([
       'Mimic uploads your parses to the guild boards and gives you a DPS overlay, trigger TTS, charm tracker, and more. It bundles everything — **no separate Node install, no admin prompt.**',
       '',
-      '**1.**  Download below and run it (SmartScreen → *More info → Run anyway*).',
+      '**1.**  Download below — your browser **will warn** (we\'re not code-signed yet; it\'s expected, not a virus):',
+      '> Edge: Downloads (Ctrl+J) → **⋯ on the file → Keep → Keep anyway**',
+      '> Then run it: SmartScreen → **More info → Run anyway**.',
       '**2.**  First run: **Sign in with Discord** — no token to paste.',
       '**3.**  Pick your **EverQuest folder**, then **`/log on`** in‑game.',
       '',
@@ -34,14 +37,18 @@ function buildParseHelpEmbed() {
     .setFooter({ text: 'Wolf Pack EQ (Quarm) • auto-updates once installed' });
 }
 
-// Buttons under the top message: open the guide + a direct download link.
-function buildParseHelpComponents() {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('parsehelp_guide').setLabel('📖 Step-by-step guide').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setURL(MIMIC_URL).setLabel('📥 Download Mimic Parser').setStyle(ButtonStyle.Link),
-    ),
-  ];
+// Buttons under the top message: the guide + DIRECT installer downloads —
+// "🐺 Download Mimic" (stable) and "Beta", matching the dashboard header's
+// pair. Resolved live from GitHub releases (5-min cache); falls back to the
+// wolfpack.quest/mimic landing page if resolution fails.
+async function buildParseHelpComponents() {
+  const { stable, beta } = await getMimicDownloadUrls();
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('parsehelp_guide').setLabel('📖 Step-by-step guide').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setURL(stable || MIMIC_URL).setLabel('🐺 Download Mimic').setStyle(ButtonStyle.Link),
+  );
+  if (beta) row.addComponents(new ButtonBuilder().setURL(beta).setLabel('Beta').setStyle(ButtonStyle.Link));
+  return [row];
 }
 
 // ── Paged walkthrough ───────────────────────────────────────────────────────
@@ -54,10 +61,14 @@ const STEPS = [
   {
     title: 'Step 1 of 4 · Download & install',
     body: [
-      'Tap **📥 Download Mimic Parser** (or go to wolfpack.quest/mimic) to grab the installer.',
+      'Tap **🐺 Download Mimic** below (Beta gets fixes first; stable lags a little).',
       '',
-      '• Windows SmartScreen will warn (not code-signed yet) → **More info → Run anyway**.',
-      '• It installs **only for you** — no admin / UAC. Just click **Install** (or change the folder if you like).',
+      '**Your browser will flag the download — this is expected.** We\'re not code-signed yet, so Windows treats the installer as "not commonly downloaded". It is not a virus.',
+      '',
+      '• **Edge:** open **Downloads** (Ctrl+J) → hover the file → **⋯ → Keep** → *Show more* → **Keep anyway**.',
+      '• **Chrome:** Downloads bar → **⋯ → Keep**.',
+      '• Running it: Windows SmartScreen → **More info → Run anyway**.',
+      '• It installs **only for you** — no admin / UAC. Just click **Install**.',
       '• Leave **Run Wolf Pack Mimic** ticked at the end and click **Finish**.',
     ].join('\n'),
   },
@@ -134,7 +145,7 @@ module.exports = {
     return interaction.reply({
       flags: MessageFlags.Ephemeral,
       embeds: [buildParseHelpEmbed()],
-      components: buildParseHelpComponents(),
+      components: await buildParseHelpComponents(),
     });
   },
 

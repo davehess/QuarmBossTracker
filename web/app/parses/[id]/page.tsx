@@ -10,8 +10,11 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isOfficer } from '@/lib/officer';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
+import { ClassificationChip } from '@/components/KillCard';
+import { classifyEncounter, clearClassification } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +30,49 @@ type PlayerRow  = {
 };
 type RawPlayer    = { name: string; damage: number; dps: number; duration: number; hasPets?: boolean; rank?: number };
 type RawDeath     = { name: string; ts: string; class?: string | null; riposteDeath?: boolean };
+// Per-defender tanking stats from the agent's EncounterBuilder — what the
+// tank's log saw incoming on themselves (and any other defenders in range).
+// Matched to the contributor by name to render the "took 47 hits for 12.4k,
+// avoided 18 (6 dodge / 3 parry / 2 riposte / 1 block / 2 miss)" line.
+type RawDefender = {
+  name: string;
+  hits?: number;
+  damageTaken?: number;
+  misses?: number;
+  dodges?: number;
+  parries?: number;
+  ripostes?: number;
+  blocks?: number;
+  invulns?: number;
+  ripostedFor?: number;
+  rampageHits?: number;
+  rampageDmg?: number;
+  // First / last incoming-swing timestamp from the tank's log (epoch ms).
+  // Lets us label MT and PIVOT by handover TIME instead of damage share —
+  // someone who briefly pulled aggro and got smacked harder than the MT
+  // shouldn't read as the MT, but the share-based heuristic would tag them
+  // that way. Undefined on uploads from agents < 3.1.50.
+  firstAttackAt?: number;
+  lastAttackAt?: number;
+};
+// Damage-shield procs the tank's gear/spells dealt back to attackers across
+// the fight. Keyed by ability name; total is what we sum for the tank line.
+type DsReflect   = { count: number; total: number; min?: number; max?: number };
+// Per-healer aggregate from the agent — used to build the Heal perspective
+// panel, mirror of Tank perspective. firstHealAt / lastHealAt land on agent
+// v3.1.51+; older uploads expose only the totals.
+type RawHealer    = {
+  name: string;
+  healed?: number;
+  ticks?: number;
+  targets?: string[];
+  firstHealAt?: number;
+  lastHealAt?: number;
+};
+// CH-chain gap analysis on the primary tank — agent fills in when it saw at
+// least one healing gap > 8s. `maxGapMs` is the longest dead air, surfaced
+// inline so the heal panel can say "max 14s gap — missed ~2 CH ticks."
+type HealGaps     = { tank: string; count: number; maxGapMs: number };
 type RawParse     = {
   bossName?: string;
   duration?: number;
@@ -34,8 +80,14 @@ type RawParse     = {
   totalDps?: number;
   players?: RawPlayer[];
   deaths?: RawDeath[];
-  // Healers vary in shape across agent versions; tolerate either an array or null.
-  healers?: { name: string; total: number }[] | null;
+  healers?: RawHealer[] | null;
+  defenders?:   RawDefender[];
+  ds_reflects?: Record<string, DsReflect>;
+  healGaps?:    HealGaps;
+  // Largest single hit the boss landed this fight — multiplied by each tank's
+  // invulns count to estimate damage absorbed by Divine Aura / Holy Aegis /
+  // similar. Undefined for fights uploaded by older agents.
+  bossMaxMelee?: number;
 };
 type Contribution = {
   id: string;
@@ -47,7 +99,26 @@ type Contribution = {
   duration_sec: number | null;
   raw_parse: RawParse | null;
   created_at: string;
+  agent_version: string | null;
+  has_ability_detail: boolean | null;
 };
+
+// Compare two semver-ish version strings ("3.1.38" vs "3.1.45"). Returns
+// -1 / 0 / +1. Tolerates extra dot segments and non-numeric tails (e.g.
+// "1.0.70-beta.3") by truncating to numeric prefix only — sufficient for the
+// "current at upload time?" check, which only cares about major.minor.patch.
+function cmpVer(a: string | null | undefined, b: string | null | undefined): number {
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+  const norm = (s: string) => s.split('.').map(p => parseInt(p, 10)).filter(n => Number.isFinite(n));
+  const A = norm(a), B = norm(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i] ?? 0, y = B[i] ?? 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
 type EncounterDetail = {
   id: string;
   started_at: string;
@@ -56,12 +127,20 @@ type EncounterDetail = {
   total_dps: number;
   zone_short: string | null;
   npc_id: number | null;
+  classification: string | null;
+  classification_reason: string | null;
+  classification_by: string | null;
   eqemu_npc_types: NpcRef | null;
   encounter_players: PlayerRow[];
 };
 type WhoObs = { character: string; class: string | null; level: number | null };
 
 const TANK_CLASSES = new Set(['Warrior', 'Paladin', 'Shadow Knight']);
+// Heal-capable classes for the Heal perspective panel. Paladin double-shows
+// (also tags as a tank) — Knights heal as well, and the symmetry is what we
+// want. Hybrids stay included so a Beastlord/Ranger CH contributor isn't
+// silently dropped from the panel.
+const HEAL_CLASSES = new Set(['Cleric', 'Druid', 'Shaman', 'Paladin', 'Ranger', 'Beastlord']);
 
 // EQEmu names scripted/event mobs with a leading '#' and underscores
 // ("#Grieg_Veneficus", "Lord_Inquisitor_Seru"). Clean those for display so
@@ -74,6 +153,7 @@ async function load(id: string) {
       .from('encounters')
       .select(`
         id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
+        classification, classification_reason, classification_by,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
       `)
@@ -83,9 +163,34 @@ async function load(id: string) {
 
     const { data: contribs } = await sb
       .from('contributions')
-      .select('id, contributor_character, contributor_discord_id, source, total_damage, player_count, duration_sec, raw_parse, created_at')
+      .select('id, contributor_character, contributor_discord_id, source, total_damage, player_count, duration_sec, raw_parse, created_at, agent_version, has_ability_detail')
       .eq('encounter_id', id)
       .order('created_at', { ascending: true });
+
+    // "Current at the time" baseline — the highest agent_version seen across
+    // ANY contribution uploaded within ±7 days of this encounter's started_at.
+    // Anyone uploading on an older version while peers were on a newer one
+    // was demonstrably stale at the time, regardless of today's latest. We do
+    // a windowed query (not lifetime-MAX) so an encounter from 2025 isn't
+    // judged against 2026 versions.
+    let latestAtTime: string | null = null;
+    if (enc?.started_at) {
+      const t = new Date((enc as { started_at: string }).started_at).getTime();
+      const lo = new Date(t - 7 * 86400_000).toISOString();
+      const hi = new Date(t + 7 * 86400_000).toISOString();
+      const { data: peers } = await sb
+        .from('contributions')
+        .select('agent_version')
+        .gte('created_at', lo)
+        .lte('created_at', hi)
+        .not('agent_version', 'is', null)
+        .range(0, 9999);
+      for (const r of (peers ?? []) as { agent_version: string | null }[]) {
+        if (r.agent_version && cmpVer(r.agent_version, latestAtTime) > 0) {
+          latestAtTime = r.agent_version;
+        }
+      }
+    }
 
     const { data: zoneRows } = await sb
       .from('eqemu_zone')
@@ -172,6 +277,7 @@ async function load(id: string) {
       bossLocalZone,
       petSet,
       date,
+      latestAtTime,
       error: null as string | null,
     };
   } catch (err: unknown) {
@@ -193,7 +299,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       </div>
     );
   }
-  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date } = data;
+  const officer = await isOfficer(user.id);
+  const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime } = data;
   // Pet detection: explicit pet_names table first, then a name-pattern
   // fallback for pets we don't track by name yet. Wizard familiars
   // ("X's familiar", generic "familiar") and the "an air/earth/fire/water
@@ -237,6 +344,48 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     const who = c.contributor_character ? whoMap.get(c.contributor_character.toLowerCase()) : null;
     return who?.class && TANK_CLASSES.has(who.class);
   });
+  // Heal perspective: same logic but heal-capable classes. Paladins land in
+  // both lists by design — they tank AND CH chain.
+  const healers = contribs.filter(c => {
+    const who = c.contributor_character ? whoMap.get(c.contributor_character.toLowerCase()) : null;
+    return who?.class && HEAL_CLASSES.has(who.class);
+  });
+
+  // Inline renderer for "what agent uploaded this and was it current at the time?"
+  // Replaces the raw `source: local_agent_v1` we used to print, which carried no
+  // information once everyone moved to the unified agent. Shows `agent v3.1.38`
+  // with a green ✓ when it matches the highest version seen across peer uploads
+  // in the ±7-day window, or an amber chip ("← v3.1.45") when it was stale at
+  // the time. Manual / chat-extracted contributions render with their source
+  // label since they don't carry an agent_version. Null version on an
+  // agent-source row means a pre-watermark upload that lacked the field.
+  const renderContribSource = (c: Contribution) => {
+    if (!c.agent_version) {
+      // Manual / paste / chat-extracted — keep the source label since there's
+      // no agent version to compare. local_agent_v1 with null version is the
+      // pre-watermark case; flag it so officers can tell it's legacy data.
+      const label = c.source === 'local_agent_v1' ? 'legacy upload' : c.source;
+      return (
+        <span className="text-dim text-[10px]" title={`source: ${c.source}`}>
+          {label}
+        </span>
+      );
+    }
+    const cmp = cmpVer(c.agent_version, latestAtTime);
+    const current = cmp >= 0 || !latestAtTime;
+    return (
+      <span className="text-dim text-[10px]" title={`source: ${c.source}${c.has_ability_detail ? ' · ability detail' : ''}`}>
+        agent v{c.agent_version}
+        {current ? (
+          <span className="text-green ml-1" title="Up to date with peer uploads in this window">✓ current</span>
+        ) : (
+          <span className="text-orange ml-1" title={`Behind peers — latest at the time was v${latestAtTime}`}>
+            · stale (latest v{latestAtTime})
+          </span>
+        )}
+      </span>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -246,15 +395,25 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
-          <h2 className="text-2xl text-gold">
-            {bossId ? (
-              <Link href={`/boss/${bossId}`} className="hover:underline">{bossName}</Link>
-            ) : bossName}
+          <h2 className="text-2xl text-gold flex items-center gap-3 min-w-0">
+            <span className="truncate">
+              {bossId ? (
+                <Link href={`/boss/${bossId}`} className="hover:underline">{bossName}</Link>
+              ) : bossName}
+            </span>
+            <ClassificationChip classification={enc.classification} />
           </h2>
           <div className="text-dim text-sm">
             {dayLabel(date)} · {fmtTime(enc.started_at)}
           </div>
         </div>
+        {enc.classification && (
+          <div className="text-xs text-dim mb-3 italic">
+            Not counted as a guild kill
+            {enc.classification_reason ? <> — <span className="text-text">{enc.classification_reason}</span></> : null}
+            {enc.classification_by ? <span className="opacity-70"> · marked by {enc.classification_by}</span> : null}
+          </div>
+        )}
         <div className="text-sm text-dim flex flex-wrap gap-x-4 gap-y-1">
           <span><span className="text-orange">📍</span> {zoneLong}</span>
           <span>{fmtDuration(enc.duration_sec)}</span>
@@ -272,6 +431,47 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             {contribs.length} contribution{contribs.length === 1 ? '' : 's'}
           </span>
         </div>
+
+        {officer && (
+          <div className="mt-4 pt-3 border-t border-border flex flex-wrap items-center gap-2">
+            <span className="text-[10px] text-dim uppercase tracking-wide mr-1">officer admin</span>
+            {[
+              { val: 'wipe', label: 'Mark Wipe', cls: 'border-orange/50 text-orange',
+                desc: 'Engaged but did not kill — excluded from kill counts + stats' },
+              { val: 'live', label: 'Mark Live', cls: 'border-blue/50 text-blue',
+                desc: 'Live server, not guild instance — excluded from kill counts + stats' },
+              { val: 'pvp',  label: 'Mark PvP',  cls: 'border-red/50 text-red',
+                desc: 'PvP / Zek server — excluded from kill counts + stats' },
+              { val: 'test', label: 'Mark Test', cls: 'border-dim/60 text-dim',
+                desc: 'Practice / dummy pull — excluded from kill counts + stats' },
+            ].map(b => (
+              <form key={b.val} action={classifyEncounter} className="contents">
+                <input type="hidden" name="id" value={enc.id} />
+                <input type="hidden" name="classification" value={b.val} />
+                <button
+                  type="submit"
+                  title={b.desc}
+                  disabled={enc.classification === b.val}
+                  className={`px-2 py-1 rounded text-xs border ${b.cls} ${enc.classification === b.val ? 'font-semibold' : 'opacity-80 hover:opacity-100'}`}
+                >
+                  {b.label}
+                </button>
+              </form>
+            ))}
+            {enc.classification && (
+              <form action={clearClassification} className="ml-auto">
+                <input type="hidden" name="id" value={enc.id} />
+                <button
+                  type="submit"
+                  title="Clear classification — back to default (guild kill)"
+                  className="px-2 py-1 rounded text-xs border border-border text-text hover:bg-bg"
+                >
+                  Clear classification
+                </button>
+              </form>
+            )}
+          </div>
+        )}
       </section>
 
       {/* Damage by class */}
@@ -325,16 +525,17 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           <span>Damage breakdown</span>
           <span className="text-dim text-xs">· max-damage-per-player across {contribs.length} parser upload{contribs.length === 1 ? '' : 's'}</span>
         </h3>
+        <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="text-dim text-left">
             <tr className="border-b border-border">
               <th className="py-1 pr-2 w-8">#</th>
               <th className="py-1 pr-2">Character</th>
               <th className="py-1 pr-2">Class</th>
-              <th className="py-1 pr-2 text-right">Damage</th>
-              <th className="py-1 pr-2 text-right">DPS</th>
-              <th className="py-1 pr-2 text-right">Duration</th>
-              <th className="py-1 pl-2">Share</th>
+              <th className="py-1 pr-2 text-right whitespace-nowrap">Damage</th>
+              <th className="py-1 pr-2 text-right whitespace-nowrap">DPS</th>
+              <th className="py-1 pr-2 text-right whitespace-nowrap">Duration</th>
+              <th className="py-1 pl-2 min-w-[80px]">Share</th>
             </tr>
           </thead>
           <tbody>
@@ -352,10 +553,10 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       {p.character_name}
                     </Link>
                   </td>
-                  <td className="py-1 pr-2 text-dim">{klass}</td>
-                  <td className="py-1 pr-2 text-right text-text">{fmtDmg(p.total_damage)}</td>
-                  <td className="py-1 pr-2 text-right text-dim">{p.dps ? `${fmtDmg(p.dps)}/s` : '—'}</td>
-                  <td className="py-1 pr-2 text-right text-dim">{fmtDuration(p.duration_sec)}</td>
+                  <td className="py-1 pr-2 text-dim whitespace-nowrap">{klass}</td>
+                  <td className="py-1 pr-2 text-right text-text whitespace-nowrap">{fmtDmg(p.total_damage)}</td>
+                  <td className="py-1 pr-2 text-right text-dim whitespace-nowrap">{p.dps ? `${fmtDmg(p.dps)}/s` : '—'}</td>
+                  <td className="py-1 pr-2 text-right text-dim whitespace-nowrap">{fmtDuration(p.duration_sec)}</td>
                   <td className="py-1 pl-2">
                     <div className="w-full bg-bg rounded h-2 overflow-hidden">
                       <div
@@ -372,6 +573,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             )}
           </tbody>
         </table>
+        </div>
       </section>
 
       {/* Deaths */}
@@ -396,30 +598,421 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       )}
 
       {/* Tank perspective */}
-      {tanks.length > 0 && (
+      {tanks.length > 0 && (() => {
+        // MT / PIVOT detection. Prefer time-based (per agent v3.1.50+ which
+        // ships firstAttackAt / lastAttackAt per defender): the tank with the
+        // earliest firstAttackAt is the MT. PIVOT is any other tank whose
+        // first hit lands ≥5s AFTER the MT's first hit AND who absorbed a
+        // meaningful share — share is the secondary tank's damageTaken /
+        // MT's damageTaken. This correctly handles "DPS pulled aggro and got
+        // smacked harder for a brief stretch" — the DPS's firstAttackAt is
+        // AFTER the MT's, so they never get [MT]; if they only ate a few
+        // hits, they also miss the PIVOT threshold. Falls back to pure share
+        // when timestamps are absent (older agent uploads).
+        const encStartMs = enc.started_at ? Date.parse(enc.started_at) : 0;
+        type TankAgg = {
+          id: string; name: string;
+          damageTaken: number;
+          firstAttackAt: number | null;
+          lastAttackAt: number | null;
+        };
+        const tankAggs: TankAgg[] = tanks
+          .map(t => {
+            const n = t.contributor_character || '';
+            const d = (t.raw_parse?.defenders ?? []).find(
+              dd => dd.name?.toLowerCase() === n.toLowerCase(),
+            );
+            return {
+              id: t.id,
+              name: n,
+              damageTaken:   d?.damageTaken   || 0,
+              firstAttackAt: d?.firstAttackAt ?? null,
+              lastAttackAt:  d?.lastAttackAt  ?? null,
+            };
+          })
+          .filter(a => a.name && a.damageTaken > 0);
+
+        const haveTimestamps = tankAggs.some(a => a.firstAttackAt !== null);
+        // Authoritative ordering. By time when we have it; by damage share otherwise.
+        const ranked = [...tankAggs].sort((a, b) => {
+          if (haveTimestamps) {
+            const af = a.firstAttackAt ?? Number.POSITIVE_INFINITY;
+            const bf = b.firstAttackAt ?? Number.POSITIVE_INFINITY;
+            if (af !== bf) return af - bf;
+          }
+          return b.damageTaken - a.damageTaken;
+        });
+        const mtId  = ranked[0]?.id;
+        const mtDmg = ranked[0]?.damageTaken || 0;
+        const mtFirst = ranked[0]?.firstAttackAt ?? null;
+        // PIVOT — secondary tank who picked up AFTER the MT. With timestamps:
+        // any other tank whose firstAttackAt is ≥5s after MT's AND took ≥15%
+        // of MT's damage (or covers a ≥10s window). Without timestamps: the
+        // share-based heuristic from before (second place, ≥20% of MT).
+        const pivotId = (() => {
+          if (haveTimestamps && mtFirst !== null) {
+            for (const t of ranked.slice(1)) {
+              if (t.firstAttackAt === null) continue;
+              const lateBy = t.firstAttackAt - mtFirst;
+              if (lateBy < 5_000) continue;
+              const window = (t.lastAttackAt && t.firstAttackAt)
+                ? t.lastAttackAt - t.firstAttackAt : 0;
+              const share  = mtDmg > 0 ? t.damageTaken / mtDmg : 0;
+              if (share >= 0.15 || window >= 10_000) return t.id;
+            }
+            return null;
+          }
+          return (ranked[1] && mtDmg > 0 && (ranked[1].damageTaken / mtDmg) >= 0.20)
+            ? ranked[1].id : null;
+        })();
+        // Format mm:ss from the fight start. Used for tanking windows + the
+        // inline death timestamp. Negative offsets shouldn't happen in
+        // practice; clamp to 0 so a clock-skew event still reads sanely.
+        const fmtOffset = (absMs: number | null | undefined) => {
+          if (!absMs || !encStartMs) return null;
+          const sec = Math.max(0, Math.round((absMs - encStartMs) / 1000));
+          const m = Math.floor(sec / 60), s = sec % 60;
+          return `${m}:${String(s).padStart(2, '0')}`;
+        };
+        return (
         <section className="bg-panel border border-border rounded-lg p-4">
           <h3 className="text-sm text-blue mb-2 flex items-center gap-2">
             <span aria-hidden>🛡️</span>
             <span>Tank perspective</span>
             <span className="text-dim text-xs">· uploaded by {tanks.length} tank class character{tanks.length === 1 ? '' : 's'}</span>
           </h3>
-          <ul className="text-xs space-y-1">
-            {tanks.map((t) => (
-              <li key={t.id} className="text-dim">
-                {t.contributor_character ? (
-                  <Link href={`/character/${encodeURIComponent(t.contributor_character)}`} className="text-text hover:text-blue hover:underline">
-                    {t.contributor_character}
-                  </Link>
-                ) : <span className="text-text">(anonymous)</span>}
-                <span> — </span>
-                <span>{(t.raw_parse?.players ?? []).length} players parsed, </span>
-                <span>{fmtDmg(t.raw_parse?.totalDamage ?? 0)} total</span>
-                <span className="opacity-60"> · source: {t.source}</span>
-              </li>
-            ))}
+          <ul className="text-xs space-y-2">
+            {tanks.map((t) => {
+              // Per-tank incoming swings + DS payback. The agent ships defenders
+              // keyed by name (string match — uploader is normally listed) and
+              // ds_reflects keyed by ability. Both undefined for older agent
+              // versions, in which case we silently drop the extra lines and
+              // keep the original "X players parsed, Y total" summary.
+              const selfName = t.contributor_character || '';
+              const selfDef  = (t.raw_parse?.defenders ?? []).find(
+                d => d.name?.toLowerCase() === selfName.toLowerCase(),
+              );
+              const dsMap = t.raw_parse?.ds_reflects || {};
+              const dsEntries = Object.entries(dsMap)
+                .map(([name, v]) => ({ name, total: v?.total || 0, count: v?.count || 0 }))
+                .filter(e => e.total > 0)
+                .sort((a, b) => b.total - a.total);
+              const dsTotal = dsEntries.reduce((s, e) => s + e.total, 0);
+              const avoidanceBits: string[] = [];
+              if (selfDef) {
+                if (selfDef.dodges)   avoidanceBits.push(`${selfDef.dodges} dodge`);
+                if (selfDef.parries)  avoidanceBits.push(`${selfDef.parries} parry`);
+                if (selfDef.ripostes) avoidanceBits.push(`${selfDef.ripostes} riposte`);
+                if (selfDef.blocks)   avoidanceBits.push(`${selfDef.blocks} block`);
+                if (selfDef.invulns)  avoidanceBits.push(`${selfDef.invulns} invuln`);
+                if (selfDef.misses)   avoidanceBits.push(`${selfDef.misses} miss`);
+              }
+              const totalAvoid = avoidanceBits.length
+                ? (selfDef?.misses || 0) + (selfDef?.dodges || 0) + (selfDef?.parries || 0)
+                  + (selfDef?.ripostes || 0) + (selfDef?.blocks || 0) + (selfDef?.invulns || 0)
+                : 0;
+              // Boss accuracy against this tank — hits / (hits + every form of
+              // avoidance). Shown only when there are enough attempts (≥20) to
+              // make the percentage meaningful — for a 3-swing tag, "33%" is
+              // statistical noise.
+              const attempts = (selfDef?.hits || 0) + totalAvoid;
+              const accuracy = attempts >= 20 ? Math.round(((selfDef?.hits || 0) / attempts) * 100) : null;
+              // Invuln-avoided damage estimate. The agent doesn't ship this
+              // per-defender — same formula it uses in the dashboard Tanks
+              // tab: invulns × bossMaxMelee. Falls back to the merged-card
+              // bossMaxMelee if this contribution didn't carry one.
+              const bmm = t.raw_parse?.bossMaxMelee
+                       ?? Math.max(...tanks.map(o => o.raw_parse?.bossMaxMelee || 0), 0);
+              const invulnAvoided = (selfDef?.invulns || 0) * bmm;
+              // Deaths this tank suffered in this fight. `deaths` is already
+              // merged + deduped above. We attach the per-death offset so we
+              // can label "☠️ at 1:38" inline — useful for the "did they die
+              // during a rampage / right after handover" question.
+              const tankDeathRows = selfName
+                ? deaths.filter(d => d.name?.toLowerCase() === selfName.toLowerCase())
+                : [];
+              const tankDeaths = tankDeathRows.length;
+              const tankDeathOffsets = tankDeathRows
+                .map(d => fmtOffset(Date.parse(d.ts)))
+                .filter((x): x is string => !!x);
+              // Tanking window — first → last incoming swing, MM:SS from
+              // fight start. We render this even when the tank isn't MT/PIVOT
+              // because it answers the question "when were they actually
+              // being attacked." Falls back to undefined for older agents.
+              const windowFrom = fmtOffset(selfDef?.firstAttackAt);
+              const windowTo   = fmtOffset(selfDef?.lastAttackAt);
+              const windowStr  = (windowFrom && windowTo) ? `${windowFrom}–${windowTo}` : null;
+              // Role tag — [MT] for top damageTaken, [PIVOT] for a meaningful
+              // secondary. [ramp] when this tank ate a tagged rampage hit.
+              // Tags only render when we have the underlying data — older
+              // agents pass through without any tag noise.
+              const isMt    = t.id === mtId    && (selfDef?.damageTaken || 0) > 0;
+              const isPivot = t.id === pivotId && (selfDef?.damageTaken || 0) > 0;
+              const isRamp  = (selfDef?.rampageHits || 0) > 0;
+              return (
+                <li key={t.id} className="text-dim">
+                  <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
+                    {t.contributor_character ? (
+                      <Link href={`/character/${encodeURIComponent(t.contributor_character)}`} className="text-text hover:text-blue hover:underline">
+                        {t.contributor_character}
+                      </Link>
+                    ) : <span className="text-text">(anonymous)</span>}
+                    {isMt && (
+                      <span
+                        title={`Took the most incoming damage (${fmtDmg(selfDef!.damageTaken!)}) — likely the main tank for this fight.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-blue/20 text-blue border-blue/40"
+                      >MT</span>
+                    )}
+                    {isPivot && (
+                      <span
+                        title={`Took ${Math.round((selfDef!.damageTaken! / mtDmg) * 100)}% of the MT's incoming damage — picked up a meaningful chunk of the fight.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-orange/20 text-orange border-orange/40"
+                      >PIVOT</span>
+                    )}
+                    {isRamp && (
+                      <span
+                        title={`Ate ${selfDef!.rampageHits} rampage hit${selfDef!.rampageHits === 1 ? '' : 's'} for ${fmtDmg(selfDef!.rampageDmg || 0)}.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-red/20 text-red border-red/40"
+                      >ramp</span>
+                    )}
+                    {tankDeaths > 0 && (
+                      <span
+                        title={
+                          tankDeathOffsets.length > 0
+                            ? `Died at ${tankDeathOffsets.join(', ')}.`
+                            : `${tankDeaths} death${tankDeaths === 1 ? '' : 's'} during this fight.`
+                        }
+                        className="text-red"
+                        aria-label={`died ${tankDeaths} time${tankDeaths === 1 ? '' : 's'}`}
+                      >
+                        {'☠️'.repeat(Math.min(tankDeaths, 10))}
+                      </span>
+                    )}
+                    <span>—</span>
+                    <span>{(t.raw_parse?.players ?? []).length} players parsed,</span>
+                    <span>{fmtDmg(t.raw_parse?.totalDamage ?? 0)} total</span>
+                    <span className="mx-1 opacity-60">·</span>
+                    {renderContribSource(t)}
+                  </div>
+                  {selfDef && (selfDef.hits || totalAvoid) ? (
+                    <div className="ml-3 text-[11px] mt-0.5">
+                      <span className="opacity-50">↳ </span>
+                      {windowStr && (
+                        <span
+                          className="text-text"
+                          title="Time window the boss was actively swinging at this tank, from fight start. Helps see the handover: MT tanked 0:00–1:38, PIVOT picked up 1:39–end."
+                        >
+                          {windowStr}
+                          <span className="opacity-60"> · </span>
+                        </span>
+                      )}
+                      <span>took </span>
+                      <span className="text-text">{selfDef.hits || 0} hit{selfDef.hits === 1 ? '' : 's'}</span>
+                      <span> for </span>
+                      <span className="text-text">{fmtDmg(selfDef.damageTaken || 0)}</span>
+                      {accuracy !== null && (
+                        <span className="opacity-60" title={`Boss connected on ${selfDef.hits || 0} of ${attempts} swings against this tank`}>
+                          {' ('}{accuracy}{'% accuracy)'}
+                        </span>
+                      )}
+                      {totalAvoid > 0 && (
+                        <>
+                          <span> · avoided </span>
+                          <span className="text-text">{totalAvoid}</span>
+                          <span className="opacity-70"> ({avoidanceBits.join(' / ')})</span>
+                        </>
+                      )}
+                      {invulnAvoided > 0 && (
+                        <span title={`Estimated damage absorbed by ${selfDef.invulns} invulnerability tick${selfDef.invulns === 1 ? '' : 's'} (invulns × boss's biggest single hit, ${fmtDmg(bmm)}).`}>
+                          {' · ~'}
+                          <span className="text-text">{fmtDmg(invulnAvoided)}</span>
+                          <span> absorbed</span>
+                        </span>
+                      )}
+                      {(selfDef.ripostedFor || 0) > 0 && (
+                        <span title="Damage the boss took from this tank's ripostes">
+                          {' · riposted back '}
+                          <span className="text-text">{fmtDmg(selfDef.ripostedFor || 0)}</span>
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+                  {dsTotal > 0 ? (
+                    <div className="ml-3 text-[11px] mt-0.5" title={dsEntries.map(e => `${e.name}: ${e.count} procs, ${e.total} dmg`).join('\n')}>
+                      <span className="opacity-50">↳ </span>
+                      <span>DS dealt </span>
+                      <span className="text-text">{fmtDmg(dsTotal)}</span>
+                      <span> back</span>
+                      {dsEntries.length > 0 && (
+                        <span className="opacity-70">
+                          {' ('}
+                          {dsEntries.slice(0, 3).map((e, i) => (
+                            <span key={e.name}>
+                              {i > 0 ? ' / ' : ''}
+                              {e.name} {fmtDmg(e.total)}
+                            </span>
+                          ))}
+                          {dsEntries.length > 3 ? ` / +${dsEntries.length - 3} more` : ''}
+                          {')'}
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </section>
-      )}
+        );
+      })()}
+
+      {/* Heal perspective — mirror of Tank perspective. One row per heal-class
+          contributor; their own healers[] entry (matched by name) drives the
+          ↳ summary line. [MAIN HEAL] is the healer with the highest `healed`
+          total; [OFF HEAL] is a secondary contributor with ≥20% of MAIN's
+          output. Older agents that didn't ship firstHealAt/lastHealAt still
+          render the totals + targets cleanly; the inline heal window just
+          doesn't appear. */}
+      {healers.length > 0 && (() => {
+        const encStartMs = enc.started_at ? Date.parse(enc.started_at) : 0;
+        const fmtOffset = (absMs: number | null | undefined) => {
+          if (!absMs || !encStartMs) return null;
+          const sec = Math.max(0, Math.round((absMs - encStartMs) / 1000));
+          const m = Math.floor(sec / 60), s = sec % 60;
+          return `${m}:${String(s).padStart(2, '0')}`;
+        };
+        type HealAgg = { id: string; name: string; healed: number };
+        const healAggs: HealAgg[] = healers
+          .map(h => {
+            const n = h.contributor_character || '';
+            const entry = (h.raw_parse?.healers ?? []).find(
+              hh => hh.name?.toLowerCase() === n.toLowerCase(),
+            );
+            return { id: h.id, name: n, healed: entry?.healed || 0 };
+          })
+          .filter(a => a.name && a.healed > 0)
+          .sort((a, b) => b.healed - a.healed);
+        const mainId    = healAggs[0]?.id;
+        const mainTotal = healAggs[0]?.healed || 0;
+        const offIds    = new Set<string>(
+          healAggs.slice(1).filter(a => mainTotal > 0 && a.healed / mainTotal >= 0.20).map(a => a.id),
+        );
+        // CH-chain gap signal — surface once at the top if any contribution
+        // saw a meaningful gap on the tank. We don't try to attribute it to
+        // a specific healer (the agent doesn't either); a gap means "the
+        // chain dropped" and that's a raid-wide observation.
+        const chainGap = healers
+          .map(h => h.raw_parse?.healGaps)
+          .filter((g): g is HealGaps => !!g && g.maxGapMs >= 8000)
+          .sort((a, b) => b.maxGapMs - a.maxGapMs)[0] || null;
+        return (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-sm text-blue mb-2 flex items-center gap-2">
+            <span aria-hidden>🩹</span>
+            <span>Heal perspective</span>
+            <span className="text-dim text-xs">· uploaded by {healers.length} heal-class character{healers.length === 1 ? '' : 's'}</span>
+          </h3>
+          {chainGap && (
+            <div
+              className="text-[11px] text-orange mb-2"
+              title={`Longest heal-free stretch on ${chainGap.tank} = ${(chainGap.maxGapMs / 1000).toFixed(1)}s across ${chainGap.count} gap${chainGap.count === 1 ? '' : 's'} > 8s. CH ticks every ~12s; a 14s+ gap means the chain dropped at least once.`}
+            >
+              ⚠️ Chain gap on {chainGap.tank} — peak {(chainGap.maxGapMs / 1000).toFixed(1)}s
+              {chainGap.count > 1 && ` (${chainGap.count} stretches > 8s)`}
+            </div>
+          )}
+          <ul className="text-xs space-y-2">
+            {healers.map((h) => {
+              const selfName = h.contributor_character || '';
+              const selfHeal = (h.raw_parse?.healers ?? []).find(
+                hh => hh.name?.toLowerCase() === selfName.toLowerCase(),
+              );
+              const targets   = (selfHeal?.targets || []).slice(0, 5);
+              const moreCount = Math.max(0, (selfHeal?.targets || []).length - targets.length);
+              const healerDeathRows = selfName
+                ? deaths.filter(d => d.name?.toLowerCase() === selfName.toLowerCase())
+                : [];
+              const healerDeaths = healerDeathRows.length;
+              const healerDeathOffsets = healerDeathRows
+                .map(d => fmtOffset(Date.parse(d.ts)))
+                .filter((x): x is string => !!x);
+              const windowStr = (selfHeal?.firstHealAt && selfHeal?.lastHealAt)
+                ? `${fmtOffset(selfHeal.firstHealAt)}–${fmtOffset(selfHeal.lastHealAt)}`
+                : null;
+              const isMain = h.id === mainId && (selfHeal?.healed || 0) > 0;
+              const isOff  = offIds.has(h.id);
+              return (
+                <li key={h.id} className="text-dim">
+                  <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
+                    {h.contributor_character ? (
+                      <Link href={`/character/${encodeURIComponent(h.contributor_character)}`} className="text-text hover:text-blue hover:underline">
+                        {h.contributor_character}
+                      </Link>
+                    ) : <span className="text-text">(anonymous)</span>}
+                    {isMain && (
+                      <span
+                        title={`Top heal output on this fight (${fmtDmg(selfHeal!.healed!)}). Doesn't necessarily mean main CH — see the targets list to read role.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-green/20 text-green border-green/40"
+                      >MAIN HEAL</span>
+                    )}
+                    {isOff && (
+                      <span
+                        title={`${Math.round(((selfHeal?.healed || 0) / mainTotal) * 100)}% of the top healer's output — meaningful secondary contributor.`}
+                        className="text-[10px] uppercase tracking-wide font-semibold px-1 py-px rounded border bg-blue/20 text-blue border-blue/40"
+                      >OFF HEAL</span>
+                    )}
+                    {healerDeaths > 0 && (
+                      <span
+                        title={
+                          healerDeathOffsets.length > 0
+                            ? `Died at ${healerDeathOffsets.join(', ')}.`
+                            : `${healerDeaths} death${healerDeaths === 1 ? '' : 's'} during this fight.`
+                        }
+                        className="text-red"
+                        aria-label={`died ${healerDeaths} time${healerDeaths === 1 ? '' : 's'}`}
+                      >
+                        {'☠️'.repeat(Math.min(healerDeaths, 10))}
+                      </span>
+                    )}
+                    <span>—</span>
+                    <span>{(h.raw_parse?.players ?? []).length} players parsed,</span>
+                    <span>{fmtDmg(h.raw_parse?.totalDamage ?? 0)} total</span>
+                    <span className="mx-1 opacity-60">·</span>
+                    {renderContribSource(h)}
+                  </div>
+                  {selfHeal && ((selfHeal.healed || 0) > 0 || (selfHeal.ticks || 0) > 0) ? (
+                    <div className="ml-3 text-[11px] mt-0.5">
+                      <span className="opacity-50">↳ </span>
+                      {windowStr && (
+                        <span
+                          className="text-text"
+                          title="Time window of observed heals from this caster, MM:SS from fight start. Quiet stretches inside the window mean they paused — not necessarily a chain drop."
+                        >
+                          {windowStr}
+                          <span className="opacity-60"> · </span>
+                        </span>
+                      )}
+                      <span>healed </span>
+                      <span className="text-text">{fmtDmg(selfHeal.healed || 0)}</span>
+                      {(selfHeal.ticks || 0) > 0 && (
+                        <span className="opacity-60"> ({selfHeal.ticks} tick{selfHeal.ticks === 1 ? '' : 's'})</span>
+                      )}
+                      {targets.length > 0 && (
+                        <>
+                          <span> on </span>
+                          <span className="text-text">{targets.join(', ')}</span>
+                          {moreCount > 0 && <span className="opacity-60">, +{moreCount} more</span>}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+        );
+      })()}
 
       {/* Contributors */}
       <section className="bg-panel border border-border rounded-lg p-4">
@@ -436,7 +1029,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                     {c.contributor_character}
                   </Link>
                 ) : <span className="text-text">(anonymous)</span>}
-                <span className="text-dim ml-1 text-[10px]">{c.source}</span>
+                <span className="ml-1">{renderContribSource(c)}</span>
               </span>
               <span className="text-dim whitespace-nowrap">{fmtDmg(c.total_damage)}</span>
             </li>

@@ -4,6 +4,7 @@
 // chat_messages table). Future tenants will join as the agent ships their
 // detectors: CotH Pearl (Magician), DI Emerald, Aegolism/Rune Peridot, etc.
 
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -16,7 +17,7 @@ async function loadCounters() {
   // value is `number | string` so cards like "Longest Dire Charm" can show
   // a pre-formatted "4h 23m" string while normal counter cards stay numeric.
   // The renderer calls value.toLocaleString() which works for both.
-  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string }[] = [];
+  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string; href?: string }[] = [];
 
   // Standalone — fetched separately so the Kyinen execution card can render
   // with its own gold-frame styling above the normal counter grid.
@@ -413,6 +414,7 @@ async function loadCounters() {
         emoji: '😈',
         value: total,
         sub: subParts.join(' · '),
+        href: '/fun/lord-of-ire',
       });
     } else {
       counters.push({
@@ -425,6 +427,95 @@ async function loadCounters() {
   } catch (err) {
     void err;
   }
+
+  // ── ⚡ Mana donated to casters — necromancer "Subversion" twitches ─────────
+  // Two signals (agent v3.1.50 caster-side, v3.1.51 recipient-side):
+  //   • `mana_twitch` (caster-side) — exact: reagent_qty = mana gifted per cast
+  //     (60 Rapacious / 100 Covetous / 150 Sedulous). Needs the NECRO on the agent.
+  //   • `mana_twitch_received` (recipient-side) — count only: fires on every
+  //     caster the necro twitches who runs the agent, so it covers the necro
+  //     even when HE isn't running it. No amount in the line, so we estimate.
+  // The headline stays the exact total; when only recipient data exists we lead
+  // with a clearly-marked ~estimate (count × the 60–150 tier range) so the card
+  // isn't stuck at zero before the necro installs.
+  const TWITCH_MID = 100;  // mid-tier (Covetous) mana for the point estimate
+  try {
+    const [{ data: twRows }, { count: recvCount }] = await Promise.all([
+      sb.from('fun_events').select('caster, reagent_qty').eq('event_type', 'mana_twitch'),
+      sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'mana_twitch_received'),
+    ]);
+    const rows = (twRows ?? []) as { caster: string | null; reagent_qty: number | null }[];
+    const received = recvCount ?? 0;
+    let totalMana = 0;
+    const byCaster = new Map<string, number>();
+    for (const r of rows) {
+      const mana = Number(r.reagent_qty) || 0;
+      totalMana += mana;
+      const k = r.caster || 'unknown';
+      byCaster.set(k, (byCaster.get(k) ?? 0) + mana);
+    }
+    const top = [...byCaster.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (totalMana > 0) {
+      counters.push({
+        label: 'Mana donated to casters',
+        emoji: '⚡',
+        value: totalMana,
+        sub: `across ${rows.length.toLocaleString()} twitches${top ? ` · top battery: ${top[0]} (${top[1].toLocaleString()} mana)` : ''}${received > 0 ? ` · +${received.toLocaleString()} more seen from the receiving end` : ''}`,
+      });
+    } else if (received > 0) {
+      counters.push({
+        label: 'Mana donated to casters',
+        emoji: '⚡',
+        value: `~${(received * TWITCH_MID).toLocaleString()}`,
+        sub: `est. from ${received.toLocaleString()} twitches seen in casters' logs (~${(received * 60).toLocaleString()}–${(received * 150).toLocaleString()} mana). Exact total lights up when the necro runs the agent.`,
+      });
+    } else {
+      counters.push({
+        label: 'Mana donated to casters',
+        emoji: '⚡',
+        value: 0,
+        sub: 'no twitches captured yet — agent v3.1.51+ ticks this up from each necro "Subversion" cast (caster-side exact, recipient-side covers necros not yet on the agent)',
+      });
+    }
+  } catch (err) { void err; }
+
+  // ── 🧠 Mind Wrack — enemy mana burned ─────────────────────────────────────
+  // Caster-side `mind_wrack_cast` (one per cast, the true count) + recipient-side
+  // `mind_wrack_recourse` ("You feel foreign mana strengthen your mind." — the
+  // group-mana refund, one per groupmate per cast). Recourse covers the necro
+  // when he's not on the agent, but it's inflated by group size, so we never
+  // present it AS the cast count — just as coverage / a "feeding the group" note.
+  try {
+    const [{ data: mwRows, count: mwTotal }, { count: recourseCount }] = await Promise.all([
+      sb.from('fun_events').select('caster', { count: 'exact' }).eq('event_type', 'mind_wrack_cast'),
+      sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'mind_wrack_recourse'),
+    ]);
+    const tally = new Map<string, number>();
+    for (const r of (mwRows ?? []) as { caster: string | null }[]) {
+      const k = r.caster || 'unknown';
+      tally.set(k, (tally.get(k) ?? 0) + 1);
+    }
+    const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
+    const total = mwTotal ?? 0;
+    const recourse = recourseCount ?? 0;
+    if (total > 0) {
+      counters.push({
+        label: 'Mind Wracks — mana burned off mobs',
+        emoji: '🧠',
+        value: total,
+        sub: `${top ? `top burner: ${top[0]} ×${top[1]}` : ''}${recourse > 0 ? `${top ? ' · ' : ''}${recourse.toLocaleString()} group mana-backs logged` : ''}` || undefined,
+      });
+    } else {
+      counters.push({
+        label: 'Mind Wracks — mana burned off mobs',
+        emoji: '🧠',
+        value: 0,
+        sub: recourse > 0
+          ? `${recourse.toLocaleString()} group mana-backs seen in groupmates' logs (≈ casts × group size) — the exact Mind Wrack count lights up when the necro runs the agent`
+          : 'no Mind Wracks captured yet — agent v3.1.51+ ticks this up (caster-side count + recipient-side group recourse)',
+      });
+    }
+  } catch (err) { void err; }
 
   return { counters, kyinen: { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone } };
 }
@@ -464,7 +555,11 @@ export default async function FunPage() {
               <div className="text-xs text-dim uppercase tracking-wide">{c.label}</div>
               <span aria-hidden className="text-2xl shrink-0">{c.emoji}</span>
             </div>
-            <div className="text-3xl text-gold font-bold mt-2">{c.value.toLocaleString()}</div>
+            <div className="text-3xl text-gold font-bold mt-2">
+              {c.href
+                ? <Link href={c.href} className="text-gold hover:underline" title="View full breakdown">{c.value.toLocaleString()}</Link>
+                : c.value.toLocaleString()}
+            </div>
             {c.sub && <div className="text-xs text-dim mt-1">{c.sub}</div>}
           </div>
         ))}

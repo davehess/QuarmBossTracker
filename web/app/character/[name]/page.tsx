@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import { eraForTimestamp } from '@/lib/eras';
+import { classDisplay } from '@/lib/class-titles';
 import LootBrowser, { type LootCategory, type LootEntry } from '@/components/LootBrowser';
 import {
   loadFamily,
@@ -285,12 +286,27 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
             <div className="text-sm text-dim">
               {who.level && <span>{who.level} </span>}
               {who.race && <span>{who.race} </span>}
-              {who.class && <span className="text-text">{who.class}</span>}
+              {who.class && <span className="text-text">{classDisplay(who.class, who.level)}</span>}
               {who.guild_name && (
                 <span className="ml-2">{'<'}<span className="text-orange">{who.guild_name}</span>{'>'}</span>
               )}
             </div>
           )}
+        </div>
+
+        <div className="text-xs mt-1 flex items-center gap-3">
+          <span>
+            <Link href={`/character/${encodeURIComponent(displayName)}/factions`} className="text-blue hover:underline">
+              🤝 Factions
+            </Link>
+            <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+          </span>
+          <span>
+            <Link href={`/character/${encodeURIComponent(displayName)}/gear`} className="text-blue hover:underline">
+              🛡️ Gear
+            </Link>
+            <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+          </span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
