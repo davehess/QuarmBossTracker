@@ -215,6 +215,46 @@ async function setFamilyLink(formData: FormData) {
   revalidatePath('/admin/agents');
 }
 
+// One-click cleanup: clear every main_name_override row where the override
+// just pins the character to themselves (override == name) or to its
+// existing main_name (no actual re-parent). These are "self-pinned" no-ops
+// that the auto-linker stamps to keep the OpenDKP sync from re-parenting a
+// row — they're harmless but clutter the page with "override" badges that
+// look like contradictions next to HOME-marked characters. Wholesale clear
+// is safe: the sync's natural state would land in the same place, and any
+// MEANINGFUL override (one that points to a name other than the current
+// main) is preserved.
+async function clearSelfPinnedOverrides() {
+  'use server';
+  const ok = await actionAssertOfficer();
+  if (!ok) redirect('/?error=admin_required');
+  const admin = supabaseAdmin();
+  // PostgREST can't express a per-row column-vs-column predicate cleanly via
+  // .or(); do it in one RPC-ish round trip by selecting candidates then
+  // patching them by name. The set is bounded (≤ characters table size,
+  // typically a few hundred) so this is cheap.
+  const { data: rows } = await admin
+    .from('characters')
+    .select('name, main_name, main_name_override')
+    .eq('guild_id', 'wolfpack')
+    .not('main_name_override', 'is', null);
+  const selfPinned = ((rows ?? []) as { name: string; main_name: string | null; main_name_override: string }[])
+    .filter(r => {
+      const ovr = r.main_name_override.toLowerCase();
+      return ovr === r.name.toLowerCase()
+          || (r.main_name && ovr === r.main_name.toLowerCase());
+    })
+    .map(r => r.name);
+  if (selfPinned.length > 0) {
+    await admin.from('characters')
+      .update({ main_name_override: null })
+      .eq('guild_id', 'wolfpack')
+      .in('name', selfPinned);
+  }
+  revalidatePath('/admin/links');
+  revalidatePath('/admin/agents');
+}
+
 // ── Family-link requests (from Mimic UI-Studio uploads of unlinked toons) ───
 
 type LinkRequest = {
@@ -414,6 +454,19 @@ export default async function AdminLinksPage({
   }
   familyGroups.sort((a, b) => b.families.length - a.families.length);
 
+  // Count self-pinned overrides across the whole roster — drives the
+  // "Clean up N self-pinned overrides" button in the section header. These
+  // are rows where main_name_override is set but only confirms the
+  // existing main_name (no actual re-parent). They're harmless but make
+  // the page noisy by painting an "override" badge on every HOME row.
+  const selfPinnedCount = (allChars as Character[]).reduce((acc, c) => {
+    if (!c.main_name_override) return acc;
+    const ovr = c.main_name_override.toLowerCase();
+    const cur = (c.main_name || c.name).toLowerCase();
+    const isSelfPin = ovr === c.name.toLowerCase() || ovr === cur;
+    return acc + (isSelfPin ? 1 : 0);
+  }, 0);
+
   // ── Unregistered characters ────────────────────────────────────────────────
   // Characters streaming from a member's Mimic (their log files are registered
   // on that machine, so the per-user token names the owner) that have NO row
@@ -554,14 +607,27 @@ export default async function AdminLinksPage({
 
       {/* Same-uploader family candidates (main/alt overrides) */}
       <section className="bg-panel border border-border rounded-lg">
-        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-          👥 Same uploader, separate families {familyGroups.length > 0 && <span className="text-gold">({familyGroups.length})</span>}
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border flex flex-wrap items-center gap-3">
+          <span>👥 Same uploader, separate families {familyGroups.length > 0 && <span className="text-gold">({familyGroups.length})</span>}</span>
+          {selfPinnedCount > 0 && (
+            <form action={clearSelfPinnedOverrides} className="ml-auto">
+              <button
+                type="submit"
+                className="px-2 py-1 rounded border border-border bg-bg/40 text-text text-xs hover:border-orange hover:text-orange"
+                title={`Clear ${selfPinnedCount} self-pinned override row${selfPinnedCount === 1 ? '' : 's'} — main_name_override is just pinning the character to themselves, so removing it changes nothing functionally. Cleans up the visual noise on this page.`}
+              >
+                🧹 Clean up {selfPinnedCount} self-pinned override{selfPinnedCount === 1 ? '' : 's'}
+              </button>
+            </form>
+          )}
         </h3>
         <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
           Each row group is one Mimic install (one member&apos;s Discord token) whose uploads span
           multiple roster families — usually alts never parented in OpenDKP. Linking sets an
           officer override that <b>survives the OpenDKP sync</b> and re-points the whole family
           at once. Leave it alone if the member genuinely runs someone else&apos;s toon.
+          {' '}
+          <span className="text-dim">A <span className="px-1.5 py-0.5 rounded bg-red/20 border border-red/60 text-red text-[10px] uppercase">⚠ bad override</span> badge means an override is incorrectly re-parenting a character that&apos;s their own HOME — clear it from that row.</span>
         </div>
         {familyGroups.length === 0 ? (
           <div className="p-4 text-xs text-dim">No candidates — every uploader&apos;s characters fold into one family. 🎉</div>
@@ -576,12 +642,37 @@ export default async function AdminLinksPage({
                     <span className="text-dim text-xs ml-2">uploads {g.families.length} families</span>
                   </div>
                   <div className="space-y-1.5">
-                    {g.families.map(f => (
+                    {g.families.map(f => {
+                      // "Self-pinned" no-op = main_name_override is set, but
+                      // it just confirms the character is their own main —
+                      // either the override equals the character's name OR
+                      // it equals the existing main_name (the OpenDKP sync's
+                      // natural choice). These overrides are NOT a problem;
+                      // they were auto-stamped by the linker as a no-op
+                      // "pin to default" so OpenDKP wouldn't re-parent the
+                      // row. Showing them as "override" misled officers
+                      // (Uilnayar 2026-06-21 — every HOME row was rendering
+                      // with a gold "override" tag that looked like a
+                      // contradiction). Now only flag the GENUINE case:
+                      // override points to a name DIFFERENT from the
+                      // current main, AND in the worst case the row is
+                      // HOME but the override still re-parents it — a
+                      // real conflict to draw eyes to.
+                      const ovr   = f.main.main_name_override;
+                      const cur   = f.main.main_name || f.main.name;
+                      const isSelfPin = !!ovr && (
+                        ovr.toLowerCase() === f.main.name.toLowerCase() ||
+                        ovr.toLowerCase() === cur.toLowerCase()
+                      );
+                      const ovrConflict = !!ovr && !isSelfPin && f.isHome;
+                      const ovrMoves    = !!ovr && !isSelfPin && !f.isHome;
+                      return (
                       <div key={f.main.name} className="flex flex-col sm:flex-row sm:items-center gap-1.5 text-xs">
                         <div className="sm:w-64">
                           <span className="text-text font-medium">{f.main.name}</span>
                           {f.isHome && <span className="ml-2 text-[10px] tracking-wide px-1.5 py-0.5 rounded bg-green/20 border border-green/60 text-green uppercase">home</span>}
-                          {f.main.main_name_override && <span className="ml-2 text-[10px] text-gold" title="Officer override active">override</span>}
+                          {ovrConflict && <span className="ml-2 text-[10px] tracking-wide px-1.5 py-0.5 rounded bg-red/20 border border-red/60 text-red uppercase" title={`Officer override re-points this character to "${ovr}" — but the row is HOME (their own OpenDKP main), so the override is incorrect. Click Clear override to remove it.`}>⚠ bad override → {ovr}</span>}
+                          {ovrMoves    && <span className="ml-2 text-[10px] text-gold" title={`Officer override → ${ovr}`}>override → {ovr}</span>}
                           <div className="text-dim text-[10px]">
                             uploads: {f.uploaders.join(', ')}{f.main.rank ? ` · ${f.main.rank}` : ''}
                           </div>
@@ -608,7 +699,8 @@ export default async function AdminLinksPage({
                           </form>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );
