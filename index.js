@@ -1214,6 +1214,20 @@ async function handleAddZoneBosses(interaction) {
 
 // ── Welcome card ──────────────────────────────────────────────────────────
 async function maybeShowWelcome(interaction) {
+  // Two independent tracking signals:
+  //   * seenWelcome — state.json array, set the first time this session
+  //     ever showed the card to this user. Volatile across Railway
+  //     redeploys / volume blanks.
+  //   * isOptedOut — Supabase member_onboarding_state, set when the user
+  //     clicked "🔕 Don't show me this again". Permanent.
+  //
+  // We must check BOTH. The original code only checked seenWelcome — so a
+  // user who'd opted out would see the welcome again the next time state.json
+  // got wiped, because seenWelcome reset to empty + the gate never asked
+  // Supabase. Reported 2026-06-21 ("'don't show this again' button doesn't
+  // work, it always shows onboarding"). Now the opt-out flag wins.
+  const { isOptedOut } = require('./utils/onboarding');
+  if (isOptedOut(interaction.user.id)) return;
   if (hasSeenWelcome(interaction.user.id)) return;
   markWelcomeSeen(interaction.user.id);
   try {
