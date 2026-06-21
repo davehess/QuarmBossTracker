@@ -15,6 +15,11 @@ export default function AdminPage() {
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card
+          title="🛠 Review queue"
+          body="Cross-checks roster + /who + chat for officer-action items: chat speakers missing from OpenDKP (no DKP credit), anon-only names that render without class info in chat, and any future category we add to web/lib/admin-queue."
+          href="/admin/queue"
+        />
+        <Card
           title="⚔️ Encounter audit"
           body="HP-vs-damage health for every encounter, duplicate detection, merge action, mark-incomplete, and file backfill requests when parses underreported."
           href="/admin/encounters"

@@ -1,9 +1,14 @@
 // Gate every /admin/* route behind: (a) signed-in session, (b) officer role.
 // Non-officer signed-in users get bounced to / with a marker so we can
 // optionally surface a "you're not an officer" message later.
+//
+// Also renders the AdminQueueBanner at the top of every admin page so the
+// review queue (chat speakers missing OpenDKP / anon-only names / etc) is
+// always one click away.
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import AdminQueueBanner from './AdminQueueBanner';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,5 +17,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!user) redirect('/auth/signin?next=/admin');
   const ok = await isOfficer(user.id);
   if (!ok) redirect('/?error=admin_required');
-  return <>{children}</>;
+  return (
+    <>
+      <AdminQueueBanner />
+      {children}
+    </>
+  );
 }
