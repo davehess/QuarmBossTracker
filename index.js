@@ -8989,6 +8989,60 @@ http.createServer(async (req, res) => {
     }
   }
 
+  // OpenDKP character registration from the web admin panel. The web
+  // /admin/links page calls this when an officer clicks "Register" on a
+  // row in the "Not in OpenDKP" section. Body:
+  //   { name, class, race?, level, rank, recorded_by_discord_id }
+  // Wraps utils/opendkp.createCharacter — same call path as the
+  // /register Discord command, just invoked via HTTP so the web can do
+  // it without redirecting the officer to Discord. Auth via the agent
+  // bearer (same shared secret); the web action validates officer status
+  // server-side before calling, and the bot logs the recorded_by id for
+  // audit. Uilnayar 2026-06-21.
+  if (req.method === 'POST' && req.url === '/api/admin/opendkp-register') {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+    try {
+      const chunks = []; let total = 0;
+      for await (const chunk of req) {
+        total += chunk.length;
+        if (total > 4096) { res.writeHead(413); return res.end(); }
+        chunks.push(chunk);
+      }
+      let body;
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+      catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+      const name  = String(body?.name  || '').trim();
+      const cls   = String(body?.class || '').trim();
+      const race  = String(body?.race  || '').trim();
+      const level = parseInt(body?.level, 10);
+      const rank  = String(body?.rank  || '').trim();
+      const recordedBy = String(body?.recorded_by_discord_id || '').trim();
+      if (!name || !cls || !Number.isFinite(level) || !rank) {
+        res.writeHead(400);
+        return res.end(JSON.stringify({ error: 'missing required fields (name/class/level/rank)' }));
+      }
+      const { createCharacter } = require('./utils/opendkp');
+      const result = await createCharacter({
+        Name:    name,
+        Class:   cls,
+        Race:    race || 'Iksar',     // OpenDKP requires a race; Iksar is a safe default,
+                                       // officer fixes in OpenDKP if wrong (UI surfaces race)
+        Level:   level,
+        Active:  1,
+        Rank:    rank,
+        ParentId: 0,                   // root for now; manual /addmain to parent later
+      });
+      console.log(`[opendkp-register] ${name} (${cls} L${level} ${rank}) by Discord ${recordedBy} → ${JSON.stringify(result).slice(0, 200)}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, result }));
+    } catch (err) {
+      console.warn('[opendkp-register] failed:', err?.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err?.message || 'register failed' }));
+    }
+  }
+
   // Cache bust for voice_settings. The /admin/voice page calls this after
   // saving so the ripcord takes effect without waiting out the 30s TTL.
   // Bearer-auth gated (same token as the agent endpoints) — anyone with

@@ -1,0 +1,114 @@
+'use client';
+
+// Interactive form row for the "Not in OpenDKP" table on /admin/links.
+// Replaces the static `/register name:X class:Y` command snippet with
+// editable dropdowns (level / class / race / rank) + a single Register
+// button that POSTs to the bot's /api/admin/opendkp-register endpoint
+// via the registerInOpenDKP server action. The bot path wraps
+// utils/opendkp.createCharacter — same call the /register Discord
+// command already makes; this just removes the Discord-paste step
+// (Uilnayar 2026-06-21).
+
+import { useState, useTransition } from 'react';
+import { registerInOpenDKP } from './opendkp-actions';
+
+const CLASSES = [
+  'Bard', 'Beastlord', 'Cleric', 'Druid', 'Enchanter', 'Magician',
+  'Monk', 'Necromancer', 'Paladin', 'Ranger', 'Rogue', 'Shadow Knight',
+  'Shaman', 'Warrior', 'Wizard',
+];
+const RACES = [
+  'Barbarian', 'Dark Elf', 'Dwarf', 'Erudite', 'Gnome', 'Half Elf',
+  'Halfling', 'High Elf', 'Human', 'Iksar', 'Ogre', 'Troll',
+  'Vah Shir', 'Wood Elf',
+];
+// Order mirrors OpenDKP's rank list. Raid Alt has a level floor of 46 —
+// auto-defaulted from the row's observed level but always overridable.
+const RANKS = ['Raid Pack', 'Raid Recruit', 'Raid Alt', 'Non-raid Alt', 'Trader'];
+
+function defaultRank(level: number | null): string {
+  if (level == null) return 'Non-raid Alt';
+  return level >= 46 ? 'Raid Alt' : 'Non-raid Alt';
+}
+
+export default function OpenDkpRegisterRow({
+  name,
+  observedClass,
+  observedLevel,
+  observedRace,
+}: {
+  name:          string;
+  observedClass: string | null;
+  observedLevel: number | null;
+  observedRace:  string | null;
+}) {
+  const [cls,   setCls]   = useState<string>(observedClass || 'Warrior');
+  const [race,  setRace]  = useState<string>(observedRace  || 'Iksar');
+  const [level, setLevel] = useState<number>(observedLevel || 60);
+  const [rank,  setRank]  = useState<string>(defaultRank(observedLevel));
+  const [busy,  startTransition] = useTransition();
+  const [status, setStatus] = useState<'idle' | 'done' | 'err'>('idle');
+  const [err, setErr] = useState<string | null>(null);
+
+  function submit() {
+    setErr(null);
+    setStatus('idle');
+    startTransition(async () => {
+      const res = await registerInOpenDKP({ name, cls, race, level, rank });
+      if (res.ok) setStatus('done');
+      else { setStatus('err'); setErr(res.error || 'register failed'); }
+    });
+  }
+
+  if (status === 'done') {
+    return (
+      <span className="text-green text-xs">
+        ✓ Registered as {cls} L{level} ({rank}). The row will drop off on next refresh.
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[11px]">
+      <select
+        value={level}
+        onChange={e => {
+          const v = parseInt(e.target.value, 10);
+          setLevel(v);
+          // Auto-update rank if the officer hasn't deviated from the
+          // level-derived default (a 46+ Raid Alt becomes Non-raid Alt
+          // if they bump the level down below 46).
+          if (rank === defaultRank(level)) setRank(defaultRank(v));
+        }}
+        disabled={busy}
+        className="bg-bg border border-border rounded px-1 py-0.5"
+      >
+        {Array.from({ length: 65 }, (_, i) => i + 1).map(n =>
+          <option key={n} value={n}>L{n}</option>
+        )}
+      </select>
+      <select value={cls} onChange={e => setCls(e.target.value)} disabled={busy}
+              className="bg-bg border border-border rounded px-1 py-0.5">
+        {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <select value={race} onChange={e => setRace(e.target.value)} disabled={busy}
+              className="bg-bg border border-border rounded px-1 py-0.5"
+              title="OpenDKP requires a race. Defaulted to /who observation if available.">
+        {RACES.map(r => <option key={r} value={r}>{r}</option>)}
+      </select>
+      <select value={rank} onChange={e => setRank(e.target.value)} disabled={busy}
+              className="bg-bg border border-border rounded px-1 py-0.5">
+        {RANKS.map(r => <option key={r} value={r}>{r}</option>)}
+      </select>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={busy}
+        className="px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white hover:opacity-90 disabled:opacity-40"
+      >
+        {busy ? '...' : 'Register'}
+      </button>
+      {status === 'err' && err && <span className="text-red text-[10px] ml-1">⚠ {err}</span>}
+    </div>
+  );
+}

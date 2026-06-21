@@ -23,6 +23,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 
 export const dynamic = 'force-dynamic';
 
@@ -747,14 +748,20 @@ export default async function AdminLinksPage({
               {unregistered.slice(0, 30).map(u => {
                 const m = memberById.get(u.did);
                 const rank = u.level == null ? '?' : (u.level >= 46 ? 'Raid Alt' : 'Non-raid Alt / Trader');
-                const cmd = `/register name:${u.name}${u.cls ? ` class:${u.cls}` : ''}${u.level != null ? ` rank:${u.level >= 46 ? 'Raid Alt' : 'Non-raid Alt'}` : ''}`;
                 return (
                   <tr key={u.name} className="border-b border-border/40 hover:bg-[#1a212c]">
                     <td className="px-3 py-2 text-text font-medium">{u.name}</td>
                     <td className="px-3 py-2 text-dim">{m ? memberLabel(m) : u.did}</td>
                     <td className="px-3 py-2 text-dim">{u.level != null ? `L${u.level}` : '?'}{u.cls ? ` ${u.cls}` : ''}</td>
                     <td className={`px-3 py-2 ${rank === 'Raid Alt' ? 'text-green' : 'text-dim'}`}>{rank}</td>
-                    <td className="px-3 py-2"><code className="text-[10px] bg-bg border border-border rounded px-1.5 py-0.5 select-all" title="Paste in Discord (officer /register command)">{cmd}</code></td>
+                    <td className="px-3 py-2">
+                      <OpenDkpRegisterRow
+                        name={u.name}
+                        observedClass={u.cls ?? null}
+                        observedLevel={u.level ?? null}
+                        observedRace={null}
+                      />
+                    </td>
                   </tr>
                 );
               })}
