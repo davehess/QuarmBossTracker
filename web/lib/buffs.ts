@@ -16,7 +16,14 @@ export type BuffCategory =
   | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds' | 'levitate' | 'resists';
 
 export const CATEGORY_ORDER: BuffCategory[] = [
-  'hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate', 'resists',
+  // 2026-06-21 (Uilnayar): dropped 'mana' from the displayed order — the
+  // raw mana category on its own renders as an empty column on the
+  // /buffs grid (we don't track flat-mana buffs separately from
+  // Mana Regen, so every row's Mana cell was '·' and the column just
+  // ate horizontal width). The CATEGORY_LABELS entry below still has
+  // 'mana': 'Mana' so any other consumer that looks the label up by
+  // name continues to work.
+  'hp', 'regen', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate', 'resists',
 ];
 
 export const CATEGORY_LABELS: Record<BuffCategory, string> = {

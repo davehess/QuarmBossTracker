@@ -2441,6 +2441,29 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] threat snapshot retention skipped:', err?.message);
       }
 
+      // ── ARI staleness sweep ───────────────────────────────────────────────
+      // Auto-raid-invite state hangs around until an officer manually
+      // clears it. Stale ARI confuses members ("ARI via Hitya · 6/4/2026"
+      // when it's now late June and someone else has run /ari since,
+      // per the user's report 2026-06-21). Clear here if the ARI is
+      // more than 12 hours old — long enough that a raid set right
+      // before midnight that runs into 1am isn't yanked mid-night, but
+      // short enough that anything carrying over from a previous raid
+      // night cleans up automatically.
+      try {
+        const { getAri, clearAri } = require('./utils/state');
+        const cur = getAri();
+        if (cur && cur.setAt) {
+          const ageHours = (Date.now() - cur.setAt) / 3_600_000;
+          if (ageHours >= 12) {
+            clearAri();
+            console.log(`[midnight] cleared stale ARI (set ${ageHours.toFixed(1)}h ago by ${cur.setByName || '?'})`);
+          }
+        }
+      } catch (err) {
+        console.warn('[midnight] ARI staleness sweep skipped:', err?.message);
+      }
+
       console.log('✅ Midnight tasks complete');
     } catch (err) { console.error('Midnight task error:', err); }
     setTimeout(runMidnightTasks, msUntilMidnightEST());
