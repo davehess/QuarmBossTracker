@@ -3139,6 +3139,18 @@ async function _handleAgentPvp(req, res) {
       // genuinely lack it; we still want the name + zone observation.
       if (!name) continue;
       if (side === 'killer' && b?.killer_is_npc) continue;
+      // VICTIM-side NPC filter (Uilnayar 2026-06-21 — Praesertums leaking
+      // into /who from Sanctus Seru kill broadcasts). When the parser
+      // matched the BOSS_ACTIVE pattern ("X of <G> has killed Boss in
+      // Zone!"), victim is the NPC's name and victimGuild is NULL by
+      // design. Real PvP victims always carry their player guild
+      // (broadcasts include "<>" or even "<null>" for unguilded humans,
+      // never a bare null). A killType='pvp' broadcast with no
+      // victimGuild is therefore the boss/NPC-kill path — skip the
+      // victim-side harvest.
+      if (side === 'victim'
+          && b?.killType === 'pvp'
+          && (guild === null || guild === undefined)) continue;
       if (guild === WP_GUILD_NAME) continue;     // WP members already in roster
       harvestedRows.push({
         name,

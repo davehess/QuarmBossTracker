@@ -9,6 +9,7 @@ import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { setWhoClass, setWhoZek, deleteWhoCharacter } from './actions';
 import { BASE_CLASSES } from './classes';
+import { normalizeClass } from '@/lib/class-titles';
 
 export type WhoRow = {
   character: string;
@@ -33,6 +34,9 @@ export type WhoRow = {
   zekOverride: boolean | null;   // null = unset (auto)
   effectiveZek: boolean;
   setByName: string | null;
+  // OpenDKP character_id when this character is on the OpenDKP roster — the
+  // name cell renders as a deep link to wolfpack.opendkp.com when present.
+  opendkpId: number | null;
 };
 
 type SortKey = 'character' | 'level' | 'class' | 'guild' | 'rank' | 'lastSeen' | 'obsCount' | 'zek' | 'zone';
@@ -51,7 +55,7 @@ function ago(iso: string | null): string {
   return Math.floor(mo / 12) + 'y';
 }
 
-export default function WhoTable({ rows: initial, canEdit = false }: { rows: WhoRow[]; canEdit?: boolean }) {
+export default function WhoTable({ rows: initial, canEdit = false, totalInDb = null }: { rows: WhoRow[]; canEdit?: boolean; totalInDb?: number | null }) {
   const router = useRouter();
   const [rows, setRows] = useState<WhoRow[]>(initial);
   const [pending, startTransition] = useTransition();
@@ -201,7 +205,25 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
           <input type="checkbox" checked={anonOnly} onChange={e => setAnonOnly(e.target.checked)} />
           anon
         </label>
-        <span className="ml-auto text-dim">{view.length.toLocaleString()} shown{pending ? ' · saving…' : ''}</span>
+        <span className="ml-auto text-dim">
+          {(() => {
+            const loaded = rows.length;
+            const shown  = view.length;
+            const t      = totalInDb;
+            // Three numbers worth surfacing when they differ: how many the
+            // filters narrowed to, how many we loaded into the page (capped
+            // at 5000), and the true catalog total.
+            if (t != null && t !== loaded) {
+              return shown === loaded
+                ? `${shown.toLocaleString()} shown · ${t.toLocaleString()} in catalog`
+                : `${shown.toLocaleString()} shown · ${loaded.toLocaleString()} loaded · ${t.toLocaleString()} in catalog`;
+            }
+            return shown === loaded
+              ? `${shown.toLocaleString()} shown`
+              : `${shown.toLocaleString()} of ${loaded.toLocaleString()} shown`;
+          })()}
+          {pending ? ' · saving…' : ''}
+        </span>
       </div>
       {err && <div className="text-red text-xs mb-2">{err}</div>}
 
@@ -222,10 +244,32 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
             </tr>
           </thead>
           <tbody>
-            {view.map(r => (
+            {view.map(r => {
+              // Normalize "Savage Lord" → "Beastlord" etc. for the observed-
+              // class label so the dropdown shows the actual class rather
+              // than the level title we sniffed off of /who.
+              const observedBase = normalizeClass(r.observedClass);
+              // Wolf Pack roster row → link the name straight to their
+              // OpenDKP character page for easy edits.
+              const dkpHref = r.opendkpId != null
+                ? `https://wolfpack.opendkp.com/#/characters/${r.opendkpId}`
+                : null;
+              return (
               <tr key={r.character} className="border-b border-border/50 hover:bg-bg/40">
                 <td className="px-2 py-1 whitespace-nowrap">
-                  <span className="text-text">{r.character}</span>
+                  {dkpHref ? (
+                    <a
+                      href={dkpHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open ${r.character} on OpenDKP — edit roster + rank + class etc.`}
+                      className="text-text hover:text-blue hover:underline"
+                    >
+                      {r.character}
+                    </a>
+                  ) : (
+                    <span className="text-text">{r.character}</span>
+                  )}
                   {r.race && <span className="text-dim"> · {r.race}</span>}
                   {r.gm && <span className="ml-1 text-gold">GM</span>}
                   {r.anonymous && <span className="ml-1 text-dim">(anon)</span>}
@@ -246,7 +290,7 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
                           : r.rosterClass ? 'border-border text-dim'
                           : 'border-red/60 text-red'}`}
                     >
-                      <option value="">{r.observedClass ? `(obs: ${r.observedClass})` : (r.rosterClass ? `(roster: ${r.rosterClass})` : '— set —')}</option>
+                      <option value="">{observedBase ? `(obs: ${observedBase})` : (r.rosterClass ? `(roster: ${r.rosterClass})` : '— set —')}</option>
                       {BASE_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   ) : (
@@ -306,7 +350,8 @@ export default function WhoTable({ rows: initial, canEdit = false }: { rows: Who
                   </td>
                 )}
               </tr>
-            ))}
+              );
+            })}
             {view.length === 0 && (
               <tr><td colSpan={canEdit ? 10 : 9} className="px-2 py-6 text-center text-dim">no characters match these filters</td></tr>
             )}

@@ -39,16 +39,24 @@ type OverrideRow = {
   updated_at: string | null;
 };
 
-async function loadRows(): Promise<WhoRow[]> {
+async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }> {
   const admin = supabaseAdmin();
   // Directory — cap to a sane ceiling; the most-recently-seen come first so the
-  // page is useful even if the catalog grows large.
-  const { data: dir } = await admin
-    .from('who_directory')
-    .select('*')
-    .order('last_seen', { ascending: false })
-    .limit(5000);
+  // page is useful even if the catalog grows large. We also fetch the TOTAL
+  // count separately so the header can show "X shown of Y in catalog" — that
+  // total includes rows beyond the 5000 ceiling.
+  const [{ data: dir }, { count: totalCount }] = await Promise.all([
+    admin
+      .from('who_directory')
+      .select('*')
+      .order('last_seen', { ascending: false })
+      .limit(5000),
+    admin
+      .from('who_directory')
+      .select('character', { count: 'exact', head: true }),
+  ]);
   const rows = (dir ?? []) as DirRow[];
+  const totalInDb = (typeof totalCount === 'number') ? totalCount : null;
 
   const { data: ov } = await admin
     .from('who_overrides')
@@ -62,14 +70,19 @@ async function loadRows(): Promise<WhoRow[]> {
   // OpenDKP roster classes — authoritative for our own members, and they fill
   // in the (very common) case where a Wolf Pack member's /who was always /anon
   // so we never observed a class. Used as a fallback below the observed class.
+  // ALSO pull opendkp_id so the table can deep-link Wolf Pack member names to
+  // their OpenDKP character page for easy edits (Uilnayar 2026-06-21).
   const { data: chars } = await admin
     .from('characters')
-    .select('name, class')
-    .eq('guild_id', 'wolfpack')
-    .not('class', 'is', null);
+    .select('name, class, opendkp_id')
+    .eq('guild_id', 'wolfpack');
   const rosterClassByName = new Map<string, string>();
-  for (const c of (chars ?? []) as { name: string; class: string | null }[]) {
-    if (c.name && c.class) rosterClassByName.set(c.name.toLowerCase(), c.class);
+  const opendkpIdByName  = new Map<string, number>();
+  for (const c of (chars ?? []) as { name: string; class: string | null; opendkp_id: number | null }[]) {
+    if (!c.name) continue;
+    const k = c.name.toLowerCase();
+    if (c.class) rosterClassByName.set(k, c.class);
+    if (c.opendkp_id != null) opendkpIdByName.set(k, c.opendkp_id);
   }
 
   // Zone short → long display name (e.g. "oasis" → "The Oasis of Marr"). Fall
@@ -82,7 +95,7 @@ async function loadRows(): Promise<WhoRow[]> {
     if (z.short_name && z.long_name) zoneLongByShort.set(z.short_name.toLowerCase(), z.long_name);
   }
 
-  return rows.map((r): WhoRow => {
+  const mapped = rows.map((r): WhoRow => {
     const o = overrides.get(r.character_key);
     const observedClass = r.observed_class || null;
     const classOverride = o?.class ?? null;
@@ -114,8 +127,13 @@ async function loadRows(): Promise<WhoRow[]> {
       zekOverride,
       effectiveZek: zekOverride != null ? zekOverride : autoZek,
       setByName: o?.set_by_name ?? null,
+      // OpenDKP character link target — present only for Wolf Pack characters
+      // we have a roster row for. The WhoTable wraps the name in a link when
+      // this is set; otherwise it renders plain.
+      opendkpId: opendkpIdByName.get(r.character_key) ?? null,
     };
   });
+  return { rows: mapped, totalInDb };
 }
 
 export default async function WhoPage() {
@@ -124,14 +142,17 @@ export default async function WhoPage() {
   if (!user) redirect('/auth/signin?next=/who');
   const canEdit = await isOfficer(user.id);
 
-  const rows = await loadRows();
+  const { rows, totalInDb } = await loadRows();
+  const totalLabel = totalInDb != null && totalInDb !== rows.length
+    ? `${rows.length.toLocaleString()} loaded of ${totalInDb.toLocaleString()} in catalog`
+    : `${rows.length.toLocaleString()} total`;
   return (
     <div className="space-y-4">
       <section className="bg-panel border border-border rounded-lg p-5">
         <h2 className="text-xl text-gold mb-2">👁 /who Directory</h2>
         <p className="text-sm text-dim leading-6">
           Every character the agents have ever seen in a <code>/who</code>, collapsed to
-          one row each ({rows.length.toLocaleString()} total). Class/level/guild show the most
+          one row each ({totalLabel}). Class/level/guild show the most
           recent <em>non-anon</em> value we observed. Sort + filter to find anyone we&apos;ve crossed.
           {canEdit
             ? <> As an officer you can set a class for rows that never reported one (always <code>/anon</code>),
@@ -140,7 +161,7 @@ export default async function WhoPage() {
             : <> Class/Zek overrides are officer-curated.</>}
         </p>
       </section>
-      <WhoTable rows={rows} canEdit={canEdit} />
+      <WhoTable rows={rows} canEdit={canEdit} totalInDb={totalInDb} />
     </div>
   );
 }
