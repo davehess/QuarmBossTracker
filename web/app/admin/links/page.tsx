@@ -468,6 +468,22 @@ export default async function AdminLinksPage({
     return acc + (isSelfPin ? 1 : 0);
   }, 0);
 
+  // Roster-wide list of mains for the "link as alt of" autocomplete on
+  // every same-uploader row. A "main" = a character whose name equals
+  // (main_name || name) — i.e. the family root. Pre-fix the row's
+  // dropdown only listed OTHER families IN THE SAME CLUSTER, which
+  // wasn't enough when a character (Luter, Borowhay, Bardtholemu)
+  // showed up in three different officers' clusters because their own
+  // Mimic isn't authenticated and several multi-boxers tail their log.
+  // Officers need to be able to link that row to a main OUTSIDE the
+  // current cluster — Bardtholemu to themselves (he IS a main),
+  // Luter to whichever real owner he is. Uilnayar 2026-06-21.
+  const allMains = [...new Set(
+    allChars
+      .map(c => ((c.main_name && c.main_name.trim()) || c.name).trim())
+      .filter(n => n.length > 0)
+  )].sort((a, b) => a.localeCompare(b));
+
   // ── Unregistered characters ────────────────────────────────────────────────
   // Characters streaming from a member's Mimic (their log files are registered
   // on that machine, so the per-user token names the owner) that have NO row
@@ -636,12 +652,34 @@ export default async function AdminLinksPage({
           <div className="divide-y divide-border/40">
             {familyGroups.map(g => {
               const m = memberById.get(g.did);
+              // Flat list of every character this Mimic install uploads,
+              // across all the families below. This is what the user
+              // expects to see at a glance — "what is this install
+              // touching" — without scanning 3+ family sub-blocks. Sort
+              // alphabetically; dedup by lower-case in case the same
+              // character appears in two families (shouldn't, but cheap
+              // safety).
+              const allUploaders = [...new Set(
+                g.families.flatMap(f => f.uploaders)
+                  .filter(Boolean)
+                  .map(n => n.trim())
+              )].sort((a, b) => a.localeCompare(b));
               return (
                 <div key={g.did} className="p-4">
                   <div className="text-sm text-text mb-2">
                     {m ? memberLabel(m) : <span className="text-dim">Discord {g.did}</span>}
-                    <span className="text-dim text-xs ml-2">uploads {g.families.length} families</span>
+                    <span className="text-dim text-xs ml-2">uploads {g.families.length} families · {allUploaders.length} character{allUploaders.length === 1 ? '' : 's'}</span>
                   </div>
+                  {allUploaders.length > 0 && (
+                    <div className="text-xs text-dim mb-3 flex flex-wrap gap-1">
+                      <span className="text-text/80 mr-1">All uploaded:</span>
+                      {allUploaders.map(name => (
+                        <span key={name} className="px-1.5 py-0.5 rounded bg-bg/40 border border-border/60 text-text font-mono text-[10px]">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="space-y-1.5">
                     {g.families.map(f => {
                       // "Self-pinned" no-op = main_name_override is set, but
@@ -671,22 +709,47 @@ export default async function AdminLinksPage({
                       <div key={f.main.name} className="flex flex-col sm:flex-row sm:items-center gap-1.5 text-xs">
                         <div className="sm:w-64">
                           <span className="text-text font-medium">{f.main.name}</span>
-                          {f.isHome && <span className="ml-2 text-[10px] tracking-wide px-1.5 py-0.5 rounded bg-green/20 border border-green/60 text-green uppercase">home</span>}
-                          {ovrConflict && <span className="ml-2 text-[10px] tracking-wide px-1.5 py-0.5 rounded bg-red/20 border border-red/60 text-red uppercase" title={`Officer override re-points this character to "${ovr}" — but the row is HOME (their own OpenDKP main), so the override is incorrect. Click Clear override to remove it.`}>⚠ bad override → {ovr}</span>}
+                          {/* HOME label removed 2026-06-21 (Uilnayar) — it
+                              fired on every family whose root carried the
+                              uploader's discord_id, which meant clusters
+                              like Hitya's painted three identical green
+                              HOME chips and the label conveyed no usable
+                              signal. The cluster header already names the
+                              uploader, so "this family is the uploader's"
+                              is the implicit default. */}
+                          {ovrConflict && <span className="ml-2 text-[10px] tracking-wide px-1.5 py-0.5 rounded bg-red/20 border border-red/60 text-red uppercase" title={`Officer override re-points this character to "${ovr}" — clear it from the row.`}>⚠ bad override → {ovr}</span>}
                           {ovrMoves    && <span className="ml-2 text-[10px] text-gold" title={`Officer override → ${ovr}`}>override → {ovr}</span>}
                           <div className="text-dim text-[10px]">
                             uploads: {f.uploaders.join(', ')}{f.main.rank ? ` · ${f.main.rank}` : ''}
                           </div>
                         </div>
-                        {!f.isHome && (
+                        {/* Link form now appears on every row, including the
+                            former HOME ones — officers may want to re-parent
+                            a family root to a different main (the Bonebro/
+                            Canopy/Hitya case, where one Discord owns three
+                            mains in the roster and you want to consolidate
+                            them). The autocomplete spans every main on the
+                            roster, not just the cluster's siblings. */}
+                        {(
                           <form action={setFamilyLink} className="flex items-center gap-1.5">
                             <input type="hidden" name="name" value={f.main.name} />
                             <span className="text-dim">link as alt of</span>
-                            <select name="main" defaultValue={g.families.find(o => o.isHome)?.main.name ?? g.families.find(o => o.main.name !== f.main.name)?.main.name ?? ''} className="bg-bg border border-border rounded px-2 py-1 text-xs">
-                              {g.families.filter(o => o.main.name !== f.main.name).map(o => (
-                                <option key={o.main.name} value={o.main.name}>{o.main.name}{o.isHome ? ' (home)' : ''}</option>
+                            <input
+                              type="text"
+                              name="main"
+                              list={`mains-${f.main.name}`}
+                              defaultValue={g.families.find(o => o.isHome)?.main.name ?? ''}
+                              placeholder="type any main..."
+                              autoComplete="off"
+                              spellCheck={false}
+                              size={16}
+                              className="bg-bg border border-border rounded px-2 py-1 text-xs"
+                            />
+                            <datalist id={`mains-${f.main.name}`}>
+                              {allMains.filter(n => n.toLowerCase() !== f.main.name.toLowerCase()).map(n => (
+                                <option key={n} value={n} />
                               ))}
-                            </select>
+                            </datalist>
                             <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">Link</button>
                           </form>
                         )}
