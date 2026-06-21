@@ -225,15 +225,14 @@ client.once(Events.ClientReady, async (readyClient) => {
   // `feedback` table with discord_msg_id NULL. Post each into the #feedback
   // thread (same as the /feedback command) and stamp the id/link so it isn't
   // re-posted. Initial run after a short delay, then every 5 min.
-  // (45s → 5min on 2026-06-21: the bot already gets feedback events
-  // synchronously via the web's submit handler invoking the relay
-  // endpoint directly, AND members file feedback through /feedback in
-  // Discord which lands in the channel without any poll. The 45s sweep
-  // is a backstop for the rare race where the web submit-time relay
-  // failed silently; 5 min is plenty for that recovery window and cuts
-  // ~96% of feedback-polling egress.)
+  // Default 5min. Was 45s pre-2026-06-21; bot already gets feedback
+  // synchronously via the web's submit-time relay, so the poll is just a
+  // backstop for the rare race where that fires-and-fails. Configurable
+  // via FEEDBACK_POLL_MS — dial down if a new DB tier wants tighter
+  // polling, dial up if egress is precious.
+  const FEEDBACK_POLL_MS = parseInt(process.env.FEEDBACK_POLL_MS, 10) || 5 * 60_000;
   setTimeout(() => relayWebFeedback(readyClient).catch(() => {}), 12_000);
-  setInterval(() => relayWebFeedback(readyClient).catch(() => {}), 5 * 60_000);
+  setInterval(() => relayWebFeedback(readyClient).catch(() => {}), FEEDBACK_POLL_MS);
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
@@ -2419,23 +2418,21 @@ function scheduleMidnightSummary(readyClient) {
       }
 
       // ── Retention sweep: encounter_threat_snapshots ───────────────────────
-      // The threat snapshots are per-fight tank-pull telemetry — useful while
-      // a fight is happening + during /parses post-mortem, NOT for long-term
-      // storage. Grew from 42k rows/week → 75k rows/week (+78%) over the last
-      // 14d as agent population + raid frequency rose; on disk it's our #2
-      // table at 103 MB and climbing. 60 days is enough for any plausible
-      // "what happened on that raid" lookback; older snapshots are dead
-      // weight (the merged encounter_players + contributions rollups carry
-      // the durable facts).
+      // Per-fight tank-pull telemetry. Useful during the fight + /parses
+      // post-mortem, NOT for long-term storage. Default 60 days; configure
+      // via THREAT_SNAPSHOT_RETENTION_DAYS (set to 0 to disable the sweep
+      // entirely — e.g. on a tier with abundant storage).
       try {
         const supabase = require('./utils/supabase');
-        if (supabase.isEnabled()) {
-          const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+        const retainDays = parseInt(process.env.THREAT_SNAPSHOT_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(retainDays) ? retainDays : 60;
+        if (supabase.isEnabled() && keep > 0) {
+          const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
           await supabase.del(
             'encounter_threat_snapshots',
             `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
           );
-          console.log('[midnight] swept encounter_threat_snapshots older than 60 days');
+          console.log(`[midnight] swept encounter_threat_snapshots older than ${keep} days`);
         }
       } catch (err) {
         console.warn('[midnight] threat snapshot retention skipped:', err?.message);
@@ -5858,14 +5855,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
         `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
-      // limit=400 (was 3000) — the buff-queue consumer only needs the most
-      // recent landings per target, and a 3h window with 30 active raiders
-      // peaks at ~300-400 distinct relevant rows. 3000 was shipping ~2 MB
-      // per call across every raid Mimic on ~3s cadence — Supabase egress
-      // culprit #2.
+      // Buff-queue row limit. Default 400 — the consumer only needs recent
+      // landings per target, and a 3h window with 30 active raiders peaks
+      // around 300-400 distinct rows. Configurable via
+      // BUFF_QUEUE_POLL_LIMIT for tiers with cheaper egress; dial higher
+      // for completeness, lower for tighter budget.
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=400`),
+        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=${parseInt(process.env.BUFF_QUEUE_POLL_LIMIT, 10) || 400}`),
     ]);
 
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
