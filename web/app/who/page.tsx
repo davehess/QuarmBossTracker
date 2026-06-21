@@ -9,7 +9,9 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { normalizeClass } from '@/lib/class-titles';
 import WhoTable, { type WhoRow } from './WhoTable';
+import WhoBreakdown from './WhoBreakdown';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,21 +43,37 @@ type OverrideRow = {
 
 async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }> {
   const admin = supabaseAdmin();
-  // Directory — cap to a sane ceiling; the most-recently-seen come first so the
-  // page is useful even if the catalog grows large. We also fetch the TOTAL
-  // count separately so the header can show "X shown of Y in catalog" — that
-  // total includes rows beyond the 5000 ceiling.
-  const [{ data: dir }, { count: totalCount }] = await Promise.all([
-    admin
+  // Directory — paginated full pull so client-side filters (class / guild /
+  // search) see the WHOLE catalog, not just the most-recently-seen 1000.
+  // Pre-2026-06-21 we used `.limit(5000)` and naively expected PostgREST to
+  // honor it; the Supabase REST gateway silently caps any single response at
+  // its `max-rows` (1000 by default), so a "Druids only" filter was scoping
+  // to the top-1000 by last_seen and silently missing the rest of the
+  // catalog (~7700 rows on the wire today). Uilnayar caught it 2026-06-21
+  // ("76 shown · 1,000 loaded · 8,738 in catalog" → are these 76 in the
+  // 1k or the 8.7k? — they were in the 1k). Loop with .range() now until
+  // we drain.
+  const PAGE = 1000;
+  const HARD_CAP = 20_000;  // safety stop; we'll log if we ever hit it
+  const allRows: DirRow[] = [];
+  for (let from = 0; from < HARD_CAP; from += PAGE) {
+    const { data: page, error } = await admin
       .from('who_directory')
       .select('*')
       .order('last_seen', { ascending: false })
-      .limit(5000),
-    admin
-      .from('who_directory')
-      .select('character', { count: 'exact', head: true }),
-  ]);
-  const rows = (dir ?? []) as DirRow[];
+      .range(from, from + PAGE - 1);
+    if (error) break;
+    if (!page || page.length === 0) break;
+    allRows.push(...(page as DirRow[]));
+    if (page.length < PAGE) break;  // last page
+  }
+  const rows = allRows;
+
+  // Separately fetch the catalog total via a head-count so the header still
+  // surfaces "X loaded of Y in catalog" if we ever truncate at the hard cap.
+  const { count: totalCount } = await admin
+    .from('who_directory')
+    .select('character', { count: 'exact', head: true });
   const totalInDb = (typeof totalCount === 'number') ? totalCount : null;
 
   const { data: ov } = await admin
@@ -146,6 +164,26 @@ export default async function WhoPage() {
   const totalLabel = totalInDb != null && totalInDb !== rows.length
     ? `${rows.length.toLocaleString()} loaded of ${totalInDb.toLocaleString()} in catalog`
     : `${rows.length.toLocaleString()} total`;
+
+  // Class + guild breakdown — counts by *effective* class (folding titles +
+  // overrides) and by *observed* guild. Excludes Wolf Pack from the guild
+  // chart (it dominates and isn't an interesting datapoint to officers
+  // looking at "who else is out there"). Excludes the empty bucket.
+  const byClass = new Map<string, number>();
+  const byGuild = new Map<string, number>();
+  for (const r of rows) {
+    const k = normalizeClass(r.effectiveClass);
+    if (k) byClass.set(k, (byClass.get(k) || 0) + 1);
+    const g = r.guild ? r.guild.trim() : '';
+    if (g && g !== 'Wolf Pack') byGuild.set(g, (byGuild.get(g) || 0) + 1);
+  }
+  const classBreakdown = [...byClass.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  const guildBreakdown = [...byGuild.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
   return (
     <div className="space-y-4">
       <section className="bg-panel border border-border rounded-lg p-5">
@@ -161,6 +199,7 @@ export default async function WhoPage() {
             : <> Class/Zek overrides are officer-curated.</>}
         </p>
       </section>
+      <WhoBreakdown classBreakdown={classBreakdown} guildBreakdown={guildBreakdown} />
       <WhoTable rows={rows} canEdit={canEdit} totalInDb={totalInDb} />
     </div>
   );
