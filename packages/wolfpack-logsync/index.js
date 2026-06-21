@@ -6871,7 +6871,12 @@ function renderHeader(s) {
   if (q.pending > 0) {
     const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
     const tip = (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
-    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued</span>';
+    // Click-to-force-drain link — POSTs /api/drain which resets next_try_at
+    // on every entry to now() and kicks an immediate pass. Helpful when the
+    // queue gets stuck in a long exponential backoff after a transient
+    // server hiccup (added 2026-06-21 from Uilnayar's stalled-queue
+    // report).
+    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
   } else if (q.permanentDropped > 0 || q.capEvicted > 0) {
     const dropTip =
       (q.permanentDropped > 0 ? q.permanentDropped + ' permanent 4xx · ' : '') +
@@ -6965,6 +6970,32 @@ function renderHeader(s) {
   _bindOnce(inline, 'click', (e) => {
     e.preventDefault();
     document.getElementById('updateBtn')?.click();
+  });
+  // "Drain now" link on the queue chip — POST /api/drain to reset all
+  // next_try_at to NOW and kick a pass immediately. The response carries
+  // diagnostics (lastError, kinds) that we surface via alert() so a stuck
+  // queue is debuggable without opening the agent log file.
+  const drainLink = document.getElementById('wpDrainNow');
+  _bindOnce(drainLink, 'click', async (e) => {
+    e.preventDefault();
+    const orig = drainLink.textContent;
+    drainLink.textContent = 'draining...';
+    try {
+      const r  = await fetch('/api/drain', { method: 'POST' });
+      const j  = await r.json();
+      const kinds = j.byKind ? Object.entries(j.byKind).map(([k,n]) => k+':'+n).join(', ') : '';
+      const msg = 'Drain kicked.\\n\\n' +
+        'Reset backoff on: ' + (j.backoffReset || 0) + ' entries\\n' +
+        'Now pending: '      + (j.pending || 0) + '\\n' +
+        (kinds ? 'Kinds: '       + kinds + '\\n' : '') +
+        (j.maxAttempts ? 'Max attempts on any entry so far: ' + j.maxAttempts + '\\n' : '') +
+        (j.lastError   ? 'Last error: ' + String(j.lastError).slice(0, 240) : 'No recent errors logged.');
+      alert(msg);
+    } catch (err) {
+      alert('Drain request failed: ' + (err && err.message || err));
+    } finally {
+      drainLink.textContent = orig;
+    }
   });
   const u = document.getElementById('updateBtn');
   _bindOnce(u, 'click', async () => {
@@ -11365,6 +11396,36 @@ function startWebDashboard(port) {
         resetSessionStats();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
+      }
+      // Force a queue drain attempt right now. Used by the "Drain now" link
+      // on the dashboard queue chip when a backlog appears stalled — resets
+      // every entry's next_try_at to right now (skipping backoff windows)
+      // and kicks a single immediate pass. Counts: how many had their
+      // backoff cleared, kinds in the queue, and a snippet of the most
+      // recent failure for diagnosis. Recovered from Uilnayar's
+      // stalled-queue report 2026-06-21.
+      if (req.url === '/api/drain' && req.method === 'POST') {
+        const now = Date.now();
+        let resetCount = 0;
+        for (const e of _uploadQueue) {
+          if (e.next_try_at > now) { e.next_try_at = now; resetCount++; }
+        }
+        if (resetCount > 0) {
+          try { _saveQueueToDisk(); } catch {}
+        }
+        // Fire-and-forget — the drain itself awaits HTTP requests, we don't
+        // want to make the dashboard hang while it runs.
+        _drainUploadQueue().catch(() => {});
+        const q = getQueueStats();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok:          true,
+          backoffReset: resetCount,
+          pending:     q.pending,
+          byKind:      q.byKind,
+          lastError:   q.lastError,
+          maxAttempts: q.maxAttempts,
+        }));
       }
       // Zeal pipe events forwarded by Mimic (same machine, localhost only —
       // no auth, matches the other localhost dashboard endpoints). Body:
