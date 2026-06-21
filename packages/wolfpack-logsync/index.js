@@ -1750,6 +1750,13 @@ const _petStatsByOwner  = new Map();   // ownerLower → { pet, skills:{[skill]:
 // EQ damage verb → skill bucket. Plural/singular collapse so 'slash'/'slashes'
 // both count as Slashing. Generic 'hits' (1H blunt + h2h) is its own bucket
 // because we can't tell apart 1HB and H2H from the verb alone.
+//
+// Bow-armed pets: EQ pets can equip a bow + arrows just like a player; per
+// Uilnayar 2026-06-21 the attack lands as a generic "Petname hits Y" verb
+// (not the player-form "shoots") so the hit/hits mapping below covers it.
+// The shoots/fires/throws/flings aliases are here defensively — covers any
+// EQ version (or future emu pet AI revision) that emits the more specific
+// ranged verb instead.
 const _PET_VERB_SKILL = {
   slash:'Slashing', slashes:'Slashing',
   pierce:'Piercing', pierces:'Piercing',
@@ -1757,7 +1764,11 @@ const _PET_VERB_SKILL = {
   bash:'Bash', bashes:'Bash',
   kick:'Kick', kicks:'Kick',
   punch:'H2H', punches:'H2H',
-  hit:'Hits', hits:'Hits',
+  hit:'Hits', hits:'Hits',                       // generic; covers pet bow shots
+  shoot:'Archery', shoots:'Archery',             // ranged form, defensive
+  fire:'Archery', fires:'Archery',               // ranged form, defensive
+  throw:'Throwing', throws:'Throwing',           // throwing weapon, defensive
+  fling:'Throwing', flings:'Throwing',           // throwing weapon, defensive
   bite:'Bite', bites:'Bite',
   claw:'Claw', claws:'Claw',
   gore:'Gore', gores:'Gore',
