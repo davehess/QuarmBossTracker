@@ -3810,9 +3810,10 @@ async function _handleAgentHateKill(req, res) {
     // lives — "here are spots known down, when you find another empty
     // spot click this kill to assign it"). When there's no web URL set
     // we drop the link button silently.
-    if (!isOwnGuild && process.env.WEB_BASE_URL) {
+    if (!isOwnGuild) {
+      const webBase = process.env.WEB_BASE_URL || 'https://wolfpack.quest';
       components.push(new ARB().addComponents(
-        new BB().setStyle(BS.Link).setLabel('🧭 Open on web — assign later').setURL(`${process.env.WEB_BASE_URL}/pvp/hate#kill-${row.id}`),
+        new BB().setStyle(BS.Link).setLabel('🧭 Open on web — assign later').setURL(`${webBase}/pvp/hate#kill-${row.id}`),
       ));
     }
 
