@@ -10595,7 +10595,8 @@ async function dismissTopDamage(key) {
   // pattern in the live API log (~10 req/sec across all agents). Bids
   // typically arrive at multi-second cadence inside an auction, so 15s
   // is plenty responsive while cutting wishlist+auction reads ~3x.
-  setInterval(fetchAll, 15000);
+  // Override via WP_AUCTION_POLL_MS for tier-driven dial-up/down.
+  setInterval(fetchAll, parseInt(process.env.WP_AUCTION_POLL_MS, 10) || 15000);
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
@@ -14639,11 +14640,14 @@ function startChatRelay() {
     }
   }, 5000);
 
-  // Threat-snapshot uploader — every 15s while a fight is active, post the
-  // current per-player threat picture to /api/agent/threat-snapshot. The bot
-  // dedups identical (uploader, boss, second-granular ts) so the rare
-  // overlap from two parsers collapses naturally. No-op when no fight is
-  // active or no token is set.
+  // Threat-snapshot uploader — periodic post of the current per-player
+  // threat picture to /api/agent/threat-snapshot during an active fight.
+  // Default cadence 30s (was 15s pre-egress triage; a roomful of Mimics
+  // pushing every 15s added up to ~120 inserts/min). Override via
+  // WP_THREAT_SNAPSHOT_MS; the safety floor is held just below the
+  // cadence so a slow drain doesn't double-post inside one interval.
+  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 30_000;
+  const _threatSnapFloor = Math.max(1000, _threatSnapMs - 1000);
   let _lastSnapAt = 0;
   setInterval(() => {
     if (!_uploadOpts || !_uploadOpts.botUrl || !_uploadOpts.token) return;
@@ -14651,11 +14655,7 @@ function startChatRelay() {
     if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) return;
     if (et.flushedAt) return; // fight already wrapped up
     const now = Date.now();
-    // 29s safety floor (effectively a 30s cadence). Was 14s/15s — a roomful
-    // of Mimics pushing every 15s during a fight added up to ~120 inserts/min
-    // into encounter_threat_snapshots, each one a 1-2 KB response from
-    // Supabase. 30s halves that load and is still useful tank-threat detail.
-    if (now - _lastSnapAt < 29_000) return;
+    if (now - _lastSnapAt < _threatSnapFloor) return;
     _lastSnapAt = now;
     // pick the first watched character as the uploader; fall back to "?".
     let uploader = "?";
@@ -14672,7 +14672,7 @@ function startChatRelay() {
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
-  }, 30_000);
+  }, _threatSnapMs);
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -16695,7 +16695,10 @@ const _targetBuffsInflight = new Set();
 // every client visiting the same target was Supabase egress culprit #1).
 // Target Info still feels live: 12s of cross-client buff visibility is fine
 // for the "did anyone else just land Tash on this mob" question.
-const TARGET_BUFFS_TTL_MS = 12000;
+// Mob Info target-buffs cache TTL. Default 12s (was 5s pre-egress
+// triage — a roomful of Mimics on the same target was fan-out hot). Dial
+// down for tighter freshness on a fat-egress tier, up for a tight one.
+const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 12000;
 function fetchTargetBuffs(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -16747,7 +16750,9 @@ const SNAPPY_WINDOW  = 60_000;
 // pulled 3000 buff_casts rows). 8s aligns with the overlay polling cadence
 // so each overlay tick at most refreshes the queue once per ~8s; the queue
 // content doesn't change faster than that in practice.
-const BUFF_QUEUE_TTL_MS = 8000;
+// Raid-buff-queue cache TTL on the agent. Default 8s (was 3s pre-egress
+// triage). Override via WP_BUFF_QUEUE_TTL_MS.
+const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 8000;
 function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
