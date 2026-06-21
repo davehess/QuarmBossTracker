@@ -74,7 +74,7 @@ export default async function HateTrackerPage() {
   // Auth gate — same shape as /me. Anyone signed in via Discord can view.
   const sb = supabaseServer();
   const { data: { user } } = await sb.auth.getUser();
-  if (!user) redirect('/auth/sign-in?next=/pvp/hate');
+  if (!user) redirect('/auth/signin?next=/pvp/hate');
 
   // 96h lookback covers the longest PvP window (72h * 1.2 = 86.4h) plus a
   // few hours of slack. The full log feed widens to 30d.
