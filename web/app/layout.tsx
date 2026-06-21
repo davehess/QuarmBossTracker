@@ -91,6 +91,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   >
                     💬 Feedback
                   </Link>
+                  {/* Direct link to the Wolf Pack OpenDKP roster + auction
+                      site. External — opens in a new tab so it doesn't
+                      nuke the user's current wolfpack.quest context. */}
+                  <a
+                    href="https://wolfpack.opendkp.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap no-underline"
+                    title="Wolf Pack OpenDKP — roster, DKP, raid attendance, auctions"
+                  >
+                    💰 OpenDKP
+                    <span aria-hidden className="text-dim text-[10px]">↗</span>
+                  </a>
                   {showAdmin && (
                     <Link
                       href="/admin"
