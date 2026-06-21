@@ -3292,7 +3292,14 @@ class EncounterBuilder {
     if (!wd) return null;
     const evTsMs = Date.parse(pvpBcast.ts) || Date.now();
     const gapMs = evTsMs - wd.tsMs;
-    if (gapMs < 0 || gapMs > 30_000) return null;
+    // Window widened 30s → 120s on 2026-06-21 (Uilnayar — Interlude
+    // tar-goo death, multiple Wolf Pack characters had damaged him in
+    // the fight but the broadcast landed after a regroup pause; every
+    // 30s window had already expired). Two minutes covers a typical
+    // disengage-and-finish scenario (target runs, ports, dies in a
+    // hazard) while still being short enough that a damage burst from
+    // an unrelated earlier fight doesn't masquerade as an assist.
+    if (gapMs < 0 || gapMs > 120_000) return null;
     // Don't credit ourselves an "assist" on our own kill — that's a kill.
     const killerLower = pvpBcast.killer ? String(pvpBcast.killer).toLowerCase() : '';
     const meLower = String(this.character || '').toLowerCase();
@@ -3565,10 +3572,32 @@ class EncounterBuilder {
       // 3) PvP assist window: uploader's outbound damage to a plausible
       // player name (single Capitalized word, not "YOU"). Stamps a sliding
       // window keyed by victim.toLowerCase() so the next PvP death broadcast
-      // naming the same victim within 30s can correlate (handled outside the
-      // builder, in the tail/backfill driver). Self-damage to mobs / heals
-      // are skipped automatically — _isMob/_isPlayer already excluded them.
-      const isMineOutbound = (event.attacker === null) || (event.attacker === this.character);
+      // naming the same victim within 120s can correlate (handled outside
+      // the builder, in the tail/backfill driver). Self-damage to mobs /
+      // heals are skipped automatically — _isMob/_isPlayer already excluded
+      // them.
+      //
+      // "Outbound" includes:
+      //   • event.attacker === null            ("You slash X" form)
+      //   • event.attacker === this.character  (named-self melee form)
+      //   • event.attacker is one of OUR PETS  (necro/mage/beastlord pet,
+      //     active charm pet) — added 2026-06-21 (Uilnayar — Interlude
+      //     tar-goo death; pet damage was silently failing to stamp the
+      //     window, so necro DoT plus pet-only damage chains never
+      //     credited an assist). Pet-ness is checked via petLeaders +
+      //     the active charm trackers.
+      const _atkLower    = event.attacker ? String(event.attacker).toLowerCase() : '';
+      const _meLower     = String(this.character || '').toLowerCase();
+      const _petOwner    = _atkLower
+        && (this.petLeaders[_atkLower]
+           || (this._activeCharms?.get(_atkLower)?.owner)
+           || (_charmTickTracker.get(_atkLower)?.is_active
+                 ? _charmTickTracker.get(_atkLower).owner
+                 : null));
+      const _isMyPet     = !!_petOwner && _meLower && String(_petOwner).toLowerCase() === _meLower;
+      const isMineOutbound = (event.attacker === null)
+        || (event.attacker === this.character)
+        || _isMyPet;
       if (isMineOutbound && _isPlayer(def)
           && def !== 'YOU' && def !== 'You'
           && def !== this.character) {
