@@ -4795,6 +4795,7 @@ function _endpointForKind(kind, botUrl) {
     case 'pvp':             return base + '/pvp';
     case 'pvp_assists':     return base + '/pvp_assists';
     case 'bosskill':        return base + '/bosskill';
+    case 'hatekill':        return base + '/hatekill';
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
@@ -13906,9 +13907,40 @@ const PVP_BARE_BOSS_ACTIVE_RX    = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)>
 const PVP_BOSS_KILL_GUILDLESS_RX = /^(\w+) has killed (.+?)(?: in (.+?))?!$/;
 const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?)(?: in (.+?))?!$/;
 
+// Player's own EQ guild, observed from any Druzzil-Ro guild broadcast that
+// fires on this log. Druzzil only ever addresses YOUR guild ("Druzzil Ro
+// tells the guild, '<X of Wolf Pack>...'"), so the killerGuild captured in
+// ANY Druzzil broadcast IS our own guild. Bootstrapped lazily — until the
+// first Druzzil fire of the session it stays null, which makes the
+// `(Instanced)` PvP-echo filter conservative (drops all instance echoes,
+// the old behavior). Once known, foreign-guild instance kills pass through
+// instead — fixing Uilnayar's 2026-06-21 missed-Lord-of-Ire-by-<Freedom>
+// report. We never clear this; if the agent is restarted, it re-learns
+// from the next Druzzil broadcast.
+let _observedOwnGuild = null;
+
+function _ciEq(a, b) {
+  return !!(a && b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase());
+}
+
+// PvP-channel echo of an own-guild instance kill is a duplicate of the
+// Druzzil broadcast we ALREADY route through /bosskill. Drop it ONLY when
+// the killing guild matches our observed own guild — foreign-guild
+// instance kills (Freedom in Plane of Hate, etc.) DO surface to us only
+// through this echo, so dropping them here loses signal entirely.
+function _isOwnGuildInstanceEcho(text, killerGuild) {
+  if (!/\(Instanced\)/i.test(text)) return false;
+  // No own-guild observed yet → conservative drop (current behavior). The
+  // first Druzzil broadcast of the session unblocks foreign-guild echoes.
+  if (!_observedOwnGuild) return true;
+  return _ciEq(killerGuild, _observedOwnGuild);
+}
+
 function parseDruzzilKill(line) {
   const m = DRUZZIL_KILL_RX.exec(line);
   if (!m) return null;
+  // Druzzil only addresses our guild — record it for the [PVP] echo filter.
+  if (m[3]) _observedOwnGuild = m[3];
   const ts = parseEqTimestamp(line);
   return {
     character: m[2],
@@ -13965,11 +13997,13 @@ function parsePvpBroadcast(line) {
     // the kill credits to the Wolf Pack killer on /pvp/server.
     const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
     if (bossA) {
-      // A guild PvE INSTANCE kill ("...in <Zone> (Instanced)!") is NOT a
-      // PvP-server boss kill — it's the Druzzil-Ro guild broadcast that the
-      // /bosskill path already turns into a normal instance timer. Skip it so
-      // it doesn't ALSO record a ±20% PvP timer + fire a PvP ping.
-      if (/\(Instanced\)/i.test(text)) return null;
+      // OWN-guild PvE instance kill is the Druzzil-Ro broadcast that the
+      // /bosskill path already turns into a normal instance timer; the
+      // [PVP] echo is a duplicate, drop it. FOREIGN-guild instance kills
+      // are silently dropped under the old behavior — they reach us only
+      // through this echo, and Uilnayar's missed-Lord-of-Ire-by-<Freedom>
+      // report (2026-06-21) was exactly that. Now we let those through.
+      if (_isOwnGuildInstanceEcho(text, bossA[2])) return null;
       return {
         ts: tsOf(), text, killType: 'pvp',
         killer: bossA[1], killerGuild: bossA[2],
@@ -13983,6 +14017,9 @@ function parsePvpBroadcast(line) {
     // Safe inside the Druzzil wrapper (already known to be a broadcast).
     const bossG = PVP_BOSS_KILL_GUILDLESS_RX.exec(text);
     if (bossG) {
+      // No guild on the line — we can't ID it as ours, so we can only
+      // assume the "(Instanced)" duplicate-protection rule applies. Leave
+      // the conservative drop in place for guildless instance echoes.
       if (/\(Instanced\)/i.test(text)) return null;
       return {
         ts: tsOf(), text, killType: 'pvp',
@@ -14033,8 +14070,10 @@ function parsePvpBroadcast(line) {
 
   const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
   if (bossBareA) {
-    // Guild PvE instance kill echoed in the [PVP] channel — skip (see Path A).
-    if (/\(Instanced\)/i.test(line)) return null;
+    // Own-guild PvE instance kill echoed in the [PVP] channel — duplicate
+    // of the Druzzil broadcast that drives /bosskill. Foreign-guild kills
+    // pass through (see Path A's note for the Uilnayar fix).
+    if (_isOwnGuildInstanceEcho(line, bossBareA[3])) return null;
     return {
       ts: tsOf(),
       text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
@@ -14326,6 +14365,31 @@ const chatBuffer        = [];   // pending guild/raid chat lines
 const pvpBuffer         = [];   // pending PVP broadcast lines
 const pvpAssistBuffer   = [];   // pending PvP assist correlations (us → player damage + their death by someone else)
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
+const hateKillBuffer    = [];   // pending Plane-of-Hate kills routed to the bot's /hatekill (Supabase-backed tracker)
+
+// Translate a parsed PvP broadcast into a hate-kill upload row, or null if
+// the kill isn't in Plane of Hate. We honor whatever the PvP parser
+// produced for killer/zone (it understands both wrapped + bare [PVP]
+// echoes) and recompute isOwnGuild from _observedOwnGuild — the bot
+// re-checks server-side but having it on the wire saves a Supabase
+// who-am-i lookup per row.
+function _pvpBcastToHateKill(pvpBcast) {
+  if (!pvpBcast || pvpBcast.killType !== 'pvp') return null;
+  if (!pvpBcast.zone || !/plane of hate/i.test(pvpBcast.zone)) return null;
+  if (!pvpBcast.victim || !pvpBcast.killer) return null;
+  return {
+    server:      'pvp',                    // PVP server broadcast; the live-server
+                                           // tracker stays manual-only for now.
+    killer:      pvpBcast.killer,
+    killerGuild: pvpBcast.killerGuild || null,
+    boss:        pvpBcast.victim,          // [PVP] line names the boss as "victim"
+    zone:        pvpBcast.zone,
+    instanced:   /\(Instanced\)/i.test(pvpBcast.text || ''),
+    isOwnGuild:  _ciEq(pvpBcast.killerGuild, _observedOwnGuild),
+    ts:          pvpBcast.ts,
+    rawText:     pvpBcast.text || null,
+  };
+}
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
 const factionBuffer     = [];   // pending faction hits + /con standing transitions
 const popFlagBuffer     = [];   // pending PoP flag grants (zone+boss context attached)
@@ -14374,6 +14438,8 @@ function startChatRelay() {
       uploadPvpAssists(pvpAssistBuffer.splice(0), _uploadOpts).catch(() => {});
     if (druzzilKillBuffer.length > 0)
       uploadDruzzilKills(druzzilKillBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (hateKillBuffer.length > 0)
+      uploadHateKills(hateKillBuffer.splice(0), _uploadOpts).catch(() => {});
     if (_lockoutBuffer.length > 0)
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
     if (funEventBuffer.length > 0)
@@ -14868,6 +14934,25 @@ function uploadPvp(broadcasts, { botUrl, token, dryRun }) {
     return Promise.resolve();
   }
   enqueueUpload('pvp', { agent_version: AGENT_VERSION, broadcasts });
+  return Promise.resolve();
+}
+
+// Plane-of-Hate kill log. Routes through /api/agent/hatekill (added 2026-06-21
+// alongside the Supabase hate_kills table). Own-guild open-world kills get a
+// spot-picker in the hate thread; foreign-guild kills land as unassigned
+// rows for later inference assignment from the /pvp/hate web page.
+function uploadHateKills(kills, { botUrl, token, dryRun }) {
+  void botUrl; void token;
+  if (!Array.isArray(kills) || kills.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const k of kills) {
+      const tag = k.isOwnGuild ? '🐺' : '🩸';
+      const inst = k.instanced ? ' (Instanced)' : '';
+      console.log(`[hatekill] ${tag} ${k.killer || '?'} of <${k.killerGuild || '?'}> killed ${k.boss}${inst} in ${k.zone}`);
+    }
+    return Promise.resolve();
+  }
+  enqueueUpload('hatekill', { agent_version: AGENT_VERSION, kills });
   return Promise.resolve();
 }
 
@@ -18134,6 +18219,16 @@ async function main() {
           const _pvpFp = 'pvp|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
           if (!_sourceExcluded && !_crossLogDupe(_pvpFp)) {
             pvpBuffer.push(pvpBcast);
+
+            // Hate-zone boss kills also fan out to the Supabase-backed
+            // hate_kills tracker via /api/agent/hatekill. Own-guild kills
+            // get a spot-picker post in the hate thread; foreign-guild
+            // kills (including the (Instanced) ones we used to silently
+            // drop pre-2026-06-21) land as unassigned rows for later web
+            // inference assignment.
+            const hk = _pvpBcastToHateKill(pvpBcast);
+            if (hk) hateKillBuffer.push(hk);
+
             // Assist correlation: if the uploader was damaging this victim in
             // the last 30s AND the killing blow was someone else (or an NPC),
             // emit an assist row. cross-log dedup also applies — the same
