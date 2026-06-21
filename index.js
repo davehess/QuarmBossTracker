@@ -483,13 +483,13 @@ async function runStartupSequence(readyClient) {
   const { runAutoRestore }           = require('./commands/restore');
   const { runBoard }                 = require('./commands/board');
   const { runCleanup }               = require('./commands/cleanup');
-  const { loadHateStateFromDiscord } = require('./utils/hateBoard');
+  const { importLegacyHateState }    = require('./utils/hateKills');
 
   await loadOnboardingData(readyClient).catch(err => console.warn('[startup] loadOnboardingData:', err?.message));
   await postOrUpdateInstructions(readyClient).catch(err => console.warn('[startup] postOrUpdateInstructions:', err?.message));
   await loadParsesFromDiscord(readyClient).catch(err => console.warn('[startup] loadParsesFromDiscord:', err?.message));
   await loadRosterFromDiscord(readyClient).catch(err => console.warn('[startup] loadRosterFromDiscord:', err?.message));
-  await loadHateStateFromDiscord(readyClient).catch(err => console.warn('[startup] loadHateStateFromDiscord:', err?.message));
+  await importLegacyHateState().catch(err => console.warn('[startup] importLegacyHateState:', err?.message));
   await runAutoRestore(readyClient).catch(err => console.warn('[startup] runAutoRestore:', err?.message));
   await delay(60_000);
   await runBoard(readyClient).catch(err => console.warn('[startup] runBoard:', err?.message));
@@ -566,6 +566,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
     if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
+    if (interaction.customId.startsWith('assign_hate_spot:'))   { await handleAssignHateSpot(interaction); return; }
     if (interaction.customId.startsWith('suggest_host:'))        { await handleSuggestHost(interaction); return; }
     if (interaction.customId.startsWith('suggest_nohost:'))     { await handleSuggestNoHost(interaction); return; }
     if (interaction.customId.startsWith('suggest_confirm:'))    { await handleSuggestConfirm(interaction); return; }
@@ -1376,12 +1377,28 @@ async function handleMarkAvail(interaction) {
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
 
   // customId: mark_avail:live:<key>  or  mark_avail:pvp:<key>
+  // Hate spots use a bare position number ('3') or one of the legacy state.js
+  // key shapes ('hate_3', 'hate_pvp_3'). Non-hate PvP bosses use their
+  // bosses_local id ('lord_nagafen') and stay on state.json — they're
+  // separately tracked.
   const [, type, ...rest] = interaction.customId.split(':');
   const key = rest.join(':');
 
-  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { refreshHateBoard, invalidateSpotStateCache } = require('./utils/hateBoard');
+  const hateKills = require('./utils/hateKills');
 
-  if (type === 'live') {
+  let spotNum = null;
+  const bareN = /^(\d+)$/.exec(key);
+  if (bareN) spotNum = parseInt(bareN[1], 10);
+  else {
+    const legacy = /^hate_(?:pvp_)?(\d+)$/.exec(key);
+    if (legacy) spotNum = parseInt(legacy[1], 10);
+  }
+
+  if (spotNum !== null) {
+    await hateKills.clearLatestSpot({ server: type, spotNum, clearedByDiscordId: interaction.user.id });
+    invalidateSpotStateCache(type);
+  } else if (type === 'live') {
     const { clearLiveKill } = require('./utils/state');
     clearLiveKill(key);
   } else if (type === 'pvp') {
@@ -1460,27 +1477,24 @@ async function handleHateKillButton(interaction) {
   const n     = parseInt(parts[2], 10);
 
   const { HATE_SPOTS } = require('./data/hate-spots');
-  const { recordLiveKill, recordPvpKill } = require('./utils/state');
-  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { refreshHateBoard, invalidateSpotStateCache } = require('./utils/hateBoard');
+  const hateKills = require('./utils/hateKills');
   const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
 
   const spot = HATE_SPOTS[n];
   if (!spot)
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Unknown spot #${n}.` });
 
-  const HATE_TIMER_HOURS = 72;
-  const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
-  const key = keyPrefix + n;
-  const kills = type === 'live' ? getAllLiveKills() : getAllPvpKills();
-  const existing = kills[key];
+  const existing = (await hateKills.getSpotStateForServer(type))[n];
   const now = Date.now();
 
-  if (existing && (existing.timerUnknown || (existing.nextSpawn && existing.nextSpawn > now))) {
+  if (existing && (existing.timer_unknown ||
+      (existing.next_spawn_latest && Date.parse(existing.next_spawn_latest) > now))) {
     // Spot is on cooldown — show confirmation instead of silently unkilling.
     // This prevents accidental unkills when Discord shows a user a stale board.
-    const statusLine = existing.timerUnknown
+    const statusLine = existing.timer_unknown
       ? 'timer unknown — check manually'
-      : `spawns ${discordRelativeTime(existing.nextSpawn)}`;
+      : `spawns ${discordRelativeTime(Date.parse(existing.next_spawn_earliest))}`;
     const confirmRow = new ARB().addComponents(
       new BB()
         .setCustomId(`hate_confirm_unkill:${type}:${n}`)
@@ -1494,23 +1508,31 @@ async function handleHateKillButton(interaction) {
     });
   }
 
-  // Kill — defer first since refreshHateBoard is async
+  // Kill — defer first since the Supabase write + board refresh are async
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const spotName = `Hate Mini — ${spot.label}`;
-  if (type === 'live') {
-    recordLiveKill(key, spotName, HATE_TIMER_HOURS, interaction.user.id, false);
-  } else {
-    recordPvpKill(spotName, HATE_TIMER_HOURS, interaction.user.id, key, false);
+  const row = await hateKills.recordHateKill({
+    server:              type,
+    spotNum:             n,
+    timerUnknown:        false,
+    source:              'manual_button',
+    recordedByDiscordId: interaction.user.id,
+  });
+  invalidateSpotStateCache(type);
+
+  if (!row) {
+    return interaction.editReply({ content: '❌ Could not record kill (Supabase unreachable).' });
   }
+
   await refreshHateBoard(interaction.client, type);
 
-  const entry = type === 'live' ? getAllLiveKills()[key] : getAllPvpKills()[key];
+  const earliestMs = row.next_spawn_earliest ? Date.parse(row.next_spawn_earliest) : null;
+  const latestMs   = row.next_spawn_latest   ? Date.parse(row.next_spawn_latest)   : null;
   let desc;
   if (type === 'live') {
-    desc = `Next spawn: ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`;
+    desc = `Next spawn: ${discordAbsoluteTime(earliestMs)} (${discordRelativeTime(earliestMs)})`;
   } else {
-    desc = `Earliest: ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})\nLatest: ${discordAbsoluteTime(entry.nextSpawnLatest)} (${discordRelativeTime(entry.nextSpawnLatest)})`;
+    desc = `Earliest: ${discordAbsoluteTime(earliestMs)} (${discordRelativeTime(earliestMs)})\nLatest: ${discordAbsoluteTime(latestMs)} (${discordRelativeTime(latestMs)})`;
   }
 
   const killEmbed = new EB()
@@ -1537,15 +1559,14 @@ async function handleHateConfirmUnkill(interaction) {
   const n     = parseInt(parts[2], 10);
 
   const { HATE_SPOTS } = require('./data/hate-spots');
-  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { refreshHateBoard, invalidateSpotStateCache } = require('./utils/hateBoard');
+  const hateKills = require('./utils/hateKills');
   const { EmbedBuilder: EB } = require('discord.js');
 
   const spot = HATE_SPOTS[n];
-  const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
-  const key = keyPrefix + n;
 
-  if (type === 'live') clearLiveKill(key);
-  else clearPvpKill(key);
+  await hateKills.clearLatestSpot({ server: type, spotNum: n, clearedByDiscordId: interaction.user.id });
+  invalidateSpotStateCache(type);
 
   await refreshHateBoard(interaction.client, type);
 
@@ -1566,15 +1587,14 @@ async function handleHateUnknownButton(interaction) {
   const n     = parseInt(parts[2], 10);
 
   const { HATE_SPOTS } = require('./data/hate-spots');
-  const { refreshHateBoard } = require('./utils/hateBoard');
+  const { refreshHateBoard, invalidateSpotStateCache } = require('./utils/hateBoard');
+  const hateKills = require('./utils/hateKills');
   const { EmbedBuilder: EB } = require('discord.js');
 
   const spot = HATE_SPOTS[n];
-  const keyPrefix = type === 'live' ? 'hate_' : 'hate_pvp_';
-  const key = keyPrefix + n;
 
-  if (type === 'live') setLiveKillTimerUnknown(key);
-  else setPvpKillTimerUnknown(key);
+  await hateKills.setLatestSpotTimerUnknown({ server: type, spotNum: n, setByDiscordId: interaction.user.id });
+  invalidateSpotStateCache(type);
 
   await refreshHateBoard(interaction.client, type);
 
@@ -1585,6 +1605,75 @@ async function handleHateUnknownButton(interaction) {
     .setTimestamp();
 
   await interaction.update({ embeds: [doneEmbed], components: [] });
+}
+
+// ── Assign a spot to an auto-broadcast hate kill ──────────────────────────────
+// customId: assign_hate_spot:<killId>:<spotNum>   spotNum=0 → "skip / unknown"
+//
+// Posted under the agent-driven "🐺 We killed Lord of Ire" cards from
+// /api/agent/hatekill. Guildmate clicks the spot they found empty, the row
+// gets spot_num set + spawn windows recomputed off killed_at, and the board
+// refreshes.
+async function handleAssignHateSpot(interaction) {
+  if (!hasAllowedRole(interaction.member))
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
+
+  const parts  = interaction.customId.split(':');  // ['assign_hate_spot', killId, n]
+  const killId = parseInt(parts[1], 10);
+  const n      = parseInt(parts[2], 10);
+  if (!Number.isFinite(killId)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Invalid kill id.` });
+  }
+
+  const hateKills = require('./utils/hateKills');
+  const { refreshHateBoard, invalidateSpotStateCache } = require('./utils/hateBoard');
+  const { HATE_SPOTS } = require('./data/hate-spots');
+  const { EmbedBuilder: EB } = require('discord.js');
+
+  if (n === 0) {
+    // Skip / unknown — just retire the picker on this message. Row stays
+    // spot_num=NULL and remains assignable later from the web page.
+    const skipEmbed = new EB()
+      .setColor(0x57606a)
+      .setTitle('⏭️ Spot left unassigned')
+      .setDescription(`<@${interaction.user.id}> deferred — assign later from the /pvp/hate page when the empty spot is found.`)
+      .setTimestamp();
+    return interaction.update({ embeds: [skipEmbed], components: [] });
+  }
+
+  const spot = HATE_SPOTS[n];
+  if (!spot) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Unknown spot #${n}.` });
+  }
+
+  await interaction.deferUpdate();
+
+  const row = await hateKills.assignSpotToKill({
+    killId,
+    spotNum: n,
+    recordedByDiscordId: interaction.user.id,
+  });
+  if (!row) {
+    return interaction.followUp({ flags: MessageFlags.Ephemeral, content: `❌ Could not assign — kill row already cleaned up?` });
+  }
+  invalidateSpotStateCache(row.server);
+  refreshHateBoard(interaction.client, row.server).catch(err =>
+    console.warn('[assign_hate_spot] refreshHateBoard:', err?.message));
+
+  const earliestMs = row.next_spawn_earliest ? Date.parse(row.next_spawn_earliest) : null;
+  const latestMs   = row.next_spawn_latest   ? Date.parse(row.next_spawn_latest)   : null;
+  const desc = row.server === 'live'
+    ? `Spot **#${n}** — ${spot.label}\nNext spawn: ${discordAbsoluteTime(earliestMs)} (${discordRelativeTime(earliestMs)})`
+    : `Spot **#${n}** — ${spot.label}\nEarliest: ${discordAbsoluteTime(earliestMs)} (${discordRelativeTime(earliestMs)})\nLatest: ${discordAbsoluteTime(latestMs)} (${discordRelativeTime(latestMs)})`;
+
+  const doneEmbed = new EB()
+    .setColor(0x57f287)
+    .setTitle(`✅ Spot #${n} assigned`)
+    .setDescription(`<@${interaction.user.id}> set this kill to spot **#${n}**.\n\n${desc}`)
+    .setTimestamp();
+
+  // Edit the original card in place so the buttons clear + the spot info shows.
+  await interaction.editReply({ embeds: [doneEmbed], components: [] });
 }
 
 // ── Suggest button handlers ───────────────────────────────────────────────────
@@ -3595,6 +3684,147 @@ async function _handleAgentBossKill(req, res) {
   }
 
   _trackUpload({ endpoint: 'bosskill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, set }));
+}
+
+// ── /api/agent/hatekill ─────────────────────────────────────────────────────
+// Agent forwards Plane-of-Hate mini-boss kills it sees in the [PVP] channel
+// (and Druzzil broadcasts for foreign-guild instance kills, which we never
+// hear about otherwise). Per the user spec 2026-06-21 (Uilnayar's missed
+// Lord-of-Ire-Singzu screenshot): own-guild PvP open-world kills get a row
+// + an instant spot-picker so a guildmate can assign which spot died.
+// Foreign-guild kills get a row with spot_num=NULL + an info-only post — the
+// /pvp/hate web page surfaces them as "candidate kills" the next time
+// someone tours Hate and finds an empty spot they didn't already have
+// recorded as down.
+//
+// Payload (POSTed by the agent — see packages/wolfpack-logsync):
+// {
+//   "kills": [
+//     {
+//       "server":      "pvp" | "live",       // PvP server [PVP] echo vs Druzzil "tells the guild"
+//       "killer":      "Singzu",
+//       "killerGuild": "Freedom",             // null/missing for solo NPC deaths
+//       "boss":        "Lord of Ire",
+//       "zone":        "Plane of Hate",
+//       "instanced":   true,                  // (Instanced) tag present
+//       "isOwnGuild":  false,                 // agent's call from observed Druzzil broadcasts
+//       "ts":          "2026-06-21T22:22:00Z",
+//       "rawText":     "[22:22] [PVP] ...!"
+//     }, ...
+//   ]
+// }
+async function _handleAgentHateKill(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 64 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const kills = Array.isArray(payload?.kills) ? payload.kills : [];
+  if (kills.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, set: 0 }));
+  }
+
+  const hateKills = require('./utils/hateKills');
+  const { invalidateSpotStateCache, HATE_THREAD_ID } = require('./utils/hateBoard');
+  const { EmbedBuilder: EB, ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = require('discord.js');
+  const { discordRelativeTime } = require('./utils/timer');
+
+  const threadId = HATE_THREAD_ID();
+  const thread   = threadId ? await client.channels.fetch(threadId).catch(() => null) : null;
+  let set = 0;
+
+  for (const k of kills) {
+    const server     = k?.server === 'live' ? 'live' : 'pvp';
+    const killer     = k?.killer || null;
+    const killGuild  = k?.killerGuild || null;
+    const bossName   = k?.boss || 'Hate Mini-Boss';
+    const zone       = k?.zone || 'Plane of Hate';
+    const instanced  = !!k?.instanced;
+    const isOwnGuild = !!k?.isOwnGuild;
+    const killedAtMs = k?.ts ? Date.parse(k.ts) : Date.now();
+
+    // Defensive — the agent shouldn't send our own instance kills (the
+    // Druzzil /bosskill path already covers those). Drop silently if it
+    // ever does so we don't double-announce.
+    if (isOwnGuild && instanced) continue;
+
+    const notes = instanced ? 'Instanced' : null;
+
+    const row = await hateKills.recordHateKill({
+      server,
+      spotNum:     null,                // foreign-guild + open-world own kills both start unassigned
+      killerName:  killer,
+      killerGuild: killGuild,
+      killedAtMs,
+      timerUnknown: false,
+      source:       'pvp_broadcast',
+      rawText:      k?.rawText || null,
+      notes,
+    });
+    // recordHateKill returns null on a same-minute duplicate (broadcast
+    // dedup index). That's a SUCCESS for us — the kill already landed via
+    // another alt's agent on the same machine, nothing to post.
+    if (!row) continue;
+    invalidateSpotStateCache(server);
+    set++;
+
+    if (!thread) continue;
+
+    // Build the announcement. Foreign-guild kills are info-only; own-guild
+    // open-world kills get the spot picker (1/2/3/5/7  | 8/9/10/11/12 | skip).
+    const guildTag    = killGuild ? `<${killGuild}>` : '(no guild)';
+    const guildPrefix = isOwnGuild ? '🐺 We killed' : '🩸 Foreign kill';
+    const colorN      = isOwnGuild ? 0xcc0000 : 0x9b59b6;
+    const title       = `${guildPrefix}: ${bossName}${instanced ? ' (Instanced)' : ''}`;
+    const desc        = killer
+      ? `**${killer}** of ${guildTag} killed **${bossName}** in ${zone} — ${discordRelativeTime(killedAtMs)}`
+      : `${guildTag} killed **${bossName}** in ${zone} — ${discordRelativeTime(killedAtMs)}`;
+    const embed = new EB().setColor(colorN).setTitle(title).setDescription(desc).setTimestamp(killedAtMs);
+
+    const components = [];
+    if (isOwnGuild && !instanced) {
+      // Open-world Wolf Pack kill — collect the spot from a guildmate.
+      const spots = [1,2,3,5,7,8,9,10,11,12];
+      const rowA = new ARB().addComponents(...spots.slice(0,5).map(n =>
+        new BB().setCustomId(`assign_hate_spot:${row.id}:${n}`).setLabel(`#${n}`).setStyle(BS.Primary),
+      ));
+      const rowB = new ARB().addComponents(...spots.slice(5).map(n =>
+        new BB().setCustomId(`assign_hate_spot:${row.id}:${n}`).setLabel(`#${n}`).setStyle(BS.Primary),
+      ));
+      const rowC = new ARB().addComponents(
+        new BB().setCustomId(`assign_hate_spot:${row.id}:0`).setLabel('❌ Skip / Unknown').setStyle(BS.Secondary),
+      );
+      components.push(rowA, rowB, rowC);
+    }
+    // Foreign kills always link to the web page (where the inference UI
+    // lives — "here are spots known down, when you find another empty
+    // spot click this kill to assign it"). When there's no web URL set
+    // we drop the link button silently.
+    if (!isOwnGuild && process.env.WEB_BASE_URL) {
+      components.push(new ARB().addComponents(
+        new BB().setStyle(BS.Link).setLabel('🧭 Open on web — assign later').setURL(`${process.env.WEB_BASE_URL}/pvp/hate#kill-${row.id}`),
+      ));
+    }
+
+    try {
+      const msg = await thread.send({ embeds: [embed], components });
+      await hateKills.setThreadMessageId(row.id, msg.id);
+    } catch (err) {
+      console.warn('[hatekill] thread post failed:', err?.message);
+    }
+  }
+
+  _trackUpload({ endpoint: 'hatekill', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, set }));
 }
@@ -8948,6 +9178,18 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentBossKill(req, res); }
     catch (err) {
       console.error('[bosskill] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Plane-of-Hate mini-boss kills from [PVP] echoes — own-guild kills get
+  // a spot-picker post, foreign kills land as unassigned rows for later
+  // inference assignment on the web page.
+  if (req.method === 'POST' && req.url === '/api/agent/hatekill') {
+    try { return await _handleAgentHateKill(req, res); }
+    catch (err) {
+      console.error('[hatekill] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

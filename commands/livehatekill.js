@@ -1,14 +1,16 @@
 // commands/livehatekill.js — Record a Plane of Hate mini-boss kill on the live server.
 // 72-hour exact timer, no variance. Posts to LIVE_CHANNEL_ID.
+//
+// Supabase-backed via utils/hateKills since 2026-06-21.
 
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { recordLiveKill, getAllLiveKills, setLiveKillMessageId } = require('../utils/state');
 const { discordAbsoluteTime, discordRelativeTime, parseTimeString } = require('../utils/timer');
-const { refreshHateBoard } = require('../utils/hateBoard');
+const { refreshHateBoard, invalidateSpotStateCache } = require('../utils/hateBoard');
+const hateKills = require('../utils/hateKills');
+const { HATE_SPOTS } = require('../data/hate-spots');
 
-const HATE_TIMER_HOURS = 72;
-const { HATE_SPOTS, VALID_HATE_SPOTS } = require('../data/hate-spots');
+const HATE_TIMER_HOURS = hateKills.HATE_TIMER_HOURS;
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -43,30 +45,38 @@ module.exports = {
     if (!spot)
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Invalid position. Valid spots: 1, 2, 3, 5, 7, 8, 9, 10, 11, 12.` });
 
-    let killedAt = null;
+    let killedAtMs = Date.now();
     if (killedAgoStr) {
       const agoMs = parseTimeString(killedAgoStr);
       if (agoMs === null)
         return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Could not parse \`killed_ago\` — use a format like "2h30m" or "45m".` });
-      killedAt = Date.now() - agoMs;
+      killedAtMs = Date.now() - agoMs;
     }
 
-    const key      = `hate_${position}`;
-    const spotName = `Hate Mini — ${spot.label}`;
-    const existing = getAllLiveKills()[key];
-
-    if (existing && (existing.timerUnknown || existing.nextSpawn > Date.now())) {
-      const status = existing.timerUnknown
+    const existing = (await hateKills.getSpotStateForServer('live'))[position];
+    if (existing && (existing.timer_unknown ||
+        (existing.next_spawn_latest && Date.parse(existing.next_spawn_latest) > Date.now()))) {
+      const status = existing.timer_unknown
         ? 'timer unknown — check manually'
-        : `spawns ${discordRelativeTime(existing.nextSpawn)}`;
+        : `spawns ${discordRelativeTime(Date.parse(existing.next_spawn_earliest))}`;
       return interaction.reply({
         flags: MessageFlags.Ephemeral,
-        content: `⚠️ **${spot.label}** is already recorded — ${status}.`,
+        content: `⚠️ **${spot.label}** is already recorded — ${status}. Use the board's Confirm Available flow if it really respawned.`,
       });
     }
 
-    recordLiveKill(key, spotName, HATE_TIMER_HOURS, interaction.user.id, timerUnknown, killedAt);
-    const entry = getAllLiveKills()[key];
+    const row = await hateKills.recordHateKill({
+      server:              'live',
+      spotNum:             position,
+      killedAtMs,
+      timerUnknown,
+      source:              'manual_slash',
+      recordedByDiscordId: interaction.user.id,
+    });
+    if (!row) {
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not record kill (Supabase unreachable or misconfigured).' });
+    }
+    invalidateSpotStateCache('live');
 
     let embed, replyText;
     if (timerUnknown) {
@@ -82,6 +92,7 @@ module.exports = {
         .setTimestamp();
       replyText = `✅ Hate mini kill recorded at **${spot.label}** (timer unknown).`;
     } else {
+      const earliestMs = Date.parse(row.next_spawn_earliest);
       embed = new EmbedBuilder()
         .setColor(0x9b59b6)
         .setTitle(`☠️ Hate Mini Kill — ${spot.label}`)
@@ -89,10 +100,10 @@ module.exports = {
           { name: 'Location',   value: spot.desc,                   inline: true },
           { name: 'Killed by',  value: `<@${interaction.user.id}>`, inline: true },
           { name: 'Timer',      value: `${HATE_TIMER_HOURS}h`,       inline: true },
-          { name: 'Next Spawn', value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`, inline: false },
+          { name: 'Next Spawn', value: `${discordAbsoluteTime(earliestMs)} (${discordRelativeTime(earliestMs)})`, inline: false },
         )
         .setTimestamp();
-      replyText = `✅ Hate mini kill recorded at **${spot.label}** — spawns ${discordRelativeTime(entry.nextSpawn)}.`;
+      replyText = `✅ Hate mini kill recorded at **${spot.label}** — spawns ${discordRelativeTime(earliestMs)}.`;
     }
 
     const channelId = process.env.LIVE_CHANNEL_ID;
@@ -103,13 +114,13 @@ module.exports = {
         if (timerUnknown) {
           payload.components = [new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`mark_avail:live:${key}`)
+              .setCustomId(`mark_avail:live:${position}`)
               .setLabel('✅ Mob is Available')
               .setStyle(ButtonStyle.Success)
           )];
         }
         const msg = await ch.send(payload);
-        setLiveKillMessageId(key, msg.id);
+        await hateKills.setThreadMessageId(row.id, msg.id);
       } catch (err) { console.warn('[livehatekill]', err?.message); }
     }
 

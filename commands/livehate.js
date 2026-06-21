@@ -1,10 +1,11 @@
 // commands/livehate.js — List current Plane of Hate mini-boss spawn status (live server).
+// Supabase-backed via utils/hateKills since 2026-06-21.
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { getAllLiveKills } = require('../utils/state');
 const { discordAbsoluteTime, discordRelativeTime } = require('../utils/timer');
 const { HATE_SPOTS, HATE_AREA_GROUPS } = require('../data/hate-spots');
+const hateKills = require('../utils/hateKills');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,7 +16,7 @@ module.exports = {
     if (!hasAllowedRole(interaction.member))
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
 
-    const kills = getAllLiveKills();
+    const state = await hateKills.getSpotStateForServer('live');
     const now   = Date.now();
 
     const embed = new EmbedBuilder()
@@ -26,19 +27,18 @@ module.exports = {
 
     for (const group of HATE_AREA_GROUPS) {
       const lines = group.spots.map(n => {
-        const key   = `hate_${n}`;
         const spot  = HATE_SPOTS[n];
-        const entry = kills[key];
+        const entry = state[n];
 
         let status;
         if (!entry) {
           status = '🟢 **Available**';
-        } else if (entry.timerUnknown) {
+        } else if (entry.timer_unknown) {
           status = '❓ **Timer Unknown** — check manually';
-        } else if (entry.nextSpawn <= now) {
-          status = '🟢 **Available** (timer expired)';
         } else {
-          status = `⏰ ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`;
+          const earliestMs = Date.parse(entry.next_spawn_earliest);
+          if (earliestMs <= now) status = '🟢 **Available** (timer expired)';
+          else status = `⏰ ${discordAbsoluteTime(earliestMs)} (${discordRelativeTime(earliestMs)})`;
         }
 
         return `**#${n} — ${spot.label.replace(/^Spot \d+ — /, '')}**\n↳ ${spot.desc}\n↳ ${status}`;

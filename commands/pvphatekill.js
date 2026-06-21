@@ -1,14 +1,17 @@
 // commands/pvphatekill.js — Record a Plane of Hate mini-boss kill on the PVP server.
 // 72-hour base timer with ±20% variance. Posts to PVP_KILLS_THREAD_ID.
+//
+// Backed by Supabase via utils/hateKills since 2026-06-21 — see that module's
+// header for why we moved off the state.json per-spot-singleton model.
 
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
-const { recordPvpKill, getAllPvpKills, setPvpKillThreadMessageId } = require('../utils/state');
 const { discordAbsoluteTime, discordRelativeTime, parseTimeString } = require('../utils/timer');
-const { refreshHateBoard } = require('../utils/hateBoard');
+const { refreshHateBoard, invalidateSpotStateCache } = require('../utils/hateBoard');
+const hateKills = require('../utils/hateKills');
+const { HATE_SPOTS } = require('../data/hate-spots');
 
-const HATE_TIMER_HOURS = 72;
-const { HATE_SPOTS, VALID_HATE_SPOTS } = require('../data/hate-spots');
+const HATE_TIMER_HOURS = hateKills.HATE_TIMER_HOURS;
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -40,33 +43,44 @@ module.exports = {
     const timerUnknown = interaction.options.getBoolean('timer_unknown') ?? false;
     const killedAgoStr = interaction.options.getString('killed_ago') ?? null;
     const spot         = HATE_SPOTS[position];
+    if (!spot)
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Invalid position. Valid spots: 1, 2, 3, 5, 7, 8, 9, 10, 11, 12.` });
 
-    let killedAt = null;
+    let killedAtMs = Date.now();
     if (killedAgoStr) {
       const agoMs = parseTimeString(killedAgoStr);
       if (agoMs === null)
         return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Could not parse \`killed_ago\` — use a format like "2h30m" or "45m".` });
-      killedAt = Date.now() - agoMs;
+      killedAtMs = Date.now() - agoMs;
     }
-    if (!spot)
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ Invalid position. Valid spots: 1, 2, 3, 5, 7, 8, 9, 10, 11, 12.` });
 
-    const key      = `hate_pvp_${position}`;
-    const spotName = `Hate Mini — ${spot.label}`;
-    const existing = getAllPvpKills()[key];
-
-    if (existing && (existing.timerUnknown || existing.nextSpawn > Date.now())) {
-      const status = existing.timerUnknown
+    // "Already recorded" guard — block when the spot has an active row whose
+    // window hasn't fully closed. The user can still click the board's
+    // confirm-unkill flow to override and start fresh.
+    const existing = (await hateKills.getSpotStateForServer('pvp'))[position];
+    if (existing && (existing.timer_unknown ||
+        (existing.next_spawn_latest && Date.parse(existing.next_spawn_latest) > Date.now()))) {
+      const status = existing.timer_unknown
         ? 'timer unknown — check manually'
-        : `earliest spawn ${discordRelativeTime(existing.nextSpawn)}`;
+        : `earliest spawn ${discordRelativeTime(Date.parse(existing.next_spawn_earliest))}`;
       return interaction.reply({
         flags: MessageFlags.Ephemeral,
-        content: `⚠️ **${spot.label}** is already recorded — ${status}.`,
+        content: `⚠️ **${spot.label}** is already recorded — ${status}. Use the board's Confirm Available flow if it really respawned.`,
       });
     }
 
-    recordPvpKill(spotName, HATE_TIMER_HOURS, interaction.user.id, key, timerUnknown, killedAt);
-    const entry = getAllPvpKills()[key];
+    const row = await hateKills.recordHateKill({
+      server:              'pvp',
+      spotNum:             position,
+      killedAtMs,
+      timerUnknown,
+      source:              'manual_slash',
+      recordedByDiscordId: interaction.user.id,
+    });
+    if (!row) {
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Could not record kill (Supabase unreachable or misconfigured).' });
+    }
+    invalidateSpotStateCache('pvp');
 
     let embed, replyText;
     if (timerUnknown) {
@@ -82,6 +96,8 @@ module.exports = {
         .setTimestamp();
       replyText = `✅ PVP Hate kill recorded at **${spot.label}** (timer unknown).`;
     } else {
+      const earliestMs = Date.parse(row.next_spawn_earliest);
+      const latestMs   = Date.parse(row.next_spawn_latest);
       embed = new EmbedBuilder()
         .setColor(0xcc0000)
         .setTitle(`🗡️ Hate Mini PVP Kill — ${spot.label}`)
@@ -90,14 +106,14 @@ module.exports = {
           { name: 'Killed by',   value: `<@${interaction.user.id}>`, inline: true },
           { name: 'Base Timer',  value: `${HATE_TIMER_HOURS}h (±20%)`, inline: true },
           { name: '⏰ Earliest Spawn',
-            value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
+            value: `${discordAbsoluteTime(earliestMs)} (${discordRelativeTime(earliestMs)})`,
             inline: false },
           { name: '⏳ Latest Spawn',
-            value: `${discordAbsoluteTime(entry.nextSpawnLatest)} (${discordRelativeTime(entry.nextSpawnLatest)}) — guaranteed by this time`,
+            value: `${discordAbsoluteTime(latestMs)} (${discordRelativeTime(latestMs)}) — guaranteed by this time`,
             inline: false },
         )
         .setTimestamp();
-      replyText = `✅ PVP Hate kill recorded at **${spot.label}**.\nEarliest spawn: ${discordRelativeTime(entry.nextSpawn)} · Latest: ${discordRelativeTime(entry.nextSpawnLatest)}`;
+      replyText = `✅ PVP Hate kill recorded at **${spot.label}**.\nEarliest spawn: ${discordRelativeTime(earliestMs)} · Latest: ${discordRelativeTime(latestMs)}`;
     }
 
     const killsThreadId = process.env.PVP_KILLS_THREAD_ID;
@@ -108,13 +124,13 @@ module.exports = {
         if (timerUnknown) {
           payload.components = [new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`mark_avail:pvp:${key}`)
+              .setCustomId(`mark_avail:pvp:${position}`)
               .setLabel('✅ Mob is Available')
               .setStyle(ButtonStyle.Success)
           )];
         }
         const msg = await thread.send(payload);
-        setPvpKillThreadMessageId(key, msg.id);
+        await hateKills.setThreadMessageId(row.id, msg.id);
       } catch (err) { console.warn('[pvphatekill]', err?.message); }
     }
 

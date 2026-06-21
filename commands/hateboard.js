@@ -86,7 +86,7 @@ module.exports = {
       await editOrPostBoard(
         thread,
         liveStoredId,
-        { embeds: [buildHateBoardEmbed('live', now)], components: buildHateBoardRows('live', now) },
+        { embeds: [await buildHateBoardEmbed('live', now)], components: await buildHateBoardRows('live', now) },
         'live'
       );
 
@@ -94,7 +94,7 @@ module.exports = {
       await editOrPostBoard(
         thread,
         pvpStoredId,
-        { embeds: [buildHateBoardEmbed('pvp', now)], components: buildHateBoardRows('pvp', now) },
+        { embeds: [await buildHateBoardEmbed('pvp', now)], components: await buildHateBoardRows('pvp', now) },
         'pvp'
       );
 
