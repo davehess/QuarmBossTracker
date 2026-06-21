@@ -225,12 +225,12 @@ client.once(Events.ClientReady, async (readyClient) => {
   // `feedback` table with discord_msg_id NULL. Post each into the #feedback
   // thread (same as the /feedback command) and stamp the id/link so it isn't
   // re-posted. Initial run after a short delay, then every 5 min.
-  // Default 5min. Was 45s pre-2026-06-21; bot already gets feedback
-  // synchronously via the web's submit-time relay, so the poll is just a
-  // backstop for the rare race where that fires-and-fails. Configurable
-  // via FEEDBACK_POLL_MS — dial down if a new DB tier wants tighter
-  // polling, dial up if egress is precious.
-  const FEEDBACK_POLL_MS = parseInt(process.env.FEEDBACK_POLL_MS, 10) || 5 * 60_000;
+  // Default 60s — cranked up 2026-06-21 after the Supabase Pro upgrade
+  // (post-fix value was 5min on Free; original pre-egress-squeeze was
+  // 45s). Still benefits from the synchronous web-relay primary path,
+  // this is just the backstop. Configurable via FEEDBACK_POLL_MS — dial
+  // down for tighter polling, up if egress is precious.
+  const FEEDBACK_POLL_MS = parseInt(process.env.FEEDBACK_POLL_MS, 10) || 60_000;
   setTimeout(() => relayWebFeedback(readyClient).catch(() => {}), 12_000);
   setInterval(() => relayWebFeedback(readyClient).catch(() => {}), FEEDBACK_POLL_MS);
 
@@ -2425,7 +2425,10 @@ function scheduleMidnightSummary(readyClient) {
       try {
         const supabase = require('./utils/supabase');
         const retainDays = parseInt(process.env.THREAT_SNAPSHOT_RETENTION_DAYS, 10);
-        const keep = Number.isFinite(retainDays) ? retainDays : 60;
+        // Cranked default 60 → 120 days 2026-06-21 (Supabase Pro upgrade —
+        // 100 GB storage cap, threat snapshots at ~75k rows/week sit at
+        // ~7 MB/week so 120d = ~120 MB, comfortably within budget).
+        const keep = Number.isFinite(retainDays) ? retainDays : 120;
         if (supabase.isEnabled() && keep > 0) {
           const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
           await supabase.del(
@@ -5855,14 +5858,15 @@ async function _handleAgentRaidBuffQueue(req, res) {
         `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
-      // Buff-queue row limit. Default 400 — the consumer only needs recent
-      // landings per target, and a 3h window with 30 active raiders peaks
-      // around 300-400 distinct rows. Configurable via
-      // BUFF_QUEUE_POLL_LIMIT for tiers with cheaper egress; dial higher
-      // for completeness, lower for tighter budget.
+      // Buff-queue row limit. Default 2000 — cranked up 2026-06-21 after
+      // the Pro upgrade (post-egress-squeeze was 400; original was 3000).
+      // A 3h window with 30 active raiders peaks ~300-400 *distinct*
+      // rows but with cast repetition the raw count climbs higher; 2000
+      // gives a full history for the buff queue's prioritization logic.
+      // Configurable via BUFF_QUEUE_POLL_LIMIT.
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=${parseInt(process.env.BUFF_QUEUE_POLL_LIMIT, 10) || 400}`),
+        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=${parseInt(process.env.BUFF_QUEUE_POLL_LIMIT, 10) || 2000}`),
     ]);
 
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
