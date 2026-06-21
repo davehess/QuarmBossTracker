@@ -20,6 +20,11 @@ export default function AdminPage() {
           href="/admin/queue"
         />
         <Card
+          title="🛰️ Agent fleet"
+          body="Who's uploading right now, who's gone stale, which agent versions are deployed, recent errors. Plus the backfill request board (pending / acked / completed / dismissed)."
+          href="/admin/agents"
+        />
+        <Card
           title="⚔️ Encounter audit"
           body="HP-vs-damage health for every encounter, duplicate detection, merge action, mark-incomplete, and file backfill requests when parses underreported."
           href="/admin/encounters"
@@ -48,11 +53,6 @@ export default function AdminPage() {
           title="🎒 Quarmy URLs"
           body="Bulk-set characters.quarmy_url. Per-row edit and a bulk-paste mode for quickly seeding URLs across the roster."
           href="/admin/quarmy"
-        />
-        <Card
-          title="🛰️ Agent fleet"
-          body="Who's uploading right now, who's gone stale, which agent versions are deployed, recent errors. Plus the backfill request board (pending / acked / completed / dismissed)."
-          href="/admin/agents"
         />
         <Card
           title="📜 Audit log"

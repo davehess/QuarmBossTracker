@@ -357,6 +357,95 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
   return [...fams.values()].sort((a, b) => b.latestMs - a.latestMs);
 }
 
+// Second pass: fold every family whose uploads share an uploader Discord
+// token into one row. Pre-fix the page rendered N rows for N family roots
+// even when one Mimic install was uploading all of them — Hitya's install
+// uploaded 15 characters across 3 family roots (Hitya/Canopy/Bonebro)
+// and showed up as 3 top-level rows + a 'same uploader as' warning fan-out.
+// Now those 3 collapse into one "Hitya install" row with all 15 members
+// underneath, sorted by most-recent activity (Uilnayar 2026-06-21,
+// instructing "should be grouped under one uploader … show the current
+// character that's online, THEN order the uploaders underneath").
+//
+// The PRIMARY family in a merged group is the one whose main carries the
+// uploader's Discord ID — i.e. the install owner's actual main. Falls
+// back to the family with the latest activity if no member's
+// characters.discord_id matches the upload token (un-rostered owner, or
+// the install owner only ever runs alts).
+//
+// Cross-account corner cases (Aimey-on-Dant's-box, Ashieron-on-Hitya's-
+// box per the user's note) read naturally under this scheme: the
+// borrowed character lands as a row inside the install owner's group,
+// which is the easiest pattern for officers to recognize. We don't try
+// to be clever about un-merging those — they're outliers.
+function mergeFamiliesByUploader(families: Family[]): Family[] {
+  // Tag each family with its uploader token. We use the most-recent
+  // uploadedBy across the family's members; if no member has one (only
+  // happens for legacy-token-only installs), the family stays solo.
+  const tagged: { fam: Family; uploader: string | null }[] = families.map(f => {
+    let pick: string | null = null;
+    let pickMs = -1;
+    for (const m of f.members) {
+      if (m.uploadedBy && m.lastUploadMs > pickMs) {
+        pick = m.uploadedBy;
+        pickMs = m.lastUploadMs;
+      }
+    }
+    return { fam: f, uploader: pick };
+  });
+
+  const byToken = new Map<string, Family[]>();
+  const solo:    Family[] = [];
+  for (const { fam, uploader } of tagged) {
+    if (!uploader) { solo.push(fam); continue; }
+    const list = byToken.get(uploader) ?? [];
+    list.push(fam);
+    byToken.set(uploader, list);
+  }
+
+  const out: Family[] = [];
+  for (const [uploader, group] of byToken) {
+    if (group.length === 1) { out.push(group[0]); continue; }
+
+    // Pick representative: the family whose main carries this uploader's
+    // Discord ID (the install owner's actual main). Fall back to the most-
+    // recent-active family.
+    const owner = group.find(f => f.discordId === uploader)
+              ?? [...group].sort((a, b) => b.latestMs - a.latestMs)[0];
+
+    // Dedup members by character name across families — same character
+    // shouldn't appear in two families but we guard anyway. Sort by
+    // most-recent upload so the currently-online character bubbles up.
+    const byChar = new Map<string, CharSummary>();
+    for (const f of group) {
+      for (const m of f.members) {
+        const existing = byChar.get(m.character);
+        if (!existing || m.lastUploadMs > existing.lastUploadMs) byChar.set(m.character, m);
+      }
+    }
+    const allMembers = [...byChar.values()].sort((a, b) => b.lastUploadMs - a.lastUploadMs);
+
+    out.push({
+      ...owner,
+      members:      allMembers,
+      totalUploads: allMembers.reduce((acc, m) => acc + m.totalUploads, 0),
+      totalErrors:  allMembers.reduce((acc, m) => acc + m.totalErrors,  0),
+      versions:     [...new Set(allMembers.map(m => m.agentVersion).filter(Boolean) as string[])],
+      latestMs:     Math.max(...allMembers.map(m => m.lastUploadMs)),
+      latestUpload: allMembers[0]?.lastUpload || owner.latestUpload,
+      queueMax:     Math.max(...group.map(f => f.queueMax)),
+      anyFight:     group.some(f => f.anyFight),
+      anyForeign:   group.some(f => f.anyForeign) || allMembers.some(m => m.foreignUploaderName),
+      linked:       group.some(f => f.linked),
+      // The 'same uploader as' warning was the WHOLE REASON we merged;
+      // it's now satisfied by the visual collapse. Clear it.
+      sameUploaderAs: [],
+    });
+  }
+
+  return [...out, ...solo].sort((a, b) => b.latestMs - a.latestMs);
+}
+
 function rel(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 60_000)    return 'just now';
@@ -419,9 +508,13 @@ export default async function AdminAgentsPage() {
   const active = summaries.filter(s => now - s.lastUploadMs <= day);
   const stale  = summaries.filter(s => now - s.lastUploadMs > day && now - s.lastUploadMs <= dormantMs);
 
-  // Family view: fold characters into their main, split active/quiet/dormant by
-  // the family's most-recent upload across all its characters.
-  const families       = groupByMain(summaries, roster, memberName);
+  // Family view: fold characters into their main, then SECOND-PASS fold
+  // every family sharing an uploader Discord token into one combined row
+  // (so Hitya's install renders once with all 15 characters underneath
+  // instead of three separate family rows + warning). Split into active/
+  // stale/dormant by the merged family's most-recent activity.
+  const familiesRaw    = groupByMain(summaries, roster, memberName);
+  const families       = mergeFamiliesByUploader(familiesRaw);
   const activeFamilies  = families.filter(f => now - f.latestMs <= day);
   const staleFamilies   = families.filter(f => now - f.latestMs > day && now - f.latestMs <= dormantMs);
   const dormantFamilies = families.filter(f => now - f.latestMs > dormantMs);
