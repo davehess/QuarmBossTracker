@@ -7027,6 +7027,28 @@ function renderHeader(s) {
     }
   }
   _bindOnce(manual, 'click', async () => {
+    // Mimic-hosted case: hand off to the shell's update IPC which fires
+    // BOTH checks at once — safeCheckForUpdates (Mimic via electron-
+    // updater; opens its own install dialog if there's news) AND
+    // checkAgentUpdate (silent in-place agent hot-swap). The user gets
+    // one unified result driven by Mimic's dialogs; no need for our
+    // dashboard-side restart confirm to add a second prompt.
+    // (Uilnayar 2026-06-21 — the dashboard button used to be agent-only,
+    // missing every Mimic-only update that landed in between.)
+    const inMimic = !!(window.mimic && typeof window.mimic.checkForUpdates === 'function');
+    if (inMimic) {
+      manual.disabled = true;
+      const _label = manual.textContent;
+      manual.textContent = 'Checking...';
+      try { await window.mimic.checkForUpdates(); }
+      catch (e) { console.warn('[update] mimic.checkForUpdates failed:', e && e.message); }
+      // Restore the button — Mimic will surface a dialog with the result
+      // if there's an update; nothing more for the dashboard to do.
+      manual.disabled = false; manual.textContent = _label;
+      return;
+    }
+    // Standalone agent (no Mimic shell): existing flow — confirm + POST
+    // /api/update for an in-place agent restart + pull.
     if (!confirm('Restart agent and pull the latest version? Session will be saved and resumed.')) return;
     manual.disabled = true; manual.textContent = 'Restarting...';
     const ok = await _attemptUpdate(manual, false);
@@ -10595,8 +10617,9 @@ async function dismissTopDamage(key) {
   // pattern in the live API log (~10 req/sec across all agents). Bids
   // typically arrive at multi-second cadence inside an auction, so 15s
   // is plenty responsive while cutting wishlist+auction reads ~3x.
-  // Override via WP_AUCTION_POLL_MS for tier-driven dial-up/down.
-  setInterval(fetchAll, parseInt(process.env.WP_AUCTION_POLL_MS, 10) || 15000);
+  // 2026-06-21: cranked default 15s → 7s after the Supabase Pro upgrade —
+  // bids feel near-real-time again. Override via WP_AUCTION_POLL_MS.
+  setInterval(fetchAll, parseInt(process.env.WP_AUCTION_POLL_MS, 10) || 7000);
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
@@ -14646,7 +14669,9 @@ function startChatRelay() {
   // pushing every 15s added up to ~120 inserts/min). Override via
   // WP_THREAT_SNAPSHOT_MS; the safety floor is held just below the
   // cadence so a slow drain doesn't double-post inside one interval.
-  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 30_000;
+  // 2026-06-21: cranked default 30s → 18s after the Supabase Pro upgrade
+  // — more granular per-fight tank-threat detail. Original was 15s.
+  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 18_000;
   const _threatSnapFloor = Math.max(1000, _threatSnapMs - 1000);
   let _lastSnapAt = 0;
   setInterval(() => {
@@ -16698,7 +16723,10 @@ const _targetBuffsInflight = new Set();
 // Mob Info target-buffs cache TTL. Default 12s (was 5s pre-egress
 // triage — a roomful of Mimics on the same target was fan-out hot). Dial
 // down for tighter freshness on a fat-egress tier, up for a tight one.
-const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 12000;
+// 2026-06-21: cranked default 12s → 6s after the Supabase Pro upgrade.
+// Original was 5s; 6s splits the difference so Mob Info feels live again
+// without the full pre-squeeze churn. Override via WP_TARGET_BUFFS_TTL_MS.
+const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 6000;
 function fetchTargetBuffs(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -16752,7 +16780,10 @@ const SNAPPY_WINDOW  = 60_000;
 // content doesn't change faster than that in practice.
 // Raid-buff-queue cache TTL on the agent. Default 8s (was 3s pre-egress
 // triage). Override via WP_BUFF_QUEUE_TTL_MS.
-const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 8000;
+// 2026-06-21: cranked default 8s → 4s after the Supabase Pro upgrade.
+// Original was 3s pre-egress-squeeze. Buff queue feels live for the
+// snappier "is X already buffed" reads. Override via WP_BUFF_QUEUE_TTL_MS.
+const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 4000;
 function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
