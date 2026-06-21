@@ -1364,6 +1364,19 @@ function _consumePendingCharmSpell(owner, nowMs) {
   _pendingCharmSpell = null;
   return { charm_class: p.cls, duration_sec: p.dur, charm_spell_name: p.name || null };
 }
+// Non-consuming variant: returns true iff there's a pending charm spell for
+// this owner that hasn't aged out. Used by _reconcileGaugeCharms to ACCEPT
+// a slot-16 pet whose name doesn't match the article-prefix heuristic — i.e.
+// a NAMED-mob charm target ("Jareker", "Mistmoore", etc). The actual
+// consume still happens in _bumpCharmTick once the debounce passes; this is
+// just the article-bypass signal.
+function _hasPendingCharmSpell(owner, nowMs) {
+  const p = _pendingCharmSpell;
+  if (!p) return false;
+  if ((nowMs || Date.now()) - p.ts > PENDING_CHARM_WINDOW_MS) return false;
+  if (p.owner && owner && String(p.owner).toLowerCase() !== String(owner).toLowerCase()) return false;
+  return true;
+}
 
 // Synthesize a "charm spell" entry in _buffLandingsByTarget so the charm shows
 // as a timed DEBUFF on the pet's Mob Info card, e.g. "Allure (Hopeya)".
@@ -1445,7 +1458,26 @@ function _reconcileGaugeCharms() {
     if (!st || !Array.isArray(st.gauges) || st.gauges.length === 0) continue;
     const ownerLower = String(ch).toLowerCase();
     gaugeOwners.add(ownerLower);
-    const petG = st.gauges.find(g => g && g.slot === 16 && g.text && /^an?\s+/i.test(String(g.text)));
+    // Article-prefix is the cheap heuristic for "this is a charmed mob, not
+    // a summoned pet" — most EQ mobs are named "a/an/the <thing>". But
+    // NAMED mobs are valid charm targets too (Jareker, Mistmoore, etc) and
+    // they have proper-noun names, no article. Uilnayar 2026-06-21
+    // ("Canopy charmed Jareker, tracker didn't light up"). Relax:
+    //   • article-prefixed slot-16 (a/an/the) → accept (legacy path,
+    //     covers ~95% of charm targets) OR
+    //   • pending charm spell from THIS owner within
+    //     PENDING_CHARM_WINDOW_MS → accept regardless of name shape.
+    // Cast → land → land-debounce → bumpCharmTick stays the proper open
+    // path; the consume happens at line 1467 just like before. Outside
+    // those signals we still reject (proper-named slot-16 with no pending
+    // charm is almost always a summon swap or pet ambiguity).
+    const petG = st.gauges.find(g => {
+      if (!g || g.slot !== 16 || !g.text) return false;
+      const txt = String(g.text);
+      if (/^(?:an?|the)\s+/i.test(txt)) return true;
+      if (_hasPendingCharmSpell(ch, now))   return true;
+      return false;
+    });
     if (!petG) continue;
     const name = String(petG.text);
     const k = name.toLowerCase();
@@ -5875,10 +5907,19 @@ function _zealExportOnCampState() {
         const st = _zealState[ch];
         if (!st || !Array.isArray(st.gauges)) continue;
         const petG = st.gauges.find(g => g && g.slot === 16 && g.text);
+        const txt = petG ? String(petG.text) : '';
+        const isArticled  = !!txt && /^(?:an?|the)\s+/i.test(txt);
+        const hasPendingCharm = _hasPendingCharmSpell(ch, now);
         out.slot16_by_char.push({
           character:  ch,
-          slot16_text: petG ? String(petG.text) : null,
-          passes_article_filter: petG ? /^an?\s+/i.test(String(petG.text)) : false,
+          slot16_text: petG ? txt : null,
+          // True if the slot-16 text would be accepted by the reconciler.
+          // Two routes: (a) article prefix (a/an/the — covers most generic
+          // mobs), OR (b) a pending charm spell for this owner, which
+          // unblocks named-mob targets like Jareker / Mistmoore.
+          passes_article_filter: !!petG && (isArticled || hasPendingCharm),
+          articled:        isArticled,
+          pending_charm:   hasPendingCharm,
           updated_age_secs: st.updatedAt ? Math.round((now - st.updatedAt) / 1000) : null,
         });
       }
@@ -7962,12 +8003,14 @@ function renderCharmDiag(s) {
          +   '<td><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(r.slot16_text) + '</code></td>'
          +   '<td>' + (r.passes_article_filter
               ? '<span style="color:var(--green)">passes</span>'
-              : '<span style="color:var(--red)">FAILS — needs to start with "a "/"an "</span>') + '</td>'
+                + (r.articled ? ' <span class="dim">(article)</span>'
+                              : (r.pending_charm ? ' <span class="dim">(pending charm)</span>' : ''))
+              : '<span style="color:var(--red)">FAILS — not articled (a/an/the) AND no pending charm spell for this owner</span>') + '</td>'
          +   '<td class="dim">' + (r.updated_age_secs != null ? r.updated_age_secs + 's ago' : '?') + '</td></tr>';
     }
     h += '</table>';
     if (slot16Rows.some(r => !r.passes_article_filter)) {
-      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ The article-prefix filter in _reconcileGaugeCharms only opens a charm session when the slot 16 text starts with "a " or "an ". If your charmed mob doesn\\'t have an article in its name, this filter rejects it — flag the case so we can relax the rule.</div>';
+      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ Reconciler accepts slot-16 text on TWO routes: (a) article prefix (a/an/the — covers generic mobs), OR (b) a pending charm spell from this owner within ~5s (the named-mob path, Uilnayar 2026-06-21 — Jareker etc). If both miss, the reconciler treats slot 16 as a non-charm pet (summoned pet swap or pet ambiguity).</div>';
     }
   }
   h += '</div>';
