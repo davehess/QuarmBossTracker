@@ -41,8 +41,19 @@ async function loadUnrosteredChatSpeakers(): Promise<QueueCategory> {
   // Pull the OpenDKP roster (small — a few hundred names) and the last
   // 14 days of chat aggregated by speaker. Diff in memory — Supabase
   // doesn't expose a NOT IN against a sub-select via PostgREST.
-  const [{ data: opendkp }, { data: msgs }] = await Promise.all([
-    sb.from('opendkp_character_id_to_name').select('character_name'),
+  //
+  // ROSTER SOURCE: we used to read from opendkp_character_id_to_name —
+  // which is EMPTY on the live database (the OpenDKP sync never populated
+  // it), so the diff treated every chatter as missing and the queue
+  // showed every active Wolf Pack member. Uilnayar 2026-06-21 ("I know
+  // for a fact this is not true — Kazmodon/Statlander/Pyxil et al ARE
+  // in OpenDKP"). The real "is this character in OpenDKP" signal lives
+  // in opendkp_attendance_recent — every character who's been ticked
+  // shows up there — backstopped by characters.opendkp_id (set by the
+  // OpenDKP sync when a character gets parented in the roster).
+  const [{ data: attendees }, { data: rosterChars }, { data: msgs }] = await Promise.all([
+    sb.from('opendkp_attendance_recent').select('character_name'),
+    sb.from('characters').select('name, opendkp_id').not('opendkp_id', 'is', null),
     sb.from('chat_messages')
       .select('speaker, ts')
       .in('channel', ['guild', 'raid'])
@@ -50,8 +61,11 @@ async function loadUnrosteredChatSpeakers(): Promise<QueueCategory> {
       .limit(20000),
   ]);
   const rostered = new Set<string>();
-  for (const r of (opendkp ?? []) as { character_name: string }[]) {
+  for (const r of (attendees ?? []) as { character_name: string | null }[]) {
     if (r.character_name) rostered.add(r.character_name.toLowerCase());
+  }
+  for (const r of (rosterChars ?? []) as { name: string | null; opendkp_id: number | null }[]) {
+    if (r.name && r.opendkp_id != null) rostered.add(r.name.toLowerCase());
   }
   const bySpeaker = new Map<string, { count: number; last: string }>();
   for (const m of (msgs ?? []) as { speaker: string; ts: string }[]) {
