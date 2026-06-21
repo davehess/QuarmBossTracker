@@ -17,8 +17,18 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
+import VengeanceList from './VengeanceList';
 
 export const dynamic = 'force-dynamic';
+
+type VengeanceRow = {
+  killer:         string;
+  killer_guild:   string | null;
+  killsAgainstWP: number;
+  killsByWP:      number;
+  vengeanceOwed:  number;
+  lastWpVictimAt: string;
+};
 
 type KillRow = {
   killer:        string;
@@ -51,7 +61,7 @@ async function loadServerLeaderboard() {
     .eq('guild_id', 'wolfpack')
     .order('killed_at', { ascending: false })
     .limit(20000);
-  if (error) return { rows: [], totals: { kills: 0, wpKills: 0, wpDeaths: 0 }, error: error.message };
+  if (error) return { rows: [], vengeance: [] as VengeanceRow[], totals: { kills: 0, wpKills: 0, wpDeaths: 0 }, error: error.message };
 
   // Two passes: aggregate every killer's row, and separately tally how many
   // times Wolf Pack killed each character (looking at THEM as victim).
@@ -59,6 +69,12 @@ async function loadServerLeaderboard() {
     killer: string; killer_guild: string | null;
     total: number; victims: Set<string>; petKills: number;
     last: string; killsAgainstWP: number;
+    // Most-recent killed_at where THIS killer's victim was a Wolf Pack
+    // member — drives the "Latest WP kill" column on the vengeance list.
+    // Distinct from `last` (their most recent kill of anyone) because we
+    // want to know when they last bloodied US, not just when they were
+    // last active.
+    lastWpVictimAt: string | null;
   }>();
   const killsByWPOnName = new Map<string, number>();   // lowercased name → count
 
@@ -67,7 +83,7 @@ async function loadServerLeaderboard() {
     let e = byKiller.get(lk);
     if (!e) {
       e = { killer: k.killer, killer_guild: k.killer_guild, total: 0, victims: new Set(),
-            petKills: 0, last: k.killed_at, killsAgainstWP: 0 };
+            petKills: 0, last: k.killed_at, killsAgainstWP: 0, lastWpVictimAt: null };
       byKiller.set(lk, e);
     }
     e.total += 1;
@@ -77,7 +93,10 @@ async function loadServerLeaderboard() {
     // Most recent guild label wins — characters change guild over time and the
     // newest row reflects current affiliation.
     if (k.killed_at === e.last) e.killer_guild = k.killer_guild;
-    if (k.victim_guild === WP_GUILD) e.killsAgainstWP += 1;
+    if (k.victim_guild === WP_GUILD) {
+      e.killsAgainstWP += 1;
+      if (!e.lastWpVictimAt || k.killed_at > e.lastWpVictimAt) e.lastWpVictimAt = k.killed_at;
+    }
     if (k.killer_guild === WP_GUILD) {
       const lv = k.victim.toLowerCase();
       killsByWPOnName.set(lv, (killsByWPOnName.get(lv) || 0) + 1);
@@ -99,13 +118,39 @@ async function loadServerLeaderboard() {
 
   const top = all.slice(0, TOP_N);
 
+  // Vengeance list — every non-WP killer who's bloodied us, sorted by
+  // outstanding debt (their kills vs WP minus WP kills back) descending,
+  // then by recency of their last WP kill so fresher wounds rise. Targets
+  // we've already evened or overshot fall to the bottom (debt = 0 is
+  // still listed, since the user might want the "0 remaining" final
+  // declaration when finishing the rivalry). Wolf Pack members are
+  // excluded by definition.
+  const vengeance: VengeanceRow[] = [...byKiller.values()]
+    .filter(e => e.killer_guild !== WP_GUILD && e.killsAgainstWP > 0 && e.lastWpVictimAt)
+    .map(e => {
+      const killsByWP     = killsByWPOnName.get(e.killer.toLowerCase()) || 0;
+      const vengeanceOwed = Math.max(0, e.killsAgainstWP - killsByWP);
+      return {
+        killer:         e.killer,
+        killer_guild:   e.killer_guild,
+        killsAgainstWP: e.killsAgainstWP,
+        killsByWP,
+        vengeanceOwed,
+        lastWpVictimAt: e.lastWpVictimAt as string,
+      };
+    })
+    .sort((a, b) =>
+      b.vengeanceOwed - a.vengeanceOwed ||
+      (b.lastWpVictimAt > a.lastWpVictimAt ? 1 : -1)
+    );
+
   const totals = {
     kills:    (data ?? []).length,
     wpKills:  (data ?? []).filter((k: KillRow) => k.killer_guild === WP_GUILD).length,
     wpDeaths: (data ?? []).filter((k: KillRow) => k.victim_guild === WP_GUILD).length,
   };
 
-  return { rows: top, totals, error: null as string | null };
+  return { rows: top, vengeance, totals, error: null as string | null };
 }
 
 export default async function ServerPvpPage() {
@@ -113,7 +158,7 @@ export default async function ServerPvpPage() {
   if (!user) redirect('/auth/signin?next=/pvp/server');
 
   const tz = await userTz();
-  const { rows, totals, error } = await loadServerLeaderboard();
+  const { rows, vengeance, totals, error } = await loadServerLeaderboard();
   if (error) {
     return (
       <div className="bg-panel border border-red rounded-lg p-4 text-red text-sm font-mono">
@@ -204,6 +249,28 @@ export default async function ServerPvpPage() {
             </tbody>
           </table>
         )}
+      </section>
+
+      <section className="bg-panel border border-border rounded-lg p-4">
+        <h2 className="text-xl text-gold flex items-center gap-3">
+          <span aria-hidden>⚖️</span>
+          <span>Vengeance list</span>
+        </h2>
+        <p className="text-sm text-dim mt-2">
+          Targets who&apos;ve killed Wolf Pack members, sorted by outstanding debt.
+          Hit the <span className="font-mono">📋 copy</span> button right before you land the
+          kill — it puts a line on your clipboard you can paste straight into EQ:
+        </p>
+        <p className="text-xs text-dim mt-1 font-mono italic">
+          &quot;I have avenged a Wolf Pack member&apos;s death by your hand. N vengeance kills remaining&quot;
+        </p>
+        <p className="text-xs text-dim mt-1">
+          N reflects the debt AFTER the kill you&apos;re about to land — so when it reads &quot;0
+          remaining&quot;, you&apos;ve squared the score on that target.
+        </p>
+        <div className="mt-4">
+          <VengeanceList rows={vengeance} />
+        </div>
       </section>
     </div>
   );

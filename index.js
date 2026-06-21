@@ -224,9 +224,16 @@ client.once(Events.ClientReady, async (readyClient) => {
   // Web-feedback relay: submissions from wolfpack.quest/feedback land in the
   // `feedback` table with discord_msg_id NULL. Post each into the #feedback
   // thread (same as the /feedback command) and stamp the id/link so it isn't
-  // re-posted. Initial run after a short delay, then every 45s.
+  // re-posted. Initial run after a short delay, then every 5 min.
+  // (45s → 5min on 2026-06-21: the bot already gets feedback events
+  // synchronously via the web's submit handler invoking the relay
+  // endpoint directly, AND members file feedback through /feedback in
+  // Discord which lands in the channel without any poll. The 45s sweep
+  // is a backstop for the rare race where the web submit-time relay
+  // failed silently; 5 min is plenty for that recovery window and cuts
+  // ~96% of feedback-polling egress.)
   setTimeout(() => relayWebFeedback(readyClient).catch(() => {}), 12_000);
-  setInterval(() => relayWebFeedback(readyClient).catch(() => {}), 45_000);
+  setInterval(() => relayWebFeedback(readyClient).catch(() => {}), 5 * 60_000);
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
@@ -2409,6 +2416,29 @@ function scheduleMidnightSummary(readyClient) {
         }
       } catch (err) {
         console.warn('[midnight] contribution compaction skipped:', err?.message);
+      }
+
+      // ── Retention sweep: encounter_threat_snapshots ───────────────────────
+      // The threat snapshots are per-fight tank-pull telemetry — useful while
+      // a fight is happening + during /parses post-mortem, NOT for long-term
+      // storage. Grew from 42k rows/week → 75k rows/week (+78%) over the last
+      // 14d as agent population + raid frequency rose; on disk it's our #2
+      // table at 103 MB and climbing. 60 days is enough for any plausible
+      // "what happened on that raid" lookback; older snapshots are dead
+      // weight (the merged encounter_players + contributions rollups carry
+      // the durable facts).
+      try {
+        const supabase = require('./utils/supabase');
+        if (supabase.isEnabled()) {
+          const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+          await supabase.del(
+            'encounter_threat_snapshots',
+            `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
+          );
+          console.log('[midnight] swept encounter_threat_snapshots older than 60 days');
+        }
+      } catch (err) {
+        console.warn('[midnight] threat snapshot retention skipped:', err?.message);
       }
 
       console.log('✅ Midnight tasks complete');
