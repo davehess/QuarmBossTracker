@@ -5,7 +5,11 @@
     "zone": "Nagafen's Lair",
     "expansion": "Classic",
     "timerHours": 162,
-    "nicknames": ["naggy", "nagafen", "nag"],
+    "nicknames": [
+      "naggy",
+      "nagafen",
+      "nag"
+    ],
     "emoji": "🐉",
     "pqdiUrl": "https://www.pqdi.cc/npc/32040"
   },
@@ -15,7 +19,10 @@
     "zone": "Nagafen's Lair",
     "expansion": "Classic",
     "timerHours": 18,
-    "nicknames": ["magi", "rokyl"],
+    "nicknames": [
+      "magi",
+      "rokyl"
+    ],
     "emoji": "🧙",
     "pqdiUrl": "https://www.pqdi.cc/npc/32000"
   },
@@ -25,7 +32,9 @@
     "zone": "Nagafen's Lair",
     "expansion": "Classic",
     "timerHours": 18,
-    "nicknames": ["skarlon"],
+    "nicknames": [
+      "skarlon"
+    ],
     "emoji": "⚔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/32020"
   },
@@ -35,7 +44,9 @@
     "zone": "Nagafen's Lair",
     "expansion": "Classic",
     "timerHours": 18,
-    "nicknames": ["tranix"],
+    "nicknames": [
+      "tranix"
+    ],
     "emoji": "👑",
     "pqdiUrl": "https://www.pqdi.cc/npc/32022"
   },
@@ -45,7 +56,9 @@
     "zone": "Permafrost Caverns",
     "expansion": "Classic",
     "timerHours": 162,
-    "nicknames": ["vox"],
+    "nicknames": [
+      "vox"
+    ],
     "emoji": "🐲",
     "pqdiUrl": "https://www.pqdi.cc/npc/73057"
   },
@@ -55,7 +68,10 @@
     "zone": "Kedge Keep",
     "expansion": "Classic",
     "timerHours": 18,
-    "nicknames": ["phinny", "phin"],
+    "nicknames": [
+      "phinny",
+      "phin"
+    ],
     "emoji": "🐟",
     "pqdiUrl": "https://www.pqdi.cc/npc/64001"
   },
@@ -65,7 +81,11 @@
     "zone": "Plane of Fear",
     "expansion": "Classic",
     "timerHours": 162,
-    "nicknames": ["ct", "cazic", "faceless"],
+    "nicknames": [
+      "ct",
+      "cazic",
+      "faceless"
+    ],
     "emoji": "😱",
     "pqdiUrl": "https://www.pqdi.cc/npc/72600"
   },
@@ -75,7 +95,10 @@
     "zone": "Plane of Fear",
     "expansion": "Classic",
     "timerHours": 66,
-    "nicknames": ["draco", "dracoliche"],
+    "nicknames": [
+      "draco",
+      "dracoliche"
+    ],
     "emoji": "🐲",
     "pqdiUrl": "https://www.pqdi.cc/npc/72690"
   },
@@ -85,7 +108,9 @@
     "zone": "Plane of Fear",
     "expansion": "Classic",
     "timerHours": 18,
-    "nicknames": ["fright"],
+    "nicknames": [
+      "fright"
+    ],
     "emoji": "😱",
     "pqdiUrl": "https://www.pqdi.cc/npc/72601"
   },
@@ -95,7 +120,9 @@
     "zone": "Plane of Fear",
     "expansion": "Classic",
     "timerHours": 18,
-    "nicknames": ["dread"],
+    "nicknames": [
+      "dread"
+    ],
     "emoji": "😱",
     "pqdiUrl": "https://www.pqdi.cc/npc/72602"
   },
@@ -105,7 +132,9 @@
     "zone": "Plane of Fear",
     "expansion": "Classic",
     "timerHours": 18,
-    "nicknames": ["terror"],
+    "nicknames": [
+      "terror"
+    ],
     "emoji": "😱",
     "pqdiUrl": "https://www.pqdi.cc/npc/72604"
   },
@@ -115,7 +144,10 @@
     "zone": "Plane of Hate",
     "expansion": "Classic",
     "timerHours": 162,
-    "nicknames": ["inny", "prince of hate"],
+    "nicknames": [
+      "inny",
+      "prince of hate"
+    ],
     "emoji": "😈",
     "pqdiUrl": "https://www.pqdi.cc/npc/76600"
   },
@@ -125,7 +157,10 @@
     "zone": "Plane of Hate",
     "expansion": "Classic",
     "timerHours": 66,
-    "nicknames": ["maestro", "rancor"],
+    "nicknames": [
+      "maestro",
+      "rancor"
+    ],
     "emoji": "🎵",
     "pqdiUrl": "https://www.pqdi.cc/npc/76611"
   },
@@ -135,7 +170,10 @@
     "zone": "Plane of Hate",
     "expansion": "Classic",
     "timerHours": 66,
-    "nicknames": ["ire", "lord ire"],
+    "nicknames": [
+      "ire",
+      "lord ire"
+    ],
     "emoji": "🛡️",
     "pqdiUrl": "https://www.pqdi.cc/npc/76325"
   },
@@ -145,7 +183,10 @@
     "zone": "Plane of Hate",
     "expansion": "Classic",
     "timerHours": 66,
-    "nicknames": ["broodmaster", "ashenbone"],
+    "nicknames": [
+      "broodmaster",
+      "ashenbone"
+    ],
     "emoji": "🐲",
     "pqdiUrl": "https://www.pqdi.cc/npc/76051"
   },
@@ -155,7 +196,10 @@
     "zone": "Ruins of Sebilis",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["trak", "trakanon"],
+    "nicknames": [
+      "trak",
+      "trakanon"
+    ],
     "emoji": "🦴",
     "pqdiUrl": "https://www.pqdi.cc/npc/89154"
   },
@@ -165,9 +209,26 @@
     "zone": "Karnor's Castle",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["vs", "venril"],
+    "nicknames": [
+      "vs",
+      "venril"
+    ],
     "emoji": "🧟",
     "pqdiUrl": "https://www.pqdi.cc/npc/102010"
+  },
+  {
+    "id": "drusella_sathir",
+    "name": "Drusella Sathir",
+    "zone": "Howling Stones",
+    "expansion": "Kunark",
+    "timerHours": 66,
+    "nicknames": [
+      "drusella",
+      "sathir",
+      "dru"
+    ],
+    "emoji": "💀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/105002"
   },
   {
     "id": "master_yael",
@@ -175,7 +236,9 @@
     "zone": "The Hole",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["yael"],
+    "nicknames": [
+      "yael"
+    ],
     "emoji": "🕳️",
     "pqdiUrl": "https://www.pqdi.cc/npc/39138"
   },
@@ -185,7 +248,10 @@
     "zone": "The Hole",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["nortlav", "scalekeeper"],
+    "nicknames": [
+      "nortlav",
+      "scalekeeper"
+    ],
     "emoji": "🕳️",
     "pqdiUrl": "https://www.pqdi.cc/npc/39648"
   },
@@ -195,7 +261,9 @@
     "zone": "Skyfire Mountains",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["talendor"],
+    "nicknames": [
+      "talendor"
+    ],
     "emoji": "🔥",
     "pqdiUrl": "https://www.pqdi.cc/npc/91093"
   },
@@ -205,7 +273,10 @@
     "zone": "Emerald Jungle",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["sev", "severilous"],
+    "nicknames": [
+      "sev",
+      "severilous"
+    ],
     "emoji": "🌿",
     "pqdiUrl": "https://www.pqdi.cc/npc/94002"
   },
@@ -215,7 +286,10 @@
     "zone": "Timorous Deep",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["fay", "faydedar"],
+    "nicknames": [
+      "fay",
+      "faydedar"
+    ],
     "emoji": "🐊",
     "pqdiUrl": "https://www.pqdi.cc/npc/96089"
   },
@@ -225,7 +299,11 @@
     "zone": "Veeshan's Peak",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["pd", "phara", "pharadar"],
+    "nicknames": [
+      "pd",
+      "phara",
+      "pharadar"
+    ],
     "emoji": "🏔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/108510"
   },
@@ -235,7 +313,9 @@
     "zone": "Veeshan's Peak",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["nexona"],
+    "nicknames": [
+      "nexona"
+    ],
     "emoji": "🏔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/108513"
   },
@@ -245,7 +325,9 @@
     "zone": "Veeshan's Peak",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["hoshkar"],
+    "nicknames": [
+      "hoshkar"
+    ],
     "emoji": "🏔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/108517"
   },
@@ -255,7 +337,9 @@
     "zone": "Veeshan's Peak",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["silverwing"],
+    "nicknames": [
+      "silverwing"
+    ],
     "emoji": "🏔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/108509"
   },
@@ -265,7 +349,9 @@
     "zone": "Veeshan's Peak",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["xygoz"],
+    "nicknames": [
+      "xygoz"
+    ],
     "emoji": "🏔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/108511"
   },
@@ -275,7 +361,9 @@
     "zone": "Veeshan's Peak",
     "expansion": "Kunark",
     "timerHours": 66,
-    "nicknames": ["druushk"],
+    "nicknames": [
+      "druushk"
+    ],
     "emoji": "🏔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/108512"
   },
@@ -285,7 +373,11 @@
     "zone": "Chardok",
     "expansion": "Kunark",
     "timerHours": 18,
-    "nicknames": ["overking", "bathezid", "ok"],
+    "nicknames": [
+      "overking",
+      "bathezid",
+      "ok"
+    ],
     "emoji": "🧍",
     "pqdiUrl": "https://www.pqdi.cc/npc/103056"
   },
@@ -295,7 +387,12 @@
     "zone": "Chardok",
     "expansion": "Kunark",
     "timerHours": 18,
-    "nicknames": ["queen", "velazul", "queen velazul", "dizok queen"],
+    "nicknames": [
+      "queen",
+      "velazul",
+      "queen velazul",
+      "dizok queen"
+    ],
     "emoji": "🧍",
     "pqdiUrl": "https://www.pqdi.cc/npc/103055"
   },
@@ -305,7 +402,11 @@
     "zone": "Chardok",
     "expansion": "Kunark",
     "timerHours": 18,
-    "nicknames": ["prince", "selrach", "dizok prince"],
+    "nicknames": [
+      "prince",
+      "selrach",
+      "dizok prince"
+    ],
     "emoji": "🧍",
     "pqdiUrl": "https://www.pqdi.cc/npc/103080"
   },
@@ -315,7 +416,10 @@
     "zone": "Velketor's Labyrinth",
     "expansion": "Velious",
     "timerHours": 66,
-    "nicknames": ["velk", "velks"],
+    "nicknames": [
+      "velk",
+      "velks"
+    ],
     "emoji": "🧙",
     "pqdiUrl": "https://www.pqdi.cc/npc/112025"
   },
@@ -325,7 +429,12 @@
     "zone": "Velketor's Labyrinth",
     "expansion": "Velious",
     "timerHours": 72,
-    "nicknames": ["bob", "lord bob", "dolj", "doli"],
+    "nicknames": [
+      "bob",
+      "lord bob",
+      "dolj",
+      "doli"
+    ],
     "emoji": "🪓",
     "pqdiUrl": "https://www.pqdi.cc/npc/112049"
   },
@@ -335,7 +444,10 @@
     "zone": "Plane of Growth",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["tunare", "naggatomommy"],
+    "nicknames": [
+      "tunare",
+      "naggatomommy"
+    ],
     "emoji": "👑",
     "pqdiUrl": "https://www.pqdi.cc/npc/127002"
   },
@@ -345,7 +457,10 @@
     "zone": "Plane of Growth",
     "expansion": "Velious",
     "timerHours": 30,
-    "nicknames": ["grahl", "strongback"],
+    "nicknames": [
+      "grahl",
+      "strongback"
+    ],
     "emoji": "👑",
     "pqdiUrl": "https://www.pqdi.cc/npc/127022"
   },
@@ -355,7 +470,10 @@
     "zone": "Plane of Growth",
     "expansion": "Velious",
     "timerHours": 30,
-    "nicknames": ["sarik", "fang"],
+    "nicknames": [
+      "sarik",
+      "fang"
+    ],
     "emoji": "🐺",
     "pqdiUrl": "https://www.pqdi.cc/npc/127017"
   },
@@ -365,7 +483,11 @@
     "zone": "Plane of Growth",
     "expansion": "Velious",
     "timerHours": 30,
-    "nicknames": ["galiel", "unicorn", "spirithoof"],
+    "nicknames": [
+      "galiel",
+      "unicorn",
+      "spirithoof"
+    ],
     "emoji": "🦄",
     "pqdiUrl": "https://www.pqdi.cc/npc/127023"
   },
@@ -375,7 +497,10 @@
     "zone": "Kael Drakkel",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["kt", "tormax"],
+    "nicknames": [
+      "kt",
+      "tormax"
+    ],
     "emoji": "👑",
     "pqdiUrl": "https://www.pqdi.cc/npc/113215"
   },
@@ -385,7 +510,11 @@
     "zone": "Kael Drakkel",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["aow", "avatar", "war"],
+    "nicknames": [
+      "aow",
+      "avatar",
+      "war"
+    ],
     "emoji": "⚔️",
     "pqdiUrl": "https://www.pqdi.cc/npc/113244"
   },
@@ -395,7 +524,12 @@
     "zone": "Kael Drakkel",
     "expansion": "Velious",
     "timerHours": 66,
-    "nicknames": ["derakor", "dv", "vindi", "vindicator"],
+    "nicknames": [
+      "derakor",
+      "dv",
+      "vindi",
+      "vindicator"
+    ],
     "emoji": "🪖",
     "pqdiUrl": "https://www.pqdi.cc/npc/113118"
   },
@@ -405,7 +539,10 @@
     "zone": "Kael Drakkel",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["statue", "rallos statue"],
+    "nicknames": [
+      "statue",
+      "rallos statue"
+    ],
     "emoji": "🗿",
     "pqdiUrl": "https://www.pqdi.cc/npc/113000"
   },
@@ -415,7 +552,10 @@
     "zone": "Icewell Keep",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["dain", "frostreaver"],
+    "nicknames": [
+      "dain",
+      "frostreaver"
+    ],
     "emoji": "❄️",
     "pqdiUrl": "https://www.pqdi.cc/npc/129003"
   },
@@ -425,7 +565,10 @@
     "zone": "Icewell Keep",
     "expansion": "Velious",
     "timerHours": 66,
-    "nicknames": ["scribe", "kaavin"],
+    "nicknames": [
+      "scribe",
+      "kaavin"
+    ],
     "emoji": "📜",
     "pqdiUrl": "https://www.pqdi.cc/npc/129021"
   },
@@ -435,7 +578,10 @@
     "zone": "Skyshrine",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["yelinak", "yelz"],
+    "nicknames": [
+      "yelinak",
+      "yelz"
+    ],
     "emoji": "🌥️",
     "pqdiUrl": "https://www.pqdi.cc/npc/114618"
   },
@@ -445,7 +591,10 @@
     "zone": "Iceclad Ocean",
     "expansion": "Velious",
     "timerHours": 18,
-    "nicknames": ["stormfeather", "sf"],
+    "nicknames": [
+      "stormfeather",
+      "sf"
+    ],
     "emoji": "🦅",
     "pqdiUrl": "https://www.pqdi.cc/npc/110005"
   },
@@ -455,7 +604,10 @@
     "zone": "Iceclad Ocean",
     "expansion": "Velious",
     "timerHours": 18,
-    "nicknames": ["lodi", "sf"],
+    "nicknames": [
+      "lodi",
+      "sf"
+    ],
     "emoji": "🐢",
     "pqdiUrl": "https://www.pqdi.cc/npc/110003"
   },
@@ -465,7 +617,10 @@
     "zone": "Cobalt Scar",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["kelorek", "cs dragon"],
+    "nicknames": [
+      "kelorek",
+      "cs dragon"
+    ],
     "emoji": "🐉",
     "pqdiUrl": "https://www.pqdi.cc/npc/117000"
   },
@@ -475,7 +630,10 @@
     "zone": "Western Wastes",
     "expansion": "Velious",
     "timerHours": 66,
-    "nicknames": ["klandicar", "klan"],
+    "nicknames": [
+      "klandicar",
+      "klan"
+    ],
     "emoji": "🐉",
     "pqdiUrl": "https://www.pqdi.cc/npc/120084"
   },
@@ -485,7 +643,9 @@
     "zone": "Western Wastes",
     "expansion": "Velious",
     "timerHours": 66,
-    "nicknames": ["sontalak"],
+    "nicknames": [
+      "sontalak"
+    ],
     "emoji": "🐉",
     "pqdiUrl": "https://www.pqdi.cc/npc/120005"
   },
@@ -495,7 +655,10 @@
     "zone": "Dragon Necropolis",
     "expansion": "Velious",
     "timerHours": 66,
-    "nicknames": ["zlandicar", "zlan"],
+    "nicknames": [
+      "zlandicar",
+      "zlan"
+    ],
     "emoji": "💀",
     "pqdiUrl": "https://www.pqdi.cc/npc/123115"
   },
@@ -505,7 +668,10 @@
     "zone": "The Wakening Land",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["wuoshi", "wl dragon"],
+    "nicknames": [
+      "wuoshi",
+      "wl dragon"
+    ],
     "emoji": "🌿",
     "pqdiUrl": "https://www.pqdi.cc/npc/119112"
   },
@@ -515,7 +681,9 @@
     "zone": "Sleeper's Tomb",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["nanzata"],
+    "nicknames": [
+      "nanzata"
+    ],
     "emoji": "⚰️",
     "pqdiUrl": "https://www.pqdi.cc/npc/128090"
   },
@@ -525,7 +693,9 @@
     "zone": "Sleeper's Tomb",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["ventani"],
+    "nicknames": [
+      "ventani"
+    ],
     "emoji": "⚰️",
     "pqdiUrl": "https://www.pqdi.cc/npc/128091"
   },
@@ -535,7 +705,9 @@
     "zone": "Sleeper's Tomb",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["tukaarak"],
+    "nicknames": [
+      "tukaarak"
+    ],
     "emoji": "⚰️",
     "pqdiUrl": "https://www.pqdi.cc/npc/128092"
   },
@@ -545,7 +717,9 @@
     "zone": "Sleeper's Tomb",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["hraashna"],
+    "nicknames": [
+      "hraashna"
+    ],
     "emoji": "⚰️",
     "pqdiUrl": "https://www.pqdi.cc/npc/128093"
   },
@@ -555,7 +729,10 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["vyemm", "tov1"],
+    "nicknames": [
+      "vyemm",
+      "tov1"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124003"
   },
@@ -565,7 +742,10 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["aary", "aaryonar"],
+    "nicknames": [
+      "aary",
+      "aaryonar"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124010"
   },
@@ -575,7 +755,11 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["lendi", "keeper", "lendiniara"],
+    "nicknames": [
+      "lendi",
+      "keeper",
+      "lendiniara"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124020"
   },
@@ -585,7 +769,10 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 66,
-    "nicknames": ["doze", "dozekar"],
+    "nicknames": [
+      "doze",
+      "dozekar"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124002"
   },
@@ -595,7 +782,9 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["ikatiar"],
+    "nicknames": [
+      "ikatiar"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124001"
   },
@@ -605,7 +794,9 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["feshlak"],
+    "nicknames": [
+      "feshlak"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124008"
   },
@@ -615,7 +806,9 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["dagarn"],
+    "nicknames": [
+      "dagarn"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124011"
   },
@@ -625,7 +818,9 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["eashen"],
+    "nicknames": [
+      "eashen"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124017"
   },
@@ -635,7 +830,9 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["kreizenn"],
+    "nicknames": [
+      "kreizenn"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124074"
   },
@@ -645,7 +842,9 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["nevederia"],
+    "nicknames": [
+      "nevederia"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124076"
   },
@@ -655,7 +854,9 @@
     "zone": "Temple of Veeshan",
     "expansion": "Velious",
     "timerHours": 162,
-    "nicknames": ["vulak"],
+    "nicknames": [
+      "vulak"
+    ],
     "emoji": "🛕",
     "pqdiUrl": "https://www.pqdi.cc/npc/124128"
   },
@@ -665,7 +866,12 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["emp", "emperor", "ssra emp", "empy"],
+    "nicknames": [
+      "emp",
+      "emperor",
+      "ssra emp",
+      "empy"
+    ],
     "emoji": "🐍",
     "pqdiUrl": "https://www.pqdi.cc/npc/162065"
   },
@@ -675,7 +881,11 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["hp", "high priest", "hpos"],
+    "nicknames": [
+      "hp",
+      "high priest",
+      "hpos"
+    ],
     "emoji": "⛪",
     "pqdiUrl": "https://www.pqdi.cc/npc/162076"
   },
@@ -685,7 +895,12 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["arch lich", "al", "rhag", "alrz"],
+    "nicknames": [
+      "arch lich",
+      "al",
+      "rhag",
+      "alrz"
+    ],
     "emoji": "💀",
     "pqdiUrl": "https://www.pqdi.cc/npc/162030"
   },
@@ -695,7 +910,12 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["vyzh exiled", "vyzhdra", "exiled", "vyzh1"],
+    "nicknames": [
+      "vyzh exiled",
+      "vyzhdra",
+      "exiled",
+      "vyzh1"
+    ],
     "emoji": "🐍",
     "pqdiUrl": "https://www.pqdi.cc/npc/162039"
   },
@@ -705,7 +925,11 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["vyzh cursed", "cursed", "vyzh2"],
+    "nicknames": [
+      "vyzh cursed",
+      "cursed",
+      "vyzh2"
+    ],
     "emoji": "🐍",
     "pqdiUrl": "https://www.pqdi.cc/npc/162042"
   },
@@ -715,7 +939,11 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["xerkizh", "creator", "xerk"],
+    "nicknames": [
+      "xerkizh",
+      "creator",
+      "xerk"
+    ],
     "emoji": "🐍",
     "pqdiUrl": "https://www.pqdi.cc/npc/162190"
   },
@@ -725,7 +953,10 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["rhagzhezum", "zhezum"],
+    "nicknames": [
+      "rhagzhezum",
+      "zhezum"
+    ],
     "emoji": "🐍",
     "pqdiUrl": "https://www.pqdi.cc/npc/162178"
   },
@@ -735,7 +966,10 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["rhagmozdezh", "mozdezh"],
+    "nicknames": [
+      "rhagmozdezh",
+      "mozdezh"
+    ],
     "emoji": "🐍",
     "pqdiUrl": "https://www.pqdi.cc/npc/162192"
   },
@@ -745,7 +979,10 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 18,
-    "nicknames": ["blood", "bos"],
+    "nicknames": [
+      "blood",
+      "bos"
+    ],
     "emoji": "🩸",
     "pqdiUrl": "https://www.pqdi.cc/npc/162189"
   },
@@ -755,7 +992,12 @@
     "zone": "Sanctus Seru",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["lis", "seru", "lord seru", "inquisitor"],
+    "nicknames": [
+      "lis",
+      "seru",
+      "lord seru",
+      "inquisitor"
+    ],
     "emoji": "⚖️",
     "pqdiUrl": "https://www.pqdi.cc/npc/159000"
   },
@@ -765,7 +1007,9 @@
     "zone": "Sanctus Seru",
     "expansion": "Luclin",
     "timerHours": 18,
-    "nicknames": ["matpa"],
+    "nicknames": [
+      "matpa"
+    ],
     "emoji": "🏛️",
     "pqdiUrl": "https://www.pqdi.cc/npc/159035"
   },
@@ -775,7 +1019,9 @@
     "zone": "Sanctus Seru",
     "expansion": "Luclin",
     "timerHours": 18,
-    "nicknames": ["bikun"],
+    "nicknames": [
+      "bikun"
+    ],
     "emoji": "🏛️",
     "pqdiUrl": "https://www.pqdi.cc/npc/159052"
   },
@@ -785,7 +1031,9 @@
     "zone": "Sanctus Seru",
     "expansion": "Luclin",
     "timerHours": 18,
-    "nicknames": ["rhugol"],
+    "nicknames": [
+      "rhugol"
+    ],
     "emoji": "🏛️",
     "pqdiUrl": "https://www.pqdi.cc/npc/159054"
   },
@@ -795,7 +1043,9 @@
     "zone": "Sanctus Seru",
     "expansion": "Luclin",
     "timerHours": 18,
-    "nicknames": ["vantorus"],
+    "nicknames": [
+      "vantorus"
+    ],
     "emoji": "🏛️",
     "pqdiUrl": "https://www.pqdi.cc/npc/159055"
   },
@@ -805,7 +1055,10 @@
     "zone": "Grieg's End",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["grieg", "ge boss"],
+    "nicknames": [
+      "grieg",
+      "ge boss"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/163156"
   },
@@ -815,7 +1068,10 @@
     "zone": "Grieg's End",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["servitor", "sol"],
+    "nicknames": [
+      "servitor",
+      "sol"
+    ],
     "emoji": "🌙",
     "pqdiUrl": "https://www.pqdi.cc/npc/163273"
   },
@@ -825,7 +1081,9 @@
     "zone": "Grieg's End",
     "expansion": "Luclin",
     "timerHours": 18,
-    "nicknames": ["myral"],
+    "nicknames": [
+      "myral"
+    ],
     "emoji": "🗡️",
     "pqdiUrl": "https://www.pqdi.cc/npc/163058"
   },
@@ -835,7 +1093,10 @@
     "zone": "Katta Castellum",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["lcea", "katta boss"],
+    "nicknames": [
+      "lcea",
+      "katta boss"
+    ],
     "emoji": "🏰",
     "pqdiUrl": "https://www.pqdi.cc/npc/160375"
   },
@@ -845,7 +1106,11 @@
     "zone": "The Deep",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["tho", "overfiend", "thought horror"],
+    "nicknames": [
+      "tho",
+      "overfiend",
+      "thought horror"
+    ],
     "emoji": "🧠",
     "pqdiUrl": "https://www.pqdi.cc/npc/164078"
   },
@@ -855,7 +1120,11 @@
     "zone": "The Deep",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["parasite", "burrower parasite", "bp"],
+    "nicknames": [
+      "parasite",
+      "burrower parasite",
+      "bp"
+    ],
     "emoji": "🪱",
     "pqdiUrl": "https://www.pqdi.cc/npc/164011"
   },
@@ -865,7 +1134,11 @@
     "zone": "Akheva Ruins",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["crawler", "insanity", "ic"],
+    "nicknames": [
+      "crawler",
+      "insanity",
+      "ic"
+    ],
     "emoji": "🕷️",
     "pqdiUrl": "https://www.pqdi.cc/npc/179001"
   },
@@ -875,7 +1148,10 @@
     "zone": "Akheva Ruins",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["shei", "vinitras"],
+    "nicknames": [
+      "shei",
+      "vinitras"
+    ],
     "emoji": "👁️",
     "pqdiUrl": "https://www.pqdi.cc/npc/179017"
   },
@@ -885,7 +1161,10 @@
     "zone": "Akheva Ruins",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["itraer", "iv"],
+    "nicknames": [
+      "itraer",
+      "iv"
+    ],
     "emoji": "👁️",
     "pqdiUrl": "https://www.pqdi.cc/npc/179037"
   },
@@ -895,7 +1174,10 @@
     "zone": "Akheva Ruins",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["vadyn", "vd"],
+    "nicknames": [
+      "vadyn",
+      "vd"
+    ],
     "emoji": "👁️",
     "pqdiUrl": "https://www.pqdi.cc/npc/179178"
   },
@@ -905,7 +1187,11 @@
     "zone": "The Umbral Plains",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["netherbian", "swarmlord", "ns"],
+    "nicknames": [
+      "netherbian",
+      "swarmlord",
+      "ns"
+    ],
     "emoji": "🦟",
     "pqdiUrl": "https://www.pqdi.cc/npc/176000"
   },
@@ -915,7 +1201,10 @@
     "zone": "The Umbral Plains",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["rumble", "rc"],
+    "nicknames": [
+      "rumble",
+      "rc"
+    ],
     "emoji": "💪",
     "pqdiUrl": "https://www.pqdi.cc/npc/176002"
   },
@@ -925,7 +1214,11 @@
     "zone": "The Umbral Plains",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["doom", "doomshade", "ds"],
+    "nicknames": [
+      "doom",
+      "doomshade",
+      "ds"
+    ],
     "emoji": "🌑",
     "pqdiUrl": "https://www.pqdi.cc/npc/176017"
   },
@@ -935,7 +1228,10 @@
     "zone": "The Umbral Plains",
     "expansion": "Luclin",
     "timerHours": 66.05,
-    "nicknames": ["zel", "zelnithak"],
+    "nicknames": [
+      "zel",
+      "zelnithak"
+    ],
     "emoji": "🦂",
     "pqdiUrl": "https://www.pqdi.cc/npc/176089"
   },
@@ -945,7 +1241,11 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["ahr", "aten", "atenhara"],
+    "nicknames": [
+      "ahr",
+      "aten",
+      "atenhara"
+    ],
     "emoji": "🌟",
     "pqdiUrl": "https://www.pqdi.cc/npc/158436"
   },
@@ -955,7 +1255,12 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["ktxahr north", "kaas north", "aten north", "ktxahr"],
+    "nicknames": [
+      "ktxahr north",
+      "kaas north",
+      "aten north",
+      "ktxahr"
+    ],
     "emoji": "✨",
     "pqdiUrl": "https://www.pqdi.cc/npc/158437"
   },
@@ -965,7 +1270,11 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["ktxahr south", "kaas south", "aten south"],
+    "nicknames": [
+      "ktxahr south",
+      "kaas south",
+      "aten south"
+    ],
     "emoji": "✨",
     "pqdiUrl": "https://www.pqdi.cc/npc/158464"
   },
@@ -975,7 +1284,11 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["mini ahr", "vaxi", "vxahr"],
+    "nicknames": [
+      "mini ahr",
+      "vaxi",
+      "vxahr"
+    ],
     "emoji": "⭐",
     "pqdiUrl": "https://www.pqdi.cc/npc/158440"
   },
@@ -985,7 +1298,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["tvk", "kelun"],
+    "nicknames": [
+      "tvk",
+      "kelun"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158439"
   },
@@ -995,7 +1311,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["dxvt", "temariel"],
+    "nicknames": [
+      "dxvt",
+      "temariel"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158441"
   },
@@ -1005,7 +1324,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["txd", "xundraux"],
+    "nicknames": [
+      "txd",
+      "xundraux"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158442"
   },
@@ -1015,7 +1337,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["dxxt", "xin thall"],
+    "nicknames": [
+      "dxxt",
+      "xin thall"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158443"
   },
@@ -1025,7 +1350,11 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["ktxad", "ans dyek", "dyek"],
+    "nicknames": [
+      "ktxad",
+      "ans dyek",
+      "dyek"
+    ],
     "emoji": "✨",
     "pqdiUrl": "https://www.pqdi.cc/npc/158444"
   },
@@ -1035,7 +1364,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["vdk", "khar"],
+    "nicknames": [
+      "vdk",
+      "khar"
+    ],
     "emoji": "💫",
     "pqdiUrl": "https://www.pqdi.cc/npc/158081"
   },
@@ -1045,7 +1377,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["diabo xin", "dxx"],
+    "nicknames": [
+      "diabo xin",
+      "dxx"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158446"
   },
@@ -1055,7 +1390,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["diabo va", "dxv"],
+    "nicknames": [
+      "diabo va",
+      "dxv"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158445"
   },
@@ -1065,7 +1403,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["xakra south", "tvx south"],
+    "nicknames": [
+      "xakra south",
+      "tvx south"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158465"
   },
@@ -1075,7 +1416,10 @@
     "zone": "Vex Thal",
     "expansion": "Luclin",
     "timerHours": 162,
-    "nicknames": ["xakra north", "tvx north"],
+    "nicknames": [
+      "xakra north",
+      "tvx north"
+    ],
     "emoji": "🌀",
     "pqdiUrl": "https://www.pqdi.cc/npc/158136"
   },
@@ -1085,7 +1429,10 @@
     "zone": "Acrylia Caverns",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["escaped burrower", "escaped"],
+    "nicknames": [
+      "escaped burrower",
+      "escaped"
+    ],
     "emoji": "🪲",
     "pqdiUrl": "https://www.pqdi.cc/npc/154017"
   },
@@ -1095,7 +1442,10 @@
     "zone": "Acrylia Caverns",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["summoned burrower", "summoned"],
+    "nicknames": [
+      "summoned burrower",
+      "summoned"
+    ],
     "emoji": "🪲",
     "pqdiUrl": "https://www.pqdi.cc/npc/154015"
   },
@@ -1105,7 +1455,10 @@
     "zone": "Acrylia Caverns",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["restless burrower", "restless"],
+    "nicknames": [
+      "restless burrower",
+      "restless"
+    ],
     "emoji": "🪲",
     "pqdiUrl": "https://www.pqdi.cc/npc/154016"
   },
@@ -1115,7 +1468,9 @@
     "zone": "Ssraeshza Temple",
     "expansion": "Luclin",
     "timerHours": 66,
-    "nicknames": ["a glyph covered serpent"],
+    "nicknames": [
+      "a glyph covered serpent"
+    ],
     "emoji": "✨",
     "pqdiUrl": "https://www.pqdi.cc/npc/162037"
   },
@@ -1125,7 +1480,11 @@
     "zone": "Plane of Justice",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["seventh hammer", "7th hammer", "hammer"],
+    "nicknames": [
+      "seventh hammer",
+      "7th hammer",
+      "hammer"
+    ],
     "emoji": "⚖️",
     "pqdiUrl": ""
   },
@@ -1135,7 +1494,11 @@
     "zone": "Plane of Innovation",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["xanamech", "xana", "mech"],
+    "nicknames": [
+      "xanamech",
+      "xana",
+      "mech"
+    ],
     "emoji": "⚙️",
     "pqdiUrl": ""
   },
@@ -1145,7 +1508,9 @@
     "zone": "Plane of Disease",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["grummus"],
+    "nicknames": [
+      "grummus"
+    ],
     "emoji": "🤢",
     "pqdiUrl": ""
   },
@@ -1155,7 +1520,9 @@
     "zone": "Plane of Disease",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["ture"],
+    "nicknames": [
+      "ture"
+    ],
     "emoji": "🤢",
     "pqdiUrl": ""
   },
@@ -1165,7 +1532,11 @@
     "zone": "Plane of Disease",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["berto", "bertox", "tox"],
+    "nicknames": [
+      "berto",
+      "bertox",
+      "tox"
+    ],
     "emoji": "☠️",
     "pqdiUrl": ""
   },
@@ -1175,7 +1546,10 @@
     "zone": "Plane of Nightmare",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["mujaki", "ravager"],
+    "nicknames": [
+      "mujaki",
+      "ravager"
+    ],
     "emoji": "😨",
     "pqdiUrl": ""
   },
@@ -1185,7 +1559,11 @@
     "zone": "Plane of Nightmare",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["terris", "tt", "terris thule"],
+    "nicknames": [
+      "terris",
+      "tt",
+      "terris thule"
+    ],
     "emoji": "😨",
     "pqdiUrl": ""
   },
@@ -1195,7 +1573,10 @@
     "zone": "Plane of Storms",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["agnarr", "storm lord"],
+    "nicknames": [
+      "agnarr",
+      "storm lord"
+    ],
     "emoji": "⛈️",
     "pqdiUrl": ""
   },
@@ -1205,7 +1586,9 @@
     "zone": "Plane of Storms",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["askr"],
+    "nicknames": [
+      "askr"
+    ],
     "emoji": "⛈️",
     "pqdiUrl": ""
   },
@@ -1215,7 +1598,11 @@
     "zone": "Plane of Storms",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["aerindar", "aerin", "dar"],
+    "nicknames": [
+      "aerindar",
+      "aerin",
+      "dar"
+    ],
     "emoji": "⛈️",
     "pqdiUrl": ""
   },
@@ -1225,7 +1612,10 @@
     "zone": "Bastion of Thunder",
     "expansion": "PoP",
     "timerHours": 72,
-    "nicknames": ["charassis", "corrupter"],
+    "nicknames": [
+      "charassis",
+      "corrupter"
+    ],
     "emoji": "⚡",
     "pqdiUrl": ""
   },
@@ -1235,7 +1625,10 @@
     "zone": "Plane of Torment",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["saryrn", "torment boss"],
+    "nicknames": [
+      "saryrn",
+      "torment boss"
+    ],
     "emoji": "🗡️",
     "pqdiUrl": ""
   },
@@ -1245,7 +1638,10 @@
     "zone": "Plane of Fire",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["fennin", "fennin ro"],
+    "nicknames": [
+      "fennin",
+      "fennin ro"
+    ],
     "emoji": "🔥",
     "pqdiUrl": ""
   },
@@ -1255,7 +1651,10 @@
     "zone": "Plane of Air",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["xegony", "queen of air"],
+    "nicknames": [
+      "xegony",
+      "queen of air"
+    ],
     "emoji": "🌪️",
     "pqdiUrl": ""
   },
@@ -1265,7 +1664,11 @@
     "zone": "Plane of Earth",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["rathe", "council", "rathe council"],
+    "nicknames": [
+      "rathe",
+      "council",
+      "rathe council"
+    ],
     "emoji": "🌍",
     "pqdiUrl": ""
   },
@@ -1275,7 +1678,10 @@
     "zone": "Plane of Water",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["coirnav", "avatar of water"],
+    "nicknames": [
+      "coirnav",
+      "avatar of water"
+    ],
     "emoji": "💧",
     "pqdiUrl": ""
   },
@@ -1285,7 +1691,11 @@
     "zone": "Plane of Tactics",
     "expansion": "PoP",
     "timerHours": 108,
-    "nicknames": ["tallon", "tallon zek", "tz"],
+    "nicknames": [
+      "tallon",
+      "tallon zek",
+      "tz"
+    ],
     "emoji": "⚔️",
     "pqdiUrl": ""
   },
@@ -1295,7 +1705,11 @@
     "zone": "Plane of Tactics",
     "expansion": "PoP",
     "timerHours": 108,
-    "nicknames": ["vallon", "vallon zek", "vz"],
+    "nicknames": [
+      "vallon",
+      "vallon zek",
+      "vz"
+    ],
     "emoji": "⚔️",
     "pqdiUrl": ""
   },
@@ -1305,7 +1719,12 @@
     "zone": "Plane of Tactics",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["rallos", "rallos zek", "rz", "warlord"],
+    "nicknames": [
+      "rallos",
+      "rallos zek",
+      "rz",
+      "warlord"
+    ],
     "emoji": "🗡️",
     "pqdiUrl": ""
   },
@@ -1315,7 +1734,10 @@
     "zone": "Plane of Time",
     "expansion": "PoP",
     "timerHours": 168,
-    "nicknames": ["quarm", "time boss"],
+    "nicknames": [
+      "quarm",
+      "time boss"
+    ],
     "emoji": "🌀",
     "pqdiUrl": ""
   }
