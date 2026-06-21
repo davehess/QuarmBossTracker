@@ -70,6 +70,7 @@ try { autoUpdater = require('electron-updater').autoUpdater; } catch (_) { /* de
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'mimic.config.json');
 const AGENT_DIR   = () => path.join(app.getPath('userData'), 'agent');
 const AGENT_LOG   = () => path.join(app.getPath('userData'), 'agent.log');
+const ZEAL_RAW_LOG = () => path.join(app.getPath('userData'), 'zeal-raw.ndjson');
 const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 
 const WOLFPACK_URL    = 'https://wolfpack.quest';
@@ -176,6 +177,11 @@ function defaultConfig() {
     // being distracting on their desktop while alt-tabbed out. Unlocking
     // (setup mode) overrides this so they can still be positioned without EQ.
     hideOverlaysWhenEqDown: true,
+    // Diagnostic: dump every raw Zeal pipe object to zeal-raw.ndjson (userData).
+    // Off by default — it's a "show me exactly what the pipe sends" capture for
+    // protocol work, not something a normal user needs running. Toggled from the
+    // tray; capped + rotated so it can't fill the disk.
+    zealRawCapture: false,
   };
 }
 function loadConfig() {
@@ -360,6 +366,39 @@ function appendAgentLog(line) {
   logTail.push(line);
   if (logTail.length > LOG_TAIL_MAX) logTail.shift();
   try { fs.appendFileSync(AGENT_LOG(), line); } catch {}
+}
+
+// ── Raw Zeal capture (opt-in diagnostic) ────────────────────────────────────
+// When enabled (Info tab toggle → cfg.zealRawCapture), every raw Zeal pipe
+// object is appended to zeal-raw.ndjson — full and untruncated, with `data`
+// un-double-encoded. This is the definitive "what does the pipe actually send"
+// record; the in-app sampler only keeps the FIRST object per type, capped at
+// 600 chars. Off by default. Capped + rotated (one prior kept) so a long
+// session can't fill the disk. Byte counter is tracked in-process so we don't
+// stat the file on every event (the pipe pushes 200+/sec).
+const ZEAL_RAW_CAP_BYTES = 25 * 1024 * 1024;   // rotate at 25 MB
+let zealRawCapture = false;
+let _zealRawBytes  = 0;
+function setZealRawCapture(on, { marker = true } = {}) {
+  zealRawCapture = !!on;
+  if (!zealRawCapture) return;
+  // Seed the counter from the existing file so rotation stays accurate across
+  // restarts / re-enables.
+  try { _zealRawBytes = fs.existsSync(ZEAL_RAW_LOG()) ? fs.statSync(ZEAL_RAW_LOG()).size : 0; }
+  catch { _zealRawBytes = 0; }
+  if (marker) _writeZealRaw({ _capture: 'started', at: new Date().toISOString() });
+}
+function _writeZealRaw(obj) {
+  let line;
+  try { line = JSON.stringify(obj) + '\n'; } catch { return; }
+  try {
+    if (_zealRawBytes + line.length > ZEAL_RAW_CAP_BYTES) {
+      try { fs.renameSync(ZEAL_RAW_LOG(), ZEAL_RAW_LOG() + '.1'); } catch {}
+      _zealRawBytes = 0;
+    }
+    fs.appendFileSync(ZEAL_RAW_LOG(), line);
+    _zealRawBytes += line.length;
+  } catch { /* best effort */ }
 }
 
 // ── Character auto-detect (largest eqlog file wins) ────────────────────────
@@ -1291,6 +1330,9 @@ function startZealCapture() {
     let _zealFirstEqAt   = 0;
     let _zealHintFired   = false;
     let _zealAnyEventYet = false;
+    // Restore the raw-capture flag from config (no "started" marker — that's
+    // only for an explicit user toggle, not a silent resume on launch).
+    setZealRawCapture(loadConfig().zealRawCapture === true, { marker: false });
     zealWatch = startZealWatch({
       log: appendAgentLog,
       onStatus: (s) => {
@@ -1329,6 +1371,13 @@ function startZealCapture() {
         _zealPending.events.push(evt);
         // Cap pending so a runaway pipe can't grow the buffer unbounded.
         if (_zealPending.events.length > 2000) _zealPending.events.splice(0, 1000);
+        // Opt-in raw capture: persist the full object (data un-double-encoded)
+        // for protocol/diagnostic work. No-op unless the user enabled it.
+        if (zealRawCapture) {
+          let inner = obj && obj.data;
+          if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch { /* keep raw string */ } }
+          _writeZealRaw({ at: Date.now(), pid, type: obj && obj.type, character: obj && obj.character, data: inner });
+        }
         // Absorb gauge/player into live state for gauge-condition triggers.
         // pid rides along so a character switch on the same client retires
         // the previous character's state (see _zealAbsorb/_retireZealChar).
@@ -4464,6 +4513,10 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideAllHotkey')) {
     try { registerHideAllHotkey(); } catch {}
   }
+  // Apply a raw-Zeal-capture toggle live (Info tab control) without a restart.
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'zealRawCapture')) {
+    try { setZealRawCapture(!!merged.zealRawCapture); } catch {}
+  }
   // Create any newly-enabled overlay window that doesn't exist yet — windows
   // are only created at startup when their pref was already on, so a flip
   // from onboarding/settings was a silent no-op until restart (the apply*
@@ -4613,6 +4666,15 @@ ipcMain.handle('open-external', (_e, url) => {
   }
   shell.openExternal(url);
   return true;
+});
+// Open the raw Zeal capture file in the OS default app (Info-tab diagnostic).
+// Returns false if capture has never run (no file yet) so the renderer can hint.
+ipcMain.handle('open-zeal-capture', () => {
+  try {
+    if (!fs.existsSync(ZEAL_RAW_LOG())) return false;
+    shell.openPath(ZEAL_RAW_LOG());
+    return true;
+  } catch { return false; }
 });
 // Mimic Discord login (device-code flow).
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());

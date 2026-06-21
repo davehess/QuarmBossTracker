@@ -1364,6 +1364,19 @@ function _consumePendingCharmSpell(owner, nowMs) {
   _pendingCharmSpell = null;
   return { charm_class: p.cls, duration_sec: p.dur, charm_spell_name: p.name || null };
 }
+// Non-consuming variant: returns true iff there's a pending charm spell for
+// this owner that hasn't aged out. Used by _reconcileGaugeCharms to ACCEPT
+// a slot-16 pet whose name doesn't match the article-prefix heuristic — i.e.
+// a NAMED-mob charm target ("Jareker", "Mistmoore", etc). The actual
+// consume still happens in _bumpCharmTick once the debounce passes; this is
+// just the article-bypass signal.
+function _hasPendingCharmSpell(owner, nowMs) {
+  const p = _pendingCharmSpell;
+  if (!p) return false;
+  if ((nowMs || Date.now()) - p.ts > PENDING_CHARM_WINDOW_MS) return false;
+  if (p.owner && owner && String(p.owner).toLowerCase() !== String(owner).toLowerCase()) return false;
+  return true;
+}
 
 // Synthesize a "charm spell" entry in _buffLandingsByTarget so the charm shows
 // as a timed DEBUFF on the pet's Mob Info card, e.g. "Allure (Hopeya)".
@@ -1445,7 +1458,26 @@ function _reconcileGaugeCharms() {
     if (!st || !Array.isArray(st.gauges) || st.gauges.length === 0) continue;
     const ownerLower = String(ch).toLowerCase();
     gaugeOwners.add(ownerLower);
-    const petG = st.gauges.find(g => g && g.slot === 16 && g.text && /^an?\s+/i.test(String(g.text)));
+    // Article-prefix is the cheap heuristic for "this is a charmed mob, not
+    // a summoned pet" — most EQ mobs are named "a/an/the <thing>". But
+    // NAMED mobs are valid charm targets too (Jareker, Mistmoore, etc) and
+    // they have proper-noun names, no article. Uilnayar 2026-06-21
+    // ("Canopy charmed Jareker, tracker didn't light up"). Relax:
+    //   • article-prefixed slot-16 (a/an/the) → accept (legacy path,
+    //     covers ~95% of charm targets) OR
+    //   • pending charm spell from THIS owner within
+    //     PENDING_CHARM_WINDOW_MS → accept regardless of name shape.
+    // Cast → land → land-debounce → bumpCharmTick stays the proper open
+    // path; the consume happens at line 1467 just like before. Outside
+    // those signals we still reject (proper-named slot-16 with no pending
+    // charm is almost always a summon swap or pet ambiguity).
+    const petG = st.gauges.find(g => {
+      if (!g || g.slot !== 16 || !g.text) return false;
+      const txt = String(g.text);
+      if (/^(?:an?|the)\s+/i.test(txt)) return true;
+      if (_hasPendingCharmSpell(ch, now))   return true;
+      return false;
+    });
     if (!petG) continue;
     const name = String(petG.text);
     const k = name.toLowerCase();
@@ -1718,6 +1750,13 @@ const _petStatsByOwner  = new Map();   // ownerLower → { pet, skills:{[skill]:
 // EQ damage verb → skill bucket. Plural/singular collapse so 'slash'/'slashes'
 // both count as Slashing. Generic 'hits' (1H blunt + h2h) is its own bucket
 // because we can't tell apart 1HB and H2H from the verb alone.
+//
+// Bow-armed pets: EQ pets can equip a bow + arrows just like a player; per
+// Uilnayar 2026-06-21 the attack lands as a generic "Petname hits Y" verb
+// (not the player-form "shoots") so the hit/hits mapping below covers it.
+// The shoots/fires/throws/flings aliases are here defensively — covers any
+// EQ version (or future emu pet AI revision) that emits the more specific
+// ranged verb instead.
 const _PET_VERB_SKILL = {
   slash:'Slashing', slashes:'Slashing',
   pierce:'Piercing', pierces:'Piercing',
@@ -1725,7 +1764,11 @@ const _PET_VERB_SKILL = {
   bash:'Bash', bashes:'Bash',
   kick:'Kick', kicks:'Kick',
   punch:'H2H', punches:'H2H',
-  hit:'Hits', hits:'Hits',
+  hit:'Hits', hits:'Hits',                       // generic; covers pet bow shots
+  shoot:'Archery', shoots:'Archery',             // ranged form, defensive
+  fire:'Archery', fires:'Archery',               // ranged form, defensive
+  throw:'Throwing', throws:'Throwing',           // throwing weapon, defensive
+  fling:'Throwing', flings:'Throwing',           // throwing weapon, defensive
   bite:'Bite', bites:'Bite',
   claw:'Claw', claws:'Claw',
   gore:'Gore', gores:'Gore',
@@ -2871,6 +2914,8 @@ const ABILITY_CLASS = {
   'dragon punch': 'Monk',
   'eagle strike': 'Monk',
   'tail rake':    'Monk',  // iksar monk equivalent of Dragon Punch
+  'subversion':   'Necromancer',  // the "twitch" mana-share line (Rapacious/Covetous/Sedulous)
+  'mind wrack':   'Necromancer',  // enemy mana burn w/ group-mana recourse
 };
 function inferClassFromAbility(character, ability) {
   if (!character || !ability) return;
@@ -4793,6 +4838,7 @@ function _endpointForKind(kind, botUrl) {
     case 'pvp':             return base + '/pvp';
     case 'pvp_assists':     return base + '/pvp_assists';
     case 'bosskill':        return base + '/bosskill';
+    case 'hatekill':        return base + '/hatekill';
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
@@ -4899,9 +4945,21 @@ function enqueueUpload(kind, payload) {
   // dashboard still works — local stats come from parseEvent, not the queue.
   if (!_isUploaderInstance) return null;
   if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
-    const dropped = _uploadQueue.shift();
+    // Prefer to evict BACKFILL uploads over live ones. Pre-2026-06-21 this
+    // was straight FIFO — during a big --since/opt-in run, live PvP/chat/
+    // bosskill events queued up BEHIND the historical encounter payloads
+    // got crowded out as the queue churned, and the user lost the live
+    // ones (Uilnayar's missed [PVP] kill broadcasts, 2026-06-21). Backfill
+    // is rerunnable (idempotent via DB dedup_key + the bot's
+    // findOrCreateEncounter ±30min window), so dropping its oldest is
+    // far cheaper than dropping a live event the user expected to see
+    // post in Discord.
+    let evictIdx = _uploadQueue.findIndex(e => e?.payload?.backfill === true);
+    if (evictIdx < 0) evictIdx = 0;   // no backfill in queue → fall back to FIFO
+    const [dropped] = _uploadQueue.splice(evictIdx, 1);
     _queueCapEvictCount++;
-    console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped oldest ${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
+    const tag = dropped?.payload?.backfill ? 'backfill ' : 'live ';
+    console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped ${tag}${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
   }
   // Attribute operator-level streams (chat / pvp / fun_event / historical_chat)
   // to the operator's primary box. These aggregate across every watched log so
@@ -5029,8 +5087,23 @@ async function _drainUploadQueue() {
     // picked up on the next pass. Cap parallel work so a huge backlog
     // doesn't wedge a single pass for hours; the next interval (15s)
     // picks up the rest.
-    const due = _uploadQueue.filter(e => e.next_try_at <= now).slice(0, QUEUE_MAX_PER_DRAIN_PASS);
-    if (due.length === 0) return;
+    //
+    // PRIORITIZE LIVE over BACKFILL within each pass. Pre-2026-06-21 the
+    // filter was naked FIFO — when a backfill produced 2800 encounter
+    // payloads ahead of 4 live PVP broadcasts in the queue, the PVP rows
+    // sat behind every single backfill encounter and waited tens of
+    // minutes (or more, under ECONNRESET retries) before getting a turn.
+    // (Uilnayar's queue diagnostic 2026-06-21 caught it: pvp:4 trapped
+    // behind encounter:2800.) Now we pick live items first, then fill
+    // the remainder of the per-pass budget with backfill. Backfill is
+    // idempotent (DB dedup_key + ±30min find_or_create_encounter
+    // window), live events are time-sensitive — this ordering is correct
+    // every time the queue has both kinds.
+    const allDue = _uploadQueue.filter(e => e.next_try_at <= now);
+    if (allDue.length === 0) return;
+    const live    = allDue.filter(e => !e?.payload?.backfill);
+    const back    = allDue.filter(e =>  e?.payload?.backfill);
+    const due     = [...live, ...back].slice(0, QUEUE_MAX_PER_DRAIN_PASS);
 
     let stateChanged = false;
     for (const entry of due) {
@@ -5051,12 +5124,27 @@ async function _drainUploadQueue() {
         stateChanged = true;
       } else {
         entry.attempts++;
-        entry.last_error = `${result.statusCode || 'net'}: ${(result.body || '').toString().slice(0, 200)}`;
-        const backoffIdx = Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1);
-        entry.next_try_at = Date.now() + QUEUE_BACKOFF_MS[backoffIdx];
+        const errBody = (result.body || '').toString();
+        entry.last_error = `${result.statusCode || 'net'}: ${errBody.slice(0, 200)}`;
+        // Transport-level errors (ECONNRESET, ETIMEDOUT, ENETUNREACH,
+        // socket hang up) usually clear within seconds — Railway cycling
+        // a connection, the bot restarting, a momentary network blip.
+        // Walking these to the 10-min backoff cap means a single bad
+        // moment leaves the queue effectively dead for half an hour
+        // (Uilnayar's stalled-queue diagnostic 2026-06-21:
+        // `net: read ECONNRESET` was driving every retry into deep
+        // backoff). Hold transport errors to a flat 30s retry instead;
+        // server-shape errors (5xx body) still get the normal exponential
+        // ladder because those mean the bot is intentionally rejecting.
+        const isTransport = !result.statusCode &&
+          /ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EPIPE|socket hang up|^timeout$/i.test(errBody);
+        const backoffMs = isTransport
+          ? 30_000
+          : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
+        entry.next_try_at = Date.now() + backoffMs;
         stats.uploadErrors++;
         if (entry.attempts === 1 || entry.attempts === 5 || entry.attempts === 20) {
-          console.warn(`[upload-queue] retrying ${entry.kind} (attempt ${entry.attempts}, next in ${Math.round(QUEUE_BACKOFF_MS[backoffIdx]/1000)}s): ${entry.last_error}`);
+          console.warn(`[upload-queue] retrying ${entry.kind} (attempt ${entry.attempts}, next in ${Math.round(backoffMs/1000)}s${isTransport ? ', transport' : ''}): ${entry.last_error}`);
         }
         stateChanged = true;
       }
@@ -5830,10 +5918,19 @@ function _zealExportOnCampState() {
         const st = _zealState[ch];
         if (!st || !Array.isArray(st.gauges)) continue;
         const petG = st.gauges.find(g => g && g.slot === 16 && g.text);
+        const txt = petG ? String(petG.text) : '';
+        const isArticled  = !!txt && /^(?:an?|the)\s+/i.test(txt);
+        const hasPendingCharm = _hasPendingCharmSpell(ch, now);
         out.slot16_by_char.push({
           character:  ch,
-          slot16_text: petG ? String(petG.text) : null,
-          passes_article_filter: petG ? /^an?\s+/i.test(String(petG.text)) : false,
+          slot16_text: petG ? txt : null,
+          // True if the slot-16 text would be accepted by the reconciler.
+          // Two routes: (a) article prefix (a/an/the — covers most generic
+          // mobs), OR (b) a pending charm spell for this owner, which
+          // unblocks named-mob targets like Jareker / Mistmoore.
+          passes_article_filter: !!petG && (isArticled || hasPendingCharm),
+          articled:        isArticled,
+          pending_charm:   hasPendingCharm,
           updated_age_secs: st.updatedAt ? Math.round((now - st.updatedAt) / 1000) : null,
         });
       }
@@ -6856,7 +6953,12 @@ function renderHeader(s) {
   if (q.pending > 0) {
     const kinds = Object.entries(q.byKind || {}).map(([k, n]) => k + ':' + n).join(' · ');
     const tip = (q.lastError ? 'Last error: ' + q.lastError + ' · ' : '') + kinds;
-    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued</span>';
+    // Click-to-force-drain link — POSTs /api/drain which resets next_try_at
+    // on every entry to now() and kicks an immediate pass. Helpful when the
+    // queue gets stuck in a long exponential backoff after a transient
+    // server hiccup (added 2026-06-21 from Uilnayar's stalled-queue
+    // report).
+    queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
   } else if (q.permanentDropped > 0 || q.capEvicted > 0) {
     const dropTip =
       (q.permanentDropped > 0 ? q.permanentDropped + ' permanent 4xx · ' : '') +
@@ -6936,6 +7038,28 @@ function renderHeader(s) {
     }
   }
   _bindOnce(manual, 'click', async () => {
+    // Mimic-hosted case: hand off to the shell's update IPC which fires
+    // BOTH checks at once — safeCheckForUpdates (Mimic via electron-
+    // updater; opens its own install dialog if there's news) AND
+    // checkAgentUpdate (silent in-place agent hot-swap). The user gets
+    // one unified result driven by Mimic's dialogs; no need for our
+    // dashboard-side restart confirm to add a second prompt.
+    // (Uilnayar 2026-06-21 — the dashboard button used to be agent-only,
+    // missing every Mimic-only update that landed in between.)
+    const inMimic = !!(window.mimic && typeof window.mimic.checkForUpdates === 'function');
+    if (inMimic) {
+      manual.disabled = true;
+      const _label = manual.textContent;
+      manual.textContent = 'Checking...';
+      try { await window.mimic.checkForUpdates(); }
+      catch (e) { console.warn('[update] mimic.checkForUpdates failed:', e && e.message); }
+      // Restore the button — Mimic will surface a dialog with the result
+      // if there's an update; nothing more for the dashboard to do.
+      manual.disabled = false; manual.textContent = _label;
+      return;
+    }
+    // Standalone agent (no Mimic shell): existing flow — confirm + POST
+    // /api/update for an in-place agent restart + pull.
     if (!confirm('Restart agent and pull the latest version? Session will be saved and resumed.')) return;
     manual.disabled = true; manual.textContent = 'Restarting...';
     const ok = await _attemptUpdate(manual, false);
@@ -6950,6 +7074,32 @@ function renderHeader(s) {
   _bindOnce(inline, 'click', (e) => {
     e.preventDefault();
     document.getElementById('updateBtn')?.click();
+  });
+  // "Drain now" link on the queue chip — POST /api/drain to reset all
+  // next_try_at to NOW and kick a pass immediately. The response carries
+  // diagnostics (lastError, kinds) that we surface via alert() so a stuck
+  // queue is debuggable without opening the agent log file.
+  const drainLink = document.getElementById('wpDrainNow');
+  _bindOnce(drainLink, 'click', async (e) => {
+    e.preventDefault();
+    const orig = drainLink.textContent;
+    drainLink.textContent = 'draining...';
+    try {
+      const r  = await fetch('/api/drain', { method: 'POST' });
+      const j  = await r.json();
+      const kinds = j.byKind ? Object.entries(j.byKind).map(([k,n]) => k+':'+n).join(', ') : '';
+      const msg = 'Drain kicked.\\n\\n' +
+        'Reset backoff on: ' + (j.backoffReset || 0) + ' entries\\n' +
+        'Now pending: '      + (j.pending || 0) + '\\n' +
+        (kinds ? 'Kinds: '       + kinds + '\\n' : '') +
+        (j.maxAttempts ? 'Max attempts on any entry so far: ' + j.maxAttempts + '\\n' : '') +
+        (j.lastError   ? 'Last error: ' + String(j.lastError).slice(0, 240) : 'No recent errors logged.');
+      alert(msg);
+    } catch (err) {
+      alert('Drain request failed: ' + (err && err.message || err));
+    } finally {
+      drainLink.textContent = orig;
+    }
   });
   const u = document.getElementById('updateBtn');
   _bindOnce(u, 'click', async () => {
@@ -7886,12 +8036,14 @@ function renderCharmDiag(s) {
          +   '<td><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(r.slot16_text) + '</code></td>'
          +   '<td>' + (r.passes_article_filter
               ? '<span style="color:var(--green)">passes</span>'
-              : '<span style="color:var(--red)">FAILS — needs to start with "a "/"an "</span>') + '</td>'
+                + (r.articled ? ' <span class="dim">(article)</span>'
+                              : (r.pending_charm ? ' <span class="dim">(pending charm)</span>' : ''))
+              : '<span style="color:var(--red)">FAILS — not articled (a/an/the) AND no pending charm spell for this owner</span>') + '</td>'
          +   '<td class="dim">' + (r.updated_age_secs != null ? r.updated_age_secs + 's ago' : '?') + '</td></tr>';
     }
     h += '</table>';
     if (slot16Rows.some(r => !r.passes_article_filter)) {
-      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ The article-prefix filter in _reconcileGaugeCharms only opens a charm session when the slot 16 text starts with "a " or "an ". If your charmed mob doesn\\'t have an article in its name, this filter rejects it — flag the case so we can relax the rule.</div>';
+      h += '<div class="dim" style="font-size:10px;margin-top:4px;color:var(--orange)">⚠ Reconciler accepts slot-16 text on TWO routes: (a) article prefix (a/an/the — covers generic mobs), OR (b) a pending charm spell from this owner within ~5s (the named-mob path, Uilnayar 2026-06-21 — Jareker etc). If both miss, the reconciler treats slot 16 as a non-charm pet (summoned pet swap or pet ambiguity).</div>';
     }
   }
   h += '</div>';
@@ -8237,6 +8389,22 @@ function renderInfo(s) {
   h += '<div>Lifetime: ' + ((s.lifetime?.totalEvents||0) + s.sessionEvents) + ' ev / ' + lifetimeMin + ' min</div>';
   if (s.lifetime?.firstSeenAt) h += '<div class="dim">First run: ' + esc(s.lifetime.firstSeenAt) + '</div>';
   h += '</div>';
+  // 🩺 Raw Zeal capture — opt-in diagnostic. The control lives here, but the
+  // capture itself runs in Mimic (it owns the pipe); we drive it through the
+  // window.mimic config bridge. wpWireZealCapture wires the buttons after render.
+  var _underMimic = !!(window.mimic && window.mimic.getConfig);
+  h += '<div class="card"><h2>🩺 Raw Zeal Capture <span class="dim" style="font-size:11px;font-weight:normal">(diagnostic)</span></h2>';
+  if (_underMimic) {
+    h += '<div class="subtle" style="font-size:11px;margin-bottom:8px">Dumps every raw Zeal pipe object &mdash; full and untruncated &mdash; to <code>zeal-raw.ndjson</code>. Turn it on, reproduce, then open the file. Leave off for normal play; it is capped + rotated so it cannot fill the disk.</div>';
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    h += '<button type="button" id="wpZealCapBtn" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--text)">&hellip;</button>';
+    h += '<button type="button" id="wpZealCapOpen" style="cursor:pointer;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:#21262d;color:var(--blue)">Open capture file&hellip;</button>';
+    h += '</div>';
+    h += '<div id="wpZealCapHint" class="dim" style="font-size:11px;margin-top:6px"></div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px">Requires Mimic &mdash; open this dashboard from the desktop app to capture raw Zeal traffic.</div>';
+  }
+  h += '</div>';
   // Top abilities
   const abs = Object.entries(s.abilityStats||{}).sort((a,b)=>b[1].total-a[1].total).slice(0,20);
   h += '<div class="card wide"><h2>Top Abilities (uploader)</h2>';
@@ -8420,6 +8588,43 @@ function renderInfo(s) {
   h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
   setSectionHTML('info', h);
   wireLoadoutControls();
+  wpWireZealCapture();
+}
+
+// Wire the Info-tab raw-Zeal-capture buttons to the Mimic config bridge. The
+// flag lives in Mimic config (zealRawCapture); toggling saveConfig flips the
+// live capture in main.js without a restart. No-op in a plain browser (no
+// window.mimic). Uses _bindOnce so re-renders don't stack listeners.
+function wpWireZealCapture() {
+  var btn  = document.getElementById('wpZealCapBtn');
+  var open = document.getElementById('wpZealCapOpen');
+  if (!btn || !window.mimic || !window.mimic.getConfig) return;
+  function paint(on) {
+    btn.textContent      = on ? 'Capturing — click to stop' : 'Start capture';
+    btn.style.background  = on ? '#3d1d1d' : '#21262d';
+    btn.style.color       = on ? '#fca5a5' : 'var(--text)';
+    btn.style.borderColor = on ? '#5a2a2a' : 'var(--border)';
+  }
+  window.mimic.getConfig().then(function(cfg){ paint(!!(cfg && cfg.zealRawCapture)); }).catch(function(){});
+  _bindOnce(btn, 'click', function(){
+    window.mimic.getConfig().then(function(cfg){
+      var next = !(cfg && cfg.zealRawCapture);
+      return window.mimic.saveConfig({ zealRawCapture: next }).then(function(){
+        paint(next);
+        var hint = document.getElementById('wpZealCapHint');
+        if (hint) hint.textContent = next
+          ? 'Capturing to zeal-raw.ndjson — reproduce now, then open the file.'
+          : 'Stopped.';
+      });
+    }).catch(function(){});
+  });
+  if (open) _bindOnce(open, 'click', function(){
+    if (!window.mimic.openZealCapture) return;
+    window.mimic.openZealCapture().then(function(ok){
+      var hint = document.getElementById('wpZealCapHint');
+      if (hint && !ok) hint.textContent = 'No capture file yet — start a capture first.';
+    }).catch(function(){});
+  });
 }
 
 
@@ -10415,7 +10620,17 @@ async function dismissTopDamage(key) {
     });
   }
   fetchAll();
-  setInterval(fetchAll, 5000);
+  // 5s → 15s (2026-06-21): the auction panel fires the bot's
+  // /api/agent/server-panel/auctions handler, which fans out into 3
+  // PostgREST reads — opendkp_auctions, opendkp_audits, AND a
+  // per-character wishlists ilike. Each active agent was hitting this
+  // every 5s and the wishlists row alone was the heaviest single egress
+  // pattern in the live API log (~10 req/sec across all agents). Bids
+  // typically arrive at multi-second cadence inside an auction, so 15s
+  // is plenty responsive while cutting wishlist+auction reads ~3x.
+  // 2026-06-21: cranked default 15s → 7s after the Supabase Pro upgrade —
+  // bids feel near-real-time again. Override via WP_AUCTION_POLL_MS.
+  setInterval(fetchAll, parseInt(process.env.WP_AUCTION_POLL_MS, 10) || 7000);
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
@@ -11290,6 +11505,36 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
       }
+      // Force a queue drain attempt right now. Used by the "Drain now" link
+      // on the dashboard queue chip when a backlog appears stalled — resets
+      // every entry's next_try_at to right now (skipping backoff windows)
+      // and kicks a single immediate pass. Counts: how many had their
+      // backoff cleared, kinds in the queue, and a snippet of the most
+      // recent failure for diagnosis. Recovered from Uilnayar's
+      // stalled-queue report 2026-06-21.
+      if (req.url === '/api/drain' && req.method === 'POST') {
+        const now = Date.now();
+        let resetCount = 0;
+        for (const e of _uploadQueue) {
+          if (e.next_try_at > now) { e.next_try_at = now; resetCount++; }
+        }
+        if (resetCount > 0) {
+          try { _saveQueueToDisk(); } catch {}
+        }
+        // Fire-and-forget — the drain itself awaits HTTP requests, we don't
+        // want to make the dashboard hang while it runs.
+        _drainUploadQueue().catch(() => {});
+        const q = getQueueStats();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok:          true,
+          backoffReset: resetCount,
+          pending:     q.pending,
+          byKind:      q.byKind,
+          lastError:   q.lastError,
+          maxAttempts: q.maxAttempts,
+        }));
+      }
       // Zeal pipe events forwarded by Mimic (same machine, localhost only —
       // no auth, matches the other localhost dashboard endpoints). Body:
       // { connectedPids: [..], events: [{ type, sample? }] }. We tally per
@@ -11335,6 +11580,20 @@ function startWebDashboard(port) {
         // the stale entry forever ("shows Dafeet after switching characters").
         if (character && payload?.disconnected === true) {
           delete _zealState[character];
+          // A camped/logged-off character's charm pet despawns with them. Drop
+          // any charm session they owned so it doesn't dangle with a stale
+          // started_at: _reconcileGaugeCharms skips a session whose owner is no
+          // longer streaming a gauge (treats it as a log-managed bystander), so
+          // without this the session never breaks and resurfaces as a phantom
+          // "charm breaking in 30 seconds" callout on relogin ("up 35:52" on a
+          // 12-min charm). Silent delete — not a 'break' — so we don't fire a
+          // recharm alert at someone who just logged out.
+          const _cl = character.toLowerCase();
+          for (const [k, info] of _charmTickTracker) {
+            if (info && String(info.owner || '').toLowerCase() === _cl) {
+              _charmTickTracker.delete(k);
+            }
+          }
           // Same-client swap: forward "<character> swapped to <X>" to the
           // bot so /raid moves them to "Not in raid (swapped to X)" instead
           // of showing both characters as live raiders. Fire-and-forget on
@@ -13058,6 +13317,23 @@ function runOptinBackfill(files, opts = {}) {
       await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
     };
 
+    // Backfill PvP broadcast batch. Pre-2026-06-21 this code referenced an
+    // undeclared `pvpBatch` + `flushPvp` — every PvP-broadcast line in a
+    // backfill ran the throw path inside readFromBytePos's `try { onLine }
+    // catch { /* swallow */ }` (line 12987), silently dropping every
+    // historical [PVP] kill from the pvp_kills ledger. (Discovered while
+    // diagnosing Uilnayar's missed live PVP messages 2026-06-21.) Now we
+    // mirror the chatBatch pattern: batch up to 200, flush via uploadPvp
+    // which routes through the durable queue so a slow drain doesn't lose
+    // anything.
+    const pvpBatch = [];
+    const flushPvp = async (force) => {
+      if (pvpBatch.length === 0) return;
+      if (!force && pvpBatch.length < 200) return;
+      const batch = pvpBatch.splice(0);
+      await uploadPvp(batch, _uploadOpts || { botUrl, token, dryRun }).catch(() => {});
+    };
+
     // Per-file builder: encounters auto-flush on boss death (see EncounterBuilder.add),
     // plus a final builder.flush() at end of file for any trailing events. /who
     // observations land in the module-level whoData map as a parseEvent side-effect
@@ -13121,6 +13397,12 @@ function runOptinBackfill(files, opts = {}) {
             if (dpEvt) funEventBuffer.push(dpEvt);
             const dirgeEvt = parseDirgeCast(line, f.character);
             if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+            // Necro mana share — Subversion twitches (mana donated) + Mind
+            // Wrack. Self-cast only (the spell name is invisible to bystanders).
+            const twitchEvt = parseNecroManaShare(line, f.character);
+            if (twitchEvt) funEventBuffer.push(twitchEvt);
+            const twitchRecvEvt = parseNecroManaReceived(line, f.character);
+            if (twitchRecvEvt) funEventBuffer.push(twitchRecvEvt);
             // Faction hits + /con standing transitions — self-only lines; rides
             // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
             // complete-log backfill crawls idempotent.
@@ -13213,6 +13495,7 @@ function runOptinBackfill(files, opts = {}) {
           { queueLen: () => _uploadQueue.length, high: QUEUE_BACKPRESSURE_HIGH, low: QUEUE_BACKPRESSURE_LOW });
         builder.flush();
         await flushChat(true).catch(() => {});
+        await flushPvp(true).catch(() => {});
         if (result?.aborted) {
           // Resume position preserved — clicking Backfill again picks up
           // where we left off via _optinState.progress[f.path].bytePos.
@@ -13819,9 +14102,52 @@ const PVP_BARE_NPC_RX            = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)>
 const PVP_BARE_PLAYER_ACTIVE_RX  = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (\w+) of <(.+?)> in (.+?)!$/;
 const PVP_BARE_BOSS_ACTIVE_RX    = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)> has killed (.+?)(?: in (.+?))?!$/;
 
+// Guildless boss kill — an UNGUILDED player rushing an open-world spawn
+// broadcasts WITHOUT an "of <Guild>" tag ("Xyz has killed Lord of Ire!"). Every
+// matcher above requires the guild clause, so these were lost silently — the
+// recurring "the bot misses ire" reports are non-guild groups grabbing the
+// open-world post-quake spawn at off hours. killerGuild stays null, so the bot
+// credits no Wolf Pack member and fires no PvP ping; the boss respawn timer
+// still records (it keys on the victim name matching data/bosses.json). The
+// BARE form REQUIRES the literal [PVP] channel tag — with no guild clause to
+// anchor it, we can't risk matching arbitrary "X has killed Y!" log noise.
+const PVP_BOSS_KILL_GUILDLESS_RX = /^(\w+) has killed (.+?)(?: in (.+?))?!$/;
+const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?)(?: in (.+?))?!$/;
+
+// Player's own EQ guild, observed from any Druzzil-Ro guild broadcast that
+// fires on this log. Druzzil only ever addresses YOUR guild ("Druzzil Ro
+// tells the guild, '<X of Wolf Pack>...'"), so the killerGuild captured in
+// ANY Druzzil broadcast IS our own guild. Bootstrapped lazily — until the
+// first Druzzil fire of the session it stays null, which makes the
+// `(Instanced)` PvP-echo filter conservative (drops all instance echoes,
+// the old behavior). Once known, foreign-guild instance kills pass through
+// instead — fixing Uilnayar's 2026-06-21 missed-Lord-of-Ire-by-<Freedom>
+// report. We never clear this; if the agent is restarted, it re-learns
+// from the next Druzzil broadcast.
+let _observedOwnGuild = null;
+
+function _ciEq(a, b) {
+  return !!(a && b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase());
+}
+
+// PvP-channel echo of an own-guild instance kill is a duplicate of the
+// Druzzil broadcast we ALREADY route through /bosskill. Drop it ONLY when
+// the killing guild matches our observed own guild — foreign-guild
+// instance kills (Freedom in Plane of Hate, etc.) DO surface to us only
+// through this echo, so dropping them here loses signal entirely.
+function _isOwnGuildInstanceEcho(text, killerGuild) {
+  if (!/\(Instanced\)/i.test(text)) return false;
+  // No own-guild observed yet → conservative drop (current behavior). The
+  // first Druzzil broadcast of the session unblocks foreign-guild echoes.
+  if (!_observedOwnGuild) return true;
+  return _ciEq(killerGuild, _observedOwnGuild);
+}
+
 function parseDruzzilKill(line) {
   const m = DRUZZIL_KILL_RX.exec(line);
   if (!m) return null;
+  // Druzzil only addresses our guild — record it for the [PVP] echo filter.
+  if (m[3]) _observedOwnGuild = m[3];
   const ts = parseEqTimestamp(line);
   return {
     character: m[2],
@@ -13878,16 +14204,35 @@ function parsePvpBroadcast(line) {
     // the kill credits to the Wolf Pack killer on /pvp/server.
     const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
     if (bossA) {
-      // A guild PvE INSTANCE kill ("...in <Zone> (Instanced)!") is NOT a
-      // PvP-server boss kill — it's the Druzzil-Ro guild broadcast that the
-      // /bosskill path already turns into a normal instance timer. Skip it so
-      // it doesn't ALSO record a ±20% PvP timer + fire a PvP ping.
-      if (/\(Instanced\)/i.test(text)) return null;
+      // OWN-guild PvE instance kill is the Druzzil-Ro broadcast that the
+      // /bosskill path already turns into a normal instance timer; the
+      // [PVP] echo is a duplicate, drop it. FOREIGN-guild instance kills
+      // are silently dropped under the old behavior — they reach us only
+      // through this echo, and Uilnayar's missed-Lord-of-Ire-by-<Freedom>
+      // report (2026-06-21) was exactly that. Now we let those through.
+      if (_isOwnGuildInstanceEcho(text, bossA[2])) return null;
       return {
         ts: tsOf(), text, killType: 'pvp',
         killer: bossA[1], killerGuild: bossA[2],
         victim: bossA[3], victimGuild: null,
         zone:   bossA[4] || null,
+      };
+    }
+
+    // Guildless killer-first boss kill: "Xyz has killed Lord of Ire!" — an
+    // unguilded player on the open-world spawn. Broadest pattern; try last.
+    // Safe inside the Druzzil wrapper (already known to be a broadcast).
+    const bossG = PVP_BOSS_KILL_GUILDLESS_RX.exec(text);
+    if (bossG) {
+      // No guild on the line — we can't ID it as ours, so we can only
+      // assume the "(Instanced)" duplicate-protection rule applies. Leave
+      // the conservative drop in place for guildless instance echoes.
+      if (/\(Instanced\)/i.test(text)) return null;
+      return {
+        ts: tsOf(), text, killType: 'pvp',
+        killer: bossG[1], killerGuild: null,
+        victim: bossG[2], victimGuild: null,
+        zone:   bossG[3] || null,
       };
     }
 
@@ -13932,8 +14277,10 @@ function parsePvpBroadcast(line) {
 
   const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
   if (bossBareA) {
-    // Guild PvE instance kill echoed in the [PVP] channel — skip (see Path A).
-    if (/\(Instanced\)/i.test(line)) return null;
+    // Own-guild PvE instance kill echoed in the [PVP] channel — duplicate
+    // of the Druzzil broadcast that drives /bosskill. Foreign-guild kills
+    // pass through (see Path A's note for the Uilnayar fix).
+    if (_isOwnGuildInstanceEcho(line, bossBareA[3])) return null;
     return {
       ts: tsOf(),
       text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
@@ -13944,7 +14291,48 @@ function parsePvpBroadcast(line) {
     };
   }
 
+  // Guildless bare boss kill in the [PVP] channel — "[PVP] Xyz has killed
+  // Lord of Ire!" (requires the [PVP] tag; see regex note above).
+  const bossBareG = PVP_BARE_BOSS_GUILDLESS_RX.exec(line);
+  if (bossBareG) {
+    if (/\(Instanced\)/i.test(line)) return null;
+    return {
+      ts: tsOf(),
+      text: `${bossBareG[2]} has killed ${bossBareG[3]}${bossBareG[4] ? ` in ${bossBareG[4]}` : ''}!`,
+      killType:    'pvp',
+      killer:      bossBareG[2], killerGuild: null,
+      victim:      bossBareG[3], victimGuild: null,
+      zone:        bossBareG[4] || null,
+    };
+  }
+
   return null;
+}
+
+// Diagnostic capture for kill-shaped PvP broadcasts that no pattern above
+// matched. Persists the raw line (capped, newest-last) to
+// logsync.pvp-unmatched.json so a novel broadcast phrasing — e.g. an
+// open-world post-quake boss kill we haven't seen — can be retrieved and
+// turned into a parser rule instead of vanishing silently.
+const PVP_UNMATCHED_FILE = path.join(__dirname, 'logsync.pvp-unmatched.json');
+const PVP_UNMATCHED_CAP  = 200;
+function captureUnmatchedPvpKill(line) {
+  if (!/PVP Druzzil Ro BROADCASTS|\[PVP\]/.test(line)) return;   // broadcast context only
+  if (!/\bhas killed\b/.test(line)) return;                       // kill-shaped only
+  if (/\(Instanced\)/i.test(line)) return;                        // instance kills are handled elsewhere
+  console.warn(`[pvp-unmatched] kill-shaped broadcast not parsed: ${line.trim()}`);
+  try {
+    let arr = [];
+    if (fs.existsSync(PVP_UNMATCHED_FILE)) {
+      try { arr = JSON.parse(fs.readFileSync(PVP_UNMATCHED_FILE, 'utf8')) || []; } catch { arr = []; }
+    }
+    if (!Array.isArray(arr)) arr = [];
+    arr.push({ ts: new Date().toISOString(), line: line.trim() });
+    if (arr.length > PVP_UNMATCHED_CAP) arr = arr.slice(-PVP_UNMATCHED_CAP);
+    const tmp = PVP_UNMATCHED_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(arr));
+    fs.renameSync(tmp, PVP_UNMATCHED_FILE);
+  } catch (e) { void e; }
 }
 
 // EQ in-game item links land in the log as `\x12<hex blob>\x12Item Name\x12`.
@@ -14184,6 +14572,31 @@ const chatBuffer        = [];   // pending guild/raid chat lines
 const pvpBuffer         = [];   // pending PVP broadcast lines
 const pvpAssistBuffer   = [];   // pending PvP assist correlations (us → player damage + their death by someone else)
 const druzzilKillBuffer = [];   // pending Druzzil Ro boss-kill announcements
+const hateKillBuffer    = [];   // pending Plane-of-Hate kills routed to the bot's /hatekill (Supabase-backed tracker)
+
+// Translate a parsed PvP broadcast into a hate-kill upload row, or null if
+// the kill isn't in Plane of Hate. We honor whatever the PvP parser
+// produced for killer/zone (it understands both wrapped + bare [PVP]
+// echoes) and recompute isOwnGuild from _observedOwnGuild — the bot
+// re-checks server-side but having it on the wire saves a Supabase
+// who-am-i lookup per row.
+function _pvpBcastToHateKill(pvpBcast) {
+  if (!pvpBcast || pvpBcast.killType !== 'pvp') return null;
+  if (!pvpBcast.zone || !/plane of hate/i.test(pvpBcast.zone)) return null;
+  if (!pvpBcast.victim || !pvpBcast.killer) return null;
+  return {
+    server:      'pvp',                    // PVP server broadcast; the live-server
+                                           // tracker stays manual-only for now.
+    killer:      pvpBcast.killer,
+    killerGuild: pvpBcast.killerGuild || null,
+    boss:        pvpBcast.victim,          // [PVP] line names the boss as "victim"
+    zone:        pvpBcast.zone,
+    instanced:   /\(Instanced\)/i.test(pvpBcast.text || ''),
+    isOwnGuild:  _ciEq(pvpBcast.killerGuild, _observedOwnGuild),
+    ts:          pvpBcast.ts,
+    rawText:     pvpBcast.text || null,
+  };
+}
 const funEventBuffer    = [];   // pending fun-events (Peopleslayer LD, future CoH/DI/etc)
 const factionBuffer     = [];   // pending faction hits + /con standing transitions
 const popFlagBuffer     = [];   // pending PoP flag grants (zone+boss context attached)
@@ -14232,6 +14645,8 @@ function startChatRelay() {
       uploadPvpAssists(pvpAssistBuffer.splice(0), _uploadOpts).catch(() => {});
     if (druzzilKillBuffer.length > 0)
       uploadDruzzilKills(druzzilKillBuffer.splice(0), _uploadOpts).catch(() => {});
+    if (hateKillBuffer.length > 0)
+      uploadHateKills(hateKillBuffer.splice(0), _uploadOpts).catch(() => {});
     if (_lockoutBuffer.length > 0)
       uploadLockouts(_lockoutBuffer.splice(0), _uploadOpts).catch(() => {});
     if (funEventBuffer.length > 0)
@@ -14259,11 +14674,16 @@ function startChatRelay() {
     }
   }, 5000);
 
-  // Threat-snapshot uploader — every 15s while a fight is active, post the
-  // current per-player threat picture to /api/agent/threat-snapshot. The bot
-  // dedups identical (uploader, boss, second-granular ts) so the rare
-  // overlap from two parsers collapses naturally. No-op when no fight is
-  // active or no token is set.
+  // Threat-snapshot uploader — periodic post of the current per-player
+  // threat picture to /api/agent/threat-snapshot during an active fight.
+  // Default cadence 30s (was 15s pre-egress triage; a roomful of Mimics
+  // pushing every 15s added up to ~120 inserts/min). Override via
+  // WP_THREAT_SNAPSHOT_MS; the safety floor is held just below the
+  // cadence so a slow drain doesn't double-post inside one interval.
+  // 2026-06-21: cranked default 30s → 18s after the Supabase Pro upgrade
+  // — more granular per-fight tank-threat detail. Original was 15s.
+  const _threatSnapMs    = parseInt(process.env.WP_THREAT_SNAPSHOT_MS, 10) || 18_000;
+  const _threatSnapFloor = Math.max(1000, _threatSnapMs - 1000);
   let _lastSnapAt = 0;
   setInterval(() => {
     if (!_uploadOpts || !_uploadOpts.botUrl || !_uploadOpts.token) return;
@@ -14271,11 +14691,7 @@ function startChatRelay() {
     if (!et || !et.perPlayer || Object.keys(et.perPlayer).length === 0) return;
     if (et.flushedAt) return; // fight already wrapped up
     const now = Date.now();
-    // 29s safety floor (effectively a 30s cadence). Was 14s/15s — a roomful
-    // of Mimics pushing every 15s during a fight added up to ~120 inserts/min
-    // into encounter_threat_snapshots, each one a 1-2 KB response from
-    // Supabase. 30s halves that load and is still useful tank-threat detail.
-    if (now - _lastSnapAt < 29_000) return;
+    if (now - _lastSnapAt < _threatSnapFloor) return;
     _lastSnapAt = now;
     // pick the first watched character as the uploader; fall back to "?".
     let uploader = "?";
@@ -14292,7 +14708,7 @@ function startChatRelay() {
       per_player:  et.perPlayer,
       total:       Object.values(et.perPlayer).reduce((a, p) => a + ((p.swing||0)+(p.proc||0)+(p.spell||0)+(p.heal||0)), 0),
     });
-  }, 30_000);
+  }, _threatSnapMs);
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -14367,6 +14783,81 @@ function parseDirgeCast(line, selfName) {
   };
 }
 
+// ── ⚡ Necromancer mana share — "Subversion" twitches + Mind Wrack ────────────
+// Necros are mana batteries: their Subversion line converts the necro's own
+// (Lich-fed) mana into instant mana for a caster ("twitching"), and Mind Wrack
+// burns an enemy's mana with a group-mana recourse. None of this shows on the
+// damage meter, and it's only visible on the NECRO'S OWN log — bystanders just
+// see "<target> twitches." with no caster, spell, or amount. So this is a
+// caster-side ("You begin casting …") detector, like Feral Avatar / Dirge.
+//
+// We count cast-starts (matching the dirge / feral-avatar convention); a rare
+// fizzle/interrupt over-counts slightly, acceptable for a fun stat. The mana
+// gifted per twitch is fixed per spell (catalog effect SPA 15 base value),
+// carried in reagent_qty so /fun can sum "mana donated to casters". Mind Wrack
+// carries no fixed per-target number, so it's a separate count-only curio.
+const TWITCH_MANA = {
+  'rapacious subversion':  60,
+  'covetous subversion':  100,
+  'sedulous subversion':  150,
+};
+const NECRO_TWITCH_RX = /^\[(.+?)\]\s+You\s+begin\s+casting\s+((?:Rapacious|Covetous|Sedulous)\s+Subversion)\.?\s*$/i;
+const MIND_WRACK_RX   = /^\[(.+?)\]\s+You\s+begin\s+casting\s+(Mind\s+Wrack)\.?\s*$/i;
+function parseNecroManaShare(line, selfName) {
+  if (!selfName) return null;
+  let m = NECRO_TWITCH_RX.exec(line);
+  if (m) {
+    const spell = m[2].trim();
+    inferClassFromAbility(selfName, 'subversion');  // necro-exclusive twitch line
+    const ts = parseEqTimestamp(line);
+    return {
+      type:        'mana_twitch',
+      caster:      selfName,
+      target:      spell,                                  // store the spell tier for analysis
+      reagent_qty: TWITCH_MANA[spell.toLowerCase()] || 0,  // mana gifted to the caster
+      ts:          ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text:    line.slice(0, 200),
+    };
+  }
+  m = MIND_WRACK_RX.exec(line);
+  if (m) {
+    inferClassFromAbility(selfName, 'mind wrack');  // necro-exclusive
+    const ts = parseEqTimestamp(line);
+    return {
+      type:     'mind_wrack_cast',
+      caster:   selfName,
+      ts:       ts ? ts.toISOString() : new Date().toISOString(),
+      raw_text: line.slice(0, 200),
+    };
+  }
+  return null;
+}
+
+// ── Necro mana share, RECIPIENT side ──────────────────────────────────────────
+// Complements parseNecroManaShare (caster-side, exact, necro-only) with the
+// view from everyone the necro feeds — so we still capture the effort when the
+// necro ISN'T running the agent, as long as the casters/groupmates are (the
+// Malthur dual-detector pattern). The recipient line names neither the caster
+// nor the amount, so caster = the RECIPIENT (their own character) and there's
+// no reagent_qty (the /fun layer estimates from the per-tier mana table).
+//   • Subversion twitch landing : "A foreign surge of mana refreshes your mind."
+//   • Mind Wrack group recourse : "You feel foreign mana strengthen your mind."
+const TWITCH_RECV_RX     = /\ba foreign surge of mana refreshes your mind\b/i;
+const MINDWRACK_RECV_RX  = /\byou feel foreign mana strengthen your mind\b/i;
+function parseNecroManaReceived(line, character) {
+  let type = null;
+  if (TWITCH_RECV_RX.test(line))         type = 'mana_twitch_received';
+  else if (MINDWRACK_RECV_RX.test(line)) type = 'mind_wrack_recourse';
+  if (!type) return null;
+  const ts = parseEqTimestamp(line);
+  return {
+    type,
+    caster:   character || null,   // the recipient — the line names no caster
+    ts:       ts ? ts.toISOString() : new Date().toISOString(),
+    raw_text: line.slice(0, 200),
+  };
+}
+
 // ── Detector history (manifest of when each detector landed) ────────────────
 // Drives the "your backfill is stale" UI. Each entry: the agent version that
 // FIRST extracted that detector. When a file's recorded backfill version is
@@ -14382,6 +14873,10 @@ function parseDirgeCast(line, selfName) {
 const DETECTOR_HISTORY = [
   // v3.0.62 — bard Dirge of *.
   { version: '3.0.62', name: 'dirge_cast',           label: 'Dirge of * casts' },
+  // v3.1.50 — necro Subversion twitches (mana donated) + Mind Wrack burn.
+  { version: '3.1.50', name: 'mana_twitch',          label: 'Necro mana twitches / Mind Wrack' },
+  // v3.1.51 — recipient-side capture (works even if the necro isn't on the agent).
+  { version: '3.1.51', name: 'mana_twitch_received', label: 'Necro mana share (recipient side)' },
   // The earlier detectors (Peopleslayer LD, Malthur provisions, Dragon Punch,
   // Feral Avatar, etc.) shipped before this manifest existed. They're left
   // out intentionally — a backfill from any 3.x version already covered them,
@@ -14647,6 +15142,25 @@ function uploadPvp(broadcasts, { botUrl, token, dryRun }) {
     return Promise.resolve();
   }
   enqueueUpload('pvp', { agent_version: AGENT_VERSION, broadcasts });
+  return Promise.resolve();
+}
+
+// Plane-of-Hate kill log. Routes through /api/agent/hatekill (added 2026-06-21
+// alongside the Supabase hate_kills table). Own-guild open-world kills get a
+// spot-picker in the hate thread; foreign-guild kills land as unassigned
+// rows for later inference assignment from the /pvp/hate web page.
+function uploadHateKills(kills, { botUrl, token, dryRun }) {
+  void botUrl; void token;
+  if (!Array.isArray(kills) || kills.length === 0) return Promise.resolve();
+  if (dryRun) {
+    for (const k of kills) {
+      const tag = k.isOwnGuild ? '🐺' : '🩸';
+      const inst = k.instanced ? ' (Instanced)' : '';
+      console.log(`[hatekill] ${tag} ${k.killer || '?'} of <${k.killerGuild || '?'}> killed ${k.boss}${inst} in ${k.zone}`);
+    }
+    return Promise.resolve();
+  }
+  enqueueUpload('hatekill', { agent_version: AGENT_VERSION, kills });
   return Promise.resolve();
 }
 
@@ -16217,7 +16731,13 @@ const _targetBuffsInflight = new Set();
 // every client visiting the same target was Supabase egress culprit #1).
 // Target Info still feels live: 12s of cross-client buff visibility is fine
 // for the "did anyone else just land Tash on this mob" question.
-const TARGET_BUFFS_TTL_MS = 12000;
+// Mob Info target-buffs cache TTL. Default 12s (was 5s pre-egress
+// triage — a roomful of Mimics on the same target was fan-out hot). Dial
+// down for tighter freshness on a fat-egress tier, up for a tight one.
+// 2026-06-21: cranked default 12s → 6s after the Supabase Pro upgrade.
+// Original was 5s; 6s splits the difference so Mob Info feels live again
+// without the full pre-squeeze churn. Override via WP_TARGET_BUFFS_TTL_MS.
+const TARGET_BUFFS_TTL_MS = parseInt(process.env.WP_TARGET_BUFFS_TTL_MS, 10) || 6000;
 function fetchTargetBuffs(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -16269,7 +16789,12 @@ const SNAPPY_WINDOW  = 60_000;
 // pulled 3000 buff_casts rows). 8s aligns with the overlay polling cadence
 // so each overlay tick at most refreshes the queue once per ~8s; the queue
 // content doesn't change faster than that in practice.
-const BUFF_QUEUE_TTL_MS = 8000;
+// Raid-buff-queue cache TTL on the agent. Default 8s (was 3s pre-egress
+// triage). Override via WP_BUFF_QUEUE_TTL_MS.
+// 2026-06-21: cranked default 8s → 4s after the Supabase Pro upgrade.
+// Original was 3s pre-egress-squeeze. Buff queue feels live for the
+// snappier "is X already buffed" reads. Override via WP_BUFF_QUEUE_TTL_MS.
+const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 4000;
 function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -17695,6 +18220,10 @@ async function main() {
         if (dpEvt) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt) funEventBuffer.push(dirgeEvt);
+        const twitchEvt = parseNecroManaShare(line, b.character);
+        if (twitchEvt) funEventBuffer.push(twitchEvt);
+        const twitchRecvEvt = parseNecroManaReceived(line, b.character);
+        if (twitchRecvEvt) funEventBuffer.push(twitchRecvEvt);
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
         // complete-log backfill crawls idempotent.
@@ -17909,6 +18438,16 @@ async function main() {
           const _pvpFp = 'pvp|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
           if (!_sourceExcluded && !_crossLogDupe(_pvpFp)) {
             pvpBuffer.push(pvpBcast);
+
+            // Hate-zone boss kills also fan out to the Supabase-backed
+            // hate_kills tracker via /api/agent/hatekill. Own-guild kills
+            // get a spot-picker post in the hate thread; foreign-guild
+            // kills (including the (Instanced) ones we used to silently
+            // drop pre-2026-06-21) land as unassigned rows for later web
+            // inference assignment.
+            const hk = _pvpBcastToHateKill(pvpBcast);
+            if (hk) hateKillBuffer.push(hk);
+
             // Assist correlation: if the uploader was damaging this victim in
             // the last 30s AND the killing blow was someone else (or an NPC),
             // emit an assist row. cross-log dedup also applies — the same
@@ -17926,6 +18465,9 @@ async function main() {
           }
           return;
         }
+        // No pattern matched — if it still looks like a kill broadcast, capture
+        // the raw line for diagnosis (guildless/novel boss-kill phrasings).
+        if (!_sourceExcluded) captureUnmatchedPvpKill(line);
 
         // Fun-event detection (Peopleslayer LD, Malthur provisions, future
         // CoH/DI/etc). Don't `return` after a match — fun events are pure
@@ -17951,6 +18493,10 @@ async function main() {
         if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
         const dirgeEvt = parseDirgeCast(line, b.character);
         if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
+        const twitchEvt = parseNecroManaShare(line, b.character);
+        if (twitchEvt && !_sourceExcluded) funEventBuffer.push(twitchEvt);
+        const twitchRecvEvt = parseNecroManaReceived(line, b.character);
+        if (twitchRecvEvt && !_sourceExcluded) funEventBuffer.push(twitchRecvEvt);
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Honors the per-character
         // exclude_from_stats opt-out like every other upload stream.
