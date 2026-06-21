@@ -303,6 +303,7 @@ export default async function PvpPage({
         <div className="text-xs text-dim mt-2 flex items-center gap-3 flex-wrap">
           <span>{rows.length} killer{rows.length === 1 ? '' : 's'} · {totalKills} total kill{totalKills === 1 ? '' : 's'}</span>
           <Link href="/pvp/server" className="text-blue hover:underline">See the server-wide top 10 →</Link>
+          <Link href="/pvp/hate" className="text-blue hover:underline">Plane of Hate tracker →</Link>
         </div>
       </section>
 
