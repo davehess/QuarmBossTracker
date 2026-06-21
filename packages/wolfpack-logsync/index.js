@@ -5857,10 +5857,17 @@ function _zealExportOnCampState() {
     latestAgentVersion: stats.latestAgentVersion,
     // Mimic Discord login: signed_in lets the dashboard show a "Signed in as
     // <name>" badge in the header + a soft "sign in to unlock cross-machine
-    // sync + officer tools" nudge when absent. Identity is the bot's canonical
-    // reply (refreshed on latest-version polls); presence of the token alone
-    // doesn't prove the token is still valid, so the badge uses identity.
-    mimicSignedIn:      !!_mimicSessionToken,
+    // sync + officer tools" nudge when absent. We require BOTH the session
+    // token AND a confirmed identity from the bot — token-without-identity
+    // is the stale/expired-session state (Uilnayar 2026-06-21 reported the
+    // header reading 'signed in' on installs that only carried the legacy
+    // agent token + had never completed the Discord OAuth flow; the
+    // Settings panel correctly demanded 'Sign in to Wolf Pack' but the
+    // header pill claimed the opposite). Requiring identity here keeps
+    // both surfaces honest. The identity is the bot's reply to the
+    // session token, refreshed on every latest-version poll, so the
+    // signal flips to true within a few seconds of a successful sign-in.
+    mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
     mimicIdentity:      _mimicIdentity,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
