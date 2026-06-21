@@ -2937,10 +2937,26 @@ function inferClassFromAbility(character, ability) {
   confirmPlayer(character);
 }
 
+// Module-level registry of every live EncounterBuilder so a flush on one
+// can wake the others. The scenario: one Mimic install is tailing multiple
+// log files (e.g. Damyu tails his own log AND Borowhay's because they multi-
+// box on one machine), each character gets its own builder, and they're
+// independently parsing the same raid. When Damyu's builder sees the boss
+// kill line, Borowhay's SHOULD see it too — but if Borowhay's log writer
+// hiccuped, or his client crashed, or the agent missed the line in his
+// buffer, his builder's fight stays open forever (Uilnayar 2026-06-21
+// reported a 17h-old encounter on Damyu's overlay; same Mimic was uploading
+// Borowhay's logs). Now a successful flush broadcasts to peer builders so
+// they catch the boss-died signal even when their own log stream missed it.
+// Silent backfill drivers don't register — they shouldn't yank live builders'
+// state mid-replay.
+const _liveBuilders = new Set();
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
     this.onFlush    = onFlush;
+    if (!silent) _liveBuilders.add(this);
     // `silent` mode = no live-dashboard side-effects. Backfill drivers
     // set this so replaying old logs doesn't move top-damage counters,
     // session DPS, recentParses, or threat tables. Combat events still
@@ -4699,6 +4715,49 @@ class EncounterBuilder {
     // for ~2 min after a fight ends rather than blanking the Threat panel immediately.
     if (stats.currentEncounterThreat) {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
+    }
+    // Cross-builder flush propagation. If this Mimic install is tailing more
+    // than one character's log (multi-box on one machine), peer builders
+    // watching the SAME fight should close along with us — if their own log
+    // missed the kill line for any reason (truncation, client crash,
+    // out-of-order flush), they'd otherwise sit with an open fight
+    // indefinitely. We only push the peer if (a) it has >= 10 events (real
+    // fight, not noise), (b) its bossName matches ours OR its top-target
+    // matches, AND (c) its lastEvent is within the same fight window. The
+    // peer's own flush() handles the upload + onFlush callback exactly as
+    // if it had seen the death event in its log.
+    if (this.bossName) {
+      const peerBossLower = String(this.bossName).toLowerCase();
+      const myEndedAtMs   = this.lastEvent ? Date.parse(this.lastEvent) : Date.now();
+      for (const peer of _liveBuilders) {
+        if (peer === this) continue;
+        if (!peer.events || peer.events.length < 10) continue;
+        const peerLastMs = peer.lastEvent ? Date.parse(peer.lastEvent) : 0;
+        // Same fight window: peer's last activity is within 5 min of our
+        // close. Tighter than the 120s tickIdle threshold because we want
+        // to be confident it's the SAME fight, not a different pull of the
+        // same mob.
+        if (Math.abs(myEndedAtMs - peerLastMs) > 5 * 60_000) continue;
+        const peerBoss   = peer.bossName ? String(peer.bossName).toLowerCase() : null;
+        // Match either confirmed bossName, or top-target if bossName isn't
+        // yet set. Top-target derivation matches the same fallback flush()
+        // uses below to fill in this.bossName before upload.
+        let peerTop = peerBoss;
+        if (!peerTop && peer.targets && peer.targets.size > 0) {
+          let topName = null, topDmg = -1;
+          for (const [name, dmg] of peer.targets) {
+            if (dmg > topDmg) { topName = name; topDmg = dmg; }
+          }
+          if (topName) peerTop = topName.toLowerCase();
+        }
+        if (peerTop !== peerBossLower) continue;
+        try {
+          if (!_dashboardEnabled) {
+            console.log(`[cross-flush] ${peer.character}'s fight on ${this.bossName} ended via peer ${this.character}`);
+          }
+          peer.flush();
+        } catch (e) { void e; }
+      }
     }
     // Mirror to the per-character map so the 2-min stale window applies
     // independently per character (a multi-boxer's other character can
