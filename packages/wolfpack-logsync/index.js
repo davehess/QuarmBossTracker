@@ -10471,7 +10471,15 @@ async function dismissTopDamage(key) {
     });
   }
   fetchAll();
-  setInterval(fetchAll, 5000);
+  // 5s → 15s (2026-06-21): the auction panel fires the bot's
+  // /api/agent/server-panel/auctions handler, which fans out into 3
+  // PostgREST reads — opendkp_auctions, opendkp_audits, AND a
+  // per-character wishlists ilike. Each active agent was hitting this
+  // every 5s and the wishlists row alone was the heaviest single egress
+  // pattern in the live API log (~10 req/sec across all agents). Bids
+  // typically arrive at multi-second cadence inside an auction, so 15s
+  // is plenty responsive while cutting wishlist+auction reads ~3x.
+  setInterval(fetchAll, 15000);
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
