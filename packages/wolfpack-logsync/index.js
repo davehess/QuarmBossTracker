@@ -5044,8 +5044,23 @@ async function _drainUploadQueue() {
     // picked up on the next pass. Cap parallel work so a huge backlog
     // doesn't wedge a single pass for hours; the next interval (15s)
     // picks up the rest.
-    const due = _uploadQueue.filter(e => e.next_try_at <= now).slice(0, QUEUE_MAX_PER_DRAIN_PASS);
-    if (due.length === 0) return;
+    //
+    // PRIORITIZE LIVE over BACKFILL within each pass. Pre-2026-06-21 the
+    // filter was naked FIFO — when a backfill produced 2800 encounter
+    // payloads ahead of 4 live PVP broadcasts in the queue, the PVP rows
+    // sat behind every single backfill encounter and waited tens of
+    // minutes (or more, under ECONNRESET retries) before getting a turn.
+    // (Uilnayar's queue diagnostic 2026-06-21 caught it: pvp:4 trapped
+    // behind encounter:2800.) Now we pick live items first, then fill
+    // the remainder of the per-pass budget with backfill. Backfill is
+    // idempotent (DB dedup_key + ±30min find_or_create_encounter
+    // window), live events are time-sensitive — this ordering is correct
+    // every time the queue has both kinds.
+    const allDue = _uploadQueue.filter(e => e.next_try_at <= now);
+    if (allDue.length === 0) return;
+    const live    = allDue.filter(e => !e?.payload?.backfill);
+    const back    = allDue.filter(e =>  e?.payload?.backfill);
+    const due     = [...live, ...back].slice(0, QUEUE_MAX_PER_DRAIN_PASS);
 
     let stateChanged = false;
     for (const entry of due) {
@@ -5066,12 +5081,27 @@ async function _drainUploadQueue() {
         stateChanged = true;
       } else {
         entry.attempts++;
-        entry.last_error = `${result.statusCode || 'net'}: ${(result.body || '').toString().slice(0, 200)}`;
-        const backoffIdx = Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1);
-        entry.next_try_at = Date.now() + QUEUE_BACKOFF_MS[backoffIdx];
+        const errBody = (result.body || '').toString();
+        entry.last_error = `${result.statusCode || 'net'}: ${errBody.slice(0, 200)}`;
+        // Transport-level errors (ECONNRESET, ETIMEDOUT, ENETUNREACH,
+        // socket hang up) usually clear within seconds — Railway cycling
+        // a connection, the bot restarting, a momentary network blip.
+        // Walking these to the 10-min backoff cap means a single bad
+        // moment leaves the queue effectively dead for half an hour
+        // (Uilnayar's stalled-queue diagnostic 2026-06-21:
+        // `net: read ECONNRESET` was driving every retry into deep
+        // backoff). Hold transport errors to a flat 30s retry instead;
+        // server-shape errors (5xx body) still get the normal exponential
+        // ladder because those mean the bot is intentionally rejecting.
+        const isTransport = !result.statusCode &&
+          /ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EPIPE|socket hang up|^timeout$/i.test(errBody);
+        const backoffMs = isTransport
+          ? 30_000
+          : QUEUE_BACKOFF_MS[Math.min(entry.attempts - 1, QUEUE_BACKOFF_MS.length - 1)];
+        entry.next_try_at = Date.now() + backoffMs;
         stats.uploadErrors++;
         if (entry.attempts === 1 || entry.attempts === 5 || entry.attempts === 20) {
-          console.warn(`[upload-queue] retrying ${entry.kind} (attempt ${entry.attempts}, next in ${Math.round(QUEUE_BACKOFF_MS[backoffIdx]/1000)}s): ${entry.last_error}`);
+          console.warn(`[upload-queue] retrying ${entry.kind} (attempt ${entry.attempts}, next in ${Math.round(backoffMs/1000)}s${isTransport ? ', transport' : ''}): ${entry.last_error}`);
         }
         stateChanged = true;
       }
