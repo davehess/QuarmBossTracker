@@ -4902,9 +4902,21 @@ function enqueueUpload(kind, payload) {
   // dashboard still works — local stats come from parseEvent, not the queue.
   if (!_isUploaderInstance) return null;
   if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
-    const dropped = _uploadQueue.shift();
+    // Prefer to evict BACKFILL uploads over live ones. Pre-2026-06-21 this
+    // was straight FIFO — during a big --since/opt-in run, live PvP/chat/
+    // bosskill events queued up BEHIND the historical encounter payloads
+    // got crowded out as the queue churned, and the user lost the live
+    // ones (Uilnayar's missed [PVP] kill broadcasts, 2026-06-21). Backfill
+    // is rerunnable (idempotent via DB dedup_key + the bot's
+    // findOrCreateEncounter ±30min window), so dropping its oldest is
+    // far cheaper than dropping a live event the user expected to see
+    // post in Discord.
+    let evictIdx = _uploadQueue.findIndex(e => e?.payload?.backfill === true);
+    if (evictIdx < 0) evictIdx = 0;   // no backfill in queue → fall back to FIFO
+    const [dropped] = _uploadQueue.splice(evictIdx, 1);
     _queueCapEvictCount++;
-    console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped oldest ${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
+    const tag = dropped?.payload?.backfill ? 'backfill ' : 'live ';
+    console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped ${tag}${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
   }
   // Attribute operator-level streams (chat / pvp / fun_event / historical_chat)
   // to the operator's primary box. These aggregate across every watched log so
@@ -13136,6 +13148,23 @@ function runOptinBackfill(files, opts = {}) {
       await uploadHistoricalChat(batch, { botUrl, token, dryRun }).catch(() => {});
     };
 
+    // Backfill PvP broadcast batch. Pre-2026-06-21 this code referenced an
+    // undeclared `pvpBatch` + `flushPvp` — every PvP-broadcast line in a
+    // backfill ran the throw path inside readFromBytePos's `try { onLine }
+    // catch { /* swallow */ }` (line 12987), silently dropping every
+    // historical [PVP] kill from the pvp_kills ledger. (Discovered while
+    // diagnosing Uilnayar's missed live PVP messages 2026-06-21.) Now we
+    // mirror the chatBatch pattern: batch up to 200, flush via uploadPvp
+    // which routes through the durable queue so a slow drain doesn't lose
+    // anything.
+    const pvpBatch = [];
+    const flushPvp = async (force) => {
+      if (pvpBatch.length === 0) return;
+      if (!force && pvpBatch.length < 200) return;
+      const batch = pvpBatch.splice(0);
+      await uploadPvp(batch, _uploadOpts || { botUrl, token, dryRun }).catch(() => {});
+    };
+
     // Per-file builder: encounters auto-flush on boss death (see EncounterBuilder.add),
     // plus a final builder.flush() at end of file for any trailing events. /who
     // observations land in the module-level whoData map as a parseEvent side-effect
@@ -13297,6 +13326,7 @@ function runOptinBackfill(files, opts = {}) {
           { queueLen: () => _uploadQueue.length, high: QUEUE_BACKPRESSURE_HIGH, low: QUEUE_BACKPRESSURE_LOW });
         builder.flush();
         await flushChat(true).catch(() => {});
+        await flushPvp(true).catch(() => {});
         if (result?.aborted) {
           // Resume position preserved — clicking Backfill again picks up
           // where we left off via _optinState.progress[f.path].bytePos.
