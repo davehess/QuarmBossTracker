@@ -13,7 +13,8 @@
 // conservative: first matching category wins, in CATEGORY_ORDER priority.
 
 export type BuffCategory =
-  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds' | 'levitate' | 'resists';
+  | 'hp' | 'regen' | 'mana' | 'manaRegen' | 'haste' | 'runSpeed' | 'attack' | 'ds'
+  | 'levitate' | 'seeInvis' | 'invis' | 'resists';
 
 export const CATEGORY_ORDER: BuffCategory[] = [
   // 2026-06-21 (Uilnayar): dropped 'mana' from the displayed order — the
@@ -23,7 +24,12 @@ export const CATEGORY_ORDER: BuffCategory[] = [
   // ate horizontal width). The CATEGORY_LABELS entry below still has
   // 'mana': 'Mana' so any other consumer that looks the label up by
   // name continues to work.
-  'hp', 'regen', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate', 'resists',
+  // 2026-06-22 (Uilnayar): added 'seeInvis' + 'invis' so the Mimic raid-
+  // detail panel surfaces them as their own rows instead of dumping them
+  // into Other (worn-item detection still TODO — the buff signal alone
+  // covers the cast case).
+  'hp', 'regen', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'levitate',
+  'seeInvis', 'invis', 'resists',
 ];
 
 export const CATEGORY_LABELS: Record<BuffCategory, string> = {
@@ -36,6 +42,8 @@ export const CATEGORY_LABELS: Record<BuffCategory, string> = {
   attack:    'Attack',
   ds:        'Dmg Shield',
   levitate:  'Levitate',
+  seeInvis:  'See Invis',
+  invis:     'Invis',
   resists:   'Resists',
 };
 
@@ -55,8 +63,12 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'khura', 'focus of spirit', 'arch shielding',
     'protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
   ],
-  // HP regeneration over time.
-  regen: ['regrowth', 'regenerat', 'chloroplast', 'replenish', 'pack regen'],
+  // HP regeneration over time. Nature's Recovery (lvl 49 druid line) and
+  // its rank variants don't share a stem with the other regen spells; add
+  // them explicitly so they categorize instead of falling into "Other"
+  // (Uilnayar 2026-06-22 — "Nature's Recovery is HP Regen").
+  regen: ['regrowth', 'regenerat', 'chloroplast', 'replenish', 'pack regen',
+          "nature's recovery", 'natures recovery'],
   // Max-mana boosts.
   mana: ['brilliance', 'iridescence', 'gift of brilliance'],
   // Mana regeneration (Clarity/KEI family).
@@ -98,6 +110,12 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
        'aura of vinitras', 'aura of the defender'],
   // Levitation — situational but worth a visible row (Hate trenches, Sky).
   levitate: ['levitat', 'dead men floating', 'dead man floating', 'flying'],
+  // See Invisible and Invisibility — separate categories so the dashboard
+  // and /buffs page surface them as their own rows. seeInvis comes first
+  // in CATEGORY_ORDER so categorizeBuff returns it before invis's broader
+  // 'invisib' substring would match (Uilnayar 2026-06-22).
+  seeInvis: ['see invis'],
+  invis:    ['invisib', 'camouflage', 'cloak of shadows', 'shauri'],
   // Resist buffs (single + group). Circle of Seasons = Fire + Cold only;
   // Epuration > Jasinth > Shadoo is the shaman Poison+Disease line.
   resists: [

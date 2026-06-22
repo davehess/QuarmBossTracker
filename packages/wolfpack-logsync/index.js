@@ -8648,8 +8648,14 @@ var _raidSelName = null;   // click-to-expand raider in the Raid card
 // DAMAGE SHIELDS (+N per slot, total), SONGS (n/6), OTHER, DI/CHA warning.
 var _RD_RES_ORDER  = ['MR','FR','CR','PR','DR'];
 var _RD_RES_LABELS = { MR:'Magic', FR:'Fire', CR:'Cold', PR:'Poison', DR:'Disease' };
-var _RD_CAT_ORDER  = ['regen','manaRegen','mana','haste','attack','runSpeed','levitate','survival'];
-var _RD_CAT_LABELS = { regen:'HP Regen', manaRegen:'Mana Regen', mana:'Mana', haste:'Haste', attack:'Attack', runSpeed:'Run Speed', levitate:'Levitate', survival:'Survival' };
+// 2026-06-22 (Uilnayar): dropped 'mana' from the displayed order — Mask of
+// the Stalker and Protection of the Cabbage both carry mana regen, the
+// raw 'Mana' (max-mana) line was always empty for the practical caster
+// case so the row just rendered "— missing" with no signal value. Also
+// added 'seeInvis' + 'invis' so those buffs surface as their own rows
+// instead of getting buried in "Other" alongside Treeform / Camouflage.
+var _RD_CAT_ORDER  = ['regen','manaRegen','haste','attack','runSpeed','seeInvis','invis','levitate','survival'];
+var _RD_CAT_LABELS = { regen:'HP Regen', manaRegen:'Mana Regen', mana:'Mana', haste:'Haste', attack:'Attack', runSpeed:'Run Speed', seeInvis:'See Invis', invis:'Invis', levitate:'Levitate', survival:'Survival' };
 var _RD_ROLE_OF = { warrior:'tank', paladin:'tank', 'shadow knight':'tank', shadowknight:'tank', sk:'tank',
   rogue:'melee', monk:'melee', ranger:'melee', beastlord:'melee', berserker:'melee',
   cleric:'priest', druid:'priest', shaman:'priest',
@@ -8707,7 +8713,21 @@ function _raidDetailHtml(sel, det) {
   _RD_RES_ORDER.forEach(function(t){
     var entries = (det.resists && det.resists[t]) || [];
     var prim = []; var sngs = [];
-    for (var i5 = 0; i5 < entries.length; i5++) (entries[i5].song ? sngs : prim).push(entries[i5]);
+    // Dedup primaries by buff name — when the same buff carries two SPA
+    // entries for the same school (Circle of Seasons covering Fire AND
+    // Cold from two slots of the same spell, or a stale + fresh cast),
+    // the row used to render "Circle of Seasons +1 more" with nothing
+    // hiding behind the +1. Uilnayar 2026-06-22 ("Fire and Cold both say
+    // +1 more after seasons but it should be the only one").
+    var seenPrim = {};
+    for (var i5 = 0; i5 < entries.length; i5++) {
+      var e5 = entries[i5];
+      if (e5.song) { sngs.push(e5); continue; }
+      var k5 = (e5.n || '').toLowerCase();
+      if (seenPrim[k5]) continue;
+      seenPrim[k5] = true;
+      prim.push(e5);
+    }
     var inner;
     if (prim.length) inner = _rdEntry(prim[0], false) + (prim.length > 1 ? ' <span class="dim">+' + (prim.length - 1) + ' more</span>' : '');
     else if (sngs.length) inner = '<span class="dim" style="font-style:italic">song only ↓</span>';

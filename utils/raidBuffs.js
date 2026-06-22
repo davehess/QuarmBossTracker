@@ -6,10 +6,12 @@
 // is cursed" view is available locally without each overlay re-fetching the
 // full live-state table. Update both together when adding a keyword.
 
-const CATEGORY_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'survival', 'levitate', 'resists'];
+const CATEGORY_ORDER = ['hp', 'regen', 'mana', 'manaRegen', 'haste', 'runSpeed', 'attack', 'ds', 'survival', 'levitate', 'seeInvis', 'invis', 'resists'];
 const CATEGORY_LABELS = {
   hp: 'HP', regen: 'HP Regen', mana: 'Mana', manaRegen: 'Mana Regen',
-  haste: 'Haste', runSpeed: 'Run Speed', attack: 'Attack', ds: 'Dmg Shield', survival: 'Survival', levitate: 'Levitate', resists: 'Resists',
+  haste: 'Haste', runSpeed: 'Run Speed', attack: 'Attack', ds: 'Dmg Shield', survival: 'Survival', levitate: 'Levitate',
+  seeInvis: 'See Invis', invis: 'Invis',
+  resists: 'Resists',
 };
 
 const KEYWORDS = {
@@ -19,7 +21,12 @@ const KEYWORDS = {
   // HoT (long-duration heal-over-time) is its own EQ buff slot — healers
   // want to know if it's open. Elixir family = Celestial/Ethereal/Supernal
   // (cleric + bard song HoTs).
-  regen: ['regrowth','regenerat','chloroplast','replenish','pack regen','elixir'],
+  // HP regeneration over time. Nature's Recovery (lvl 49 druid line) and
+  // its rank variants don't share a stem with the other regen spells so we
+  // list them explicitly — without this they fall through categorizeBuff
+  // and land in the dashboard's "Other" pile (Uilnayar 2026-06-22).
+  regen: ['regrowth','regenerat','chloroplast','replenish','pack regen','elixir',
+          "nature's recovery", 'natures recovery'],
   mana: ['brilliance','iridescence','gift of brilliance'],
   manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
   haste: ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
@@ -41,6 +48,16 @@ const KEYWORDS = {
   // buff-window slot — surface them so the healer/bard knows "DA slot open".
   survival: ['divine aura','kazumi','bestowal of divinity','quivering veil','death pact','divine intervention'],
   levitate: ['levitat','dead men floating','dead man floating','flying'],
+  // See Invisible and Invisibility — separate categories so the dashboard
+  // can show "do I have it" rather than burying these in Other. ORDER
+  // MATTERS here: 'invis' substring also appears inside 'invisib' so we
+  // place seeInvis first; categorizeBuff returns the first hit and 'see
+  // invis' is the more-specific match. We also have an entry for the
+  // 'see invisible' clicky-form name and the Ranger/Druid Camouflage line
+  // that confers invis (Uilnayar 2026-06-22). 'invis' alone matches both
+  // 'invisible' and 'invisibility'.
+  seeInvis: ['see invis'],
+  invis:    ['invisib', 'camouflage', 'cloak of shadows', 'shauri'],
   resists: ['resist','endure','protection of','talisman of altuna','talisman of jasinth','talisman of shadoo','talisman of epuration','circle of','aegis of bathezid','colossal','elemental'],
 };
 
