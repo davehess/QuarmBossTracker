@@ -5,7 +5,7 @@
 // then router.refresh() reconciles against the DB. Override values are visually
 // distinguished from observed values so it's clear what's curated vs collected.
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { setWhoClass, setWhoZek, deleteWhoCharacter } from './actions';
 import { BASE_CLASSES } from './classes';
@@ -42,6 +42,15 @@ export type WhoRow = {
 type SortKey = 'character' | 'level' | 'class' | 'guild' | 'rank' | 'lastSeen' | 'obsCount' | 'zek' | 'zone';
 type ZekFilter = 'all' | 'zek' | 'notzek';
 
+// Page-size choices. ~8.8k rows × officer <select>s was hammering the DOM
+// hard enough that opening /who as an officer took 8-10s on a fast laptop
+// — every row materializes two selects and a hidden options list. Capping
+// the rendered set at 100 by default cuts that to a quarter-second; the
+// filters still operate over the full catalog (loaded into `rows`), so
+// search/class/zek narrow first and then paginate over the matches.
+const PAGE_SIZES = [50, 100, 250, 500];
+const DEFAULT_PAGE_SIZE = 100;
+
 function ago(iso: string | null): string {
   if (!iso) return '—';
   const t = Date.parse(iso);
@@ -71,6 +80,10 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>('lastSeen');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Pagination
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   function toggleSort(k: SortKey) {
     if (k === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -118,6 +131,19 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
     };
     return out.sort(cmp);
   }, [rows, q, classFilter, zekFilter, missingClassOnly, anonOnly, sortKey, sortDir]);
+
+  // Snap back to page 1 whenever the filter/sort key changes — staying on
+  // page 47 of "8,798 rows sorted by lastSeen" while typing "uil…" into the
+  // search box would surface zero matches every time.
+  useEffect(() => {
+    setPage(0);
+  }, [q, classFilter, zekFilter, missingClassOnly, anonOnly, sortKey, sortDir, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(view.length / pageSize));
+  const pageClamped = Math.min(page, totalPages - 1);
+  const pageStart = pageClamped * pageSize;
+  const pageEnd   = Math.min(view.length, pageStart + pageSize);
+  const pageRows  = view.slice(pageStart, pageEnd);
 
   function patchRow(name: string, patch: Partial<WhoRow>) {
     setRows(rs => rs.map(r => (r.character === name ? { ...r, ...patch } : r)));
@@ -208,19 +234,22 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
         <span className="ml-auto text-dim">
           {(() => {
             const loaded = rows.length;
-            const shown  = view.length;
-            const t      = totalInDb;
-            // Three numbers worth surfacing when they differ: how many the
-            // filters narrowed to, how many we loaded into the page (capped
-            // at 5000), and the true catalog total.
+            const matched = view.length;
+            const t       = totalInDb;
+            // Surface: rows visible on this page · matched by filters ·
+            // loaded into the table · true catalog total. Collapse identical
+            // numbers so the line stays readable.
+            const onPage = matched === 0
+              ? '0 shown'
+              : `${(pageStart + 1).toLocaleString()}–${pageEnd.toLocaleString()} of ${matched.toLocaleString()}`;
             if (t != null && t !== loaded) {
-              return shown === loaded
-                ? `${shown.toLocaleString()} shown · ${t.toLocaleString()} in catalog`
-                : `${shown.toLocaleString()} shown · ${loaded.toLocaleString()} loaded · ${t.toLocaleString()} in catalog`;
+              return matched === loaded
+                ? `${onPage} · ${t.toLocaleString()} in catalog`
+                : `${onPage} · ${loaded.toLocaleString()} loaded · ${t.toLocaleString()} in catalog`;
             }
-            return shown === loaded
-              ? `${shown.toLocaleString()} shown`
-              : `${shown.toLocaleString()} of ${loaded.toLocaleString()} shown`;
+            return matched === loaded
+              ? onPage
+              : `${onPage} · ${loaded.toLocaleString()} loaded`;
           })()}
           {pending ? ' · saving…' : ''}
         </span>
@@ -244,7 +273,7 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
             </tr>
           </thead>
           <tbody>
-            {view.map(r => {
+            {pageRows.map(r => {
               // Normalize "Savage Lord" → "Beastlord" etc. for the observed-
               // class label so the dropdown shows the actual class rather
               // than the level title we sniffed off of /who.
@@ -358,6 +387,50 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
           </tbody>
         </table>
       </div>
+
+      {/* Pager — hidden when everything fits on one page so the simple cases
+          (filtered down to a handful of rows) stay uncluttered. */}
+      {view.length > pageSize && (
+        <div className="flex flex-wrap items-center gap-2 mt-3 text-xs text-dim">
+          <button
+            type="button"
+            onClick={() => setPage(0)}
+            disabled={pageClamped === 0}
+            className="px-2 py-1 rounded border border-border hover:border-blue disabled:opacity-30 disabled:cursor-not-allowed"
+          >« First</button>
+          <button
+            type="button"
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={pageClamped === 0}
+            className="px-2 py-1 rounded border border-border hover:border-blue disabled:opacity-30 disabled:cursor-not-allowed"
+          >‹ Prev</button>
+          <span>
+            Page <span className="text-text">{pageClamped + 1}</span> of {totalPages.toLocaleString()}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={pageClamped >= totalPages - 1}
+            className="px-2 py-1 rounded border border-border hover:border-blue disabled:opacity-30 disabled:cursor-not-allowed"
+          >Next ›</button>
+          <button
+            type="button"
+            onClick={() => setPage(totalPages - 1)}
+            disabled={pageClamped >= totalPages - 1}
+            className="px-2 py-1 rounded border border-border hover:border-blue disabled:opacity-30 disabled:cursor-not-allowed"
+          >Last »</button>
+          <span className="ml-auto flex items-center gap-1">
+            Rows per page
+            <select
+              value={pageSize}
+              onChange={e => setPageSize(parseInt(e.target.value, 10))}
+              className="bg-bg border border-border rounded px-1 py-0.5 text-text"
+            >
+              {PAGE_SIZES.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </span>
+        </div>
+      )}
     </section>
   );
 }
