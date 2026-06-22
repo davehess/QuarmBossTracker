@@ -29,6 +29,11 @@ type StandingRow = {
   faction: string;
   better_count: number;
   worse_count: number;
+  // Sum of magnitudes from agent-reported deltas (Quarm "got better by N" /
+  // "(+N)" forms). 0 means we haven't captured any magnitudes yet — either
+  // older agent or no magnitude in the log line. Web prefers totals when > 0.
+  better_total?: number | null;
+  worse_total?:  number | null;
   capped_max_at: string | null;
   capped_min_at: string | null;
   first_hit_at: string;
@@ -53,7 +58,7 @@ async function load(decoded: string) {
   const sb = supabaseAdmin();
   const [standingRes, consRes, charRes] = await Promise.all([
     sb.from('faction_standing')
-      .select('faction, better_count, worse_count, capped_max_at, capped_min_at, first_hit_at, last_hit_at, last_direction')
+      .select('faction, better_count, worse_count, better_total, worse_total, capped_max_at, capped_min_at, first_hit_at, last_hit_at, last_direction')
       .ilike('character', decoded)
       .order('last_hit_at', { ascending: false })
       .limit(500),
@@ -154,11 +159,30 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
-                    {rows.map(f => (
+                    {rows.map(f => {
+                      // Prefer summed magnitudes when the agent has captured
+                      // any (Quarm prints per-line deltas); fall back to hit
+                      // counts when not. Tooltip surfaces whichever number
+                      // ISN'T the headline so officers can sanity-check
+                      // "+96 points (8 hits)" vs "+8 hits (no per-hit deltas
+                      // captured)" (Uilnayar 2026-06-23).
+                      const bTot = f.better_total ?? 0;
+                      const wTot = f.worse_total  ?? 0;
+                      const betterHead = bTot > 0
+                        ? { val: `+${bTot.toLocaleString()}`, tip: `+${bTot.toLocaleString()} points across ${f.better_count.toLocaleString()} hit${f.better_count === 1 ? '' : 's'}` }
+                        : f.better_count > 0
+                          ? { val: `+${f.better_count}`, tip: `${f.better_count.toLocaleString()} hit${f.better_count === 1 ? '' : 's'} — no per-line magnitude captured (older agent, or the server didn’t print one)` }
+                          : { val: '—', tip: '' };
+                      const worseHead = wTot > 0
+                        ? { val: `−${wTot.toLocaleString()}`, tip: `−${wTot.toLocaleString()} points across ${f.worse_count.toLocaleString()} hit${f.worse_count === 1 ? '' : 's'}` }
+                        : f.worse_count > 0
+                          ? { val: `−${f.worse_count}`, tip: `${f.worse_count.toLocaleString()} hit${f.worse_count === 1 ? '' : 's'} — no per-line magnitude captured` }
+                          : { val: '—', tip: '' };
+                      return (
                       <tr key={f.faction}>
                         <td className="py-1.5 pr-3 text-text">{f.faction}</td>
-                        <td className="py-1.5 pr-3 text-right text-green">{f.better_count > 0 ? `+${f.better_count}` : '—'}</td>
-                        <td className="py-1.5 pr-3 text-right text-red">{f.worse_count > 0 ? `−${f.worse_count}` : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right text-green" title={betterHead.tip}>{betterHead.val}</td>
+                        <td className="py-1.5 pr-3 text-right text-red"   title={worseHead.tip}>{worseHead.val}</td>
                         <td className="py-1.5 pr-3">
                           {f.capped_max_at && <span className="text-gold text-xs" title={`hit the max cap ${fmtDate(f.capped_max_at)}`}>▲ at max cap</span>}
                           {f.capped_max_at && f.capped_min_at && <span className="text-dim text-xs"> · </span>}
@@ -174,7 +198,8 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                           )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                     {missing.map(m => (
                       <tr key={m.name} className="opacity-70">
                         <td className="py-1.5 pr-3 text-dim">{m.name}</td>

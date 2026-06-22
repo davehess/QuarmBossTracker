@@ -2491,16 +2491,33 @@ const CON_STANDINGS = [
 const _CON_RX = new RegExp('\\]\\s+(.+?)\\s+(' + CON_STANDINGS.map(([p]) => p).join('|') + ')', 'i');
 function parseFactionLine(line, character) {
   if (!character || line.indexOf('Your faction standing with') === -1) return null;
-  const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)|could not possibly get any (better|worse))\.\s*$/i);
+  // Quarm sometimes prints a magnitude after the line — common shapes:
+  //   "Your faction standing with X got better."         (no magnitude)
+  //   "Your faction standing with X got better. (+25)"   (signed parens)
+  //   "Your faction standing with X got better. (25)"    (bare parens)
+  //   "Your faction standing with X got better by 25."   (Live-style)
+  // Match all four. Lines that print a magnitude USED to silently drop on
+  // the old regex (which anchored `.\s*$`) — that's why Kael giant kills
+  // looked like single hits even though they're +N each (Uilnayar
+  // 2026-06-23). Capping lines never carry a magnitude.
+  const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)(?:\s+by\s+(\d+))?\.\s*(?:\((?:([+\-]?)(\d+))\)\s*)?|could not possibly get any (better|worse)\.)\s*$/i);
   if (!m) return null;
   const ts = parseEqTimestamp(line);
-  const dirWord = (m[2] || m[3] || '').toLowerCase();
+  const dirWord = (m[2] || m[6] || '').toLowerCase();
+  // Magnitude is the absolute value reported in either capture form; the
+  // direction is set by dirWord (parenthetical signs are decorative).
+  const magByWord  = m[3] ? parseInt(m[3], 10) : null;          // "by 25."
+  const magInParen = m[5] ? parseInt(m[5], 10) : null;          // "(+25)" / "(25)"
+  const magnitude  = magByWord != null ? magByWord
+                    : magInParen != null ? magInParen
+                    : null;
   return {
     kind:      'hit',
     character,
     faction:   m[1].trim().slice(0, 96),
     direction: dirWord === 'better' ? 1 : -1,
-    capped:    !!m[3],
+    magnitude,                                                  // null if Quarm printed no delta
+    capped:    !!m[6],
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
 }

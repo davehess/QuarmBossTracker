@@ -4791,12 +4791,23 @@ async function _handleAgentFaction(req, res) {
       let a = agg.get(key);
       if (!a) {
         a = { guild_id: guildId, character, faction, better: 0, worse: 0,
+              better_total: 0, worse_total: 0,
               capped_max_at: null, capped_min_at: null,
               first_hit_at: iso, last_hit_at: iso, last_direction: null };
         agg.set(key, a);
       }
       const dir = e.direction > 0 ? 1 : -1;
       if (dir > 0) a.better++; else a.worse++;
+      // Magnitude is OPTIONAL — older agents and lines without a numeric
+      // delta send nothing; the count++ above still records the hit. When
+      // present (Quarm "got better by N" / "(+N)" / "(N)" forms), sum it so
+      // the web can show actual point swings instead of just hit counts.
+      // Clamp to a sane range so a corrupt log line can't poison the rollup.
+      const magRaw = Number(e.magnitude);
+      if (Number.isFinite(magRaw) && magRaw > 0 && magRaw < 100000) {
+        const mag = Math.trunc(magRaw);
+        if (dir > 0) a.better_total += mag; else a.worse_total += mag;
+      }
       if (e.capped && dir > 0 && (!a.capped_max_at || iso > a.capped_max_at)) a.capped_max_at = iso;
       if (e.capped && dir < 0 && (!a.capped_min_at || iso > a.capped_min_at)) a.capped_min_at = iso;
       if (iso < a.first_hit_at) a.first_hit_at = iso;
