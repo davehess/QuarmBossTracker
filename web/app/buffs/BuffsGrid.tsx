@@ -58,16 +58,34 @@ const TIME_TONE_CLASS: Record<string, string> = {
 
 // One buff: guild-shorthand name + its live time-left badge (toned so a buffer
 // sees who needs a top-off). updatedAt elapsed-adjusts the tick count.
-function BuffChip({ name, ticks, updatedAt }: { name: string; ticks: number | null | undefined; updatedAt: string | null }) {
+function BuffChip({ name, ticks, updatedAt, spellId }: { name: string; ticks: number | null | undefined; updatedAt: string | null; spellId?: number | null }) {
   const at = updatedAt ? new Date(updatedAt).getTime() : null;
   const t = fmtBuffRemaining(ticks, at);
   const tone = buffTimeTone(ticks, at);
-  const titleSuffix = tone === 'unknown' ? ' · duration unknown' : t ? ` · ${t} left` : '';
-  return (
-    <span title={name + titleSuffix}>
+  // Tooltip shows the full name + a hint about the deep-link target so users
+  // know what clicking does (Uilnayar 2026-06-23: "hover over for exact name
+  // and clicking on the name of a spell or the abbreviation will take you to
+  // the pqdi link for that buff").
+  const linkHref = spellId ? `https://www.pqdi.cc/spell/${spellId}` : null;
+  const titleSuffix = (tone === 'unknown' ? ' · duration unknown' : t ? ` · ${t} left` : '')
+    + (linkHref ? ' · click → PQDI' : '');
+  const Inner = (
+    <>
       <span className="text-green">{shortBuffName(name)}</span>
       {t && <span className={['ml-1 tabular-nums', TIME_TONE_CLASS[tone]].join(' ')}>{t}</span>}
-    </span>
+    </>
+  );
+  if (!linkHref) return <span title={name + titleSuffix}>{Inner}</span>;
+  return (
+    <a
+      href={linkHref}
+      target="_blank"
+      rel="noreferrer"
+      title={name + titleSuffix}
+      className="no-underline hover:underline decoration-dotted decoration-green/50 underline-offset-2"
+    >
+      {Inner}
+    </a>
   );
 }
 
@@ -120,7 +138,24 @@ function ago(iso: string | null): string {
   return Math.floor(h / 24) + 'd ago';
 }
 
-export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categories: BuffCategory[] }) {
+export default function BuffsGrid({ rows, categories, spellIds = {} }: { rows: BuffRow[]; categories: BuffCategory[]; spellIds?: Record<string, number> }) {
+  // name(lower) → spell id. Passed to every BuffChip so it can deep-link
+  // to PQDI. Uilnayar 2026-06-23.
+  const lookupSpellId = (n: string | null | undefined): number | null => {
+    if (!n) return null;
+    return spellIds[n.toLowerCase()] ?? null;
+  };
+  // Per-character pet expand state. Pets are collapsed by default; clicking
+  // the pet row or "Expand pets" toggles. expandAll wins when set.
+  const [expandedPets, setExpandedPets] = useState<Set<string>>(new Set());
+  const [expandAllPets, setExpandAllPets] = useState(false);
+  const togglePet = (name: string) => {
+    setExpandedPets(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
   // Distinct classes present, for the filter chips.
   const classes = useMemo(() => {
     const set = new Set<string>();
@@ -248,6 +283,14 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
             <input type="checkbox" checked={hideStale} onChange={e => setHideStale(e.target.checked)} />
             <span className="text-text">Hide logged-off (synced &gt;30m ago)</span>
           </label>
+          <button
+            type="button"
+            onClick={() => setExpandAllPets(v => !v)}
+            className="px-2 py-1 rounded border border-border bg-bg/40 text-xs text-dim hover:text-text hover:border-blue transition-colors"
+            title="Toggle pet buff rows for every character with a pet. Individual pet rows can also be opened by clicking the pet name."
+          >
+            {expandAllPets ? '▾ Collapse pets' : '▸ Expand pets'}
+          </button>
           <span className="text-dim ml-auto">{filtered.length} shown</span>
         </div>
       </div>
@@ -291,9 +334,11 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                   {groupRows.map(r => {
                     const target = ROLE_TARGETS[r.role] || [];
                     const stale = r.updatedAt ? (now - new Date(r.updatedAt).getTime()) > STALE_MS : true;
+                    const petOpen = !!r.pet && (expandAllPets || expandedPets.has(r.name));
                     return (
-                      <tr key={r.name} className={['border-b border-border/40', (stale && !r.noAgent) ? 'opacity-50' : ''].join(' ')}>
-                        <td className="p-2 sticky left-0 bg-panel">
+                      <Fragment key={r.name}>
+                      <tr className={['border-b border-border/40', (stale && !r.noAgent) ? 'opacity-50' : ''].join(' ')}>
+                        <td className="px-1.5 py-1 sticky left-0 bg-panel">
                           <div className="text-text flex items-center">
                             <span>{r.name}</span>
                             <CopyTargetButton name={r.name} />
@@ -302,20 +347,26 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                             {[r.className || 'Unknown', ROLE_LABELS[r.role]].join(' · ')}
                           </div>
                           {r.pet && (
-                            <div className="text-[10px] mt-0.5 flex items-center gap-1" title={r.pet.buffs.map(b => b.name).join(', ')}>
+                            <button
+                              type="button"
+                              onClick={() => togglePet(r.name)}
+                              className="text-[10px] mt-0.5 flex items-center gap-1 hover:text-blue group cursor-pointer w-full text-left"
+                              title={`Click to ${petOpen ? 'collapse' : 'expand'} ${r.pet.name}'s buffs (${r.pet.buffs.length})`}
+                            >
+                              <span className="text-orange shrink-0">{petOpen ? '🔽' : '▸'}</span>
                               <span className="text-orange shrink-0">🐾</span>
-                              <span className="text-text/80 truncate max-w-[8rem]" title={r.pet.name}>{r.pet.name}</span>
+                              <span className="text-text/80 truncate max-w-[8rem] group-hover:text-blue">{r.pet.name}</span>
                               {r.pet.hpPct != null && (
                                 <span className={[petHpClass(r.pet.hpPct), 'tabular-nums shrink-0'].join(' ')}>{Math.round(r.pet.hpPct)}%</span>
                               )}
                               {r.pet.buffs.length > 0 && (
                                 <span className="text-dim shrink-0">· {r.pet.buffs.length} buff{r.pet.buffs.length === 1 ? '' : 's'}</span>
                               )}
-                            </div>
+                            </button>
                           )}
                         </td>
                         {r.noAgent ? (
-                          <td colSpan={HP_SLOTS.length + categories.length + 1} className="p-2 text-center text-dim/60 italic text-[11px]">
+                          <td colSpan={HP_SLOTS.length + categories.length + 1} className="px-1.5 py-1 text-center text-dim/60 italic text-[11px]">
                             in the raid but not running the agent — buffs unknown
                           </td>
                         ) : (
@@ -323,9 +374,9 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                             {HP_SLOTS.map(slot => {
                               const filled = r.hpSlots[slot];
                               return (
-                                <td key={slot} className="p-2 text-center border-l border-border/40">
+                                <td key={slot} className="px-1.5 py-1 text-center border-l border-border/40">
                                   {filled ? (
-                                    <BuffChip name={filled} ticks={r.buffTicks?.[filled.toLowerCase()]} updatedAt={r.updatedAt} />
+                                    <BuffChip name={filled} ticks={r.buffTicks?.[filled.toLowerCase()]} updatedAt={r.updatedAt} spellId={lookupSpellId(filled)} />
                                   ) : (
                                     <span className="text-red-400" title={'Missing — ' + HP_SLOT_PROVIDER[slot]}>— missing</span>
                                   )}
@@ -337,10 +388,10 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                               const present = (names?.length || 0) > 0;
                               const expected = target.includes(cat);
                               return (
-                                <td key={cat} className="p-2 text-center">
+                                <td key={cat} className="px-1.5 py-1 text-center">
                                   {present ? (
                                     <span title={names!.join(', ')}>
-                                      <BuffChip name={names![0]} ticks={r.buffTicks?.[names![0].toLowerCase()]} updatedAt={r.updatedAt} />
+                                      <BuffChip name={names![0]} ticks={r.buffTicks?.[names![0].toLowerCase()]} updatedAt={r.updatedAt} spellId={lookupSpellId(names![0])} />
                                       {names!.length > 1 ? <span className="text-green"> +{names!.length - 1}</span> : null}
                                     </span>
                                   ) : expected ? (
@@ -351,13 +402,38 @@ export default function BuffsGrid({ rows, categories }: { rows: BuffRow[]; categ
                                 </td>
                               );
                             })}
-                            <td className="p-2 text-center" title={r.other.join(', ')}>
+                            <td className="px-1.5 py-1 text-center" title={r.other.join(', ')}>
                               {r.other.length > 0 ? <span className="text-dim">{r.other.length}</span> : <span className="text-dim/40">·</span>}
                             </td>
                           </>
                         )}
-                        <td className="p-2 text-right text-dim whitespace-nowrap">{r.noAgent ? '—' : ago(r.updatedAt)}</td>
+                        <td className="px-1.5 py-1 text-right text-dim whitespace-nowrap">{r.noAgent ? '—' : ago(r.updatedAt)}</td>
                       </tr>
+                      {/* Collapsible pet buff row — one cell spans the buff
+                          columns so the pet's spells aren't squashed into
+                          the per-slot grid (pets don't slot the same way as
+                          their owners). Click the pet line above (or
+                          "Expand pets" up top) to open. */}
+                      {petOpen && r.pet && (
+                        <tr className="bg-bg/40 border-b border-border/40">
+                          <td className="px-1.5 py-1 sticky left-0 bg-bg/40 text-[10px] text-dim italic pl-6">
+                            🐾 {r.pet.name}'s buffs
+                          </td>
+                          <td colSpan={HP_SLOTS.length + categories.length + 1} className="px-1.5 py-1">
+                            {r.pet.buffs.length === 0 ? (
+                              <span className="text-dim/60 italic text-[11px]">no buffs landed on the pet</span>
+                            ) : (
+                              <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px]">
+                                {r.pet.buffs.map(b => (
+                                  <BuffChip key={b.name} name={b.name} ticks={null} updatedAt={r.updatedAt} spellId={lookupSpellId(b.name)} />
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td />
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </Fragment>

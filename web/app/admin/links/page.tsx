@@ -484,17 +484,22 @@ export default async function AdminLinksPage({
         && (((c.main_name && c.main_name.trim()) || c.name).toLowerCase() === mainLower));
       return { main, uploaders: [...ups].sort(), isHome };
     }).sort((a, b) => Number(b.isHome) - Number(a.isHome) || a.main.name.localeCompare(b.main.name));
-    // Drop NON-home families an officer has explicitly marked standalone via
-    // "Not an alt" (main_name_override === own name). They've been reviewed —
-    // "this character is their own person, stop suggesting them as an alt
-    // here" (Uilnayar 2026-06-23: the button looked like it did nothing
-    // because the row stayed in the cluster). Home stays so the cluster still
-    // anchors. If fewer than 2 families remain, there's nothing left to link,
-    // so the cluster drops entirely.
-    const visible = families.filter(f =>
-      f.isHome
-      || !(f.main.main_name_override
-           && f.main.main_name_override.toLowerCase() === f.main.name.toLowerCase()));
+    // Drop families that don't need an officer decision:
+    //   • Non-home families an officer marked "Not an alt" (override === self)
+    //     — they've been reviewed, the row in the cluster was spurious.
+    //   • Raid Packs — anyone Raid Pack is a main and doesn't need linking
+    //     anywhere (Uilnayar 2026-06-23). Hiding them keeps the cluster
+    //     focused on the actual decisions: Raid Alts that should be folded
+    //     under a Raid Pack root.
+    // Home stays so the cluster still anchors visually. If fewer than 2
+    // families remain, the cluster drops entirely (nothing left to link).
+    const visible = families.filter(f => {
+      if (f.isHome) return true;
+      if ((f.main.rank || '').toLowerCase().trim() === 'raid pack') return false;
+      if (f.main.main_name_override
+          && f.main.main_name_override.toLowerCase() === f.main.name.toLowerCase()) return false;
+      return true;
+    });
     if (visible.length < 2) continue;
     familyGroups.push({ did, families: visible });
   }
@@ -867,10 +872,40 @@ export default async function AdminLinksPage({
                       );
                       const ovrConflict = !!ovr && !isSelfPin && f.isHome;
                       const ovrMoves    = !!ovr && !isSelfPin && !f.isHome;
+                      // OpenDKP's view of who this character is parented
+                      // under — surfaces "(Shavimo in OpenDKP)" next to
+                      // Gnomistakes when OpenDKP has Gnomistakes rooted
+                      // under Shavimo (Uilnayar 2026-06-23). main_name is
+                      // set by the OpenDKP sync from ParentId, so if it
+                      // differs from the row's own name AND we have the
+                      // parent's OpenDKP id, link out to that character
+                      // page. Skipped when the override is just self
+                      // (effectively un-parented after officer cleanup).
+                      const opendkpParentName = (f.main.main_name && f.main.main_name.toLowerCase() !== f.main.name.toLowerCase())
+                        ? f.main.main_name : null;
+                      const opendkpParentChar = opendkpParentName ? charByLower.get(opendkpParentName.toLowerCase()) : null;
+                      const opendkpParentId   = opendkpParentChar?.opendkp_id ?? null;
                       return (
                       <div key={f.main.name} className="flex flex-col sm:flex-row sm:items-center gap-1.5 text-xs">
                         <div className="sm:w-64">
                           <span className="text-text font-medium">{f.main.name}</span>
+                          {opendkpParentName && (
+                            opendkpParentId ? (
+                              <a
+                                href={`https://wolfpack.opendkp.com/#/characters/${opendkpParentId}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={`OpenDKP has ${f.main.name} parented under ${opendkpParentName}. Click to open that character on OpenDKP.`}
+                                className="ml-1.5 text-dim text-[10px] hover:text-blue hover:underline no-underline"
+                              >
+                                ({opendkpParentName} in OpenDKP ↗)
+                              </a>
+                            ) : (
+                              <span className="ml-1.5 text-dim text-[10px]" title={`OpenDKP has ${f.main.name} parented under ${opendkpParentName} (no OpenDKP id captured for the parent yet).`}>
+                                ({opendkpParentName} in OpenDKP)
+                              </span>
+                            )
+                          )}
                           {/* HOME label removed 2026-06-21 (Uilnayar) — it
                               fired on every family whose root carried the
                               uploader's discord_id, which meant clusters

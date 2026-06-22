@@ -149,6 +149,39 @@ export default async function BuffsPage() {
   // category column set.
   const categories = (CATEGORY_ORDER as BuffCategory[]).filter(c => c !== 'hp');
 
+  // Resolve buff names → eqemu_spells.id so BuffChip can deep-link each
+  // chip to its PQDI page (Uilnayar 2026-06-23). Only look up the names
+  // that actually appear in the current rows (player buffs + pet buffs +
+  // HP slots + Other), bounded — avoids fetching the full 4k-spell catalog.
+  const wantedNames = new Set<string>();
+  const addName = (n: string | null | undefined) => { if (n) wantedNames.add(n); };
+  for (const r of rows) {
+    for (const slot of ['A', 'B', 'C'] as const) addName(r.hpSlots?.[slot] ?? null);
+    for (const list of Object.values(r.byCategory || {})) for (const n of (list || [])) addName(n);
+    for (const n of (r.other || [])) addName(n);
+    if (r.pet) for (const b of (r.pet.buffs || [])) addName(b.name);
+  }
+  const spellIdByName = new Map<string, number>();
+  if (wantedNames.size > 0) {
+    const namesArr = [...wantedNames];
+    // PostgREST .in() caps URL length; chunk in batches so a busy raid
+    // (200+ distinct buffs) doesn't 414. 80 per request is a safe ceiling.
+    const CHUNK = 80;
+    for (let i = 0; i < namesArr.length; i += CHUNK) {
+      const slice = namesArr.slice(i, i + CHUNK);
+      const { data } = await admin
+        .from('eqemu_spells')
+        .select('id, name')
+        .in('name', slice);
+      for (const s of ((data ?? []) as { id: number; name: string }[])) {
+        if (!spellIdByName.has(s.name.toLowerCase())) spellIdByName.set(s.name.toLowerCase(), s.id);
+      }
+    }
+  }
+  // Serialize for the client component prop.
+  const spellIds: Record<string, number> = {};
+  for (const [k, v] of spellIdByName) spellIds[k] = v;
+
   return (
     <div className="space-y-3">
       {/* Promote the next-gen /raid view (stage-1 mockup). The classic grid
@@ -164,7 +197,7 @@ export default async function BuffsPage() {
         <span className="text-dim"> Stage-1 mockup; this <code>/buffs</code> page stays as the classic grid.</span>
         <span className="text-blue ml-1">→</span>
       </Link>
-      <BuffsGrid rows={rows} categories={categories} />
+      <BuffsGrid rows={rows} categories={categories} spellIds={spellIds} />
     </div>
   );
 }
