@@ -5,6 +5,7 @@ import Nav from '@/components/Nav';
 import AuthBadge from '@/components/AuthBadge';
 import TimezonePicker from '@/components/TimezonePicker';
 import LocalDashboardLink from '@/components/LocalDashboardLink';
+import GlobalSearch from '@/components/GlobalSearch';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 
@@ -118,11 +119,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </div>
             </div>
 
-            {/* Row 2 — primary nav on its own clean strip. Downloads moved up
-                under the wordmark; Feedback + Admin live in the account
-                block. */}
-            <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
+            {/* Row 2 — primary nav on its own clean strip + the site-wide
+                search box (signed-in only; the search API is members-only).
+                Downloads moved up under the wordmark; Feedback + Admin live in
+                the account block. */}
+            <div className="flex items-center justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
               <Nav showMe={showMe} />
+              {showMe && <div className="w-full sm:w-auto sm:ml-auto"><GlobalSearch /></div>}
             </div>
           </header>
           <main>{children}</main>
