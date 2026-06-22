@@ -77,8 +77,16 @@ async function update(table, queryString, body) {
   return _request(`/${table}?${queryString}`, { method: 'PATCH', body });
 }
 
-async function upsert(table, rows, onConflict) {
-  const prefer = `return=representation,resolution=merge-duplicates`;
+// Default behavior: returns the upserted rows so callers can count via
+// Array.isArray(result).length. Pass { minimal: true } when you DON'T need
+// the rows back — the PostgREST response array is capped at the server's
+// max-rows setting (default 1000 on Supabase), so a 2000-row upsert silently
+// returns 1000 even though all rows were written. Minimal-return drops the
+// representation entirely (no cap, less egress); the caller's "written"
+// count then has to come from the input length, not the response.
+async function upsert(table, rows, onConflict, opts = {}) {
+  const ret = opts.minimal ? 'return=minimal' : 'return=representation';
+  const prefer = `${ret},resolution=merge-duplicates`;
   const path   = onConflict ? `/${table}?on_conflict=${onConflict}` : `/${table}`;
   return _request(path, { method: 'POST', body: rows, prefer });
 }

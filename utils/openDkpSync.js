@@ -319,8 +319,14 @@ async function syncAuctions(opts = {}) {
     // Auction rows
     const auctionRows = list.map(_auctionRow).filter(Boolean);
     if (auctionRows.length > 0) {
-      const written = await supabase.upsert('opendkp_auctions', auctionRows, 'auction_id');
-      if (Array.isArray(written)) totalUpserted += written.length;
+      // Minimal-return: the auction upsert often batches more than 1000
+      // rows on a full sync, and PostgREST caps the representation response
+      // at max-rows (default 1000), which made the "upserted" count read
+      // 1000 even when more rows were written (Uilnayar 2026-06-23: "12,797
+      // actual auctions but the report said 1000"). All rows ARE written;
+      // count from the input length.
+      await supabase.upsert('opendkp_auctions', auctionRows, 'auction_id', { minimal: true });
+      totalUpserted += auctionRows.length;
     }
 
     // Bid rows live inline in each auction's Bids[] — no detail call needed.
@@ -331,12 +337,15 @@ async function syncAuctions(opts = {}) {
       return _bidsFromAuction(auctionId, a);
     });
     if (allBids.length > 0) {
-      const written = await supabase.upsert(
+      // Same minimal-return rationale — bid payloads on a full sync exceed
+      // the 1000-row response cap.
+      await supabase.upsert(
         'opendkp_auction_bids',
         allBids,
         'auction_id,character_name,value',
+        { minimal: true },
       );
-      if (Array.isArray(written)) bidsWritten += written.length;
+      bidsWritten += allBids.length;
     }
 
     // Stop if the API said this is the last page.
@@ -365,10 +374,14 @@ async function syncRaidsList() {
   const rows = raids.map(_raidSummaryRow).filter(Boolean);
   if (rows.length === 0) return { fetched: raids.length, upserted: 0 };
 
-  const written = await supabase.upsert('opendkp_raids', rows, 'raid_id');
+  // Minimal-return: same 1000-row PostgREST cap that hit the auctions upsert
+  // (Uilnayar 2026-06-23). We're at 385 raids today but the count will grow,
+  // and getting capped silently 18 months from now is exactly the failure
+  // mode we just fixed elsewhere. Count from the input length.
+  await supabase.upsert('opendkp_raids', rows, 'raid_id', { minimal: true });
   return {
     fetched:  raids.length,
-    upserted: Array.isArray(written) ? written.length : 0,
+    upserted: rows.length,
   };
 }
 
