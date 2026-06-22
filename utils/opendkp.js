@@ -161,6 +161,51 @@ async function createCharacter(payload) {
   }, body);
 }
 
+// Resolve the internal ClientId HASH the /characters/links endpoint wants in
+// its body (e.g. "8fa8662b40c12"). This is NOT the "wolfpack" URL slug nor the
+// OPENDKP_CLIENT_ID read token — it's the client's internal id, constant per
+// OpenDKP client and present on every character row. We cache it (env override
+// first, then read it off any character row, then a known fallback) so linking
+// never needs a manual config step. Uilnayar 2026-06-23.
+let _openDkpClientHash = null;
+async function _resolveClientHash() {
+  if (_openDkpClientHash) return _openDkpClientHash;
+  if (process.env.OPENDKP_CLIENT_HASH) { _openDkpClientHash = process.env.OPENDKP_CLIENT_HASH; return _openDkpClientHash; }
+  try {
+    const chars = await getCharacters({ activeOnly: true });
+    const list = Array.isArray(chars) ? chars
+               : Array.isArray(chars?.Characters) ? chars.Characters
+               : Array.isArray(chars?.data) ? chars.data : [];
+    const row = list.find(c => c && c.ClientId);
+    if (row && row.ClientId) { _openDkpClientHash = String(row.ClientId); return _openDkpClientHash; }
+  } catch { /* fall through to the known constant */ }
+  // Known wolfpack client id (appears in every authenticated browser request);
+  // safe public identifier, used only when the roster fetch can't supply it.
+  _openDkpClientHash = '8fa8662b40c12';
+  return _openDkpClientHash;
+}
+
+// PUT /clients/{name}/characters/links — link a child character under a parent
+// in the OpenDKP family tree. createCharacter's ParentId field does NOT
+// establish the link (confirmed 2026-06-23 — newly created chars came up
+// un-parented), so this separate call is required. Body shape captured from
+// the OpenDKP UI:  { ParentId: "<id>", ChildId: <id>, ClientId: "<hash>" }.
+// No follow-up save is needed (confirmed by Uilnayar).
+async function linkCharacter(parentId, childId) {
+  const clientId = await _resolveClientHash();
+  const headers  = await _bearerHeaders(true);
+  const body     = JSON.stringify({
+    ParentId: String(parentId),
+    ChildId:  Number(childId),
+    ClientId: clientId,
+  });
+  return _post({
+    ..._clientUrl('/characters/links'),
+    method: 'PUT',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
 // ── Auction API ───────────────────────────────────────────────────────────────
 // PUT /clients/{name}/auctions — start one or more auctions.
 //
@@ -471,7 +516,7 @@ async function updateRaidById(raidId, raidObject) {
 
 module.exports = {
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
-  getCharacters, createCharacter,
+  getCharacters, createCharacter, linkCharacter,
   createAuctions, getAuctions, getAuction, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
   getAudits, getAdjustments,

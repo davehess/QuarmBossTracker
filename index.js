@@ -501,7 +501,7 @@ async function _processRegisterQueue(client) {
       `status=eq.pending&order=created_at.asc&limit=25`);
     if (!Array.isArray(pending) || pending.length === 0) return;
 
-    const { createCharacter } = require('./utils/opendkp');
+    const { createCharacter, linkCharacter } = require('./utils/opendkp');
     // uploaderDid → [{ name, opendkpId, parentName }] for one batched DM.
     const dmBatch = new Map();
     // Ranks that should STAY OFF the OpenDKP roster — Non-raid Alts and
@@ -531,6 +531,21 @@ async function _processRegisterQueue(client) {
           });
           newId = (result && Number.isFinite(Number(result.CharacterId)))
             ? Number(result.CharacterId) : null;
+
+          // Link the new character under its OpenDKP parent. createCharacter's
+          // ParentId field does NOT establish the family link (confirmed
+          // 2026-06-23 — Dwaalin came up un-parented), so the separate
+          // /characters/links PUT is required. Best-effort: if it fails the
+          // character still exists and an officer can link manually, so we log
+          // and continue rather than failing the whole registration.
+          if (newId && Number.isFinite(row.parent_opendkp_id) && row.parent_opendkp_id > 0) {
+            try {
+              await linkCharacter(row.parent_opendkp_id, newId);
+              console.log(`[opendkp-register-queue] linked ${row.name} (${newId}) under parent ${row.parent_opendkp_id}`);
+            } catch (linkErr) {
+              console.warn(`[opendkp-register-queue] link ${row.name} → ${row.parent_opendkp_id} failed:`, linkErr?.message);
+            }
+          }
         }
 
         // Resolve the parent's NAME (for our main_name) when the web sent us
