@@ -484,7 +484,19 @@ export default async function AdminLinksPage({
         && (((c.main_name && c.main_name.trim()) || c.name).toLowerCase() === mainLower));
       return { main, uploaders: [...ups].sort(), isHome };
     }).sort((a, b) => Number(b.isHome) - Number(a.isHome) || a.main.name.localeCompare(b.main.name));
-    familyGroups.push({ did, families });
+    // Drop NON-home families an officer has explicitly marked standalone via
+    // "Not an alt" (main_name_override === own name). They've been reviewed —
+    // "this character is their own person, stop suggesting them as an alt
+    // here" (Uilnayar 2026-06-23: the button looked like it did nothing
+    // because the row stayed in the cluster). Home stays so the cluster still
+    // anchors. If fewer than 2 families remain, there's nothing left to link,
+    // so the cluster drops entirely.
+    const visible = families.filter(f =>
+      f.isHome
+      || !(f.main.main_name_override
+           && f.main.main_name_override.toLowerCase() === f.main.name.toLowerCase()));
+    if (visible.length < 2) continue;
+    familyGroups.push({ did, families: visible });
   }
   familyGroups.sort((a, b) => b.families.length - a.families.length);
 
