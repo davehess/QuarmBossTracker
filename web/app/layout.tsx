@@ -82,6 +82,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                     <span>Beta</span>
                     <span aria-hidden className="text-dim text-[10px]">↗</span>
                   </a>
+                  {/* Site-wide search sits beside the download CTAs (Uilnayar
+                      2026-06-23). Signed-in only — the search API is
+                      members-only. Enter opens the full /search results page. */}
+                  {showMe && <GlobalSearch />}
                 </div>
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
@@ -119,13 +123,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </div>
             </div>
 
-            {/* Row 2 — primary nav on its own clean strip + the site-wide
-                search box (signed-in only; the search API is members-only).
-                Downloads moved up under the wordmark; Feedback + Admin live in
-                the account block. */}
-            <div className="flex items-center justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
+            {/* Row 2 — primary nav on its own clean strip. Search moved up
+                beside the download CTAs; Feedback + Admin live in the account
+                block. */}
+            <div className="flex items-start justify-between gap-3 flex-wrap border-t border-border/60 mt-3 pt-3">
               <Nav showMe={showMe} />
-              {showMe && <div className="w-full sm:w-auto sm:ml-auto"><GlobalSearch /></div>}
             </div>
           </header>
           <main>{children}</main>

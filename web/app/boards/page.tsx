@@ -10,6 +10,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { userTz, fmtAbs } from '@/lib/timezone';
 import ExpansionSection from './ExpansionSection';
 
 export const dynamic = 'force-dynamic';
@@ -62,6 +63,7 @@ export default async function BoardsPage() {
   if (!user) redirect('/auth/signin?next=/boards');
 
   const { rows, updatedAt, error } = await loadBoards();
+  const tz = await userTz();
   if (error) {
     return (
       <div className="bg-panel border border-red rounded-lg p-4 text-red text-sm font-mono">
@@ -100,7 +102,7 @@ export default async function BoardsPage() {
           <div className="text-xs text-dim">
             <span className="text-green">{totalAvailable}</span> available now
             {updatedAt && (
-              <span className="ml-3">snapshot: {new Date(updatedAt).toLocaleString()}</span>
+              <span className="ml-3">snapshot: {fmtAbs(updatedAt, tz)}</span>
             )}
           </div>
         </div>

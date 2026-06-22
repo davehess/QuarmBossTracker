@@ -384,18 +384,6 @@ export default async function ParsesPage() {
             {nightLoot.length > 0 && (
               <LootBlock loot={nightLoot as LootRow[]} />
             )}
-
-            {nightAttendance && nightAttendance.top_attendees.length > 0 && (
-              <div className="text-xs text-dim flex flex-wrap items-center gap-x-4 gap-y-1">
-                <span className="text-orange">Top ticks:</span>
-                {nightAttendance.top_attendees.map((a) => (
-                  <span key={a.name}>
-                    <span className="text-text">{a.name}</span>
-                    <span className="opacity-60"> · {a.ticks}</span>
-                  </span>
-                ))}
-              </div>
-            )}
           </section>
         );
       })}

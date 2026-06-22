@@ -28,6 +28,7 @@ export default function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);   // index into the flat hit list
+  const [arrowed, setArrowed] = useState(false); // user moved with arrows → Enter opens the hit
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -42,7 +43,7 @@ export default function GlobalSearch() {
     const t = setTimeout(async () => {
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
-        if (res.ok) { setResults(await res.json()); setActive(0); }
+        if (res.ok) { setResults(await res.json()); setActive(0); setArrowed(false); }
       } catch { /* network blip — leave prior results */ }
       finally { setLoading(false); }
     }, 200);
@@ -80,10 +81,18 @@ export default function GlobalSearch() {
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') { setOpen(false); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(flat.length - 1, a + 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(0, a - 1)); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setArrowed(true); setActive(a => Math.min(flat.length - 1, a + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setArrowed(true); setActive(a => Math.max(0, a - 1)); }
     else if (e.key === 'Enter') {
-      if (flat[active]) { e.preventDefault(); go(flat[active]); }
+      e.preventDefault();
+      // Arrowed to a specific hit → open it. Otherwise Enter opens the full
+      // results page (Uilnayar 2026-06-23 "do a search, hit enter, show
+      // search results").
+      if (arrowed && flat[active]) go(flat[active]);
+      else if (q.trim().length >= 2) {
+        setOpen(false);
+        router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+      }
     }
   }
 
