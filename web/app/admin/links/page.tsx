@@ -877,6 +877,7 @@ export default async function AdminLinksPage({
                         observedRace={null}
                         parentName={u.parentName}
                         parentOpenDkpId={u.parentOpenDkpId}
+                        uploaderDiscordId={u.did}
                       />
                     </td>
                   </tr>

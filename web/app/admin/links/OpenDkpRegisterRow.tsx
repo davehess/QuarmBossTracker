@@ -44,21 +44,28 @@ export default function OpenDkpRegisterRow({
   observedRace,
   parentName,
   parentOpenDkpId,
+  uploaderDiscordId,
 }: {
-  name:            string;
-  observedClass:   string | null;
-  observedLevel:   number | null;
-  observedRace:    string | null;
-  parentName:      string | null;
-  parentOpenDkpId: number | null;
+  name:              string;
+  observedClass:     string | null;
+  observedLevel:     number | null;
+  observedRace:      string | null;
+  parentName:        string | null;
+  parentOpenDkpId:   number | null;
+  uploaderDiscordId: string | null;
 }) {
   const [cls,   setCls]   = useState<string>(observedClass || UNKNOWN);
   const [race,  setRace]  = useState<string>(observedRace  || UNKNOWN);
   const [level, setLevel] = useState<number>(observedLevel || 60);
   const [rank,  setRank]  = useState<string>(defaultRank(observedLevel));
+  // DM the owner a claim link once the bot registers it — on by default, but
+  // only meaningful when we know who the owner is (uploaderDiscordId set).
+  const [dmOwner, setDmOwner] = useState<boolean>(true);
   const [busy,  startTransition] = useTransition();
   const [status, setStatus] = useState<'idle' | 'done' | 'err'>('idle');
   const [err, setErr] = useState<string | null>(null);
+
+  const canDm = !!uploaderDiscordId;
 
   function submit() {
     setErr(null);
@@ -66,7 +73,10 @@ export default function OpenDkpRegisterRow({
     startTransition(async () => {
       const res = await registerInOpenDKP({
         name, cls, race, level, rank,
-        parentOpenDkpId: parentOpenDkpId ?? null,
+        parentOpenDkpId:   parentOpenDkpId ?? null,
+        parentName:        parentName ?? null,
+        uploaderDiscordId: uploaderDiscordId ?? null,
+        dmOwner:           canDm && dmOwner,
       });
       if (res.ok) setStatus('done');
       else { setStatus('err'); setErr(res.error || 'register failed'); }
@@ -76,9 +86,11 @@ export default function OpenDkpRegisterRow({
   if (status === 'done') {
     return (
       <span className="text-green text-xs">
-        ✓ Registered as {cls} L{level} ({rank})
+        ✓ Queued as {cls} L{level} ({rank})
         {parentName ? <> · alt of {parentName}</> : null}.
-        Player needs to claim in OpenDKP. Row drops off on next refresh.
+        The bot registers it in OpenDKP within ~20s
+        {canDm && dmOwner ? <> and DMs the owner a claim link</> : null}.
+        Row drops off on next refresh.
       </span>
     );
   }
@@ -124,13 +136,26 @@ export default function OpenDkpRegisterRow({
           : "Couldn't resolve a family root for this uploader's Discord ID. The character will land as its own self-rooted main in OpenDKP — you can re-parent it via the family-link section after."}>
         {parentName ? <>→ alt of <span className="text-text">{parentName}</span></> : 'no parent found'}
       </span>
+      <label
+        className={`flex items-center gap-1 ${canDm ? 'text-dim cursor-pointer' : 'text-dim/40 cursor-not-allowed'}`}
+        title={canDm
+          ? "DM the character's owner a claim link in Discord once the bot registers it (batched if you register several at once)."
+          : "We don't have a Discord ID for this uploader, so there's nobody to DM. Link their Discord first if you want the claim nudge."}>
+        <input
+          type="checkbox"
+          checked={canDm && dmOwner}
+          disabled={!canDm || busy}
+          onChange={e => setDmOwner(e.target.checked)}
+        />
+        DM
+      </label>
       <button
         type="button"
         onClick={submit}
         disabled={busy || cls === UNKNOWN || race === UNKNOWN}
         title={cls === UNKNOWN || race === UNKNOWN
           ? 'Pick a class and race before registering — OpenDKP rejects UNKNOWN.'
-          : 'Register this character in OpenDKP'}
+          : 'Queue this character for OpenDKP registration (the bot processes it within ~20s)'}
         className="px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {busy ? '...' : 'Register'}

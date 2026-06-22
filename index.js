@@ -155,6 +155,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   const { startWolfpackMembersSync } = require('./utils/wolfpackMembers');
   startWolfpackMembersSync(readyClient);
   startOpenDkpSync();
+  startOpenDkpRegisterQueue(readyClient);
   startRaidHelperSync();
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 
@@ -460,6 +461,138 @@ function startOpenDkpSync() {
     runSync().then(r => console.log('[opendkp-sync] interval:', JSON.stringify(r)))
              .catch(err => console.warn('[opendkp-sync] interval failed:', err?.message));
   }, OPENDKP_SYNC_INTERVAL_MS);
+}
+
+// ── OpenDKP register queue drain ────────────────────────────────────────────
+// The web /admin/links Register button writes a row to
+// opendkp_register_requests (using its Supabase service-role access — no
+// shared bearer / BOT_BASE_URL needed). This poller drains pending rows:
+// createCharacter in OpenDKP, stamp the characters audit marker, then DM the
+// owner a claim link (batched per uploader). Single Railway replica, so no
+// cross-instance contention; a busy flag guards against a slow OpenDKP call
+// letting two passes overlap.
+const OPENDKP_REGISTER_QUEUE_INTERVAL_MS = 20 * 1000;
+let _registerQueueBusy = false;
+function startOpenDkpRegisterQueue(client) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    console.log('[opendkp-register-queue] skipped — supabase disabled');
+    return;
+  }
+  const hasCreds = (process.env.OPENDKP_USERNAME || process.env.OPENDKP_EMAIL)
+    && process.env.OPENDKP_PASSWORD && process.env.OPENDKP_COGNITO_CLIENT_ID;
+  if (!hasCreds) {
+    console.log('[opendkp-register-queue] skipped — missing OpenDKP Cognito creds');
+    return;
+  }
+  setInterval(() => {
+    _processRegisterQueue(client).catch(err =>
+      console.warn('[opendkp-register-queue] pass failed:', err?.message));
+  }, OPENDKP_REGISTER_QUEUE_INTERVAL_MS);
+}
+
+async function _processRegisterQueue(client) {
+  if (_registerQueueBusy) return;
+  _registerQueueBusy = true;
+  try {
+    const supabase = require('./utils/supabase');
+    const guildId  = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const pending  = await supabase.select('opendkp_register_requests',
+      `status=eq.pending&order=created_at.asc&limit=25`);
+    if (!Array.isArray(pending) || pending.length === 0) return;
+
+    const { createCharacter } = require('./utils/opendkp');
+    // uploaderDid → [{ name, opendkpId, parentName }] for one batched DM.
+    const dmBatch = new Map();
+
+    for (const row of pending) {
+      try {
+        const result = await createCharacter({
+          Name:     row.name,
+          Class:    row.class,
+          Race:     row.race || 'Iksar',
+          Level:    row.level,
+          Active:   1,
+          Rank:     row.rank,
+          ParentId: Number.isFinite(row.parent_opendkp_id) ? row.parent_opendkp_id : 0,
+        });
+        const newId = (result && Number.isFinite(Number(result.CharacterId)))
+          ? Number(result.CharacterId) : null;
+
+        // Audit marker on characters — scoped fields only (the OpenDKP sync
+        // owns class/race/rank/main_name; merge resolution leaves them alone).
+        await supabase.upsert('characters', [{
+          guild_id:                          guildId,
+          name:                              row.name,
+          registered_via_web_at:             new Date().toISOString(),
+          registered_via_web_by_discord_id:  row.requested_by_discord_id || null,
+          claim_opendkp_id:                  newId,
+        }], 'guild_id,name').catch(err =>
+          console.warn('[opendkp-register-queue] characters audit upsert failed:', err?.message));
+
+        await supabase.update('opendkp_register_requests', `id=eq.${row.id}`, {
+          status:       'done',
+          opendkp_id:   newId,
+          error:        null,
+          processed_at: new Date().toISOString(),
+        });
+
+        if (row.dm_owner && row.uploader_discord_id && newId) {
+          if (!dmBatch.has(row.uploader_discord_id)) dmBatch.set(row.uploader_discord_id, []);
+          dmBatch.get(row.uploader_discord_id).push({
+            name: row.name, opendkpId: newId, parentName: row.parent_name || null,
+          });
+        }
+        console.log(`[opendkp-register-queue] registered ${row.name} (${row.class} L${row.level} ${row.rank}, parent ${row.parent_opendkp_id || 'none'}) → id ${newId || '?'}`);
+      } catch (err) {
+        await supabase.update('opendkp_register_requests', `id=eq.${row.id}`, {
+          status:       'failed',
+          error:        String(err?.message || err).slice(0, 300),
+          processed_at: new Date().toISOString(),
+        });
+        console.warn(`[opendkp-register-queue] ${row.name} failed:`, err?.message);
+      }
+    }
+
+    // Batched claim DMs — one message per uploader listing all their newly
+    // registered characters + claim links. Status recorded on characters
+    // (claim_dm_status) so the awaiting-claim queue can show "DM'd" vs
+    // "DMs off" vs "failed". No auto-retry — officers nudge from the queue.
+    for (const [did, chars] of dmBatch) {
+      let status = 'sent', errMsg = null;
+      try {
+        const user = await client.users.fetch(did).catch(() => null);
+        if (!user) { status = 'failed'; errMsg = 'user not fetchable'; }
+        else {
+          const lines = chars.map(c =>
+            `• **${c.name}**${c.parentName ? ` _(alt of ${c.parentName})_` : ''} — <https://wolfpack.opendkp.com/#/characters/${c.opendkpId}>`);
+          const plural = chars.length === 1 ? 'a character' : `${chars.length} characters`;
+          await user.send(
+            `🐺 **Wolf Pack** — an officer just registered ${plural} for you in OpenDKP:\n` +
+            lines.join('\n') +
+            `\n\nClaim ${chars.length === 1 ? 'it' : 'them'} in OpenDKP to link to your account so DKP + loot history credit correctly. ` +
+            `You can also see your outstanding actions any time at <https://wolfpack.quest/me>.`
+          );
+        }
+      } catch (err) {
+        // 50007 = "Cannot send messages to this user" (DMs disabled / not a mutual server).
+        status = (err && err.code === 50007) ? 'dms_off' : 'failed';
+        errMsg = String(err?.message || err).slice(0, 200);
+      }
+      // Stamp claim-DM status on each character row by name.
+      const supabase = require('./utils/supabase');
+      const nowIso = new Date().toISOString();
+      for (const c of chars) {
+        await supabase.update('characters',
+          `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(c.name)}`,
+          { claim_dm_sent_at: nowIso, claim_dm_status: status, claim_dm_error: errMsg }
+        ).catch(() => {});
+      }
+      console.log(`[opendkp-register-queue] claim DM to ${did}: ${status} (${chars.length} char${chars.length === 1 ? '' : 's'})`);
+    }
+  } finally {
+    _registerQueueBusy = false;
+  }
 }
 
 // Raid-Helper sync — pulls upcoming + recent events and per-event signups
