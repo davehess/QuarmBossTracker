@@ -2496,18 +2496,16 @@ function parseFactionLine(line, character) {
   //   "Your faction standing with X got better. (+25)"   (signed parens)
   //   "Your faction standing with X got better. (25)"    (bare parens)
   //   "Your faction standing with X got better by 25."   (Live-style)
-  // Match all four. Lines that print a magnitude USED to silently drop on
-  // the old regex (which anchored `.\s*$`) — that's why Kael giant kills
-  // looked like single hits even though they're +N each (Uilnayar
-  // 2026-06-23). Capping lines never carry a magnitude.
+  // Match all four. The old regex anchored `.\s*$` so any line carrying a
+  // magnitude after the period was silently dropped — which is why Kael
+  // giant kills (each ticking Coldain by far more than 1) read as single
+  // hits on the faction page (Uilnayar 2026-06-23).
   const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)(?:\s+by\s+(\d+))?\.\s*(?:\((?:([+\-]?)(\d+))\)\s*)?|could not possibly get any (better|worse)\.)\s*$/i);
   if (!m) return null;
   const ts = parseEqTimestamp(line);
   const dirWord = (m[2] || m[6] || '').toLowerCase();
-  // Magnitude is the absolute value reported in either capture form; the
-  // direction is set by dirWord (parenthetical signs are decorative).
-  const magByWord  = m[3] ? parseInt(m[3], 10) : null;          // "by 25."
-  const magInParen = m[5] ? parseInt(m[5], 10) : null;          // "(+25)" / "(25)"
+  const magByWord  = m[3] ? parseInt(m[3], 10) : null;
+  const magInParen = m[5] ? parseInt(m[5], 10) : null;
   const magnitude  = magByWord != null ? magByWord
                     : magInParen != null ? magInParen
                     : null;
@@ -2516,7 +2514,7 @@ function parseFactionLine(line, character) {
     character,
     faction:   m[1].trim().slice(0, 96),
     direction: dirWord === 'better' ? 1 : -1,
-    magnitude,                                                  // null if Quarm printed no delta
+    magnitude,
     capped:    !!m[6],
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
@@ -2954,10 +2952,26 @@ function inferClassFromAbility(character, ability) {
   confirmPlayer(character);
 }
 
+// Module-level registry of every live EncounterBuilder so a flush on one
+// can wake the others. The scenario: one Mimic install is tailing multiple
+// log files (e.g. Damyu tails his own log AND Borowhay's because they multi-
+// box on one machine), each character gets its own builder, and they're
+// independently parsing the same raid. When Damyu's builder sees the boss
+// kill line, Borowhay's SHOULD see it too — but if Borowhay's log writer
+// hiccuped, or his client crashed, or the agent missed the line in his
+// buffer, his builder's fight stays open forever (Uilnayar 2026-06-21
+// reported a 17h-old encounter on Damyu's overlay; same Mimic was uploading
+// Borowhay's logs). Now a successful flush broadcasts to peer builders so
+// they catch the boss-died signal even when their own log stream missed it.
+// Silent backfill drivers don't register — they shouldn't yank live builders'
+// state mid-replay.
+const _liveBuilders = new Set();
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
     this.onFlush    = onFlush;
+    if (!silent) _liveBuilders.add(this);
     // `silent` mode = no live-dashboard side-effects. Backfill drivers
     // set this so replaying old logs doesn't move top-damage counters,
     // session DPS, recentParses, or threat tables. Combat events still
@@ -3309,7 +3323,14 @@ class EncounterBuilder {
     if (!wd) return null;
     const evTsMs = Date.parse(pvpBcast.ts) || Date.now();
     const gapMs = evTsMs - wd.tsMs;
-    if (gapMs < 0 || gapMs > 30_000) return null;
+    // Window widened 30s → 120s on 2026-06-21 (Uilnayar — Interlude
+    // tar-goo death, multiple Wolf Pack characters had damaged him in
+    // the fight but the broadcast landed after a regroup pause; every
+    // 30s window had already expired). Two minutes covers a typical
+    // disengage-and-finish scenario (target runs, ports, dies in a
+    // hazard) while still being short enough that a damage burst from
+    // an unrelated earlier fight doesn't masquerade as an assist.
+    if (gapMs < 0 || gapMs > 120_000) return null;
     // Don't credit ourselves an "assist" on our own kill — that's a kill.
     const killerLower = pvpBcast.killer ? String(pvpBcast.killer).toLowerCase() : '';
     const meLower = String(this.character || '').toLowerCase();
@@ -3582,10 +3603,32 @@ class EncounterBuilder {
       // 3) PvP assist window: uploader's outbound damage to a plausible
       // player name (single Capitalized word, not "YOU"). Stamps a sliding
       // window keyed by victim.toLowerCase() so the next PvP death broadcast
-      // naming the same victim within 30s can correlate (handled outside the
-      // builder, in the tail/backfill driver). Self-damage to mobs / heals
-      // are skipped automatically — _isMob/_isPlayer already excluded them.
-      const isMineOutbound = (event.attacker === null) || (event.attacker === this.character);
+      // naming the same victim within 120s can correlate (handled outside
+      // the builder, in the tail/backfill driver). Self-damage to mobs /
+      // heals are skipped automatically — _isMob/_isPlayer already excluded
+      // them.
+      //
+      // "Outbound" includes:
+      //   • event.attacker === null            ("You slash X" form)
+      //   • event.attacker === this.character  (named-self melee form)
+      //   • event.attacker is one of OUR PETS  (necro/mage/beastlord pet,
+      //     active charm pet) — added 2026-06-21 (Uilnayar — Interlude
+      //     tar-goo death; pet damage was silently failing to stamp the
+      //     window, so necro DoT plus pet-only damage chains never
+      //     credited an assist). Pet-ness is checked via petLeaders +
+      //     the active charm trackers.
+      const _atkLower    = event.attacker ? String(event.attacker).toLowerCase() : '';
+      const _meLower     = String(this.character || '').toLowerCase();
+      const _petOwner    = _atkLower
+        && (this.petLeaders[_atkLower]
+           || (this._activeCharms?.get(_atkLower)?.owner)
+           || (_charmTickTracker.get(_atkLower)?.is_active
+                 ? _charmTickTracker.get(_atkLower).owner
+                 : null));
+      const _isMyPet     = !!_petOwner && _meLower && String(_petOwner).toLowerCase() === _meLower;
+      const isMineOutbound = (event.attacker === null)
+        || (event.attacker === this.character)
+        || _isMyPet;
       if (isMineOutbound && _isPlayer(def)
           && def !== 'YOU' && def !== 'You'
           && def !== this.character) {
@@ -4688,6 +4731,49 @@ class EncounterBuilder {
     if (stats.currentEncounterThreat) {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
+    // Cross-builder flush propagation. If this Mimic install is tailing more
+    // than one character's log (multi-box on one machine), peer builders
+    // watching the SAME fight should close along with us — if their own log
+    // missed the kill line for any reason (truncation, client crash,
+    // out-of-order flush), they'd otherwise sit with an open fight
+    // indefinitely. We only push the peer if (a) it has >= 10 events (real
+    // fight, not noise), (b) its bossName matches ours OR its top-target
+    // matches, AND (c) its lastEvent is within the same fight window. The
+    // peer's own flush() handles the upload + onFlush callback exactly as
+    // if it had seen the death event in its log.
+    if (this.bossName) {
+      const peerBossLower = String(this.bossName).toLowerCase();
+      const myEndedAtMs   = this.lastEvent ? Date.parse(this.lastEvent) : Date.now();
+      for (const peer of _liveBuilders) {
+        if (peer === this) continue;
+        if (!peer.events || peer.events.length < 10) continue;
+        const peerLastMs = peer.lastEvent ? Date.parse(peer.lastEvent) : 0;
+        // Same fight window: peer's last activity is within 5 min of our
+        // close. Tighter than the 120s tickIdle threshold because we want
+        // to be confident it's the SAME fight, not a different pull of the
+        // same mob.
+        if (Math.abs(myEndedAtMs - peerLastMs) > 5 * 60_000) continue;
+        const peerBoss   = peer.bossName ? String(peer.bossName).toLowerCase() : null;
+        // Match either confirmed bossName, or top-target if bossName isn't
+        // yet set. Top-target derivation matches the same fallback flush()
+        // uses below to fill in this.bossName before upload.
+        let peerTop = peerBoss;
+        if (!peerTop && peer.targets && peer.targets.size > 0) {
+          let topName = null, topDmg = -1;
+          for (const [name, dmg] of peer.targets) {
+            if (dmg > topDmg) { topName = name; topDmg = dmg; }
+          }
+          if (topName) peerTop = topName.toLowerCase();
+        }
+        if (peerTop !== peerBossLower) continue;
+        try {
+          if (!_dashboardEnabled) {
+            console.log(`[cross-flush] ${peer.character}'s fight on ${this.bossName} ended via peer ${this.character}`);
+          }
+          peer.flush();
+        } catch (e) { void e; }
+      }
+    }
     // Mirror to the per-character map so the 2-min stale window applies
     // independently per character (a multi-boxer's other character can
     // still be mid-fight while this one wraps up).
@@ -5786,10 +5872,17 @@ function _zealExportOnCampState() {
     latestAgentVersion: stats.latestAgentVersion,
     // Mimic Discord login: signed_in lets the dashboard show a "Signed in as
     // <name>" badge in the header + a soft "sign in to unlock cross-machine
-    // sync + officer tools" nudge when absent. Identity is the bot's canonical
-    // reply (refreshed on latest-version polls); presence of the token alone
-    // doesn't prove the token is still valid, so the badge uses identity.
-    mimicSignedIn:      !!_mimicSessionToken,
+    // sync + officer tools" nudge when absent. We require BOTH the session
+    // token AND a confirmed identity from the bot — token-without-identity
+    // is the stale/expired-session state (Uilnayar 2026-06-21 reported the
+    // header reading 'signed in' on installs that only carried the legacy
+    // agent token + had never completed the Discord OAuth flow; the
+    // Settings panel correctly demanded 'Sign in to Wolf Pack' but the
+    // header pill claimed the opposite). Requiring identity here keeps
+    // both surfaces honest. The identity is the bot's reply to the
+    // session token, refreshed on every latest-version poll, so the
+    // signal flips to true within a few seconds of a successful sign-in.
+    mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
     mimicIdentity:      _mimicIdentity,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
@@ -8665,12 +8758,11 @@ var _raidSelName = null;   // click-to-expand raider in the Raid card
 // DAMAGE SHIELDS (+N per slot, total), SONGS (n/6), OTHER, DI/CHA warning.
 var _RD_RES_ORDER  = ['MR','FR','CR','PR','DR'];
 var _RD_RES_LABELS = { MR:'Magic', FR:'Fire', CR:'Cold', PR:'Poison', DR:'Disease' };
-// 2026-06-22 (Uilnayar): dropped 'mana' from the displayed order — Mask of
-// the Stalker and Protection of the Cabbage both carry mana regen, the
-// raw 'Mana' (max-mana) line was always empty for the practical caster
-// case so the row just rendered "— missing" with no signal value. Also
-// added 'seeInvis' + 'invis' so those buffs surface as their own rows
-// instead of getting buried in "Other" alongside Treeform / Camouflage.
+// 2026-06-22 (Uilnayar): dropped 'mana' from the displayed order — the raw
+// max-mana category was always blank for the practical caster case (Mask of
+// the Stalker / Protection of the Cabbage carry +mana regen, not +max mana),
+// so the row just read "— missing" forever. Added 'seeInvis' + 'invis' so
+// those surface as their own rows instead of being buried in "Other".
 var _RD_CAT_ORDER  = ['regen','manaRegen','haste','attack','runSpeed','seeInvis','invis','levitate','survival'];
 var _RD_CAT_LABELS = { regen:'HP Regen', manaRegen:'Mana Regen', mana:'Mana', haste:'Haste', attack:'Attack', runSpeed:'Run Speed', seeInvis:'See Invis', invis:'Invis', levitate:'Levitate', survival:'Survival' };
 var _RD_ROLE_OF = { warrior:'tank', paladin:'tank', 'shadow knight':'tank', shadowknight:'tank', sk:'tank',
@@ -8730,12 +8822,11 @@ function _raidDetailHtml(sel, det) {
   _RD_RES_ORDER.forEach(function(t){
     var entries = (det.resists && det.resists[t]) || [];
     var prim = []; var sngs = [];
-    // Dedup primaries by buff name — when the same buff carries two SPA
-    // entries for the same school (Circle of Seasons covering Fire AND
-    // Cold from two slots of the same spell, or a stale + fresh cast),
-    // the row used to render "Circle of Seasons +1 more" with nothing
-    // hiding behind the +1. Uilnayar 2026-06-22 ("Fire and Cold both say
-    // +1 more after seasons but it should be the only one").
+    // Dedup primaries by buff name — Circle of Seasons covers Fire AND Cold,
+    // and the catalog can return two SPA entries for one school (or a stale +
+    // fresh cast lingers), which rendered "Circle of Seasons +1 more" with
+    // nothing behind the +1 (Uilnayar 2026-06-22). "+N more" now only fires
+    // when the extra entry is a genuinely different spell.
     var seenPrim = {};
     for (var i5 = 0; i5 < entries.length; i5++) {
       var e5 = entries[i5];
