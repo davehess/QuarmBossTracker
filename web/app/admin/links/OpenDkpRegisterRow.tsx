@@ -42,11 +42,15 @@ export default function OpenDkpRegisterRow({
   observedClass,
   observedLevel,
   observedRace,
+  parentName,
+  parentOpenDkpId,
 }: {
-  name:          string;
-  observedClass: string | null;
-  observedLevel: number | null;
-  observedRace:  string | null;
+  name:            string;
+  observedClass:   string | null;
+  observedLevel:   number | null;
+  observedRace:    string | null;
+  parentName:      string | null;
+  parentOpenDkpId: number | null;
 }) {
   const [cls,   setCls]   = useState<string>(observedClass || UNKNOWN);
   const [race,  setRace]  = useState<string>(observedRace  || UNKNOWN);
@@ -60,7 +64,10 @@ export default function OpenDkpRegisterRow({
     setErr(null);
     setStatus('idle');
     startTransition(async () => {
-      const res = await registerInOpenDKP({ name, cls, race, level, rank });
+      const res = await registerInOpenDKP({
+        name, cls, race, level, rank,
+        parentOpenDkpId: parentOpenDkpId ?? null,
+      });
       if (res.ok) setStatus('done');
       else { setStatus('err'); setErr(res.error || 'register failed'); }
     });
@@ -69,7 +76,9 @@ export default function OpenDkpRegisterRow({
   if (status === 'done') {
     return (
       <span className="text-green text-xs">
-        ✓ Registered as {cls} L{level} ({rank}). The row will drop off on next refresh.
+        ✓ Registered as {cls} L{level} ({rank})
+        {parentName ? <> · alt of {parentName}</> : null}.
+        Player needs to claim in OpenDKP. Row drops off on next refresh.
       </span>
     );
   }
@@ -109,6 +118,12 @@ export default function OpenDkpRegisterRow({
               className="bg-bg border border-border rounded px-1 py-0.5">
         {RANKS.map(r => <option key={r} value={r}>{r}</option>)}
       </select>
+      <span className={parentName ? 'text-dim' : 'text-orange'}
+        title={parentName
+          ? `OpenDKP family root for this Mimic's uploads — new character will land as one of ${parentName}'s alts.`
+          : "Couldn't resolve a family root for this uploader's Discord ID. The character will land as its own self-rooted main in OpenDKP — you can re-parent it via the family-link section after."}>
+        {parentName ? <>→ alt of <span className="text-text">{parentName}</span></> : 'no parent found'}
+      </span>
       <button
         type="button"
         onClick={submit}

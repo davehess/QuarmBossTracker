@@ -18,6 +18,11 @@ type RegisterArgs = {
   race:  string;
   level: number;
   rank:  string;
+  // OpenDKP CharacterId of the family root this character should be parented
+  // under. Resolved by the /admin/links page from the uploader's existing
+  // characters cluster. null = no family root resolved (the bot will pass
+  // ParentId=0, the character lands as a self-rooted main in OpenDKP).
+  parentOpenDkpId?: number | null;
 };
 
 export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boolean; error?: string }> {
@@ -61,6 +66,7 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
         race:  args.race,
         level: args.level,
         rank:  args.rank,
+        parent_opendkp_id:      args.parentOpenDkpId ?? 0,
         recorded_by_discord_id: recordedBy,
       }),
     });

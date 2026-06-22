@@ -37,6 +37,7 @@ type Character = {
   active: boolean;
   discord_id: string | null;
   link_ignored: boolean;
+  opendkp_id: number | null;
 };
 
 type Member = {
@@ -148,7 +149,7 @@ async function applyAllAutoMatches() {
   if (!ok) redirect('/?error=admin_required');
   const admin = supabaseAdmin();
   const [{ data: chars }, { data: members }] = await Promise.all([
-    admin.from('characters').select('guild_id, name, main_name, class, rank, active, discord_id, link_ignored').eq('guild_id', 'wolfpack'),
+    admin.from('characters').select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id').eq('guild_id', 'wolfpack'),
     admin.from('wolfpack_members').select('discord_id, nickname, global_name').eq('is_member', true),
   ]);
   const ix = buildTokenIndex((members ?? []) as Member[]);
@@ -377,7 +378,7 @@ export default async function AdminLinksPage({
   const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }, { data: whoRows }] = await Promise.all([
     admin
       .from('characters')
-      .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored')
+      .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id')
       .eq('guild_id', 'wolfpack')
       .order('active', { ascending: false })
       .order('name'),
@@ -490,12 +491,60 @@ export default async function AdminLinksPage({
   // in the OpenDKP mirror at all. Surface them with the owner + observed
   // level/class and a ready-to-paste /register command. Rank rule: Raid Alts
   // require level 46+; anything below is a Non-raid Alt or Trader.
-  type UnregRow = { name: string; did: string; level: number | null; cls: string | null; lastUpload: string | null };
+  type UnregRow = {
+    name: string;
+    did: string;
+    level: number | null;
+    cls: string | null;
+    lastUpload: string | null;
+    // Resolved family root for the uploader — pre-fills ParentId on the
+    // OpenDKP create so the new character lands as one of their alts
+    // instead of becoming an un-parented self-rooted main. Falls back to
+    // null when we can't resolve a family root for this discord_id
+    // (Mimic uploading on behalf of an officer's box for a non-member).
+    parentName: string | null;
+    parentOpenDkpId: number | null;
+  };
   const whoByName = new Map<string, { level: number | null; cls: string | null }>();
   for (const w of (whoRows ?? []) as { character: string; level: number | null; class: string | null }[]) {
     const k = (w.character || '').toLowerCase();
     if (k && !whoByName.has(k)) whoByName.set(k, { level: w.level ?? null, cls: w.class ?? null });
   }
+
+  // Per-uploader family-root resolution: for each Discord ID that uploads
+  // unregistered characters, find which OpenDKP family (= main_name cluster)
+  // their existing characters live under, and pick the most-populous one
+  // as the parent. Hitya's box uploads Hitya/Bonebro/Canopy + a handful of
+  // alts — OpenDKP has the whole family rooted at Canopy, so Canopy wins
+  // and new alts land under it. Multi-main accounts pick the largest
+  // cluster; officer can re-parent via the family-link section after the
+  // fact if it's wrong.
+  const parentByDid = new Map<string, { name: string; opendkpId: number | null }>();
+  {
+    type MainCounts = Map<string, number>;          // lower(main) → char count
+    const countsByDid = new Map<string, MainCounts>();
+    for (const c of allChars) {
+      if (!c.discord_id) continue;
+      const main = ((c.main_name && c.main_name.trim()) || c.name).toLowerCase();
+      let mc = countsByDid.get(c.discord_id);
+      if (!mc) { mc = new Map(); countsByDid.set(c.discord_id, mc); }
+      mc.set(main, (mc.get(main) || 0) + 1);
+    }
+    for (const [did, mc] of countsByDid) {
+      let best: { lower: string; n: number } | null = null;
+      for (const [lower, n] of mc) {
+        if (!best || n > best.n) best = { lower, n };
+      }
+      if (!best) continue;
+      const mainChar = charByLower.get(best.lower);
+      if (!mainChar) continue;
+      parentByDid.set(did, {
+        name:      mainChar.name,
+        opendkpId: mainChar.opendkp_id ?? null,
+      });
+    }
+  }
+
   const unregistered: UnregRow[] = [];
   {
     const seenU = new Set<string>();
@@ -506,13 +555,16 @@ export default async function AdminLinksPage({
       const k = name.toLowerCase();
       if (seenU.has(k) || charByLower.has(k)) continue;       // already in the mirror
       seenU.add(k);
-      const who = whoByName.get(k);
+      const who    = whoByName.get(k);
+      const parent = parentByDid.get(u.uploaded_by_discord_id);
       unregistered.push({
         name,
         did: u.uploaded_by_discord_id,
         level: who?.level ?? null,
         cls: who?.cls ?? null,
         lastUpload: u.last_uploaded_at ?? null,
+        parentName:      parent?.name      ?? null,
+        parentOpenDkpId: parent?.opendkpId ?? null,
       });
     }
     unregistered.sort((a, b) => String(b.lastUpload || '').localeCompare(String(a.lastUpload || '')));
@@ -823,6 +875,8 @@ export default async function AdminLinksPage({
                         observedClass={u.cls ?? null}
                         observedLevel={u.level ?? null}
                         observedRace={null}
+                        parentName={u.parentName}
+                        parentOpenDkpId={u.parentOpenDkpId}
                       />
                     </td>
                   </tr>

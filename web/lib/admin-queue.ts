@@ -22,7 +22,7 @@ export type QueueItem = {
 };
 
 export type QueueCategory = {
-  id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp';
+  id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp' | 'awaiting_opendkp_claim';
   icon:         string;
   title:        string;
   summary:      string;
@@ -249,6 +249,55 @@ async function loadUnregisteredOpenDKP(): Promise<QueueCategory> {
   };
 }
 
+// (4) Characters we registered via the /admin/links Register button that
+// still have no discord_id mapped on the bot side. The audit marker
+// (characters.registered_via_web_at) lets us scope this to *recently*
+// registered chars instead of all ~100+ historical unlinked rows; the
+// 30-day window matches the realistic "did the player claim yet?"
+// follow-up cadence. Action link drops the officer onto /admin/links so
+// they can pick a Discord member from the dropdown if the player hasn't
+// claimed within OpenDKP's own UI yet.
+async function loadAwaitingOpenDKPClaim(): Promise<QueueCategory> {
+  const sb = supabaseAdmin();
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: rows } = await sb
+    .from('characters')
+    .select('name, registered_via_web_at, registered_via_web_by_discord_id, discord_id, main_name, rank, opendkp_id')
+    .eq('guild_id', 'wolfpack')
+    .is('discord_id', null)
+    .gt('registered_via_web_at', since)
+    .order('registered_via_web_at', { ascending: false });
+  type Row = {
+    name: string;
+    registered_via_web_at: string | null;
+    registered_via_web_by_discord_id: string | null;
+    discord_id: string | null;
+    main_name: string | null;
+    rank: string | null;
+    opendkp_id: number | null;
+  };
+  const items: QueueItem[] = ((rows ?? []) as Row[]).map(r => ({
+    key:    r.name.toLowerCase(),
+    label:  r.name,
+    last:   r.registered_via_web_at,
+    detail: [
+      r.main_name && r.main_name !== r.name ? `alt of ${r.main_name}` : null,
+      r.rank,
+      r.opendkp_id != null ? 'in OpenDKP roster' : 'awaiting OpenDKP sync',
+    ].filter(Boolean).join(' · '),
+    href:   `/admin/links?show=linked`,    // dropdown to assign Discord ID lives here
+  }));
+  return {
+    id:      'awaiting_opendkp_claim',
+    icon:    '⏳',
+    title:   'Registered, awaiting OpenDKP claim',
+    summary: 'Characters we registered into OpenDKP via the web Register button in the last 30 days that still have no Discord ID linked. Player needs to claim the character in OpenDKP (sets Discord on their account); an officer can also assign the Discord member from /admin/links if the player isn’t going to claim themselves.',
+    count:   items.length,
+    items,
+    fixHelpHref: '/admin/links',
+  };
+}
+
 // Load every category in parallel. Caller uses the total count for the
 // banner, the per-category counts for the badges, and items for /admin/queue.
 export async function loadAdminQueue(): Promise<{
@@ -259,6 +308,7 @@ export async function loadAdminQueue(): Promise<{
     loadUnrosteredChatSpeakers(),
     loadUnenrichableChatSpeakers(),
     loadUnregisteredOpenDKP(),
+    loadAwaitingOpenDKPClaim(),
   ]);
   const total = categories.reduce((acc, c) => acc + c.count, 0);
   return { total, categories };

@@ -9041,6 +9041,15 @@ http.createServer(async (req, res) => {
       const level = parseInt(body?.level, 10);
       const rank  = String(body?.rank  || '').trim();
       const recordedBy = String(body?.recorded_by_discord_id || '').trim();
+      // OpenDKP CharacterId of the family root this new character should be
+      // parented under. The web /admin/links page computes this from the
+      // uploader's existing characters cluster — e.g. Hitya's Mimic uploads
+      // a new alt, OpenDKP already lists her family rooted at Canopy, so
+      // the new character lands as one of Canopy's alts instead of becoming
+      // its own un-parented root. 0 = no parent (acceptable when the web
+      // genuinely couldn't resolve a family root for the uploader).
+      const parentOpenDkpId = Number.isFinite(parseInt(body?.parent_opendkp_id, 10))
+        ? parseInt(body.parent_opendkp_id, 10) : 0;
       if (!name || !cls || !Number.isFinite(level) || !rank) {
         res.writeHead(400);
         return res.end(JSON.stringify({ error: 'missing required fields (name/class/level/rank)' }));
@@ -9054,9 +9063,27 @@ http.createServer(async (req, res) => {
         Level:   level,
         Active:  1,
         Rank:    rank,
-        ParentId: 0,                   // root for now; manual /addmain to parent later
+        ParentId: parentOpenDkpId,
       });
-      console.log(`[opendkp-register] ${name} (${cls} L${level} ${rank}) by Discord ${recordedBy} → ${JSON.stringify(result).slice(0, 200)}`);
+      // Audit marker for the "Awaiting OpenDKP claim" admin-queue category.
+      // Keep the upsert SCOPED to the registered_via_web_* fields so we don't
+      // clobber whatever the OpenDKP sync wrote into class/race/rank/main_name
+      // when it runs between our create call and this write — PostgREST merge
+      // resolution leaves columns we don't send alone. On the first-insert
+      // case the other columns land at their defaults (active=true, the rest
+      // null) and the next OpenDKP sync (every few minutes) fills them in.
+      try {
+        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+        await supabase.upsert('characters', [{
+          guild_id:                          guildId,
+          name,
+          registered_via_web_at:             new Date().toISOString(),
+          registered_via_web_by_discord_id:  recordedBy || null,
+        }], 'guild_id,name');
+      } catch (err) {
+        console.warn('[opendkp-register] characters audit upsert failed:', err?.message);
+      }
+      console.log(`[opendkp-register] ${name} (${cls} L${level} ${rank}, parent ${parentOpenDkpId || 'none'}) by Discord ${recordedBy} → ${JSON.stringify(result).slice(0, 200)}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, result }));
     } catch (err) {
