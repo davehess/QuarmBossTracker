@@ -2491,16 +2491,31 @@ const CON_STANDINGS = [
 const _CON_RX = new RegExp('\\]\\s+(.+?)\\s+(' + CON_STANDINGS.map(([p]) => p).join('|') + ')', 'i');
 function parseFactionLine(line, character) {
   if (!character || line.indexOf('Your faction standing with') === -1) return null;
-  const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)|could not possibly get any (better|worse))\.\s*$/i);
+  // Quarm sometimes prints a magnitude after the line — common shapes:
+  //   "Your faction standing with X got better."         (no magnitude)
+  //   "Your faction standing with X got better. (+25)"   (signed parens)
+  //   "Your faction standing with X got better. (25)"    (bare parens)
+  //   "Your faction standing with X got better by 25."   (Live-style)
+  // Match all four. The old regex anchored `.\s*$` so any line carrying a
+  // magnitude after the period was silently dropped — which is why Kael
+  // giant kills (each ticking Coldain by far more than 1) read as single
+  // hits on the faction page (Uilnayar 2026-06-23).
+  const m = line.match(/\]\s+Your faction standing with (.+?) (?:got (better|worse)(?:\s+by\s+(\d+))?\.\s*(?:\((?:([+\-]?)(\d+))\)\s*)?|could not possibly get any (better|worse)\.)\s*$/i);
   if (!m) return null;
   const ts = parseEqTimestamp(line);
-  const dirWord = (m[2] || m[3] || '').toLowerCase();
+  const dirWord = (m[2] || m[6] || '').toLowerCase();
+  const magByWord  = m[3] ? parseInt(m[3], 10) : null;
+  const magInParen = m[5] ? parseInt(m[5], 10) : null;
+  const magnitude  = magByWord != null ? magByWord
+                    : magInParen != null ? magInParen
+                    : null;
   return {
     kind:      'hit',
     character,
     faction:   m[1].trim().slice(0, 96),
     direction: dirWord === 'better' ? 1 : -1,
-    capped:    !!m[3],
+    magnitude,
+    capped:    !!m[6],
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
 }
