@@ -79,6 +79,15 @@ const WHITELIST = {
   // e.g. the 5/15/30% on a duration AA).
   altadv_vars:         { dest: 'eqemu_altadv_vars',       transform: 'altadv_vars' },
   aa_effects:          { dest: 'eqemu_aa_effects',        transform: 'aa_effects' },
+  // Faction resolution. faction_list = faction id → name (+ PQDI faction id).
+  // npc_faction = the per-mob faction "slot" (id referenced by
+  // npc_types.npc_faction_id) → primaryfaction (the faction_list id of the
+  // mob's home faction). npc_faction_entries = the full hit list a kill
+  // grants (faction_id, value) so we can compute faction deltas from a mob
+  // dying instead of relying on Quarm to print a magnitude.
+  faction_list:        { dest: 'eqemu_faction_list',         transform: 'faction_list' },
+  npc_faction:         { dest: 'eqemu_npc_faction',          transform: 'npc_faction' },
+  npc_faction_entries: { dest: 'eqemu_npc_faction_entries',  transform: 'npc_faction_entries' },
 };
 
 // ── Supabase REST helper ────────────────────────────────────────────────────
@@ -574,6 +583,28 @@ const TRANSFORMS = {
     if (r.aaid == null || r.slot == null) return null;
     return { aaid: r.aaid, slot: r.slot, effectid: r.effectid, base1: r.base1, base2: r.base2 };
   },
+  // faction_list → id + display name. Used to label a mob's faction and build
+  // the PQDI faction link (https://www.pqdi.cc/faction/<id>).
+  faction_list: (cols, row) => {
+    const r = pick(cols, row, ['id', 'name']);
+    if (r.id == null) return null;
+    return { id: r.id, name: r.name };
+  },
+  // npc_faction → the per-mob faction slot. id is referenced by
+  // npc_types.npc_faction_id; primaryfaction is the faction_list id of the
+  // mob's home faction (what we display + link).
+  npc_faction: (cols, row) => {
+    const r = pick(cols, row, ['id', 'name', 'primaryfaction']);
+    if (r.id == null) return null;
+    return { id: r.id, name: r.name, primaryfaction: r.primaryfaction };
+  },
+  // npc_faction_entries → every faction a kill of this npc_faction touches and
+  // the delta. Lets us compute faction hits from a mob dying.
+  npc_faction_entries: (cols, row) => {
+    const r = pick(cols, row, ['npc_faction_id', 'faction_id', 'value', 'npc_value']);
+    if (r.npc_faction_id == null || r.faction_id == null) return null;
+    return { npc_faction_id: r.npc_faction_id, faction_id: r.faction_id, value: r.value, npc_value: r.npc_value };
+  },
 };
 
 function pick(cols, row, wanted) {
@@ -641,6 +672,9 @@ const PK_MAP = {
   eqemu_npc_spells_entries:['npc_spells_id', 'spellid', 'minlevel'],
   eqemu_altadv_vars:       ['skill_id'],
   eqemu_aa_effects:        ['aaid', 'slot'],
+  eqemu_faction_list:        ['id'],
+  eqemu_npc_faction:         ['id'],
+  eqemu_npc_faction_entries: ['npc_faction_id', 'faction_id'],
 };
 
 // ── Exports for tests ───────────────────────────────────────────────────────
