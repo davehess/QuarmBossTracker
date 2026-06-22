@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation';
 import { setWhoClass, setWhoZek, deleteWhoCharacter } from './actions';
 import { BASE_CLASSES } from './classes';
 import { normalizeClass } from '@/lib/class-titles';
+import WhoBreakdown from './WhoBreakdown';
 
 export type WhoRow = {
   character: string;
@@ -88,6 +89,12 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
   const [zekFilter, setZekFilter] = useState<ZekFilter>('all');
   const [missingClassOnly, setMissingClassOnly] = useState(false);
   const [anonOnly, setAnonOnly] = useState(false);
+  // Minimum level — defaults to 50 so the directory leads with raid-relevant
+  // characters and isn't drowned in low-level bazaar mules / alts (Uilnayar
+  // 2026-06-22 "by default don't show under level 50"). Rows with an UNKNOWN
+  // level (never observed non-anon) are kept regardless — "unknown" isn't
+  // "under 50". 0 = show everything.
+  const [minLevel, setMinLevel] = useState<number>(50);
 
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>('lastSeen');
@@ -115,6 +122,8 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
       if (zekFilter === 'notzek' && r.effectiveZek) return false;
       if (missingClassOnly && r.effectiveClass) return false;
       if (anonOnly && !r.anonymous) return false;
+      // Min-level gate — known level below the floor drops out; unknown stays.
+      if (minLevel > 0 && r.level != null && r.level < minLevel) return false;
       return true;
     });
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -142,14 +151,32 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
       }
     };
     return out.sort(cmp);
-  }, [rows, q, classFilter, zekFilter, missingClassOnly, anonOnly, sortKey, sortDir]);
+  }, [rows, q, classFilter, zekFilter, missingClassOnly, anonOnly, minLevel, sortKey, sortDir]);
+
+  // Catalog breakdown computed from the FILTERED view so it tracks whatever
+  // the filters are narrowing to (Uilnayar 2026-06-22). By effective class
+  // (title-folded), and by guild excluding Wolf Pack + the empty bucket.
+  const { classBreakdown, guildBreakdown } = useMemo(() => {
+    const byClass = new Map<string, number>();
+    const byGuild = new Map<string, number>();
+    for (const r of view) {
+      const k = normalizeClass(r.effectiveClass);
+      if (k) byClass.set(k, (byClass.get(k) || 0) + 1);
+      const g = r.guild ? r.guild.trim() : '';
+      if (g && g !== 'Wolf Pack') byGuild.set(g, (byGuild.get(g) || 0) + 1);
+    }
+    const sort = (m: Map<string, number>) => [...m.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    return { classBreakdown: sort(byClass), guildBreakdown: sort(byGuild) };
+  }, [view]);
 
   // Snap back to page 1 whenever the filter/sort key changes — staying on
   // page 47 of "8,798 rows sorted by lastSeen" while typing "uil…" into the
   // search box would surface zero matches every time.
   useEffect(() => {
     setPage(0);
-  }, [q, classFilter, zekFilter, missingClassOnly, anonOnly, sortKey, sortDir, pageSize]);
+  }, [q, classFilter, zekFilter, missingClassOnly, anonOnly, minLevel, sortKey, sortDir, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(view.length / pageSize));
   const pageClamped = Math.min(page, totalPages - 1);
@@ -214,7 +241,11 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
   );
 
   return (
-    <section className="bg-panel border border-border rounded-lg p-4">
+    <div className="space-y-4">
+      {/* Catalog breakdown reflects the current filters. */}
+      <WhoBreakdown classBreakdown={classBreakdown} guildBreakdown={guildBreakdown} filtered />
+
+      <section className="bg-panel border border-border rounded-lg p-4">
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
         <input
@@ -242,6 +273,21 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
         <label className="flex items-center gap-1 text-dim cursor-pointer">
           <input type="checkbox" checked={anonOnly} onChange={e => setAnonOnly(e.target.checked)} />
           anon
+        </label>
+        <label className="flex items-center gap-1 text-dim" title="Hide characters below this level. Unknown-level rows always show. Set to 0 to show everyone.">
+          min lvl
+          <select
+            value={minLevel}
+            onChange={e => setMinLevel(parseInt(e.target.value, 10))}
+            className="bg-bg border border-border rounded px-1 py-1 text-text"
+          >
+            <option value={0}>all</option>
+            <option value={30}>30+</option>
+            <option value={46}>46+</option>
+            <option value={50}>50+</option>
+            <option value={55}>55+</option>
+            <option value={60}>60+</option>
+          </select>
         </label>
         <span className="ml-auto text-dim">
           {(() => {
@@ -443,6 +489,7 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
           </span>
         </div>
       )}
-    </section>
+      </section>
+    </div>
   );
 }

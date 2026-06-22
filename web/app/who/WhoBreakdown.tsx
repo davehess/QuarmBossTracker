@@ -85,9 +85,13 @@ function Section({
 export default function WhoBreakdown({
   classBreakdown,
   guildBreakdown,
+  filtered = false,
 }: {
   classBreakdown: Bucket[];
   guildBreakdown: Bucket[];
+  // When true the counts reflect the table's active filters (not the whole
+  // catalog) — label it so the numbers aren't misread as catalog totals.
+  filtered?: boolean;
 }) {
   const [open, setOpen] = useState(true);
   const classTotal = classBreakdown.reduce((acc, b) => acc + b.count, 0);
@@ -96,7 +100,7 @@ export default function WhoBreakdown({
   return (
     <section className="bg-panel border border-border rounded-lg p-3">
       <div className="flex items-baseline gap-3">
-        <h2 className="text-sm font-semibold text-gold">📊 Catalog breakdown</h2>
+        <h2 className="text-sm font-semibold text-gold">📊 {filtered ? 'Breakdown of current filter' : 'Catalog breakdown'}</h2>
         <span className="text-dim text-xs">
           {classBreakdown.length} classes · {guildBreakdown.length} guilds (excl. Wolf Pack)
         </span>

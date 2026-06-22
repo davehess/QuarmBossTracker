@@ -9,9 +9,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
-import { normalizeClass } from '@/lib/class-titles';
 import WhoTable, { type WhoRow } from './WhoTable';
-import WhoBreakdown from './WhoBreakdown';
 
 export const dynamic = 'force-dynamic';
 
@@ -180,25 +178,9 @@ export default async function WhoPage() {
     ? `${rows.length.toLocaleString()} loaded of ${totalInDb.toLocaleString()} in catalog`
     : `${rows.length.toLocaleString()} total`;
 
-  // Class + guild breakdown — counts by *effective* class (folding titles +
-  // overrides) and by *observed* guild. Excludes Wolf Pack from the guild
-  // chart (it dominates and isn't an interesting datapoint to officers
-  // looking at "who else is out there"). Excludes the empty bucket.
-  const byClass = new Map<string, number>();
-  const byGuild = new Map<string, number>();
-  for (const r of rows) {
-    const k = normalizeClass(r.effectiveClass);
-    if (k) byClass.set(k, (byClass.get(k) || 0) + 1);
-    const g = r.guild ? r.guild.trim() : '';
-    if (g && g !== 'Wolf Pack') byGuild.set(g, (byGuild.get(g) || 0) + 1);
-  }
-  const classBreakdown = [...byClass.entries()]
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-  const guildBreakdown = [...byGuild.entries()]
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-
+  // The catalog breakdown now lives INSIDE WhoTable so it tracks the active
+  // filters (Uilnayar 2026-06-22 — "the breakdown should take into account the
+  // filtering we're doing below"). Page just hands WhoTable the full row set.
   return (
     <div className="space-y-4">
       <section className="bg-panel border border-border rounded-lg p-5">
@@ -214,7 +196,6 @@ export default async function WhoPage() {
             : <> Class/Zek overrides are officer-curated.</>}
         </p>
       </section>
-      <WhoBreakdown classBreakdown={classBreakdown} guildBreakdown={guildBreakdown} />
       <WhoTable rows={rows} canEdit={canEdit} totalInDb={totalInDb} />
     </div>
   );
