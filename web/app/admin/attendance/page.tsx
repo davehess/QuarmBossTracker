@@ -211,36 +211,46 @@ function computeAttendance(args: {
 }) {
   const { chars, raids, ticks, oldTicks, raids365, since30, since60 } = args;
 
-  // raid_id → ts so we can decide which window a raid belongs to
+  // raid_id → ts so we can decide which window a tick belongs to
   const raidTs = new Map<number, string>();
   for (const r of raids) raidTs.set(r.raid_id, r.ts);
   for (const r of raids365) if (!raidTs.has(r.raid_id)) raidTs.set(r.raid_id, r.ts);
 
-  // raids in each window
-  const raids30 = raids.filter(r => r.ts >= since30).length;
-  const raidsPrior = raids.filter(r => r.ts >= since60 && r.ts < since30).length;
+  // OpenDKP computes RA per TICK, not per raid (its "30 Day (52/52)" is 52
+  // ticks). We match that exactly: rate = attended ticks / total ticks in
+  // window. CRITICAL: only count ticks that actually have attendees — empty-
+  // attendee ticks are sync gaps (detail fetched mid-raid before attendance
+  // was finalized) and counting them in the denominator credits nobody,
+  // which is what tanked everyone's RA below OpenDKP's numbers (Rorschach
+  // read 64% vs OpenDKP's 100%). The bot's _raidNeedsDetail re-fetch backfills
+  // those empties over the next sync cycles; until then we simply don't
+  // penalize anyone for ticks we failed to capture.
+  const validTicks = ticks.filter(t => Array.isArray(t.attendees) && t.attendees.length > 0);
 
-  // character (lower) → set of raid_ids they attended, plus first-seen ts
-  const attended90 = new Map<string, Set<number>>();
-  const attendedPrior = new Map<string, Set<number>>();
-  const firstSeen = new Map<string, string>();   // lower → ISO
-
-  for (const t of ticks) {
+  // tick denominators per window
+  let ticks30 = 0, ticksPrior = 0;
+  for (const t of validTicks) {
     const ts = raidTs.get(t.raid_id);
     if (!ts) continue;
+    if (ts >= since30) ticks30++;
+    else if (ts >= since60) ticksPrior++;
+  }
+
+  // character (lower) → attended-tick counts per window, plus first-seen ts
+  const attended30 = new Map<string, number>();
+  const attendedPrior = new Map<string, number>();
+  const firstSeen = new Map<string, string>();   // lower → ISO
+
+  for (const t of validTicks) {
+    const ts = raidTs.get(t.raid_id);
+    if (!ts) continue;
+    const in30    = ts >= since30;
+    const inPrior = ts >= since60 && ts < since30;
     for (const name of (t.attendees || [])) {
       const k = (name || '').toLowerCase();
       if (!k) continue;
-      let set90 = attended90.get(k);
-      if (!set90) { set90 = new Set(); attended90.set(k, set90); }
-      set90.add(t.raid_id);
-
-      if (ts >= since60 && ts < since30) {
-        let setPrior = attendedPrior.get(k);
-        if (!setPrior) { setPrior = new Set(); attendedPrior.set(k, setPrior); }
-        setPrior.add(t.raid_id);
-      }
-
+      if (in30)    attended30.set(k, (attended30.get(k) || 0) + 1);
+      else if (inPrior) attendedPrior.set(k, (attendedPrior.get(k) || 0) + 1);
       const prev = firstSeen.get(k);
       if (!prev || ts < prev) firstSeen.set(k, ts);
     }
@@ -269,21 +279,16 @@ function computeAttendance(args: {
     const cls = (c.class || 'UNKNOWN');
     if (cls === 'UNKNOWN') continue;
     const k = c.name.toLowerCase();
-    const set90 = attended90.get(k) || new Set<number>();
-    const attended30 = [...set90].filter(rid => {
-      const ts = raidTs.get(rid);
-      return ts && ts >= since30;
-    }).length;
-    const setPrior = attendedPrior.get(k) || new Set<number>();
-    const attendedPriorN = setPrior.size;
-    const rate30   = raids30     > 0 ? attended30     / raids30     : 0;
-    const ratePrior = raidsPrior > 0 ? attendedPriorN / raidsPrior  : 0;
+    const a30 = attended30.get(k) || 0;
+    const aPrior = attendedPrior.get(k) || 0;
+    const rate30   = ticks30     > 0 ? a30    / ticks30     : 0;
+    const ratePrior = ticksPrior > 0 ? aPrior / ticksPrior  : 0;
 
     const row: AttRow = {
       name: c.name,
       className: cls,
       rate30, ratePrior,
-      attended30, attendedPrior: attendedPriorN,
+      attended30: a30, attendedPrior: aPrior,
       firstSeen: firstSeen.get(k) || null,
     };
     const list = byClass.get(cls) || [];
@@ -296,7 +301,9 @@ function computeAttendance(args: {
     list.sort((a, b) => (b.rate30 - a.rate30) || a.name.localeCompare(b.name));
   }
 
-  return { byClass, raids30, raidsPrior };
+  // raids30/raidsPrior kept as field names for callers, but now carry TICK
+  // counts (the real RA denominator).
+  return { byClass, raids30: ticks30, raidsPrior: ticksPrior };
 }
 
 function classify(r: AttRow, threshold: number, since60Iso: string) {

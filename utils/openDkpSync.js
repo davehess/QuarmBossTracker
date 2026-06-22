@@ -373,15 +373,45 @@ async function syncRaidsList() {
 }
 
 // Pull existing ticks + loot for a raid_id so we know whether detail sync is
-// needed. We re-sync if EITHER:
+// needed. We re-sync if ANY of:
 //   - we have zero ticks for it (never fetched detail), OR
+//   - ANY tick has an empty/null attendees array (we captured the tick row
+//     mid-raid before attendance was finalized, or a fetch returned partial
+//     data — this is the bug behind the wildly-low attendance %: empty-
+//     attendee ticks still count in the denominator but credit nobody, so
+//     regulars like Rorschach/Gonner read far below their true RA). Forcing
+//     a re-fetch until every tick is populated backfills the real attendance.
 //   - the upstream Version (from summary) is newer than ours.
-async function _raidNeedsDetail(raidId, upstreamVersion) {
-  const ticks = await supabase.select(
-    'opendkp_ticks',
-    `raid_id=eq.${raidId}&select=tick_id&limit=1`
-  );
-  if (!Array.isArray(ticks) || ticks.length === 0) return true;
+// Empty-tick re-fetch only matters for raids the attendance page actually
+// reads (last ~90 days). Re-checking attendees on ancient raids every sync
+// would pull every tick's full attendee array forever — wasted egress. Cap
+// the attendee-emptiness check to this window; older raids use the cheap
+// "has any tick" check.
+const EMPTY_TICK_RECHECK_DAYS = 100;
+async function _raidNeedsDetail(raidId, upstreamVersion, raidTs) {
+  const recentEnough = raidTs
+    ? (Date.now() - new Date(raidTs).getTime()) <= EMPTY_TICK_RECHECK_DAYS * 86400000
+    : false;
+  if (recentEnough) {
+    // Pull attendees so we can detect empty-attendee ticks (detail captured
+    // mid-raid before attendance was finalized) and force a backfill re-fetch
+    // until every tick is populated — the fix for attendance % reading far
+    // below OpenDKP's truth.
+    const ticks = await supabase.select(
+      'opendkp_ticks',
+      `raid_id=eq.${raidId}&select=tick_id,attendees`
+    );
+    if (!Array.isArray(ticks) || ticks.length === 0) return true;
+    const hasEmptyTick = ticks.some(t => !Array.isArray(t.attendees) || t.attendees.length === 0);
+    if (hasEmptyTick) return true;
+  } else {
+    // Cheap existence check for older raids.
+    const ticks = await supabase.select(
+      'opendkp_ticks',
+      `raid_id=eq.${raidId}&select=tick_id&limit=1`
+    );
+    if (!Array.isArray(ticks) || ticks.length === 0) return true;
+  }
   // Cheap version check
   if (upstreamVersion == null) return false;
   const ours = await supabase.select(
@@ -487,7 +517,7 @@ async function runSync(opts = {}) {
   // ones are more visible if we get throttled).
   const raids = await supabase.select(
     'opendkp_raids',
-    'select=raid_id,version&order=ts.desc'
+    'select=raid_id,version,ts&order=ts.desc'
   );
   if (!Array.isArray(raids)) {
     return {
@@ -505,7 +535,7 @@ async function runSync(opts = {}) {
   const cap = opts.full ? Infinity : PER_RUN_DETAIL_LIMIT;
   const candidates = [];
   for (const r of raids) {
-    if (opts.full || await _raidNeedsDetail(r.raid_id, r.version)) {
+    if (opts.full || await _raidNeedsDetail(r.raid_id, r.version, r.ts)) {
       candidates.push(r.raid_id);
     }
     if (candidates.length >= cap) break;

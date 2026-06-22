@@ -22,7 +22,7 @@ export type QueueItem = {
 };
 
 export type QueueCategory = {
-  id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp' | 'awaiting_opendkp_claim';
+  id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp' | 'awaiting_opendkp_claim' | 'missing_ticks';
   icon:         string;
   title:        string;
   summary:      string;
@@ -298,6 +298,97 @@ async function loadAwaitingOpenDKPClaim(): Promise<QueueCategory> {
   };
 }
 
+// (5) Potentially-missing raid ticks. OpenDKP is the source of truth for
+// attendance; when a character is present for SOME ticks of a raid but not
+// ALL of them, they were in the raid yet missed a tick — usually from
+// switching characters, zoning, or going LD (Uilnayar 2026-06-23). We only
+// consider raids where EVERY tick has attendees captured (fully-synced), so
+// a sync gap (empty-attendee tick) never false-flags the whole raid. Per
+// character we report how many ticks they missed across the last 30 days +
+// when it last happened, so an officer can decide whether to hand-credit it
+// in OpenDKP.
+async function loadPotentialMissingTicks(): Promise<QueueCategory> {
+  const sb = supabaseAdmin();
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: raids } = await sb
+    .from('opendkp_raids')
+    .select('raid_id, ts')
+    .gte('ts', since)
+    .order('ts', { ascending: false });
+  const raidRows = (raids ?? []) as { raid_id: number; ts: string }[];
+  if (raidRows.length === 0) {
+    return { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks',
+      summary: 'Raiders present for some ticks of a raid but not all — likely a character swap, zone, or LD that cost a tick. Officer can hand-credit in OpenDKP.',
+      count: 0, items: [], fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
+  }
+  const tsByRaid = new Map<number, string>();
+  for (const r of raidRows) tsByRaid.set(r.raid_id, r.ts);
+
+  const { data: ticks } = await sb
+    .from('opendkp_ticks')
+    .select('raid_id, tick_id, attendees')
+    .in('raid_id', raidRows.map(r => r.raid_id));
+  type TickRow = { raid_id: number; tick_id: number; attendees: string[] | null };
+
+  // Group ticks by raid.
+  const byRaid = new Map<number, TickRow[]>();
+  for (const t of (ticks ?? []) as TickRow[]) {
+    const list = byRaid.get(t.raid_id) ?? [];
+    list.push(t);
+    byRaid.set(t.raid_id, list);
+  }
+
+  // For each FULLY-SYNCED raid (every tick populated), find characters who
+  // attended ≥1 tick but fewer than all ticks → missed a tick.
+  type Miss = { missed: number; last: string };
+  const byChar = new Map<string, Miss>();   // displayName → aggregate
+  const display = new Map<string, string>(); // lower → original-case name
+  for (const [raidId, tickList] of byRaid) {
+    if (tickList.length < 2) continue;       // single-tick raid — nothing to "miss"
+    const allPopulated = tickList.every(t => Array.isArray(t.attendees) && t.attendees.length > 0);
+    if (!allPopulated) continue;             // sync gap — don't false-flag
+    const total = tickList.length;
+    const presentCount = new Map<string, number>();
+    for (const t of tickList) {
+      for (const a of (t.attendees || [])) {
+        const k = (a || '').toLowerCase();
+        if (!k) continue;
+        presentCount.set(k, (presentCount.get(k) || 0) + 1);
+        if (!display.has(k)) display.set(k, a);
+      }
+    }
+    const ts = tsByRaid.get(raidId) || '';
+    for (const [k, n] of presentCount) {
+      if (n >= total) continue;              // got every tick — fine
+      const missedHere = total - n;
+      const cur = byChar.get(k);
+      if (!cur) byChar.set(k, { missed: missedHere, last: ts });
+      else { cur.missed += missedHere; if (ts > cur.last) cur.last = ts; }
+    }
+  }
+
+  const items: QueueItem[] = [...byChar.entries()]
+    .map(([k, v]) => ({
+      key:    k,
+      label:  display.get(k) || k,
+      count:  v.missed,
+      last:   v.last,
+      detail: `missed ${v.missed} tick${v.missed === 1 ? '' : 's'} (present for the raid)`,
+      href:   'https://wolfpack.opendkp.com/#/raids',
+    }))
+    .sort((a, b) => (b.count || 0) - (a.count || 0) || (b.last || '').localeCompare(a.last || ''));
+
+  return {
+    id:      'missing_ticks',
+    icon:    '🎟️',
+    title:   'Potentially missing raid ticks',
+    summary: 'Raiders present for some ticks of a raid but not all over the last 30 days — likely a character swap, zone, or LD that cost a tick. Only fully-synced raids are checked (no sync-gap false positives). Officer can hand-credit the tick in OpenDKP.',
+    count:   items.length,
+    items,
+    fixHelpHref: 'https://wolfpack.opendkp.com/#/raids',
+  };
+}
+
 // Load every category in parallel. Caller uses the total count for the
 // banner, the per-category counts for the badges, and items for /admin/queue.
 export async function loadAdminQueue(): Promise<{
@@ -309,6 +400,7 @@ export async function loadAdminQueue(): Promise<{
     loadUnenrichableChatSpeakers(),
     loadUnregisteredOpenDKP(),
     loadAwaitingOpenDKPClaim(),
+    loadPotentialMissingTicks(),
   ]);
   const total = categories.reduce((acc, c) => acc + c.count, 0);
   return { total, categories };
