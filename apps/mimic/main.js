@@ -691,6 +691,18 @@ function _startWindowDrag(win, persistKey) {
   try {
     const c = screen.getCursorScreenPoint();
     const b = win.getBounds();
+    // Non-focusable overlays (CH chain, set focusable:false so they never
+    // steal EQ focus) can't reliably deliver the renderer's document.mouseup
+    // that ends a drag — the window gets WS_EX_NOACTIVATE, the cursor slides
+    // off the moving window, and mouseup lands on EQ instead. Result: the
+    // 60fps setBounds stays glued to the cursor = "the overlay is stuck to my
+    // mouse" (Uilnayar 2026-06-22, CH chain + threat). Make the window
+    // focusable for the duration of the drag so mouseup is delivered, then
+    // restore its resting focusability on drag end. isFocusable() captures the
+    // resting state so we only re-disable windows that were non-focusable.
+    let wasFocusable = true;
+    try { wasFocusable = win.isFocusable(); } catch {}
+    if (!wasFocusable) { try { win.setFocusable(true); } catch {} }
     _dragSession = {
       win,
       persistKey: persistKey || _boundsKeyForWindow(win),
@@ -699,10 +711,17 @@ function _startWindowDrag(win, persistKey) {
       width:   b.width,
       height:  b.height,
       interval: null,
+      restoreFocusable: !wasFocusable,
+      startedAt: Date.now(),
     };
     _dragSession.interval = setInterval(() => {
       if (!_dragSession) return;
       if (_dragSession.win.isDestroyed()) { _stopWindowDrag(); return; }
+      // Safety watchdog — if a drag somehow runs past 30s the mouseup was
+      // missed entirely; auto-stop so the overlay can never be permanently
+      // glued to the cursor. The legitimate case (positioning an overlay)
+      // is always sub-second.
+      if (Date.now() - _dragSession.startedAt > 30_000) { _stopWindowDrag(); return; }
       try {
         const cur = screen.getCursorScreenPoint();
         _dragSession.win.setBounds({
@@ -920,6 +939,11 @@ function _stopWindowDrag() {
     // Final persist — the periodic setBounds calls fire 'moved' but the
     // debounce may swallow the last one if the user lifts quickly.
     try { _persistBounds(_dragSession.persistKey, _dragSession.win); } catch {}
+    // Restore resting non-focusable state for overlays we temporarily made
+    // focusable to receive the drag-ending mouseup (CH chain etc.).
+    if (_dragSession.restoreFocusable && _dragSession.win && !_dragSession.win.isDestroyed()) {
+      try { _dragSession.win.setFocusable(false); } catch {}
+    }
     _dragSession = null;
   }
 }
