@@ -688,13 +688,19 @@ if (require.main !== module) return;
   console.log(`Quarm DB sync — ${new Date().toISOString()}`);
   const dump = await findLatestDump();
 
-  // Have we already synced this exact dump? Skip if yes (idempotent).
+  // Have we already synced this exact dump? Skip if yes (idempotent) — UNLESS
+  // FORCE_RESYNC is set. Force is needed when the dump is unchanged but the
+  // WHITELIST grew (new mirror tables added in code), so a re-import of the
+  // same dump is required to populate them (Uilnayar 2026-06-23 — faction
+  // tables added; the unchanged-dump short-circuit was skipping them).
   let prevState = {};
   try { prevState = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}
-  if (prevState.last_dump_sha && prevState.last_dump_sha === dump.sha) {
-    console.log(`✅ Already synced ${dump.filename} (sha ${dump.sha}) — nothing to do`);
+  const forceResync = String(process.env.FORCE_RESYNC || '').toLowerCase() === 'true';
+  if (!forceResync && prevState.last_dump_sha && prevState.last_dump_sha === dump.sha) {
+    console.log(`✅ Already synced ${dump.filename} (sha ${dump.sha}) — nothing to do (set FORCE_RESYNC=true to re-import)`);
     return;
   }
+  if (forceResync) console.log('⚙ FORCE_RESYNC set — re-importing even though the dump sha is unchanged.');
 
   const extractDir = await downloadAndExtract(dump.url, dump.filename);
   const sql        = await findSqlFiles(extractDir);

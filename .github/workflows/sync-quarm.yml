@@ -10,6 +10,11 @@ on:
       dump_url:
         description: 'Optional: specific tarball URL to use instead of the latest'
         required: false
+      force:
+        description: 'Re-import even if the dump sha is unchanged (use after adding new mirror tables)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # so we can commit data/sync_state.json back to the repo
@@ -27,6 +32,7 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SUPABASE_GUILD_ID: ${{ secrets.SUPABASE_GUILD_ID }}
       DUMP_URL_OVERRIDE: ${{ inputs.dump_url }}
+      FORCE_RESYNC: ${{ inputs.force }}
 
     steps:
       - name: Checkout

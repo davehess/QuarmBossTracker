@@ -22,6 +22,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { groupFactions } from '@/lib/factionGroups';
+import ConsTable from './ConsTable';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,18 @@ type StandingRow = {
   last_direction: number | null;
 };
 type ConRow = { mob: string; standing: string; rank: number | null; event_ts: string };
+// Con row enriched with the mob's faction + PQDI link targets (resolved from
+// the eqemu faction mirror).
+export type ConEnriched = {
+  mob: string;
+  standing: string;
+  rank: number | null;
+  eventTs: string;
+  npcId: number | null;
+  factionId: number | null;
+  factionName: string | null;
+  isMax: boolean;
+};
 
 const STANDING_COLORS: Record<string, string> = {
   ally:           'text-green',
@@ -75,9 +88,76 @@ async function load(decoded: string) {
       .limit(1),
   ]);
   const char = (charRes.data && charRes.data[0]) || null;
+  const cons = (consRes.data ?? []) as ConRow[];
+
+  // Resolve each con'd mob → its faction (name + PQDI faction id) via the
+  // eqemu mirror chain: npc_types(name → id, npc_faction_id) → npc_faction
+  // (primaryfaction) → faction_list (name). Also resolve the mob's own npc_id
+  // for a PQDI mob link. Gracefully returns nothing until the faction mirror
+  // sync has populated; the page just omits the faction column in that case.
+  const conNames = [...new Set(cons.map(c => (c.mob || '').trim()).filter(Boolean))];
+  const mobInfo = new Map<string, { npcId: number | null; factionId: number | null; factionName: string | null }>();
+  if (conNames.length > 0) {
+    // npc_types by name (case-insensitive via the names as stored). Pull id +
+    // npc_faction_id; keep the lowest id per name as the canonical mob.
+    const npcByName = new Map<string, { id: number; npcFactionId: number | null }>();
+    const CHUNK = 80;
+    for (let i = 0; i < conNames.length; i += CHUNK) {
+      const slice = conNames.slice(i, i + CHUNK);
+      const { data } = await sb
+        .from('eqemu_npc_types')
+        .select('id, name, npc_faction_id')
+        .in('name', slice);
+      for (const n of ((data ?? []) as { id: number; name: string; npc_faction_id: number | null }[])) {
+        const k = (n.name || '').toLowerCase();
+        const cur = npcByName.get(k);
+        if (!cur || n.id < cur.id) npcByName.set(k, { id: n.id, npcFactionId: n.npc_faction_id ?? null });
+      }
+    }
+    // npc_faction → primaryfaction, then faction_list → name.
+    const npcFactionIds = [...new Set([...npcByName.values()].map(v => v.npcFactionId).filter((x): x is number => x != null && x > 0))];
+    const primaryByNpcFaction = new Map<number, number>();
+    if (npcFactionIds.length > 0) {
+      const { data } = await sb.from('eqemu_npc_faction').select('id, primaryfaction').in('id', npcFactionIds);
+      for (const r of ((data ?? []) as { id: number; primaryfaction: number | null }[])) {
+        if (r.primaryfaction != null) primaryByNpcFaction.set(r.id, r.primaryfaction);
+      }
+    }
+    const factionIds = [...new Set([...primaryByNpcFaction.values()])];
+    const factionNameById = new Map<number, string>();
+    if (factionIds.length > 0) {
+      const { data } = await sb.from('eqemu_faction_list').select('id, name').in('id', factionIds);
+      for (const r of ((data ?? []) as { id: number; name: string }[])) factionNameById.set(r.id, r.name);
+    }
+    for (const name of conNames) {
+      const npc = npcByName.get(name.toLowerCase());
+      const factionId = npc?.npcFactionId != null ? (primaryByNpcFaction.get(npc.npcFactionId) ?? null) : null;
+      mobInfo.set(name.toLowerCase(), {
+        npcId:       npc?.id ?? null,
+        factionId,
+        factionName: factionId != null ? (factionNameById.get(factionId) ?? null) : null,
+      });
+    }
+  }
+
+  const consEnriched: ConEnriched[] = cons.map(c => {
+    const info = mobInfo.get((c.mob || '').toLowerCase());
+    return {
+      mob:         c.mob,
+      standing:    c.standing,
+      rank:        c.rank,
+      eventTs:     c.event_ts,
+      npcId:       info?.npcId ?? null,
+      factionId:   info?.factionId ?? null,
+      factionName: info?.factionName ?? null,
+      // rank 8 = 'ally' = the maximum non-special standing tier.
+      isMax:       c.rank === 8 || (c.standing || '').toLowerCase() === 'ally',
+    };
+  });
+
   return {
     standings: (standingRes.data ?? []) as StandingRow[],
-    cons:      (consRes.data ?? []) as ConRow[],
+    cons:      consEnriched,
     race:      (char?.race as string | null) ?? null,
     cls:       (char?.class as string | null) ?? null,
   };
@@ -98,9 +178,7 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
   // most-active bloc first. Catalog members with no recorded hits show as
   // "?" rows with an estimated base standing from race/class.
   const grouped = groupFactions(standings, f => f.better_count + f.worse_count, { race, cls });
-  const conRows = cons
-    .slice()
-    .sort((a, b) => (b.rank ?? 4) - (a.rank ?? 4) || a.mob.localeCompare(b.mob));
+  const conRows = cons;
 
   const fmtDate = (ts: string) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -227,38 +305,18 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
       <section className="bg-panel border border-border rounded-lg p-4">
         <h3 className="text-sm text-orange mb-1">Consider standings ({conRows.length} mob{conRows.length === 1 ? '' : 's'})</h3>
         <p className="text-xs text-dim mb-3">
-          Latest <b>non-hostile</b> <code>/con</code> per mob, best standing first. Scowling/threatening cons are
+          Latest <b>non-hostile</b> <code>/con</code> per mob. Scowling/threatening cons are
           deliberately excluded — an engaged mob always cons hostile, so they carry no faction signal. A row
           here means this mob&apos;s faction visibly accepts {decoded} (and is the proof a Feign Death stuck).
+          Sort by standing or observed; mob + faction link out to PQDI; an <span className="text-green">ally</span> con
+          is the maximum standing for that faction.
         </p>
-        {conRows.length === 0 ? (
-          <div className="text-sm text-dim p-2">No non-hostile considers recorded yet — <code>/con</code> mobs in-game with the agent running.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-dim text-xs text-left">
-                <th className="py-1 pr-3">Mob</th>
-                <th className="py-1 pr-3">Standing</th>
-                <th className="py-1">Observed</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {conRows.map(c => (
-                <tr key={c.mob}>
-                  <td className="py-1.5 pr-3 text-text">{c.mob}</td>
-                  <td className={`py-1.5 pr-3 ${STANDING_COLORS[c.standing] ?? 'text-dim'}`}>{c.standing}</td>
-                  <td className="py-1.5 text-dim text-xs">{fmtDate(c.event_ts)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <ConsTable rows={conRows} character={decoded} />
       </section>
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-5">
         <b className="text-text">Coming next:</b> base standing by class/race/deity (the starting offset before any
-        hits), Ornate Velium Pendant (+100) attempt tracking, per-class faction-raising spells/songs, and PQDI
-        per-faction deep links once we mirror their faction ↔ mob/quest tables.
+        hits), Ornate Velium Pendant (+100) attempt tracking, and per-class faction-raising spells/songs.
       </section>
     </div>
   );
