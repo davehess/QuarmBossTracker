@@ -66,7 +66,19 @@ function ago(iso: string | null): string {
 
 export default function WhoTable({ rows: initial, canEdit = false, totalInDb = null }: { rows: WhoRow[]; canEdit?: boolean; totalInDb?: number | null }) {
   const router = useRouter();
-  const [rows, setRows] = useState<WhoRow[]>(initial);
+  // Dedup defensively by character name — the server loader already dedups by
+  // character_key, but this is a hard guarantee the table can never render the
+  // same character twice (the Nosfearatu ×8 pagination bug, Uilnayar
+  // 2026-06-22). Also makes the React row key (character) collision-free.
+  const [rows, setRows] = useState<WhoRow[]>(() => {
+    const seen = new Set<string>();
+    return initial.filter(r => {
+      const k = r.character.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  });
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
 

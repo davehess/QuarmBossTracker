@@ -57,17 +57,32 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   const HARD_CAP = 20_000;  // safety stop; we'll log if we ever hit it
   const allRows: DirRow[] = [];
   for (let from = 0; from < HARD_CAP; from += PAGE) {
+    // Order by the UNIQUE character_key, not last_seen. last_seen has heavy
+    // ties (everyone /who'd in the same batch shares a timestamp; many rows
+    // are months-stale at the same bucket), and PostgREST .range() pagination
+    // over a non-unique sort is non-deterministic — the same row can land on
+    // two adjacent pages while another is skipped. That's why Nosfearatu
+    // showed up 8× in the directory (Uilnayar 2026-06-22): one row in the
+    // view, re-fetched across page boundaries. character_key is the view's
+    // unique group key, so ordering by it guarantees each row appears on
+    // exactly one page. The client table re-sorts by last_seen for display.
     const { data: page, error } = await admin
       .from('who_directory')
       .select('*')
-      .order('last_seen', { ascending: false })
+      .order('character_key', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) break;
     if (!page || page.length === 0) break;
     allRows.push(...(page as DirRow[]));
     if (page.length < PAGE) break;  // last page
   }
-  const rows = allRows;
+  // Defensive dedup by character_key — belt-and-suspenders against any future
+  // pagination drift so a duplicate can never reach the table again.
+  const byKey = new Map<string, DirRow>();
+  for (const r of allRows) {
+    if (!byKey.has(r.character_key)) byKey.set(r.character_key, r);
+  }
+  const rows = [...byKey.values()];
 
   // Separately fetch the catalog total via a head-count so the header still
   // surfaces "X loaded of Y in catalog" if we ever truncate at the hard cap.

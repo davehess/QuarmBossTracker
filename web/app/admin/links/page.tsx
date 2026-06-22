@@ -24,6 +24,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import OpenDkpRegisterRow from './OpenDkpRegisterRow';
+import UnregisteredTable from './UnregisteredTable';
 
 export const dynamic = 'force-dynamic';
 
@@ -217,6 +218,31 @@ async function setFamilyLink(formData: FormData) {
   revalidatePath('/admin/agents');
 }
 
+// "Remove linkage" — declare a character a standalone main, NOT an alt of
+// anyone (Uilnayar 2026-06-22: "Luter is his own person"). Sets main_name =
+// name and main_name_override = name (self-pin) so the character (a) stops
+// rendering as someone else's alt immediately and (b) survives the next
+// OpenDKP sync re-parenting them. The self-pin is deliberate here — unlike
+// the auto-linker's no-op pins, this one encodes an officer decision, so the
+// "clean up self-pinned overrides" button intentionally won't be run blindly
+// against it (it's a manual action). Also clears any alts currently rooted at
+// this character? No — removing linkage only affects THIS character's own
+// parentage; its own alts (if any) stay put.
+async function makeOwnMain(formData: FormData) {
+  'use server';
+  const ok = await actionAssertOfficer();
+  if (!ok) redirect('/?error=admin_required');
+  const name = String(formData.get('name') || '').trim();
+  if (!name || !/^[A-Za-z]{2,}$/.test(name)) return;
+  await supabaseAdmin()
+    .from('characters')
+    .update({ main_name: name, main_name_override: name })
+    .eq('guild_id', 'wolfpack')
+    .ilike('name', name);
+  revalidatePath('/admin/links');
+  revalidatePath('/admin/agents');
+}
+
 // One-click cleanup: clear every main_name_override row where the override
 // just pins the character to themselves (override == name) or to its
 // existing main_name (no actual re-parent). These are "self-pinned" no-ops
@@ -375,7 +401,7 @@ export default async function AdminLinksPage({
   const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
-  const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }, { data: whoRows }] = await Promise.all([
+  const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }, { data: whoRows }, { data: registerReqs }] = await Promise.all([
     admin
       .from('characters')
       .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id')
@@ -405,6 +431,12 @@ export default async function AdminLinksPage({
       .eq('guild_id', 'wolfpack')
       .order('observed_at', { ascending: false })
       .limit(3000),
+    admin
+      .from('opendkp_register_requests')
+      .select('id, name, status, error, requested_by_discord_id, opendkp_id, created_at, processed_at')
+      .eq('guild_id', 'wolfpack')
+      .order('created_at', { ascending: false })
+      .limit(100),
   ]);
   const pendingRequests = (reqs ?? []) as LinkRequest[];
 
@@ -569,6 +601,72 @@ export default async function AdminLinksPage({
     }
     unregistered.sort((a, b) => String(b.lastUpload || '').localeCompare(String(a.lastUpload || '')));
   }
+
+  // Targeted /who level fill — the recency-windowed whoRows above misses
+  // characters last /who'd outside the most-recent 3000 observations, which
+  // is exactly the long-tail alt case (Uilmuley/Sanamar showed "?"). For
+  // every unregistered name still missing a level, look it up directly by
+  // name across ALL of who_observations (bounded to the candidate set) and
+  // keep the highest level + most recent class seen — including the owner's
+  // own /who when their Mimic captured it (Uilnayar 2026-06-22).
+  {
+    const needLevel = unregistered.filter(u => u.level == null).map(u => u.name);
+    if (needLevel.length > 0) {
+      const { data: targetedWho } = await admin
+        .from('who_observations')
+        .select('character, level, class, observed_at')
+        .eq('guild_id', 'wolfpack')
+        .in('character', needLevel)
+        .order('observed_at', { ascending: false })
+        .limit(5000);
+      const best = new Map<string, { level: number | null; cls: string | null }>();
+      for (const w of (targetedWho ?? []) as { character: string; level: number | null; class: string | null }[]) {
+        const k = (w.character || '').toLowerCase();
+        const cur = best.get(k);
+        const lvl = (w.level != null && (cur?.level == null || w.level > cur.level)) ? w.level : (cur?.level ?? null);
+        const cls = cur?.cls ?? (w.class ?? null);   // first (most recent) non-null class
+        best.set(k, { level: lvl, cls });
+      }
+      for (const u of unregistered) {
+        if (u.level != null) continue;
+        const b = best.get(u.name.toLowerCase());
+        if (b) { u.level = b.level; if (!u.cls) u.cls = b.cls; }
+      }
+    }
+  }
+
+  // Build the view rows for the sortable client table — resolve the owner's
+  // display label + the suggested rank server-side so the client component
+  // is purely presentational.
+  const unregisteredView = unregistered.map(u => {
+    const m = memberById.get(u.did);
+    return {
+      name:            u.name,
+      ownerLabel:      m ? memberLabel(m) : u.did,
+      did:             u.did,
+      level:           u.level,
+      cls:             u.cls,
+      rank:            u.level == null ? '?' : (u.level >= 46 ? 'Raid Alt' : 'Non-raid Alt / Trader'),
+      parentName:      u.parentName,
+      parentOpenDkpId: u.parentOpenDkpId,
+    };
+  });
+
+  // Recent OpenDKP register-queue rows — surface who requested each one and
+  // whether the bot succeeded, so a failed/stuck registration is visible
+  // (Uilnayar 2026-06-22 "whoever made the updates... should be shown").
+  type RegisterReq = {
+    id: string; name: string; status: string; error: string | null;
+    requested_by_discord_id: string | null; opendkp_id: number | null;
+    created_at: string; processed_at: string | null;
+  };
+  const registerQueue = ((registerReqs ?? []) as RegisterReq[]).map(r => ({
+    ...r,
+    requesterLabel: r.requested_by_discord_id
+      ? (memberById.get(r.requested_by_discord_id) ? memberLabel(memberById.get(r.requested_by_discord_id)!) : r.requested_by_discord_id)
+      : '—',
+  }));
+  const queuePendingOrFailed = registerQueue.filter(r => r.status !== 'done');
 
   // Dismissed (link_ignored) characters are parked in their own view and
   // excluded from every other list + the auto-match logic.
@@ -814,6 +912,17 @@ export default async function AdminLinksPage({
                             </button>
                           </form>
                         )}
+                        {/* "Not an alt" — declare this character their own
+                            standalone main so they stop showing as an alt
+                            candidate under this uploader (Uilnayar 2026-06-22:
+                            "Luter is his own person"). Pins main_name to self
+                            so it sticks through the OpenDKP sync. */}
+                        <form action={makeOwnMain}>
+                          <input type="hidden" name="name" value={f.main.name} />
+                          <button type="submit" title={`Mark ${f.main.name} as their own main — removes any alt linkage and stops them being suggested as an alt here.`} className="px-2 py-1 rounded border border-border text-dim text-xs hover:border-green hover:text-green">
+                            Not an alt
+                          </button>
+                        </form>
                       </div>
                       );
                     })}
@@ -834,57 +943,61 @@ export default async function AdminLinksPage({
         </form>
       </section>
 
-      {/* Unregistered characters — uploading via a member's Mimic but absent
-          from OpenDKP entirely. Surfaced with a ready-to-paste /register. */}
-      <section className="bg-panel border border-border rounded-lg">
-        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
-          🆕 Not in OpenDKP {unregistered.length > 0 && <span className="text-gold">({unregistered.length})</span>}
-        </h3>
-        <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
-          Characters streaming from a member&apos;s Mimic with no OpenDKP entry. The owner comes
-          from the upload token; level/class from <code>/who</code> sightings. Register with the
-          suggested command — <b>Raid Alt requires level 46+</b>; below that they&apos;re a
-          Non-raid Alt (or Trader).
-        </div>
-        {unregistered.length === 0 ? (
-          <div className="p-4 text-xs text-dim">Every uploading character is in OpenDKP. 🎉</div>
-        ) : (
+      {/* OpenDKP register queue — pending / failed rows so a stuck or errored
+          registration is visible with who requested it. Done rows are hidden
+          (the character drops off the "Not in OpenDKP" list once registered). */}
+      {queuePendingOrFailed.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg">
+          <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
+            ⏳ Registration queue <span className="text-gold">({queuePendingOrFailed.length})</span>
+          </h3>
+          <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
+            OpenDKP registrations the bot is working through (drains every ~20s). A <span className="text-red">failed</span> row
+            shows the error so you can fix the data and re-register. Successful ones drop off once OpenDKP confirms.
+          </div>
           <table className="w-full text-xs">
             <thead className="text-dim hidden sm:table-header-group">
               <tr className="border-b border-border">
                 <th className="text-left px-3 py-2 font-normal">Character</th>
-                <th className="text-left px-3 py-2 font-normal">Owner</th>
-                <th className="text-left px-3 py-2 font-normal">Lvl / Class</th>
-                <th className="text-left px-3 py-2 font-normal">Suggested rank</th>
-                <th className="text-left px-3 py-2 font-normal">Register</th>
+                <th className="text-left px-3 py-2 font-normal">Requested by</th>
+                <th className="text-left px-3 py-2 font-normal">Status</th>
+                <th className="text-left px-3 py-2 font-normal">When</th>
               </tr>
             </thead>
             <tbody>
-              {unregistered.slice(0, 30).map(u => {
-                const m = memberById.get(u.did);
-                const rank = u.level == null ? '?' : (u.level >= 46 ? 'Raid Alt' : 'Non-raid Alt / Trader');
-                return (
-                  <tr key={u.name} className="border-b border-border/40 hover:bg-[#1a212c]">
-                    <td className="px-3 py-2 text-text font-medium">{u.name}</td>
-                    <td className="px-3 py-2 text-dim">{m ? memberLabel(m) : u.did}</td>
-                    <td className="px-3 py-2 text-dim">{u.level != null ? `L${u.level}` : '?'}{u.cls ? ` ${u.cls}` : ''}</td>
-                    <td className={`px-3 py-2 ${rank === 'Raid Alt' ? 'text-green' : 'text-dim'}`}>{rank}</td>
-                    <td className="px-3 py-2">
-                      <OpenDkpRegisterRow
-                        name={u.name}
-                        observedClass={u.cls ?? null}
-                        observedLevel={u.level ?? null}
-                        observedRace={null}
-                        parentName={u.parentName}
-                        parentOpenDkpId={u.parentOpenDkpId}
-                        uploaderDiscordId={u.did}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
+              {queuePendingOrFailed.map(r => (
+                <tr key={r.id} className="border-b border-border/40 hover:bg-[#1a212c]">
+                  <td className="px-3 py-2 text-text font-medium">{r.name}</td>
+                  <td className="px-3 py-2 text-dim">{r.requesterLabel}</td>
+                  <td className="px-3 py-2">
+                    {r.status === 'pending'
+                      ? <span className="text-blue">⏳ pending</span>
+                      : <span className="text-red" title={r.error || ''}>⚠ failed{r.error ? ` — ${r.error.slice(0, 80)}` : ''}</span>}
+                  </td>
+                  <td className="px-3 py-2 text-dim">{new Date(r.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
+        </section>
+      )}
+
+      {/* Unregistered characters — uploading via a member's Mimic but absent
+          from OpenDKP entirely. Sortable; Register queues the bot job. */}
+      <section className="bg-panel border border-border rounded-lg">
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
+          🆕 Not in OpenDKP {unregisteredView.length > 0 && <span className="text-gold">({unregisteredView.length})</span>}
+        </h3>
+        <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
+          Characters streaming from a member&apos;s Mimic with no OpenDKP entry. The owner comes
+          from the upload token; level/class from <code>/who</code> sightings (incl. the owner&apos;s own
+          /who). Click a column header to sort. <b>Raid Alt requires level 46+</b>; below that they&apos;re a
+          Non-raid Alt (or Trader). Register queues a bot job (processed in ~20s).
+        </div>
+        {unregisteredView.length === 0 ? (
+          <div className="p-4 text-xs text-dim">Every uploading character is in OpenDKP. 🎉</div>
+        ) : (
+          <UnregisteredTable rows={unregisteredView} />
         )}
       </section>
 
