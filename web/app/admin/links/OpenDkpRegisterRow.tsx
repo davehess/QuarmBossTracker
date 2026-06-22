@@ -83,14 +83,20 @@ export default function OpenDkpRegisterRow({
     });
   }
 
+  // Non-raid Alt / Trader rows stay OFF the OpenDKP roster — they only get a
+  // local family link in our characters table (Uilnayar 2026-06-23: those
+  // ranks clutter the OpenDKP top-nav with bank/mule characters).
+  const isLocalOnly = rank === 'Non-raid Alt' || rank === 'Trader';
+
   if (status === 'done') {
     return (
       <span className="text-green text-xs">
         ✓ Queued as {cls} L{level} ({rank})
         {parentName ? <> · alt of {parentName}</> : null}.
-        The bot registers it in OpenDKP within ~20s
-        {canDm && dmOwner ? <> and DMs the owner a claim link</> : null}.
-        Row drops off on next refresh.
+        {isLocalOnly
+          ? <> The bot will link this on our side only — Non-raid Alts and Traders stay off OpenDKP to keep the top-nav clean.</>
+          : <> The bot registers it in OpenDKP within ~20s{canDm && dmOwner ? <> and DMs the owner a claim link</> : null}.</>}
+        {' '}Row drops off on next refresh.
       </span>
     );
   }

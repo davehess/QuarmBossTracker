@@ -504,46 +504,87 @@ async function _processRegisterQueue(client) {
     const { createCharacter } = require('./utils/opendkp');
     // uploaderDid → [{ name, opendkpId, parentName }] for one batched DM.
     const dmBatch = new Map();
+    // Ranks that should STAY OFF the OpenDKP roster — Non-raid Alts and
+    // Traders end up cluttering the top-nav "your characters" list with
+    // bank/mule characters that have no DKP relevance (Uilnayar 2026-06-23).
+    // We still record the family linkage on our side so /admin/links and the
+    // upload picture reflect reality; just skip the OpenDKP createCharacter
+    // call and the claim DM (nothing to claim).
+    const SKIP_OPENDKP_RANKS = new Set(['non-raid alt', 'non raid alt', 'nonraid alt', 'trader']);
 
     for (const row of pending) {
       try {
-        const result = await createCharacter({
-          Name:     row.name,
-          Class:    row.class,
-          Race:     row.race || 'Iksar',
-          Level:    row.level,
-          Active:   1,
-          Rank:     row.rank,
-          ParentId: Number.isFinite(row.parent_opendkp_id) ? row.parent_opendkp_id : 0,
-        });
-        const newId = (result && Number.isFinite(Number(result.CharacterId)))
-          ? Number(result.CharacterId) : null;
+        const rankLower    = String(row.rank || '').toLowerCase().trim();
+        const skipOpenDkp  = SKIP_OPENDKP_RANKS.has(rankLower);
 
-        // Audit marker on characters — scoped fields only (the OpenDKP sync
-        // owns class/race/rank/main_name; merge resolution leaves them alone).
-        await supabase.upsert('characters', [{
+        let newId = null;
+        let result = null;
+        if (!skipOpenDkp) {
+          result = await createCharacter({
+            Name:     row.name,
+            Class:    row.class,
+            Race:     row.race || 'Iksar',
+            Level:    row.level,
+            Active:   1,
+            Rank:     row.rank,
+            ParentId: Number.isFinite(row.parent_opendkp_id) ? row.parent_opendkp_id : 0,
+          });
+          newId = (result && Number.isFinite(Number(result.CharacterId)))
+            ? Number(result.CharacterId) : null;
+        }
+
+        // Resolve the parent's NAME (for our main_name) when the web sent us
+        // the OpenDKP parent id. Falls back to row.parent_name if present.
+        let parentMainName = row.parent_name || null;
+        if (!parentMainName && Number.isFinite(row.parent_opendkp_id) && row.parent_opendkp_id > 0) {
+          const parentRows = await supabase.select('characters',
+            `select=name&guild_id=eq.${encodeURIComponent(guildId)}&opendkp_id=eq.${row.parent_opendkp_id}&limit=1`)
+            .catch(() => null);
+          if (Array.isArray(parentRows) && parentRows[0]?.name) parentMainName = parentRows[0].name;
+        }
+
+        // Audit marker + LOCAL family link on characters. For skip-OpenDKP
+        // ranks we additionally stamp main_name + main_name_override so the
+        // character shows as parented under the uploader's main on our pages
+        // even though OpenDKP itself never sees it. For real OpenDKP rows we
+        // leave main_name to the OpenDKP sync (it already encodes ParentId).
+        const audit = {
           guild_id:                          guildId,
           name:                              row.name,
           registered_via_web_at:             new Date().toISOString(),
           registered_via_web_by_discord_id:  row.requested_by_discord_id || null,
           claim_opendkp_id:                  newId,
-        }], 'guild_id,name').catch(err =>
+          // Local-only ranks: record the family link directly. discord_id
+          // gets set to the uploader so /admin/links shows them under the
+          // right owner; main_name_override survives the OpenDKP sync.
+          ...(skipOpenDkp && parentMainName ? {
+            main_name:           parentMainName,
+            main_name_override:  parentMainName,
+            discord_id:          row.uploader_discord_id || null,
+            rank:                row.rank,
+            class:               row.class,
+            race:                row.race || null,
+            active:              true,
+          } : {}),
+        };
+        await supabase.upsert('characters', [audit], 'guild_id,name').catch(err =>
           console.warn('[opendkp-register-queue] characters audit upsert failed:', err?.message));
 
         await supabase.update('opendkp_register_requests', `id=eq.${row.id}`, {
           status:       'done',
           opendkp_id:   newId,
-          error:        null,
+          error:        skipOpenDkp ? 'skipped OpenDKP (rank=' + row.rank + ') — local family link only' : null,
           processed_at: new Date().toISOString(),
         });
 
-        if (row.dm_owner && row.uploader_discord_id && newId) {
+        // No claim DM for local-only rows — there's nothing to claim.
+        if (!skipOpenDkp && row.dm_owner && row.uploader_discord_id && newId) {
           if (!dmBatch.has(row.uploader_discord_id)) dmBatch.set(row.uploader_discord_id, []);
           dmBatch.get(row.uploader_discord_id).push({
-            name: row.name, opendkpId: newId, parentName: row.parent_name || null,
+            name: row.name, opendkpId: newId, parentName: parentMainName || null,
           });
         }
-        console.log(`[opendkp-register-queue] registered ${row.name} (${row.class} L${row.level} ${row.rank}, parent ${row.parent_opendkp_id || 'none'}) → id ${newId || '?'}`);
+        console.log(`[opendkp-register-queue] ${skipOpenDkp ? 'LOCAL-ONLY ' : ''}${row.name} (${row.class} L${row.level} ${row.rank}, parent ${row.parent_opendkp_id || 'none'}) → id ${newId || (skipOpenDkp ? 'local' : '?')}`);
       } catch (err) {
         await supabase.update('opendkp_register_requests', `id=eq.${row.id}`, {
           status:       'failed',
@@ -564,13 +605,19 @@ async function _processRegisterQueue(client) {
         const user = await client.users.fetch(did).catch(() => null);
         if (!user) { status = 'failed'; errMsg = 'user not fetchable'; }
         else {
-          const lines = chars.map(c =>
-            `• **${c.name}**${c.parentName ? ` _(alt of ${c.parentName})_` : ''} — <https://wolfpack.opendkp.com/#/characters/${c.opendkpId}>`);
-          const plural = chars.length === 1 ? 'a character' : `${chars.length} characters`;
+          // OpenDKP claim flow lives on the LIST page — the per-character
+          // page (#/characters/<id>) has no claim button. So link to the
+          // list and tell them which name to type into the search box.
+          // Query-string pre-fill on the hash route doesn't work (Uilnayar
+          // 2026-06-23 confirmed manually), so this is the cleanest path.
+          const nameList = chars.length === 1
+            ? `**${chars[0].name}**${chars[0].parentName ? ` _(alt of ${chars[0].parentName})_` : ''}`
+            : chars.map(c => `**${c.name}**${c.parentName ? ` _(alt of ${c.parentName})_` : ''}`).join(', ');
+          const lineWord = chars.length === 1 ? 'name' : 'names';
           await user.send(
-            `🐺 **Wolf Pack** — an officer just registered ${plural} for you in OpenDKP:\n` +
-            lines.join('\n') +
-            `\n\nClaim ${chars.length === 1 ? 'it' : 'them'} in OpenDKP to link to your account so DKP + loot history credit correctly. ` +
+            `🐺 **Wolf Pack** — an officer just registered ${chars.length === 1 ? 'a character' : `${chars.length} characters`} for you in OpenDKP:\n` +
+            `${nameList}\n\n` +
+            `**To claim:** open <https://wolfpack.opendkp.com/#/characters>, type the character ${lineWord} into the search bar at the top right, then click the green **Claim** button on the row. Claiming links the character to your account so DKP + loot history credit correctly.\n\n` +
             `You can also see your outstanding actions any time at <https://wolfpack.quest/me>.`
           );
         }
