@@ -210,8 +210,12 @@ export default function RaidView({
     }
     return m;
   }, [inRaidRows]);
-  // "Not in raid" parking lot: hide characters unseen for >15 min by default
-  // (logged-off alts pile up fast) — the toggle brings them back.
+  // Parking-lot threshold: characters unseen for >5 min get moved to the
+  // "Not seen / offline" group (Uilnayar 2026-06-22 — "Not in raid implies
+  // they're still online"). 5 min lines up with Mimic's live-state heartbeat
+  // cadence; anything older than that is almost always logged out, not
+  // just sitting in the parking lot. Default still hides stale rows from
+  // the group; toggle brings them back in case an officer needs to audit.
   const [showStale, setShowStale] = useState(false);
 
   // Live page: re-runs the server component every 15s so freshly-cast buffs
@@ -238,19 +242,21 @@ export default function RaidView({
     return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
   }, [tabRows]);
 
-  // Group by raid group. Parked alts → "Not in raid" bucket sorted last.
-  // Stale parked characters (no live-state update in >15 min — logged off)
-  // are hidden by default; staleHidden carries the count for the toggle.
-  const STALE_MS = 15 * 60 * 1000;
+  // Group by raid group. Parked alts → "Not seen / offline" bucket sorted
+  // last. Stale parked characters (no live-state update in >5 min — logged
+  // off, NOT just parked in raid) are hidden by default; staleHidden
+  // carries the count for the toggle.
+  const STALE_MS = 5 * 60 * 1000;
   // Swapped characters are exempt — "(swapped to X)" is the information.
   const isStale = (r: RaidRow) =>
     !r.inRaid && !r.swappedTo
     && (!r.updatedAt || (Date.now() - new Date(r.updatedAt).getTime()) > STALE_MS);
   const staleHidden = useMemo(() => tabRows.filter(isStale).length, [tabRows]); // eslint-disable-line react-hooks/exhaustive-deps
+  const PARKED_GROUP_LABEL = 'Not seen / offline';
   const groups = useMemo(() => {
     const m = new Map<string, RaidRow[]>();
     const keyFor = (r: RaidRow) =>
-      r.raidGroup != null ? `Group ${r.raidGroup}` : 'Not in raid';
+      r.raidGroup != null ? `Group ${r.raidGroup}` : PARKED_GROUP_LABEL;
     for (const r of tabRows) {
       if (!showStale && isStale(r)) continue;
       const k = keyFor(r);
@@ -258,7 +264,7 @@ export default function RaidView({
       if (arr) arr.push(r); else m.set(k, [r]);
     }
     return [...m.entries()].sort((a, b) => {
-      const an = a[0] === 'Not in raid', bn = b[0] === 'Not in raid';
+      const an = a[0] === PARKED_GROUP_LABEL, bn = b[0] === PARKED_GROUP_LABEL;
       if (an !== bn) return an ? 1 : -1;
       const ai = parseInt(a[0].replace('Group ', ''), 10);
       const bi = parseInt(b[0].replace('Group ', ''), 10);
@@ -494,15 +500,15 @@ export default function RaidView({
                         ? <span title="At least one Mimic in this group → HP signals available" className="text-[9px] uppercase tracking-widest text-green border border-green/40 rounded px-1.5 py-0.5">🐺 mimic</span>
                         : <span title="No Mimic in this group — HP signals unavailable" className="text-[9px] uppercase tracking-widest text-dim border border-dim/40 rounded px-1.5 py-0.5">no mimic</span>
                     )}
-                    {!isRaidGroup && <span className="text-dim/70 text-xs">parked / not in current raid</span>}
+                    {!isRaidGroup && <span className="text-dim/70 text-xs">no live signal in the last 5 minutes — likely offline</span>}
                     {!isRaidGroup && staleHidden > 0 && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setShowStale(s => !s); }}
                         className="text-[10px] px-1.5 py-0.5 rounded border border-border text-dim hover:text-text hover:border-blue"
-                        title="Parked characters with no live data in the last 15 minutes are hidden by default"
+                        title="Parked characters with no live data in the last 5 minutes are hidden by default — they're almost always logged off, not idling in raid."
                       >
-                        {showStale ? `hide ${staleHidden} unseen >15m` : `show ${staleHidden} unseen >15m`}
+                        {showStale ? `hide ${staleHidden} unseen >5m` : `show ${staleHidden} unseen >5m`}
                       </button>
                     )}
                   </div>
@@ -582,11 +588,11 @@ export default function RaidView({
             );
           })}
 
-          {/* When every parked character is stale, the "Not in raid" section
+          {/* When every parked character is stale, the parking-lot section
               vanishes — keep the toggle reachable. */}
-          {staleHidden > 0 && !groups.some(([l]) => l === 'Not in raid') && (
+          {staleHidden > 0 && !groups.some(([l]) => l === PARKED_GROUP_LABEL) && (
             <section className="bg-panel border border-border/60 rounded-lg px-3 py-2 text-xs text-dim flex items-center justify-between">
-              <span>🛋️ {staleHidden} parked character{staleHidden === 1 ? '' : 's'} unseen for &gt;15m</span>
+              <span>🛋️ {staleHidden} character{staleHidden === 1 ? '' : 's'} unseen for &gt;5m (likely offline)</span>
               <button
                 type="button"
                 onClick={() => setShowStale(true)}
