@@ -12,6 +12,12 @@
 import { useState, useTransition } from 'react';
 import { registerInOpenDKP } from './opendkp-actions';
 
+// "UNKNOWN" sentinel — when we have no /who-observed class or race for the
+// character, default to this instead of guessing Warrior/Iksar. Officer has
+// to pick a real value before the Register button enables, so a one-click
+// register doesn't silently misregister someone (Uilnayar 2026-06-22).
+const UNKNOWN = 'UNKNOWN';
+
 const CLASSES = [
   'Bard', 'Beastlord', 'Cleric', 'Druid', 'Enchanter', 'Magician',
   'Monk', 'Necromancer', 'Paladin', 'Ranger', 'Rogue', 'Shadow Knight',
@@ -42,8 +48,8 @@ export default function OpenDkpRegisterRow({
   observedLevel: number | null;
   observedRace:  string | null;
 }) {
-  const [cls,   setCls]   = useState<string>(observedClass || 'Warrior');
-  const [race,  setRace]  = useState<string>(observedRace  || 'Iksar');
+  const [cls,   setCls]   = useState<string>(observedClass || UNKNOWN);
+  const [race,  setRace]  = useState<string>(observedRace  || UNKNOWN);
   const [level, setLevel] = useState<number>(observedLevel || 60);
   const [rank,  setRank]  = useState<string>(defaultRank(observedLevel));
   const [busy,  startTransition] = useTransition();
@@ -88,12 +94,15 @@ export default function OpenDkpRegisterRow({
         )}
       </select>
       <select value={cls} onChange={e => setCls(e.target.value)} disabled={busy}
-              className="bg-bg border border-border rounded px-1 py-0.5">
+              className={`bg-bg border rounded px-1 py-0.5 ${cls === UNKNOWN ? 'border-red text-red' : 'border-border'}`}
+              title="OpenDKP requires a class. Defaulted to /who observation if available; otherwise UNKNOWN — pick one before registering.">
+        <option value={UNKNOWN}>— class? —</option>
         {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
       </select>
       <select value={race} onChange={e => setRace(e.target.value)} disabled={busy}
-              className="bg-bg border border-border rounded px-1 py-0.5"
-              title="OpenDKP requires a race. Defaulted to /who observation if available.">
+              className={`bg-bg border rounded px-1 py-0.5 ${race === UNKNOWN ? 'border-red text-red' : 'border-border'}`}
+              title="OpenDKP requires a race. Defaulted to /who observation if available; otherwise UNKNOWN — pick one before registering.">
+        <option value={UNKNOWN}>— race? —</option>
         {RACES.map(r => <option key={r} value={r}>{r}</option>)}
       </select>
       <select value={rank} onChange={e => setRank(e.target.value)} disabled={busy}
@@ -103,8 +112,11 @@ export default function OpenDkpRegisterRow({
       <button
         type="button"
         onClick={submit}
-        disabled={busy}
-        className="px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white hover:opacity-90 disabled:opacity-40"
+        disabled={busy || cls === UNKNOWN || race === UNKNOWN}
+        title={cls === UNKNOWN || race === UNKNOWN
+          ? 'Pick a class and race before registering — OpenDKP rejects UNKNOWN.'
+          : 'Register this character in OpenDKP'}
+        className="px-2 py-0.5 rounded border border-blue bg-[#1f6feb] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {busy ? '...' : 'Register'}
       </button>

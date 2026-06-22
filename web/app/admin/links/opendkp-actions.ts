@@ -28,6 +28,12 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
   const ok = await isOfficer(user.id);
   if (!ok) return { ok: false, error: 'officer role required' };
 
+  // Reject the UNKNOWN sentinel — OpenDKP rejects it server-side anyway, but
+  // failing here gives the officer a clear "pick a class/race" error instead
+  // of the bot's opaque "OpenDKP createCharacter failed" response.
+  if (!args.cls  || args.cls  === 'UNKNOWN') return { ok: false, error: 'class required — pick one before registering' };
+  if (!args.race || args.race === 'UNKNOWN') return { ok: false, error: 'race required — pick one before registering' };
+
   const botUrl = process.env.BOT_BASE_URL;
   const token  = process.env.WOLFPACK_AGENT_TOKEN;
   if (!botUrl) return { ok: false, error: 'BOT_BASE_URL not configured on the web — set it on Vercel to the Railway bot URL' };
