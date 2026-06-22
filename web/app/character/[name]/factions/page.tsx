@@ -98,12 +98,19 @@ async function load(decoded: string) {
   const conNames = [...new Set(cons.map(c => (c.mob || '').trim()).filter(Boolean))];
   const mobInfo = new Map<string, { npcId: number | null; factionId: number | null; factionName: string | null }>();
   if (conNames.length > 0) {
-    // npc_types by name (case-insensitive via the names as stored). Pull id +
-    // npc_faction_id; keep the lowest id per name as the canonical mob.
+    // eqemu_npc_types.name stores spaces as underscores ("Lord_Nagafen"),
+    // while con/log mob names use spaces ("Lord Nagafen"). Query by the
+    // underscore form and key the result by that form so the join actually
+    // matches (without this only ~2% of cons resolved; with it ~46%).
+    // Preserve case for the IN query (PostgREST .in() is case-sensitive); the
+    // lookup map is keyed lowercase so our side is case-insensitive.
+    const toUnder = (s: string) => s.trim().replace(/ /g, '_');
+    const queryForms = [...new Set(conNames.map(toUnder))];
+    // underscore-name(lower) → { id, npcFactionId }; keep the lowest id per name.
     const npcByName = new Map<string, { id: number; npcFactionId: number | null }>();
     const CHUNK = 80;
-    for (let i = 0; i < conNames.length; i += CHUNK) {
-      const slice = conNames.slice(i, i + CHUNK);
+    for (let i = 0; i < queryForms.length; i += CHUNK) {
+      const slice = queryForms.slice(i, i + CHUNK);
       const { data } = await sb
         .from('eqemu_npc_types')
         .select('id, name, npc_faction_id')
@@ -130,7 +137,7 @@ async function load(decoded: string) {
       for (const r of ((data ?? []) as { id: number; name: string }[])) factionNameById.set(r.id, r.name);
     }
     for (const name of conNames) {
-      const npc = npcByName.get(name.toLowerCase());
+      const npc = npcByName.get(toUnder(name).toLowerCase());
       const factionId = npc?.npcFactionId != null ? (primaryByNpcFaction.get(npc.npcFactionId) ?? null) : null;
       mobInfo.set(name.toLowerCase(), {
         npcId:       npc?.id ?? null,
