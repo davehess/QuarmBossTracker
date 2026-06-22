@@ -266,131 +266,68 @@ async function loadCounters() {
     }
   } catch (err) { void err; }
 
-  // ── 🎵 Dirges sung — bard "Dirge of *" cast counter ──────────────────────
-  // Each cast lands as a `dirge_cast` fun_event (target = song name). Damage
-  // total is best-effort: we sum across encounter_combat_rollup.by_skill keys
-  // whose name contains "dirge" (the agent stores damage events keyed on the
-  // ability name from the log). by_skill is upload-side only — bards who
-  // never ran the agent contribute 0 damage; the cast count still counts
-  // them since the bystander-side detector catches their casts on any
-  // raider's log.
+  // ── 🎵 Dirge damage — bard targeted-AoE damage songs (Denon's Desperate
+  //    Dirge et al.) ────────────────────────────────────────────────────────
+  // DAMAGE-driven, not cast-count-driven. The old card gated on a
+  // `dirge_cast` fun_event that never fired (no such detector shipped), so it
+  // sat at 0 forever even though the damage was in the data. Denon's
+  // Desperate Dirge is a targeted PBAoE that can hit 4-5 players for several
+  // hundred to thousands each; the agent logs it in encounter_combat_rollup
+  // by_skill under the song name. We sum every by_skill key containing
+  // "dirge" (folds Denon's + any other Dirge-of-* damage song), per bard, and
+  // headline the TOTAL DAMAGE. by_skill is upload-side only (agent with
+  // ability detail), so bards who never ran the agent contribute 0 — the
+  // number grows as more bards upload. Cast count is parked until/if a
+  // bystander-side "begins singing Dirge of …" detector ships.
   try {
-    const [castRes, rollupRes] = await Promise.all([
-      sb.from('fun_events')
-        .select('caster, event_ts', { count: 'exact' })
-        .eq('event_type', 'dirge_cast'),
-      sb.from('encounter_combat_rollup')
-        .select('character_name, by_skill')
-        .limit(20000),
-    ]);
-    const castCount = castRes.count ?? 0;
-    const byTopCaster = new Map<string, number>();
-    for (const r of (castRes.data ?? []) as { caster: string | null }[]) {
-      const k = r.caster || 'unknown';
-      byTopCaster.set(k, (byTopCaster.get(k) ?? 0) + 1);
-    }
-    const topCaster = [...byTopCaster.entries()].sort((a, b) => b[1] - a[1])[0];
-
-    // Sum dirge damage across every uploader's per-skill rollup. Match the
-    // ability key (case-insensitive contains "dirge"), so any "Dirge of *"
-    // (Carnage, Restless, Sleepwalker, …) folds together. DS-prefixed keys
-    // ('ds:dirge of …') still count; melee + chant DoT damage are the same
-    // pool for the joke.
-    let dirgeDamage = 0;
+    const { data: rollupRows } = await sb
+      .from('encounter_combat_rollup')
+      .select('character_name, by_skill')
+      .limit(20000);
     type RollupRow = { character_name: string; by_skill: Record<string, { hits?: number; dmg?: number }> | null };
-    for (const r of (rollupRes.data ?? []) as RollupRow[]) {
+    let dirgeDamage = 0;
+    let dirgeHits = 0;
+    const byBard = new Map<string, number>();
+    for (const r of (rollupRows ?? []) as RollupRow[]) {
       const bs = r.by_skill || {};
+      let charDmg = 0;
       for (const k of Object.keys(bs)) {
         if (k.toLowerCase().includes('dirge')) {
-          dirgeDamage += Number(bs[k]?.dmg) || 0;
+          charDmg   += Number(bs[k]?.dmg)  || 0;
+          dirgeHits += Number(bs[k]?.hits) || 0;
         }
       }
-    }
-
-    if (castCount > 0) {
-      const sub = topCaster
-        ? (dirgeDamage > 0
-            ? `${dirgeDamage.toLocaleString()} damage attributed · top dirger: ${topCaster[0]} ×${topCaster[1]}`
-            : `top dirger: ${topCaster[0]} ×${topCaster[1]} (damage rolls in once bards upload with agent v3.0.62+)`)
-        : `${dirgeDamage.toLocaleString()} damage attributed`;
-      counters.push({
-        label: 'Dirges sung — killed a whole guild',
-        emoji: '🎵',
-        value: castCount,
-        sub,
-      });
-    } else {
-      counters.push({
-        label: 'Dirges sung — killed a whole guild',
-        emoji: '🎵',
-        value: 0,
-        sub: 'no dirges captured yet — agent v3.0.62+ ticks this up on every "begins singing Dirge of …" line',
-      });
-    }
-  } catch (err) {
-    void err;
-  }
-
-  // ── 🐎 Average haste % — mains with both VoG and a Warsong active ─────────
-  // Pulls character_live_state (Zeal-reported current buff set), filters to
-  // mains (characters.main_name is itself or null), and counts the ones who
-  // have BOTH a Visions of Grandeur buff (chanter spell haste, slot 1) AND a
-  // bard Warsong (haste song, slot 2). Spell + song stack additively in EQ
-  // Classic→Luclin, so each qualifying main is the same combined %; reporting
-  // it as "average" is just future-proofing — when we map more haste sources
-  // by name → %, the average will actually vary across mains.
-  try {
-    const [{ data: liveRows }, { data: charRows }] = await Promise.all([
-      sb.from('character_live_state')
-        .select('character, buffs')
-        .eq('guild_id', 'wolfpack'),
-      sb.from('characters')
-        .select('name, main_name')
-        .eq('guild_id', 'wolfpack'),
-    ]);
-    type LiveRow = { character: string; buffs: { name: string; ticks: number | null }[] | null };
-    type CharRow = { name: string; main_name: string | null };
-    const mains = new Set(
-      ((charRows ?? []) as CharRow[])
-        .filter(c => !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase())
-        .map(c => c.name.toLowerCase()),
-    );
-
-    const VOG_PCT     = 51;   // Visions of Grandeur — chanter group spell haste (Velious)
-    const WARSONG_PCT = 25;   // Bard Warsong / war march — song slot, conservative
-
-    let qualifying = 0;
-    let totalPct   = 0;
-    for (const r of (liveRows ?? []) as LiveRow[]) {
-      if (!mains.has(r.character.toLowerCase())) continue;
-      const buffNames = (r.buffs ?? []).map(b => (b?.name || '').toLowerCase());
-      const hasVog     = buffNames.some(n => n.includes('visions of grandeur'));
-      const hasWarsong = buffNames.some(n => n.includes('warsong') || n.includes('war march'));
-      if (hasVog && hasWarsong) {
-        qualifying += 1;
-        totalPct   += VOG_PCT + WARSONG_PCT;
+      if (charDmg > 0) {
+        dirgeDamage += charDmg;
+        byBard.set(r.character_name, (byBard.get(r.character_name) ?? 0) + charDmg);
       }
     }
-    if (qualifying > 0) {
-      const avg = Math.round(totalPct / qualifying);
+    const ranked = [...byBard.entries()].sort((a, b) => b[1] - a[1]);
+    if (dirgeDamage > 0) {
+      const top = ranked.slice(0, 3).map(([n, d]) => `${n} ${d.toLocaleString()}`);
       counters.push({
-        label: 'Avg haste — mains w/ VoG + Warsong',
-        emoji: '🐎',
-        value: `${avg}%`,
-        sub: `${qualifying} main${qualifying === 1 ? '' : 's'} sporting the full ${VOG_PCT}% VoG + ${WARSONG_PCT}% Warsong stack right now`,
+        label: 'Dirge damage — killed a whole guild',
+        emoji: '🎵',
+        value: dirgeDamage,
+        sub: `${dirgeHits.toLocaleString()} hit${dirgeHits === 1 ? '' : 's'} across ${ranked.length} bard${ranked.length === 1 ? '' : 's'}${top.length ? ` · top: ${top.join(' · ')}` : ''}`,
       });
     } else {
       counters.push({
-        label: 'Avg haste — mains w/ VoG + Warsong',
-        emoji: '🐎',
-        value: '—',
-        sub: 'no mains currently have both VoG and a Warsong buffed (Zeal reports per-character buff lists)',
+        label: 'Dirge damage — killed a whole guild',
+        emoji: '🎵',
+        value: 0,
+        sub: 'no dirge damage captured yet — lands in encounter_combat_rollup once a bard uploads a fight with ability detail (Denon’s Desperate Dirge etc.)',
       });
     }
   } catch (err) {
     void err;
   }
 
+  // (Avg-haste card removed 2026-06-22 per owner request — it was a noisy
+  // "right now" snapshot that depended on two specific buffs being live and
+  // mostly read "—".)
+
+  // ── 😈 Lord of Ire vanquished ─────────────────────────────────────────────
   // by a Wolf Pack member. Sub-text shows the top killer + their tally so the
   // bragging rights are explicit. Source: fun_events emitted from the bot's
   // PvP relay when a Wolf-Pack-attributed broadcast names "Lord of Ire" as the
@@ -527,6 +464,16 @@ export default async function FunPage() {
   const tz = await userTz();
   const { counters, kyinen } = await loadCounters();
 
+  // Bucket cards: "live" ones carry real data; "dormant" ones are still at
+  // zero / "—" (detector hasn't fired or nobody's triggered them yet) and
+  // get demoted to a dimmer section at the bottom so the live stats lead.
+  // Uilnayar 2026-06-22 ("any empty fun ones should be moved to the bottom
+  // section").
+  const isLive = (c: { value: number | string }) =>
+    !(c.value === 0 || c.value === '—');
+  const liveCounters    = counters.filter(isLive);
+  const dormantCounters = counters.filter(c => !isLive(c));
+
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -541,6 +488,14 @@ export default async function FunPage() {
         </p>
       </section>
 
+      {/* Live cards first. */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {liveCounters.map(c => <FunCard key={c.label} c={c} />)}
+      </section>
+
+      {/* The Kyinen decree — moved below the live counters (Uilnayar
+          2026-06-22 "move the decree to the bottom"). Still its own gold
+          frame, just no longer hogging the top of the page. */}
       <KyinenExecutionCard
         executions={kyinen.executions}
         latest={kyinen.latest}
@@ -548,38 +503,50 @@ export default async function FunPage() {
         tz={tz}
       />
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {counters.map(c => (
-          <div key={c.label} className="bg-panel border border-border rounded-lg p-4">
-            <div className="flex items-baseline justify-between">
-              <div className="text-xs text-dim uppercase tracking-wide">{c.label}</div>
-              <span aria-hidden className="text-2xl shrink-0">{c.emoji}</span>
-            </div>
-            <div className="text-3xl text-gold font-bold mt-2">
-              {c.href
-                ? <Link href={c.href} className="text-gold hover:underline" title="View full breakdown">{c.value.toLocaleString()}</Link>
-                : c.value.toLocaleString()}
-            </div>
-            {c.sub && <div className="text-xs text-dim mt-1">{c.sub}</div>}
+      {/* Dormant cards — real cards that just haven't lit up yet. Dimmed and
+          parked at the bottom so they read as "waiting on data," not noise. */}
+      {dormantCounters.length > 0 && (
+        <section>
+          <div className="text-xs text-dim uppercase tracking-wide mb-2">Quiet for now — waiting on data</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 opacity-60">
+            {dormantCounters.map(c => <FunCard key={c.label} c={c} />)}
           </div>
-        ))}
-      </section>
+        </section>
+      )}
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim">
-        <div className="font-semibold text-text mb-2">Collecting now — cards land when data shows up</div>
+        <div className="font-semibold text-text mb-2">Queued — need an agent detector before a card can appear</div>
         <ul className="space-y-1 list-disc list-inside">
-          <li>⚰️ SK Harm Touch damage leaderboard (agent v2.4.31+)</li>
-          <li>✋ Paladin Lay on Hands count + heal total (agent v2.4.31+; total uses count × paladin max HP when the line omits the number)</li>
-          <li>⚔️ Currently PvP-flagged board (agent v2.4.34 captures the toggle)</li>
-        </ul>
-        <div className="font-semibold text-text mt-4 mb-2">Queued (need detectors)</div>
-        <ul className="space-y-1 list-disc list-inside">
+          <li>⚰️ SK Harm Touch damage total + per-type breakdown table</li>
+          <li>✋ Paladin Lay on Hands count + heal total</li>
           <li>🦪 CotH Pearl tally (Magician Call of the Hero casts)</li>
           <li>💚 Emerald counter (Cleric Divine Intervention casts + saves)</li>
           <li>💛 Peridot counter (Rune + Aegolism + group buffs; MGB doubles)</li>
           <li>📚 Spell-cast leaderboard (per-character per-spell from agent castCounts)</li>
         </ul>
       </section>
+    </div>
+  );
+}
+
+// One fun counter card. Emoji is absolutely positioned in the top-right so a
+// tall SVG emoji (the Tunare kiss scene) can't push the number down and break
+// vertical alignment with sibling cards in the same grid row — that was the
+// "Tunare Invocations is off" misalignment (Uilnayar 2026-06-22). Label +
+// number reserve right padding so they never run under the emoji.
+function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: number | string; sub?: string; href?: string } }) {
+  return (
+    <div className="relative bg-panel border border-border rounded-lg p-4 overflow-hidden">
+      <span aria-hidden className="absolute top-3 right-3 flex items-start justify-end" style={{ width: 60, height: 48, fontSize: 28, lineHeight: 1 }}>
+        {c.emoji}
+      </span>
+      <div className="text-xs text-dim uppercase tracking-wide pr-16 min-h-[2rem]">{c.label}</div>
+      <div className="text-3xl text-gold font-bold mt-2">
+        {c.href
+          ? <Link href={c.href} className="text-gold hover:underline" title="View full breakdown">{c.value.toLocaleString()}</Link>
+          : c.value.toLocaleString()}
+      </div>
+      {c.sub && <div className="text-xs text-dim mt-1">{c.sub}</div>}
     </div>
   );
 }
