@@ -258,7 +258,21 @@ async function syncAuctionBids(auctionId) {
 
   const rows = bids.map((b, i) => _bidRow(auctionId, b, i + 1)).filter(Boolean);
   if (rows.length === 0) return { bids_written: 0 };
-  const written = await supabase.upsert('opendkp_auction_bids', rows, 'auction_id,character_name,value');
+  // Dedup by the unique key (auction_id, character_name, value) before the
+  // upsert — PG 21000 ("ON CONFLICT DO UPDATE command cannot affect row a
+  // second time") fires when two rows in the same payload target the same
+  // conflict target, which happens when OpenDKP's bid history lists the
+  // same character at the same DKP value twice (re-clicks, tie recordings).
+  // Keep the row with the lowest position (= earliest entry in the bid
+  // history, the canonical placement if it tied).
+  const dedup = new Map();
+  const posOf = r => Number.isFinite(r.position) ? r.position : Infinity;
+  for (const r of rows) {
+    const key = `${r.auction_id}|${(r.character_name || '').toLowerCase()}|${r.value}`;
+    const cur = dedup.get(key);
+    if (!cur || posOf(r) < posOf(cur)) dedup.set(key, r);
+  }
+  const written = await supabase.upsert('opendkp_auction_bids', [...dedup.values()], 'auction_id,character_name,value');
   return { bids_written: Array.isArray(written) ? written.length : 0 };
 }
 
