@@ -22,7 +22,7 @@ export type QueueItem = {
 };
 
 export type QueueCategory = {
-  id:           'unrostered_chat' | 'unenrichable_chat';
+  id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp';
   icon:         string;
   title:        string;
   summary:      string;
@@ -169,6 +169,86 @@ async function loadUnenrichableChatSpeakers(): Promise<QueueCategory> {
   };
 }
 
+// (3) Characters streaming from a member's Mimic with NO entry in the
+// OpenDKP-mirrored `characters` table — same source list the
+// /admin/links "Not in OpenDKP" section surfaces, lifted into the queue
+// so officers see the backlog at a glance instead of having to navigate
+// to /admin/links and scroll. The fix-it action lives in /admin/links
+// (the Register form), which is what `href` jumps to.
+async function loadUnregisteredOpenDKP(): Promise<QueueCategory> {
+  const sb = supabaseAdmin();
+  const [{ data: uploads }, { data: chars }, { data: whoRows }] = await Promise.all([
+    sb.from('agent_upload_stats')
+      .select('character, uploaded_by_discord_id, last_uploaded_at')
+      .not('uploaded_by_discord_id', 'is', null)
+      .not('character', 'is', null)
+      .limit(3000),
+    sb.from('characters')
+      .select('name')
+      .eq('guild_id', 'wolfpack'),
+    sb.from('who_observations')
+      .select('character, level, class, observed_at')
+      .eq('guild_id', 'wolfpack')
+      .order('observed_at', { ascending: false })
+      .limit(3000),
+  ]);
+
+  const rostered = new Set<string>();
+  for (const c of (chars ?? []) as { name: string }[]) {
+    if (c.name) rostered.add(c.name.toLowerCase());
+  }
+  const whoByName = new Map<string, { level: number | null; cls: string | null }>();
+  for (const w of (whoRows ?? []) as { character: string; level: number | null; class: string | null }[]) {
+    const k = (w.character || '').toLowerCase();
+    if (k && !whoByName.has(k)) whoByName.set(k, { level: w.level ?? null, cls: w.class ?? null });
+  }
+
+  const seen = new Set<string>();
+  type Row = { name: string; last: string | null; level: number | null; cls: string | null };
+  const rows: Row[] = [];
+  for (const u of (uploads ?? []) as { character: string | null; uploaded_by_discord_id: string | null; last_uploaded_at: string | null }[]) {
+    const name = (u.character || '').trim();
+    if (!name || !u.uploaded_by_discord_id) continue;
+    if (!/^[A-Za-z]{3,20}$/.test(name)) continue;       // operator streams / junk
+    const k = name.toLowerCase();
+    if (seen.has(k) || rostered.has(k)) continue;
+    seen.add(k);
+    const who = whoByName.get(k);
+    rows.push({
+      name,
+      last:  u.last_uploaded_at ?? null,
+      level: who?.level ?? null,
+      cls:   who?.cls ?? null,
+    });
+  }
+
+  const items: QueueItem[] = rows
+    .map(r => {
+      const lvl  = r.level != null ? `L${r.level}` : 'L?';
+      const cls  = r.cls || 'class?';
+      const rank = r.level == null ? 'rank?'
+                 : (r.level >= 46 ? 'Raid Alt' : 'Non-raid Alt');
+      return {
+        key:    r.name.toLowerCase(),
+        label:  r.name,
+        last:   r.last,
+        detail: `${lvl} ${cls} · ${rank}`,
+        href:   `/admin/links`,
+      };
+    })
+    .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+
+  return {
+    id:      'unregistered_opendkp',
+    icon:    '🆕',
+    title:   'Characters not in OpenDKP',
+    summary: 'Characters streaming from a member’s Mimic with no entry in the OpenDKP-mirrored roster. They show on /admin/links → Not in OpenDKP and can be registered inline (officer Register button calls the bot).',
+    count:   items.length,
+    items,
+    fixHelpHref: '/admin/links',
+  };
+}
+
 // Load every category in parallel. Caller uses the total count for the
 // banner, the per-category counts for the badges, and items for /admin/queue.
 export async function loadAdminQueue(): Promise<{
@@ -178,6 +258,7 @@ export async function loadAdminQueue(): Promise<{
   const categories = await Promise.all([
     loadUnrosteredChatSpeakers(),
     loadUnenrichableChatSpeakers(),
+    loadUnregisteredOpenDKP(),
   ]);
   const total = categories.reduce((acc, c) => acc + c.count, 0);
   return { total, categories };
