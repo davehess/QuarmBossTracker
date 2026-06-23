@@ -207,9 +207,12 @@ function parsePerlBody(body) {
 // ── Lua handler parser ───────────────────────────────────────────────────────
 function parseLuaTurnIns(src) {
   const results = [];
-  // Each turn-in: if(item_lib.check_turn_in(... {item1=X, item2=Y, ...})) then ... end
-  // Tolerate spacing, optional arg=3rd-arg, and the closing of the if-block.
-  const checkRx = /item_lib\.check_turn_in\s*\(\s*e\.self\s*,\s*e\.trade\s*,\s*\{([^}]*)\}/g;
+  // Each turn-in: item_lib.check_turn_in(... {item1=X, item2=Y, ...})
+  // Both 2-arg (e.trade, {…}) and 3-arg (e.self, e.trade, {…}) variants exist
+  // in the wild — Cazic Thule's Lua uses 2-arg and was hiding the Whistling
+  // Fists turn-in until we accepted both. Permissive: skip up to the inline
+  // table no matter what's in between.
+  const checkRx = /item_lib\.check_turn_in\s*\([^{]*\{([^}]*)\}/g;
   let m;
   while ((m = checkRx.exec(src)) !== null) {
     // Inputs from the inline table
