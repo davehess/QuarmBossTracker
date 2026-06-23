@@ -12,7 +12,7 @@ import { isOfficer } from '@/lib/officer';
 
 type ParsedSpell = { spell_id: number; spell_name: string; spell_level: number | null };
 
-export function parseSpellbook(text: string): ParsedSpell[] {
+function parseSpellbook(text: string): ParsedSpell[] {
   const out: ParsedSpell[] = [];
   const seen = new Set<number>();
   for (const raw of text.split(/\r?\n/)) {

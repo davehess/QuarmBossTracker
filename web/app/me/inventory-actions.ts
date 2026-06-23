@@ -21,7 +21,7 @@ type ParsedRow = { slot_label: string; item_id: number | null; item_name: string
 
 // Parse the EQ inventory output. Defensive against tab vs multi-space
 // separation and a header row. Returns one row per non-empty slot.
-export function parseInventory(text: string): ParsedRow[] {
+function parseInventory(text: string): ParsedRow[] {
   const out: ParsedRow[] = [];
   const seen = new Set<string>();
   for (const raw of text.split(/\r?\n/)) {

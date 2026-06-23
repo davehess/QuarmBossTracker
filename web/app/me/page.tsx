@@ -32,6 +32,7 @@ import ScrapShare from './ScrapShare';
 import InventoryUpload from './InventoryUpload';
 import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
+import MeCharacterCards, { type MeCard } from './MeCharacterCards';
 
 export const dynamic = 'force-dynamic';
 
@@ -401,6 +402,29 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
 // per-backfill. One counter row per (character, endpoint), so a single lookup
 // gives the last-seen + version. Returns nothing for a character that's never
 // uploaded, so the banner can still say "no recent uploads".
+// Best-known level per character, from /who history (characters table has no
+// level column; who_observations.level is the only source). Anonymous /who
+// rows report null level, so MAX(level) over a name gives the real ding.
+// Drives the default level-descending card order. Few owned chars → cheap
+// parallel lookups (mirrors loadSyncHeartbeats' shape).
+async function loadCharLevels(charNames: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (charNames.length === 0) return out;
+  const admin = supabaseAdmin();
+  await Promise.all(charNames.map(async (name) => {
+    const { data } = await admin
+      .from('who_observations')
+      .select('level')
+      .ilike('character', name)
+      .not('level', 'is', null)
+      .order('level', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data?.level != null) out.set(name.toLowerCase(), data.level as number);
+  }));
+  return out;
+}
+
 async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, { lastUpload: string; agentVersion: string | null }>> {
   if (charNames.length === 0) return new Map();
   const admin = supabaseAdmin();
@@ -490,9 +514,20 @@ export default async function MePage() {
       .then(s => [c.name, s] as const)));
   const byName = new Map(stats);
 
-  // Order the cards: the MAIN (family root — its name equals its main_name)
-  // pinned at the very top, then the alts by DKP spent (desc), then name.
+  // Live state + best-known level per owned character.
+  const [liveState, levelByName] = await Promise.all([
+    loadLiveState(chars.map(c => c.name)),
+    loadCharLevels(chars.map(c => c.name)),
+  ]);
+
+  // Default card order: highest level first (the member's mains/raiders float
+  // up). Tiebreak keeps the family root above its alts, then DKP, then name.
+  // The /me layout controls (MeCharacterCards) let the member override this
+  // and remember their own order.
   chars.sort((a, b) => {
+    const aLvl = levelByName.get(a.name.toLowerCase()) ?? -1;
+    const bLvl = levelByName.get(b.name.toLowerCase()) ?? -1;
+    if (aLvl !== bLvl) return bLvl - aLvl;
     const aMain = (a.main_name || a.name).toLowerCase() === a.name.toLowerCase();
     const bMain = (b.main_name || b.name).toLowerCase() === b.name.toLowerCase();
     if (aMain !== bMain) return aMain ? -1 : 1;
@@ -501,9 +536,6 @@ export default async function MePage() {
     if (aDkp !== bDkp) return bDkp - aDkp;
     return a.name.localeCompare(b.name);
   });
-
-  // Live state (buffs + last-seen zone) per owned character.
-  const liveState = await loadLiveState(chars.map(c => c.name));
 
   // Sync heartbeat: most recent agent upload per owned character. Drives the
   // top-of-page "syncing now / stale / no upload" banner.
@@ -575,6 +607,230 @@ export default async function MePage() {
     bannerColor === 'green'  ? 'text-green'   :
     bannerColor === 'orange' ? 'text-orange'  :
     bannerColor === 'red'    ? 'text-red-400' : 'text-dim';
+
+  // Build the per-character card slots and hand them to the client-side layout
+  // controller (MeCharacterCards), which owns show/hide, order (drag-drop),
+  // and collapse. Each card has: header (always shown), summary (buffs/zone,
+  // shown when collapsed), and details (the full panel grid).
+  const cardItems: MeCard[] = chars.map(c => {
+    const s = byName.get(c.name)!;
+    const live = liveState.get(c.name.toLowerCase()) || null;
+    const level = levelByName.get(c.name.toLowerCase()) ?? null;
+
+    const buffsZonePanel = (
+      <Panel
+        title="Buffs & Zone"
+        badge="GUILD"
+        tooltip="What this character is currently carrying (buffs/songs) and the zone they were last seen in, synced from your local parser's Zeal feed. A snapshot updated when things change — open localhost:7779 for live, second-by-second buff timers."
+      >
+        {!live ? (
+          <div className="text-dim text-xs italic">
+            No live state yet. Run the local parser with the Zeal pipe enabled to sync
+            current buffs + zone.
+          </div>
+        ) : (
+          <>
+            <Row label="Last-seen zone">
+              {live.zoneName ? <span className="text-text">{live.zoneName}</span> : <span className="text-dim">—</span>}
+            </Row>
+            <Row label="Buffs">
+              {live.buffCount > 0
+                ? <span className="text-text">{live.buffCount}</span>
+                : <span className="text-dim">none</span>}
+            </Row>
+            {live.buffs.length > 0 && (
+              <div className="flex flex-wrap gap-1 pt-1">
+                {live.buffs.map((b, i) => {
+                  const t = fmtBuffTime(b.ticks);
+                  return (
+                    <span key={`${b.name}-${i}`} className="bg-bg border border-border/60 rounded px-1.5 py-0.5 text-[10px] text-text">
+                      {b.name}{t && <span className="text-dim/70"> · {t}</span>}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim flex items-center justify-between gap-2 flex-wrap">
+              <span>{live.updatedAt ? <>synced {relTime(live.updatedAt)}</> : 'snapshot'}</span>
+              <a href="http://localhost:7779" target="_blank" rel="noreferrer" className="text-blue hover:underline whitespace-nowrap">
+                live on localhost:7779 ↗
+              </a>
+            </div>
+          </>
+        )}
+      </Panel>
+    );
+
+    const header = (
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-lg text-text">{c.name}</h3>
+            {level != null && <span className="text-gold text-xs">L{level}</span>}
+            {!c.active && <span className="text-dim text-xs">(inactive)</span>}
+            {c.main_name && c.main_name !== c.name && (
+              <span className="text-dim text-xs">alt of {c.main_name}</span>
+            )}
+          </div>
+          <div className="text-xs text-dim">
+            {[c.race, c.class, c.rank].filter(Boolean).join(' · ') || '—'}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-xs flex-wrap">
+          <ExclusionToggles
+            character={c.name}
+            excludeFromStats={!!c.exclude_from_stats}
+            excludeInventory={!!c.exclude_inventory}
+            tellRelay={!!c.tell_relay}
+            tellDm={c.tell_dm !== false}
+            showInventoryPublicly={!!c.show_inventory_publicly}
+          />
+          <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
+          <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
+          <Link href={`/character/${encodeURIComponent(c.name)}/spells`} className="text-blue hover:underline">spells →</Link>
+          {c.quarmy_url && (
+            <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
+          )}
+          {c.opendkp_id && (
+            <span className="text-dim">opendkp id {c.opendkp_id}</span>
+          )}
+          <InventoryUpload character={c.name} />
+          <KeysUpload character={c.name} />
+          <SpellbookUpload character={c.name} />
+        </div>
+      </div>
+    );
+
+    const details = (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
+        <Panel title="Parses">
+          <Row label="Encounters">{s.encounterCount.toLocaleString()}</Row>
+          <Row label="Total damage">{s.totalDamage.toLocaleString()}</Row>
+          <Row label="Top fight">
+            {s.topDmg > 0 ? (
+              <Link href={`/parses/${s.topEncounterId}`} className="text-blue hover:underline">
+                {s.topDmg.toLocaleString()} dmg →
+              </Link>
+            ) : '—'}
+          </Row>
+        </Panel>
+
+        <Panel title="Agent uploads">
+          <Row label="Total contributions">{s.uploadCount.toLocaleString()}</Row>
+          <Row label="Last upload">
+            {s.lastUpload ? <>{relTime(s.lastUpload)} <span className="text-dim text-[10px]">· {fmtAbs(s.lastUpload, tz)}</span></> : '—'}
+          </Row>
+          <Row label="Latest agent version">
+            {s.latestAgentVersion
+              ? <span className="text-text">v{s.latestAgentVersion}</span>
+              : <span className="text-dim text-[10px] italic">none recorded yet (pre-v2.4.26 uploads aren&apos;t stamped)</span>}
+          </Row>
+        </Panel>
+
+        <Panel title="Chat">
+          <Row label="Last 30 days">{s.chat30.toLocaleString()}</Row>
+          <Row label="All-time">{s.chatAll.toLocaleString()}</Row>
+        </Panel>
+
+        <Panel title="PvP">
+          <Row label="Kills"  green>{s.pvpKills.toLocaleString()}</Row>
+          <Row label="Deaths" red>{s.pvpDeaths.toLocaleString()}</Row>
+        </Panel>
+
+        <Panel title="Loot">
+          <Row label="Items won">{s.lootCount.toLocaleString()}</Row>
+          <Row label="DKP spent">{s.dkpSpent.toLocaleString()}</Row>
+          <Row label="Wishlist entries">
+            {s.wishlistCount.toLocaleString()}
+            {s.wishlistCount > 0 && <span className="text-dim text-[10px] ml-2">use /mywishlist in Discord for decrypted bids</span>}
+          </Row>
+        </Panel>
+
+        {/* Skill breakdown + self-attack counter (PRIVATE scope per
+            CLAUDE.md disclosure spec: only the owner sees this; nothing
+            here ever appears named on a public page). Populated by
+            encounter_combat_rollup which started collecting at agent
+            v2.4.26 — older raids have no source data and only populate
+            if the member opts in to resubmit those logs. */}
+        <Panel
+          title="Skill breakdown"
+          badge="PRIVATE"
+          tooltip="Only you see this — never named elsewhere. Hits by EQ skill (Crushing, 1H Slash, Backstab, Channeling) and per-spell totals across every raid where you ran the agent. Times you attacked yourself = swings/casts where your character resolved as both attacker and defender (charm break, fat-finger /assist, riposted swing, etc)."
+        >
+          {s.rollupHits === 0 && s.encountersWithDetail === 0 ? (
+            <div className="text-dim text-xs italic">
+              No skill breakdown collected for this character yet.{' '}
+              {s.encountersResubmittable > 0 && (
+                <>Re-run the agent (v2.4.26+) over your old logs to unlock totals for past raids.</>
+              )}
+            </div>
+          ) : (
+            <>
+              <Row label="Total hits logged">{s.rollupHits.toLocaleString()}</Row>
+              <Row label="Total damage logged">{s.rollupDamage.toLocaleString()}</Row>
+              <Row label="Times you attacked yourself">
+                <span className={s.selfAttackCount > 0 ? 'text-orange' : 'text-text'}>
+                  {s.selfAttackCount.toLocaleString()}
+                </span>
+              </Row>
+              {s.topSkills.length > 0 && (
+                <div className="pt-2 mt-1 border-t border-border/40">
+                  <div className="text-[10px] text-dim mb-1">Top skills by damage</div>
+                  <ul className="space-y-0.5 text-xs">
+                    {s.topSkills.map(t => (
+                      <li key={t.skill} className="flex items-center gap-2">
+                        <span className="flex-1 min-w-0 text-text truncate">{t.skill}</span>
+                        <span className="w-24 shrink-0 text-dim text-[10px] text-right tabular-nums whitespace-nowrap">{t.hits.toLocaleString()} hits</span>
+                        <span className="w-24 shrink-0 text-text text-[10px] text-right tabular-nums whitespace-nowrap">{t.dmg.toLocaleString()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+          {s.encountersResubmittable > 0 && (
+            <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim">
+              <span className="text-orange">
+                {s.encountersResubmittable.toLocaleString()} past raid{s.encountersResubmittable === 1 ? '' : 's'}
+              </span>{' '}
+              could unlock a full skill breakdown if you resubmit those logs with agent v2.4.26+.
+            </div>
+          )}
+          {s.memberSince && (
+            <div className="mt-1 text-[10px] text-dim">
+              Counted from <span className="text-text">{fmtDateOnly(s.memberSince, tz)}</span>
+              {s.floorSource && (
+                <span className="text-dim/70"> · floor: {s.floorSource.replace('_', ' ')}</span>
+              )}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Recent encounters">
+          {s.recentEncounters.length === 0 ? (
+            <div className="text-dim text-xs italic">No parses recorded.</div>
+          ) : (
+            <ul className="space-y-1 text-xs">
+              {s.recentEncounters.map(e => (
+                <li key={e.id} className="flex items-center gap-2">
+                  <Link href={`/parses/${e.id}`} className="flex-1 min-w-0 text-blue hover:underline truncate">
+                    {e.npc_name || 'unknown'}
+                  </Link>
+                  <span className="w-36 shrink-0 text-dim text-[10px] text-right tabular-nums whitespace-nowrap">{fmtAbs(e.started_at, tz)}</span>
+                  <span className="w-20 shrink-0 text-text text-[10px] text-right tabular-nums whitespace-nowrap">{e.damage.toLocaleString()}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+
+        {buffsZonePanel}
+      </div>
+    );
+
+    return { name: c.name, level, header, summary: buffsZonePanel, details } as MeCard;
+  });
 
   return (
     <div className="space-y-6">
@@ -743,227 +999,7 @@ export default async function MePage() {
         </section>
       )}
 
-      {chars.map(c => {
-        const s = byName.get(c.name)!;
-        const live = liveState.get(c.name.toLowerCase()) || null;
-        return (
-          <section key={c.name} className="bg-panel border border-border rounded-lg">
-            <header className="px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-lg text-text">{c.name}</h3>
-                  {!c.active && <span className="text-dim text-xs">(inactive)</span>}
-                  {c.main_name && c.main_name !== c.name && (
-                    <span className="text-dim text-xs">alt of {c.main_name}</span>
-                  )}
-                </div>
-                <div className="text-xs text-dim">
-                  {[c.race, c.class, c.rank].filter(Boolean).join(' · ') || '—'}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-xs flex-wrap">
-                <ExclusionToggles
-                  character={c.name}
-                  excludeFromStats={!!c.exclude_from_stats}
-                  excludeInventory={!!c.exclude_inventory}
-                  tellRelay={!!c.tell_relay}
-                  tellDm={c.tell_dm !== false}
-                  showInventoryPublicly={!!c.show_inventory_publicly}
-                />
-                <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
-                <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
-                <Link href={`/character/${encodeURIComponent(c.name)}/spells`} className="text-blue hover:underline">spells →</Link>
-                {c.quarmy_url && (
-                  <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
-                )}
-                {c.opendkp_id && (
-                  <span className="text-dim">opendkp id {c.opendkp_id}</span>
-                )}
-                <InventoryUpload character={c.name} />
-                <KeysUpload character={c.name} />
-                <SpellbookUpload character={c.name} />
-              </div>
-            </header>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
-              <Panel title="Parses">
-                <Row label="Encounters">{s.encounterCount.toLocaleString()}</Row>
-                <Row label="Total damage">{s.totalDamage.toLocaleString()}</Row>
-                <Row label="Top fight">
-                  {s.topDmg > 0 ? (
-                    <Link href={`/parses/${s.topEncounterId}`} className="text-blue hover:underline">
-                      {s.topDmg.toLocaleString()} dmg →
-                    </Link>
-                  ) : '—'}
-                </Row>
-              </Panel>
-
-              <Panel title="Agent uploads">
-                <Row label="Total contributions">{s.uploadCount.toLocaleString()}</Row>
-                <Row label="Last upload">
-                  {s.lastUpload ? <>{relTime(s.lastUpload)} <span className="text-dim text-[10px]">· {fmtAbs(s.lastUpload, tz)}</span></> : '—'}
-                </Row>
-                <Row label="Latest agent version">
-                  {s.latestAgentVersion
-                    ? <span className="text-text">v{s.latestAgentVersion}</span>
-                    : <span className="text-dim text-[10px] italic">none recorded yet (pre-v2.4.26 uploads aren&apos;t stamped)</span>}
-                </Row>
-              </Panel>
-
-              <Panel title="Chat">
-                <Row label="Last 30 days">{s.chat30.toLocaleString()}</Row>
-                <Row label="All-time">{s.chatAll.toLocaleString()}</Row>
-              </Panel>
-
-              <Panel title="PvP">
-                <Row label="Kills"  green>{s.pvpKills.toLocaleString()}</Row>
-                <Row label="Deaths" red>{s.pvpDeaths.toLocaleString()}</Row>
-              </Panel>
-
-              <Panel title="Loot">
-                <Row label="Items won">{s.lootCount.toLocaleString()}</Row>
-                <Row label="DKP spent">{s.dkpSpent.toLocaleString()}</Row>
-                <Row label="Wishlist entries">
-                  {s.wishlistCount.toLocaleString()}
-                  {s.wishlistCount > 0 && <span className="text-dim text-[10px] ml-2">use /mywishlist in Discord for decrypted bids</span>}
-                </Row>
-              </Panel>
-
-              {/* Skill breakdown + self-attack counter (PRIVATE scope per
-                  CLAUDE.md disclosure spec: only the owner sees this; nothing
-                  here ever appears named on a public page). Populated by
-                  encounter_combat_rollup which started collecting at agent
-                  v2.4.26 — older raids have no source data and only populate
-                  if the member opts in to resubmit those logs. */}
-              <Panel
-                title="Skill breakdown"
-                badge="PRIVATE"
-                tooltip="Only you see this — never named elsewhere. Hits by EQ skill (Crushing, 1H Slash, Backstab, Channeling) and per-spell totals across every raid where you ran the agent. Times you attacked yourself = swings/casts where your character resolved as both attacker and defender (charm break, fat-finger /assist, riposted swing, etc)."
-              >
-                {s.rollupHits === 0 && s.encountersWithDetail === 0 ? (
-                  <div className="text-dim text-xs italic">
-                    No skill breakdown collected for this character yet.{' '}
-                    {s.encountersResubmittable > 0 && (
-                      <>Re-run the agent (v2.4.26+) over your old logs to unlock totals for past raids.</>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <Row label="Total hits logged">{s.rollupHits.toLocaleString()}</Row>
-                    <Row label="Total damage logged">{s.rollupDamage.toLocaleString()}</Row>
-                    <Row label="Times you attacked yourself">
-                      <span className={s.selfAttackCount > 0 ? 'text-orange' : 'text-text'}>
-                        {s.selfAttackCount.toLocaleString()}
-                      </span>
-                    </Row>
-                    {s.topSkills.length > 0 && (
-                      <div className="pt-2 mt-1 border-t border-border/40">
-                        <div className="text-[10px] text-dim mb-1">Top skills by damage</div>
-                        <ul className="space-y-0.5 text-xs">
-                          {s.topSkills.map(t => (
-                            // Fixed-width middle/right columns instead of
-                            // justify-between — keeps the hit/damage columns
-                            // vertically aligned across rows regardless of how
-                            // wide the skill name is.
-                            <li key={t.skill} className="flex items-center gap-2">
-                              <span className="flex-1 min-w-0 text-text truncate">{t.skill}</span>
-                              <span className="w-24 shrink-0 text-dim text-[10px] text-right tabular-nums whitespace-nowrap">{t.hits.toLocaleString()} hits</span>
-                              <span className="w-24 shrink-0 text-text text-[10px] text-right tabular-nums whitespace-nowrap">{t.dmg.toLocaleString()}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </>
-                )}
-                {s.encountersResubmittable > 0 && (
-                  <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim">
-                    <span className="text-orange">
-                      {s.encountersResubmittable.toLocaleString()} past raid{s.encountersResubmittable === 1 ? '' : 's'}
-                    </span>{' '}
-                    could unlock a full skill breakdown if you resubmit those logs with agent v2.4.26+.
-                  </div>
-                )}
-                {s.memberSince && (
-                  <div className="mt-1 text-[10px] text-dim">
-                    Counted from <span className="text-text">{fmtDateOnly(s.memberSince, tz)}</span>
-                    {s.floorSource && (
-                      <span className="text-dim/70"> · floor: {s.floorSource.replace('_', ' ')}</span>
-                    )}
-                  </div>
-                )}
-              </Panel>
-
-              <Panel title="Recent encounters">
-                {s.recentEncounters.length === 0 ? (
-                  <div className="text-dim text-xs italic">No parses recorded.</div>
-                ) : (
-                  <ul className="space-y-1 text-xs">
-                    {s.recentEncounters.map(e => (
-                      // Fixed-width date + damage columns so they line up the
-                      // same way across rows no matter how long the mob name
-                      // is (was using justify-between, which floats the middle
-                      // column to wherever the first column's content ends).
-                      <li key={e.id} className="flex items-center gap-2">
-                        <Link href={`/parses/${e.id}`} className="flex-1 min-w-0 text-blue hover:underline truncate">
-                          {e.npc_name || 'unknown'}
-                        </Link>
-                        <span className="w-36 shrink-0 text-dim text-[10px] text-right tabular-nums whitespace-nowrap">{fmtAbs(e.started_at, tz)}</span>
-                        <span className="w-20 shrink-0 text-text text-[10px] text-right tabular-nums whitespace-nowrap">{e.damage.toLocaleString()}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </Panel>
-
-              {/* Buffs & Zone — snapshot from the Zeal stream (synced on change
-                  by the local agent). GUILD scope. Live countdowns live on the
-                  local dashboard; this is the "what + where, last seen" view. */}
-              <Panel
-                title="Buffs & Zone"
-                badge="GUILD"
-                tooltip="What this character is currently carrying (buffs/songs) and the zone they were last seen in, synced from your local parser's Zeal feed. A snapshot updated when things change — open localhost:7779 for live, second-by-second buff timers."
-              >
-                {!live ? (
-                  <div className="text-dim text-xs italic">
-                    No live state yet. Run the local parser with the Zeal pipe enabled to sync
-                    current buffs + zone.
-                  </div>
-                ) : (
-                  <>
-                    <Row label="Last-seen zone">
-                      {live.zoneName ? <span className="text-text">{live.zoneName}</span> : <span className="text-dim">—</span>}
-                    </Row>
-                    <Row label="Buffs">
-                      {live.buffCount > 0
-                        ? <span className="text-text">{live.buffCount}</span>
-                        : <span className="text-dim">none</span>}
-                    </Row>
-                    {live.buffs.length > 0 && (
-                      <div className="flex flex-wrap gap-1 pt-1">
-                        {live.buffs.map((b, i) => {
-                          const t = fmtBuffTime(b.ticks);
-                          return (
-                            <span key={`${b.name}-${i}`} className="bg-bg border border-border/60 rounded px-1.5 py-0.5 text-[10px] text-text">
-                              {b.name}{t && <span className="text-dim/70"> · {t}</span>}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim flex items-center justify-between gap-2 flex-wrap">
-                      <span>{live.updatedAt ? <>synced {relTime(live.updatedAt)}</> : 'snapshot'}</span>
-                      <a href="http://localhost:7779" target="_blank" rel="noreferrer" className="text-blue hover:underline whitespace-nowrap">
-                        live on localhost:7779 ↗
-                      </a>
-                    </div>
-                  </>
-                )}
-              </Panel>
-            </div>
-          </section>
-        );
-      })}
+      <MeCharacterCards items={cardItems} storageKey={discordId ?? ''} />
     </div>
   );
 }

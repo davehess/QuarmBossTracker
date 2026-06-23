@@ -21,7 +21,7 @@ import { isOfficer } from '@/lib/officer';
 type ParsedKey = { key_name: string };
 
 // Strip the `[HH:MM:SS] ` log prefix when present; trim; drop empties + dupes.
-export function parseKeys(text: string): ParsedKey[] {
+function parseKeys(text: string): ParsedKey[] {
   const out: ParsedKey[] = [];
   const seen = new Set<string>();
   for (const raw of text.split(/\r?\n/)) {
