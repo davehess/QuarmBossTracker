@@ -28,8 +28,8 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
-import ItemHover, { type ItemCard } from './ItemHover';
-import ItemIcon from './ItemIcon';
+import { type ItemCard } from './ItemHover';
+import InventoryView, { type ViewData, type CellData, type ContainerData } from './InventoryView';
 
 export const dynamic = 'force-dynamic';
 
@@ -137,6 +137,48 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
   const totalSlotsUsed = inv.filter(r => parseChildSlot(r.slot_label) || EQUIPPED_SLOTS.includes(r.slot_label)).length;
   const updatedAt = inv.length === 0 ? null : '(uploaded snapshot)';
 
+  // Build serializable view data for the client InventoryView (mode toggle +
+  // name-at-top + bag fullness). Bag capacity is estimated by rounding the
+  // highest filled slot up to a standard EQ bag size — /outputfile's "Slots"
+  // column isn't captured in character_inventory yet.
+  const STD_BAG = [4, 6, 8, 10, 16, 20, 24];
+  const bagCapacity = (observedMax: number) => {
+    for (const s of STD_BAG) if (observedMax <= s) return s;
+    return observedMax || 10;
+  };
+  const toCell = (label: string, row?: InvRow): CellData => row
+    ? { label, name: row.item_name, item_id: row.item_id, quantity: row.quantity, card: (row.item_id != null ? cards.get(row.item_id) ?? null : null) }
+    : { label, name: null, item_id: null, quantity: 0, card: null };
+  const buildContainers = (prefix: string, count: number, containers: Map<number, InvRow>): ContainerData[] => {
+    const out: ContainerData[] = [];
+    for (let i = 1; i <= count; i++) {
+      const slotName = `${prefix}${i}`;
+      const bag = containers.get(i);
+      const contents = childrenByParent.get(slotName);
+      if (!bag && (!contents || contents.size === 0)) continue;   // hide empty container slots
+      const observedMax = contents ? Math.max(0, ...contents.keys()) : 0;
+      const capacity = bagCapacity(observedMax);
+      const cells: CellData[] = [];
+      for (let j = 1; j <= capacity; j++) cells.push(toCell(`#${j}`, contents?.get(j)));
+      out.push({
+        key: slotName,
+        shortLabel: prefix === 'SharedBank' ? `Shared ${i}` : `${prefix.charAt(0)}${i}`,
+        bagName: bag?.item_name ?? null,
+        bagCard: bag?.item_id != null ? cards.get(bag.item_id) ?? null : null,
+        used: contents?.size ?? 0,
+        capacity,
+        cells,
+      });
+    }
+    return out;
+  };
+  const viewData: ViewData = {
+    equipped: EQUIPPED_SLOTS.map(slot => toCell(slot, equipped.get(slot))),
+    bags: buildContainers('General', 8, generalContainers),
+    bank: buildContainers('Bank', 24, bankContainers),
+    sharedBank: buildContainers('SharedBank', 10, sharedBankContainers),
+  };
+
   return (
     <div className="space-y-6">
       <div className="text-sm flex gap-4">
@@ -171,139 +213,10 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
         )}
       </section>
 
-      {/* Equipped strip */}
-      <SectionCard title="Equipped" count={equipped.size}>
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-1.5">
-          {EQUIPPED_SLOTS.map(slot => {
-            const row = equipped.get(slot);
-            return <Cell key={slot} label={slot} row={row} card={row?.item_id ? cards.get(row.item_id) : undefined} />;
-          })}
-        </div>
-      </SectionCard>
-
-      {/* Bags */}
-      <SectionCard title="Bags" count={[...childrenByParent.entries()].filter(([p]) => p.startsWith('General')).reduce((s, [, m]) => s + m.size, 0)}>
-        <ContainerGroup
-          prefix="General"
-          count={8}
-          containers={generalContainers}
-          children_={childrenByParent}
-          cards={cards}
-        />
-      </SectionCard>
-
-      {/* Bank */}
-      <SectionCard title="Bank" count={[...childrenByParent.entries()].filter(([p]) => p.startsWith('Bank')).reduce((s, [, m]) => s + m.size, 0)}>
-        <ContainerGroup
-          prefix="Bank"
-          count={24}
-          containers={bankContainers}
-          children_={childrenByParent}
-          cards={cards}
-        />
-      </SectionCard>
-
-      {/* Shared bank */}
-      <SectionCard title="Shared bank" count={[...childrenByParent.entries()].filter(([p]) => p.startsWith('SharedBank')).reduce((s, [, m]) => s + m.size, 0)}>
-        <p className="text-[11px] text-dim leading-5 mb-2">Shared across every character on the same EQ account.</p>
-        <ContainerGroup
-          prefix="SharedBank"
-          count={10}
-          containers={sharedBankContainers}
-          children_={childrenByParent}
-          cards={cards}
-        />
-      </SectionCard>
+      {/* Bag/bank grid with view-mode toggle (Normal / Small / Text), item
+          names at the top of each box, and bag fullness in the top-right. */}
+      <InventoryView data={viewData} />
       {updatedAt && <p className="text-[10px] text-dim text-right">{updatedAt}</p>}
     </div>
-  );
-}
-
-function SectionCard({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
-  return (
-    <section className="bg-panel border border-border rounded-lg p-5">
-      <h3 className="text-lg text-orange mb-3">{title} <span className="text-dim text-xs font-normal">· {count}</span></h3>
-      {children}
-    </section>
-  );
-}
-
-function ContainerGroup({ prefix, count, containers, children_, cards }: {
-  prefix: string;
-  count: number;
-  containers: Map<number, InvRow>;
-  children_: Map<string, Map<number, InvRow>>;
-  cards: Map<number, ItemCard>;
-}) {
-  return (
-    <div className="space-y-3">
-      {Array.from({ length: count }, (_, i) => {
-        const idx = i + 1;
-        const slotName = `${prefix}${idx}`;
-        const bag = containers.get(idx);
-        const contents = children_.get(slotName);
-        if (!bag && (!contents || contents.size === 0)) return null;   // hide empty container slots
-        const bagCard = bag?.item_id ? cards.get(bag.item_id) : undefined;
-        // Bag size: prefer the parent row's slot count (col 5 in /outputfile),
-        // fall back to the highest child idx we observed. EQ bags are 4/6/8/10.
-        const observedMax = contents ? Math.max(0, ...contents.keys()) : 0;
-        const declaredSize = bag?.quantity && bag.quantity >= 4 ? null : null;   // quantity field is item count, not bag size; ignore
-        void declaredSize;
-        const bagSize = Math.max(observedMax, 10);
-        return (
-          <details key={slotName} open className="bg-bg/40 border border-border/60 rounded">
-            <summary className="cursor-pointer px-2.5 py-1.5 text-xs flex items-center gap-2 hover:bg-bg/60">
-              <span className="text-dim w-12">{prefix === 'SharedBank' ? `Shared ${idx}` : `${prefix.charAt(0)}${idx}`}</span>
-              {bag ? (
-                <ItemHover card={bagCard} fallbackName={bag.item_name} className="text-text">
-                  <span>{bag.item_name}</span>
-                </ItemHover>
-              ) : (
-                <span className="text-dim italic">(empty bag slot)</span>
-              )}
-              {contents && contents.size > 0 && (
-                <span className="text-dim text-[10px] ml-auto">{contents.size} item{contents.size === 1 ? '' : 's'}</span>
-              )}
-            </summary>
-            {contents && contents.size > 0 && (
-              <div className="px-2.5 py-2 grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-1.5">
-                {Array.from({ length: bagSize }, (_, j) => {
-                  const childIdx = j + 1;
-                  const row = contents.get(childIdx);
-                  return <Cell key={childIdx} label={`#${childIdx}`} row={row} card={row?.item_id ? cards.get(row.item_id) : undefined} />;
-                })}
-              </div>
-            )}
-          </details>
-        );
-      })}
-    </div>
-  );
-}
-
-function Cell({ label, row, card }: { label: string; row?: InvRow; card?: ItemCard }) {
-  if (!row) {
-    return (
-      <div className="aspect-square bg-bg/40 border border-border/40 rounded flex items-end p-1">
-        <span className="text-[9px] text-dim/60">{label}</span>
-      </div>
-    );
-  }
-  // Color hints: gold border for NODROP, blue for MAGIC, default for normal.
-  const nodrop = card?.nodrop;
-  const magic  = card?.magic;
-  const borderClass = nodrop ? 'border-gold/60' : magic ? 'border-blue/60' : 'border-border';
-  return (
-    <ItemHover card={card} fallbackName={row.item_name} className={`group aspect-square bg-bg border ${borderClass} rounded p-1 flex flex-col items-center justify-between text-center hover:border-blue`}>
-      {/* Icon when we have one; the name caption is always present so a missing
-          icon (unreachable host / unknown id) still reads. */}
-      {card?.icon
-        ? <ItemIcon icon={card.icon} alt={row.item_name} size={32} className="mt-0.5" />
-        : <span className="text-[10px] leading-tight line-clamp-2 text-text mt-0.5">{row.item_name}</span>}
-      <div className="flex items-end justify-between gap-1 w-full">
-        <span className="text-[9px] text-dim/70 truncate">{label}</span>
-        {row.quantity > 1 && <span className="text-[10px] text-orange font-medium shrink-0">×{row.quantity}</span>}
-      </div>
-    </ItemHover>
   );
 }

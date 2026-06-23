@@ -72,6 +72,7 @@ type CharStats = {
 
   pvpKills: number;
   pvpDeaths: number;
+  pvpAssists: number;
 
   lootCount: number;
   dkpSpent: number;
@@ -223,6 +224,7 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
     chatAllRes,
     pvpKillsRes,
     pvpDeathsRes,
+    pvpAssistsRes,
     lootRes,
     wishlistRes,
     { data: rollupRows },
@@ -255,6 +257,12 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
       .from('pvp_kills')
       .select('id', { count: 'exact', head: true })
       .ilike('victim', name),
+    // PvP assists — credited to the assister on someone else's kill
+    // (Uilnayar 2026-06-24: "the /me page should also list assists").
+    admin
+      .from('pvp_assists')
+      .select('id', { count: 'exact', head: true })
+      .ilike('assister', name),
     // Loot from the OpenDKP mirror (the bot's loot_drops table is unused —
     // auction-award wiring is stubbed). opendkp_loot_recent resolves the
     // winner to a character name and carries the DKP spent + item + date.
@@ -378,6 +386,7 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
     chatAll: chatAllRes.count ?? 0,
     pvpKills: pvpKillsRes.count ?? 0,
     pvpDeaths: pvpDeathsRes.count ?? 0,
+    pvpAssists: pvpAssistsRes.count ?? 0,
     lootCount: lootRows.length,
     dkpSpent,
     wishlistCount: wishlistRes.count ?? 0,
@@ -582,6 +591,7 @@ export default async function MePage() {
     uploads: stats.reduce((s, [, x]) => s + x.uploadCount, 0),
     pvpKills: stats.reduce((s, [, x]) => s + x.pvpKills, 0),
     pvpDeaths: stats.reduce((s, [, x]) => s + x.pvpDeaths, 0),
+    pvpAssists: stats.reduce((s, [, x]) => s + x.pvpAssists, 0),
     lootCount: stats.reduce((s, [, x]) => s + x.lootCount, 0),
     dkpSpent: stats.reduce((s, [, x]) => s + x.dkpSpent, 0),
   };
@@ -692,28 +702,34 @@ export default async function MePage() {
             {[c.race, c.class, c.rank].filter(Boolean).join(' · ') || '—'}
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs flex-wrap">
-          <ExclusionToggles
-            character={c.name}
-            excludeFromStats={!!c.exclude_from_stats}
-            excludeInventory={!!c.exclude_inventory}
-            tellRelay={!!c.tell_relay}
-            tellDm={c.tell_dm !== false}
-            showInventoryPublicly={!!c.show_inventory_publicly}
-          />
-          <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
-          <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
-          <Link href={`/character/${encodeURIComponent(c.name)}/spells`} className="text-blue hover:underline">spells →</Link>
-          <Link href={`/character/${encodeURIComponent(c.name)}/inventory`} className="text-blue hover:underline">inventory →</Link>
-          {c.quarmy_url && (
-            <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
-          )}
-          {c.opendkp_id && (
-            <span className="text-dim">opendkp id {c.opendkp_id}</span>
-          )}
-          <InventoryUpload character={c.name} />
-          <KeysUpload character={c.name} />
-          <SpellbookUpload character={c.name} />
+        <div className="flex flex-col items-start sm:items-end gap-2 text-xs">
+          <div className="flex items-center gap-2 flex-wrap sm:justify-end">
+            <ExclusionToggles
+              character={c.name}
+              excludeFromStats={!!c.exclude_from_stats}
+              excludeInventory={!!c.exclude_inventory}
+              tellRelay={!!c.tell_relay}
+              tellDm={c.tell_dm !== false}
+              showInventoryPublicly={!!c.show_inventory_publicly}
+            />
+            <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
+            <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
+            <Link href={`/character/${encodeURIComponent(c.name)}/spells`} className="text-blue hover:underline">spells →</Link>
+            <Link href={`/character/${encodeURIComponent(c.name)}/inventory`} className="text-blue hover:underline">inventory →</Link>
+            {c.quarmy_url && (
+              <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
+            )}
+            {c.opendkp_id && (
+              <a href={`https://wolfpack.opendkp.com/#/characters/${c.opendkp_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">opendkp →</a>
+            )}
+          </div>
+          {/* Uploads on their own line (Uilnayar 2026-06-24: "lets put the
+              uploads on a new line"). */}
+          <div className="flex items-center gap-2 flex-wrap sm:justify-end">
+            <InventoryUpload character={c.name} />
+            <KeysUpload character={c.name} />
+            <SpellbookUpload character={c.name} />
+          </div>
         </div>
       </div>
     );
@@ -750,8 +766,9 @@ export default async function MePage() {
         </Panel>
 
         <Panel title="PvP">
-          <Row label="Kills"  green>{s.pvpKills.toLocaleString()}</Row>
-          <Row label="Deaths" red>{s.pvpDeaths.toLocaleString()}</Row>
+          <Row label="Kills"   green>{s.pvpKills.toLocaleString()}</Row>
+          <Row label="Deaths"  red>{s.pvpDeaths.toLocaleString()}</Row>
+          <Row label="Assists" blue>{s.pvpAssists.toLocaleString()}</Row>
         </Panel>
 
         <Panel title="Loot">
@@ -928,6 +945,7 @@ export default async function MePage() {
             <Stat label="Uploads"      value={agg.uploads}      color="text-blue" />
             <Stat label="PvP kills"    value={agg.pvpKills}     color="text-green" />
             <Stat label="PvP deaths"   value={agg.pvpDeaths}    color="text-red-400" />
+            <Stat label="PvP assists"  value={agg.pvpAssists}   color="text-blue" />
             <Stat label="Loot won"     value={agg.lootCount}    color="text-purple" />
             <Stat label="DKP spent"    value={agg.dkpSpent}     compact />
           </div>
@@ -1067,11 +1085,11 @@ function Panel({ title, children, badge, tooltip }: {
   );
 }
 
-function Row({ label, children, green, red }: { label: string; children: React.ReactNode; green?: boolean; red?: boolean }) {
+function Row({ label, children, green, red, blue }: { label: string; children: React.ReactNode; green?: boolean; red?: boolean; blue?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-3 text-xs">
       <span className="text-dim">{label}</span>
-      <span className={green ? 'text-green' : red ? 'text-red-400' : 'text-text'}>{children}</span>
+      <span className={green ? 'text-green' : red ? 'text-red-400' : blue ? 'text-blue' : 'text-text'}>{children}</span>
     </div>
   );
 }
