@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.118': [
+    '**Parse integrity — session blobs no longer pollute fights** — a parser occasionally uploaded a whole raid session as one "encounter" (30m–2h, everyone who did any damage in the zone). Merged into a real ~3min boss kill, that wrongly credited parked alts and passers-by (e.g. a name showing up on a fight they weren\'t in). The bot now drops any parse longer than 30 minutes, and the merge ignores blob uploads when a normal-length parse exists. Cleaned up the existing affected encounters too.',
+  ],
   '3.0.117': [
     '**Foreign-guild instance kills surface in #pvp again** — fixed a bug where `(Instanced)` PvE echoes were dropped for every guild, not just our own. Now own-guild echoes still suppress (they\'re already announced via Druzzil) but foreign-guild instance kills (e.g. *Oakin of <Zek> has killed Terror in Plane of Fear (Instanced)!*) post as informational `☠️` notices in #pvp and land on /pvp/hate so you can see who\'s contesting / friend the killer. Open-world timers still tick only on open-world kills.',
     '**PvP boss timer board** sorts open ("camp now") rows by most recent kill so fresh activity floats to the top; pending rows still sort soonest-spawn first.',

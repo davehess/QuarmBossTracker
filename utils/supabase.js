@@ -223,6 +223,20 @@ async function recordParse({
 }) {
   if (!isEnabled()) return null;
 
+  // Guard: drop session-blob parses. When a parser uploads an entire raid
+  // session as one "encounter" (a 30m–2h duration with everyone who did any
+  // damage in the zone), merging it into a real ~3min boss kill drags in
+  // parked alts and passers-by (Uilnayar 2026-06-23: a 3024s Cazic Thule blob
+  // attributed 2.3k to Hitya, who wasn't in the fight). No single boss fight on
+  // Quarm runs past 30 minutes; anything longer is a segmentation failure, not
+  // a fight. Drop it before it can find/create or pollute an encounter. The
+  // boss respawn timer is unaffected (it rides the separate /bosskill path).
+  const MAX_FIGHT_SEC = 1800;
+  if (parsed && Number(parsed.duration) > MAX_FIGHT_SEC) {
+    console.warn(`[supabase] dropped session-blob parse: ${parsed.duration}s for ${bossInternalId} from ${contributorCharacter || '?'} (agent v${agentVersion || '?'}) — exceeds ${MAX_FIGHT_SEC}s single-fight cap`);
+    return null;
+  }
+
   // One query for npc_id + zone_short so encounter insert lands with a zone.
   const rows = await select(
     'bosses_local',
