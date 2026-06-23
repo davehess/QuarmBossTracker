@@ -40,6 +40,7 @@ export type FamilyMember = {
   main_name: string | null;
   opendkp_id: number | null;
   active: boolean | null;
+  discord_id?: string | null;
 };
 
 export type EraSummary = {
@@ -47,12 +48,16 @@ export type EraSummary = {
   start: string;
   end: string;
   main: string | null;          // detected main for this era
-  mainSource: 'big_bid' | 'ticks' | 'rank_fallback' | 'no_activity';
+  mainSource: 'big_bid' | 'ticks' | 'carry_forward' | 'rank_fallback' | 'no_activity';
+  mainSince: string | null;     // approx date this era's main took over (their first tick in-era)
+  swappedFrom: string | null;   // the prior era's main, when the main changed at this era's boundary
   dkpEarned: number;            // sum of tick.value for family members in era (raids attended * tick value approximation)
   dkpSpent: number;             // sum of loot DKP for family members in era
   itemsWon: number;
   raidsAttended: number;        // distinct raid_ids the family attended in era
 };
+
+const FAMILY_COLS = 'name, rank, class, race, main_name, opendkp_id, active, discord_id';
 
 export async function loadFamily(
   sb: SupabaseClient,
@@ -61,7 +66,7 @@ export async function loadFamily(
   // Step 1: find the row matching this character so we know the family root.
   const { data: selfRows } = await sb
     .from('characters')
-    .select('name, rank, class, race, main_name, opendkp_id, active')
+    .select(FAMILY_COLS)
     .ilike('name', characterName)
     .eq('guild_id', 'wolfpack')
     .limit(1);
@@ -69,25 +74,51 @@ export async function loadFamily(
   const self = (selfRows && selfRows[0]) as FamilyMember | undefined;
   if (!self) return { root: null, members: [] };
 
-  // Root: the character whose name matches self.main_name (or self if self IS
-  // the root — main_name === name).
+  // The OpenDKP main_name root (the row whose name === main_name).
   const rootName = self.main_name || self.name;
 
-  // Step 2: pull all family members.
-  const { data: famRows } = await sb
-    .from('characters')
-    .select('name, rank, class, race, main_name, opendkp_id, active')
-    .or(`main_name.eq.${rootName},name.eq.${rootName}`)
-    .eq('guild_id', 'wolfpack');
+  // Step 2: pull family members by BOTH signals and union them.
+  //   (a) OpenDKP main_name linkage (the historical grouping).
+  //   (b) Same discord_id — the strongest identity signal. The main_name
+  //       grouping sometimes splits ONE person's characters across roots
+  //       (e.g. when an officer's newer main becomes its own root), which
+  //       breaks the era timeline because each split sees only part of the
+  //       person's DKP history. (Uilnayar 2026-06-23: Hitya was its own root,
+  //       split from Canopy/Melting, so Hitya's page claimed Hitya was the
+  //       Classic main when the player was actually Canopy then.)
+  const queries = [
+    sb.from('characters').select(FAMILY_COLS)
+      .or(`main_name.eq.${rootName},name.eq.${rootName}`)
+      .eq('guild_id', 'wolfpack'),
+  ];
+  if (self.discord_id) {
+    queries.push(
+      sb.from('characters').select(FAMILY_COLS)
+        .eq('discord_id', self.discord_id)
+        .eq('guild_id', 'wolfpack'),
+    );
+  }
+  const results = await Promise.all(queries);
 
-  const members = ((famRows ?? []) as FamilyMember[]).sort((a, b) => {
+  // Dedup by lowercased name (a character can match both queries).
+  const byName = new Map<string, FamilyMember>();
+  for (const res of results) {
+    for (const r of ((res.data ?? []) as FamilyMember[])) {
+      const k = r.name.toLowerCase();
+      if (!byName.has(k)) byName.set(k, r);
+    }
+  }
+  const members = [...byName.values()].sort((a, b) => {
     const ai = rankIndex(a.rank);
     const bi = rankIndex(b.rank);
     if (ai !== bi) return ai - bi;
     return a.name.localeCompare(b.name);
   });
 
-  const root = members.find(m => m.name === rootName) || null;
+  // Root = the actual current main (highest rank), so "alt of X" points at the
+  // real main rather than a stale main_name root. Keeps the page's Main badge
+  // (isMain → currentMain) and the "alt of …" link consistent.
+  const root = currentMain(members) || members.find(m => m.name === rootName) || null;
 
   return { root, members };
 }
@@ -173,19 +204,22 @@ export async function loadEraTimeline(
     return v[field] || null;
   }
 
-  return ERAS.map(era => {
+  const famByName = new Map<string, FamilyMember>();
+  for (const m of family) famByName.set(m.name, m);
+
+  // First pass: detect each era's main from REAL signals only (leave null when
+  // the family had no presence that era — we do NOT fabricate a main yet).
+  const results: EraSummary[] = ERAS.map(era => {
     const inEra = (iso: string | null) => !!iso && iso >= era.start && iso < era.end;
 
-    // Big bids landing in this era → main votes.
-    const mainVotes = new Map<string, number>();
-    let bigBidActivity = 0;
+    // Big bids landing in this era → bid votes.
+    const bidVotes = new Map<string, number>();
     for (const b of bigBids) {
       const ts = nestedTimestamp(b, 'opendkp_auctions', 'end_at');
       if (!inEra(ts)) continue;
       const resolved = resolveBidder(b);
       if (!resolved) continue;
-      bigBidActivity++;
-      mainVotes.set(resolved, (mainVotes.get(resolved) || 0) + 1);
+      bidVotes.set(resolved, (bidVotes.get(resolved) || 0) + 1);
     }
 
     // DKP spent (loot) in era.
@@ -197,15 +231,15 @@ export async function loadEraTimeline(
       itemsWon += 1;
     }
 
-    // DKP earned + per-member tick counts (for main-by-ticks fallback).
+    // DKP earned + per-member tick counts (the primary main signal) + each
+    // member's first tick date in-era (powers the "main swap" timestamp).
     let dkpEarned = 0;
     const raidIds = new Set<number>();
-    const tickCounts = new Map<string, number>(); // family member name → tick count
+    const tickCounts = new Map<string, number>();      // family member name → tick count
+    const firstTickByMember = new Map<string, string>(); // family member name → earliest in-era tick ts
     for (const t of ticks) {
       const ts = nestedTimestamp(t, 'opendkp_raids', 'ts');
       if (!inEra(ts)) continue;
-      // Track each family member that appears in this tick's attendee list.
-      // Members can appear by multiple casings; lowercase-normalize lookup.
       let touched = false;
       for (const attendee of (t.attendees || [])) {
         const key = (attendee || '').toLowerCase();
@@ -213,6 +247,8 @@ export async function loadEraTimeline(
         const canonical = family.find(m => m.name.toLowerCase() === key)?.name;
         if (!canonical) continue;
         tickCounts.set(canonical, (tickCounts.get(canonical) || 0) + 1);
+        const prev = firstTickByMember.get(canonical);
+        if (ts && (!prev || ts < prev)) firstTickByMember.set(canonical, ts);
         touched = true;
       }
       if (touched) {
@@ -221,38 +257,28 @@ export async function loadEraTimeline(
       }
     }
 
-    // Priority 1: bids > 100 (deterministic — only mains can bid that high).
-    // Priority 2: tick attendance (alts don't get ticked in).
-    // Priority 3: rank fallback.
+    // Main = whoever the family attended raids AS the most that era. Tick
+    // attendance is the high-volume, era-wide signal (a member can swap mains
+    // mid-era; whoever logged the most ticks was the main for the bulk of it).
+    // A single end-of-era big bid shouldn't override a season of attendance,
+    // so big-bid count is only a tiebreaker — and stands in alone when there
+    // were no ticks at all (e.g. a main who bid but whose ticks predate our
+    // OpenDKP history). Rank breaks remaining ties. (Uilnayar 2026-06-23:
+    // big-bid-first wrongly flipped Classic from Canopy→Melting on one bid.)
+    const candidates = new Set<string>([...tickCounts.keys(), ...bidVotes.keys()]);
     let detectedMain: string | null = null;
     let mainSource: EraSummary['mainSource'] = 'no_activity';
-    if (mainVotes.size > 0) {
-      const ranked = [...mainVotes.entries()].sort((a, b) => {
-        if (b[1] !== a[1]) return b[1] - a[1];
-        const fa = family.find(m => m.name === a[0]);
-        const fb = family.find(m => m.name === b[0]);
-        return rankIndex(fa?.rank) - rankIndex(fb?.rank);
+    if (candidates.size > 0) {
+      const ranked = [...candidates].sort((a, b) => {
+        const ta = tickCounts.get(a) || 0, tb = tickCounts.get(b) || 0;
+        if (tb !== ta) return tb - ta;
+        const ba = bidVotes.get(a) || 0, bb = bidVotes.get(b) || 0;
+        if (bb !== ba) return bb - ba;
+        return rankIndex(famByName.get(a)?.rank) - rankIndex(famByName.get(b)?.rank);
       });
-      detectedMain = ranked[0][0];
-      mainSource = 'big_bid';
-    } else if (tickCounts.size > 0) {
-      const ranked = [...tickCounts.entries()].sort((a, b) => {
-        if (b[1] !== a[1]) return b[1] - a[1];
-        const fa = family.find(m => m.name === a[0]);
-        const fb = family.find(m => m.name === b[0]);
-        return rankIndex(fa?.rank) - rankIndex(fb?.rank);
-      });
-      detectedMain = ranked[0][0];
-      mainSource = 'ticks';
-    } else {
-      const fallback = currentMain(family);
-      if (fallback) {
-        detectedMain = fallback.name;
-        mainSource = 'rank_fallback';
-      }
+      detectedMain = ranked[0];
+      mainSource = (tickCounts.get(detectedMain) || 0) > 0 ? 'ticks' : 'big_bid';
     }
-
-    void bigBidActivity; // bookkeeping only
 
     return {
       era: era.name,
@@ -260,12 +286,44 @@ export async function loadEraTimeline(
       end: era.end,
       main: detectedMain,
       mainSource,
+      mainSince: detectedMain ? (firstTickByMember.get(detectedMain) ?? null) : null,
+      swappedFrom: null,   // filled in the swap-detection pass below
       dkpEarned,
       dkpSpent,
       itemsWon,
       raidsAttended: raidIds.size,
     };
   });
+
+  // Second pass: fill gaps. Once we know who the main was, carry it FORWARD
+  // through quiet eras (the main doesn't revert just because a season had no
+  // bid/tick activity). Eras BEFORE the family's first signal stay null — we
+  // genuinely don't know who the main was then, which is more honest than
+  // stamping the current main onto pre-history (the original bug).
+  let lastKnown: string | null = null;
+  for (const r of results) {
+    if (r.main) { lastKnown = r.main; continue; }
+    if (lastKnown) { r.main = lastKnown; r.mainSource = 'carry_forward'; }
+  }
+
+  // If the family never produced ANY signal in any era, fall back to the
+  // current main across the board so the timeline isn't entirely blank.
+  if (results.every(r => !r.main)) {
+    const cm = currentMain(family);
+    if (cm) for (const r of results) { r.main = cm.name; r.mainSource = 'rank_fallback'; }
+  }
+
+  // Mark main swaps: an era whose main differs from the previous known main.
+  // Runs AFTER carry-forward so quiet eras (which inherit the prior main)
+  // don't register a false swap. (Uilnayar 2026-06-23: surface WHEN the main
+  // changed in the timeline.)
+  let prevMain: string | null = null;
+  for (const r of results) {
+    if (r.main && prevMain && r.main !== prevMain) r.swappedFrom = prevMain;
+    if (r.main) prevMain = r.main;
+  }
+
+  return results;
 }
 
 // Aggregate stats across the whole family.

@@ -468,11 +468,13 @@ function EraCard({ era, family, self }: { era: EraSummary; family: FamilyMember[
   const sourceLabel =
     era.mainSource === 'big_bid' ? 'big bid' :
     era.mainSource === 'ticks'    ? 'most ticks' :
+    era.mainSource === 'carry_forward' ? 'carried forward' :
     era.mainSource === 'rank_fallback' ? 'rank fallback' :
     'no activity';
   const sourceColor =
     era.mainSource === 'big_bid' ? 'text-gold' :
     era.mainSource === 'ticks'    ? 'text-blue' :
+    era.mainSource === 'carry_forward' ? 'text-dim' :
     'text-dim';
 
   return (
@@ -497,6 +499,21 @@ function EraCard({ era, family, self }: { era: EraSummary; family: FamilyMember[
         {mainMember?.class && <span className="text-dim ml-2">· {mainMember.class}</span>}
         <span className={`ml-2 text-[10px] ${sourceColor}`}>({sourceLabel})</span>
       </div>
+
+      {era.swappedFrom && main && (
+        <div className="text-[11px] text-gold bg-gold/10 border border-gold/30 rounded px-1.5 py-1 flex items-center gap-1 flex-wrap">
+          <span aria-hidden>🔄</span>
+          <span>
+            Main swap: <span className="text-dim">{era.swappedFrom}</span>
+            {' → '}<span className="font-medium">{main}</span>
+          </span>
+          {era.mainSince && (
+            <span className="text-dim">
+              · around {new Date(era.mainSince).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-1.5 text-[11px]">
         <div className="bg-panel border border-border/40 rounded px-1.5 py-1">
