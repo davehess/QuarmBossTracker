@@ -101,12 +101,32 @@ async function load(decoded: string) {
     .or(`name.eq.${main},main_name.eq.${main}`);
   const familyNames = new Set(((familyRows ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
 
+  const quests = (questsRes.data ?? []) as Quest[];
+  const questItems = (itemsRes.data ?? []) as QuestItem[];
+
+  // Authoritative per-item display data (canonical name, lore, drop zone) for
+  // every required + reward item id. Lore is the ONLY way to tell apart items
+  // that share a name (the 10 VT "A Lucid Shard" components), so we resolve it
+  // from eqemu_items rather than trusting the seeded item_name.
+  const itemIds = Array.from(new Set([
+    ...questItems.map(q => q.item_id).filter((x): x is number => x != null),
+    ...quests.map(q => q.reward_item_id).filter((x): x is number => x != null),
+  ]));
+  const itemInfo = new Map<number, { name: string; lore: string | null; zones: string[] }>();
+  if (itemIds.length > 0) {
+    const { data: info } = await sb.rpc('quest_item_info', { p_item_ids: itemIds });
+    for (const r of ((info ?? []) as { item_id: number; name: string; lore: string | null; zones: string[] | null }[])) {
+      itemInfo.set(r.item_id, { name: r.name, lore: r.lore, zones: r.zones ?? [] });
+    }
+  }
+
   return {
     char,
-    quests: (questsRes.data ?? []) as Quest[],
-    questItems: (itemsRes.data ?? []) as QuestItem[],
+    quests,
+    questItems,
     inventory: (invRes.data ?? []) as InventoryRow[],
     familyNames,
+    itemInfo,
   };
 }
 
@@ -120,7 +140,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const data = await load(decoded);
   if (!data) notFound();
-  const { char, quests, questItems, inventory, familyNames } = data;
+  const { char, quests, questItems, inventory, familyNames, itemInfo } = data;
 
   // Visibility gate. Officer or owner always; everyone else needs the
   // character's show_inventory_publicly flag.
@@ -155,6 +175,11 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const ownInvByName = new Map<string, number>();
   const ownInvSlotByName = new Map<string, string[]>();
   const familyInvByName = new Map<string, Map<string, number>>();  // item -> { charName -> qty }
+  // Parallel id-keyed maps. item_id is the reliable join when items share a
+  // name (e.g. the 10 identical "A Lucid Shard" components) — name matching
+  // would lump them together and falsely complete the quest off one shard.
+  const ownInvById = new Map<number, number>();
+  const familyInvById = new Map<number, Map<string, number>>();
   for (const row of inventory) {
     const isOwn = row.character_name.toLowerCase() === decoded.toLowerCase();
     const isFamily = familyNames.has(row.character_name.toLowerCase());
@@ -165,10 +190,16 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       const slots = ownInvSlotByName.get(itemKey) ?? [];
       slots.push(row.slot_label);
       ownInvSlotByName.set(itemKey, slots);
+      if (row.item_id != null) ownInvById.set(row.item_id, (ownInvById.get(row.item_id) ?? 0) + row.quantity);
     } else {
       const sub = familyInvByName.get(itemKey) ?? new Map();
       sub.set(row.character_name, (sub.get(row.character_name) ?? 0) + row.quantity);
       familyInvByName.set(itemKey, sub);
+      if (row.item_id != null) {
+        const subId = familyInvById.get(row.item_id) ?? new Map();
+        subId.set(row.character_name, (subId.get(row.character_name) ?? 0) + row.quantity);
+        familyInvById.set(row.item_id, subId);
+      }
     }
   }
 
@@ -181,9 +212,10 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   // Quest completion: required items where ownInv quantity >= required.
   // "Has the reward" → completed (folded into a separate section).
+  type ItemInfo = { name: string; lore: string | null; zones: string[] };
   type QuestProgress = {
     quest: Quest;
-    items: { ri: QuestItem; have: number; need: number; familyHints: { name: string; qty: number }[] }[];
+    items: { ri: QuestItem; have: number; need: number; familyHints: { name: string; qty: number }[]; info?: ItemInfo }[];
     haveCount: number;
     needCount: number;
     completed: boolean;        // owns the reward item already (quest done)
@@ -191,15 +223,21 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const progress: QuestProgress[] = quests.map(q => {
     const reqs = itemsByQuest.get(q.id) ?? [];
     const items = reqs.map(ri => {
-      const have = ownInvByName.get(ri.item_name.toLowerCase()) ?? 0;
-      const sub = familyInvByName.get(ri.item_name.toLowerCase());
+      const byId = ri.item_id != null;
+      const have = byId
+        ? (ownInvById.get(ri.item_id!) ?? 0)
+        : (ownInvByName.get(ri.item_name.toLowerCase()) ?? 0);
+      const sub = byId ? familyInvById.get(ri.item_id!) : familyInvByName.get(ri.item_name.toLowerCase());
       const familyHints = sub ? [...sub.entries()].map(([name, qty]) => ({ name, qty })) : [];
-      return { ri, have, need: ri.quantity, familyHints };
+      const info = ri.item_id != null ? itemInfo.get(ri.item_id) : undefined;
+      return { ri, have, need: ri.quantity, familyHints, info };
     });
     const haveCount = items.filter(x => x.have >= x.need && !x.ri.optional).length;
     const needCount = items.filter(x => !x.ri.optional).length;
     const rewardKey = (q.reward_item_name || '').toLowerCase();
-    const completed = !!rewardKey && (ownInvByName.get(rewardKey) ?? 0) >= 1;
+    const completed =
+      (q.reward_item_id != null && (ownInvById.get(q.reward_item_id) ?? 0) >= 1) ||
+      (!!rewardKey && (ownInvByName.get(rewardKey) ?? 0) >= 1);
     return { quest: q, items, haveCount, needCount, completed };
   });
 
@@ -274,15 +312,19 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
                   {p.items.map(it => {
                     const ok = it.have >= it.need;
                     return (
-                      <li key={it.ri.id} className="flex items-baseline gap-2">
+                      <li key={it.ri.id} className="flex items-baseline gap-2 flex-wrap">
                         <span className={ok ? 'text-green' : it.ri.optional ? 'text-dim' : 'text-red-400'}>
                           {ok ? '✓' : it.ri.optional ? '·' : '✗'}
                         </span>
                         <span className={ok ? 'text-text' : 'text-dim'}>
-                          {it.ri.item_name}
+                          {it.info?.name ?? it.ri.item_name}
+                          {it.info?.lore && it.info.lore !== it.info.name && <span className="text-purple/90 text-[10px]"> ({it.info.lore})</span>}
                           {it.need > 1 && <> × {it.need}</>}
                           {ok && it.have > it.need && <span className="text-dim/60"> (have {it.have})</span>}
                         </span>
+                        {it.info?.zones?.length ? (
+                          <span className="text-blue/70 text-[10px]">📍 {it.info.zones.slice(0, 2).join(', ')}</span>
+                        ) : null}
                         {!ok && it.familyHints.length > 0 && (
                           <span className="text-dim/70 text-[10px]">
                             (also on family: {it.familyHints.map(h => `${h.name}${h.qty > 1 ? ` ×${h.qty}` : ''}`).join(', ')})
@@ -324,7 +366,11 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
                 const familyTotal = it.familyHints.reduce((s, h) => s + h.qty, 0);
                 return (
                   <tr key={`${p.quest.id}-${it.ri.id}`}>
-                    <td className="py-1.5 pr-3 text-text">{it.ri.item_name}</td>
+                    <td className="py-1.5 pr-3 text-text">
+                      {it.info?.name ?? it.ri.item_name}
+                      {it.info?.lore && it.info.lore !== it.info.name && <span className="text-purple/90 text-[10px]"> ({it.info.lore})</span>}
+                      {it.info?.zones?.length ? <span className="text-blue/70 text-[10px] block">📍 {it.info.zones.slice(0, 2).join(', ')}</span> : null}
+                    </td>
                     <td className="py-1.5 pr-3 text-dim text-xs">
                       {p.quest.pqdi_quest_url
                         ? <a href={p.quest.pqdi_quest_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">{p.quest.name} ↗</a>
