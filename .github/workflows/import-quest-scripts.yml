@@ -1,0 +1,71 @@
+name: Import Quest Scripts
+
+# On-demand pull of the ProjectEQ quest scripts repo into scripted_npc_turnins.
+# Mirrors sync-quarm.yml's pattern (uses the same SUPABASE_URL +
+# SUPABASE_SERVICE_ROLE_KEY repo secrets). Defaults to a full sweep — every
+# .pl / .lua file walked, every EVENT_ITEM / item_lib.check_turn_in branch
+# extracted, money_required + faction nudges + cash + exp captured. Two
+# optional inputs:
+#   • zone — restrict to one zone short_name (e.g. "kael", "akheva") for a
+#     fast sanity check before unleashing the full sweep
+#   • limit — cap the file count for debugging
+# (Uilnayar 2026-06-24: "can you run it via GitHub script".)
+
+on:
+  workflow_dispatch:
+    inputs:
+      zone:
+        description: 'Optional: restrict to one zone (e.g. "kael", "skyshrine"). Empty = sweep all.'
+        required: false
+        default: ''
+      limit:
+        description: 'Optional: cap the number of script files processed (debug).'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: import-quest-scripts
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Sanity check secrets
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY repo secrets" >&2
+            exit 1
+          fi
+
+      - name: Import
+        # Build the arg list conditionally so empty inputs don't become bad
+        # CLI tokens (the script's argv parser would otherwise treat them as
+        # the next flag's value).
+        run: |
+          set -euo pipefail
+          args=( --commit )
+          if [ -n "${{ inputs.zone }}" ]; then
+            args+=( --zone "${{ inputs.zone }}" )
+          fi
+          if [ -n "${{ inputs.limit }}" ]; then
+            args+=( --limit "${{ inputs.limit }}" )
+          fi
+          echo "Running: node scripts/import-quest-scripts.js ${args[*]}"
+          node scripts/import-quest-scripts.js "${args[@]}"
