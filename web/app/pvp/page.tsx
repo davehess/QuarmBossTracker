@@ -162,14 +162,22 @@ async function loadBossTimers(): Promise<BossKill[]> {
     seen.add(r.boss_id);
     out.push(r);
   }
-  // Sort by spawn_earliest ascending → "soonest spawns first" up top, then
-  // "already-open" rows (spawn_latest passed) drop to the bottom.
+  // Two-phase sort:
+  //   1. Still-pending rows (spawn_latest in the future): soonest first by
+  //      spawn_earliest — useful camp planning.
+  //   2. Already-open rows (camp now): newest killed_at first — most recently
+  //      camped/contested floats to the top so you can spot fresh activity
+  //      and friend the killers. (Uilnayar 2026-06-23.)
   const now = Date.now();
   out.sort((a, b) => {
     const aOpen = new Date(a.spawn_latest).getTime() < now;
     const bOpen = new Date(b.spawn_latest).getTime() < now;
     if (aOpen !== bOpen) return aOpen ? 1 : -1;
-    // A quake override (window opened "now") makes earliest = override.
+    if (aOpen) {
+      // Both already-open → newest killed_at first.
+      return (b.killed_at || '').localeCompare(a.killed_at || '');
+    }
+    // Both still-pending → soonest spawn first.
     const aE = new Date(a.spawn_earliest_override ?? a.spawn_earliest).getTime();
     const bE = new Date(b.spawn_earliest_override ?? b.spawn_earliest).getTime();
     return aE - bE;
@@ -430,11 +438,13 @@ export default async function PvpPage({
           <p className="text-sm text-dim mt-2">
             Respawn windows for PvP-server bosses with a ±20% variance applied
             to the base timer. Fed live by Druzzil broadcasts in <code className="text-text">#pvp</code> and by
-            manual <code className="text-text">/pvpkill</code>. Sorted by earliest spawn; rows whose window has
-            already opened drop to the bottom (mob is in <span className="text-green">camp now</span>).
+            manual <code className="text-text">/pvpkill</code>. Pending rows sorted by earliest spawn; <span className="text-green">camp now</span> rows
+            sort by most recent kill so fresh activity floats to the top of the open list.
           </p>
           <div className="text-xs text-dim mt-2">
-            {bossTimers.length} boss{bossTimers.length === 1 ? '' : 'es'} tracked · last kill {fmtDateOnly(bossTimers[0].killed_at, tz)}
+            {bossTimers.length} boss{bossTimers.length === 1 ? '' : 'es'} tracked · last kill {fmtDateOnly(
+              bossTimers.reduce<string>((m, b) => (b.killed_at > m ? b.killed_at : m), bossTimers[0].killed_at), tz
+            )}
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm">

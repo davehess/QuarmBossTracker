@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.117': [
+    '**Foreign-guild instance kills surface in #pvp again** — fixed a bug where `(Instanced)` PvE echoes were dropped for every guild, not just our own. Now own-guild echoes still suppress (they\'re already announced via Druzzil) but foreign-guild instance kills (e.g. *Oakin of <Zek> has killed Terror in Plane of Fear (Instanced)!*) post as informational `☠️` notices in #pvp and land on /pvp/hate so you can see who\'s contesting / friend the killer. Open-world timers still tick only on open-world kills.',
+    '**PvP boss timer board** sorts open ("camp now") rows by most recent kill so fresh activity floats to the top; pending rows still sort soonest-spawn first.',
+  ],
   '3.0.92': [
     '**Trash announces stay trash** — `/announce <zone>` with a note containing "trash" (e.g. *TRASH LOOT!*) no longer adds the zone\'s bosses as kill targets — no boss cards, kill buttons, or auto-tracked timers. The takedown still posts the zone, time, and note for the run.',
   ],

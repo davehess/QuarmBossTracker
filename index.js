@@ -3412,10 +3412,17 @@ async function _handleAgentPvp(req, res) {
     if (_isPvpDupe(b)) { deduped++; continue; }
     const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
     // Defense-in-depth (for agents pre-dating the agent-side guard): a guild
-    // PvE INSTANCE kill ("...in <Zone> (Instanced)!") is not a PvP-server boss
-    // kill. It arrives via the /bosskill path as a normal instance timer — so
-    // skip it here entirely (no PvP ping, no ±20% PvP timer, no ledger row).
-    if (/\(Instanced\)/i.test(zone || '') || /\(Instanced\)/i.test(text || '')) { deduped++; continue; }
+    // (Instanced) PvE kill echoes: only drop OWN-GUILD ones (the Druzzil
+    // broadcast already routed those through /bosskill, so the [PVP] echo is
+    // a duplicate). FOREIGN-guild instance kills reach us only through the
+    // [PVP] channel — Druzzil never tells us about a Zek-guild kill — so they
+    // must pass through as informational posts and into pvp_boss_kills for
+    // "who killed this instance and when" tracking. (Uilnayar 2026-06-23:
+    // "Oakin of <Zek> killed Terror in Plane of Fear (Instanced) at 10:38
+    // and we don't have that listed in our PVP channel." The old
+    // unconditional drop discarded every foreign-guild instance kill.)
+    const _isInstanceEcho = /\(Instanced\)/i.test(zone || '') || /\(Instanced\)/i.test(text || '');
+    if (_isInstanceEcho && killerGuild === WP_GUILD_NAME) { deduped++; continue; }
     try {
       const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
       if (!ch) continue;
@@ -3506,59 +3513,67 @@ async function _handleAgentPvp(req, res) {
           );
           if (candidates.length === 1) {
             const boss = candidates[0];
-            const existing = getAllPvpKills()[boss.id];
-            // Don't overwrite a fresh active timer — only auto-record when there
-            // is no existing entry or the previous one's window has expired.
-            const alreadyActive = existing
-              && !existing.timerUnknown
-              && existing.nextSpawnLatest > Date.now();
-            if (!alreadyActive) {
-              const killedAtMs = b?.ts ? new Date(b.ts).getTime() : Date.now();
-              const killedByLabel = `auto:${killer || '?'}${killerGuild ? '/' + killerGuild : ''}`;
-              recordPvpKill(boss.name, boss.timerHours, killedByLabel, boss.id, false, killedAtMs);
-              // Mirror to Supabase so wolfpack.quest/pvp can render the timer
-              // board. Failure here is non-fatal — state.json is the source of
-              // truth for the bot's own /timers, /pvphate, etc.
-              require('./utils/supabase').mirrorPvpBossKill({
-                boss_id:         boss.id,
-                boss_name:       boss.name,
-                zone:            boss.zone || null,
-                timer_hours:     boss.timerHours,
-                killed_at:       new Date(killedAtMs).toISOString(),
-                killed_by:       killer || null,
-                killed_by_guild: killerGuild || null,
-                source:          'auto_broadcast',
-                raw_text:        text,
-              }).catch(() => {});
-              content += `\n_⏱️ Auto-tracked — respawns in ~${boss.timerHours}h (±20%) · see /timers_`;
+            const killedAtMs = b?.ts ? new Date(b.ts).getTime() : Date.now();
 
-              // Post a richer card to PVP_KILLS_THREAD_ID mirroring /pvpkill.
-              const killsThreadId = process.env.PVP_KILLS_THREAD_ID;
-              if (killsThreadId) {
-                try {
-                  const { EmbedBuilder } = require('discord.js');
-                  const entry = getAllPvpKills()[boss.id];
-                  const embed = new EmbedBuilder()
-                    .setColor(0xcc0000)
-                    .setTitle(`🗡️ PVP Kill — ${boss.name}`)
-                    .setDescription('Auto-recorded from PvP server broadcast.')
-                    .addFields(
-                      { name: 'Zone',       value: boss.zone, inline: true },
-                      { name: 'Killed by',  value: `${killer || '?'}${killerGuild ? ' of <' + killerGuild + '>' : ''}`, inline: true },
-                      { name: 'Base Timer', value: `${boss.timerHours}h (±20%)`, inline: true },
-                      { name: '⏰ Earliest Spawn',
-                        value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
-                        inline: false },
-                      { name: '⏳ Latest Spawn',
-                        value: `${discordAbsoluteTime(entry.nextSpawnLatest)} (${discordRelativeTime(entry.nextSpawnLatest)}) — guaranteed by this time`,
-                        inline: false },
-                    )
-                    .setTimestamp();
-                  const thread = await client.channels.fetch(killsThreadId);
-                  const msg = await thread.send({ embeds: [embed] });
-                  setPvpKillThreadMessageId(boss.id, msg.id);
-                } catch (err) {
-                  console.warn('[pvp-auto] could not post kill card:', err?.message);
+            // Always mirror to Supabase so /pvp/hate's "named-boss kills" panel
+            // shows last-killer-and-when for instance AND open-world. Cheap
+            // best-effort write; nothing depends on the result.
+            require('./utils/supabase').mirrorPvpBossKill({
+              boss_id:         boss.id,
+              boss_name:       boss.name,
+              zone:            boss.zone || null,
+              timer_hours:     boss.timerHours,
+              killed_at:       new Date(killedAtMs).toISOString(),
+              killed_by:       killer || null,
+              killed_by_guild: killerGuild || null,
+              source:          'auto_broadcast',
+              raw_text:        text,
+            }).catch(() => {});
+
+            // Open-world timer ticks ONLY for open-world kills (instances have
+            // private spawns and don't share a respawn). Instance kills above
+            // still mirror for visibility, but skip the ±20% PvP timer +
+            // PVP_KILLS_THREAD card here. (Pre-fix bug: the bot recorded
+            // instance kills as if they ticked the open-world timer, wrong.)
+            if (_isInstanceEcho) {
+              content += `\n_📜 Logged on /pvp/hate (instance kill — does not tick the open-world timer)_`;
+            } else {
+              const existing = getAllPvpKills()[boss.id];
+              const alreadyActive = existing
+                && !existing.timerUnknown
+                && existing.nextSpawnLatest > Date.now();
+              if (!alreadyActive) {
+                const killedByLabel = `auto:${killer || '?'}${killerGuild ? '/' + killerGuild : ''}`;
+                recordPvpKill(boss.name, boss.timerHours, killedByLabel, boss.id, false, killedAtMs);
+                content += `\n_⏱️ Auto-tracked — respawns in ~${boss.timerHours}h (±20%) · see /timers_`;
+
+                const killsThreadId = process.env.PVP_KILLS_THREAD_ID;
+                if (killsThreadId) {
+                  try {
+                    const { EmbedBuilder } = require('discord.js');
+                    const entry = getAllPvpKills()[boss.id];
+                    const embed = new EmbedBuilder()
+                      .setColor(0xcc0000)
+                      .setTitle(`🗡️ PVP Kill — ${boss.name}`)
+                      .setDescription('Auto-recorded from PvP server broadcast.')
+                      .addFields(
+                        { name: 'Zone',       value: boss.zone, inline: true },
+                        { name: 'Killed by',  value: `${killer || '?'}${killerGuild ? ' of <' + killerGuild + '>' : ''}`, inline: true },
+                        { name: 'Base Timer', value: `${boss.timerHours}h (±20%)`, inline: true },
+                        { name: '⏰ Earliest Spawn',
+                          value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
+                          inline: false },
+                        { name: '⏳ Latest Spawn',
+                          value: `${discordAbsoluteTime(entry.nextSpawnLatest)} (${discordRelativeTime(entry.nextSpawnLatest)}) — guaranteed by this time`,
+                          inline: false },
+                      )
+                      .setTimestamp();
+                    const thread = await client.channels.fetch(killsThreadId);
+                    const msg = await thread.send({ embeds: [embed] });
+                    setPvpKillThreadMessageId(boss.id, msg.id);
+                  } catch (err) {
+                    console.warn('[pvp-auto] could not post kill card:', err?.message);
+                  }
                 }
               }
             }
