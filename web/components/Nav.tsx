@@ -20,6 +20,7 @@ const links = [
 export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?: boolean; showMe?: boolean }) {
   const path = usePathname();
   const allLinks = [...links];
+  if (showMe)    allLinks.push({ href: '/test-server', label: '🧪 Test server' });
   if (showMe)    allLinks.push({ href: '/me',    label: '👤 Me'    });
   if (showAdmin) allLinks.push({ href: '/admin', label: '🛡️ Admin' });
   return (
