@@ -245,7 +245,8 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     items: { ri: QuestItem; have: number; need: number; familyHints: { name: string; qty: number }[]; info?: ItemInfo }[];
     haveCount: number;
     needCount: number;
-    completed: boolean;        // owns the reward item already (quest done)
+    completed: boolean;        // owns the reward (directly or via a downstream output)
+    impliedBy: string | null;  // name of the downstream quest that proves this one done
   };
   const progress: QuestProgress[] = quests.map(q => {
     const reqs = itemsByQuest.get(q.id) ?? [];
@@ -262,13 +263,51 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     const haveCount = items.filter(x => x.have >= x.need && !x.ri.optional).length;
     const needCount = items.filter(x => !x.ri.optional).length;
     const rewardKey = (q.reward_item_name || '').toLowerCase();
-    // Hold the reward → done, whether it's in inventory OR on the keyring
-    // (Key of Veeshan, Trakanon Idol, etc.). Match by item id first, name second.
-    const completed =
+    // Direct: hold the reward, in inventory OR keyring (Key of Veeshan, etc.).
+    const directComplete =
       (q.reward_item_id != null && ((ownInvById.get(q.reward_item_id) ?? 0) >= 1 || ownKeyIds.has(q.reward_item_id))) ||
       (!!rewardKey && ((ownInvByName.get(rewardKey) ?? 0) >= 1 || ownKeyNames.has(rewardKey)));
-    return { quest: q, items, haveCount, needCount, completed };
+    return { quest: q, items, haveCount, needCount, completed: directComplete, impliedBy: null as string | null };
   });
+
+  // Chain-implication: if you hold a downstream output, the upstream steps that
+  // feed it are provably done — their components were consumed in the combine.
+  // (Uilnayar 2026-06-23: "If someone has the Vex Thal key, they definitely did
+  // the first part of the quest.") Edge: quest Q's reward_item_id appears as a
+  // required item of quest P ⇒ completing P implies Q. Propagate to a fixpoint
+  // so a 3+-step chain fully resolves.
+  const progressById = new Map(progress.map(p => [p.quest.id, p]));
+  const consumersOf = new Map<number, QuestProgress[]>();   // questId → quests that consume its reward
+  for (const p of progress) {
+    for (const ri of (itemsByQuest.get(p.quest.id) ?? [])) {
+      if (ri.item_id == null) continue;
+      const upstream = progress.find(u => u.quest.reward_item_id === ri.item_id && u.quest.id !== p.quest.id);
+      if (upstream) {
+        const arr = consumersOf.get(upstream.quest.id) ?? [];
+        arr.push(p);
+        consumersOf.set(upstream.quest.id, arr);
+      }
+    }
+  }
+  // Memoized backward reachability to a directly-complete consumer.
+  const resolving = new Set<number>();
+  function impliedComplete(p: QuestProgress): { done: boolean; via: string | null } {
+    if (p.completed) return { done: true, via: p.impliedBy };
+    if (resolving.has(p.quest.id)) return { done: false, via: null };   // cycle guard
+    resolving.add(p.quest.id);
+    for (const consumer of (consumersOf.get(p.quest.id) ?? [])) {
+      const r = consumer.completed ? { done: true, via: consumer.quest.name } : impliedComplete(consumer);
+      if (r.done) { resolving.delete(p.quest.id); return { done: true, via: consumer.quest.name }; }
+    }
+    resolving.delete(p.quest.id);
+    return { done: false, via: null };
+  }
+  for (const p of progress) {
+    if (p.completed) continue;
+    const r = impliedComplete(p);
+    if (r.done) { p.completed = true; p.impliedBy = r.via; }
+  }
+  void progressById;
 
   // Apply per-character layout overrides. Custom display_order (from
   // character_quest_prefs) trumps the catalog's, falling back to it.
@@ -463,6 +502,8 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
                     <span className="text-[10px]">— in {slots.join(', ')}</span>
                   ) : onKeyring ? (
                     <span className="text-[10px] text-green/80">— 🗝 on keyring</span>
+                  ) : p.impliedBy ? (
+                    <span className="text-[10px] text-green/80">— done via {p.impliedBy}</span>
                   ) : null}
                 </li>
               );
