@@ -83,11 +83,27 @@ const WHITELIST = {
   // npc_faction = the per-mob faction "slot" (id referenced by
   // npc_types.npc_faction_id) → primaryfaction (the faction_list id of the
   // mob's home faction). npc_faction_entries = the full hit list a kill
-  // grants (faction_id, value) so we can compute faction deltas from a mob
-  // dying instead of relying on Quarm to print a magnitude.
-  faction_list:        { dest: 'eqemu_faction_list',         transform: 'faction_list' },
+  // grants. faction_list_mod = per-race/class/deity adjustments to baseline
+  // (mod_name is one of r<N>/c<N>/d<N>, joining characters.race/class/deity_id
+  // so we can compute the user's actual starting standing per faction).
+  // From Al'Kabor (Quarm parent dump) — Quarm content tarball omits these.
+  faction_list:        { dest: 'eqemu_faction_list_full',    transform: 'faction_list_full' },
+  faction_list_mod:    { dest: 'eqemu_faction_list_mod',     transform: 'faction_list_mod' },
   npc_faction:         { dest: 'eqemu_npc_faction',          transform: 'npc_faction' },
   npc_faction_entries: { dest: 'eqemu_npc_faction_entries',  transform: 'npc_faction_entries' },
+  // Quest tracker source: tradeskill recipes + per-component item list.
+  tradeskill_recipe:         { dest: 'eqemu_tradeskill_recipe',         transform: 'tradeskill_recipe' },
+  tradeskill_recipe_entries: { dest: 'eqemu_tradeskill_recipe_entries', transform: 'tradeskill_recipe_entries' },
+  // World navigation (zone connections, locked doors, ground spawns, forage).
+  doors:               { dest: 'eqemu_doors',                transform: 'doors' },
+  zone_points:         { dest: 'eqemu_zone_points',          transform: 'zone_points' },
+  ground_spawns:       { dest: 'eqemu_ground_spawns',        transform: 'ground_spawns' },
+  forage:              { dest: 'eqemu_forage',               transform: 'forage' },
+  fishing:             { dest: 'eqemu_fishing',              transform: 'fishing' },
+  // Merchant inventories + placed objects + mob chatter.
+  merchantlist:        { dest: 'eqemu_merchantlist',         transform: 'merchantlist' },
+  object:              { dest: 'eqemu_object',               transform: 'object' },
+  npc_emotes:          { dest: 'eqemu_npc_emotes',           transform: 'npc_emotes' },
 };
 
 // ── Supabase REST helper ────────────────────────────────────────────────────
@@ -135,6 +151,33 @@ async function findLatestDump() {
   if (!quarmDumps.length) throw new Error('No quarm_*.tar.gz dumps found in upstream repo');
   const latest = quarmDumps[0];
   console.log(`Latest: ${latest.name}  (sha ${latest.sha})`);
+  return { url: latest.download_url, filename: latest.name, sha: latest.sha };
+}
+
+// ── Al'Kabor fallback dump for tables the Quarm content snapshot omits ─────
+// The Quarm tarball only carries the live-server snapshot tables (factions,
+// recipes, doors, merchant lists, etc. are CLASSIC-static and live in the
+// TAKP/Al'Kabor parent dump). For any whitelisted table we don't see in the
+// Quarm dump we fall back to scanning the latest Al'Kabor tarball — same
+// CREATE TABLE + INSERT mysqldump format, just a different file. Uilnayar
+// 2026-06-23 — "we need our own version of the DB for a complete picture."
+async function findAlkaborDump() {
+  console.log('Querying GitHub for latest Al\'Kabor DB tarball (fallback source)…');
+  const apiUrl = 'https://api.github.com/repos/SecretsOTheP/EQMacEmu/contents/utils/sql/database_full';
+  const res = await fetch(apiUrl, {
+    headers: { 'User-Agent': 'QuarmBossTracker-sync', 'Accept': 'application/vnd.github+json' },
+  });
+  if (!res.ok) throw new Error(`GitHub API ${res.status}: ${await res.text()}`);
+  const files = await res.json();
+  const akDumps = files
+    .filter(f => /^alkabor_.*\.tar\.gz$/.test(f.name))
+    .sort((a, b) => (a.name < b.name ? 1 : -1));
+  if (!akDumps.length) {
+    console.warn('  no alkabor_*.tar.gz found — skipping fallback');
+    return null;
+  }
+  const latest = akDumps[0];
+  console.log(`  Al'Kabor: ${latest.name}  (sha ${latest.sha})`);
   return { url: latest.download_url, filename: latest.name, sha: latest.sha };
 }
 
@@ -583,27 +626,138 @@ const TRANSFORMS = {
     if (r.aaid == null || r.slot == null) return null;
     return { aaid: r.aaid, slot: r.slot, effectid: r.effectid, base1: r.base1, base2: r.base2 };
   },
-  // faction_list → id + display name. Used to label a mob's faction and build
-  // the PQDI faction link (https://www.pqdi.cc/faction/<id>).
-  faction_list: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name']);
+  // faction_list_full → id, name, base (everyone starts at this), see_illusion,
+  // min/max cap. Powers PQDI link + the per-character baseline computation.
+  faction_list_full: (cols, row) => {
+    const r = pick(cols, row, ['id', 'name', 'base', 'see_illusion', 'min_cap', 'max_cap']);
     if (r.id == null) return null;
-    return { id: r.id, name: r.name };
+    return {
+      id: r.id, name: r.name,
+      base:         r.base         ?? 0,
+      see_illusion: r.see_illusion ?? 1,
+      min_cap:      r.min_cap      ?? 0,
+      max_cap:      r.max_cap      ?? 0,
+    };
   },
-  // npc_faction → the per-mob faction slot. id is referenced by
+  // faction_list_mod → race/class/deity adjustments. mod_name encoded as
+  // r<N>/c<N>/d<N>; join characters.race/class/deity_id to get the per-user
+  // faction base. Confirmed encoding from Al'Kabor: c1-c15 (15 classes),
+  // d201-d216 (16 deities), r<N> (race ids, incl. 128 Iksar, 130 Vah Shir).
+  faction_list_mod: (cols, row) => {
+    const r = pick(cols, row, ['id', 'faction_id', 'mod', 'mod_name']);
+    if (r.id == null || r.faction_id == null || !r.mod_name) return null;
+    return {
+      id: r.id, faction_id: r.faction_id,
+      mod: r.mod ?? 0,
+      mod_name: String(r.mod_name).slice(0, 16),
+    };
+  },
+  // npc_faction → per-mob faction slot. id is referenced by
   // npc_types.npc_faction_id; primaryfaction is the faction_list id of the
   // mob's home faction (what we display + link).
   npc_faction: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'primaryfaction']);
+    const r = pick(cols, row, ['id', 'name', 'primaryfaction', 'ignore_primary_assist']);
     if (r.id == null) return null;
-    return { id: r.id, name: r.name, primaryfaction: r.primaryfaction };
+    return {
+      id: r.id, name: r.name,
+      primaryfaction:        r.primaryfaction        ?? 0,
+      ignore_primary_assist: r.ignore_primary_assist ?? 0,
+    };
   },
-  // npc_faction_entries → every faction a kill of this npc_faction touches and
-  // the delta. Lets us compute faction hits from a mob dying.
+  // npc_faction_entries → every faction a kill of this npc_faction touches.
   npc_faction_entries: (cols, row) => {
-    const r = pick(cols, row, ['npc_faction_id', 'faction_id', 'value', 'npc_value']);
+    const r = pick(cols, row, ['npc_faction_id', 'faction_id', 'value', 'npc_value', 'temp', 'sort_order']);
     if (r.npc_faction_id == null || r.faction_id == null) return null;
-    return { npc_faction_id: r.npc_faction_id, faction_id: r.faction_id, value: r.value, npc_value: r.npc_value };
+    return {
+      npc_faction_id: r.npc_faction_id, faction_id: r.faction_id,
+      value:      r.value      ?? 0,
+      npc_value:  r.npc_value  ?? 0,
+      temp:       r.temp       ?? 0,
+      sort_order: r.sort_order ?? 0,
+    };
+  },
+  // Tradeskill recipes. notes carries the in-game recipe description (handy
+  // for matching quest steps); quest flag = is-quest-step (vs a player recipe).
+  tradeskill_recipe: (cols, row) => {
+    const r = pick(cols, row, ['id', 'name', 'tradeskill', 'skillneeded', 'trivial', 'nofail', 'replace_container', 'notes', 'must_learn', 'quest']);
+    if (r.id == null) return null;
+    return {
+      id: r.id, name: r.name,
+      tradeskill: r.tradeskill ?? null, skillneeded: r.skillneeded ?? null,
+      trivial: r.trivial ?? null, nofail: r.nofail ?? 0,
+      replace_container: r.replace_container ?? 0, notes: r.notes ?? null,
+      must_learn: r.must_learn ?? 0, quest: r.quest ?? 0,
+    };
+  },
+  tradeskill_recipe_entries: (cols, row) => {
+    const r = pick(cols, row, ['id', 'recipe_id', 'item_id', 'successcount', 'failcount', 'componentcount', 'salvagecount', 'iscontainer']);
+    if (r.id == null || r.recipe_id == null) return null;
+    return {
+      id: r.id, recipe_id: r.recipe_id,
+      item_id: r.item_id ?? null,
+      successcount:   r.successcount   ?? 0,
+      failcount:      r.failcount      ?? 0,
+      componentcount: r.componentcount ?? 0,
+      salvagecount:   r.salvagecount   ?? 0,
+      iscontainer:    r.iscontainer    ?? 0,
+    };
+  },
+  doors: (cols, row) => {
+    const r = pick(cols, row, ['id', 'doorid', 'zone', 'version', 'name', 'pos_x', 'pos_y', 'pos_z', 'heading',
+      'opentype', 'guild', 'lockpick', 'keyitem', 'nokeyring', 'triggerdoor', 'triggertype', 'doorisopen',
+      'dest_zone', 'dest_instance', 'dest_x', 'dest_y', 'dest_z', 'dest_heading',
+      'invert_state', 'incline', 'size', 'client_version_mask']);
+    if (r.id == null) return null;
+    return r;
+  },
+  zone_points: (cols, row) => {
+    const r = pick(cols, row, ['id', 'zone', 'number', 'x', 'y', 'z', 'heading',
+      'target_x', 'target_y', 'target_z', 'target_zone_id', 'heading_target', 'client_version_mask']);
+    if (r.id == null) return null;
+    return r;
+  },
+  ground_spawns: (cols, row) => {
+    const r = pick(cols, row, ['id', 'zoneid', 'version', 'max_x', 'max_y', 'max_z', 'min_x', 'min_y', 'heading',
+      'name', 'item', 'max_allowed', 'respawn_timer']);
+    if (r.id == null) return null;
+    return r;
+  },
+  forage: (cols, row) => {
+    const r = pick(cols, row, ['id', 'zoneid', 'itemid', 'level', 'chance',
+      'min_expansion', 'max_expansion', 'content_flags', 'content_flags_disabled']);
+    if (r.id == null) return null;
+    return r;
+  },
+  fishing: (cols, row) => {
+    const r = pick(cols, row, ['id', 'zoneid', 'itemid', 'skill_level', 'chance', 'npc_id', 'npc_chance',
+      'min_expansion', 'max_expansion', 'content_flags', 'content_flags_disabled']);
+    if (r.id == null) return null;
+    return r;
+  },
+  merchantlist: (cols, row) => {
+    const r = pick(cols, row, ['merchantid', 'slot', 'item', 'faction_required', 'level_required',
+      'alt_currency_cost', 'classes_required', 'min_expansion', 'max_expansion',
+      'content_flags', 'content_flags_disabled', 'probability']);
+    if (r.merchantid == null || r.slot == null) return null;
+    return r;
+  },
+  object: (cols, row) => {
+    const r = pick(cols, row, ['id', 'zoneid', 'xpos', 'ypos', 'zpos', 'heading',
+      'itemid', 'charges', 'objectname', 'type', 'icon',
+      'unknown08', 'unknown10', 'unknown20', 'min_expansion', 'max_expansion']);
+    if (r.id == null) return null;
+    return r;
+  },
+  // upstream column is `event` which is a SQL reserved word; remap to event_.
+  npc_emotes: (cols, row) => {
+    const r = pick(cols, row, ['emoteid', 'event', 'type', 'text']);
+    if (r.emoteid == null) return null;
+    return {
+      emoteid: r.emoteid,
+      event_:  r.event ?? null,
+      type:    r.type  ?? null,
+      text:    r.text  ?? null,
+    };
   },
 };
 
@@ -672,9 +826,20 @@ const PK_MAP = {
   eqemu_npc_spells_entries:['npc_spells_id', 'spellid', 'minlevel'],
   eqemu_altadv_vars:       ['skill_id'],
   eqemu_aa_effects:        ['aaid', 'slot'],
-  eqemu_faction_list:        ['id'],
-  eqemu_npc_faction:         ['id'],
-  eqemu_npc_faction_entries: ['npc_faction_id', 'faction_id'],
+  eqemu_faction_list_full:           ['id'],
+  eqemu_faction_list_mod:            ['id'],
+  eqemu_npc_faction:                 ['id'],
+  eqemu_npc_faction_entries:         ['npc_faction_id', 'faction_id'],
+  eqemu_tradeskill_recipe:           ['id'],
+  eqemu_tradeskill_recipe_entries:   ['id'],
+  eqemu_doors:                       ['id'],
+  eqemu_zone_points:                 ['id'],
+  eqemu_ground_spawns:               ['id'],
+  eqemu_forage:                      ['id'],
+  eqemu_fishing:                     ['id'],
+  eqemu_merchantlist:                ['merchantid', 'slot'],
+  eqemu_object:                      ['id'],
+  eqemu_npc_emotes:                  ['emoteid'],
 };
 
 // ── Exports for tests ───────────────────────────────────────────────────────
@@ -713,16 +878,49 @@ if (require.main !== module) return;
     ? Object.entries(sql.files)
     : [['__combined__', sql.file]];
 
+  // Tables seen-or-not in the primary (Quarm) dump → drives Al'Kabor fallback.
+  const seenInPrimary = new Set();
   for (const [name, file] of filesToScan) {
     console.log(`Reading ${sql.mode === 'split' ? name + '.sql' : path.basename(file)}…`);
     for await (const { table, columns, row } of iterInserts(file)) {
       const wl = WHITELIST[table];
       if (!wl) continue;
+      seenInPrimary.add(table);
       const out = TRANSFORMS[wl.transform](columns, row);
       if (!out) continue;
       buffers[wl.dest] = buffers[wl.dest] || [];
       buffers[wl.dest].push(out);
       totalRows++;
+    }
+  }
+
+  // ── Al'Kabor fallback: any whitelisted table the Quarm dump didn't carry
+  //     gets pulled from the latest alkabor_*.tar.gz (TAKP parent, same
+  //     mysqldump format). Classic-static tables (factions, recipes, doors,
+  //     merchant lists, ground spawns, …) live there.
+  const missing = Object.keys(WHITELIST).filter(t => !seenInPrimary.has(t));
+  if (missing.length > 0) {
+    console.log(`Al'Kabor fallback needed for ${missing.length} table(s): ${missing.join(', ')}`);
+    const akDump = await findAlkaborDump();
+    if (akDump) {
+      const akExtract = await downloadAndExtract(akDump.url, akDump.filename);
+      const akSql = await findSqlFiles(akExtract);
+      const akFiles = akSql.mode === 'split'
+        ? Object.entries(akSql.files)
+        : [['__combined__', akSql.file]];
+      const wantSet = new Set(missing);
+      for (const [name, file] of akFiles) {
+        console.log(`  Al'Kabor: reading ${akSql.mode === 'split' ? name + '.sql' : path.basename(file)}…`);
+        for await (const { table, columns, row } of iterInserts(file)) {
+          if (!wantSet.has(table)) continue;
+          const wl = WHITELIST[table];
+          const out = TRANSFORMS[wl.transform](columns, row);
+          if (!out) continue;
+          buffers[wl.dest] = buffers[wl.dest] || [];
+          buffers[wl.dest].push(out);
+          totalRows++;
+        }
+      }
     }
   }
 
@@ -750,6 +948,9 @@ if (require.main !== module) return;
   _dropOrphans('eqemu_spawnentry',        'spawngroup_id','eqemu_spawngroup',  'id');
   _dropOrphans('eqemu_spawnentry',        'npc_id',       'eqemu_npc_types',   'id');
   _dropOrphans('eqemu_spawn2',            'spawngroup_id','eqemu_spawngroup',  'id');
+  _dropOrphans('eqemu_tradeskill_recipe_entries', 'recipe_id', 'eqemu_tradeskill_recipe', 'id');
+  _dropOrphans('eqemu_npc_faction_entries',       'npc_faction_id', 'eqemu_npc_faction',  'id');
+  _dropOrphans('eqemu_faction_list_mod',          'faction_id', 'eqemu_faction_list_full','id');
   _dropOrphans('eqemu_spawn2',            'zone_short',   'eqemu_zone',        'short_name');
   // npc_spells_entries.npc_spells_id → eqemu_npc_spells.id (the list) and
   // npc_spells_entries.spellid → eqemu_spells.id (the catalog). Drop entries
