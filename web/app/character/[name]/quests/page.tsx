@@ -65,7 +65,7 @@ type InventoryRow = {
 async function load(decoded: string) {
   const sb = supabaseAdmin();
   const [
-    charRes, questsRes, itemsRes, invRes,
+    charRes, questsRes, itemsRes, invRes, keysRes,
   ] = await Promise.all([
     sb.from('characters')
       .select('name, class, race, main_name, discord_id, show_inventory_publicly')
@@ -85,6 +85,13 @@ async function load(decoded: string) {
       .select('character_name, slot_label, item_id, item_name, quantity')
       .eq('guild_id', 'wolfpack')
       .limit(10000),
+    // The viewed character's keyring (/keys upload). A key/quest is COMPLETE
+    // when you hold the final reward — and keys (Key of Veeshan, Trakanon Idol)
+    // live on the keyring, not in inventory, with the components long consumed.
+    sb.from('character_keys')
+      .select('item_id, key_name')
+      .eq('guild_id', 'wolfpack')
+      .ilike('character_name', decoded),
   ]);
 
   const char = (charRes.data && charRes.data[0]) as
@@ -125,6 +132,7 @@ async function load(decoded: string) {
     quests,
     questItems,
     inventory: (invRes.data ?? []) as InventoryRow[],
+    keys: (keysRes.data ?? []) as { item_id: number | null; key_name: string }[],
     familyNames,
     itemInfo,
   };
@@ -140,7 +148,17 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const data = await load(decoded);
   if (!data) notFound();
-  const { char, quests, questItems, inventory, familyNames, itemInfo } = data;
+  const { char, quests, questItems, inventory, keys, familyNames, itemInfo } = data;
+
+  // The viewed character's keyring — a quest completes when its reward sits
+  // here (keys) OR in inventory (combine outputs / quest rewards). Components
+  // are consumed on turn-in, so don't require them once the reward is held.
+  const ownKeyIds = new Set<number>();
+  const ownKeyNames = new Set<string>();
+  for (const k of keys) {
+    if (k.item_id != null) ownKeyIds.add(k.item_id);
+    if (k.key_name) ownKeyNames.add(k.key_name.toLowerCase());
+  }
 
   // Visibility gate. Officer or owner always; everyone else needs the
   // character's show_inventory_publicly flag.
@@ -235,9 +253,11 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     const haveCount = items.filter(x => x.have >= x.need && !x.ri.optional).length;
     const needCount = items.filter(x => !x.ri.optional).length;
     const rewardKey = (q.reward_item_name || '').toLowerCase();
+    // Hold the reward → done, whether it's in inventory OR on the keyring
+    // (Key of Veeshan, Trakanon Idol, etc.). Match by item id first, name second.
     const completed =
-      (q.reward_item_id != null && (ownInvById.get(q.reward_item_id) ?? 0) >= 1) ||
-      (!!rewardKey && (ownInvByName.get(rewardKey) ?? 0) >= 1);
+      (q.reward_item_id != null && ((ownInvById.get(q.reward_item_id) ?? 0) >= 1 || ownKeyIds.has(q.reward_item_id))) ||
+      (!!rewardKey && ((ownInvByName.get(rewardKey) ?? 0) >= 1 || ownKeyNames.has(rewardKey)));
     return { quest: q, items, haveCount, needCount, completed };
   });
 
@@ -395,24 +415,31 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       <section className="bg-panel border border-border rounded-lg p-5">
         <h3 className="text-lg text-orange mb-2">Completed quests ({completed.length})</h3>
         {completed.length === 0 ? (
-          <p className="text-sm text-dim italic">No completed quests recorded yet. Items show as complete when the reward item is in inventory.</p>
+          <p className="text-sm text-dim italic">No completed quests recorded yet. A quest completes when you hold its reward — in inventory or on your keyring (upload via 📖/🗝 on /me).</p>
         ) : (
           <ul className="text-sm space-y-1">
-            {completed.map(p => (
-              <li key={p.quest.id} className="flex items-baseline gap-2 text-dim">
-                <span className="text-green">✓</span>
-                <span className="text-text">{p.quest.name}</span>
-                {p.quest.zone && <span className="text-xs">· {p.quest.zone}</span>}
-                {p.quest.pqdi_quest_url && (
-                  <a href={p.quest.pqdi_quest_url} target="_blank" rel="noreferrer" className="text-blue text-[10px] hover:underline">PQDI turn-in ↗</a>
-                )}
-                {p.quest.reward_item_name && ownInvSlotByName.get(p.quest.reward_item_name.toLowerCase()) && (
-                  <span className="text-[10px]">
-                    — in {ownInvSlotByName.get(p.quest.reward_item_name.toLowerCase())!.join(', ')}
-                  </span>
-                )}
-              </li>
-            ))}
+            {completed.map(p => {
+              const rk = (p.quest.reward_item_name || '').toLowerCase();
+              const slots = rk ? ownInvSlotByName.get(rk) : undefined;
+              const onKeyring =
+                (p.quest.reward_item_id != null && ownKeyIds.has(p.quest.reward_item_id)) ||
+                (!!rk && ownKeyNames.has(rk));
+              return (
+                <li key={p.quest.id} className="flex items-baseline gap-2 text-dim">
+                  <span className="text-green">✓</span>
+                  <span className="text-text">{p.quest.name}</span>
+                  {p.quest.zone && <span className="text-xs">· {p.quest.zone}</span>}
+                  {p.quest.pqdi_quest_url && (
+                    <a href={p.quest.pqdi_quest_url} target="_blank" rel="noreferrer" className="text-blue text-[10px] hover:underline">PQDI turn-in ↗</a>
+                  )}
+                  {slots ? (
+                    <span className="text-[10px]">— in {slots.join(', ')}</span>
+                  ) : onKeyring ? (
+                    <span className="text-[10px] text-green/80">— 🗝 on keyring</span>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

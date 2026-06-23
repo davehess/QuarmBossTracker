@@ -27,8 +27,11 @@ function parseKeys(text: string): ParsedKey[] {
   for (const raw of text.split(/\r?\n/)) {
     let line = raw.trim();
     if (!line) continue;
-    // Strip the EQ log prefix "[HH:MM:SS] " if present.
-    line = line.replace(/^\[\d{1,2}:\d{2}:\d{2}\]\s*/, '');
+    // Strip the EQ log timestamp. The real format is the full stamp
+    // "[Tue Jun 23 09:06:12 2026] " — NOT just "[HH:MM:SS]" — so strip any
+    // leading [...] bracket. (Bug: the old HH:MM:SS-only regex left the whole
+    // stamp on the key name, which then never matched eqemu_items.)
+    line = line.replace(/^\[[^\]]*\]\s*/, '');
     // Strip a second optional timestamp some clients emit.
     line = line.replace(/^\(\d{1,2}:\d{2}:\d{2}\)\s*/, '');
     line = line.trim();
