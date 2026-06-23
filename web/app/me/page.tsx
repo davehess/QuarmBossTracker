@@ -29,6 +29,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { userTz, fmtAbs, relTime, fmtDateOnly } from '@/lib/timezone';
 import ExclusionToggles from './ExclusionToggles';
 import ScrapShare from './ScrapShare';
+import InventoryUpload from './InventoryUpload';
 
 export const dynamic = 'force-dynamic';
 
@@ -768,12 +769,14 @@ export default async function MePage() {
                   showInventoryPublicly={!!c.show_inventory_publicly}
                 />
                 <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
+                <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
                 {c.quarmy_url && (
                   <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
                 )}
                 {c.opendkp_id && (
                   <span className="text-dim">opendkp id {c.opendkp_id}</span>
                 )}
+                <InventoryUpload character={c.name} />
               </div>
             </header>
 
