@@ -973,6 +973,25 @@ if (require.main !== module) return;
     // here — silently dropped after the buffer fill.
     'eqemu_npc_spells', 'eqemu_npc_spells_entries',
     'eqemu_altadv_vars', 'eqemu_aa_effects',
+    // Faction tables — parent (faction_list_full) before children
+    // (faction_list_mod / npc_faction_entries) so FK targets are present
+    // before rows that reference them get upserted.
+    'eqemu_faction_list_full',
+    'eqemu_npc_faction',
+    'eqemu_faction_list_mod',
+    'eqemu_npc_faction_entries',
+    // Tradeskill recipes (parent before entries).
+    'eqemu_tradeskill_recipe',
+    'eqemu_tradeskill_recipe_entries',
+    // World navigation + merchants + objects + mob chatter — no FKs.
+    'eqemu_doors',
+    'eqemu_zone_points',
+    'eqemu_ground_spawns',
+    'eqemu_forage',
+    'eqemu_fishing',
+    'eqemu_merchantlist',
+    'eqemu_object',
+    'eqemu_npc_emotes',
   ];
   for (const dest of ORDER) {
     if (!buffers[dest] || !buffers[dest].length) continue;
