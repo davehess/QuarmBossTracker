@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.119': [
+    '**Chat relay attributes the real speaker** — when a player\'s log file is named after a previous character ("eqlog_Dopefiend_pq.proj.txt" while you\'re actually playing Wabumkin), every guild/raid line you typed used to relay under the old name (you saw your own lines as Dopefiend / Facehack / etc). Fixed by cross-checking against the other agents in raid: when at least one of them sees "Wabumkin tells the guild" (the third-person broadcast every other client receives), that wins over your local "You say..." line. No agent update required — works at the bot.',
+  ],
   '3.0.118': [
     '**Parse integrity — session blobs no longer pollute fights** — a parser occasionally uploaded a whole raid session as one "encounter" (30m–2h, everyone who did any damage in the zone). Merged into a real ~3min boss kill, that wrongly credited parked alts and passers-by (e.g. a name showing up on a fight they weren\'t in). The bot now drops any parse longer than 30 minutes, and the merge ignores blob uploads when a normal-length parse exists. Cleaned up the existing affected encounters too.',
   ],

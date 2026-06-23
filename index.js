@@ -2919,6 +2919,58 @@ const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
 // still letting a genuinely distinct later repeat through.
 const CHAT_RELAY_DEDUP_WINDOW_MS = 12_000;
 const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
+
+// Cross-uploader speaker resolution. Same in-game line arrives from multiple
+// agents: the speaker's OWN log writes "You say to your guild", from which the
+// agent fills speaker = selfName-from-filename — wrong when the player renamed
+// their character without renaming the log file (Wabumkin's log named
+// eqlog_Dopefiend_pq.proj.txt, so their lines relayed as "Dopefiend"). Every
+// other uploader sees the canonical "Wabumkin tells the guild" and parses the
+// real name. We bias toward the parsed name (uploader != speaker) and treat
+// "uploader is the listed character" as a single-witness self-view, fixable
+// when a third-person witness arrives in the same window. (Uilnayar 2026-06-23.)
+const SPEAKER_RESOLVE_WINDOW_MS = 12_000;
+const _speakerWitness = new Map();   // key "channel|normtext" → { speakers: Map<speakerLower, {count, anyParsed}>, at }
+function _speakerWitnessGc(now) {
+  for (const [k, v] of _speakerWitness) if (now - v.at > SPEAKER_RESOLVE_WINDOW_MS * 2) _speakerWitness.delete(k);
+}
+// uploaderCharacters: lowercased set of characters whose discord_id matches the
+// uploader. When the incoming speaker is in that set, the attribution is a
+// self-view candidate. Pre-resolved per upload to avoid N DB hits.
+function _resolveSpeaker(channel, normText, incomingSpeaker, uploaderCharacters) {
+  const now = Date.now();
+  _speakerWitnessGc(now);
+  const key = `${channel}|${normText}`;
+  const slot = _speakerWitness.get(key) || { speakers: new Map(), at: now };
+  const lc = incomingSpeaker.toLowerCase();
+  const isSelfView = uploaderCharacters.has(lc);
+  const prev = slot.speakers.get(lc) || { count: 0, anyParsed: false };
+  prev.count += 1;
+  prev.anyParsed = prev.anyParsed || !isSelfView;
+  slot.speakers.set(lc, prev);
+  slot.at = now;
+  _speakerWitness.set(key, slot);
+
+  // Pick the best-witnessed speaker: prefer any parsed (third-person) speaker,
+  // tiebreak by witness count, then alphabetical for stability.
+  let best = incomingSpeaker, bestScore = [isSelfView ? 0 : 1, prev.count, incomingSpeaker];
+  for (const [other, info] of slot.speakers) {
+    if (other === lc) continue;
+    const score = [info.anyParsed ? 1 : 0, info.count, other];
+    if (score[0] > bestScore[0]
+      || (score[0] === bestScore[0] && score[1] > bestScore[1])
+      || (score[0] === bestScore[0] && score[1] === bestScore[1] && score[2] < bestScore[2])) {
+      // Use the original-case form we recorded earlier (stored on slot via a
+      // parallel map below). Falls back to lower if not recorded.
+      best = slot.original?.get(other) || other;
+      bestScore = score;
+    }
+  }
+  // Record original case for the incoming so a later arrival can render it.
+  slot.original = slot.original || new Map();
+  if (!slot.original.has(lc)) slot.original.set(lc, incomingSpeaker);
+  return best;
+}
 // Trigger-broadcast dedup: every raider's agent fires the same trigger (e.g. a
 // boss rampage), so collapse by guild|key within a short window — one Discord
 // post per event. The key is the trigger's own dedup key ("rampage:<target>").
@@ -3072,6 +3124,18 @@ async function _handleAgentChat(req, res) {
   const guildChId = process.env.GUILD_CHAT_CHANNEL_ID;
   const raidChId  = process.env.RAID_CHAT_CHANNEL_ID;
   let posted = 0;
+
+  // Pre-resolve the uploader's own characters so the speaker resolver can tell
+  // a self-view (speaker == one of uploader's chars) from a third-person parse
+  // (some other player's name). One query per upload, cheap.
+  let uploaderCharacters = new Set();
+  try {
+    const rows = await supabase.select(
+      'characters',
+      `select=name&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&discord_id=eq.${encodeURIComponent(identity.discord_id)}`,
+    );
+    for (const r of (Array.isArray(rows) ? rows : [])) if (r?.name) uploaderCharacters.add(String(r.name).toLowerCase());
+  } catch { /* offline: just disables the resolver — original behavior */ }
   // Mirror every relayed chat line into chat_messages so the historical
   // record builds up live, not just via the agent's --since backfill.
   // Same dedup as the Discord-side path (speaker + text + 5s window) but
@@ -3159,7 +3223,13 @@ async function _handleAgentChat(req, res) {
     // key fails to dedup → the message double-posts. Lowercasing + collapsing
     // whitespace in the KEY (display text keeps original casing) closes it.
     const normText = String(text).toLowerCase().replace(/\s+/g, ' ').trim();
-    const key = `${channel}|${speaker.toLowerCase()}|${normText}`;
+    // Cross-uploader speaker resolution. Replace incoming speaker with the
+    // best-witnessed name in the current window — a third-person "Wabumkin
+    // tells the guild" parse outranks the uploader's own "You say..." self-view
+    // even if the self-view arrived first. (See _resolveSpeaker comment above.)
+    const resolvedSpeaker = _resolveSpeaker(channel, normText, speaker, uploaderCharacters);
+    const effectiveSpeaker = resolvedSpeaker || speaker;
+    const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${normText}`;
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
 
@@ -3177,7 +3247,7 @@ async function _handleAgentChat(req, res) {
       guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
       ts:          msgTs || new Date().toISOString(),
       channel,
-      speaker,
+      speaker:     effectiveSpeaker,
       text:        String(text).slice(0, 2000),
       who:         uploadedWho || null,
       uploaded_by: identity.discord_id,
@@ -3188,7 +3258,7 @@ async function _handleAgentChat(req, res) {
     // otherwise an empty whoEntry produced a bare " []" after the name
     // (the bug behind "Wabumkin []: no :(").
     const { getWhoEntry } = require('./utils/state');
-    const whoEntry = getWhoEntry(speaker) || uploadedWho || null;
+    const whoEntry = getWhoEntry(effectiveSpeaker) || uploadedWho || null;
     const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
     const whoTag   = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
 
@@ -3201,7 +3271,7 @@ async function _handleAgentChat(req, res) {
       if (!ch) continue;
       // Format matches Quarm's #ingame-general style:  "**Name** [60 Race Class]: message"
       // Both speaker name and text are sanitized — no @pings, no code-block injection.
-      const safeSpeaker = sanitizeChatText(speaker).replace(/\*/g, '');  // strip bold markers from name
+      const safeSpeaker = sanitizeChatText(effectiveSpeaker).replace(/\*/g, '');  // strip bold markers from name
       // Sanitize FIRST (strips control chars, pings) then linkify items.
       // Order matters: if we linkified first the sanitizer's backslash-doubling
       // could break our markdown URLs (URLs have no backslashes so this is just
