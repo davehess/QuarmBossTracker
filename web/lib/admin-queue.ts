@@ -9,6 +9,7 @@
 //   3. (optional) adding a section to /admin/queue/page.tsx
 
 import { supabaseAdmin } from '@/lib/supabase';
+import { rankIndex } from '@/lib/eras';
 
 const WINDOW = '14 days';
 
@@ -19,6 +20,7 @@ export type QueueItem = {
   count?:     number;        // recent message count etc — sortable/display
   last?:      string | null; // ISO timestamp
   href?:      string;        // optional jump-to-fix link
+  lines?:     string[];      // optional per-incident breakdown (rendered under the row)
 };
 
 export type QueueCategory = {
@@ -298,95 +300,279 @@ async function loadAwaitingOpenDKPClaim(): Promise<QueueCategory> {
   };
 }
 
-// (5) Potentially-missing raid ticks. OpenDKP is the source of truth for
-// attendance; when a character is present for SOME ticks of a raid but not
-// ALL of them, they were in the raid yet missed a tick — usually from
-// switching characters, zoning, or going LD (Uilnayar 2026-06-23). We only
-// consider raids where EVERY tick has attendees captured (fully-synced), so
-// a sync gap (empty-attendee tick) never false-flags the whole raid. Per
-// character we report how many ticks they missed across the last 30 days +
-// when it last happened, so an officer can decide whether to hand-credit it
-// in OpenDKP.
+// Family index: collapse a person's characters into one unit so a "missed
+// tick" is judged against the WHOLE family (you might be ticked on different
+// characters across a raid). Union-find over main_name + discord_id, mirroring
+// loadFamily in character-family.ts. Returns name→family, family→main display
+// name, family→member set, and a lower→display-case map.
+type FamilyIndex = {
+  familyOf: Map<string, string>;
+  mainName: Map<string, string>;
+  members:  Map<string, Set<string>>;
+  display:  Map<string, string>;
+};
+async function loadFamilyIndex(sb: ReturnType<typeof supabaseAdmin>): Promise<FamilyIndex> {
+  const { data } = await sb.from('characters')
+    .select('name, main_name, discord_id, rank').eq('guild_id', 'wolfpack');
+  const rows = (data ?? []) as { name: string; main_name: string | null; discord_id: string | null; rank: string | null }[];
+  const lc = (s: string) => s.toLowerCase();
+  const parent = new Map<string, string>();
+  const ensure = (x: string) => { if (!parent.has(x)) parent.set(x, x); };
+  const find = (x: string): string => { let r = x; while (parent.get(r) !== r) r = parent.get(r)!; let c = x; while (parent.get(c) !== r) { const n = parent.get(c)!; parent.set(c, r); c = n; } return r; };
+  const union = (a: string, b: string) => { ensure(a); ensure(b); const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+
+  const byDiscord = new Map<string, string[]>();
+  const display = new Map<string, string>();
+  const rowByLower = new Map<string, { name: string; main_name: string | null; rank: string | null }>();
+  for (const r of rows) {
+    const ln = lc(r.name);
+    ensure(ln);
+    if (!display.has(ln)) display.set(ln, r.name);
+    if (!rowByLower.has(ln)) rowByLower.set(ln, r);
+    if (r.main_name) union(ln, lc(r.main_name));
+    if (r.discord_id) { const arr = byDiscord.get(r.discord_id) ?? []; arr.push(ln); byDiscord.set(r.discord_id, arr); }
+  }
+  for (const [, arr] of byDiscord) for (let i = 1; i < arr.length; i++) union(arr[0], arr[i]);
+
+  const members = new Map<string, Set<string>>();
+  const familyOf = new Map<string, string>();
+  for (const r of rows) {
+    const ln = lc(r.name);
+    const f = find(ln);
+    familyOf.set(ln, f);
+    const s = members.get(f) ?? new Set<string>();
+    s.add(ln);
+    members.set(f, s);
+  }
+  // Main = the best-ranked member of each family (Officer < … < Raid Alt).
+  const mainName = new Map<string, string>();
+  for (const [f, set] of members) {
+    let best: string | null = null, bestRank = Infinity;
+    for (const ln of set) {
+      const ri = rankIndex(rowByLower.get(ln)?.rank);
+      if (best === null || ri < bestRank || (ri === bestRank && ln < best)) { best = ln; bestRank = ri; }
+    }
+    mainName.set(f, display.get(best!) || best!);
+  }
+  return { familyOf, mainName, members, display };
+}
+
+// Approximate a tick's wall-clock time from its description, anchored to the
+// raid start (UTC). OpenDKP descriptions are usually "Tick 1 (Raid Start)",
+// "Tick 3 (2 Hour)", "Tick 4 (Raid End)". Embedded filename timestamps are
+// skipped — their timezone is the parsing PC's local time, so they can't be
+// compared to the UTC raid ts. Returns null when no relative anchor is found
+// (caller falls back to the whole-raid window for chat corroboration).
+function parseTickTime(raidTs: string, description: string | null): string | null {
+  if (!description) return null;
+  if (/raid\s*start/i.test(description)) return raidTs;
+  const hr = description.match(/(\d+)\s*hour/i);
+  if (hr) return new Date(Date.parse(raidTs) + parseInt(hr[1], 10) * 3600000).toISOString();
+  if (/raid\s*end/i.test(description)) return new Date(Date.parse(raidTs) + 3 * 3600000).toISOString();
+  return null;
+}
+
+// (5) Potentially-missing raid ticks — family-aware, evidence-backed.
+//
+// A "missed tick" only counts when the person was demonstrably PRESENT but not
+// in the snapshot. Three cases (Uilnayar 2026-06-23):
+//   • INTERIOR gap — ticked (on any of their characters) BEFORE and AFTER the
+//     missed tick. Self-evident: a swap / LD / zone cost them a tick.
+//   • END-OF-RAID (trailing) — missed the last tick(s) but combat or chat
+//     shows they were still there. These matter most (loot eligibility).
+//   • RAID-START (leading) — missed the first tick(s) but combat/chat shows
+//     they were already there. (The first tick is taken at 8:30 sharp, so an
+//     8:31 entry legitimately misses it — that has no combat/chat *before* the
+//     tick, so it is NOT flagged.)
+// Late joins and early leaves with no corroborating presence are normal
+// partial attendance and never flagged. Grouped by family → "Main (Alt)" when
+// an alt held the surrounding ticks; each row lists which tick of which raid
+// and the evidence (⚔ combat / 💬 chat). Officer hand-credits in OpenDKP.
 async function loadPotentialMissingTicks(): Promise<QueueCategory> {
   const sb = supabaseAdmin();
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
-  const { data: raids } = await sb
-    .from('opendkp_raids')
-    .select('raid_id, ts')
-    .gte('ts', since)
-    .order('ts', { ascending: false });
-  const raidRows = (raids ?? []) as { raid_id: number; ts: string }[];
-  if (raidRows.length === 0) {
-    return { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks',
-      summary: 'Raiders present for some ticks of a raid but not all — likely a character swap, zone, or LD that cost a tick. Officer can hand-credit in OpenDKP.',
-      count: 0, items: [], fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
-  }
-  const tsByRaid = new Map<number, string>();
-  for (const r of raidRows) tsByRaid.set(r.raid_id, r.ts);
+  const summary = 'Raiders who were present (ticked before/after, or shown by combat + chat) but missing from a tick snapshot — a swap/LD/zone mid-raid, or still fighting at raid end when the last loot tick was taken. Late joins / early leaves with no corroboration aren\'t flagged. Grouped by family; expand for which tick of which raid + evidence. Officer hand-credits in OpenDKP.';
+  const emptyCat: QueueCategory = { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', summary, count: 0, items: [], fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
+
+  const [{ data: raids }, fam] = await Promise.all([
+    sb.from('opendkp_raids').select('raid_id, ts, name').gte('ts', since).order('ts', { ascending: false }),
+    loadFamilyIndex(sb),
+  ]);
+  const raidRows = (raids ?? []) as { raid_id: number; ts: string; name: string | null }[];
+  if (raidRows.length === 0) return emptyCat;
+  const raidMeta = new Map<number, { ts: string; name: string | null }>();
+  for (const r of raidRows) raidMeta.set(r.raid_id, { ts: r.ts, name: r.name });
 
   const { data: ticks } = await sb
     .from('opendkp_ticks')
-    .select('raid_id, tick_id, attendees')
+    .select('raid_id, tick_id, description, value, attendees')
     .in('raid_id', raidRows.map(r => r.raid_id));
-  type TickRow = { raid_id: number; tick_id: number; attendees: string[] | null };
-
-  // Group ticks by raid.
+  type TickRow = { raid_id: number; tick_id: number; description: string | null; value: number | null; attendees: string[] | null };
   const byRaid = new Map<number, TickRow[]>();
-  for (const t of (ticks ?? []) as TickRow[]) {
-    const list = byRaid.get(t.raid_id) ?? [];
-    list.push(t);
-    byRaid.set(t.raid_id, list);
-  }
+  for (const t of (ticks ?? []) as TickRow[]) { const l = byRaid.get(t.raid_id) ?? []; l.push(t); byRaid.set(t.raid_id, l); }
 
-  // For each FULLY-SYNCED raid (every tick populated), find characters who
-  // attended ≥1 tick but fewer than all ticks → missed a tick.
-  type Miss = { missed: number; last: string };
-  const byChar = new Map<string, Miss>();   // displayName → aggregate
-  const display = new Map<string, string>(); // lower → original-case name
-  for (const [raidId, tickList] of byRaid) {
-    if (tickList.length < 2) continue;       // single-tick raid — nothing to "miss"
-    const allPopulated = tickList.every(t => Array.isArray(t.attendees) && t.attendees.length > 0);
-    if (!allPopulated) continue;             // sync gap — don't false-flag
-    const total = tickList.length;
-    const presentCount = new Map<string, number>();
-    for (const t of tickList) {
+  type Kind = 'interior' | 'trailing' | 'leading';
+  type Incident = {
+    familyId: string; raidId: number; raidTs: string; raidName: string;
+    tickLabel: string; tickTime: string | null; onChar: string; value: number;
+    kind: Kind; combatNear?: boolean; chatNear?: boolean;
+  };
+  const candidates: Incident[] = [];
+
+  for (const [raidId, tickListRaw] of byRaid) {
+    const tickList = [...tickListRaw].sort((a, b) => a.tick_id - b.tick_id);
+    if (tickList.length < 2) continue;
+    if (!tickList.every(t => Array.isArray(t.attendees) && t.attendees.length > 0)) continue;  // sync gap
+    const meta = raidMeta.get(raidId)!;
+
+    const famPresence = new Map<string, Set<string>[]>();
+    tickList.forEach((t, idx) => {
       for (const a of (t.attendees || [])) {
-        const k = (a || '').toLowerCase();
-        if (!k) continue;
-        presentCount.set(k, (presentCount.get(k) || 0) + 1);
-        if (!display.has(k)) display.set(k, a);
+        const ln = (a || '').toLowerCase();
+        if (!ln) continue;
+        const fid = fam.familyOf.get(ln);
+        if (!fid) continue;                                                       // not a roster character
+        let arr = famPresence.get(fid);
+        if (!arr) { arr = tickList.map(() => new Set<string>()); famPresence.set(fid, arr); }
+        arr[idx].add(ln);
+      }
+    });
+
+    for (const [fid, arr] of famPresence) {
+      const present = arr.map(s => s.size > 0);
+      const first = present.indexOf(true);
+      const last = present.lastIndexOf(true);
+      if (first < 0) continue;
+      for (let i = 0; i < tickList.length; i++) {
+        if (present[i]) continue;
+        const kind: Kind = (i > first && i < last) ? 'interior' : (i > last) ? 'trailing' : 'leading';
+        const t = tickList[i];
+        // The character they were on = nearest present family char (before, else after).
+        let onLn = '';
+        for (let j = i - 1; j >= 0; j--) { if (arr[j].size) { onLn = [...arr[j]][0]; break; } }
+        if (!onLn) for (let j = i + 1; j < arr.length; j++) { if (arr[j].size) { onLn = [...arr[j]][0]; break; } }
+        candidates.push({
+          familyId: fid, raidId, raidTs: meta.ts, raidName: meta.name || `raid ${raidId}`,
+          tickLabel: t.description || `tick ${t.tick_id}`, tickTime: parseTickTime(meta.ts, t.description),
+          onChar: fam.display.get(onLn) || onLn, value: t.value || 0, kind,
+        });
       }
     }
-    const ts = tsByRaid.get(raidId) || '';
-    for (const [k, n] of presentCount) {
-      if (n >= total) continue;              // got every tick — fine
-      const missedHere = total - n;
-      const cur = byChar.get(k);
-      if (!cur) byChar.set(k, { missed: missedHere, last: ts });
-      else { cur.missed += missedHere; if (ts > cur.last) cur.last = ts; }
-    }
   }
 
-  const items: QueueItem[] = [...byChar.entries()]
-    .map(([k, v]) => ({
-      key:    k,
-      label:  display.get(k) || k,
-      count:  v.missed,
-      last:   v.last,
-      detail: `missed ${v.missed} tick${v.missed === 1 ? '' : 's'} (present for the raid)`,
-      href:   'https://wolfpack.opendkp.com/#/raids',
-    }))
-    .sort((a, b) => (b.count || 0) - (a.count || 0) || (b.last || '').localeCompare(a.last || ''));
+  // ── Corroboration signals (chat + combat) for the families with candidates ──
+  const candFamIds = new Set(candidates.map(c => c.familyId));
+  const famChat = new Map<string, number[]>();    // familyId → chat ts (ms)
+  const famCombat = new Map<string, number[]>();   // familyId → encounter start ts (ms)
 
-  return {
-    id:      'missing_ticks',
-    icon:    '🎟️',
-    title:   'Potentially missing raid ticks',
-    summary: 'Raiders present for some ticks of a raid but not all over the last 30 days — likely a character swap, zone, or LD that cost a tick. Only fully-synced raids are checked (no sync-gap false positives). Officer can hand-credit the tick in OpenDKP.',
-    count:   items.length,
-    items,
-    fixHelpHref: 'https://wolfpack.opendkp.com/#/raids',
-  };
+  if (candFamIds.size > 0) {
+    // Chat for every member of a candidate family (display + corroboration).
+    const speakerToFam = new Map<string, string>();
+    const speakers: string[] = [];
+    for (const fid of candFamIds) for (const ln of (fam.members.get(fid) ?? [])) {
+      const disp = fam.display.get(ln) || ln; speakers.push(disp); speakerToFam.set(disp.toLowerCase(), fid);
+    }
+    const { data: chat } = await sb.from('chat_messages')
+      .select('speaker, ts').in('channel', ['guild', 'raid'])
+      .in('speaker', speakers.slice(0, 400)).gte('ts', since).limit(20000);
+    for (const m of ((chat ?? []) as { speaker: string | null; ts: string | null }[])) {
+      if (!m.speaker || !m.ts) continue;
+      const fid = speakerToFam.get(m.speaker.toLowerCase());
+      if (!fid) continue;
+      const arr = famChat.get(fid) ?? []; arr.push(Date.parse(m.ts)); famChat.set(fid, arr);
+    }
+
+    // Combat only matters for EDGE candidates (interior is self-evident). Fetch
+    // per edge-raid: encounters in the raid window + which family members were
+    // in them. Bounded — few raids produce edge candidates.
+    const edge = candidates.filter(c => c.kind !== 'interior');
+    const edgeRaidIds = [...new Set(edge.map(c => c.raidId))];
+    const edgeFamIds = new Set(edge.map(c => c.familyId));
+    const memberToFam = new Map<string, string>();
+    const memberNames: string[] = [];
+    for (const fid of edgeFamIds) for (const ln of (fam.members.get(fid) ?? [])) {
+      const disp = fam.display.get(ln) || ln; memberNames.push(disp); memberToFam.set(disp.toLowerCase(), fid);
+    }
+    await Promise.all(edgeRaidIds.map(async (rid) => {
+      const meta = raidMeta.get(rid)!;
+      const lo = new Date(Date.parse(meta.ts) - 10 * 60000).toISOString();
+      const hi = new Date(Date.parse(meta.ts) + 6 * 3600000).toISOString();
+      const { data: encs } = await sb.from('encounters')
+        .select('id, started_at').eq('guild_id', 'wolfpack')
+        .gte('started_at', lo).lte('started_at', hi).limit(300);
+      const encList = (encs ?? []) as { id: string; started_at: string }[];
+      if (encList.length === 0) return;
+      const startById = new Map(encList.map(e => [e.id, Date.parse(e.started_at)]));
+      const { data: eps } = await sb.from('encounter_players')
+        .select('encounter_id, character_name')
+        .in('encounter_id', encList.map(e => e.id))
+        .in('character_name', memberNames.slice(0, 400)).limit(20000);
+      for (const ep of ((eps ?? []) as { encounter_id: string; character_name: string | null }[])) {
+        if (!ep.character_name) continue;
+        const fid = memberToFam.get(ep.character_name.toLowerCase());
+        const t = startById.get(ep.encounter_id);
+        if (!fid || t == null) continue;
+        const arr = famCombat.get(fid) ?? []; arr.push(t); famCombat.set(fid, arr);
+      }
+    }));
+  }
+
+  // ── Resolve candidates: keep interior always; keep edges only when combat or
+  // chat proves presence on the MISSING side of the tick. ──
+  type Agg = { familyId: string; main: string; missed: number; last: string; incidents: Incident[]; alts: Set<string> };
+  const byFamily = new Map<string, Agg>();
+  for (const c of candidates) {
+    const chatTs = famChat.get(c.familyId) ?? [];
+    const combatTs = famCombat.get(c.familyId) ?? [];
+    const tt = c.tickTime ? Date.parse(c.tickTime) : null;
+    const within = (arr: number[], lo: number, hi: number) => arr.some(t => t >= lo && t <= hi);
+    if (tt != null) {
+      c.chatNear = within(chatTs, tt - 20 * 60000, tt + 20 * 60000);
+      c.combatNear = within(combatTs, tt - 20 * 60000, tt + 20 * 60000);
+    }
+
+    let keep = c.kind === 'interior';
+    if (!keep) {
+      const raidLo = Date.parse(c.raidTs), raidHi = raidLo + 6 * 3600000;
+      // present on the missing side: leading → at/before the tick; trailing → at/after.
+      const lo = c.kind === 'leading' ? raidLo : (tt != null ? tt - 20 * 60000 : raidLo);
+      const hi = c.kind === 'leading' ? (tt != null ? tt + 20 * 60000 : raidHi) : raidHi;
+      keep = within(combatTs, lo, hi) || within(chatTs, lo, hi);
+    }
+    if (!keep) continue;
+
+    const agg = byFamily.get(c.familyId) ?? { familyId: c.familyId, main: fam.mainName.get(c.familyId) || c.familyId, missed: 0, last: c.raidTs, incidents: [], alts: new Set<string>() };
+    agg.missed += 1;
+    if (c.raidTs > agg.last) agg.last = c.raidTs;
+    agg.incidents.push(c);
+    if (c.onChar && c.onChar.toLowerCase() !== agg.main.toLowerCase()) agg.alts.add(c.onChar);
+    byFamily.set(c.familyId, agg);
+  }
+
+  const kindLabel: Record<Kind, string> = { interior: 'mid-raid gap', trailing: 'end-of-raid loot tick', leading: 'raid-start tick' };
+  const items: QueueItem[] = [...byFamily.values()].map(agg => {
+    const label = agg.alts.size ? `${agg.main} (${[...agg.alts].join(', ')})` : agg.main;
+    const lines = agg.incidents
+      .sort((a, b) => b.raidTs.localeCompare(a.raidTs))
+      .map(inc => {
+        const d = new Date(inc.raidTs).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+        const on = inc.onChar && inc.onChar.toLowerCase() !== agg.main.toLowerCase() ? ` on ${inc.onChar}` : '';
+        const ev = [inc.combatNear ? '⚔ in combat' : '', inc.chatNear ? '💬 chatting' : ''].filter(Boolean).join(', ');
+        return `${d} ${inc.raidName} — missed ${inc.tickLabel}${on} (${inc.value} DKP) · ${kindLabel[inc.kind]}${ev ? ` · ${ev}` : ''}`;
+      });
+    const trailing = agg.incidents.filter(i => i.kind === 'trailing').length;
+    return {
+      key:    agg.familyId,
+      label,
+      count:  agg.missed,
+      last:   agg.last,
+      detail: `${agg.missed} likely missed tick${agg.missed === 1 ? '' : 's'}${trailing ? ` (${trailing} at raid end — loot-relevant)` : ''}`,
+      lines,
+      href:   'https://wolfpack.opendkp.com/#/raids',
+    };
+  }).sort((a, b) => (b.count || 0) - (a.count || 0) || (b.last || '').localeCompare(a.last || ''));
+
+  return { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', summary, count: items.length, items, fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
 }
 
 // Load every category in parallel. Caller uses the total count for the

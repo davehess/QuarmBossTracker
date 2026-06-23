@@ -50,11 +50,18 @@ function Section({ cat }: { cat: QueueCategory }) {
             </thead>
             <tbody>
               {cat.items.map((it, i) => (
-                <tr key={it.key} className="border-b border-border/30 hover:bg-[#1a212c]">
+                <tr key={it.key} className="border-b border-border/30 hover:bg-[#1a212c] align-top">
                   <td className="py-1 pr-2 text-dim">{i + 1}</td>
                   <td className="py-1 pr-2 text-text">{it.label}</td>
-                  <td className="py-1 pr-2 text-dim text-xs">{it.detail ?? '—'}</td>
-                  <td className="py-1 pr-2 text-right text-dim text-xs">{fmtAgo(it.last ?? null)}</td>
+                  <td className="py-1 pr-2 text-dim text-xs">
+                    {it.detail ?? '—'}
+                    {it.lines && it.lines.length > 0 && (
+                      <ul className="mt-1 space-y-0.5 text-[11px] text-dim/80">
+                        {it.lines.map((ln, j) => <li key={j}>· {ln}</li>)}
+                      </ul>
+                    )}
+                  </td>
+                  <td className="py-1 pr-2 text-right text-dim text-xs whitespace-nowrap">{fmtAgo(it.last ?? null)}</td>
                   <td className="py-1 pr-2 text-right">
                     {it.href ? (
                       <Link href={it.href} className="text-blue hover:underline text-xs">fix →</Link>
