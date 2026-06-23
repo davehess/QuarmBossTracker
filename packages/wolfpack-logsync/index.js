@@ -4948,6 +4948,8 @@ function _endpointForKind(kind, botUrl) {
     case 'faction':         return base + '/faction';
     case 'pop_flag':        return base + '/pop_flags';
     case 'quarmy':          return base + '/quarmy';
+    case 'inventory':       return base + '/inventory';
+    case 'spellbook':       return base + '/spellbook';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -13273,6 +13275,161 @@ function scanQuarmyExports() {
   }
 }
 
+// ── Mimic auto-loader: inventory + spellbook ──────────────────────────────
+// EQ's /outputfile inventory and /outputfile spellbook write tab-separated
+// snapshots next to the log files. We watch the EQ folder for mtime changes on
+// <Char>-Inventory.txt and <Char>-Spellbook.txt; whenever the player runs the
+// command, the agent picks it up on the next 60s tick and uploads the parsed
+// rows. Mirrors scanQuarmyExports: same opt-out gate, same checksum dedup
+// pattern (so reruns over an unchanged file no-op), same exclude_inventory
+// rule. (Uilnayar 2026-06-23: "load the inventory, spellbook, and quarmy files
+// via mimic the way we are the logs".)
+
+const INVENTORY_UPLOAD_FILENAME_RX = /^([A-Za-z]+)-Inventory\.txt$/i;
+const SPELLBOOK_FILENAME_RX        = /^([A-Za-z]+)-Spellbook\.txt$/i;
+const _inventoryUploaded = {};   // char(lower) → checksum already uploaded
+const _spellbookUploaded = {};
+
+// FULL inventory parser for the upload path. Unlike parseInventoryFile (which
+// drops Bank rows since the threat calculator doesn't need them), this keeps
+// every slot the bot's character_inventory table accepts. Currency rows
+// (-Coin) and the literal "Currency" name are dropped — the player's wallet
+// is account-level and we never persist it.
+function parseInventoryFileFull(text) {
+  const rows = [];
+  const seenSlots = new Set();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) continue;
+    let cols = line.split('\t');
+    if (cols.length < 4) cols = line.split(/\s{2,}/);
+    if (cols.length < 4) continue;
+    const [loc, name, idStr, countStr] = cols.map(c => c.trim());
+    if (!loc || /^location$/i.test(loc)) continue;                // header
+    const itemName = (name || '').trim();
+    if (!itemName || /^empty$/i.test(itemName) || itemName === '(empty)') continue;
+    // Drop wallet rows. Same regex the bot also enforces server-side.
+    if (/-Coin$/i.test(loc) || /^Currency$/i.test(itemName)) continue;
+    if (seenSlots.has(loc)) continue;
+    seenSlots.add(loc);
+    const id    = parseInt(idStr, 10);
+    const count = Math.max(1, parseInt(countStr, 10) || 1);
+    rows.push({
+      slot_label: loc.slice(0, 64),
+      item_name:  itemName.slice(0, 128),
+      item_id:    Number.isFinite(id) && id > 0 ? id : null,
+      quantity:   count,
+    });
+  }
+  return rows;
+}
+
+function parseSpellbookFile(text) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    let cols = line.split('\t');
+    if (cols.length < 4) cols = line.split(/\s{2,}/);
+    if (cols.length < 4) continue;
+    const [, idStr, lvlStr, ...nameParts] = cols.map(c => c.trim());
+    if (/^spellid$/i.test(idStr)) continue;                       // header
+    const id = parseInt(idStr, 10);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const name = nameParts.join(' ').trim();
+    if (!name) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const lvl = parseInt(lvlStr, 10);
+    out.push({
+      spell_id:    id,
+      spell_name:  name.slice(0, 96),
+      spell_level: Number.isFinite(lvl) ? lvl : null,
+    });
+  }
+  return out;
+}
+
+// Reusable scan + queue routine for inventory and spellbook. The two share the
+// opt-out gate, the per-character dedup map keyed by stable checksum, and the
+// dry-run / env-excluded behavior — only the filename regex, parser, payload
+// shape, and upload kind differ. Encapsulating keeps the future "add another
+// outputfile type" change to a one-line invocation.
+function _scanExportFamily({
+  filenameRx,         // RegExp — first capture group = character name
+  parser,             // (text) → rows array
+  uploadedMap,        // _inventoryUploaded | _spellbookUploaded
+  uploadKind,         // 'inventory' | 'spellbook'
+  payloadField,       // 'rows' | 'spells'
+  emptyOk = false,    // allow zero rows (no real EQ /outputfile is empty)
+}) {
+  if (!stats.characterPrefsCheckedAt) return;                     // prefs gate
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return;
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  const envExcluded = new Set(
+    (process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+  const pascal = s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+
+  for (const name of entries) {
+    const m = name.match(filenameRx);
+    if (!m) continue;
+    const character = pascal(m[1]);
+    const lower = character.toLowerCase();
+    if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
+    const fullPath = path.join(dir, name);
+    try {
+      const text  = fs.readFileSync(fullPath, 'utf8');
+      const stat  = fs.statSync(fullPath);
+      const items = parser(text);
+      if (!emptyOk && items.length === 0) continue;
+      // Stable checksum: SHA1 over the file bytes (mtime tells us when, hash
+      // tells us *what*). Strips the chance that an unrelated touch-the-file
+      // (open in notepad and re-save) re-triggers an upload.
+      const checksum = require('crypto').createHash('sha1').update(text).digest('hex').slice(0, 20);
+      if (uploadedMap[lower] === checksum) continue;
+      if (dryRun) {
+        console.log(`[${uploadKind}] DRY RUN — would upload ${character}: ${items.length} ${payloadField} (checksum ${checksum})`);
+        continue;
+      }
+      uploadedMap[lower] = checksum;
+      enqueueUpload(uploadKind, {
+        agent_version: AGENT_VERSION,
+        character,
+        checksum,
+        [payloadField]: items,
+        observed_at_mtime: stat.mtime.toISOString(),
+      });
+      console.log(`[${uploadKind}] queued upload for ${character} (${items.length} ${payloadField})`);
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
+function scanInventoryUploads() {
+  _scanExportFamily({
+    filenameRx:  INVENTORY_UPLOAD_FILENAME_RX,
+    parser:      parseInventoryFileFull,
+    uploadedMap: _inventoryUploaded,
+    uploadKind:  'inventory',
+    payloadField:'rows',
+  });
+}
+
+function scanSpellbookUploads() {
+  _scanExportFamily({
+    filenameRx:  SPELLBOOK_FILENAME_RX,
+    parser:      parseSpellbookFile,
+    uploadedMap: _spellbookUploaded,
+    uploadKind:  'spellbook',
+    payloadField:'spells',
+  });
+}
+
 function _scanOptInFiles() {
   _loadOptInState();
   _optinState.files   = [];
@@ -18138,6 +18295,16 @@ async function main() {
   // be known, not assumed), so the first useful pass is the 30s one.
   setTimeout(scanQuarmyExports, 30_000);
   setInterval(scanQuarmyExports, 10 * 60_000);
+
+  // Mimic auto-loader — <Char>-Inventory.txt and <Char>-Spellbook.txt
+  // (Uilnayar 2026-06-23). Same EQ folder, same opt-out gate as Quarmy. We
+  // poll every 60s; the player's /outputfile inventory rewrites the file
+  // atomically so a checksum match no-ops the upload. First useful pass is
+  // 45s after start (15s after the prefs poll typically answers).
+  setTimeout(scanInventoryUploads, 45_000);
+  setInterval(scanInventoryUploads, 60_000);
+  setTimeout(scanSpellbookUploads, 50_000);
+  setInterval(scanSpellbookUploads, 60_000);
 
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter

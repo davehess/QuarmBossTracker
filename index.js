@@ -5203,6 +5203,185 @@ async function _handleAgentQuarmy(req, res) {
   res.end(JSON.stringify({ ok: true, written }));
 }
 
+// POST /api/agent/inventory
+//
+// Mimic-auto-uploaded inventory snapshot (Uilnayar 2026-06-23: "load the
+// inventory, spellbook, and quarmy files via mimic the way we are the logs").
+// EQ writes <Char>-Inventory.txt on /outputfile inventory; the agent watches
+// the file and POSTs pre-parsed rows here on mtime change. Shape matches the
+// /me uploadInventory action (same character_inventory table, replace
+// semantics). Currency rows (Bank-Coin / Currency) are dropped at parse time
+// by the agent and again here as defense in depth. Opt-out (exclude_inventory)
+// is enforced server-side. Checksum dedup so reruns of the same export no-op.
+async function _handleAgentInventory(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 2 * 1024 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const character = typeof payload?.character === 'string' ? payload.character.trim().slice(0, 64) : '';
+  if (!/^[A-Za-z]{2,}$/.test(character)) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'bad character' }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  const charRows = await supabase
+    .select('characters', `select=name,exclude_inventory,inventory_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .catch(() => null);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  if (charRow && charRow.exclude_inventory) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'opted_out' }));
+  }
+  const canonical = charRow?.name || character;
+  const checksum  = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
+  if (checksum && charRow && charRow.inventory_checksum === checksum) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
+  }
+
+  const seen = new Set();   // dedup slots within payload — schema is unique-by-slot
+  const rows = [];
+  for (const r of Array.isArray(payload.rows) ? payload.rows : []) {
+    if (!r || typeof r.slot_label !== 'string') continue;
+    const slot = r.slot_label.trim().slice(0, 64);
+    if (!slot) continue;
+    // Defense-in-depth: drop currency + any banned location even if the agent
+    // shipped them (older agent versions).
+    if (/-Coin$/i.test(slot) || /^Currency$/i.test(r.item_name || '')) continue;
+    if (seen.has(slot.toLowerCase())) continue;
+    seen.add(slot.toLowerCase());
+    const itemId = r.item_id != null ? parseInt(r.item_id, 10) : null;
+    const quantity = Math.max(1, parseInt(r.quantity, 10) || 1);
+    const itemName = String(r.item_name || '').trim().slice(0, 128);
+    if (!itemName) continue;
+    rows.push({
+      guild_id:       guildId,
+      character_name: canonical,
+      slot_label:     slot,
+      item_id:        Number.isFinite(itemId) && itemId > 0 ? itemId : null,
+      item_name:      itemName,
+      quantity,
+      observed_at:    new Date().toISOString(),
+    });
+  }
+
+  // Replace snapshot: delete + chunked insert.
+  await supabase.del('character_inventory',
+    `guild_id=eq.${encodeURIComponent(guildId)}&character_name=ilike.${encodeURIComponent(canonical)}`)
+    .catch(err => console.warn('[inventory] delete failed:', err?.message));
+  let written = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const slice = rows.slice(i, i + 500);
+    const ok = await supabase.insert('character_inventory', slice).catch(err => {
+      console.warn('[inventory] insert failed:', err?.message); return null;
+    });
+    if (Array.isArray(ok)) written += ok.length;
+  }
+  if (checksum && charRow?.name) {
+    await supabase
+      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`,
+        { inventory_checksum: checksum })
+      .catch(err => console.warn('[inventory] checksum update failed:', err?.message));
+  }
+  _trackUpload({ endpoint: 'inventory', character: canonical, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
+// POST /api/agent/spellbook
+//
+// Spellbook snapshot from EQ's /outputfile spellbook (mirror of inventory
+// path). One row per scribed spell; the agent ships Index/SpellId/Level/Name.
+// Replace semantics + checksum dedup; gated by exclude_inventory like the other
+// gear uploads.
+async function _handleAgentSpellbook(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 1024 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const character = typeof payload?.character === 'string' ? payload.character.trim().slice(0, 64) : '';
+  if (!/^[A-Za-z]{2,}$/.test(character)) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'bad character' }));
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  const charRows = await supabase
+    .select('characters', `select=name,exclude_inventory,spellbook_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .catch(() => null);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  if (charRow && charRow.exclude_inventory) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'opted_out' }));
+  }
+  const canonical = charRow?.name || character;
+  const checksum  = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
+  if (checksum && charRow && charRow.spellbook_checksum === checksum) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
+  }
+
+  const seenIds = new Set();
+  const rows = [];
+  for (const s of Array.isArray(payload.spells) ? payload.spells : []) {
+    const id = parseInt(s?.spell_id, 10);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    const name = String(s.spell_name || '').trim().slice(0, 96);
+    if (!name) continue;
+    const lvl = parseInt(s.spell_level, 10);
+    rows.push({
+      guild_id:       guildId,
+      character_name: canonical,
+      spell_id:       id,
+      spell_name:     name,
+      spell_level:    Number.isFinite(lvl) ? lvl : null,
+      observed_at:    new Date().toISOString(),
+    });
+  }
+
+  await supabase.del('character_spellbook',
+    `guild_id=eq.${encodeURIComponent(guildId)}&character_name=ilike.${encodeURIComponent(canonical)}`)
+    .catch(err => console.warn('[spellbook] delete failed:', err?.message));
+  let written = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const slice = rows.slice(i, i + 500);
+    const ok = await supabase.insert('character_spellbook', slice).catch(err => {
+      console.warn('[spellbook] insert failed:', err?.message); return null;
+    });
+    if (Array.isArray(ok)) written += ok.length;
+  }
+  if (checksum && charRow?.name) {
+    await supabase
+      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`,
+        { spellbook_checksum: checksum })
+      .catch(err => console.warn('[spellbook] checksum update failed:', err?.message));
+  }
+  _trackUpload({ endpoint: 'spellbook', character: canonical, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written }));
+}
+
 // POST /api/agent/buff_casts
 //
 // Observed buff landings on other players (see migration 20260605120000). The
@@ -9742,6 +9921,24 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentQuarmy(req, res); }
     catch (err) {
       console.error('[quarmy] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/inventory') {
+    try { return await _handleAgentInventory(req, res); }
+    catch (err) {
+      console.error('[inventory] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/spellbook') {
+    try { return await _handleAgentSpellbook(req, res); }
+    catch (err) {
+      console.error('[spellbook] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

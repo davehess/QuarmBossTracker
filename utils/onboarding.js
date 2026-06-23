@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.121': [
+    '**Mimic auto-loads inventory + spellbook** — just like your combat logs flow into wolfpack.quest, your `/outputfile inventory` and `/outputfile spellbook` snapshots now upload on their own whenever you (re-)run the commands. Mimic 1.0.78+ (logsync 3.1.67+) watches the EQ folder for `<Char>-Inventory.txt` and `<Char>-Spellbook.txt` and ships the parsed rows on every file change; reruns over the same content no-op. Quarmy was already doing this; this just adds the other two. Honors the same `exclude_inventory` opt-out on /me as Quarmy — flip that off if you don\'t want gear surfaced. (Inventory page + key inference next.)',
+  ],
   '3.0.120': [
     '**Chat misattribution safeguard** — if your agent is tailing a stray/old log (an `eqlog_OldName` file left in the folder Mimic watches), your guild chat used to post under that wrong name (Wabumkin → "Dopefiend"/"Facehack", etc). The bot now only trusts a guild-chat speaker that is in our roster, is one of your linked characters, or is independently confirmed by another raider\'s agent — otherwise it relabels to the corroborated real name. Officers get a new **Chat speaker misattribution** card in the review queue pointing at the exact machine + stray log to clean up. Existing mislabeled lines were scrubbed.',
   ],
