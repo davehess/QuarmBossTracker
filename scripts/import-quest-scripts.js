@@ -146,18 +146,28 @@ function splitPerlBranches(eventBody) {
   return branches;
 }
 
-// Parse a Perl `plugin::check_handin(\%itemcount, ID => QTY, ID => QTY)` call.
-// Returns the {item_id, qty}[] tuples or null if the cond isn't a check_handin.
+// Parse a Perl turn-in condition for its required items + currency.
 // Returns { items: [{item_id, qty}], money: {plat,gold,silver,copper}|null }
-// — null when this branch isn't a check_handin. The EQ trade window holds 4
-// items + currency, so a turn-in can require both, and both forms occur:
-//   (a) currency inside check_handin: plugin::check_handin(\%ic, 7836 => 1, platinum => 100)
-//   (b) currency as a prefix condition: ($platinum >= 900) && plugin::check_handin(\%ic, ...)
-// We collect both. (Uilnayar 2026-06-24.)
+// — null when this branch isn't a handin. Three call shapes occur in the wild:
+//   (a) hashref:    plugin::check_handin(\%ic, ID => QTY, platinum => 100)
+//                   (also quest::check_handin / quest::handin with \%ic)
+//   (b) hash literal: quest::handin({ID => QTY, ...}) — older idiom, ~27 Perl
+//       scripts incl. the Magician elemental-tool quests (Vira → Ice Giant
+//       Toes). The importer missed these entirely until now. (Uilnayar
+//       2026-06-24.)
+// Currency can ride inside the call (… platinum => 100) or as a prefix
+// condition (($platinum >= 900) && …); we collect both.
 function parseCheckHandinPerl(cond) {
-  const m = /plugin::check_handin\s*\(\s*\\?%\w+\s*,\s*([^)]*)\)/.exec(cond);
-  if (!m) return null;
-  const args = m[1];
+  let args = null;
+  // (a) hashref form: …handin(\%var, pairs)
+  let m = /(?:plugin|quest)::(?:check_)?handin\s*\(\s*\\?%\w+\s*,\s*([^)]*)\)/.exec(cond);
+  if (m) args = m[1];
+  // (b) hash-literal form: quest::handin({ pairs })
+  if (args == null) {
+    m = /quest::(?:check_)?handin\s*\(\s*\{([^}]*)\}/.exec(cond);
+    if (m) args = m[1];
+  }
+  if (args == null) return null;
   const items = [];
   let pm;
   const pairRx = /(\d+)\s*=>\s*(\d+)/g;
