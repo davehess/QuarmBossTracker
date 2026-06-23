@@ -402,25 +402,41 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
 // per-backfill. One counter row per (character, endpoint), so a single lookup
 // gives the last-seen + version. Returns nothing for a character that's never
 // uploaded, so the banner can still say "no recent uploads".
-// Best-known level per character, from /who history (characters table has no
-// level column; who_observations.level is the only source). Anonymous /who
-// rows report null level, so MAX(level) over a name gives the real ding.
-// Drives the default level-descending card order. Few owned chars → cheap
-// parallel lookups (mirrors loadSyncHeartbeats' shape).
+// Best-known level per character. Two signals:
+//   (a) who_observations.level — /who history (highest level we've ever seen).
+//   (b) character_spellbook.spell_level — a scribed L60 spell IS proof of L60,
+//       independent of /who staleness (Uilnayar 2026-06-23: Canopy's /who
+//       cache held an L57 row but her spellbook proves L60).
+// Compute the max client-side. who_observations has tons of NULL-level rows
+// (anonymous /who hides level) and a chained PostgREST .not('level','is',null)
+// .order('level',desc).limit(1) was returning a non-max row in production —
+// likely a NULLS FIRST quirk. Pulling the few non-NULL rows and Math.max-ing
+// in JS is bulletproof.
 async function loadCharLevels(charNames: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (charNames.length === 0) return out;
   const admin = supabaseAdmin();
   await Promise.all(charNames.map(async (name) => {
-    const { data } = await admin
-      .from('who_observations')
-      .select('level')
-      .ilike('character', name)
-      .not('level', 'is', null)
-      .order('level', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (data?.level != null) out.set(name.toLowerCase(), data.level as number);
+    const [whoRes, bookRes] = await Promise.all([
+      admin.from('who_observations')
+        .select('level')
+        .ilike('character', name)
+        .gte('level', 1)         // implies NOT NULL and dodges the NULLS-FIRST sort trap
+        .limit(500),
+      admin.from('character_spellbook')
+        .select('spell_level')
+        .ilike('character_name', name)
+        .gte('spell_level', 1)
+        .limit(1000),
+    ]);
+    let best = 0;
+    for (const r of (whoRes.data ?? []) as { level: number | null }[]) {
+      if (typeof r.level === 'number' && r.level > best) best = r.level;
+    }
+    for (const r of (bookRes.data ?? []) as { spell_level: number | null }[]) {
+      if (typeof r.spell_level === 'number' && r.spell_level > best) best = r.spell_level;
+    }
+    if (best > 0) out.set(name.toLowerCase(), best);
   }));
   return out;
 }
