@@ -115,6 +115,22 @@ async function load(decoded: string) {
   const quests = (questsRes.data ?? []) as Quest[];
   const questItems = (itemsRes.data ?? []) as QuestItem[];
 
+  // Key inference: holding a NO-DROP item exclusive to a locked zone proves
+  // you had the key (Uilnayar 2026-06-24). This implies the catalog quest
+  // whose reward IS that key — VP key, Trakanon Idol, VT Scepter of Shadows.
+  // The Howling Stones row has no key_item_id (no single mirrored key item),
+  // so its catalog implication is currently null but the evidence is still
+  // reported for the diagnostic line.
+  const { data: inferredRows } = await sb
+    .rpc('inferred_keys_for_character', { p_guild_id: 'wolfpack', p_character: decoded });
+  type InferredKey = {
+    zone_short: string; zone_long: string;
+    key_item_id: number | null; key_item_name: string;
+    evidence_items: string[]; evidence_count: number;
+    quest_catalog_id: number | null;
+  };
+  const inferredKeys = (inferredRows ?? []) as InferredKey[];
+
   // Authoritative per-item display data (canonical name, lore, drop zone) for
   // every required + reward item id. Lore is the ONLY way to tell apart items
   // that share a name (the 10 VT "A Lucid Shard" components), so we resolve it
@@ -144,6 +160,7 @@ async function load(decoded: string) {
     familyNames,
     itemInfo,
     prefByQuest,
+    inferredKeys,
   };
 }
 
@@ -157,7 +174,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const data = await load(decoded);
   if (!data) notFound();
-  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest } = data;
+  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest, inferredKeys } = data;
 
   // The viewed character's keyring — a quest completes when its reward sits
   // here (keys) OR in inventory (combine outputs / quest rewards). Components
@@ -270,6 +287,21 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     return { quest: q, items, haveCount, needCount, completed: directComplete, impliedBy: null as string | null };
   });
 
+  // Key inference: a catalog quest whose reward is a locked-zone key gets
+  // marked completed when the character holds NO-DROP loot exclusive to that
+  // zone — they couldn't have looted it without the key. The implication
+  // message names the strongest piece of evidence so the page explains itself.
+  for (const k of inferredKeys) {
+    if (k.quest_catalog_id == null) continue;          // no catalog quest seeded for this zone
+    const target = progress.find(p => p.quest.id === k.quest_catalog_id);
+    if (!target || target.completed) continue;
+    target.completed = true;
+    const sample = k.evidence_items[0];
+    target.impliedBy = sample
+      ? `inventory loot from ${k.zone_long} (${sample})`
+      : `inventory loot from ${k.zone_long}`;
+  }
+
   // Chain-implication: if you hold a downstream output, the upstream steps that
   // feed it are provably done — their components were consumed in the combine.
   // (Uilnayar 2026-06-23: "If someone has the Vex Thal key, they definitely did
@@ -369,6 +401,34 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </p>
         )}
       </section>
+
+      {/* Inferred zone access — derived from NO DROP loot in inventory that
+          drops ONLY in a locked zone. Surfaces even when no catalog quest is
+          seeded for the zone (e.g. Howling Stones), so the evidence is always
+          visible. (Uilnayar 2026-06-24.) */}
+      {inferredKeys.length > 0 && (
+        <section className="bg-panel border border-gold/40 rounded-lg p-5">
+          <h3 className="text-lg text-gold mb-2">🗝 Inferred zone access</h3>
+          <p className="text-xs text-dim leading-5 mb-3">
+            {decoded} is provably holding NO DROP loot exclusive to these locked
+            zones — they could not have looted it without the key.
+          </p>
+          <ul className="space-y-2 text-sm">
+            {inferredKeys.map(k => (
+              <li key={k.zone_short} className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-green">✓</span>
+                <span className="text-text">{k.zone_long}</span>
+                <span className="text-dim text-xs">
+                  {k.key_item_name && `· ${k.key_item_name}`}
+                </span>
+                <span className="text-dim/70 text-[10px]">
+                  {k.evidence_count} item{k.evidence_count === 1 ? '' : 's'} held — {k.evidence_items.slice(0, 3).join(', ')}{k.evidence_items.length < k.evidence_count ? '…' : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Active quests */}
       <section className="bg-panel border border-border rounded-lg p-5">
