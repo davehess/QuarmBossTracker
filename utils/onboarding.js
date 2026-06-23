@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.120': [
+    '**Chat misattribution safeguard** — if your agent is tailing a stray/old log (an `eqlog_OldName` file left in the folder Mimic watches), your guild chat used to post under that wrong name (Wabumkin → "Dopefiend"/"Facehack", etc). The bot now only trusts a guild-chat speaker that is in our roster, is one of your linked characters, or is independently confirmed by another raider\'s agent — otherwise it relabels to the corroborated real name. Officers get a new **Chat speaker misattribution** card in the review queue pointing at the exact machine + stray log to clean up. Existing mislabeled lines were scrubbed.',
+  ],
   '3.0.119': [
     '**Chat relay attributes the real speaker** — when a player\'s log file is named after a previous character ("eqlog_Dopefiend_pq.proj.txt" while you\'re actually playing Wabumkin), every guild/raid line you typed used to relay under the old name (you saw your own lines as Dopefiend / Facehack / etc). Fixed by cross-checking against the other agents in raid: when at least one of them sees "Wabumkin tells the guild" (the third-person broadcast every other client receives), that wins over your local "You say..." line. No agent update required — works at the bot.',
   ],

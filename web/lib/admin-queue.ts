@@ -24,7 +24,7 @@ export type QueueItem = {
 };
 
 export type QueueCategory = {
-  id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp' | 'awaiting_opendkp_claim' | 'missing_ticks';
+  id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp' | 'awaiting_opendkp_claim' | 'missing_ticks' | 'chat_misattribution';
   icon:         string;
   title:        string;
   summary:      string;
@@ -575,6 +575,41 @@ async function loadPotentialMissingTicks(): Promise<QueueCategory> {
   return { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', summary, count: items.length, items, fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
 }
 
+// (6) Chat speaker misattribution. A misconfigured agent tails a stray
+// eqlog_<Name> log (an old or foreign character still in the watched folder),
+// so guild/raid chat the player typed on their REAL character is stamped with
+// that stray name (Wabumkin's machine emitting "Dopefiend"/"Facehack";
+// Chadivarius's emitting "Ashaiya"). The chat_attribution_conflicts RPC finds
+// lines where the same in-game broadcast was stored under both a ghost name
+// (non-roster, one uploader) and a real roster name (seen by bystanders). The
+// fix is on the member's machine: remove the stray log from Mimic's watch dir.
+async function loadChatMisattribution(): Promise<QueueCategory> {
+  const sb = supabaseAdmin();
+  const summary = 'Members whose agent is tailing a stray/old log file, so their guild chat posts under the wrong name (the bot now auto-relabels what it can, but the source should be fixed). Ask the member to remove the named log from the folder Mimic watches.';
+  const { data, error } = await sb.rpc('chat_attribution_conflicts', { p_days: 7 });
+  const rows = (data ?? []) as { ghost_speaker: string; uploader_discord_id: string; likely_real: string; lines: number; last_line: string }[];
+  if (error || rows.length === 0) {
+    return { id: 'chat_misattribution', icon: '🪪', title: 'Chat speaker misattribution', summary, count: 0, items: [], fixHelpHref: '/admin/agents' };
+  }
+  // Resolve uploader discord_id → member nickname for readable rows.
+  const ids = [...new Set(rows.map(r => r.uploader_discord_id))];
+  const { data: members } = await sb.from('wolfpack_members')
+    .select('discord_id, nickname, global_name').in('discord_id', ids);
+  const nameById = new Map<string, string>();
+  for (const m of ((members ?? []) as { discord_id: string; nickname: string | null; global_name: string | null }[])) {
+    nameById.set(m.discord_id, m.nickname || m.global_name || m.discord_id);
+  }
+  const items: QueueItem[] = rows.map(r => ({
+    key:    `${r.uploader_discord_id}|${r.ghost_speaker}`,
+    label:  `${nameById.get(r.uploader_discord_id) || r.uploader_discord_id}: relaying as “${r.ghost_speaker}”`,
+    detail: `Real character looks like ${r.likely_real}. ${r.lines} line${r.lines === 1 ? '' : 's'} in 7d — their agent is tailing a stray eqlog_${r.ghost_speaker} log; have them remove it from Mimic's watch folder.`,
+    count:  r.lines,
+    last:   r.last_line,
+    href:   '/admin/agents',
+  }));
+  return { id: 'chat_misattribution', icon: '🪪', title: 'Chat speaker misattribution', summary, count: items.length, items, fixHelpHref: '/admin/agents' };
+}
+
 // Load every category in parallel. Caller uses the total count for the
 // banner, the per-category counts for the badges, and items for /admin/queue.
 export async function loadAdminQueue(): Promise<{
@@ -587,6 +622,7 @@ export async function loadAdminQueue(): Promise<{
     loadUnregisteredOpenDKP(),
     loadAwaitingOpenDKPClaim(),
     loadPotentialMissingTicks(),
+    loadChatMisattribution(),
   ]);
   const total = categories.reduce((acc, c) => acc + c.count, 0);
   return { total, categories };

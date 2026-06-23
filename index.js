@@ -2920,56 +2920,77 @@ const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
 const CHAT_RELAY_DEDUP_WINDOW_MS = 12_000;
 const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
 
-// Cross-uploader speaker resolution. Same in-game line arrives from multiple
-// agents: the speaker's OWN log writes "You say to your guild", from which the
-// agent fills speaker = selfName-from-filename — wrong when the player renamed
-// their character without renaming the log file (Wabumkin's log named
-// eqlog_Dopefiend_pq.proj.txt, so their lines relayed as "Dopefiend"). Every
-// other uploader sees the canonical "Wabumkin tells the guild" and parses the
-// real name. We bias toward the parsed name (uploader != speaker) and treat
-// "uploader is the listed character" as a single-witness self-view, fixable
-// when a third-person witness arrives in the same window. (Uilnayar 2026-06-23.)
-const SPEAKER_RESOLVE_WINDOW_MS = 12_000;
-const _speakerWitness = new Map();   // key "channel|normtext" → { speakers: Map<speakerLower, {count, anyParsed}>, at }
-function _speakerWitnessGc(now) {
-  for (const [k, v] of _speakerWitness) if (now - v.at > SPEAKER_RESOLVE_WINDOW_MS * 2) _speakerWitness.delete(k);
+// ── Chat speaker safeguard ──────────────────────────────────────────────────
+// A misconfigured agent tails a stray log (an old / foreign eqlog_<Name> file
+// still in the watched folder), so guild chat the player actually typed on
+// their REAL character gets stamped with that stray name. Observed repeatedly:
+// Wabumkin's machine emitting "Dopefiend" (a Freedom player), earlier
+// "Facehack"; Chadivarius's machine emitting "Ashaiya" (Uilnayar 2026-06-23).
+//
+// Guild/raid chat is WP-only, so a speaker we can't vouch for is suspect. We
+// trust a speaker when ANY of:
+//   • it's in the WP roster (characters table), OR
+//   • it's a character linked to the uploading Discord account, OR
+//   • a DIFFERENT uploader independently reported the same in-game line under
+//     that name (bystander corroboration — everyone in guild sees the same
+//     "X tells the guild" broadcast).
+// When the incoming speaker isn't trusted but a trusted alternative exists for
+// the same line, we RELABEL to it. We never drop a line on this path (a
+// genuinely-unlinked solo speaker passes through unchanged) — relabel only.
+//
+// The witness buffer keys on the IN-GAME line (channel | EQ-second | text) so
+// only the same broadcast is unified, never two people who happened to type the
+// same word at different times.
+const CHAT_WITNESS_WINDOW_MS = 90_000;
+const _chatWitness = new Map();   // key → { at, bySpeaker: Map<lc, { uploaders:Set, original }> }
+function _witnessKey(channel, msgTs, normText) {
+  const sec = msgTs ? new Date(msgTs).toISOString().slice(0, 19) : '';
+  return `${channel}|${sec}|${normText}`;
 }
-// uploaderCharacters: lowercased set of characters whose discord_id matches the
-// uploader. When the incoming speaker is in that set, the attribution is a
-// self-view candidate. Pre-resolved per upload to avoid N DB hits.
-function _resolveSpeaker(channel, normText, incomingSpeaker, uploaderCharacters) {
+function _recordWitness(key, speaker, uploaderId) {
   const now = Date.now();
-  _speakerWitnessGc(now);
-  const key = `${channel}|${normText}`;
-  const slot = _speakerWitness.get(key) || { speakers: new Map(), at: now };
-  const lc = incomingSpeaker.toLowerCase();
-  const isSelfView = uploaderCharacters.has(lc);
-  const prev = slot.speakers.get(lc) || { count: 0, anyParsed: false };
-  prev.count += 1;
-  prev.anyParsed = prev.anyParsed || !isSelfView;
-  slot.speakers.set(lc, prev);
-  slot.at = now;
-  _speakerWitness.set(key, slot);
-
-  // Pick the best-witnessed speaker: prefer any parsed (third-person) speaker,
-  // tiebreak by witness count, then alphabetical for stability.
-  let best = incomingSpeaker, bestScore = [isSelfView ? 0 : 1, prev.count, incomingSpeaker];
-  for (const [other, info] of slot.speakers) {
-    if (other === lc) continue;
-    const score = [info.anyParsed ? 1 : 0, info.count, other];
-    if (score[0] > bestScore[0]
-      || (score[0] === bestScore[0] && score[1] > bestScore[1])
-      || (score[0] === bestScore[0] && score[1] === bestScore[1] && score[2] < bestScore[2])) {
-      // Use the original-case form we recorded earlier (stored on slot via a
-      // parallel map below). Falls back to lower if not recorded.
-      best = slot.original?.get(other) || other;
-      bestScore = score;
-    }
+  if (_chatWitness.size > 8000) {
+    for (const [k, v] of _chatWitness) if (now - v.at > CHAT_WITNESS_WINDOW_MS) _chatWitness.delete(k);
   }
-  // Record original case for the incoming so a later arrival can render it.
-  slot.original = slot.original || new Map();
-  if (!slot.original.has(lc)) slot.original.set(lc, incomingSpeaker);
-  return best;
+  let slot = _chatWitness.get(key);
+  if (!slot) { slot = { at: now, bySpeaker: new Map() }; _chatWitness.set(key, slot); }
+  slot.at = now;
+  const lc = speaker.toLowerCase();
+  let w = slot.bySpeaker.get(lc);
+  if (!w) { w = { uploaders: new Set(), original: speaker }; slot.bySpeaker.set(lc, w); }
+  w.uploaders.add(uploaderId);
+  return slot;
+}
+// Roster cache (lowercased WP character names), refreshed lazily.
+let _rosterNames = new Set();
+let _rosterNamesAt = 0;
+const ROSTER_CACHE_TTL_MS = 10 * 60 * 1000;
+async function _rosterNameSet() {
+  if (_rosterNames.size && Date.now() - _rosterNamesAt < ROSTER_CACHE_TTL_MS) return _rosterNames;
+  try {
+    const rows = await supabase.select('characters',
+      `select=name&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}`);
+    const s = new Set();
+    for (const r of (Array.isArray(rows) ? rows : [])) if (r?.name) s.add(String(r.name).toLowerCase());
+    if (s.size) { _rosterNames = s; _rosterNamesAt = Date.now(); }
+  } catch { /* offline → keep last good set (or empty: safeguard just no-ops) */ }
+  return _rosterNames;
+}
+// Returns the speaker to use. Relabels a distrusted stray-log name to a trusted
+// alternative witnessed on the same line; otherwise returns the input unchanged.
+function _safeguardSpeaker(slot, incomingSpeaker, uploaderId, rosterSet, uploaderCharacters) {
+  const lc = incomingSpeaker.toLowerCase();
+  const mine = slot.bySpeaker.get(lc);
+  const corroborated = !!mine && [...mine.uploaders].some(u => u !== uploaderId);
+  const trusted = rosterSet.has(lc) || uploaderCharacters.has(lc) || corroborated;
+  if (trusted) return incomingSpeaker;
+  // Distrusted → look for a trusted alternative on the SAME line to relabel to.
+  for (const [otherLc, w] of slot.bySpeaker) {
+    if (otherLc === lc) continue;
+    const otherCorroborated = [...w.uploaders].some(u => u !== uploaderId);
+    if (rosterSet.has(otherLc) || otherCorroborated) return w.original;
+  }
+  return incomingSpeaker;   // no trusted alternative — pass through unchanged (never drop)
 }
 // Trigger-broadcast dedup: every raider's agent fires the same trigger (e.g. a
 // boss rampage), so collapse by guild|key within a short window — one Discord
@@ -3125,9 +3146,9 @@ async function _handleAgentChat(req, res) {
   const raidChId  = process.env.RAID_CHAT_CHANNEL_ID;
   let posted = 0;
 
-  // Pre-resolve the uploader's own characters so the speaker resolver can tell
-  // a self-view (speaker == one of uploader's chars) from a third-person parse
-  // (some other player's name). One query per upload, cheap.
+  // Speaker safeguard inputs: the uploader's own linked characters (a self-view
+  // of one of these is trusted) + the full WP roster (cached). One small query
+  // per upload for the former; the roster is cached ~10min.
   let uploaderCharacters = new Set();
   try {
     const rows = await supabase.select(
@@ -3135,7 +3156,8 @@ async function _handleAgentChat(req, res) {
       `select=name&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&discord_id=eq.${encodeURIComponent(identity.discord_id)}`,
     );
     for (const r of (Array.isArray(rows) ? rows : [])) if (r?.name) uploaderCharacters.add(String(r.name).toLowerCase());
-  } catch { /* offline: just disables the resolver — original behavior */ }
+  } catch { /* offline: safeguard degrades to roster + corroboration only */ }
+  const rosterSet = await _rosterNameSet();
   // Mirror every relayed chat line into chat_messages so the historical
   // record builds up live, not just via the agent's --since backfill.
   // Same dedup as the Discord-side path (speaker + text + 5s window) but
@@ -3223,12 +3245,12 @@ async function _handleAgentChat(req, res) {
     // key fails to dedup → the message double-posts. Lowercasing + collapsing
     // whitespace in the KEY (display text keeps original casing) closes it.
     const normText = String(text).toLowerCase().replace(/\s+/g, ' ').trim();
-    // Cross-uploader speaker resolution. Replace incoming speaker with the
-    // best-witnessed name in the current window — a third-person "Wabumkin
-    // tells the guild" parse outranks the uploader's own "You say..." self-view
-    // even if the self-view arrived first. (See _resolveSpeaker comment above.)
-    const resolvedSpeaker = _resolveSpeaker(channel, normText, speaker, uploaderCharacters);
-    const effectiveSpeaker = resolvedSpeaker || speaker;
+    // Speaker safeguard: relabel a stray-log ghost name (e.g. Wabumkin's agent
+    // emitting "Dopefiend") to a trusted alternative witnessed on the same line.
+    // Witness is keyed on the in-game line (channel|EQ-second|text). See the
+    // _safeguardSpeaker comment above.
+    const witnessSlot = _recordWitness(_witnessKey(channel, msgTs, normText), speaker, identity.discord_id);
+    const effectiveSpeaker = _safeguardSpeaker(witnessSlot, speaker, identity.discord_id, rosterSet, uploaderCharacters);
     const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${normText}`;
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
