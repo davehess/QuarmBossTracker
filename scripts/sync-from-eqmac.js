@@ -748,15 +748,17 @@ const TRANSFORMS = {
     if (r.id == null) return null;
     return r;
   },
-  // upstream column is `event` which is a SQL reserved word; remap to event_.
+  // Upstream schema: id (auto-inc PK), emoteid (the script-key reference),
+  // event_ (already suffixed in source — SQL reserved word), type, text.
   npc_emotes: (cols, row) => {
-    const r = pick(cols, row, ['emoteid', 'event', 'type', 'text']);
-    if (r.emoteid == null) return null;
+    const r = pick(cols, row, ['id', 'emoteid', 'event_', 'type', 'text']);
+    if (r.id == null) return null;
     return {
-      emoteid: r.emoteid,
-      event_:  r.event ?? null,
-      type:    r.type  ?? null,
-      text:    r.text  ?? null,
+      id:      r.id,
+      emoteid: r.emoteid ?? 0,
+      event_:  r.event_  ?? null,
+      type:    r.type    ?? null,
+      text:    r.text    ?? null,
     };
   },
 };
@@ -839,7 +841,7 @@ const PK_MAP = {
   eqemu_fishing:                     ['id'],
   eqemu_merchantlist:                ['merchantid', 'slot'],
   eqemu_object:                      ['id'],
-  eqemu_npc_emotes:                  ['emoteid'],
+  eqemu_npc_emotes:                  ['id'],
 };
 
 // ── Exports for tests ───────────────────────────────────────────────────────
