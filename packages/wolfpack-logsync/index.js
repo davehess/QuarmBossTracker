@@ -14265,9 +14265,14 @@ function _ciEq(a, b) {
 // through this echo, so dropping them here loses signal entirely.
 function _isOwnGuildInstanceEcho(text, killerGuild) {
   if (!/\(Instanced\)/i.test(text)) return false;
-  // No own-guild observed yet → conservative drop (current behavior). The
-  // first Druzzil broadcast of the session unblocks foreign-guild echoes.
-  if (!_observedOwnGuild) return true;
+  // No own-guild observed yet → PASS THROUGH (let the bot decide). The old
+  // conservative-drop default silently lost every foreign-guild (Instanced)
+  // echo until the first Druzzil broadcast fired in the session, which
+  // explained Uilnayar's missing 10:38 Oakin/Zek Terror kill on 2026-06-23.
+  // The bot now drops own-guild instance echoes itself (via WP_GUILD_NAME),
+  // so the worst case here is a small wasted relay request — never a missed
+  // foreign kill.
+  if (!_observedOwnGuild) return false;
   return _ciEq(killerGuild, _observedOwnGuild);
 }
 
