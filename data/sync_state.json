@@ -1,5 +1,5 @@
 {
-  "last_run": "2026-06-22T22:05:30.397Z",
+  "last_run": "2026-06-23T03:49:06.641Z",
   "last_dump": "quarm_2026-03-20-09_37.tar.gz",
   "last_dump_sha": "db13431511c90c3b5cbe084d2a15e1b94c2e0eb1",
   "counts": {
@@ -19,5 +19,5 @@
     "eqemu_altadv_vars": 222,
     "eqemu_aa_effects": 818
   },
-  "total_rows": 238108
+  "total_rows": 349510
 }
