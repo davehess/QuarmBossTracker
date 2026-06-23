@@ -131,6 +131,41 @@ async function load(decoded: string) {
   };
   const inferredKeys = (inferredRows ?? []) as InferredKey[];
 
+  // Inventory-driven quest discovery from scripted_npc_turnins (Uilnayar
+  // 2026-06-24: "start populating quests based on the inventories"). For every
+  // item id the character holds, surface the NPC turn-ins where that item is
+  // either an input (piece-of-quest) or an output (completed turn-in). We
+  // resolve the in/out item names via eqemu_items in one batched call so the
+  // page can render "Captain Bvellos: Storm Giant Toes → +Kromzek faction".
+  const ownInventoryIds = Array.from(new Set(
+    (invRes.data ?? []).filter(r => r.character_name.toLowerCase() === decoded.toLowerCase() && r.item_id != null).map(r => r.item_id as number)
+  ));
+  type Discovered = {
+    turnin_id: number; zone_short: string; npc_name: string;
+    evidence: 'piece' | 'completed';
+    matched_item_id: number;
+    inputs:  { item_id: number; qty: number }[];
+    outputs: { item_id: number; kind: 'fixed' | 'random' }[];
+    faction_changes: { faction_id: number; delta: number }[] | null;
+    exp_award: number | null;
+    cash: { plat?: number; gold?: number; silver?: number; copper?: number } | null;
+    random_outputs: boolean;
+  };
+  let discovered: Discovered[] = [];
+  if (ownInventoryIds.length > 0) {
+    const { data: dRows } = await sb.rpc('discover_quests_for_item', { p_item_ids: ownInventoryIds });
+    discovered = (dRows ?? []) as Discovered[];
+  }
+  // Resolve input/output item names for display in one batch.
+  const discoveryItemIds = Array.from(new Set(discovered.flatMap(d =>
+    [...d.inputs.map(i => i.item_id), ...d.outputs.map(o => o.item_id), d.matched_item_id]
+  )));
+  const itemNameById = new Map<number, string>();
+  if (discoveryItemIds.length > 0) {
+    const { data: irows } = await sb.from('eqemu_items').select('id, name').in('id', discoveryItemIds);
+    for (const r of ((irows ?? []) as { id: number; name: string }[])) itemNameById.set(r.id, r.name);
+  }
+
   // Authoritative per-item display data (canonical name, lore, drop zone) for
   // every required + reward item id. Lore is the ONLY way to tell apart items
   // that share a name (the 10 VT "A Lucid Shard" components), so we resolve it
@@ -161,6 +196,8 @@ async function load(decoded: string) {
     itemInfo,
     prefByQuest,
     inferredKeys,
+    discovered,
+    itemNameById,
   };
 }
 
@@ -174,7 +211,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const data = await load(decoded);
   if (!data) notFound();
-  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest, inferredKeys } = data;
+  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest, inferredKeys, discovered, itemNameById } = data;
 
   // The viewed character's keyring — a quest completes when its reward sits
   // here (keys) OR in inventory (combine outputs / quest rewards). Components
@@ -429,6 +466,84 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </ul>
         </section>
       )}
+
+      {/* Inventory-driven discovery — scripted NPC turn-ins where any item the
+          player holds is consumed or rewarded. Authoritative source: the
+          ProjectEQ quest scripts mirrored into scripted_npc_turnins. We split
+          into "completed" (held item is one of the rewards — they did it
+          already) and "in progress" (held item is consumed — they could turn
+          it in now). (Uilnayar 2026-06-24.) */}
+      {discovered.length > 0 && (() => {
+        const completed = discovered.filter(d => d.evidence === 'completed');
+        const inProgress = discovered.filter(d => d.evidence === 'piece');
+        // Group by NPC so a single turn-in NPC doesn't render 5 rows.
+        const byNpc = new Map<string, typeof discovered>();
+        for (const d of inProgress) {
+          const k = `${d.zone_short}|${d.npc_name}|${d.turnin_id}`;
+          const arr = byNpc.get(k) ?? [];
+          arr.push(d);
+          byNpc.set(k, arr);
+        }
+        const itemName = (id: number) => itemNameById.get(id) || `#${id}`;
+        return (
+          <section className="bg-panel border border-purple/40 rounded-lg p-5">
+            <h3 className="text-lg text-purple mb-2">🔍 Inventory-driven discovery</h3>
+            <p className="text-xs text-dim leading-5 mb-3">
+              NPC turn-ins matched against {decoded}&apos;s inventory. Sourced from the
+              ProjectEQ quest scripts ({(discovered.length).toLocaleString()} matches across {byNpc.size + completed.length} turn-ins). Faction nudges and exp
+              shown when present.
+            </p>
+            {completed.length > 0 && (
+              <div className="mb-4">
+                <h4 className="text-sm text-green mb-1.5">✓ Turn-in outputs you hold ({completed.length})</h4>
+                <ul className="text-xs space-y-1">
+                  {completed.slice(0, 30).map(d => (
+                    <li key={`c-${d.turnin_id}-${d.matched_item_id}`} className="flex items-baseline gap-2 flex-wrap">
+                      <span className="text-green">✓</span>
+                      <span className="text-text">{itemName(d.matched_item_id)}</span>
+                      <span className="text-dim text-[10px]">— from {d.npc_name} ({d.zone_short})</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {byNpc.size > 0 && (
+              <div>
+                <h4 className="text-sm text-orange mb-1.5">⏳ In-progress turn-ins ({byNpc.size})</h4>
+                <ul className="text-xs space-y-2">
+                  {[...byNpc.entries()].slice(0, 40).map(([k, rows]) => {
+                    const head = rows[0];
+                    return (
+                      <li key={k} className="border-l-2 border-purple/30 pl-3">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span className="text-text font-medium">{head.npc_name}</span>
+                          <span className="text-dim text-[10px]">· {head.zone_short}</span>
+                          {head.exp_award && <span className="text-blue text-[10px]">{head.exp_award.toLocaleString()} xp</span>}
+                        </div>
+                        <div className="text-[11px] text-dim mt-0.5">
+                          Give: {head.inputs.map(i => `${itemName(i.item_id)}${i.qty > 1 ? ` ×${i.qty}` : ''}`).join(' + ')}
+                          {head.outputs.length > 0 && (
+                            <span>
+                              {' → '}
+                              {head.outputs.map(o => itemName(o.item_id)).join(', ')}
+                              {head.random_outputs && <span className="text-orange/80"> (random)</span>}
+                            </span>
+                          )}
+                        </div>
+                        {head.faction_changes && head.faction_changes.length > 0 && (
+                          <div className="text-[10px] text-dim/80 mt-0.5">
+                            Faction: {head.faction_changes.map(f => `${f.delta > 0 ? '+' : ''}${f.delta} #${f.faction_id}`).join(', ')}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </section>
+        );
+      })()}
 
       {/* Active quests */}
       <section className="bg-panel border border-border rounded-lg p-5">
