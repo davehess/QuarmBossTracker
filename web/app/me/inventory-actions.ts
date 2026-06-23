@@ -35,6 +35,10 @@ export function parseInventory(text: string): ParsedRow[] {
     if (!location || location.toLowerCase() === 'location') continue;   // header
     const lname = (name || '').trim();
     if (!lname || /^empty$/i.test(lname) || lname === '(empty)') continue;
+    // Currency entries (Bank-Coin, General-Coin, SharedBank-Coin, etc.) carry
+    // platinum totals — useful but not "items," and they'd skew quantity
+    // aggregates. Drop them; the player's wallet is a separate signal.
+    if (/-Coin$/i.test(location) || /^Currency$/i.test(lname)) continue;
     const id = parseInt(idStr, 10);
     const count = Math.max(1, parseInt(countStr, 10) || 1);
     // Dedup on slot (one item per slot); the file shouldn't repeat slots but

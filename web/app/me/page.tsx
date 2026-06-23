@@ -30,6 +30,8 @@ import { userTz, fmtAbs, relTime, fmtDateOnly } from '@/lib/timezone';
 import ExclusionToggles from './ExclusionToggles';
 import ScrapShare from './ScrapShare';
 import InventoryUpload from './InventoryUpload';
+import KeysUpload from './KeysUpload';
+import SpellbookUpload from './SpellbookUpload';
 
 export const dynamic = 'force-dynamic';
 
@@ -777,6 +779,8 @@ export default async function MePage() {
                   <span className="text-dim">opendkp id {c.opendkp_id}</span>
                 )}
                 <InventoryUpload character={c.name} />
+                <KeysUpload character={c.name} />
+                <SpellbookUpload character={c.name} />
               </div>
             </header>
 
