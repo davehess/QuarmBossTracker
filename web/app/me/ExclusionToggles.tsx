@@ -12,7 +12,7 @@
 import { useTransition, useState } from 'react';
 import { setCharacterExclusion } from './actions';
 
-type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm';
+type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly';
 
 export default function ExclusionToggles({
   character,
@@ -20,17 +20,20 @@ export default function ExclusionToggles({
   excludeInventory,
   tellRelay,
   tellDm,
+  showInventoryPublicly,
 }: {
   character: string;
   excludeFromStats: boolean;
   excludeInventory: boolean;
   tellRelay: boolean;
   tellDm: boolean;
+  showInventoryPublicly: boolean;
 }) {
   const [stats, setStats]         = useState(excludeFromStats);
   const [inventory, setInventory] = useState(excludeInventory);
   const [tells, setTells]         = useState(tellRelay);
   const [dm, setDm]               = useState(tellDm);
+  const [showQuests, setShowQuests] = useState(showInventoryPublicly);
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
 
@@ -94,6 +97,15 @@ export default function ExclusionToggles({
             onChange={(next) => flip('tell_dm', next, setDm, dm)}
           />
         )}
+        <Toggle
+          on={showQuests}
+          disabled={pending}
+          tooltip="Public quest tracker: when ON, anyone signed in can see this character's /character/<name>/quests page (which items they have/need, family hints). OFF (default) keeps it owner + officer only."
+          onLabel="Quests: PUBLIC"
+          offLabel="Quests: private"
+          variant="positive-when-on"
+          onChange={(next) => flip('show_inventory_publicly', next, setShowQuests, showQuests)}
+        />
       </div>
       {err && <div className="text-red-400">{err}</div>}
     </div>

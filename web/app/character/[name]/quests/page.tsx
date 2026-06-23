@@ -1,0 +1,388 @@
+// /character/[name]/quests — per-character quest tracker.
+//
+// Visibility:
+//   • Always visible to the character's owner (characters.discord_id ==
+//     viewer's wolfpack_members.discord_id).
+//   • Always visible to officers.
+//   • Visible to other signed-in members only if the character has set
+//     characters.show_inventory_publicly = true.
+//
+// Data:
+//   • quest_catalog + quest_required_item — the curated list of trackable
+//     quests (managed by officers via /admin/quests).
+//   • character_inventory — populated by the future agent file-watcher on
+//     <character>-Inventory.txt. Until that lands, the page renders red-X
+//     for every item, which is honest — we haven't observed the inventory.
+//   • Family-aware: cross-character hint shows when ANOTHER character in
+//     the same main_name family has the item (useful for MQ planning).
+//
+// Three sections on the page:
+//   1. Active quests — progress bars + per-item check/X
+//   2. Stack turn-ins — separate table view per Uilnayar 2026-06-24
+//      ("for items where you typically would turn in stacks, highlight
+//       those in a table")
+//   3. Inventory dead-weight — items in the inventory that aren't useful
+//      to this character (no-drop, wrong class/race, no quest claim).
+
+import Link from 'next/link';
+import { redirect, notFound } from 'next/navigation';
+import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
+import { isOfficer } from '@/lib/officer';
+
+export const dynamic = 'force-dynamic';
+
+type Quest = {
+  id: number;
+  name: string;
+  category: string | null;
+  zone: string | null;
+  pqdi_quest_url: string | null;
+  notes: string | null;
+  is_stack_turnin: boolean;
+  reward_item_id: number | null;
+  reward_item_name: string | null;
+  display_order: number;
+};
+type QuestItem = {
+  id: number;
+  quest_id: number;
+  item_id: number | null;
+  item_name: string;
+  quantity: number;
+  optional: boolean;
+  notes: string | null;
+  display_order: number;
+};
+type InventoryRow = {
+  character_name: string;
+  slot_label: string;
+  item_id: number | null;
+  item_name: string;
+  quantity: number;
+};
+
+async function load(decoded: string) {
+  const sb = supabaseAdmin();
+  const [
+    charRes, questsRes, itemsRes, invRes,
+  ] = await Promise.all([
+    sb.from('characters')
+      .select('name, class, race, main_name, discord_id, show_inventory_publicly')
+      .ilike('name', decoded)
+      .limit(1),
+    sb.from('quest_catalog')
+      .select('id, name, category, zone, pqdi_quest_url, notes, is_stack_turnin, reward_item_id, reward_item_name, display_order')
+      .eq('guild_id', 'wolfpack')
+      .eq('active', true)
+      .order('display_order', { ascending: true }),
+    sb.from('quest_required_item')
+      .select('id, quest_id, item_id, item_name, quantity, optional, notes, display_order')
+      .order('display_order', { ascending: true }),
+    // The character's inventory plus everyone in the same family
+    // (family = same main_name) so we can hint "X has this on Y."
+    sb.from('character_inventory')
+      .select('character_name, slot_label, item_id, item_name, quantity')
+      .eq('guild_id', 'wolfpack')
+      .limit(10000),
+  ]);
+
+  const char = (charRes.data && charRes.data[0]) as
+    | { name: string; class: string | null; race: string | null; main_name: string | null; discord_id: string | null; show_inventory_publicly: boolean }
+    | undefined;
+  if (!char) return null;
+
+  // Family lookup → main_name (or own name if main).
+  const main = (char.main_name && char.main_name.trim()) || char.name;
+  const { data: familyRows } = await sb
+    .from('characters')
+    .select('name')
+    .eq('guild_id', 'wolfpack')
+    .or(`name.eq.${main},main_name.eq.${main}`);
+  const familyNames = new Set(((familyRows ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
+
+  return {
+    char,
+    quests: (questsRes.data ?? []) as Quest[],
+    questItems: (itemsRes.data ?? []) as QuestItem[],
+    inventory: (invRes.data ?? []) as InventoryRow[],
+    familyNames,
+  };
+}
+
+export default async function CharacterQuestsPage({ params }: { params: Promise<{ name: string }> }) {
+  const { name } = await params;
+  const decoded = decodeURIComponent(name);
+  if (!/^[A-Za-z]{2,}$/.test(decoded)) notFound();
+
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/quests`);
+
+  const data = await load(decoded);
+  if (!data) notFound();
+  const { char, quests, questItems, inventory, familyNames } = data;
+
+  // Visibility gate. Officer or owner always; everyone else needs the
+  // character's show_inventory_publicly flag.
+  const officer = await isOfficer(user.id);
+  let isOwner = false;
+  if (char.discord_id) {
+    const { data: me } = await supabaseAdmin()
+      .from('wolfpack_members')
+      .select('discord_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    isOwner = !!me?.discord_id && me.discord_id === char.discord_id;
+  }
+  if (!officer && !isOwner && !char.show_inventory_publicly) {
+    return (
+      <div className="space-y-4">
+        <div className="text-sm"><Link href={`/character/${encodeURIComponent(decoded)}`} className="text-blue hover:underline">← back to {decoded}</Link></div>
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold">🔒 Private</h2>
+          <p className="text-sm text-dim mt-2">
+            {decoded} hasn&apos;t made their quest tracker public yet. Only the owner
+            (and officers) can see this page.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  // Index inventory by lowercase item name (we may not have item_id for
+  // every row from the eventual upload). Sum quantities across slots so
+  // stacks-of-10-in-different-bags count correctly.
+  const ownInvByName = new Map<string, number>();
+  const ownInvSlotByName = new Map<string, string[]>();
+  const familyInvByName = new Map<string, Map<string, number>>();  // item -> { charName -> qty }
+  for (const row of inventory) {
+    const isOwn = row.character_name.toLowerCase() === decoded.toLowerCase();
+    const isFamily = familyNames.has(row.character_name.toLowerCase());
+    if (!isOwn && !isFamily) continue;
+    const itemKey = row.item_name.toLowerCase();
+    if (isOwn) {
+      ownInvByName.set(itemKey, (ownInvByName.get(itemKey) ?? 0) + row.quantity);
+      const slots = ownInvSlotByName.get(itemKey) ?? [];
+      slots.push(row.slot_label);
+      ownInvSlotByName.set(itemKey, slots);
+    } else {
+      const sub = familyInvByName.get(itemKey) ?? new Map();
+      sub.set(row.character_name, (sub.get(row.character_name) ?? 0) + row.quantity);
+      familyInvByName.set(itemKey, sub);
+    }
+  }
+
+  const itemsByQuest = new Map<number, QuestItem[]>();
+  for (const it of questItems) {
+    const list = itemsByQuest.get(it.quest_id) ?? [];
+    list.push(it);
+    itemsByQuest.set(it.quest_id, list);
+  }
+
+  // Quest completion: required items where ownInv quantity >= required.
+  // "Has the reward" → completed (folded into a separate section).
+  type QuestProgress = {
+    quest: Quest;
+    items: { ri: QuestItem; have: number; need: number; familyHints: { name: string; qty: number }[] }[];
+    haveCount: number;
+    needCount: number;
+    completed: boolean;        // owns the reward item already (quest done)
+  };
+  const progress: QuestProgress[] = quests.map(q => {
+    const reqs = itemsByQuest.get(q.id) ?? [];
+    const items = reqs.map(ri => {
+      const have = ownInvByName.get(ri.item_name.toLowerCase()) ?? 0;
+      const sub = familyInvByName.get(ri.item_name.toLowerCase());
+      const familyHints = sub ? [...sub.entries()].map(([name, qty]) => ({ name, qty })) : [];
+      return { ri, have, need: ri.quantity, familyHints };
+    });
+    const haveCount = items.filter(x => x.have >= x.need && !x.ri.optional).length;
+    const needCount = items.filter(x => !x.ri.optional).length;
+    const rewardKey = (q.reward_item_name || '').toLowerCase();
+    const completed = !!rewardKey && (ownInvByName.get(rewardKey) ?? 0) >= 1;
+    return { quest: q, items, haveCount, needCount, completed };
+  });
+
+  const active     = progress.filter(p => !p.completed && !p.quest.is_stack_turnin);
+  const stacks     = progress.filter(p => !p.completed &&  p.quest.is_stack_turnin);
+  const completed  = progress.filter(p => p.completed);
+
+  // Dead-weight: inventory items that are NOT required by any active quest
+  // and the character isn't using as gear. Heuristic for v1 — refined as
+  // we learn the data. Items with item_id that we recognize from
+  // eqemu_items but aren't equipped (slot starts with 'General') and
+  // aren't a quest reagent are surfaced as dead-weight candidates.
+  // (Skipped until inventory data lands; placeholder section below.)
+
+  return (
+    <div className="space-y-6">
+      <div className="text-sm">
+        <Link href={`/character/${encodeURIComponent(decoded)}`} className="text-blue hover:underline">← back to {decoded}</Link>
+      </div>
+
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-2xl text-gold flex items-center gap-3 mb-1">
+          📋 {decoded} — Quest tracker
+          {!char.show_inventory_publicly && (
+            <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-dim/20 border border-dim/60 text-dim uppercase" title="Owner/officer only. Toggle on /me to share with the guild.">
+              🔒 Private
+            </span>
+          )}
+          <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+        </h2>
+        <p className="text-sm text-dim leading-6">
+          Curated quests we track against {decoded}&apos;s inventory. Green ✓
+          on items {decoded} has; red ✗ on items they need. A hint in
+          parentheses shows when another character in their family
+          (<code>{(char.main_name || char.name)}</code>) has the item —
+          useful for MQ planning. Catalog is officer-managed at{' '}
+          <Link href="/admin/quests" className="text-blue hover:underline">/admin/quests</Link>.
+        </p>
+        {inventory.length === 0 && (
+          <p className="text-xs text-orange mt-3">
+            ⚠ No inventory data yet for any character. The page will light up
+            once the agent&apos;s upcoming inventory file watcher ships and a
+            recent <code>/outputfile inventory</code> has run.
+          </p>
+        )}
+      </section>
+
+      {/* Active quests */}
+      <section className="bg-panel border border-border rounded-lg p-5">
+        <h3 className="text-lg text-orange mb-3">Active quests ({active.length})</h3>
+        {active.length === 0 ? (
+          <p className="text-sm text-dim italic">All seeded quests completed or none active.</p>
+        ) : (
+          <div className="space-y-4">
+            {active.map(p => (
+              <div key={p.quest.id} className="border-l-2 border-border/60 pl-3">
+                <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                  <div>
+                    <span className="text-text">{p.quest.name}</span>
+                    {p.quest.zone && <span className="text-dim text-xs"> · {p.quest.zone}</span>}
+                    {p.quest.pqdi_quest_url && (
+                      <a href={p.quest.pqdi_quest_url} target="_blank" rel="noreferrer"
+                         className="text-blue text-[10px] hover:underline ml-2">PQDI ↗</a>
+                    )}
+                  </div>
+                  <span className="text-dim text-xs">
+                    {p.haveCount}/{p.needCount} pieces
+                  </span>
+                </div>
+                {p.quest.notes && <p className="text-[11px] text-dim italic mt-0.5">{p.quest.notes}</p>}
+                <ul className="text-xs mt-1.5 space-y-0.5">
+                  {p.items.map(it => {
+                    const ok = it.have >= it.need;
+                    return (
+                      <li key={it.ri.id} className="flex items-baseline gap-2">
+                        <span className={ok ? 'text-green' : it.ri.optional ? 'text-dim' : 'text-red-400'}>
+                          {ok ? '✓' : it.ri.optional ? '·' : '✗'}
+                        </span>
+                        <span className={ok ? 'text-text' : 'text-dim'}>
+                          {it.ri.item_name}
+                          {it.need > 1 && <> × {it.need}</>}
+                          {ok && it.have > it.need && <span className="text-dim/60"> (have {it.have})</span>}
+                        </span>
+                        {!ok && it.familyHints.length > 0 && (
+                          <span className="text-dim/70 text-[10px]">
+                            (also on family: {it.familyHints.map(h => `${h.name}${h.qty > 1 ? ` ×${h.qty}` : ''}`).join(', ')})
+                          </span>
+                        )}
+                        {it.ri.notes && <span className="text-dim/60 text-[10px] italic">— {it.ri.notes}</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Stack turn-ins */}
+      <section className="bg-panel border border-border rounded-lg p-5">
+        <h3 className="text-lg text-orange mb-2">Stack turn-ins ({stacks.length})</h3>
+        <p className="text-xs text-dim mb-3">
+          Repeatable faction / DKP turn-ins where stacks of the same item drive value.
+          Bone chips, goblin ears, Kael giant toes, Crushbone belts, etc.
+        </p>
+        {stacks.length === 0 ? (
+          <p className="text-sm text-dim italic">No stack turn-ins in the catalog yet.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-dim text-xs text-left">
+                <th className="py-1 pr-3">Item</th>
+                <th className="py-1 pr-3">For</th>
+                <th className="py-1 pr-3 text-right">Have</th>
+                <th className="py-1 pr-3 text-right">Per turn-in</th>
+                <th className="py-1">Family stash</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40">
+              {stacks.flatMap(p => p.items.map(it => {
+                const familyTotal = it.familyHints.reduce((s, h) => s + h.qty, 0);
+                return (
+                  <tr key={`${p.quest.id}-${it.ri.id}`}>
+                    <td className="py-1.5 pr-3 text-text">{it.ri.item_name}</td>
+                    <td className="py-1.5 pr-3 text-dim text-xs">
+                      {p.quest.pqdi_quest_url
+                        ? <a href={p.quest.pqdi_quest_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">{p.quest.name} ↗</a>
+                        : p.quest.name}
+                    </td>
+                    <td className={`py-1.5 pr-3 text-right tabular-nums ${it.have >= it.need ? 'text-green' : 'text-dim'}`}>{it.have}</td>
+                    <td className="py-1.5 pr-3 text-right text-dim tabular-nums">{it.need}</td>
+                    <td className="py-1.5 text-dim text-xs">
+                      {familyTotal > 0
+                        ? `+${familyTotal} across ${it.familyHints.length} char${it.familyHints.length === 1 ? '' : 's'}`
+                        : '—'}
+                    </td>
+                  </tr>
+                );
+              }))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {/* Completed quests (collapsible-ish — just a dim folded list) */}
+      <section className="bg-panel border border-border rounded-lg p-5">
+        <h3 className="text-lg text-orange mb-2">Completed quests ({completed.length})</h3>
+        {completed.length === 0 ? (
+          <p className="text-sm text-dim italic">No completed quests recorded yet. Items show as complete when the reward item is in inventory.</p>
+        ) : (
+          <ul className="text-sm space-y-1">
+            {completed.map(p => (
+              <li key={p.quest.id} className="flex items-baseline gap-2 text-dim">
+                <span className="text-green">✓</span>
+                <span className="text-text">{p.quest.name}</span>
+                {p.quest.zone && <span className="text-xs">· {p.quest.zone}</span>}
+                {p.quest.pqdi_quest_url && (
+                  <a href={p.quest.pqdi_quest_url} target="_blank" rel="noreferrer" className="text-blue text-[10px] hover:underline">PQDI turn-in ↗</a>
+                )}
+                {p.quest.reward_item_name && ownInvSlotByName.get(p.quest.reward_item_name.toLowerCase()) && (
+                  <span className="text-[10px]">
+                    — in {ownInvSlotByName.get(p.quest.reward_item_name.toLowerCase())!.join(', ')}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Dead-weight inventory — placeholder until the heuristic + inventory data are wired */}
+      <section className="bg-panel border border-border rounded-lg p-5">
+        <h3 className="text-lg text-orange mb-2">Quest pieces you probably don&apos;t need</h3>
+        <p className="text-xs text-dim leading-6">
+          Items in {decoded}&apos;s inventory that don&apos;t feed a quest they
+          could finish (wrong class/race reward, no-drop dead end, no
+          faction value) and aren&apos;t equipped will surface here.
+          <span className="text-orange"> Wired to render when the agent inventory
+          upload lands and we&apos;ve scored items against the character&apos;s
+          class/race — placeholder for now.</span>
+        </p>
+      </section>
+    </div>
+  );
+}

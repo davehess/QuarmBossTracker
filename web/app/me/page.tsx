@@ -45,6 +45,7 @@ type CharRow = {
   exclude_inventory:  boolean | null;
   tell_relay:         boolean | null;
   tell_dm:            boolean | null;
+  show_inventory_publicly: boolean | null;
 };
 
 type SkillBucket = { hits: number; dmg: number };
@@ -158,7 +159,7 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   // household.
   const { data: allChars } = await admin
     .from('characters')
-    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm')
+    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly')
     .eq('guild_id', 'wolfpack');
   const all = (allChars ?? []) as (CharRow & { discord_id: string | null })[];
 
@@ -727,6 +728,7 @@ export default async function MePage() {
                   excludeInventory={!!c.exclude_inventory}
                   tellRelay={!!c.tell_relay}
                   tellDm={c.tell_dm !== false}
+                  showInventoryPublicly={!!c.show_inventory_publicly}
                 />
               </li>
             ))}
@@ -763,6 +765,7 @@ export default async function MePage() {
                   excludeInventory={!!c.exclude_inventory}
                   tellRelay={!!c.tell_relay}
                   tellDm={c.tell_dm !== false}
+                  showInventoryPublicly={!!c.show_inventory_publicly}
                 />
                 <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
                 {c.quarmy_url && (

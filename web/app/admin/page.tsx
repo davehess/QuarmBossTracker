@@ -55,6 +55,11 @@ export default function AdminPage() {
           href="/admin/quarmy"
         />
         <Card
+          title="📋 Quest catalog"
+          body="Curated quests powering /character/[name]/quests — keys, armor molds, stack turn-ins. Add a quest, list its required items, and the per-character page checks them off as inventory uploads land."
+          href="/admin/quests"
+        />
+        <Card
           title="📜 Audit log"
           body="Searchable mirror of the audit trail thread — filter by actor, action, boss name, date range. Bot v2.5.35+ mirrors every kill/unkill/updatetimer."
           href="/admin/audit"
