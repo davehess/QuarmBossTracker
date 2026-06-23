@@ -29,6 +29,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import ItemHover, { type ItemCard } from './ItemHover';
+import ItemIcon from './ItemIcon';
 
 export const dynamic = 'force-dynamic';
 
@@ -293,11 +294,15 @@ function Cell({ label, row, card }: { label: string; row?: InvRow; card?: ItemCa
   const magic  = card?.magic;
   const borderClass = nodrop ? 'border-gold/60' : magic ? 'border-blue/60' : 'border-border';
   return (
-    <ItemHover card={card} fallbackName={row.item_name} className={`group aspect-square bg-bg border ${borderClass} rounded p-1 flex flex-col justify-between text-left hover:border-blue`}>
-      <span className="text-[10px] leading-tight line-clamp-3 text-text">{row.item_name}</span>
-      <div className="flex items-end justify-between gap-1">
-        <span className="text-[9px] text-dim/70">{label}</span>
-        {row.quantity > 1 && <span className="text-[10px] text-orange font-medium">×{row.quantity}</span>}
+    <ItemHover card={card} fallbackName={row.item_name} className={`group aspect-square bg-bg border ${borderClass} rounded p-1 flex flex-col items-center justify-between text-center hover:border-blue`}>
+      {/* Icon when we have one; the name caption is always present so a missing
+          icon (unreachable host / unknown id) still reads. */}
+      {card?.icon
+        ? <ItemIcon icon={card.icon} alt={row.item_name} size={32} className="mt-0.5" />
+        : <span className="text-[10px] leading-tight line-clamp-2 text-text mt-0.5">{row.item_name}</span>}
+      <div className="flex items-end justify-between gap-1 w-full">
+        <span className="text-[9px] text-dim/70 truncate">{label}</span>
+        {row.quantity > 1 && <span className="text-[10px] text-orange font-medium shrink-0">×{row.quantity}</span>}
       </div>
     </ItemHover>
   );

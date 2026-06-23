@@ -16,11 +16,13 @@
 // except this one tooltip surface.
 
 import { useId, useRef, useState } from 'react';
+import ItemIcon from './ItemIcon';
 
 export type ItemCard = {
   item_id: number;
   name: string;
   lore: string | null;
+  icon: number | null;
   nodrop: boolean | null;
   magic: boolean | null;
   itemtype: number | null;
@@ -107,15 +109,23 @@ export default function ItemHover({ card, fallbackName, className, children }: {
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tipId = useId();
   const pqdiHref = card ? `https://pqdi.cc/item/${card.item_id}` : `https://pqdi.cc/search?term=${encodeURIComponent(fallbackName)}`;
+
+  // Close on a short delay so the cursor can travel from the item up to the
+  // tooltip (crossing the small gap) without it vanishing — that gap was the
+  // reason the PQDI link inside couldn't be clicked. Any enter cancels it.
+  const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
+  const openNow = () => { cancelClose(); setOpen(true); };
+  const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 180); };
+
   return (
-    <span ref={ref} className={`relative inline-block ${className ?? ''}`}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={() => setOpen(false)}
+    <span className={`relative inline-block ${className ?? ''}`}
+      onMouseEnter={openNow}
+      onMouseLeave={scheduleClose}
+      onFocus={openNow}
+      onBlur={scheduleClose}
       tabIndex={0}
       aria-describedby={open ? tipId : undefined}
     >
@@ -124,14 +134,22 @@ export default function ItemHover({ card, fallbackName, className, children }: {
         <div
           id={tipId}
           role="tooltip"
-          className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 z-50 w-64 max-w-[16rem] bg-bg border border-blue/70 rounded p-2.5 shadow-xl text-[11px] text-left pointer-events-auto"
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
+          // pt-1.5 (padding, not margin) keeps the gap visually but as part of
+          // the hover target, so the cursor never crosses dead space.
+          className="absolute left-1/2 -translate-x-1/2 bottom-full pt-1.5 z-50 w-64 max-w-[16rem] text-[11px] text-left pointer-events-auto"
+          onMouseEnter={openNow}
+          onMouseLeave={scheduleClose}
         >
-          <div className="flex items-baseline gap-2">
-            <span className="text-text font-medium leading-tight">{card?.name ?? fallbackName}</span>
-            {card?.nodrop && <span className="text-[9px] text-gold uppercase tracking-wider">NO DROP</span>}
-            {card?.magic  && <span className="text-[9px] text-blue uppercase tracking-wider">MAGIC</span>}
+        <div className="bg-bg border border-blue/70 rounded p-2.5 shadow-xl">
+          <div className="flex items-start gap-2">
+            {card?.icon ? <ItemIcon icon={card.icon} alt={card.name} size={32} className="shrink-0 rounded-sm border border-border/60" /> : null}
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-text font-medium leading-tight">{card?.name ?? fallbackName}</span>
+                {card?.nodrop && <span className="text-[9px] text-gold uppercase tracking-wider">NO DROP</span>}
+                {card?.magic  && <span className="text-[9px] text-blue uppercase tracking-wider">MAGIC</span>}
+              </div>
+            </div>
           </div>
           {card?.lore && card.lore !== card.name && (
             <div className="text-purple/90 text-[10px] mt-0.5">Lore: {card.lore}</div>
@@ -164,7 +182,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
               <Row k="Race">{decodeMask(card.races, RACE_TAGS, ALL_RACE_MASK)}</Row>
               {!!card.required_level && <Row k="Req">{card.required_level}</Row>}
               {!!card.recommended_level && <Row k="Rec">{card.recommended_level}</Row>}
-              {!!card.clickeffect && (
+              {card.clickeffect != null && card.clickeffect > 0 && (
                 <Row k="Clicky">
                   <a href={`https://pqdi.cc/spell/${card.clickeffect}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">
                     spell #{card.clickeffect}
@@ -181,6 +199,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
             <a href={pqdiHref} target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI ↗</a>
             <span className="text-dim/70">stats-only · v1</span>
           </div>
+        </div>
         </div>
       )}
     </span>
