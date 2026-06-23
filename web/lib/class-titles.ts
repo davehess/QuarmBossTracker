@@ -63,6 +63,22 @@ export function titleForClass(cls: string | null | undefined, level: number | nu
   return null;
 }
 
+// EQ item class bitmask per base class. Mirrors eq_class_bit() in
+// supabase/migrations/20260624020000_spell_exchange.sql — keep in sync.
+// (Berserker 32768 omitted — post-PoP, can't appear on Quarm.)
+const CLASS_BIT: Record<string, number> = {
+  Warrior: 1, Cleric: 2, Paladin: 4, Ranger: 8, 'Shadow Knight': 16,
+  Druid: 32, Monk: 64, Bard: 128, Rogue: 256, Shaman: 512,
+  Necromancer: 1024, Wizard: 2048, Magician: 4096, Enchanter: 8192,
+  Beastlord: 16384,
+};
+
+/** Class name OR level title → EQ item class bitmask (0 if unknown). */
+export function classBit(cls: string | null | undefined): number {
+  const base = normalizeClass(cls);
+  return (base && CLASS_BIT[base]) || 0;
+}
+
 /**
  * Display string for a character's class: the worn level title with the base
  * class in parentheses — "Savage Lord (Beastlord)" — falling back to just the

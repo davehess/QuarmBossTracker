@@ -60,6 +60,11 @@ export default function AdminPage() {
           href="/admin/quests"
         />
         <Card
+          title="📖 Spell exchange"
+          body="Every spell scroll sitting in a member's inventory matched to who can use it and hasn't scribed it — the distribution side of raid spell drops. Backed by /me spellbook + inventory uploads."
+          href="/admin/spells"
+        />
+        <Card
           title="📜 Audit log"
           body="Searchable mirror of the audit trail thread — filter by actor, action, boss name, date range. Bot v2.5.35+ mirrors every kill/unkill/updatetimer."
           href="/admin/audit"

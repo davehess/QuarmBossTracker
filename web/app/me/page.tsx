@@ -772,6 +772,7 @@ export default async function MePage() {
                 />
                 <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
                 <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
+                <Link href={`/character/${encodeURIComponent(c.name)}/spells`} className="text-blue hover:underline">spells →</Link>
                 {c.quarmy_url && (
                   <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
                 )}
