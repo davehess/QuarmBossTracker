@@ -9,7 +9,7 @@
 // dismiss are per-button. (Uilnayar 2026-06-23.)
 
 import { useTransition } from 'react';
-import { setQuestHidden, setQuestDismissed, moveQuest } from './actions';
+import { setQuestHidden, setQuestDismissed, moveQuest, promoteTurnin, demoteTurnin } from './actions';
 
 export function QuestActionButtons({ character, questId }: { character: string; questId: number }) {
   const [pending, start] = useTransition();
@@ -31,6 +31,20 @@ export function QuestActionButtons({ character, questId }: { character: string; 
         className="text-dim hover:text-red disabled:opacity-40"
         title="Dismiss — 'I'm not doing this.' Folds it into the Dismissed section.">✕ dismiss</button>
     </span>
+  );
+}
+
+// Discovery → Active: pin (▲ add) / unpin (✕ remove) a scripted turn-in to the
+// character's Active quests section. (Uilnayar 2026-06-24.)
+export function TurninPromoteButton({ character, turninId, active }: { character: string; turninId: number; active: boolean }) {
+  const [pending, start] = useTransition();
+  const run = () => start(() => (active ? demoteTurnin : promoteTurnin)(character, turninId).then(() => {}));
+  return (
+    <button type="button" disabled={pending} onClick={run}
+      className={`text-[10px] disabled:opacity-40 ${active ? 'text-dim hover:text-red' : 'text-blue hover:underline'}`}
+      title={active ? 'Remove from Active quests' : 'Move to Active quests'}>
+      {active ? '✕ remove' : '▲ to active'}
+    </button>
   );
 }
 

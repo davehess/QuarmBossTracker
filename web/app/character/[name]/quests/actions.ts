@@ -109,6 +109,36 @@ export async function moveQuest(characterName: string, questId: number, directio
   return reorderQuests(characterName, next.map(q => q.id));
 }
 
+// Promote a discovered scripted turn-in into the character's Active quests
+// section (Uilnayar 2026-06-24: "Let people move those quests to the active
+// quests section"). Stored per-character in character_active_turnins; the
+// turn-in itself isn't in quest_catalog, so this is a lightweight pin.
+export async function promoteTurnin(characterName: string, turninId: number) {
+  const gate = await ownsOrOfficer(characterName);
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const admin = supabaseAdmin();
+  // Idempotent: ignore the unique-violation if it's already pinned.
+  const { error } = await admin.from('character_active_turnins').insert({
+    guild_id: 'wolfpack', character_name: characterName, turnin_id: turninId,
+  });
+  if (error && !/duplicate key/i.test(error.message)) return { ok: false, error: error.message };
+  revalidatePath(`/character/${encodeURIComponent(characterName)}/quests`);
+  return { ok: true };
+}
+
+export async function demoteTurnin(characterName: string, turninId: number) {
+  const gate = await ownsOrOfficer(characterName);
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const admin = supabaseAdmin();
+  await admin.from('character_active_turnins')
+    .delete()
+    .eq('guild_id', 'wolfpack')
+    .ilike('character_name', characterName)
+    .eq('turnin_id', turninId);
+  revalidatePath(`/character/${encodeURIComponent(characterName)}/quests`);
+  return { ok: true };
+}
+
 export async function resetQuestLayout(characterName: string) {
   const gate = await ownsOrOfficer(characterName);
   if (!gate.ok) return { ok: false, error: gate.error };

@@ -16,20 +16,23 @@
 //   • Family-aware: cross-character hint shows when ANOTHER character in
 //     the same main_name family has the item (useful for MQ planning).
 //
-// Three sections on the page:
-//   1. Active quests — progress bars + per-item check/X
-//   2. Stack turn-ins — separate table view per Uilnayar 2026-06-24
-//      ("for items where you typically would turn in stacks, highlight
-//       those in a table")
-//   3. Inventory dead-weight — items in the inventory that aren't useful
-//      to this character (no-drop, wrong class/race, no quest claim).
+// Sections on the page (top → bottom):
+//   1. Active quests — catalog quests + turn-ins the character pinned from
+//      discovery (▲ to active). At the top per Uilnayar 2026-06-24.
+//   2. Inferred zone access — locked zones proven by NO DROP loot held.
+//   3. Inventory-driven discovery — scripted NPC turn-ins matched to held
+//      items, triaged: Ready to turn in → NO DROP vs tradeable → gems folded.
+//      "Item — Turn-in NPC — zone" format, PQDI links, ✓/✗ per component.
+//   4. Stack turn-ins — table view for repeatable stack turn-ins.
+//   5. Completed quests — held rewards + deduped turn-in rewards w/ counts.
+//   6. Inventory dead-weight — items not useful to this character (placeholder).
 
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
-import { QuestActionButtons, QuestUnhideButton } from './QuestPrefsControls';
+import { QuestActionButtons, QuestUnhideButton, TurninPromoteButton } from './QuestPrefsControls';
 
 export const dynamic = 'force-dynamic';
 
@@ -140,31 +143,54 @@ async function load(decoded: string) {
   const ownInventoryIds = Array.from(new Set(
     (invRes.data ?? []).filter(r => r.character_name.toLowerCase() === decoded.toLowerCase() && r.item_id != null).map(r => r.item_id as number)
   ));
-  type Discovered = {
-    turnin_id: number; zone_short: string; npc_name: string;
-    evidence: 'piece' | 'completed';
-    matched_item_id: number;
+  type Money = { plat?: number; gold?: number; silver?: number; copper?: number };
+  type TurninCore = {
+    turnin_id: number; zone_short: string; npc_name: string; npc_id: number | null;
     inputs:  { item_id: number; qty: number }[];
     outputs: { item_id: number; kind: 'fixed' | 'random' }[];
     faction_changes: { faction_id: number; delta: number }[] | null;
     exp_award: number | null;
-    cash:           { plat?: number; gold?: number; silver?: number; copper?: number } | null;
-    money_required: { plat?: number; gold?: number; silver?: number; copper?: number } | null;
+    cash:           Money | null;
+    money_required: Money | null;
     random_outputs: boolean;
+  };
+  type Discovered = TurninCore & {
+    evidence: 'piece' | 'completed';
+    matched_item_id: number;
   };
   let discovered: Discovered[] = [];
   if (ownInventoryIds.length > 0) {
     const { data: dRows } = await sb.rpc('discover_quests_for_item', { p_item_ids: ownInventoryIds });
     discovered = (dRows ?? []) as Discovered[];
   }
-  // Resolve input/output item names for display in one batch.
-  const discoveryItemIds = Array.from(new Set(discovered.flatMap(d =>
-    [...d.inputs.map(i => i.item_id), ...d.outputs.map(o => o.item_id), d.matched_item_id]
-  )));
-  const itemNameById = new Map<number, string>();
+
+  // Promoted turn-ins — the character pinned these into the Active section
+  // (Uilnayar 2026-06-24). Fetch by id so they render even if the matching
+  // inventory item was since consumed.
+  const { data: activeRows } = await sb
+    .from('character_active_turnins')
+    .select('turnin_id')
+    .eq('guild_id', 'wolfpack')
+    .ilike('character_name', decoded);
+  const promotedTurninIds = ((activeRows ?? []) as { turnin_id: number }[]).map(r => r.turnin_id);
+  let promotedTurnins: TurninCore[] = [];
+  if (promotedTurninIds.length > 0) {
+    const { data: pRows } = await sb.rpc('turnins_by_id', { p_ids: promotedTurninIds });
+    promotedTurnins = (pRows ?? []) as TurninCore[];
+  }
+
+  // Resolve input/output item names + NO-DROP flag for display in one batch.
+  // (eqemu_items.nodrop is INVERTED on this mirror: false = NO DROP.)
+  const discoveryItemIds = Array.from(new Set([
+    ...discovered.flatMap(d => [...d.inputs.map(i => i.item_id), ...d.outputs.map(o => o.item_id), d.matched_item_id]),
+    ...promotedTurnins.flatMap(t => [...t.inputs.map(i => i.item_id), ...t.outputs.map(o => o.item_id)]),
+  ]));
+  const itemMetaById = new Map<number, { name: string; nodrop: boolean }>();
   if (discoveryItemIds.length > 0) {
-    const { data: irows } = await sb.from('eqemu_items').select('id, name').in('id', discoveryItemIds);
-    for (const r of ((irows ?? []) as { id: number; name: string }[])) itemNameById.set(r.id, r.name);
+    const { data: irows } = await sb.from('eqemu_items').select('id, name, nodrop').in('id', discoveryItemIds);
+    for (const r of ((irows ?? []) as { id: number; name: string; nodrop: boolean }[])) {
+      itemMetaById.set(r.id, { name: r.name, nodrop: r.nodrop });
+    }
   }
 
   // Authoritative per-item display data (canonical name, lore, drop zone) for
@@ -198,7 +224,9 @@ async function load(decoded: string) {
     prefByQuest,
     inferredKeys,
     discovered,
-    itemNameById,
+    itemMetaById,
+    promotedTurnins,
+    promotedTurninIds,
   };
 }
 
@@ -212,7 +240,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const data = await load(decoded);
   if (!data) notFound();
-  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest, inferredKeys, discovered, itemNameById } = data;
+  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest, inferredKeys, discovered, itemMetaById, promotedTurnins, promotedTurninIds } = data;
 
   // The viewed character's keyring — a quest completes when its reward sits
   // here (keys) OR in inventory (combine outputs / quest rewards). Components
@@ -400,6 +428,139 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const stacks     = visibleProgress.filter(p => !p.completed &&  p.quest.is_stack_turnin);
   const completed  = visibleProgress.filter(p => p.completed);
 
+  // ---- Inventory-driven discovery presentation (Uilnayar 2026-06-24 rework) ----
+  // One row per turn-in (deduped), classified for triage:
+  //   • Ready to turn in (hold every component) → top
+  //   • In progress, NO DROP component vs tradeable-only → two groups
+  //   • Gem turn-ins where the only thing held is a common gem → minimized
+  //   • Completed (hold an output) → deduped by item w/ held count, shown in
+  //     the Completed section
+  // PQDI link on every item + (when unambiguously resolvable) the NPC.
+  type Turnin = {
+    turnin_id: number; zone_short: string; npc_name: string; npc_id: number | null;
+    inputs: { item_id: number; qty: number }[];
+    outputs: { item_id: number; kind: string }[];
+    faction_changes: { faction_id: number; delta: number }[] | null;
+    exp_award: number | null;
+    money_required: { plat?: number; gold?: number; silver?: number; copper?: number } | null;
+    random_outputs: boolean;
+  };
+  const dItemName = (id: number) => itemMetaById.get(id)?.name || `#${id}`;
+  // eqemu_items.nodrop is INVERTED on this Quarm mirror: false = NO DROP.
+  const dIsNoDrop = (id: number) => itemMetaById.get(id)?.nodrop === false;
+  const GEM_RE = /\b(gems?|jade|ruby|sapphire|emerald|diamond|opal|pearl|topaz|peridot|amber|garnet|malachite|lapis|jacinth|jasper|turquoise|onyx|bloodstone|moonstone|sunstone|quartz|coral)\b/i;
+  const dIsGem = (id: number) => GEM_RE.test(itemMetaById.get(id)?.name || '');
+  const itemPqdi = (id: number) => `https://www.pqdi.cc/item/${id}`;
+  const npcPqdi = (npcId: number | null) => (npcId ? `https://www.pqdi.cc/npc/${npcId}` : null);
+  const heldQty = (id: number) => ownInvById.get(id) ?? 0;
+  const promotedSet = new Set<number>(promotedTurninIds);
+
+  // Group discovered "piece" rows (held item is a component) by turn-in.
+  const pieceById = new Map<number, { t: Turnin; matched: Set<number> }>();
+  for (const d of discovered) {
+    if (d.evidence !== 'piece' || promotedSet.has(d.turnin_id)) continue;  // promoted ones render in Active
+    let e = pieceById.get(d.turnin_id);
+    if (!e) { e = { t: d as Turnin, matched: new Set<number>() }; pieceById.set(d.turnin_id, e); }
+    e.matched.add(d.matched_item_id);
+  }
+  const readyList: { t: Turnin; matched: Set<number> }[] = [];
+  const noDropList: { t: Turnin; matched: Set<number> }[] = [];
+  const tradeableList: { t: Turnin; matched: Set<number> }[] = [];
+  const gemList: { t: Turnin; matched: Set<number> }[] = [];
+  for (const e of pieceById.values()) {
+    const ready = e.t.inputs.every(i => heldQty(i.item_id) >= i.qty);
+    const hasNoDrop = e.t.inputs.some(i => dIsNoDrop(i.item_id));
+    const gemNoise = !ready && e.matched.size > 0 && [...e.matched].every(id => dIsGem(id));
+    if (ready) readyList.push(e);
+    else if (gemNoise) gemList.push(e);
+    else if (hasNoDrop) noDropList.push(e);
+    else tradeableList.push(e);
+  }
+  const byZoneNpc = (a: { t: Turnin }, b: { t: Turnin }) =>
+    a.t.zone_short.localeCompare(b.t.zone_short) || a.t.npc_name.localeCompare(b.t.npc_name);
+  readyList.sort(byZoneNpc); noDropList.sort(byZoneNpc); tradeableList.sort(byZoneNpc); gemList.sort(byZoneNpc);
+  const discoveryCount = pieceById.size;
+
+  // Completed turn-ins: dedup by output item held, with the held quantity.
+  const completedHeld = new Map<number, number>();
+  for (const d of discovered) {
+    if (d.evidence !== 'completed') continue;
+    if (!completedHeld.has(d.matched_item_id)) completedHeld.set(d.matched_item_id, heldQty(d.matched_item_id));
+  }
+  const completedTurninItems = [...completedHeld.entries()]
+    .map(([item_id, qty]) => ({ item_id, qty }))
+    .sort((a, b) => dItemName(a.item_id).localeCompare(dItemName(b.item_id)));
+
+  // Promoted turn-ins (pinned to Active by the character).
+  const promoted: { t: Turnin; matched: Set<number> }[] = promotedTurnins
+    .map(t => ({ t: t as Turnin, matched: new Set<number>(t.inputs.filter(i => heldQty(i.item_id) >= i.qty).map(i => i.item_id)) }))
+    .sort(byZoneNpc);
+
+  // Shared row renderer for a discovered/promoted turn-in. Format the header as
+  // "Item — Turn-in NPC — where" (the held item drives discovery), then a ✓/✗
+  // give-list and the reward. (Uilnayar 2026-06-24.)
+  const turninRow = (t: Turnin, matched: Set<number>, isPromoted: boolean) => {
+    const ready = t.inputs.every(i => heldQty(i.item_id) >= i.qty);
+    const headId = [...matched][0] ?? t.inputs[0]?.item_id ?? t.outputs[0]?.item_id ?? null;
+    const m = t.money_required;
+    const moneyStr = m ? [
+      m.plat ? `${m.plat}pp` : '', m.gold ? `${m.gold}gp` : '',
+      m.silver ? `${m.silver}sp` : '', m.copper ? `${m.copper}cp` : '',
+    ].filter(Boolean).join(' ') : '';
+    const npcUrl = npcPqdi(t.npc_id);
+    return (
+      <li key={t.turnin_id} className="border-l-2 border-purple/30 pl-3 py-0.5">
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          <div className="flex items-baseline gap-1.5 flex-wrap text-xs">
+            {ready && <span className="text-green" title="You hold every component">✅</span>}
+            {headId != null
+              ? <a href={itemPqdi(headId)} target="_blank" rel="noreferrer" className="text-text font-medium hover:text-blue hover:underline">{dItemName(headId)}</a>
+              : <span className="text-text font-medium">turn-in</span>}
+            <span className="text-dim/60">—</span>
+            {npcUrl
+              ? <a href={npcUrl} target="_blank" rel="noreferrer" className="text-blue hover:underline">{t.npc_name}</a>
+              : <span className="text-text">{t.npc_name}</span>}
+            <span className="text-dim/60">—</span>
+            <span className="text-dim">{t.zone_short}</span>
+            {t.exp_award ? <span className="text-blue/80 text-[10px]">{t.exp_award.toLocaleString()} xp</span> : null}
+          </div>
+          <TurninPromoteButton character={decoded} turninId={t.turnin_id} active={isPromoted} />
+        </div>
+        <ul className="text-[11px] mt-0.5 space-y-0.5">
+          {t.inputs.map((i, idx) => {
+            const have = heldQty(i.item_id); const ok = have >= i.qty;
+            return (
+              <li key={idx} className="flex items-baseline gap-1.5 flex-wrap">
+                <span className={ok ? 'text-green' : 'text-red-400'}>{ok ? '✓' : '✗'}</span>
+                <a href={itemPqdi(i.item_id)} target="_blank" rel="noreferrer" className={`hover:underline ${ok ? 'text-text' : 'text-dim'}`}>{dItemName(i.item_id)}</a>
+                {i.qty > 1 && <span className="text-dim">× {i.qty}</span>}
+                {ok && have > i.qty && <span className="text-dim/50">(have {have})</span>}
+                {dIsNoDrop(i.item_id) && <span className="text-orange/70 text-[9px] uppercase tracking-wide">no drop</span>}
+              </li>
+            );
+          })}
+          {moneyStr && (
+            <li className="flex items-baseline gap-1.5">
+              <span className="text-dim/60">·</span>
+              <span className="text-dim">{moneyStr}</span>
+            </li>
+          )}
+        </ul>
+        {t.outputs.length > 0 && (
+          <div className="text-[10px] text-dim/80 mt-0.5">
+            Reward: {t.outputs.map((o, idx) => (
+              <span key={idx}>
+                {idx > 0 && ', '}
+                <a href={itemPqdi(o.item_id)} target="_blank" rel="noreferrer" className="text-blue/80 hover:underline">{dItemName(o.item_id)}</a>
+              </span>
+            ))}
+            {t.random_outputs && <span className="text-orange/70"> (random)</span>}
+          </div>
+        )}
+      </li>
+    );
+  };
+
   // Dead-weight: inventory items that are NOT required by any active quest
   // and the character isn't using as gear. Heuristic for v1 — refined as
   // we learn the data. Items with item_id that we recognize from
@@ -440,128 +601,20 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         )}
       </section>
 
-      {/* Inferred zone access — derived from NO DROP loot in inventory that
-          drops ONLY in a locked zone. Surfaces even when no catalog quest is
-          seeded for the zone (e.g. Howling Stones), so the evidence is always
-          visible. (Uilnayar 2026-06-24.) */}
-      {inferredKeys.length > 0 && (
-        <section className="bg-panel border border-gold/40 rounded-lg p-5">
-          <h3 className="text-lg text-gold mb-2">🗝 Inferred zone access</h3>
-          <p className="text-xs text-dim leading-5 mb-3">
-            {decoded} is provably holding NO DROP loot exclusive to these locked
-            zones — they could not have looted it without the key.
-          </p>
-          <ul className="space-y-2 text-sm">
-            {inferredKeys.map(k => (
-              <li key={k.zone_short} className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-green">✓</span>
-                <span className="text-text">{k.zone_long}</span>
-                <span className="text-dim text-xs">
-                  {k.key_item_name && `· ${k.key_item_name}`}
-                </span>
-                <span className="text-dim/70 text-[10px]">
-                  {k.evidence_count} item{k.evidence_count === 1 ? '' : 's'} held — {k.evidence_items.slice(0, 3).join(', ')}{k.evidence_items.length < k.evidence_count ? '…' : ''}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* Inventory-driven discovery — scripted NPC turn-ins where any item the
-          player holds is consumed or rewarded. Authoritative source: the
-          ProjectEQ quest scripts mirrored into scripted_npc_turnins. We split
-          into "completed" (held item is one of the rewards — they did it
-          already) and "in progress" (held item is consumed — they could turn
-          it in now). (Uilnayar 2026-06-24.) */}
-      {discovered.length > 0 && (() => {
-        const completed = discovered.filter(d => d.evidence === 'completed');
-        const inProgress = discovered.filter(d => d.evidence === 'piece');
-        // Group by NPC so a single turn-in NPC doesn't render 5 rows.
-        const byNpc = new Map<string, typeof discovered>();
-        for (const d of inProgress) {
-          const k = `${d.zone_short}|${d.npc_name}|${d.turnin_id}`;
-          const arr = byNpc.get(k) ?? [];
-          arr.push(d);
-          byNpc.set(k, arr);
-        }
-        const itemName = (id: number) => itemNameById.get(id) || `#${id}`;
-        return (
-          <section className="bg-panel border border-purple/40 rounded-lg p-5">
-            <h3 className="text-lg text-purple mb-2">🔍 Inventory-driven discovery</h3>
-            <p className="text-xs text-dim leading-5 mb-3">
-              NPC turn-ins matched against {decoded}&apos;s inventory. Sourced from the
-              ProjectEQ quest scripts ({(discovered.length).toLocaleString()} matches across {byNpc.size + completed.length} turn-ins). Faction nudges and exp
-              shown when present.
-            </p>
-            {completed.length > 0 && (
-              <div className="mb-4">
-                <h4 className="text-sm text-green mb-1.5">✓ Turn-in outputs you hold ({completed.length})</h4>
-                <ul className="text-xs space-y-1">
-                  {completed.slice(0, 30).map(d => (
-                    <li key={`c-${d.turnin_id}-${d.matched_item_id}`} className="flex items-baseline gap-2 flex-wrap">
-                      <span className="text-green">✓</span>
-                      <span className="text-text">{itemName(d.matched_item_id)}</span>
-                      <span className="text-dim text-[10px]">— from {d.npc_name} ({d.zone_short})</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {byNpc.size > 0 && (
-              <div>
-                <h4 className="text-sm text-orange mb-1.5">⏳ In-progress turn-ins ({byNpc.size})</h4>
-                <ul className="text-xs space-y-2">
-                  {[...byNpc.entries()].slice(0, 40).map(([k, rows]) => {
-                    const head = rows[0];
-                    return (
-                      <li key={k} className="border-l-2 border-purple/30 pl-3">
-                        <div className="flex items-baseline gap-2 flex-wrap">
-                          <span className="text-text font-medium">{head.npc_name}</span>
-                          <span className="text-dim text-[10px]">· {head.zone_short}</span>
-                          {head.exp_award && <span className="text-blue text-[10px]">{head.exp_award.toLocaleString()} xp</span>}
-                        </div>
-                        <div className="text-[11px] text-dim mt-0.5">
-                          Give: {[
-                            ...head.inputs.map(i => `${itemName(i.item_id)}${i.qty > 1 ? ` ×${i.qty}` : ''}`),
-                            // Currency cost. EQ trade window holds 4 items + a
-                            // currency slot, so a turn-in can require both.
-                            head.money_required && [
-                              head.money_required.plat   ? `${head.money_required.plat}pp` : '',
-                              head.money_required.gold   ? `${head.money_required.gold}gp` : '',
-                              head.money_required.silver ? `${head.money_required.silver}sp` : '',
-                              head.money_required.copper ? `${head.money_required.copper}cp` : '',
-                            ].filter(Boolean).join(' ') || null,
-                          ].filter(Boolean).join(' + ')}
-                          {head.outputs.length > 0 && (
-                            <span>
-                              {' → '}
-                              {head.outputs.map(o => itemName(o.item_id)).join(', ')}
-                              {head.random_outputs && <span className="text-orange/80"> (random)</span>}
-                            </span>
-                          )}
-                        </div>
-                        {head.faction_changes && head.faction_changes.length > 0 && (
-                          <div className="text-[10px] text-dim/80 mt-0.5">
-                            Faction: {head.faction_changes.map(f => `${f.delta > 0 ? '+' : ''}${f.delta} #${f.faction_id}`).join(', ')}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-          </section>
-        );
-      })()}
-
-      {/* Active quests */}
+      {/* Active quests — catalog quests + turn-ins the character pinned from
+          discovery. Pinned ones render first. (Uilnayar 2026-06-24: "Let people
+          move those quests to the active quests section and have that be at the
+          top of the page.") */}
       <section className="bg-panel border border-border rounded-lg p-5">
-        <h3 className="text-lg text-orange mb-3">Active quests ({active.length})</h3>
-        {active.length === 0 ? (
-          <p className="text-sm text-dim italic">All seeded quests completed or none active.</p>
-        ) : (
+        <h3 className="text-lg text-orange mb-3">Active quests ({active.length + promoted.length})</h3>
+        {promoted.length > 0 && (
+          <ul className="space-y-2 mb-4">
+            {promoted.map(e => turninRow(e.t, e.matched, true))}
+          </ul>
+        )}
+        {active.length === 0 && promoted.length === 0 ? (
+          <p className="text-sm text-dim italic">No active quests. Pin a turn-in from Inventory-driven discovery below (▲ to active) to track it here.</p>
+        ) : active.length === 0 ? null : (
           <div className="space-y-4">
             {active.map(p => (
               <div key={p.quest.id} className="border-l-2 border-border/60 pl-3">
@@ -612,6 +665,81 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </div>
         )}
       </section>
+
+      {/* Inferred zone access — derived from NO DROP loot in inventory that
+          drops ONLY in a locked zone. Surfaces even when no catalog quest is
+          seeded for the zone (e.g. Howling Stones), so the evidence is always
+          visible. (Uilnayar 2026-06-24.) */}
+      {inferredKeys.length > 0 && (
+        <section className="bg-panel border border-gold/40 rounded-lg p-5">
+          <h3 className="text-lg text-gold mb-2">🗝 Inferred zone access</h3>
+          <p className="text-xs text-dim leading-5 mb-3">
+            {decoded} is provably holding NO DROP loot exclusive to these locked
+            zones — they could not have looted it without the key.
+          </p>
+          <ul className="space-y-2 text-sm">
+            {inferredKeys.map(k => (
+              <li key={k.zone_short} className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-green">✓</span>
+                <span className="text-text">{k.zone_long}</span>
+                <span className="text-dim text-xs">
+                  {k.key_item_name && `· ${k.key_item_name}`}
+                </span>
+                <span className="text-dim/70 text-[10px]">
+                  {k.evidence_count} item{k.evidence_count === 1 ? '' : 's'} held — {k.evidence_items.slice(0, 3).join(', ')}{k.evidence_items.length < k.evidence_count ? '…' : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Inventory-driven discovery — scripted NPC turn-ins matched against the
+          player's inventory (ProjectEQ quest scripts → scripted_npc_turnins).
+          Reworked (Uilnayar 2026-06-24): ready-to-turn-in first, NO DROP vs
+          tradeable split, gem-only matches minimized, "Item — NPC — where"
+          format with PQDI links and ✓/✗ per component. */}
+      {(discoveryCount > 0 || completedTurninItems.length > 0) && (
+        <section className="bg-panel border border-purple/40 rounded-lg p-5">
+          <h3 className="text-lg text-purple mb-2">🔍 Inventory-driven discovery</h3>
+          <p className="text-xs text-dim leading-5 mb-3">
+            NPC turn-ins matched against {decoded}&apos;s inventory, from the ProjectEQ
+            quest scripts. Format is <span className="text-dim/80">Item — Turn-in NPC — zone</span>;
+            ✓ marks a component held, ✗ one still needed. Pin one to Active quests with ▲.
+          </p>
+
+          {readyList.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-sm text-green mb-1.5">✅ Ready to turn in ({readyList.length})</h4>
+              <ul className="space-y-2">{readyList.map(e => turninRow(e.t, e.matched, false))}</ul>
+            </div>
+          )}
+
+          {noDropList.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-sm text-orange mb-1.5">🔒 In progress — has a NO DROP component ({noDropList.length})</h4>
+              <ul className="space-y-2">{noDropList.slice(0, 60).map(e => turninRow(e.t, e.matched, false))}</ul>
+              {noDropList.length > 60 && <p className="text-[10px] text-dim mt-1">+{noDropList.length - 60} more — refine inventory to narrow.</p>}
+            </div>
+          )}
+
+          {tradeableList.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-sm text-blue mb-1.5">📦 In progress — tradeable components ({tradeableList.length})</h4>
+              <ul className="space-y-2">{tradeableList.slice(0, 60).map(e => turninRow(e.t, e.matched, false))}</ul>
+              {tradeableList.length > 60 && <p className="text-[10px] text-dim mt-1">+{tradeableList.length - 60} more — refine inventory to narrow.</p>}
+            </div>
+          )}
+
+          {gemList.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-sm text-dim cursor-pointer hover:text-blue">💎 Gem turn-ins — only a common gem held ({gemList.length})</summary>
+              <ul className="space-y-2 mt-2">{gemList.slice(0, 80).map(e => turninRow(e.t, e.matched, false))}</ul>
+              {gemList.length > 80 && <p className="text-[10px] text-dim mt-1">+{gemList.length - 80} more.</p>}
+            </details>
+          )}
+        </section>
+      )}
 
       {/* Stack turn-ins */}
       <section className="bg-panel border border-border rounded-lg p-5">
@@ -666,9 +794,9 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       {/* Completed quests (collapsible-ish — just a dim folded list) */}
       <section className="bg-panel border border-border rounded-lg p-5">
         <h3 className="text-lg text-orange mb-2">Completed quests ({completed.length})</h3>
-        {completed.length === 0 ? (
+        {completed.length === 0 && completedTurninItems.length === 0 ? (
           <p className="text-sm text-dim italic">No completed quests recorded yet. A quest completes when you hold its reward — in inventory or on your keyring (upload via 📖/🗝 on /me).</p>
-        ) : (
+        ) : completed.length === 0 ? null : (
           <ul className="text-sm space-y-1">
             {completed.map(p => {
               const rk = (p.quest.reward_item_name || '').toLowerCase();
@@ -695,6 +823,27 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
               );
             })}
           </ul>
+        )}
+
+        {/* Turn-in rewards held — deduped by item with a held count (Uilnayar
+            2026-06-24: "there shouldn't be multiples displayed - we should see a
+            count (x)"). Holding a turn-in's reward implies the turn-in was done. */}
+        {completedTurninItems.length > 0 && (
+          <div className="mt-4">
+            <h4 className="text-sm text-green mb-1">Turn-in rewards held ({completedTurninItems.length})</h4>
+            <p className="text-[11px] text-dim mb-1.5">
+              Reward items from scripted turn-ins that are in {decoded}&apos;s inventory — the turn-in was almost certainly completed.
+            </p>
+            <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
+              {completedTurninItems.map(c => (
+                <li key={c.item_id} className="flex items-baseline gap-1.5">
+                  <span className="text-green">✓</span>
+                  <a href={itemPqdi(c.item_id)} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{dItemName(c.item_id)}</a>
+                  <span className="text-dim/70">({c.qty})</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
 
