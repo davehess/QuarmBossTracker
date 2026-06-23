@@ -313,6 +313,12 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
             </Link>
             <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
           </span>
+          <span>
+            <Link href={`/character/${encodeURIComponent(displayName)}/inventory`} className="text-blue hover:underline">
+              🎒 Inventory
+            </Link>
+            <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+          </span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
