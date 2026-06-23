@@ -29,6 +29,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { QuestActionButtons, QuestUnhideButton } from './QuestPrefsControls';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,7 +66,7 @@ type InventoryRow = {
 async function load(decoded: string) {
   const sb = supabaseAdmin();
   const [
-    charRes, questsRes, itemsRes, invRes, keysRes,
+    charRes, questsRes, itemsRes, invRes, keysRes, prefsRes,
   ] = await Promise.all([
     sb.from('characters')
       .select('name, class, race, main_name, discord_id, show_inventory_publicly')
@@ -85,11 +86,14 @@ async function load(decoded: string) {
       .select('character_name, slot_label, item_id, item_name, quantity')
       .eq('guild_id', 'wolfpack')
       .limit(10000),
-    // The viewed character's keyring (/keys upload). A key/quest is COMPLETE
-    // when you hold the final reward — and keys (Key of Veeshan, Trakanon Idol)
-    // live on the keyring, not in inventory, with the components long consumed.
+    // Keyring (Key of Veeshan, Trakanon Idol, etc.) — quests complete when you
+    // hold the reward, in inventory OR on the keyring.
     sb.from('character_keys')
       .select('item_id, key_name')
+      .eq('guild_id', 'wolfpack')
+      .ilike('character_name', decoded),
+    sb.from('character_quest_prefs')
+      .select('quest_id, display_order, hidden, dismissed')
       .eq('guild_id', 'wolfpack')
       .ilike('character_name', decoded),
   ]);
@@ -127,6 +131,10 @@ async function load(decoded: string) {
     }
   }
 
+  const prefs = ((prefsRes.data ?? []) as { quest_id: number; display_order: number | null; hidden: boolean; dismissed: boolean }[]);
+  const prefByQuest = new Map<number, { display_order: number | null; hidden: boolean; dismissed: boolean }>();
+  for (const p of prefs) prefByQuest.set(p.quest_id, { display_order: p.display_order, hidden: p.hidden, dismissed: p.dismissed });
+
   return {
     char,
     quests,
@@ -135,6 +143,7 @@ async function load(decoded: string) {
     keys: (keysRes.data ?? []) as { item_id: number | null; key_name: string }[],
     familyNames,
     itemInfo,
+    prefByQuest,
   };
 }
 
@@ -148,7 +157,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const data = await load(decoded);
   if (!data) notFound();
-  const { char, quests, questItems, inventory, keys, familyNames, itemInfo } = data;
+  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest } = data;
 
   // The viewed character's keyring — a quest completes when its reward sits
   // here (keys) OR in inventory (combine outputs / quest rewards). Components
@@ -261,9 +270,26 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     return { quest: q, items, haveCount, needCount, completed };
   });
 
-  const active     = progress.filter(p => !p.completed && !p.quest.is_stack_turnin);
-  const stacks     = progress.filter(p => !p.completed &&  p.quest.is_stack_turnin);
-  const completed  = progress.filter(p => p.completed);
+  // Apply per-character layout overrides. Custom display_order (from
+  // character_quest_prefs) trumps the catalog's, falling back to it.
+  function effectiveOrder(qid: number, catalogOrder: number): number {
+    const o = prefByQuest.get(qid)?.display_order;
+    return (o ?? null) !== null ? (o as number) : catalogOrder;
+  }
+  const isHidden    = (qid: number) => !!prefByQuest.get(qid)?.hidden;
+  const isDismissed = (qid: number) => !!prefByQuest.get(qid)?.dismissed;
+
+  const sortByPref = (a: QuestProgress, b: QuestProgress) =>
+    effectiveOrder(a.quest.id, a.quest.display_order) - effectiveOrder(b.quest.id, b.quest.display_order)
+    || a.quest.name.localeCompare(b.quest.name);
+
+  const visibleProgress = progress.filter(p => !isHidden(p.quest.id) && !isDismissed(p.quest.id)).sort(sortByPref);
+  const hiddenProgress    = progress.filter(p => isHidden(p.quest.id) && !isDismissed(p.quest.id)).sort(sortByPref);
+  const dismissedProgress = progress.filter(p => isDismissed(p.quest.id)).sort(sortByPref);
+
+  const active     = visibleProgress.filter(p => !p.completed && !p.quest.is_stack_turnin);
+  const stacks     = visibleProgress.filter(p => !p.completed &&  p.quest.is_stack_turnin);
+  const completed  = visibleProgress.filter(p => p.completed);
 
   // Dead-weight: inventory items that are NOT required by any active quest
   // and the character isn't using as gear. Heuristic for v1 — refined as
@@ -323,9 +349,10 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
                          className="text-blue text-[10px] hover:underline ml-2">PQDI ↗</a>
                     )}
                   </div>
-                  <span className="text-dim text-xs">
-                    {p.haveCount}/{p.needCount} pieces
-                  </span>
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-dim text-xs">{p.haveCount}/{p.needCount} pieces</span>
+                    <QuestActionButtons character={decoded} questId={p.quest.id} />
+                  </div>
                 </div>
                 {p.quest.notes && <p className="text-[11px] text-dim italic mt-0.5">{p.quest.notes}</p>}
                 <ul className="text-xs mt-1.5 space-y-0.5">
@@ -443,6 +470,46 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </ul>
         )}
       </section>
+
+      {/* Hidden / Dismissed — restore from here. Hidden = "out of the way for now",
+          dismissed = "I'm not doing this." Both stay in the database; restore
+          buttons bring them back to active. */}
+      {(hiddenProgress.length > 0 || dismissedProgress.length > 0) && (
+        <section className="bg-panel border border-border rounded-lg p-5 space-y-3">
+          {hiddenProgress.length > 0 && (
+            <details>
+              <summary className="text-sm text-dim cursor-pointer hover:text-blue">
+                👁 Hidden ({hiddenProgress.length})
+              </summary>
+              <ul className="mt-2 text-xs space-y-1">
+                {hiddenProgress.map(p => (
+                  <li key={p.quest.id} className="flex items-baseline gap-2">
+                    <span className="text-dim/80">{p.quest.name}</span>
+                    {p.quest.zone && <span className="text-dim text-[10px]">· {p.quest.zone}</span>}
+                    <QuestUnhideButton character={decoded} questId={p.quest.id} label="unhide" />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {dismissedProgress.length > 0 && (
+            <details>
+              <summary className="text-sm text-dim cursor-pointer hover:text-blue">
+                ✕ Dismissed ({dismissedProgress.length})
+              </summary>
+              <ul className="mt-2 text-xs space-y-1">
+                {dismissedProgress.map(p => (
+                  <li key={p.quest.id} className="flex items-baseline gap-2">
+                    <span className="text-dim/80">{p.quest.name}</span>
+                    {p.quest.zone && <span className="text-dim text-[10px]">· {p.quest.zone}</span>}
+                    <QuestUnhideButton character={decoded} questId={p.quest.id} label="restore" />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </section>
+      )}
 
       {/* Dead-weight inventory — placeholder until the heuristic + inventory data are wired */}
       <section className="bg-panel border border-border rounded-lg p-5">
