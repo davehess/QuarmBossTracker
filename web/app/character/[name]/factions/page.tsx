@@ -80,10 +80,11 @@ async function load(decoded: string) {
       .ilike('character', decoded)
       .order('event_ts', { ascending: false })
       .limit(500),
-    // Race/class feed the estimated base standings for unrecorded factions.
-    // Deity isn't captured anywhere yet — estimates say so.
+    // race/class/deity_id power the per-character faction baseline (see
+    // computeBaseline below). characters.deity_id joins eqemu_faction_list_mod
+    // via mod_name='d<deity_id>'; race + class likewise via r<N> / c<N>.
     sb.from('characters')
-      .select('race, class')
+      .select('race, class, deity_id')
       .ilike('name', decoded)
       .limit(1),
   ]);
@@ -162,11 +163,71 @@ async function load(decoded: string) {
     };
   });
 
+  // Per-character faction baseline. A faction's true starting standing is
+  // faction_list_full.base + sum of faction_list_mod entries where mod_name
+  // matches the character's race / class / deity codes (r<N> / c<N> / d<N>).
+  // Lets us tell a user "Coldain start at +50 for you, not 0" — and surfaces
+  // why a Dark Elf paladin can't shop in Felwithe without showing red.
+  // Returns a map faction_id → { base, baseTotal, modBreakdown }. Empty when
+  // the eqemu_faction_list_full mirror hasn't been populated yet.
+  const baseline = new Map<number, { name: string | null; base: number; total: number; mods: { code: string; mod: number }[] }>();
+  const race = (char?.race as string | null) ?? null;
+  const cls  = (char?.class as string | null) ?? null;
+  const deityId = (char?.deity_id as number | null) ?? null;
+  // race / class name → numeric id used by the mod_name encoding.
+  const RACE_ID: Record<string, number> = {
+    human:1, barbarian:2, erudite:3, 'wood elf':4, 'high elf':5, 'dark elf':6,
+    'half elf':7, dwarf:8, troll:9, ogre:10, halfling:11, gnome:12,
+    iksar:128, 'vah shir':130, 'vahshir':130, drakkin:522,
+  };
+  const CLASS_ID: Record<string, number> = {
+    warrior:1, cleric:2, paladin:3, ranger:4, 'shadow knight':5, 'shadowknight':5, sk:5,
+    druid:6, monk:7, bard:8, rogue:9, shaman:10, necromancer:11, necro:11,
+    wizard:12, magician:13, mage:13, enchanter:14, beastlord:15, berserker:16,
+  };
+  const raceId  = race ? (RACE_ID[race.toLowerCase()] ?? null) : null;
+  const classId = cls  ? (CLASS_ID[cls.toLowerCase()] ?? null) : null;
+
+  const modCodes: string[] = [];
+  if (raceId  != null) modCodes.push(`r${raceId}`);
+  if (classId != null) modCodes.push(`c${classId}`);
+  if (deityId != null) modCodes.push(`d${deityId}`);
+
+  if (modCodes.length > 0) {
+    // Pull mod rows applying to this character and the matching faction_list
+    // entries in parallel. Bounded — typical faction count is a few hundred.
+    const [{ data: modRows }, { data: factionRows }] = await Promise.all([
+      sb.from('eqemu_faction_list_mod')
+        .select('faction_id, mod, mod_name')
+        .in('mod_name', modCodes)
+        .limit(20000),
+      sb.from('eqemu_faction_list_full')
+        .select('id, name, base')
+        .limit(5000),
+    ]);
+    for (const f of ((factionRows ?? []) as { id: number; name: string | null; base: number | null }[])) {
+      const b = f.base ?? 0;
+      baseline.set(f.id, { name: f.name, base: b, total: b, mods: [] });
+    }
+    for (const m of ((modRows ?? []) as { faction_id: number; mod: number | null; mod_name: string }[])) {
+      const cur = baseline.get(m.faction_id);
+      const delta = m.mod ?? 0;
+      if (cur) {
+        cur.total += delta;
+        cur.mods.push({ code: m.mod_name, mod: delta });
+      } else {
+        // Mod row for a faction whose definition row wasn't returned (rare —
+        // capped query). Seed an entry so the data isn't lost.
+        baseline.set(m.faction_id, { name: null, base: 0, total: delta, mods: [{ code: m.mod_name, mod: delta }] });
+      }
+    }
+  }
+
   return {
     standings: (standingRes.data ?? []) as StandingRow[],
     cons:      consEnriched,
-    race:      (char?.race as string | null) ?? null,
-    cls:       (char?.class as string | null) ?? null,
+    race, cls, deityId,
+    baseline,
   };
 }
 
@@ -178,7 +239,13 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/factions`);
 
-  const { standings, cons, race, cls } = await load(decoded);
+  const { standings, cons, race, cls, deityId, baseline } = await load(decoded);
+  // Name-keyed lookup so the standings table (keyed by faction NAME, not id)
+  // can find the baseline for a row.
+  const baselineByFactionName = new Map<string, { name: string | null; base: number; total: number; mods: { code: string; mod: number }[] }>();
+  for (const [, b] of baseline) {
+    if (b.name) baselineByFactionName.set(b.name.toLowerCase(), b);
+  }
 
   // Bloc grouping — factions render next to the ones whose hits arrive
   // together (Velious war, Seru vs Katta, Chardok vs the goblin mines, …),
@@ -214,11 +281,12 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
         <h3 className="text-sm text-orange mb-1">Faction standing ({standings.length} recorded)</h3>
         <p className="text-xs text-dim mb-3">
           Grouped by the wars you grind them in — raising one side of a bloc usually lowers the other.
-          <span className="text-text"> ? rows</span> are bloc factions with no recorded hits yet; their{' '}
-          <i>est. base</i> tier is a coarse estimate from race/class
-          {race || cls ? <> ({[race, cls].filter(Boolean).join(' ')})</> : null} —{' '}
-          <b>deity isn&apos;t tracked yet</b>, so deity-shifted factions may sit a tier off. <code>/con</code> something
-          on that faction in-game to pin the real tier.
+          <b className="text-text"> Base</b> is your starting standing (faction base + per-race/class/deity
+          adjustments from the eqemu mirror, computed for{' '}
+          {[race, cls, deityId ? `deity #${deityId}` : null].filter(Boolean).join(' / ') || 'this character'});
+          hover the cell for the breakdown.{' '}
+          <span className="text-text"> ? rows</span> are bloc factions with no recorded hits yet — their cons-tier
+          estimate is shown alongside. <code>/con</code> something on that faction in-game to pin the real tier.
         </p>
         {grouped.length === 0 ? (
           <div className="text-sm text-dim p-2">
@@ -236,7 +304,8 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-dim text-xs text-left">
-                      <th className="py-1 pr-3 w-[40%]">Faction</th>
+                      <th className="py-1 pr-3 w-[35%]">Faction</th>
+                      <th className="py-1 pr-3 text-right" title="Your starting standing — eqemu_faction_list.base + adjustments for your race / class / deity. Hover a value for the breakdown.">Base</th>
                       <th className="py-1 pr-3 text-right">Raised</th>
                       <th className="py-1 pr-3 text-right">Lowered</th>
                       <th className="py-1 pr-3">Position</th>
@@ -263,9 +332,23 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                         : f.worse_count > 0
                           ? { val: `−${f.worse_count}`, tip: `${f.worse_count.toLocaleString()} hit${f.worse_count === 1 ? '' : 's'} — no per-line magnitude captured` }
                           : { val: '—', tip: '' };
+                      // Per-character baseline (faction_list.base + mods for
+                      // your race/class/deity). Empty until the eqemu_faction_*
+                      // mirror is populated.
+                      const bl = baselineByFactionName.get(f.faction.toLowerCase());
+                      const baseCell = bl ? (() => {
+                        const total = bl.total;
+                        const tone = total >= 750 ? 'text-green' : total >= 0 ? 'text-text' : total >= -750 ? 'text-orange' : 'text-red';
+                        const sign = total > 0 ? '+' : '';
+                        const modsLine = bl.mods.length > 0
+                          ? bl.mods.map(m => `${m.code} ${m.mod > 0 ? '+' : ''}${m.mod}`).join(' · ')
+                          : 'no race/class/deity mods';
+                        return <span className={tone} title={`base ${bl.base >= 0 ? '+' : ''}${bl.base} · ${modsLine} = ${sign}${total}`}>{sign}{total}</span>;
+                      })() : <span className="text-dim/40">—</span>;
                       return (
                       <tr key={f.faction}>
                         <td className="py-1.5 pr-3 text-text">{f.faction}</td>
+                        <td className="py-1.5 pr-3 text-right">{baseCell}</td>
                         <td className="py-1.5 pr-3 text-right text-green" title={betterHead.tip}>{betterHead.val}</td>
                         <td className="py-1.5 pr-3 text-right text-red"   title={worseHead.tip}>{worseHead.val}</td>
                         <td className="py-1.5 pr-3">
@@ -285,9 +368,21 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                       </tr>
                       );
                     })}
-                    {missing.map(m => (
+                    {missing.map(m => {
+                      const bl = baselineByFactionName.get(m.name.toLowerCase());
+                      const baseCell = bl ? (() => {
+                        const total = bl.total;
+                        const tone = total >= 750 ? 'text-green' : total >= 0 ? 'text-text' : total >= -750 ? 'text-orange' : 'text-red';
+                        const sign = total > 0 ? '+' : '';
+                        const modsLine = bl.mods.length > 0
+                          ? bl.mods.map(mm => `${mm.code} ${mm.mod > 0 ? '+' : ''}${mm.mod}`).join(' · ')
+                          : 'no race/class/deity mods';
+                        return <span className={tone} title={`base ${bl.base >= 0 ? '+' : ''}${bl.base} · ${modsLine} = ${sign}${total}`}>{sign}{total}</span>;
+                      })() : <span className="text-dim/40">—</span>;
+                      return (
                       <tr key={m.name} className="opacity-70">
                         <td className="py-1.5 pr-3 text-dim">{m.name}</td>
+                        <td className="py-1.5 pr-3 text-right">{baseCell}</td>
                         <td className="py-1.5 pr-3 text-right text-dim">?</td>
                         <td className="py-1.5 pr-3 text-right text-dim">?</td>
                         <td className="py-1.5 pr-3">
@@ -300,7 +395,8 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                         </td>
                         <td className="py-1.5 text-dim text-xs">—</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
