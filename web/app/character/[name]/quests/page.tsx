@@ -148,7 +148,8 @@ async function load(decoded: string) {
     outputs: { item_id: number; kind: 'fixed' | 'random' }[];
     faction_changes: { faction_id: number; delta: number }[] | null;
     exp_award: number | null;
-    cash: { plat?: number; gold?: number; silver?: number; copper?: number } | null;
+    cash:           { plat?: number; gold?: number; silver?: number; copper?: number } | null;
+    money_required: { plat?: number; gold?: number; silver?: number; copper?: number } | null;
     random_outputs: boolean;
   };
   let discovered: Discovered[] = [];
@@ -521,7 +522,17 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
                           {head.exp_award && <span className="text-blue text-[10px]">{head.exp_award.toLocaleString()} xp</span>}
                         </div>
                         <div className="text-[11px] text-dim mt-0.5">
-                          Give: {head.inputs.map(i => `${itemName(i.item_id)}${i.qty > 1 ? ` ×${i.qty}` : ''}`).join(' + ')}
+                          Give: {[
+                            ...head.inputs.map(i => `${itemName(i.item_id)}${i.qty > 1 ? ` ×${i.qty}` : ''}`),
+                            // Currency cost. EQ trade window holds 4 items + a
+                            // currency slot, so a turn-in can require both.
+                            head.money_required && [
+                              head.money_required.plat   ? `${head.money_required.plat}pp` : '',
+                              head.money_required.gold   ? `${head.money_required.gold}gp` : '',
+                              head.money_required.silver ? `${head.money_required.silver}sp` : '',
+                              head.money_required.copper ? `${head.money_required.copper}cp` : '',
+                            ].filter(Boolean).join(' ') || null,
+                          ].filter(Boolean).join(' + ')}
                           {head.outputs.length > 0 && (
                             <span>
                               {' → '}

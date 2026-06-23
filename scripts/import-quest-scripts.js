@@ -148,17 +148,38 @@ function splitPerlBranches(eventBody) {
 
 // Parse a Perl `plugin::check_handin(\%itemcount, ID => QTY, ID => QTY)` call.
 // Returns the {item_id, qty}[] tuples or null if the cond isn't a check_handin.
+// Returns { items: [{item_id, qty}], money: {plat,gold,silver,copper}|null }
+// — null when this branch isn't a check_handin. The EQ trade window holds 4
+// items + currency, so a turn-in can require both, and both forms occur:
+//   (a) currency inside check_handin: plugin::check_handin(\%ic, 7836 => 1, platinum => 100)
+//   (b) currency as a prefix condition: ($platinum >= 900) && plugin::check_handin(\%ic, ...)
+// We collect both. (Uilnayar 2026-06-24.)
 function parseCheckHandinPerl(cond) {
-  const m = /plugin::check_handin\s*\(\s*\\?%\w+\s*,\s*([^)]+)\)/.exec(cond);
+  const m = /plugin::check_handin\s*\(\s*\\?%\w+\s*,\s*([^)]*)\)/.exec(cond);
   if (!m) return null;
   const args = m[1];
-  const pairs = [];
-  const pairRx = /(\d+)\s*=>\s*(\d+)/g;
+  const items = [];
   let pm;
+  const pairRx = /(\d+)\s*=>\s*(\d+)/g;
   while ((pm = pairRx.exec(args)) !== null) {
-    pairs.push({ item_id: parseInt(pm[1], 10), qty: parseInt(pm[2], 10) });
+    items.push({ item_id: parseInt(pm[1], 10), qty: parseInt(pm[2], 10) });
   }
-  return pairs.length ? pairs : null;
+  const money = { plat: 0, gold: 0, silver: 0, copper: 0 };
+  let any = false;
+  // Inline currency keys
+  const curRx = /\b(platinum|plat|gold|silver|copper)\b\s*=>\s*(\d+)/gi;
+  while ((pm = curRx.exec(args)) !== null) {
+    const k = pm[1].toLowerCase().replace(/^plat$/, 'plat').replace('platinum', 'plat');
+    money[k] = parseInt(pm[2], 10); any = true;
+  }
+  // Prefix-condition form: ($platinum >= 900)
+  const prefRx = /\$(platinum|plat|gold|silver|copper)\s*>=\s*(\d+)/gi;
+  while ((pm = prefRx.exec(cond)) !== null) {
+    const k = pm[1].toLowerCase().replace(/^plat$/, 'plat').replace('platinum', 'plat');
+    money[k] = Math.max(money[k] || 0, parseInt(pm[2], 10)); any = true;
+  }
+  if (items.length === 0 && !any) return null;
+  return { items, money: any ? money : null };
 }
 
 // Parse the body of a Perl turn-in branch for outputs / faction / cash / exp.
@@ -215,12 +236,19 @@ function parseLuaTurnIns(src) {
   const checkRx = /item_lib\.check_turn_in\s*\([^{]*\{([^}]*)\}/g;
   let m;
   while ((m = checkRx.exec(src)) !== null) {
-    // Inputs from the inline table
+    // Inputs from the inline table — items + optional currency keys.
     const inputs = [];
     const itemRx = /item(\d+)\s*=\s*(\d+)/g;
     let im;
     while ((im = itemRx.exec(m[1])) !== null) inputs.push({ item_id: parseInt(im[2], 10), qty: 1 });
-    if (inputs.length === 0) continue;
+    const money = { plat: 0, gold: 0, silver: 0, copper: 0 };
+    let anyMoney = false;
+    const curRx = /\b(platinum|plat|gold|silver|copper)\b\s*=\s*(\d+)/gi;
+    while ((im = curRx.exec(m[1])) !== null) {
+      const k = im[1].toLowerCase().replace(/^plat$/, 'plat').replace('platinum', 'plat');
+      money[k] = parseInt(im[2], 10); anyMoney = true;
+    }
+    if (inputs.length === 0 && !anyMoney) continue;
 
     // Body = next ~600 chars (the if/then…end is local). Crude but works for
     // the EVENT_TRADE handlers in this repo, which are tightly scoped.
@@ -241,6 +269,7 @@ function parseLuaTurnIns(src) {
 
     results.push({
       inputs, outputs, factions, cash: null, exp_award: null, random,
+      money_required: anyMoney ? money : null,
       snippet: tail.slice(0, 800),
     });
   }
@@ -258,12 +287,13 @@ function parseScript({ source, lang }) {
   const branches = splitPerlBranches(eventBody);
   const out = [];
   for (const b of branches) {
-    const inputs = parseCheckHandinPerl(b.cond);
-    if (!inputs) continue;
+    const hi = parseCheckHandinPerl(b.cond);
+    if (!hi) continue;
     const body = parsePerlBody(b.body);
-    if (body.outputs.length === 0 && body.factions.length === 0 && !body.cash && !body.exp_award) continue;
+    if (body.outputs.length === 0 && body.factions.length === 0 && !body.cash && !body.exp_award && !hi.money) continue;
     out.push({
-      inputs,
+      inputs: hi.items,
+      money_required: hi.money,
       outputs: body.outputs,
       factions: body.factions,
       cash: body.cash,
@@ -384,6 +414,7 @@ async function main() {
               inputs: t.inputs, outputs: t.outputs,
               faction_changes: t.factions.length ? t.factions : null,
               cash: t.cash, exp_award: t.exp_award,
+              money_required: t.money_required || null,
               random_outputs: t.random,
               raw_snippet: t.snippet,
             });

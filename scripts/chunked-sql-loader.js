@@ -43,6 +43,7 @@ function rowToValues(r) {
     sqlJson(r.outputs),
     sqlJson(r.faction_changes),
     sqlJson(r.cash),
+    sqlJson(r.money_required),
     sqlInt(r.exp_award),
     sqlBool(r.random_outputs),
     sqlString(r.raw_snippet || ''),
@@ -59,7 +60,7 @@ function* chunkRows(jsonlPath, chunkSize) {
     if (slice.length === 0) continue;
     yield (
       'INSERT INTO scripted_npc_turnins\n' +
-      '  (zone_short, npc_name, script_path, script_lang, inputs, outputs, faction_changes, cash, exp_award, random_outputs, raw_snippet)\n' +
+      '  (zone_short, npc_name, script_path, script_lang, inputs, outputs, faction_changes, cash, money_required, exp_award, random_outputs, raw_snippet)\n' +
       'VALUES\n' +
       slice.join(',\n') + '\n' +
       'ON CONFLICT (zone_short, npc_name, raw_snippet) DO NOTHING;'
