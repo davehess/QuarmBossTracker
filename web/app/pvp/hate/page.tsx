@@ -95,6 +95,24 @@ export default async function HateTrackerPage() {
     .order('killed_at', { ascending: false })
     .limit(100);
 
+  // Named-boss PoH kills (Lord of Ire, Maestro of Rancor, Innoruuk, Ashenbone)
+  // — every PvP-server broadcast for a boss whose data/bosses.json zone is
+  // Plane of Hate. We surface the killer (and guild) prominently so members
+  // can friend the killer for tracking, per Uilnayar 2026-06-23: "it's very
+  // useful to know when it was last killed and who's doing it so you can add
+  // them to friends list for tracking." Sourced from pvp_boss_kills (the auto-
+  // record / timer table), not pvp_kills (player-vs-player ledger), because
+  // these are NPC kills with no real victim guild.
+  const { data: pohBossRows } = await sb
+    .from('pvp_boss_kills')
+    .select('boss_id, boss_name, zone, killed_by, killed_by_guild, killed_at, source, raw_text')
+    .eq('zone', 'Plane of Hate')
+    .gte('killed_at', since30d)
+    .order('killed_at', { ascending: false })
+    .limit(50);
+  type PoHBossRow = { boss_id: string; boss_name: string; zone: string; killed_by: string | null; killed_by_guild: string | null; killed_at: string; source: string; raw_text: string | null };
+  const pohBoss = (pohBossRows ?? []) as PoHBossRow[];
+
   const active = (activeRows ?? []) as HateKillRow[];
   const log    = (logRows ?? []) as HateKillRow[];
   const now    = Date.now();
@@ -229,6 +247,51 @@ export default async function HateTrackerPage() {
                 />
               );
             })}
+          </div>
+        )}
+      </section>
+
+      {/* ─── Section 2.5: named PoH boss kills (Lord of Ire, etc.) ──────── */}
+      <section className="mb-8">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+          Plane of Hate named-boss kills · last 30 days ({pohBoss.length})
+        </h2>
+        <p className="mb-2 text-xs text-zinc-500">
+          Auto-detected from PvP-server broadcasts. Friend the killer to follow
+          their open-world activity. Instance kills (own guild + foreign) are shown
+          too — useful for spotting who&apos;s currently camping it.
+        </p>
+        {pohBoss.length === 0 ? (
+          <div className="rounded border border-zinc-800 px-3 py-3 text-sm text-zinc-500 italic">
+            No PoH boss kills tracked in 30 days. Open-world kills auto-record via the [PVP] broadcast; if you saw a kill that didn&apos;t land here, it may have arrived in a phrasing the agent didn&apos;t recognize — capture the line and we&apos;ll add a parser rule.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded border border-zinc-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-zinc-900 text-xs uppercase text-zinc-400">
+                <tr>
+                  <th className="px-2 py-1.5">Boss</th>
+                  <th className="px-2 py-1.5">Killer</th>
+                  <th className="px-2 py-1.5">Guild</th>
+                  <th className="px-2 py-1.5">When</th>
+                  <th className="px-2 py-1.5">Source</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {pohBoss.map((r, i) => {
+                  const instanced = /\(Instanced\)/i.test(r.raw_text || '');
+                  return (
+                    <tr key={`${r.boss_id}-${r.killed_at}-${i}`} className="hover:bg-zinc-900/50">
+                      <td className="px-2 py-1.5 text-zinc-100">{r.boss_name}{instanced && <span className="ml-1 text-[10px] text-amber-500">(instanced)</span>}</td>
+                      <td className="px-2 py-1.5 text-zinc-100">{r.killed_by ?? '—'}</td>
+                      <td className="px-2 py-1.5 text-zinc-400">{r.killed_by_guild ? `<${r.killed_by_guild}>` : '—'}</td>
+                      <td className="px-2 py-1.5 text-zinc-400" title={r.killed_at}>{fmtAgo(Date.parse(r.killed_at))}</td>
+                      <td className="px-2 py-1.5 text-xs text-zinc-500">{r.source.replace(/_/g, ' ')}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
