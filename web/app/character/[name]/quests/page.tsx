@@ -194,11 +194,12 @@ async function load(decoded: string) {
     ...prefTurnins.flatMap(t => [...t.inputs.map(i => i.item_id), ...t.outputs.map(o => o.item_id)]),
     ...ownInventoryIds,
   ]));
-  const itemMetaById = new Map<number, { name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null }>();
+  type ItemMeta = { name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null; slots: number | null; damage: number | null; clickeffect: number | null; clicktype: number | null };
+  const itemMetaById = new Map<number, ItemMeta>();
   if (discoveryItemIds.length > 0) {
-    const { data: irows } = await sb.from('eqemu_items').select('id, name, nodrop, classes, races, price').in('id', discoveryItemIds);
-    for (const r of ((irows ?? []) as { id: number; name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null }[])) {
-      itemMetaById.set(r.id, { name: r.name, nodrop: r.nodrop, classes: r.classes, races: r.races, price: r.price });
+    const { data: irows } = await sb.from('eqemu_items').select('id, name, nodrop, classes, races, price, slots, damage, clickeffect, clicktype').in('id', discoveryItemIds);
+    for (const r of ((irows ?? []) as ({ id: number } & ItemMeta)[])) {
+      itemMetaById.set(r.id, { name: r.name, nodrop: r.nodrop, classes: r.classes, races: r.races, price: r.price, slots: r.slots, damage: r.damage, clickeffect: r.clickeffect, clicktype: r.clicktype });
     }
   }
 
@@ -503,6 +504,12 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     const tags = CLASS_TAGS.filter(([b]) => (m.classes! & b) !== 0).map(([, t]) => t);
     return tags.length ? tags.join(' ') : 'ALL';
   };
+  // A clicky usable from inventory (any slot) is useful to ANY class — clicktype
+  // 4 = "must equip", anything else with a click effect works from bags. (Manastone,
+  // Amulet of Necropotence, etc.) Weapons may be carried for pets. (Uilnayar 2026-06-24.)
+  const hasInventoryClicky = (id: number) => { const m = itemMetaById.get(id); return !!m && (m.clickeffect ?? 0) > 0 && m.clicktype !== 4; };
+  const isWeapon = (id: number) => (itemMetaById.get(id)?.damage ?? 0) > 0;
+  const isEquippable = (id: number) => (itemMetaById.get(id)?.slots ?? 0) > 0;
 
   // Group discovered "piece" rows (held item is a component) by turn-in.
   // Skip promoted (render in Active) and dismissed (hidden) turn-ins.
@@ -515,8 +522,8 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   }
   type Entry = { t: Turnin; matched: Set<number> };
   const readyList: Entry[] = [];     // hold every component
-  const mqList: Entry[] = [];        // in progress, all components tradeable → MQ-able
-  const soloList: Entry[] = [];      // in progress, has a NO DROP component → solo only
+  const tradeList: Entry[] = [];     // in progress, ALL components tradeable → just trade to one person
+  const mqList: Entry[] = [];        // in progress, has a NO DROP component → multi-quest it
   const notForList: Entry[] = [];    // reward is tradeable but not usable by this char
   const gemList: Entry[] = [];       // jeweler/cosmetic/gem noise
   for (const e of pieceById.values()) {
@@ -534,12 +541,12 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     if (gemNoise) gemList.push(e);
     else if (ready) readyList.push(e);
     else if (rewardNotForChar) notForList.push(e);
-    else if (hasNoDrop) soloList.push(e);
-    else mqList.push(e);
+    else if (hasNoDrop) mqList.push(e);    // NO DROP piece → can't consolidate by trading → multi-quest
+    else tradeList.push(e);                 // all tradeable → just trade everything to one person
   }
   const byZoneNpc = (a: Entry, b: Entry) =>
     a.t.zone_short.localeCompare(b.t.zone_short) || a.t.npc_name.localeCompare(b.t.npc_name);
-  readyList.sort(byZoneNpc); mqList.sort(byZoneNpc); soloList.sort(byZoneNpc); notForList.sort(byZoneNpc); gemList.sort(byZoneNpc);
+  readyList.sort(byZoneNpc); tradeList.sort(byZoneNpc); mqList.sort(byZoneNpc); notForList.sort(byZoneNpc); gemList.sort(byZoneNpc);
   const discoveryCount = pieceById.size;
 
   // Group a list of turn-ins by the held item that drives them, so one flooding
@@ -603,13 +610,16 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             <span className="text-dim/60">—</span>
             <span className="text-dim">{t.zone_short}</span>
             {t.exp_award ? <span className="text-blue/80 text-[10px]">{t.exp_award.toLocaleString()} xp</span> : null}
-            {/* MQ-able when ≥2 components and every component is tradeable; a
-                NO DROP component forces a solo turn-in. (Uilnayar 2026-06-24.) */}
-            {t.inputs.length >= 2 && t.inputs.every(i => dIsDroppable(i.item_id)) && (
-              <span className="text-[9px] text-purple/90 border border-purple/40 rounded px-1" title="Multi-questable — components are tradeable, so multiple people can hand in pieces (last hand-in gets the reward)">MQ</span>
+            {/* MQ matters when there's a NO DROP component you can't just trade
+                to one person — the NO DROP holder does the final hand-in while
+                others contribute the tradeable pieces. All-tradeable turn-ins
+                don't need MQ; just trade everything to one person. (Uilnayar
+                2026-06-24.) */}
+            {t.inputs.length >= 2 && t.inputs.some(i => dIsNoDrop(i.item_id)) && (
+              <span className="text-[9px] text-purple/90 border border-purple/40 rounded px-1" title="Multi-questable — the NO DROP holder does the final hand-in; others contribute the tradeable pieces">MQ</span>
             )}
-            {t.inputs.some(i => dIsNoDrop(i.item_id)) && (
-              <span className="text-[9px] text-orange/80 border border-orange/40 rounded px-1" title="Has a NO DROP component — must be done solo, can't multi-quest">solo</span>
+            {t.inputs.length >= 2 && t.inputs.every(i => dIsDroppable(i.item_id)) && (
+              <span className="text-[9px] text-blue/70 border border-blue/30 rounded px-1" title="All components tradeable — no MQ needed, just trade the pieces to one person">trade</span>
             )}
           </div>
           <TurninControls character={decoded} turninId={t.turnin_id} kind={kind} />
@@ -684,8 +694,16 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     const m = itemMetaById.get(id);
     if (!m) continue;
     const usable = usableByChar(id);
+    // Clickies usable from inventory (any class) and weapons (often carried for
+    // pets) are NOT dead-weight even if the class can't wear them. (Uilnayar
+    // 2026-06-24: Amulet of Necropotence / Shield of the Immaculate / Blade of
+    // the Earthcaller.)
+    if (hasInventoryClicky(id) || isWeapon(id)) continue;
     if (m.nodrop === true && !usable) dontNeed.push({ id, qty });
-    else if (m.nodrop === false && (m.price ?? 0) <= 0 && !questPieceIds.has(id) && !usable) brokenItems.push({ id, qty });
+    // Broken = NO DROP, no value, feeds no quest, can't use, and not even
+    // equippable (slotless junk). Equippable NO DROP armor is almost always a
+    // quest/turn-in piece (Velious armor molds), so never call it broken.
+    else if (m.nodrop === false && (m.price ?? 0) <= 0 && !questPieceIds.has(id) && !usable && !isEquippable(id)) brokenItems.push({ id, qty });
   }
   dontNeed.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
   brokenItems.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
@@ -847,19 +865,19 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             </div>
           )}
 
-          {mqList.length > 0 && (
+          {tradeList.length > 0 && (
             <div className="mb-4">
-              <h4 className="text-sm text-blue mb-1.5">🔀 Possibly multi-questable ({mqList.length})</h4>
-              <p className="text-[10px] text-dim mb-1.5">All components tradeable — pieces can be split across people (last hand-in gets the reward). Grouped by the item you hold; click to expand.</p>
-              <div className="space-y-0.5">{renderGroups(mqList)}</div>
+              <h4 className="text-sm text-blue mb-1.5">🤝 Tradeable — just consolidate ({tradeList.length})</h4>
+              <p className="text-[10px] text-dim mb-1.5">Every component is tradeable, so no MQ needed — gather the pieces (or trade them to one person) and turn in. Grouped by the item you hold; click to expand.</p>
+              <div className="space-y-0.5">{renderGroups(tradeList)}</div>
             </div>
           )}
 
-          {soloList.length > 0 && (
+          {mqList.length > 0 && (
             <div className="mb-4">
-              <h4 className="text-sm text-orange mb-1.5">🔒 Solo only — has a NO DROP component ({soloList.length})</h4>
-              <p className="text-[10px] text-dim mb-1.5">Can&apos;t be multi-quested (a NO DROP piece must be looted by you). Grouped by the item you hold.</p>
-              <div className="space-y-0.5">{renderGroups(soloList)}</div>
+              <h4 className="text-sm text-purple mb-1.5">🔀 Multi-questable — has a NO DROP component ({mqList.length})</h4>
+              <p className="text-[10px] text-dim mb-1.5">A NO DROP piece can&apos;t be traded together, so MQ it: the NO DROP holder does the final hand-in while others contribute the tradeable pieces. Grouped by the item you hold.</p>
+              <div className="space-y-0.5">{renderGroups(mqList)}</div>
             </div>
           )}
 
