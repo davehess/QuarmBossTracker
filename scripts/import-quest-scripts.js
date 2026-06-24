@@ -146,6 +146,17 @@ function splitPerlBranches(eventBody) {
   return branches;
 }
 
+// Collapse repeated item_ids into a single {item_id, qty} (summing), sorted by
+// id. EQ turn-ins that want N of an item are sometimes written as N separate
+// slots — Perl `7836 => 1, 7836 => 1` or Lua `{item1=X,item2=X,item3=X}` — and
+// must NOT render as three rows of the same item. Sorting also makes the row
+// content-stable so dedup works across runs. (Uilnayar 2026-06-24.)
+function aggregateInputs(items) {
+  const byId = new Map();
+  for (const it of items) byId.set(it.item_id, (byId.get(it.item_id) || 0) + (it.qty || 1));
+  return [...byId.entries()].sort((a, b) => a[0] - b[0]).map(([item_id, qty]) => ({ item_id, qty }));
+}
+
 // Parse a Perl turn-in condition for its required items + currency.
 // Returns { items: [{item_id, qty}], money: {plat,gold,silver,copper}|null }
 // — null when this branch isn't a handin. Three call shapes occur in the wild:
@@ -277,13 +288,37 @@ function parseLuaTurnIns(src) {
     const facRx = /Faction\s*\(\s*e\.self\s*,\s*(\d+)\s*,\s*(-?\d+)/g;
     while ((om = facRx.exec(tail)) !== null) factions.push({ faction_id: parseInt(om[1], 10), delta: parseInt(om[2], 10) });
 
+    // Drop pure-noise turn-ins with no reward of any kind (no item out, no
+    // faction, no money) — e.g. Reebo Leafsway's "feed Jumjum to Nillipuss"
+    // flavor handins. Mirrors the Perl filter. (Uilnayar 2026-06-24.)
+    if (outputs.length === 0 && factions.length === 0 && !anyMoney) continue;
     results.push({
-      inputs, outputs, factions, cash: null, exp_award: null, random,
+      inputs: aggregateInputs(inputs), outputs: outputs.slice().sort((a, b) => a.item_id - b.item_id), factions, cash: null, exp_award: null, random,
       money_required: anyMoney ? money : null,
       snippet: tail.slice(0, 800),
     });
   }
   return results;
+}
+
+// Recursively collect handin branches. Many EVENT_ITEM handlers gate their
+// turn-ins behind a non-handin condition — most commonly `if ($faction <= 3)
+// { if (check_handin...) {...} elsif (...) {...} }` (every Velious class-armor
+// NPC does this). splitPerlBranches isn't recursive, so those nested turn-ins
+// were silently dropped. Here we walk into any branch whose cond ISN'T a handin
+// but whose body still contains handin calls. (Uilnayar 2026-06-24: Foreman
+// Felspar / corroded armor molds.)
+function collectHandinBranches(body, depth = 0) {
+  if (depth > 6) return [];
+  const out = [];
+  for (const b of splitPerlBranches(body)) {
+    if (parseCheckHandinPerl(b.cond)) {
+      out.push(b);
+    } else if (/(?:plugin|quest)::(?:check_)?handin/.test(b.body)) {
+      out.push(...collectHandinBranches(b.body, depth + 1));
+    }
+  }
+  return out;
 }
 
 // ── Per-file parse ───────────────────────────────────────────────────────────
@@ -294,7 +329,7 @@ function parseScript({ source, lang }) {
   // Perl
   const eventBody = extractEventBlock(source, 'EVENT_ITEM');
   if (!eventBody) return [];
-  const branches = splitPerlBranches(eventBody);
+  const branches = collectHandinBranches(eventBody);
   const out = [];
   for (const b of branches) {
     const hi = parseCheckHandinPerl(b.cond);
@@ -302,9 +337,9 @@ function parseScript({ source, lang }) {
     const body = parsePerlBody(b.body);
     if (body.outputs.length === 0 && body.factions.length === 0 && !body.cash && !body.exp_award && !hi.money) continue;
     out.push({
-      inputs: hi.items,
+      inputs: aggregateInputs(hi.items),
       money_required: hi.money,
-      outputs: body.outputs,
+      outputs: body.outputs.slice().sort((a, b) => a.item_id - b.item_id),
       factions: body.factions,
       cash: body.cash,
       exp_award: body.exp_award,
@@ -328,7 +363,10 @@ async function upsertBatch(rows, { commit }) {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error('SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required to --commit');
-  const endpoint = `${url.replace(/\/$/, '')}/rest/v1/scripted_npc_turnins?on_conflict=zone_short,npc_name,raw_snippet`;
+  // Dedup on the generated content_key (zone|npc|sorted inputs|sorted outputs|
+  // money) so re-runs never create content-duplicates regardless of the snippet
+  // text. (Uilnayar 2026-06-24.)
+  const endpoint = `${url.replace(/\/$/, '')}/rest/v1/scripted_npc_turnins?on_conflict=content_key`;
   const body = JSON.stringify(rows);
   return new Promise((resolve, reject) => {
     const req = https.request(endpoint, {
