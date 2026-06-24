@@ -5175,13 +5175,20 @@ function _onUploadSuccess(entry, responseText) {
   if (!isBackfill) recordUploadForDashboard(entry.payload, entry.payload?.character);
 }
 
-async function _drainUploadQueue() {
+async function _drainUploadQueue(opts = {}) {
+  // force = explicit "drain now" from the dashboard. Bypasses the read-only
+  // guard so a stranded queue on a non-uploader instance (another Parser/Mimic
+  // holds the lock) can still be flushed — safe because every upload is
+  // idempotent (dedup_key + ±30min find_or_create_encounter). (Uilnayar
+  // 2026-06-24: 240 stuck on a read-only instance, "drain now" did nothing.)
+  const force = opts.force === true;
   if (_queueDraining) return;
   if (!_queueUploadOpts) return;
   // Read-only instance: don't replay the persisted queue either (it may hold
   // entries from a prior run, and the active uploader is covering live data).
-  // Draining resumes automatically if this instance takes over the lock.
-  if (!_isUploaderInstance) return;
+  // Draining resumes automatically if this instance takes over the lock — or
+  // immediately when the operator clicks "drain now" (force).
+  if (!_isUploaderInstance && !force) return;
   if (_uploadQueue.length === 0) return;
   _queueDraining = true;
   try {
@@ -5264,7 +5271,7 @@ async function _drainUploadQueue() {
   // (5000 / 50 = 100 passes * 3s = 5min) rather than 15s * 100 passes = 25min.
   const now = Date.now();
   if (_uploadQueue.some(e => e.next_try_at <= now)) {
-    setTimeout(() => _drainUploadQueue().catch(() => {}), 3_000);
+    setTimeout(() => _drainUploadQueue({ force }).catch(() => {}), 3_000);
   }
 }
 
@@ -7201,6 +7208,12 @@ function renderHeader(s) {
       const msg = 'Drain kicked.\\n\\n' +
         'Reset backoff on: ' + (j.backoffReset || 0) + ' entries\\n' +
         'Now pending: '      + (j.pending || 0) + '\\n' +
+        (j.draining ? 'A drain pass is already running — give it a moment.\\n' : '') +
+        (j.isUploader === false
+          ? 'NOTE: this instance is read-only (another agent holds the uploader lock'
+            + (j.uploaderPort ? '; its dashboard: http://localhost:' + j.uploaderPort : '')
+            + '). Forcing this queue out anyway.\\n'
+          : '') +
         (kinds ? 'Kinds: '       + kinds + '\\n' : '') +
         (j.maxAttempts ? 'Max attempts on any entry so far: ' + j.maxAttempts + '\\n' : '') +
         (j.lastError   ? 'Last error: ' + String(j.lastError).slice(0, 240) : 'No recent errors logged.');
@@ -11649,18 +11662,23 @@ function startWebDashboard(port) {
         if (resetCount > 0) {
           try { _saveQueueToDisk(); } catch {}
         }
-        // Fire-and-forget — the drain itself awaits HTTP requests, we don't
-        // want to make the dashboard hang while it runs.
-        _drainUploadQueue().catch(() => {});
-        const q = getQueueStats();
+        // Fire-and-forget force pass — the drain itself awaits HTTP requests, we
+        // don't want to make the dashboard hang while it runs. force:true so a
+        // read-only instance still flushes its stranded queue on operator demand.
+        _drainUploadQueue({ force: true }).catch(() => {});
+        const q = uploadQueueSnapshot();   // was getQueueStats() — undefined, 500'd the endpoint
+        const holder = _uploaderLockHolder || {};
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
-          ok:          true,
+          ok:           true,
           backoffReset: resetCount,
-          pending:     q.pending,
-          byKind:      q.byKind,
-          lastError:   q.lastError,
-          maxAttempts: q.maxAttempts,
+          pending:      q.pending,
+          byKind:       q.byKind,
+          lastError:    q.lastError,
+          maxAttempts:  q.maxAttempts,
+          draining:     _queueDraining,
+          isUploader:   _isUploaderInstance,
+          uploaderPort: (!_isUploaderInstance && holder.webPort) ? holder.webPort : null,
         }));
       }
       // Zeal pipe events forwarded by Mimic (same machine, localhost only —
