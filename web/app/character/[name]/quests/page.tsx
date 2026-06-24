@@ -187,9 +187,12 @@ async function load(decoded: string) {
 
   // Resolve input/output item names + NO-DROP flag for display in one batch.
   // (eqemu_items.nodrop is INVERTED on this mirror: false = NO DROP.)
+  // Include every held item id so the bottom dead-weight / broken-item lists
+  // can classify the whole inventory by class/race + NO DROP + value.
   const discoveryItemIds = Array.from(new Set([
     ...discovered.flatMap(d => [...d.inputs.map(i => i.item_id), ...d.outputs.map(o => o.item_id), d.matched_item_id]),
     ...prefTurnins.flatMap(t => [...t.inputs.map(i => i.item_id), ...t.outputs.map(o => o.item_id)]),
+    ...ownInventoryIds,
   ]));
   const itemMetaById = new Map<number, { name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null }>();
   if (discoveryItemIds.length > 0) {
@@ -665,12 +668,36 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       </details>
     ));
 
-  // Dead-weight: inventory items that are NOT required by any active quest
-  // and the character isn't using as gear. Heuristic for v1 — refined as
-  // we learn the data. Items with item_id that we recognize from
-  // eqemu_items but aren't equipped (slot starts with 'General') and
-  // aren't a quest reagent are surfaced as dead-weight candidates.
-  // (Skipped until inventory data lands; placeholder section below.)
+  // ── Inventory dead-weight + broken items (Uilnayar 2026-06-24) ──
+  // Classify held bag/bank items (not equipped). A "quest piece" is any held
+  // item that feeds or is rewarded by a discovered turn-in.
+  const questPieceIds = new Set<number>(discovered.map(d => d.matched_item_id));
+  const heldNonEquipped = new Map<number, number>();   // item_id → qty (bags/bank only)
+  for (const row of inventory) {
+    if (row.character_name.toLowerCase() !== decoded.toLowerCase() || row.item_id == null) continue;
+    if (!/^(General|Bank|SharedBank)/.test(row.slot_label)) continue;   // skip equipped slots
+    heldNonEquipped.set(row.item_id, (heldNonEquipped.get(row.item_id) ?? 0) + row.quantity);
+  }
+  const dontNeed: { id: number; qty: number }[] = [];     // tradeable but not usable by this char
+  const brokenItems: { id: number; qty: number }[] = [];  // NO DROP + no value + dead-end + unusable
+  for (const [id, qty] of heldNonEquipped) {
+    const m = itemMetaById.get(id);
+    if (!m) continue;
+    const usable = usableByChar(id);
+    if (m.nodrop === true && !usable) dontNeed.push({ id, qty });
+    else if (m.nodrop === false && (m.price ?? 0) <= 0 && !questPieceIds.has(id) && !usable) brokenItems.push({ id, qty });
+  }
+  dontNeed.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
+  brokenItems.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
+  // Compact coin value from a copper price.
+  const coin = (price: number | null | undefined) => {
+    const p = price ?? 0;
+    if (p <= 0) return '—';
+    if (p >= 1000) return `${Math.floor(p / 1000)}pp`;
+    if (p >= 100) return `${Math.floor(p / 100)}gp`;
+    if (p >= 10) return `${Math.floor(p / 10)}sp`;
+    return `${p}cp`;
+  };
 
   return (
     <div className="space-y-6">
@@ -1006,18 +1033,50 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         </section>
       )}
 
-      {/* Dead-weight inventory — placeholder until the heuristic + inventory data are wired */}
+      {/* Dead-weight: held (bag/bank) items that are tradeable but the char's
+          class/race can't use. (Uilnayar 2026-06-24.) */}
       <section className="bg-panel border border-border rounded-lg p-5">
-        <h3 className="text-lg text-orange mb-2">Quest pieces you probably don&apos;t need</h3>
-        <p className="text-xs text-dim leading-6">
-          Items in {decoded}&apos;s inventory that don&apos;t feed a quest they
-          could finish (wrong class/race reward, no-drop dead end, no
-          faction value) and aren&apos;t equipped will surface here.
-          <span className="text-orange"> Wired to render when the agent inventory
-          upload lands and we&apos;ve scored items against the character&apos;s
-          class/race — placeholder for now.</span>
+        <h3 className="text-lg text-orange mb-2">Quest pieces you probably don&apos;t need ({dontNeed.length})</h3>
+        <p className="text-xs text-dim leading-6 mb-2">
+          Tradeable items in {decoded}&apos;s bags/bank that {char.class || 'this character'} can&apos;t
+          use — sell, trade, or hand off to an alt. Class/race tags + value shown.
         </p>
+        {dontNeed.length === 0 ? (
+          <p className="text-sm text-dim italic">Nothing flagged — every tradeable item {decoded} is holding is usable by their class/race (or has no class restriction).</p>
+        ) : (
+          <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
+            {dontNeed.map(({ id, qty }) => (
+              <li key={id} className="flex items-baseline gap-1.5">
+                <a href={itemPqdi(id)} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{dItemName(id)}</a>
+                {qty > 1 && <span className="text-dim/70">×{qty}</span>}
+                <span className="text-red-400/70 text-[10px]">[{classTagsFor(id)}]</span>
+                <span className="text-dim/50 text-[10px]">{coin(itemMetaById.get(id)?.price)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
+
+      {/* Broken quest items — NO DROP, no value, feed no quest, unusable.
+          Advisory only ("safe to destroy"); double-check before deleting. */}
+      {brokenItems.length > 0 && (
+        <section className="bg-panel border border-red/30 rounded-lg p-5">
+          <h3 className="text-lg text-red-400 mb-2">🗑 Broken quest items ({brokenItems.length})</h3>
+          <p className="text-xs text-dim leading-6 mb-2">
+            NO DROP, no vendor value, feed no known turn-in, and {char.class || 'this character'} can&apos;t
+            use them — almost certainly safe to destroy. Double-check on PQDI first.
+          </p>
+          <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
+            {brokenItems.map(({ id, qty }) => (
+              <li key={id} className="flex items-baseline gap-1.5">
+                <a href={itemPqdi(id)} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{dItemName(id)}</a>
+                {qty > 1 && <span className="text-dim/70">×{qty}</span>}
+                <span className="text-orange/60 text-[9px] uppercase tracking-wide">no drop</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
