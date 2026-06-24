@@ -32,7 +32,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
-import { QuestActionButtons, QuestUnhideButton, TurninPromoteButton } from './QuestPrefsControls';
+import { QuestActionButtons, QuestUnhideButton, TurninControls } from './QuestPrefsControls';
 
 export const dynamic = 'force-dynamic';
 
@@ -164,26 +164,32 @@ async function load(decoded: string) {
     discovered = (dRows ?? []) as Discovered[];
   }
 
-  // Promoted turn-ins — the character pinned these into the Active section
-  // (Uilnayar 2026-06-24). Fetch by id so they render even if the matching
-  // inventory item was since consumed.
+  // Per-character turn-in prefs (Uilnayar 2026-06-24): 'active' = pinned into
+  // the Active section, 'dismissed' = hidden from discovery. Fetch the pinned +
+  // dismissed turn-ins by id so they render even if the matching inventory item
+  // was since consumed.
   const { data: activeRows } = await sb
     .from('character_active_turnins')
-    .select('turnin_id')
+    .select('turnin_id, status')
     .eq('guild_id', 'wolfpack')
     .ilike('character_name', decoded);
-  const promotedTurninIds = ((activeRows ?? []) as { turnin_id: number }[]).map(r => r.turnin_id);
-  let promotedTurnins: TurninCore[] = [];
-  if (promotedTurninIds.length > 0) {
-    const { data: pRows } = await sb.rpc('turnins_by_id', { p_ids: promotedTurninIds });
-    promotedTurnins = (pRows ?? []) as TurninCore[];
+  const prefRows = ((activeRows ?? []) as { turnin_id: number; status: string }[]);
+  const promotedTurninIds = prefRows.filter(r => r.status === 'active').map(r => r.turnin_id);
+  const dismissedTurninIds = prefRows.filter(r => r.status === 'dismissed').map(r => r.turnin_id);
+  const prefIds = [...promotedTurninIds, ...dismissedTurninIds];
+  let prefTurnins: TurninCore[] = [];
+  if (prefIds.length > 0) {
+    const { data: pRows } = await sb.rpc('turnins_by_id', { p_ids: prefIds });
+    prefTurnins = (pRows ?? []) as TurninCore[];
   }
+  const promotedTurnins = prefTurnins.filter(t => promotedTurninIds.includes(t.turnin_id));
+  const dismissedTurnins = prefTurnins.filter(t => dismissedTurninIds.includes(t.turnin_id));
 
   // Resolve input/output item names + NO-DROP flag for display in one batch.
   // (eqemu_items.nodrop is INVERTED on this mirror: false = NO DROP.)
   const discoveryItemIds = Array.from(new Set([
     ...discovered.flatMap(d => [...d.inputs.map(i => i.item_id), ...d.outputs.map(o => o.item_id), d.matched_item_id]),
-    ...promotedTurnins.flatMap(t => [...t.inputs.map(i => i.item_id), ...t.outputs.map(o => o.item_id)]),
+    ...prefTurnins.flatMap(t => [...t.inputs.map(i => i.item_id), ...t.outputs.map(o => o.item_id)]),
   ]));
   const itemMetaById = new Map<number, { name: string; nodrop: boolean }>();
   if (discoveryItemIds.length > 0) {
@@ -227,6 +233,8 @@ async function load(decoded: string) {
     itemMetaById,
     promotedTurnins,
     promotedTurninIds,
+    dismissedTurnins,
+    dismissedTurninIds,
   };
 }
 
@@ -240,7 +248,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const data = await load(decoded);
   if (!data) notFound();
-  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest, inferredKeys, discovered, itemMetaById, promotedTurnins, promotedTurninIds } = data;
+  const { char, quests, questItems, inventory, keys, familyNames, itemInfo, prefByQuest, inferredKeys, discovered, itemMetaById, promotedTurnins, promotedTurninIds, dismissedTurnins, dismissedTurninIds } = data;
 
   // The viewed character's keyring — a quest completes when its reward sits
   // here (keys) OR in inventory (combine outputs / quest rewards). Components
@@ -454,11 +462,13 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const npcPqdi = (npcId: number | null) => (npcId ? `https://www.pqdi.cc/npc/${npcId}` : null);
   const heldQty = (id: number) => ownInvById.get(id) ?? 0;
   const promotedSet = new Set<number>(promotedTurninIds);
+  const dismissedSet = new Set<number>(dismissedTurninIds);
 
   // Group discovered "piece" rows (held item is a component) by turn-in.
+  // Skip promoted (render in Active) and dismissed (hidden) turn-ins.
   const pieceById = new Map<number, { t: Turnin; matched: Set<number> }>();
   for (const d of discovered) {
-    if (d.evidence !== 'piece' || promotedSet.has(d.turnin_id)) continue;  // promoted ones render in Active
+    if (d.evidence !== 'piece' || promotedSet.has(d.turnin_id) || dismissedSet.has(d.turnin_id)) continue;
     let e = pieceById.get(d.turnin_id);
     if (!e) { e = { t: d as Turnin, matched: new Set<number>() }; pieceById.set(d.turnin_id, e); }
     e.matched.add(d.matched_item_id);
@@ -470,9 +480,15 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   for (const e of pieceById.values()) {
     const ready = e.t.inputs.every(i => heldQty(i.item_id) >= i.qty);
     const hasNoDrop = e.t.inputs.some(i => dIsNoDrop(i.item_id));
-    const gemNoise = !ready && e.matched.size > 0 && [...e.matched].every(id => dIsGem(id));
-    if (ready) readyList.push(e);
-    else if (gemNoise) gemList.push(e);
+    // Gem noise: a turn-in whose inputs are ALL common gems (jeweler / cosmetic
+    // / tradeskill handlers — e.g. Diamond → H.E.L.M device), or one where the
+    // only thing held is a gem and the real piece is missing. Minimize either
+    // way, even when "ready". (Uilnayar 2026-06-24.)
+    const allGems = e.t.inputs.length > 0 && e.t.inputs.every(i => dIsGem(i.item_id));
+    const matchedAllGems = e.matched.size > 0 && [...e.matched].every(id => dIsGem(id));
+    const gemNoise = allGems || (!ready && matchedAllGems);
+    if (gemNoise) gemList.push(e);
+    else if (ready) readyList.push(e);
     else if (hasNoDrop) noDropList.push(e);
     else tradeableList.push(e);
   }
@@ -491,15 +507,15 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     .map(([item_id, qty]) => ({ item_id, qty }))
     .sort((a, b) => dItemName(a.item_id).localeCompare(dItemName(b.item_id)));
 
-  // Promoted turn-ins (pinned to Active by the character).
-  const promoted: { t: Turnin; matched: Set<number> }[] = promotedTurnins
-    .map(t => ({ t: t as Turnin, matched: new Set<number>(t.inputs.filter(i => heldQty(i.item_id) >= i.qty).map(i => i.item_id)) }))
-    .sort(byZoneNpc);
+  // Promoted (pinned to Active) and dismissed (hidden) turn-ins.
+  const toEntry = (t: Turnin) => ({ t, matched: new Set<number>(t.inputs.filter(i => heldQty(i.item_id) >= i.qty).map(i => i.item_id)) });
+  const promoted = promotedTurnins.map(toEntry).sort(byZoneNpc);
+  const dismissed = dismissedTurnins.map(toEntry).sort(byZoneNpc);
 
-  // Shared row renderer for a discovered/promoted turn-in. Format the header as
-  // "Item — Turn-in NPC — where" (the held item drives discovery), then a ✓/✗
-  // give-list and the reward. (Uilnayar 2026-06-24.)
-  const turninRow = (t: Turnin, matched: Set<number>, isPromoted: boolean) => {
+  // Shared row renderer for a discovered/promoted/dismissed turn-in. Format the
+  // header as "Item — Turn-in NPC — where" (the held item drives discovery),
+  // then a ✓/✗ give-list and the reward. (Uilnayar 2026-06-24.)
+  const turninRow = (t: Turnin, matched: Set<number>, kind: 'discovery' | 'promoted' | 'dismissed') => {
     const ready = t.inputs.every(i => heldQty(i.item_id) >= i.qty);
     const headId = [...matched][0] ?? t.inputs[0]?.item_id ?? t.outputs[0]?.item_id ?? null;
     const m = t.money_required;
@@ -524,7 +540,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             <span className="text-dim">{t.zone_short}</span>
             {t.exp_award ? <span className="text-blue/80 text-[10px]">{t.exp_award.toLocaleString()} xp</span> : null}
           </div>
-          <TurninPromoteButton character={decoded} turninId={t.turnin_id} active={isPromoted} />
+          <TurninControls character={decoded} turninId={t.turnin_id} kind={kind} />
         </div>
         <ul className="text-[11px] mt-0.5 space-y-0.5">
           {t.inputs.map((i, idx) => {
@@ -609,7 +625,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         <h3 className="text-lg text-orange mb-3">Active quests ({active.length + promoted.length})</h3>
         {promoted.length > 0 && (
           <ul className="space-y-2 mb-4">
-            {promoted.map(e => turninRow(e.t, e.matched, true))}
+            {promoted.map(e => turninRow(e.t, e.matched, 'promoted'))}
           </ul>
         )}
         {active.length === 0 && promoted.length === 0 ? (
@@ -699,26 +715,27 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           Reworked (Uilnayar 2026-06-24): ready-to-turn-in first, NO DROP vs
           tradeable split, gem-only matches minimized, "Item — NPC — where"
           format with PQDI links and ✓/✗ per component. */}
-      {(discoveryCount > 0 || completedTurninItems.length > 0) && (
+      {(discoveryCount > 0 || completedTurninItems.length > 0 || dismissed.length > 0) && (
         <section className="bg-panel border border-purple/40 rounded-lg p-5">
           <h3 className="text-lg text-purple mb-2">🔍 Inventory-driven discovery</h3>
           <p className="text-xs text-dim leading-5 mb-3">
             NPC turn-ins matched against {decoded}&apos;s inventory, from the ProjectEQ
             quest scripts. Format is <span className="text-dim/80">Item — Turn-in NPC — zone</span>;
-            ✓ marks a component held, ✗ one still needed. Pin one to Active quests with ▲.
+            ✓ marks a component held, ✗ one still needed. Pin one to Active quests with ▲,
+            or 🚫 dismiss ones you don&apos;t care about.
           </p>
 
           {readyList.length > 0 && (
             <div className="mb-4">
               <h4 className="text-sm text-green mb-1.5">✅ Ready to turn in ({readyList.length})</h4>
-              <ul className="space-y-2">{readyList.map(e => turninRow(e.t, e.matched, false))}</ul>
+              <ul className="space-y-2">{readyList.map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
             </div>
           )}
 
           {noDropList.length > 0 && (
             <div className="mb-4">
               <h4 className="text-sm text-orange mb-1.5">🔒 In progress — has a NO DROP component ({noDropList.length})</h4>
-              <ul className="space-y-2">{noDropList.slice(0, 60).map(e => turninRow(e.t, e.matched, false))}</ul>
+              <ul className="space-y-2">{noDropList.slice(0, 60).map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
               {noDropList.length > 60 && <p className="text-[10px] text-dim mt-1">+{noDropList.length - 60} more — refine inventory to narrow.</p>}
             </div>
           )}
@@ -726,7 +743,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           {tradeableList.length > 0 && (
             <div className="mb-4">
               <h4 className="text-sm text-blue mb-1.5">📦 In progress — tradeable components ({tradeableList.length})</h4>
-              <ul className="space-y-2">{tradeableList.slice(0, 60).map(e => turninRow(e.t, e.matched, false))}</ul>
+              <ul className="space-y-2">{tradeableList.slice(0, 60).map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
               {tradeableList.length > 60 && <p className="text-[10px] text-dim mt-1">+{tradeableList.length - 60} more — refine inventory to narrow.</p>}
             </div>
           )}
@@ -734,8 +751,15 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           {gemList.length > 0 && (
             <details className="mt-2">
               <summary className="text-sm text-dim cursor-pointer hover:text-blue">💎 Gem turn-ins — only a common gem held ({gemList.length})</summary>
-              <ul className="space-y-2 mt-2">{gemList.slice(0, 80).map(e => turninRow(e.t, e.matched, false))}</ul>
+              <ul className="space-y-2 mt-2">{gemList.slice(0, 80).map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
               {gemList.length > 80 && <p className="text-[10px] text-dim mt-1">+{gemList.length - 80} more.</p>}
+            </details>
+          )}
+
+          {dismissed.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-sm text-dim cursor-pointer hover:text-blue">🚫 Dismissed turn-ins ({dismissed.length}) — restore any</summary>
+              <ul className="space-y-2 mt-2">{dismissed.map(e => turninRow(e.t, e.matched, 'dismissed'))}</ul>
             </details>
           )}
         </section>

@@ -9,7 +9,7 @@
 // dismiss are per-button. (Uilnayar 2026-06-23.)
 
 import { useTransition } from 'react';
-import { setQuestHidden, setQuestDismissed, moveQuest, promoteTurnin, demoteTurnin } from './actions';
+import { setQuestHidden, setQuestDismissed, moveQuest, promoteTurnin, demoteTurnin, dismissTurnin, restoreTurnin } from './actions';
 
 export function QuestActionButtons({ character, questId }: { character: string; questId: number }) {
   const [pending, start] = useTransition();
@@ -34,17 +34,32 @@ export function QuestActionButtons({ character, questId }: { character: string; 
   );
 }
 
-// Discovery → Active: pin (▲ add) / unpin (✕ remove) a scripted turn-in to the
-// character's Active quests section. (Uilnayar 2026-06-24.)
-export function TurninPromoteButton({ character, turninId, active }: { character: string; turninId: number; active: boolean }) {
+// Per-turn-in controls for the discovery panel (Uilnayar 2026-06-24).
+//   • 'discovery' → ▲ to active  +  🚫 dismiss
+//   • 'promoted'  → ✕ remove (un-pin from Active)
+//   • 'dismissed' → ↺ restore (back to discovery)
+export function TurninControls({ character, turninId, kind }: { character: string; turninId: number; kind: 'discovery' | 'promoted' | 'dismissed' }) {
   const [pending, start] = useTransition();
-  const run = () => start(() => (active ? demoteTurnin : promoteTurnin)(character, turninId).then(() => {}));
+  const run = (fn: () => Promise<unknown>) => () => start(() => fn().then(() => {}));
+  if (kind === 'promoted') {
+    return (
+      <button type="button" disabled={pending} onClick={run(() => demoteTurnin(character, turninId))}
+        className="text-[10px] text-dim hover:text-red disabled:opacity-40" title="Remove from Active quests">✕ remove</button>
+    );
+  }
+  if (kind === 'dismissed') {
+    return (
+      <button type="button" disabled={pending} onClick={run(() => restoreTurnin(character, turninId))}
+        className="text-[10px] text-blue hover:underline disabled:opacity-40">↺ restore</button>
+    );
+  }
   return (
-    <button type="button" disabled={pending} onClick={run}
-      className={`text-[10px] disabled:opacity-40 ${active ? 'text-dim hover:text-red' : 'text-blue hover:underline'}`}
-      title={active ? 'Remove from Active quests' : 'Move to Active quests'}>
-      {active ? '✕ remove' : '▲ to active'}
-    </button>
+    <span className="inline-flex items-center gap-2 text-[10px]">
+      <button type="button" disabled={pending} onClick={run(() => promoteTurnin(character, turninId))}
+        className="text-blue hover:underline disabled:opacity-40" title="Move to Active quests">▲ to active</button>
+      <button type="button" disabled={pending} onClick={run(() => dismissTurnin(character, turninId))}
+        className="text-dim hover:text-red disabled:opacity-40" title="Not interested — hide from discovery">🚫 dismiss</button>
+    </span>
   );
 }
 

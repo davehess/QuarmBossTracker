@@ -109,24 +109,28 @@ export async function moveQuest(characterName: string, questId: number, directio
   return reorderQuests(characterName, next.map(q => q.id));
 }
 
-// Promote a discovered scripted turn-in into the character's Active quests
-// section (Uilnayar 2026-06-24: "Let people move those quests to the active
-// quests section"). Stored per-character in character_active_turnins; the
-// turn-in itself isn't in quest_catalog, so this is a lightweight pin.
-export async function promoteTurnin(characterName: string, turninId: number) {
+// Per-character status for a discovered scripted turn-in (which isn't in
+// quest_catalog) — stored as a lightweight pin in character_active_turnins:
+//   • 'active'    → pinned to the Active quests section ("Let people move those
+//                   quests to the active quests section", Uilnayar 2026-06-24)
+//   • 'dismissed' → hidden from discovery ("mark off which quests are not of
+//                   interest, and remove them from the list", Uilnayar 2026-06-24)
+//   • no row      → neutral (shown in discovery)
+async function setTurninStatus(characterName: string, turninId: number, status: 'active' | 'dismissed') {
   const gate = await ownsOrOfficer(characterName);
   if (!gate.ok) return { ok: false, error: gate.error };
   const admin = supabaseAdmin();
-  // Idempotent: ignore the unique-violation if it's already pinned.
-  const { error } = await admin.from('character_active_turnins').insert({
-    guild_id: 'wolfpack', character_name: characterName, turnin_id: turninId,
-  });
-  if (error && !/duplicate key/i.test(error.message)) return { ok: false, error: error.message };
+  const { error } = await admin.from('character_active_turnins').upsert(
+    { guild_id: 'wolfpack', character_name: characterName, turnin_id: turninId, status },
+    { onConflict: 'guild_id,character_name,turnin_id' },
+  );
+  if (error) return { ok: false, error: error.message };
   revalidatePath(`/character/${encodeURIComponent(characterName)}/quests`);
   return { ok: true };
 }
 
-export async function demoteTurnin(characterName: string, turninId: number) {
+// Remove the pin row entirely → back to neutral (re-appears in discovery).
+async function clearTurnin(characterName: string, turninId: number) {
   const gate = await ownsOrOfficer(characterName);
   if (!gate.ok) return { ok: false, error: gate.error };
   const admin = supabaseAdmin();
@@ -137,6 +141,20 @@ export async function demoteTurnin(characterName: string, turninId: number) {
     .eq('turnin_id', turninId);
   revalidatePath(`/character/${encodeURIComponent(characterName)}/quests`);
   return { ok: true };
+}
+
+export async function promoteTurnin(characterName: string, turninId: number) {
+  return setTurninStatus(characterName, turninId, 'active');
+}
+export async function dismissTurnin(characterName: string, turninId: number) {
+  return setTurninStatus(characterName, turninId, 'dismissed');
+}
+// demote = un-pin from Active; restore = un-dismiss. Both clear the row.
+export async function demoteTurnin(characterName: string, turninId: number) {
+  return clearTurnin(characterName, turninId);
+}
+export async function restoreTurnin(characterName: string, turninId: number) {
+  return clearTurnin(characterName, turninId);
 }
 
 export async function resetQuestLayout(characterName: string) {
