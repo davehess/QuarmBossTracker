@@ -191,11 +191,11 @@ async function load(decoded: string) {
     ...discovered.flatMap(d => [...d.inputs.map(i => i.item_id), ...d.outputs.map(o => o.item_id), d.matched_item_id]),
     ...prefTurnins.flatMap(t => [...t.inputs.map(i => i.item_id), ...t.outputs.map(o => o.item_id)]),
   ]));
-  const itemMetaById = new Map<number, { name: string; nodrop: boolean }>();
+  const itemMetaById = new Map<number, { name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null }>();
   if (discoveryItemIds.length > 0) {
-    const { data: irows } = await sb.from('eqemu_items').select('id, name, nodrop').in('id', discoveryItemIds);
-    for (const r of ((irows ?? []) as { id: number; name: string; nodrop: boolean }[])) {
-      itemMetaById.set(r.id, { name: r.name, nodrop: r.nodrop });
+    const { data: irows } = await sb.from('eqemu_items').select('id, name, nodrop, classes, races, price').in('id', discoveryItemIds);
+    for (const r of ((irows ?? []) as { id: number; name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null }[])) {
+      itemMetaById.set(r.id, { name: r.name, nodrop: r.nodrop, classes: r.classes, races: r.races, price: r.price });
     }
   }
 
@@ -456,6 +456,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const dItemName = (id: number) => itemMetaById.get(id)?.name || `#${id}`;
   // eqemu_items.nodrop is INVERTED on this Quarm mirror: false = NO DROP.
   const dIsNoDrop = (id: number) => itemMetaById.get(id)?.nodrop === false;
+  const dIsDroppable = (id: number) => itemMetaById.get(id)?.nodrop === true;   // tradeable
   const GEM_RE = /\b(gems?|jade|ruby|sapphire|emerald|diamond|opal|pearl|topaz|peridot|amber|garnet|malachite|lapis|jacinth|jasper|turquoise|onyx|bloodstone|moonstone|sunstone|quartz|coral)\b/i;
   const dIsGem = (id: number) => GEM_RE.test(itemMetaById.get(id)?.name || '');
   const itemPqdi = (id: number) => `https://www.pqdi.cc/item/${id}`;
@@ -463,6 +464,42 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const heldQty = (id: number) => ownInvById.get(id) ?? 0;
   const promotedSet = new Set<number>(promotedTurninIds);
   const dismissedSet = new Set<number>(dismissedTurninIds);
+
+  // ── Class/race usability (Uilnayar 2026-06-24: "say the classes/races that
+  // can use the item; if it's not one that that character can use and it's
+  // droppable" → route to 'don't need'). eqemu_items.classes / .races are EQ
+  // bitmasks. The viewed character's bit is matched against them.
+  const CLASS_BITS: Record<string, number> = {
+    warrior: 1, cleric: 2, paladin: 4, ranger: 8, 'shadow knight': 16, shadowknight: 16,
+    druid: 32, monk: 64, bard: 128, rogue: 256, shaman: 512, necromancer: 1024,
+    wizard: 2048, magician: 4096, mage: 4096, enchanter: 8192, beastlord: 16384,
+  };
+  const RACE_BITS: Record<string, number> = {
+    human: 1, barbarian: 2, erudite: 4, 'wood elf': 8, 'high elf': 16, 'dark elf': 32,
+    'half elf': 64, dwarf: 128, troll: 256, ogre: 512, halfling: 1024, gnome: 2048,
+    iksar: 4096, 'vah shir': 8192, 'vahshir': 8192,
+  };
+  const CLASS_TAGS: [number, string][] = [
+    [1, 'WAR'], [2, 'CLR'], [4, 'PAL'], [8, 'RNG'], [16, 'SHD'], [32, 'DRU'], [64, 'MNK'],
+    [128, 'BRD'], [256, 'ROG'], [512, 'SHM'], [1024, 'NEC'], [2048, 'WIZ'], [4096, 'MAG'],
+    [8192, 'ENC'], [16384, 'BST'],
+  ];
+  const ALL_CLASS_MASK = CLASS_TAGS.reduce((s, [b]) => s | b, 0);
+  const charClassBit = CLASS_BITS[(char.class || '').toLowerCase()] ?? 0;
+  const charRaceBit  = RACE_BITS[(char.race || '').toLowerCase()] ?? 0;
+  const usableByChar = (id: number) => {
+    const m = itemMetaById.get(id);
+    if (!m) return true;                                   // unknown → don't flag
+    const cOk = !charClassBit || !m.classes || (m.classes & charClassBit) !== 0;
+    const rOk = !charRaceBit  || !m.races   || (m.races   & charRaceBit)  !== 0;
+    return cOk && rOk;
+  };
+  const classTagsFor = (id: number) => {
+    const m = itemMetaById.get(id);
+    if (!m || !m.classes || (m.classes & ALL_CLASS_MASK) === ALL_CLASS_MASK) return 'ALL';
+    const tags = CLASS_TAGS.filter(([b]) => (m.classes! & b) !== 0).map(([, t]) => t);
+    return tags.length ? tags.join(' ') : 'ALL';
+  };
 
   // Group discovered "piece" rows (held item is a component) by turn-in.
   // Skip promoted (render in Active) and dismissed (hidden) turn-ins.
@@ -473,29 +510,53 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     if (!e) { e = { t: d as Turnin, matched: new Set<number>() }; pieceById.set(d.turnin_id, e); }
     e.matched.add(d.matched_item_id);
   }
-  const readyList: { t: Turnin; matched: Set<number> }[] = [];
-  const noDropList: { t: Turnin; matched: Set<number> }[] = [];
-  const tradeableList: { t: Turnin; matched: Set<number> }[] = [];
-  const gemList: { t: Turnin; matched: Set<number> }[] = [];
+  type Entry = { t: Turnin; matched: Set<number> };
+  const readyList: Entry[] = [];     // hold every component
+  const mqList: Entry[] = [];        // in progress, all components tradeable → MQ-able
+  const soloList: Entry[] = [];      // in progress, has a NO DROP component → solo only
+  const notForList: Entry[] = [];    // reward is tradeable but not usable by this char
+  const gemList: Entry[] = [];       // jeweler/cosmetic/gem noise
   for (const e of pieceById.values()) {
     const ready = e.t.inputs.every(i => heldQty(i.item_id) >= i.qty);
     const hasNoDrop = e.t.inputs.some(i => dIsNoDrop(i.item_id));
-    // Gem noise: a turn-in whose inputs are ALL common gems (jeweler / cosmetic
-    // / tradeskill handlers — e.g. Diamond → H.E.L.M device), or one where the
-    // only thing held is a gem and the real piece is missing. Minimize either
-    // way, even when "ready". (Uilnayar 2026-06-24.)
+    // Gem noise: inputs all common gems (Diamond → H.E.L.M device etc.), or the
+    // only thing held is a gem and the real piece is missing.
     const allGems = e.t.inputs.length > 0 && e.t.inputs.every(i => dIsGem(i.item_id));
     const matchedAllGems = e.matched.size > 0 && [...e.matched].every(id => dIsGem(id));
     const gemNoise = allGems || (!ready && matchedAllGems);
+    // Reward not for this character: the (primary) reward is tradeable AND the
+    // char's class/race can't use it → not worth doing for them.
+    const reward = e.t.outputs[0];
+    const rewardNotForChar = !!reward && dIsDroppable(reward.item_id) && !usableByChar(reward.item_id);
     if (gemNoise) gemList.push(e);
     else if (ready) readyList.push(e);
-    else if (hasNoDrop) noDropList.push(e);
-    else tradeableList.push(e);
+    else if (rewardNotForChar) notForList.push(e);
+    else if (hasNoDrop) soloList.push(e);
+    else mqList.push(e);
   }
-  const byZoneNpc = (a: { t: Turnin }, b: { t: Turnin }) =>
+  const byZoneNpc = (a: Entry, b: Entry) =>
     a.t.zone_short.localeCompare(b.t.zone_short) || a.t.npc_name.localeCompare(b.t.npc_name);
-  readyList.sort(byZoneNpc); noDropList.sort(byZoneNpc); tradeableList.sort(byZoneNpc); gemList.sort(byZoneNpc);
+  readyList.sort(byZoneNpc); mqList.sort(byZoneNpc); soloList.sort(byZoneNpc); notForList.sort(byZoneNpc); gemList.sort(byZoneNpc);
   const discoveryCount = pieceById.size;
+
+  // Group a list of turn-ins by the held item that drives them, so one flooding
+  // item (e.g. Sky Jewel feeding 30 NPCs) collapses into one expandable group.
+  // Primary held item = the matched item shared by the most turn-ins in the list.
+  const groupByHeld = (entries: Entry[]): [number, Entry[]][] => {
+    const cnt = new Map<number, number>();
+    for (const e of entries) for (const id of e.matched) cnt.set(id, (cnt.get(id) ?? 0) + 1);
+    const groups = new Map<number, Entry[]>();
+    for (const e of entries) {
+      let primary = -1, best = -1;
+      for (const id of e.matched) {
+        const c = cnt.get(id) ?? 0;
+        if (c > best || (c === best && (primary < 0 || id < primary))) { best = c; primary = id; }
+      }
+      if (primary < 0) primary = e.t.inputs[0]?.item_id ?? 0;
+      const arr = groups.get(primary) ?? []; arr.push(e); groups.set(primary, arr);
+    }
+    return [...groups.entries()].sort((a, b) => b[1].length - a[1].length || dItemName(a[0]).localeCompare(dItemName(b[0])));
+  };
 
   // Completed turn-ins: dedup by output item held, with the held quantity.
   const completedHeld = new Map<number, number>();
@@ -539,6 +600,14 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             <span className="text-dim/60">—</span>
             <span className="text-dim">{t.zone_short}</span>
             {t.exp_award ? <span className="text-blue/80 text-[10px]">{t.exp_award.toLocaleString()} xp</span> : null}
+            {/* MQ-able when ≥2 components and every component is tradeable; a
+                NO DROP component forces a solo turn-in. (Uilnayar 2026-06-24.) */}
+            {t.inputs.length >= 2 && t.inputs.every(i => dIsDroppable(i.item_id)) && (
+              <span className="text-[9px] text-purple/90 border border-purple/40 rounded px-1" title="Multi-questable — components are tradeable, so multiple people can hand in pieces (last hand-in gets the reward)">MQ</span>
+            )}
+            {t.inputs.some(i => dIsNoDrop(i.item_id)) && (
+              <span className="text-[9px] text-orange/80 border border-orange/40 rounded px-1" title="Has a NO DROP component — must be done solo, can't multi-quest">solo</span>
+            )}
           </div>
           <TurninControls character={decoded} turninId={t.turnin_id} kind={kind} />
         </div>
@@ -564,18 +633,37 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         </ul>
         {t.outputs.length > 0 && (
           <div className="text-[10px] text-dim/80 mt-0.5">
-            Reward: {t.outputs.map((o, idx) => (
-              <span key={idx}>
-                {idx > 0 && ', '}
-                <a href={itemPqdi(o.item_id)} target="_blank" rel="noreferrer" className="text-blue/80 hover:underline">{dItemName(o.item_id)}</a>
-              </span>
-            ))}
+            Reward: {t.outputs.map((o, idx) => {
+              const usable = usableByChar(o.item_id);
+              return (
+                <span key={idx}>
+                  {idx > 0 && ', '}
+                  <a href={itemPqdi(o.item_id)} target="_blank" rel="noreferrer" className="text-blue/80 hover:underline">{dItemName(o.item_id)}</a>
+                  {/* class/race tags next to the reward; red when this char can't use it */}
+                  <span className={usable ? 'text-dim/50' : 'text-red-400/80'}> [{classTagsFor(o.item_id)}]{!usable && ' ✗ not your class/race'}</span>
+                </span>
+              );
+            })}
             {t.random_outputs && <span className="text-orange/70"> (random)</span>}
           </div>
         )}
       </li>
     );
   };
+
+  // Render a list of turn-ins grouped by the held item that drives them — each
+  // group a collapsible "Item ✓ — N turn-ins" (auto-open when small). Fixes the
+  // flood from one item feeding many NPCs. (Uilnayar 2026-06-24.)
+  const renderGroups = (entries: Entry[]) =>
+    groupByHeld(entries).map(([itemId, list]) => (
+      <details key={itemId} open={list.length <= 2} className="border-l-2 border-purple/20 pl-2">
+        <summary className="cursor-pointer text-xs text-text hover:text-blue py-0.5">
+          <span className="text-green">✓</span> {dItemName(itemId)}
+          <span className="text-dim"> — {list.length} turn-in{list.length === 1 ? '' : 's'}</span>
+        </summary>
+        <ul className="space-y-2 mt-1 mb-2">{list.map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
+      </details>
+    ));
 
   // Dead-weight: inventory items that are NOT required by any active quest
   // and the character isn't using as gear. Heuristic for v1 — refined as
@@ -732,27 +820,34 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             </div>
           )}
 
-          {noDropList.length > 0 && (
+          {mqList.length > 0 && (
             <div className="mb-4">
-              <h4 className="text-sm text-orange mb-1.5">🔒 In progress — has a NO DROP component ({noDropList.length})</h4>
-              <ul className="space-y-2">{noDropList.slice(0, 60).map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
-              {noDropList.length > 60 && <p className="text-[10px] text-dim mt-1">+{noDropList.length - 60} more — refine inventory to narrow.</p>}
+              <h4 className="text-sm text-blue mb-1.5">🔀 Possibly multi-questable ({mqList.length})</h4>
+              <p className="text-[10px] text-dim mb-1.5">All components tradeable — pieces can be split across people (last hand-in gets the reward). Grouped by the item you hold; click to expand.</p>
+              <div className="space-y-0.5">{renderGroups(mqList)}</div>
             </div>
           )}
 
-          {tradeableList.length > 0 && (
+          {soloList.length > 0 && (
             <div className="mb-4">
-              <h4 className="text-sm text-blue mb-1.5">📦 In progress — tradeable components ({tradeableList.length})</h4>
-              <ul className="space-y-2">{tradeableList.slice(0, 60).map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
-              {tradeableList.length > 60 && <p className="text-[10px] text-dim mt-1">+{tradeableList.length - 60} more — refine inventory to narrow.</p>}
+              <h4 className="text-sm text-orange mb-1.5">🔒 Solo only — has a NO DROP component ({soloList.length})</h4>
+              <p className="text-[10px] text-dim mb-1.5">Can&apos;t be multi-quested (a NO DROP piece must be looted by you). Grouped by the item you hold.</p>
+              <div className="space-y-0.5">{renderGroups(soloList)}</div>
             </div>
+          )}
+
+          {notForList.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-sm text-dim cursor-pointer hover:text-blue">🚷 Reward not usable by your class/race ({notForList.length})</summary>
+              <p className="text-[10px] text-dim mt-1 mb-1.5">The reward is tradeable but {char.class || 'this character'} can&apos;t use it — only worth doing to MQ for someone else.</p>
+              <div className="space-y-0.5 mt-1">{renderGroups(notForList)}</div>
+            </details>
           )}
 
           {gemList.length > 0 && (
             <details className="mt-2">
               <summary className="text-sm text-dim cursor-pointer hover:text-blue">💎 Gem turn-ins — only a common gem held ({gemList.length})</summary>
-              <ul className="space-y-2 mt-2">{gemList.slice(0, 80).map(e => turninRow(e.t, e.matched, 'discovery'))}</ul>
-              {gemList.length > 80 && <p className="text-[10px] text-dim mt-1">+{gemList.length - 80} more.</p>}
+              <div className="space-y-0.5 mt-2">{renderGroups(gemList)}</div>
             </details>
           )}
 
