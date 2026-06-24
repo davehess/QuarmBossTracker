@@ -90,6 +90,11 @@ export default function AdminPage() {
           href="/admin/triggers"
         />
         <Card
+          title="📊 Page analytics"
+          body="Which pages members are using — top routes, top concrete pages, top viewers, with a 24h/7d/30d/90d range toggle. Sourced from middleware, anonymous + bot traffic excluded."
+          href="/admin/analytics"
+        />
+        <Card
           title="🎙️ Voice triggers"
           body="Ripcord + tunables for the bot speaking in raid voice. Master enable, default voice, volume slider, skip patterns (for muting noisy callouts mid-fight). Settings propagate in ~30s."
           href="/admin/voice"
