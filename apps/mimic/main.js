@@ -87,6 +87,7 @@ let melodyWindow  = null;
 let zealWindow    = null;
 let threatWindow  = null;
 let chChainWindow = null;
+let tankWindow    = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -1847,6 +1848,7 @@ function _overlayEntries() {
   if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
   if (threatWindow  && !threatWindow.isDestroyed())  out.push(['threat',  threatWindow]);
   if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
+  if (tankWindow    && !tankWindow.isDestroyed())    out.push(['tank',    tankWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1911,6 +1913,7 @@ function applySetupMode(on) {
     if (!zealWindow)    createZealHealthOverlay();
     if (!threatWindow)  createThreatMeterOverlay();
     if (!chChainWindow) createChChainOverlay();
+    if (!tankWindow)    createTankOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -3112,6 +3115,42 @@ function applyZealVisibility() {
   if (shouldShow) zealWindow.showInactive(); else zealWindow.hide();
 }
 
+// Tank overlay — DS total, buffs+timers, Divine Aura countdown, current target
+// HP, boss enrage warning, current rampage target. Reads /api/tank-state which
+// aggregates everything from the locally-watched Zeal state. Cross-raid HP sync
+// is Tier 4 (deferred); the overlay shows the active local character only.
+// (Uilnayar 2026-06-25.)
+function createTankOverlay() {
+  const b = _resolveBounds('tankBounds', 'tankBoundsSig', { x: 40, y: 480, width: 300, height: 280 });
+  tankWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Tank overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 240, minHeight: 120,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  tankWindow.setAlwaysOnTop(true, 'screen-saver');
+  tankWindow.setVisibleOnAllWorkspaces(true);
+  tankWindow.loadFile('tank.html');
+  tankWindow.on('moved',  () => _persistBounds('tankBounds', tankWindow));
+  tankWindow.on('resize', () => _persistBounds('tankBounds', tankWindow));
+  tankWindow.once('ready-to-show', () => {
+    tankWindow.webContents.send('agent-port', agentPort);
+    applyTankVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(tankWindow, 'tank');
+  });
+}
+function applyTankVisibility() {
+  if (!tankWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in — most members don't tank, so default off. EQ-gated like the rest.
+  const shouldShow = unlocked || (cfg.showTank && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) tankWindow.showInactive(); else tankWindow.hide();
+}
+
 // Threat meter overlay — per-fight per-player aggro breakdown (swing / proc /
 // spell / heal stacked bar) reading stats.currentEncounterThreat. Tanks see
 // where their hate is coming from; non-tanks see when they're about to pull.
@@ -3242,6 +3281,7 @@ function toggleHideAllOverlays() {
       showZeal:         !!cfg.showZeal,
       showThreat:       !!cfg.showThreat,
       showChChain:      !!cfg.showChChain,
+      showTank:         !!cfg.showTank,
     };
     cfg.showHud = false;
     cfg.enableTriggerTts = false;
@@ -3254,6 +3294,7 @@ function toggleHideAllOverlays() {
     cfg.showZeal = false;
     cfg.showThreat = false;
     cfg.showChChain = false;
+    cfg.showTank = false;
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -3393,6 +3434,7 @@ function currentStatus() {
     showZeal: !!cfg.showZeal,
     showThreat: !!cfg.showThreat,
     showChChain: !!cfg.showChChain,
+    showTank: !!cfg.showTank,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -3573,6 +3615,11 @@ function buildTrayMenu() {
     { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showThreat = mi.checked; saveConfig(cfg);
         if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
+        pushStatus();
+      } },
+    { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showTank = mi.checked; saveConfig(cfg);
+        if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility();
         pushStatus();
       } },
     { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode, click: (mi) => {
@@ -4125,6 +4172,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showChChain = !cfg.showChChain; saveConfig(cfg);
       if (cfg.showChChain && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
       break;
+    case 'tank':
+      cfg.showTank = !cfg.showTank; saveConfig(cfg);
+      if (cfg.showTank && !tankWindow) createTankOverlay(); else applyTankVisibility();
+      break;
     default:
       return null;
   }
@@ -4175,6 +4226,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === chChainWindow) {
       cfg.showChChain = false; saveConfig(cfg);
       try { chChainWindow.hide(); } catch {}
+    } else if (win === tankWindow) {
+      cfg.showTank = false; saveConfig(cfg);
+      try { tankWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -4557,6 +4611,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showZeal         && !zealWindow)      createZealHealthOverlay();
     if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
     if (merged.showChChain      && !chChainWindow)   createChChainOverlay();
+    if (merged.showTank         && !tankWindow)      createTankOverlay();
   } catch (e) { void e; }
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
@@ -4741,6 +4796,7 @@ app.whenReady().then(async () => {
   createMelodyOverlay();
   createZealHealthOverlay();
   createChChainOverlay();
+  createTankOverlay();
   pushStatus();
   startZealCapture();
 

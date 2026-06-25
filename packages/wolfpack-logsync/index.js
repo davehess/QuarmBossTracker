@@ -3758,6 +3758,15 @@ class EncounterBuilder {
       }
       this._rampageTs = Date.parse(event.ts) || Date.now();
       this._rampageTarget = event.defender || null;
+      // Publish the current rampage target to stats so the Tank overlay can
+      // surface it without poking builder internals. Cleared by the damage-tag
+      // path below or by the 8s freshness check on the /api/tank-state side.
+      // (Uilnayar 2026-06-25: tank overlay should say who current Rampage is.)
+      stats.currentRampage = {
+        target:   event.defender || null,
+        attacker: event.attacker || this.bossName || null,
+        at:       this._rampageTs,
+      };
       return;
     }
     // Tag the immediately following damage event for this rampage target (within 3s).
@@ -5827,6 +5836,131 @@ function loadSessionState() {
 // visible window and browse the dashboard on demand.
 //
 // Binds 127.0.0.1 only — never exposes the dashboard to the network.
+
+// Tank overlay snapshot — see the /api/tank-state route comment. (Uilnayar
+// 2026-06-25.) Pulls from the currently focused character's _zealState entry
+// plus the global stats.currentDsReflects + stats.currentRampage. Always
+// returns a shape — never null — so the overlay can render a "no data yet"
+// state instead of erroring on missing fields.
+const DA_SPELL_RX = /^(divine aura|divine barrier|divine intervention|harmshield|forced sound channeling|invulnerability)/i;
+const DA_CRITICAL_TICKS = 2;  // ≤12s remaining (1 tick = 6s) → flash + ramp callout
+// Bosses that enrage at low HP — primary use is the warning gauge. ~8% on
+// Quarm per Uilnayar 2026-06-25; not every boss enrages. Until we have a
+// proper data-table, recognize the most-asked-about ones. Empty list → no
+// warning (overlay just shows boss HP).
+const ENRAGE_BOSSES = new Set([
+  // Plane of Hate / Fear era
+  'innoruuk', 'cazic thule', 'dread', 'fright', 'terror',
+  // Velious dragons
+  'lord yelinak', 'klandicar', 'zlandicar', 'vulak`aerr', 'dain frostreaver iv',
+  'lady mirenilla', 'lady nevederia',
+  // Kunark
+  'trakanon', 'venril sathir', 'gorenaire', 'severilous', 'talendor',
+  // Luclin Ssra / VT
+  'emperor ssraeshza', 'rhag`mozdezhan', 'thall xundraux diabo', 'aten ha ra',
+  'thall va kelun', 'thall va sharzul',
+]);
+function _isEnrageBoss(name) {
+  if (!name) return false;
+  return ENRAGE_BOSSES.has(String(name).toLowerCase());
+}
+function _serializeTankState() {
+  // Active focused character — same heuristic _serializeForDashboard uses.
+  const now = Date.now();
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    const ts = (st && st.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  const st = active ? (_zealState[active] || {}) : {};
+
+  // Target HP comes from gauge slot 6 (target gauge text + hp_pct).
+  let targetName = null, targetHpPct = null;
+  if (Array.isArray(st.gauges)) {
+    const g = st.gauges.find(g => g && g.slot === 6);
+    if (g) { targetName = g.text || null; targetHpPct = g.hp_pct != null ? g.hp_pct : null; }
+  }
+
+  // Buffs — passthrough with normalization. EQ buff durations come in 6s
+  // ticks; convert to seconds remaining for the overlay.
+  const buffs = Array.isArray(st.buffs) ? st.buffs : [];
+  const buffsOut = buffs
+    .filter(b => b && b.name)
+    .map(b => ({
+      name:    String(b.name),
+      ticks:   typeof b.ticks === 'number' ? b.ticks : null,
+      seconds: typeof b.ticks === 'number' ? Math.max(0, b.ticks * 6) : null,
+    }));
+
+  // Divine Aura detection on self. EQ's DA-class spells are short — the
+  // duration field counts ticks remaining. Flag critical if ≤12s left so
+  // the overlay can flash and call out "start CH on <name>".
+  let da = null;
+  for (const b of buffsOut) {
+    if (DA_SPELL_RX.test(b.name)) {
+      da = {
+        name:        b.name,
+        seconds:     b.seconds,
+        ticks:       b.ticks,
+        critical:    b.ticks != null && b.ticks <= DA_CRITICAL_TICKS,
+        ramp_target: active,    // who'd need to be CH'd when DA falls
+      };
+      break;
+    }
+  }
+
+  // DS reflect total this fight — sum across all abilities + provide a tiny
+  // breakdown so the overlay can render "🛡 12.4k (Thorn 8.1k · Mark 4.3k)".
+  const dsr = stats.currentDsReflects || null;
+  let dsTotal = 0;
+  const dsBreakdown = [];
+  if (dsr && dsr.abilities) {
+    for (const [name, v] of Object.entries(dsr.abilities)) {
+      const t = (v && v.total) || 0;
+      dsTotal += t;
+      dsBreakdown.push({ name, total: t, count: (v && v.count) || 0 });
+    }
+    dsBreakdown.sort((a, b) => b.total - a.total);
+  }
+
+  // Rampage target — only return when fresh (≤8s). Older than that and we
+  // assume the rampage cycle is over.
+  let rampage = null;
+  const r = stats.currentRampage || null;
+  if (r && r.target && r.at && (now - r.at) <= 8000) {
+    rampage = { target: r.target, attacker: r.attacker || null, ageMs: now - r.at };
+  }
+
+  // Boss + enrage hint. Drives the enrage countdown / warning. We use the
+  // active boss name from the DS reflects struct as a fallback when the
+  // target gauge is empty (e.g. tank is targeting an offtank).
+  const bossName = (dsr && dsr.bossName) || targetName || null;
+  const enrage = {
+    boss_name:        bossName,
+    enrages:          _isEnrageBoss(bossName),
+    threshold_pct:    8,                 // Quarm bosses enrage at ~8% HP
+    warn_pct:         15,                // warn the tank starting at 15%
+    target_hp_pct:    targetHpPct,
+    // Light projection — overlay can compute its own based on session DPS.
+    projection_ready: targetHpPct != null && targetHpPct <= 15,
+  };
+
+  return {
+    character: active,
+    hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
+    target:    { name: targetName, hp_pct: targetHpPct },
+    buffs:     buffsOut,
+    da,
+    ds: { total: dsTotal, abilities: dsBreakdown.slice(0, 8) },
+    rampage,
+    enrage,
+    updated_at: st.updatedAt || 0,
+    // Cross-raid sync hasn't shipped yet — overlay reads local data only.
+    // (Tier 4 work, deferred.) When it does, this flag will flip true.
+    fast_sync: false,
+  };
+}
 
 function _serializeForDashboard() {
   const healersOut = {};
@@ -8374,6 +8508,7 @@ var WP_OVERLAY_ROWS = [
   ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
+  ['tank',    'Tank HUD',            'Tank focus card: own HP, current target HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target, DS reflect total this fight, and the top expiring buffs. Reads /api/tank-state.'],
 ];
 
 function renderOverlays(s) {
@@ -8493,7 +8628,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -11468,6 +11603,20 @@ function startWebDashboard(port) {
       if (req.url === '/api/state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeForDashboard()));
+      }
+      // Tank overlay snapshot (Uilnayar 2026-06-25). Aggregates everything the
+      // tank.html overlay needs from the active character's live state:
+      //   • self HP %, target name + HP %, current buffs (with ticks remaining)
+      //   • DS reflect total this fight (sum of stats.currentDsReflects)
+      //   • DA (Divine Aura / Divine Barrier / Divine Intervention) countdown
+      //     — flag at_critical when ≤10s remain so the overlay can flash
+      //   • current rampage target (8s freshness window)
+      //   • boss name + enrage hint (warns at ≤15% HP if the encounter is the
+      //     kind that enrages — full per-boss table is server-side data later)
+      // No cross-raid sync yet — Tier 4 lift is deferred to its own design.
+      if (req.url === '/api/tank-state') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_serializeTankState()));
       }
       // Mimic's buff-queue overlay polls this — we proxy the bot's
       // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't

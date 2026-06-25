@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>tank</title>
+<style>
+  /* Wolf Pack Tank Overlay — Uilnayar 2026-06-25:
+     "DS total and buffs with timers, enrage upcoming based on boss HP …
+     who current Rampage is … DA countdown + 'start CH on <DA ramp>' at ≤10s."
+     Reads /api/tank-state. Cross-raid sync (Tier 4) deferred — overlay
+     shows the local agent's data only for now. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{padding:6px 8px;min-width:240px;}
+  .title{display:flex;align-items:center;gap:8px;
+    font-size:12px;color:#f8b87b;text-shadow:0 1px 2px #000;margin-bottom:5px;}
+  .title .who{font-size:11px;color:#9aa4ad;font-weight:normal}
+  .title .badge{font-size:9px;border:1px solid rgba(255,255,255,0.2);border-radius:3px;
+    padding:1px 4px;color:#9aa4ad;letter-spacing:0.5px}
+  .card{background:rgba(0,0,0,0.55);border-radius:5px;padding:5px 7px;margin-bottom:4px}
+  .card .head{font-size:10px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;
+    text-shadow:0 1px 2px #000}
+  .hpwrap{position:relative;height:14px;background:#222;border-radius:3px;overflow:hidden;
+    border:1px solid rgba(255,255,255,0.06)}
+  .hpbar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(to right,#56d364,#56d364);
+    transition:width .25s ease, background .25s ease}
+  .hpbar.low {background:linear-gradient(to right,#f0d264,#f0a52d)}
+  .hpbar.crit{background:linear-gradient(to right,#f87171,#dc2626)}
+  .hpwrap .val{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:#fff;text-shadow:0 1px 2px #000;font-weight:600}
+  .da{display:flex;align-items:center;gap:6px;padding:5px 7px;background:rgba(31,75,140,0.5);
+    border:1px solid #4287f5;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .da.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .da .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .da .call{font-size:10px;color:#fff;text-shadow:0 1px 2px #000}
+  @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
+  .enrage{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(140,72,31,0.45);
+    border:1px solid #f0a52d;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .enrage.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .ramp{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,32,32,0.55);
+    border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .ramp .who{font-weight:700;color:#fff}
+  .ds-total{font-size:13px;color:#56d364;font-variant-numeric:tabular-nums;font-weight:700}
+  .ds-breakdown{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;line-height:1.4}
+  .buffs{display:flex;flex-direction:column;gap:1px;font-size:10px;line-height:1.4}
+  .buffs .buff{display:flex;align-items:center;gap:4px}
+  .buffs .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  .buffs .left{color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;font-size:9px}
+  .buffs .buff.soon .left{color:#f0d264}
+  .buffs .buff.crit .left{color:#f87171;font-weight:700}
+  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:3px 0;text-align:center}
+  /* drag/lock/setup chrome — shared pattern. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(248,184,123,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(180,98,34,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(180,98,34,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{margin-top:26px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#f8b87b;border-color:#f8b87b}
+  body.setup #move-btn{top:30px}
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
+  <button id="hide-btn" title="Hide the Tank overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛡 Tank</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span aria-hidden>🛡</span><span>Tank</span><span class="who" id="who"></span><span class="badge" id="syncBadge" title="When cross-raid HP sync ships (Tier 4), this will turn green and update at sub-second.">local</span></div>
+    <div id="content"></div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  function fmtDmg(n){ if (!n || n < 1000) return String(n||0); if (n < 1e6) return (n/1000).toFixed(1)+'k'; return (n/1e6).toFixed(2)+'M'; }
+  function fmtSec(s){ if (s == null) return '--'; if (s < 60) return Math.round(s)+'s'; var m = Math.floor(s/60), r = Math.round(s%60); return m+':'+(r<10?'0':'')+r; }
+
+  function _requestAutoHeight(){
+    if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
+    var w = document.getElementById('wrap'); if (!w) return;
+    try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
+  }
+
+  var contentEl = document.getElementById('content');
+  var whoEl     = document.getElementById('who');
+  var syncEl    = document.getElementById('syncBadge');
+
+  function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
+
+  function render(s){
+    if (!s || s.character == null) {
+      contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
+      whoEl.textContent = '';
+      return;
+    }
+    whoEl.textContent = '· ' + s.character;
+    if (s.fast_sync) { syncEl.textContent = 'sync'; syncEl.style.color = '#56d364'; syncEl.style.borderColor = '#56d364'; }
+    else { syncEl.textContent = 'local'; syncEl.style.color = '#9aa4ad'; syncEl.style.borderColor = 'rgba(255,255,255,0.2)'; }
+
+    var html = '';
+
+    // Own HP
+    var hp = s.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.hp_pct)));
+    html += '<div class="card">'
+         +    '<div class="head">Your HP</div>'
+         +    '<div class="hpwrap"><div class="hpbar ' + hpClass(hp) + '" style="width:' + (hp == null ? 0 : hp) + '%"></div>'
+         +      '<div class="val">' + (hp == null ? '—' : hp + '%') + '</div></div>'
+         +  '</div>';
+
+    // Divine Aura — flash when ≤10s remain + "start CH on <name>" callout.
+    if (s.da) {
+      var crit = !!s.da.critical;
+      html += '<div class="da ' + (crit ? 'crit' : '') + '">'
+           +    '<span>🛡️ ' + esc(s.da.name) + '</span>'
+           +    '<span class="sec">' + fmtSec(s.da.seconds) + '</span>'
+           +    (crit ? '<span class="call">— start CH on ' + esc(s.da.ramp_target || 'you') + '!</span>' : '')
+           +  '</div>';
+    }
+
+    // Target HP + boss enrage warning
+    if (s.target && s.target.name) {
+      var thp = s.target.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.target.hp_pct)));
+      html += '<div class="card">'
+           +    '<div class="head">Target — ' + esc(s.target.name) + '</div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
+           +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
+           +  '</div>';
+      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+        html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
+             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +  '</div>';
+      }
+    }
+
+    // Rampage target
+    if (s.rampage && s.rampage.target) {
+      html += '<div class="ramp">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>';
+    }
+
+    // DS total + top breakdown
+    if (s.ds && (s.ds.total > 0 || (s.ds.abilities && s.ds.abilities.length))) {
+      var bdown = (s.ds.abilities || []).slice(0, 3).map(function(a){ return esc(a.name) + ' ' + fmtDmg(a.total); }).join(' · ');
+      html += '<div class="card">'
+           +    '<div class="head">Damage shield (this fight)</div>'
+           +    '<div class="ds-total">' + fmtDmg(s.ds.total || 0) + ' returned</div>'
+           +    (bdown ? '<div class="ds-breakdown">' + bdown + '</div>' : '')
+           +  '</div>';
+    }
+
+    // Buffs with countdowns
+    if (s.buffs && s.buffs.length) {
+      var buffsHtml = '';
+      var buffs = s.buffs.slice().sort(function(a,b){
+        // null ticks at the end; lowest seconds first so expiring shows up.
+        var as = a.seconds == null ? 1e9 : a.seconds;
+        var bs = b.seconds == null ? 1e9 : b.seconds;
+        return as - bs;
+      }).slice(0, 8);
+      for (var i = 0; i < buffs.length; i++) {
+        var b = buffs[i];
+        var cls = ''; if (b.seconds != null) { if (b.seconds <= 12) cls = 'crit'; else if (b.seconds <= 60) cls = 'soon'; }
+        buffsHtml += '<div class="buff ' + cls + '"><span class="name">' + esc(b.name) + '</span><span class="left">' + (b.seconds == null ? '—' : fmtSec(b.seconds)) + '</span></div>';
+      }
+      html += '<div class="card"><div class="head">Buffs</div><div class="buffs">' + buffsHtml + '</div></div>';
+    }
+
+    contentEl.innerHTML = html;
+    _requestAutoHeight();
+  }
+
+  async function tick(){
+    try {
+      const r = await fetch('http://127.0.0.1:'+PORT+'/api/tank-state', { cache: 'no-store' });
+      const s = await r.json();
+      render(s);
+    } catch (e) {
+      // Quiet — agent might be restarting. Next tick will recover.
+    }
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+</body></html>
