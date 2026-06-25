@@ -2333,6 +2333,12 @@ function noteSelfCast(line, character) {
 // our own casts are nameable (EQ hides others' spell/target), so coverage scales
 // with Mimic adoption. LIVE path only (never backfill — stale casts are useless).
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
+// Heal-spell name detector for the per-encounter spell-count tally surfaced on
+// the heal perspective panel (Uilnayar 2026-06-25). Word-boundary'd so we
+// don't pick up unrelated names like "Annul Magic" or "Reflect Spell"; a
+// broad-enough match that custom Quarm heal spells are still captured if
+// they're named recognisably.
+const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloropl|regrowth|torpor|lay on hands|restoration|touch of the divine|vigor|salve)\b/i;
 const _lastCastRelay = new Map();   // charLower → { sig, at }
 function relaySelfCastForCasting(line, character) {
   if (!line || !character) return;
@@ -3032,6 +3038,13 @@ class EncounterBuilder {
     this.defenderStats = new Map();
     // Healer totals: heal-source name → { healed, ticks, targets:Set<name> }
     this.healerStats   = new Map();
+    // Per-encounter heal-spell cast counts from the UPLOADER's own log.
+    // EQ only logs the spell name on the caster's "You begin casting X" line,
+    // so this is meaningful for self-casts only (other healers' casts arrive
+    // as "X begins to cast a spell" with no name). { spellName: count }.
+    // Attached to the uploader's own healer entry at emit time. (Uilnayar
+    // 2026-06-25: "x CHs and other heal types".)
+    this.healSpellCounts = {};
     // Pending riposte: when X attacks Y and Y ripostes, the next damage event
     // where Y attacks X within ~1.5s IS the riposte counter-hit. We tag it so
     // the tank can see total damage-from-ripostes per fight.
@@ -3277,12 +3290,19 @@ class EncounterBuilder {
   _bumpHealer(healer, target, amount, tsMs) {
     if (!healer || !amount) return;
     if (!this.healerStats.has(healer)) {
-      this.healerStats.set(healer, { healed: 0, ticks: 0, targets: new Set() });
+      this.healerStats.set(healer, { healed: 0, ticks: 0, targets: new Set(), byTarget: {} });
     }
     const s = this.healerStats.get(healer);
     s.healed += amount;
     s.ticks  += 1;
-    if (target) s.targets.add(target);
+    if (target) {
+      s.targets.add(target);
+      // Per-recipient totals — agent v3.1.69+. Lets the heal-perspective UI
+      // show "Ashieron 320k · Moash 180k" instead of a bare name list.
+      // (Uilnayar 2026-06-25: "how much tanks were healed".)
+      if (!s.byTarget) s.byTarget = {};
+      s.byTarget[target] = (s.byTarget[target] || 0) + amount;
+    }
     // First/last heal timestamp — lets /parses/[id] show the heal window
     // ("Carol healed 0:00–2:54") parallel to the tank window. Optional
     // — bookkeeping calls that don't represent a real heal tick can skip
@@ -4159,6 +4179,13 @@ class EncounterBuilder {
         const byChar = stats.castCounts[caster] || (stats.castCounts[caster] = {});
         byChar[spell] = (byChar[spell] || 0) + 1;
       }
+      // Per-encounter heal-spell tally for the heal perspective. Only count
+      // self-casts (event.attacker null) where the spell name is actually a
+      // healing spell — bystander cast lines don't include the name on Quarm
+      // so they'd all collapse to "a spell" and be useless.
+      if (!event.attacker && spell && HEAL_SPELL_RX.test(spell)) {
+        this.healSpellCounts[spell] = (this.healSpellCounts[spell] || 0) + 1;
+      }
       // Charm-spell cast → stage its class + duration so the next charm-land
       // (gauge or log) can attach a duration bar to the session. Self-cast only
       // (no attacker = the builder's own character cast it); matched to the land
@@ -4629,6 +4656,16 @@ class EncounterBuilder {
               name, healed: s.healed, ticks: s.ticks, targets: [...s.targets],
               firstHealAt: s.firstHealAt || undefined,
               lastHealAt:  s.lastHealAt  || undefined,
+              // Per-recipient totals — populated for every healer the agent
+              // observed (the heal-line attribution gives us both healer and
+              // target on third-person heals as well as self-heals).
+              byTarget:    (s.byTarget && Object.keys(s.byTarget).length) ? s.byTarget : undefined,
+              // Heal-spell cast counts — populated ONLY on the uploader's own
+              // healer entry, since EQ hides the spell name on bystander cast
+              // lines. (Uilnayar 2026-06-25: CHs and other heal-type counts.)
+              spells:      (this.character && name === this.character && Object.keys(this.healSpellCounts).length)
+                ? { ...this.healSpellCounts }
+                : undefined,
             }))
           : undefined,
         // Player deaths in this encounter.
