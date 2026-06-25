@@ -68,6 +68,15 @@ type RawHealer    = {
   targets?: string[];
   firstHealAt?: number;
   lastHealAt?: number;
+  // Per-recipient heal totals — agent v3.1.69+. Lets the heal panel show
+  // "Ashieron 320k · Moash 180k" instead of a bare name list.
+  byTarget?: Record<string, number>;
+  // Heal-spell cast counts from the uploader's own log — agent v3.1.69+.
+  // EQ only shows the spell name on the caster's "You begin casting X" line
+  // (bystanders get "X begins to cast a spell"), so this is populated ONLY
+  // on the healer whose name equals the contribution's uploader.
+  // (Uilnayar 2026-06-25: "x CHs and other heal types".)
+  spells?: Record<string, number>;
 };
 // CH-chain gap analysis on the primary tank — agent fills in when it saw at
 // least one healing gap > 8s. `maxGapMs` is the longest dead air, surfaced
@@ -327,10 +336,28 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     .sort((a, b) => (b.total_damage || 0) - (a.total_damage || 0));
   const maxDamage = players[0]?.total_damage || 0;
 
-  // Merge deaths across all contributions, dedup on name+ts.
+  // Merge deaths across all contributions, dedup on name+ts. Then suppress
+  // names that any SINGLE contributor reported dying 2+ times — a real player
+  // can only die once per encounter (corpses don't respawn mid-fight), so a
+  // repeat death from one machine's view means it's an NPC namesake getting
+  // mis-attributed (Uilnayar 2026-06-25: 30+ phantom "Syphon" deaths in
+  // Ssra because "Syphon" is both an SK player and a Quarm-custom NPC; the
+  // agent's confirmedPlayer check matched the player and credited every
+  // NPC-Syphon kill to him). One agent's view is enough to discredit the
+  // name across the whole fight.
+  const phantomNames = new Set<string>();
+  for (const c of contribs) {
+    const perName = new Map<string, number>();
+    for (const d of (c.raw_parse?.deaths ?? [])) {
+      const k = (d.name || '').toLowerCase();
+      perName.set(k, (perName.get(k) ?? 0) + 1);
+    }
+    for (const [k, n] of perName) if (n >= 2) phantomNames.add(k);
+  }
   const deathsMap = new Map<string, RawDeath>();
   for (const c of contribs) {
     for (const d of (c.raw_parse?.deaths ?? [])) {
+      if (phantomNames.has((d.name || '').toLowerCase())) continue;
       const k = `${d.name}|${d.ts}`;
       if (!deathsMap.has(k)) deathsMap.set(k, d);
     }
@@ -927,8 +954,41 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
               const selfHeal = (h.raw_parse?.healers ?? []).find(
                 hh => hh.name?.toLowerCase() === selfName.toLowerCase(),
               );
+              // Prefer per-recipient totals (agent v3.1.69+); fall back to
+              // the bare name list for older uploads.
+              const byTargetEntries = selfHeal?.byTarget
+                ? Object.entries(selfHeal.byTarget).sort((a, b) => b[1] - a[1])
+                : null;
               const targets   = (selfHeal?.targets || []).slice(0, 5);
               const moreCount = Math.max(0, (selfHeal?.targets || []).length - targets.length);
+              // Spell-count summary — abbreviate the noisy long EQ names.
+              const SPELL_LABELS: [RegExp, string][] = [
+                [/^complete healing$/i, 'CH'],
+                [/^greater healing$/i, 'GH'],
+                [/^superior healing$/i, 'SH'],
+                [/^healing(?: light)?$/i, 'Heal'],
+                [/^minor healing$/i, 'mH'],
+                [/^light healing$/i, 'LH'],
+                [/^word of restoration$/i, 'WoR'],
+                [/^word of healing$/i, 'WoH'],
+                [/^word of vigor$/i, 'WoV'],
+                [/^lay on hands$/i, 'LoH'],
+                [/^touch of the divine$/i, 'ToD'],
+                [/^renewal of light$/i, 'RoL'],
+                [/^chloroplast$/i, 'Chlro'],
+                [/^regrowth of the grove$/i, 'RotG'],
+                [/^regrowth$/i, 'Regrowth'],
+                [/^karana's renewal$/i, 'KR'],
+                [/^torpor$/i, 'Torpor'],
+                [/^ward of restoration$/i, 'WoR'],
+              ];
+              const labelOf = (name: string) => {
+                for (const [rx, lbl] of SPELL_LABELS) if (rx.test(name)) return lbl;
+                return name;
+              };
+              const spellEntries = selfHeal?.spells
+                ? Object.entries(selfHeal.spells).filter(([, n]) => (n || 0) > 0).sort((a, b) => b[1] - a[1])
+                : [];
               const healerDeathRows = selfName
                 ? deaths.filter(d => d.name?.toLowerCase() === selfName.toLowerCase())
                 : [];
@@ -997,15 +1057,41 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       {(selfHeal.ticks || 0) > 0 && (
                         <span className="opacity-60"> ({selfHeal.ticks} tick{selfHeal.ticks === 1 ? '' : 's'})</span>
                       )}
-                      {targets.length > 0 && (
+                      {byTargetEntries && byTargetEntries.length > 0 ? (
+                        <>
+                          <span> on </span>
+                          {byTargetEntries.slice(0, 4).map(([name, amt], i) => (
+                            <span key={name}>
+                              {i > 0 && <span className="opacity-60">, </span>}
+                              <Link href={`/character/${encodeURIComponent(name)}`} className="text-text hover:text-blue hover:underline">{name}</Link>
+                              <span className="opacity-60"> {fmtDmg(amt)}</span>
+                            </span>
+                          ))}
+                          {byTargetEntries.length > 4 && <span className="opacity-60">, +{byTargetEntries.length - 4} more</span>}
+                        </>
+                      ) : targets.length > 0 ? (
                         <>
                           <span> on </span>
                           <span className="text-text">{targets.join(', ')}</span>
                           {moreCount > 0 && <span className="opacity-60">, +{moreCount} more</span>}
                         </>
-                      )}
+                      ) : null}
                     </div>
                   ) : null}
+                  {spellEntries.length > 0 && (
+                    <div className="ml-3 text-[11px] mt-0.5">
+                      <span className="opacity-50">↳ </span>
+                      <span title="Heal-spell cast counts from this healer's own log. Only the caster's client logs the spell name — others see 'begins to cast a spell' — so this only counts when this healer was running the agent.">
+                        {spellEntries.map(([name, n], i) => (
+                          <span key={name}>
+                            {i > 0 && <span className="opacity-60"> · </span>}
+                            <span className="text-text">{labelOf(name)}</span>
+                            <span className="opacity-60"> × {n}</span>
+                          </span>
+                        ))}
+                      </span>
+                    </div>
+                  )}
                 </li>
               );
             })}
