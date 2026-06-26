@@ -45,68 +45,112 @@ async function loadCounters() {
   // we only count an encounter if one of his LD timestamps falls inside that
   // encounter's window [started_at, started_at + duration_sec] — "damage dealt
   // while he was disconnected." Still only his own encounter_players rows.
+  // ── 🔌 Raids since Peopleslayer crashed ──────────────────────────────────
+  // Peopleslayer got a new machine; we flipped the card from "lifetime LD
+  // count" (the old one — strikethrough'd in the subtitle as a callback) to
+  // "raids since the most recent LD", per his own suggestion. Shows the date
+  // of the last LD in bold + the zone it happened in (agent v3.1.72+ enriches
+  // the event with the zone from Zeal state). Previous-best streak strikes
+  // through when broken — same pattern as the Moash card. (Uilnayar 2026-06-26.)
   try {
-    const LD_GRACE_MS = 5 * 60 * 1000; // a fight that kicked off ≤5m after an LD still counts (he stayed LD)
-    const [ldRes, ldRows] = await Promise.all([
-      sb.from('fun_events')
-        .select('*', { count: 'exact', head: true })
-        .eq('event_type', 'peopleslayer_ld'),
-      sb.from('fun_events')
-        .select('event_ts')
-        .eq('event_type', 'peopleslayer_ld')
-        .order('event_ts', { ascending: true }),
-    ]);
-    const ldCount = ldRes.count ?? 0;
-    const ldTimes = ((ldRows.data ?? []) as { event_ts: string }[])
-      .map(r => new Date(r.event_ts).getTime())
-      .filter(t => !Number.isNaN(t));
+    const { data: ldRows, count: ldTotal } = await sb
+      .from('fun_events')
+      .select('event_ts, target', { count: 'exact' })
+      .eq('event_type', 'peopleslayer_ld')
+      .order('event_ts', { ascending: true });
+    const lds = ((ldRows ?? []) as { event_ts: string; target: string | null }[])
+      .map(r => ({ ts: new Date(r.event_ts).getTime(), zone: r.target }))
+      .filter(r => Number.isFinite(r.ts));
 
-    let postLdDamage = 0;
-    if (ldTimes.length > 0) {
-      const earliestLd = ldTimes[0];
-      // His encounters that could overlap an LD must START at or before the
-      // last LD. Pull them with duration so we can test the window in JS
-      // (PostgREST can't filter started_at + duration). Bounded to his rows.
+    // "Raids since" = distinct UTC dates where Peopleslayer parsed an
+    // encounter, from after his most recent LD until today. Each distinct
+    // calendar date counts as one raid he survived without going LD.
+    const fmtDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+    let raidsSince = 0;
+    let prevRecordRaids = 0;
+    if (lds.length > 0) {
+      const lastLdMs = lds[lds.length - 1].ts;
       const { data: ep } = await sb
         .from('encounter_players')
-        .select('encounter_id, total_damage, encounters!inner(started_at, duration_sec)')
+        .select('encounters!inner(started_at)')
         .ilike('character_name', 'Peopleslayer')
-        .gte('encounters.started_at', new Date(earliestLd - LD_GRACE_MS).toISOString())
-        .lte('encounters.started_at', new Date(ldTimes[ldTimes.length - 1] + LD_GRACE_MS).toISOString())
+        .gte('encounters.started_at', new Date(lastLdMs + 60_000).toISOString())
         .limit(5000);
-      type EpRow = { encounter_id: string; total_damage: number | null; encounters: { started_at: string; duration_sec: number | null } | { started_at: string; duration_sec: number | null }[] | null };
-      const seen = new Set<string>();
+      type EpRow = { encounters: { started_at: string } | { started_at: string }[] | null };
+      const sinceDays = new Set<string>();
       for (const r of (ep ?? []) as unknown as EpRow[]) {
-        // PostgREST returns the to-one join as an object, but the generated
-        // types model it as an array — accept either.
         const enc = Array.isArray(r.encounters) ? r.encounters[0] : r.encounters;
-        if (!enc || !enc.started_at) continue;
-        const start = new Date(enc.started_at).getTime();
-        if (Number.isNaN(start)) continue;
-        const end = start + (enc.duration_sec ?? 0) * 1000;
-        // Counts if any LD happened during the fight, or the fight began within
-        // the grace window after an LD (he hadn't reconnected yet).
-        const overlapsLd = ldTimes.some(ld => (ld >= start - LD_GRACE_MS && ld <= end) || (start >= ld && start <= ld + LD_GRACE_MS));
-        if (overlapsLd && !seen.has(r.encounter_id)) {
-          seen.add(r.encounter_id);
-          postLdDamage += r.total_damage || 0;
+        if (!enc?.started_at) continue;
+        sinceDays.add(enc.started_at.slice(0, 10));
+      }
+      raidsSince = sinceDays.size;
+
+      // Previous-best streak — for each consecutive pair of LDs, count distinct
+      // raid dates Peopleslayer parsed between them. The biggest one is the
+      // record to beat. Cheap-and-correct: one extra query covering all gaps.
+      if (lds.length >= 2) {
+        const firstMs = lds[0].ts;
+        const { data: epAll } = await sb
+          .from('encounter_players')
+          .select('encounters!inner(started_at)')
+          .ilike('character_name', 'Peopleslayer')
+          .gte('encounters.started_at', new Date(firstMs - 60_000).toISOString())
+          .lte('encounters.started_at', new Date(lastLdMs + 60_000).toISOString())
+          .limit(8000);
+        const allStarts: number[] = [];
+        for (const r of (epAll ?? []) as unknown as EpRow[]) {
+          const enc = Array.isArray(r.encounters) ? r.encounters[0] : r.encounters;
+          if (!enc?.started_at) continue;
+          const t = new Date(enc.started_at).getTime();
+          if (Number.isFinite(t)) allStarts.push(t);
+        }
+        for (let i = 0; i < lds.length - 1; i++) {
+          const lo = lds[i].ts, hi = lds[i + 1].ts;
+          const days = new Set<string>();
+          for (const t of allStarts) if (t > lo && t < hi) days.add(fmtDay(t));
+          if (days.size > prevRecordRaids) prevRecordRaids = days.size;
         }
       }
     }
 
-    counters.push({
-      label: 'Peopleslayer linkdead',
-      emoji: '🔌',
-      value: ldCount,
-      sub: postLdDamage > 0
-        ? `…and ${postLdDamage.toLocaleString()} damage logged while LD. DPS doesn't stop for sleep.`
-        : (ldCount > 0
-            ? 'no damage logged while LD yet — give him a minute.'
-            : 'still online.'),
-    });
+    if (lds.length === 0) {
+      counters.push({
+        label: 'Raids since Peopleslayer crashed',
+        emoji: '🔌',
+        value: '—',
+        sub: 'no LDs on record yet — first one resets the counter and lights the card up.',
+      });
+    } else {
+      const lastLd  = lds[lds.length - 1];
+      const lastDt  = new Date(lastLd.ts);
+      const lastLbl = lastDt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const zoneLbl = lastLd.zone || '—';
+      const showPrev = prevRecordRaids > raidsSince;
+      counters.push({
+        label: 'Raids since Peopleslayer crashed',
+        emoji: '🔌',
+        value: raidsSince,
+        sub: (
+          <>
+            Last LD: <strong className="text-text">{lastLbl}</strong> in{' '}
+            <strong className="text-text">{zoneLbl}</strong>
+            {showPrev && (
+              <>
+                {' · '}
+                <span className="line-through text-dim/60">previous record {prevRecordRaids}</span>
+              </>
+            )}
+            {' · '}
+            <span className="line-through text-dim/60" title="The card used to count his lifetime LDs — flipped now per his suggestion to count raids without an LD.">
+              {(ldTotal ?? 0).toLocaleString()} lifetime LDs
+            </span>
+          </>
+        ),
+      });
+    }
   } catch (err) {
     counters.push({
-      label: 'Peopleslayer linkdead',
+      label: 'Raids since Peopleslayer crashed',
       emoji: '🔌',
       value: 0,
       sub: 'no data yet.',
