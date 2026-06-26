@@ -649,7 +649,7 @@ export default async function FunPage() {
 // vertical alignment with sibling cards in the same grid row — that was the
 // "Tunare Invocations is off" misalignment (Uilnayar 2026-06-22). Label +
 // number reserve right padding so they never run under the emoji.
-function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: number | string; sub?: string; href?: string } }) {
+function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string } }) {
   return (
     <div className="relative bg-panel border border-border rounded-lg p-4 overflow-hidden">
       <span aria-hidden className="absolute top-3 right-3 flex items-start justify-end" style={{ width: 60, height: 48, fontSize: 28, lineHeight: 1 }}>
