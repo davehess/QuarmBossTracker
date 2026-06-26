@@ -204,6 +204,23 @@
       html += '<div class="ramp">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>';
     }
 
+    // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26). When a chain
+    // is running on the focused character (we're the target) we render the
+    // banner prominently as "Next CH in Xs · spot heal if HP < Y". When the
+    // chain is running on someone else (e.g. the off-tank or another MT) we
+    // still surface a compact form so healers in this overlay see who's being
+    // CHed and when the next tick lands.
+    if (s.ch_chain) {
+      var ch = s.ch_chain;
+      var dueSec = Math.max(0, Math.round(ch.due_in_ms / 1000));
+      var beatSec = Math.max(1, Math.round(ch.beat_ms / 1000));
+      var urgCls = ch.urgency === 'red' ? 'crit' : (ch.urgency === 'yellow' ? '' : '');
+      var line = ch.is_target
+        ? '🪢 <strong>Your CH</strong> in ' + dueSec + 's <span class="opacity-70">(beat ' + beatSec + 's)</span>'
+        : '🪢 CH on <strong>' + esc(ch.target || '?') + '</strong> in ' + dueSec + 's <span class="opacity-70">(beat ' + beatSec + 's)</span>';
+      html += '<div class="enrage ' + urgCls + '" style="border-color:' + (ch.urgency === 'red' ? '#f87171' : ch.urgency === 'yellow' ? '#f0d264' : '#56d364') + ';background:rgba(0,0,0,0.45)">' + line + '</div>';
+    }
+
     // DS total + top breakdown
     if (s.ds && (s.ds.total > 0 || (s.ds.abilities && s.ds.abilities.length))) {
       var bdown = (s.ds.abilities || []).slice(0, 3).map(function(a){ return esc(a.name) + ' ' + fmtDmg(a.total); }).join(' · ');

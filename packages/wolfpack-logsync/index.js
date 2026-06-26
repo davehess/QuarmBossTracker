@@ -5965,6 +5965,44 @@ function _serializeTankState() {
     ds: { total: dsTotal, abilities: dsBreakdown.slice(0, 8) },
     rampage,
     enrage,
+    // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26).
+    // When a CH chain is running on a tank, predict when the next CH hits and
+    // surface "spot heal in: Xs" so the tank's own healers can fill the gap
+    // before the chain re-arrives. We compute against the chain target —
+    // usually the MT — so the tank overlay shows the right window for whoever
+    // it's running on. Returns null when no chain is active OR the snapshot
+    // is stale.
+    ch_chain: (() => {
+      const c = chChainSnapshot();
+      if (!c) return null;
+      const nowMs   = Date.now();
+      const lastMs  = c.last_ch && c.last_ch.atMs ? c.last_ch.atMs : (c.updated_at || nowMs);
+      // Beat is the median observed delay between sequential calls. If we
+      // haven't measured a beat yet, fall back to 4s (the default tight chain).
+      const beatMs  = c.beat_ms || 4000;
+      const dueInMs = Math.max(0, (lastMs + beatMs) - nowMs);
+      // Urgency tiers — surface mostly through colour on the overlay:
+      //   green  : tank above 60% HP and next CH due within the beat
+      //   yellow : tank 40–60% OR next CH > 1× beat (chain may have slipped)
+      //   red    : tank under 40% OR next CH > 1.5× beat (chain almost certainly dropped)
+      const targetHp = (typeof st.self_hp_pct === 'number') ? st.self_hp_pct : null;
+      let urgency = 'green';
+      if (targetHp != null && targetHp < 40) urgency = 'red';
+      else if (dueInMs > beatMs * 1.5) urgency = 'red';
+      else if ((targetHp != null && targetHp < 60) || dueInMs > beatMs) urgency = 'yellow';
+      return {
+        target:       c.target || null,
+        beat_ms:      beatMs,
+        last_ch_at:   lastMs,
+        due_in_ms:    dueInMs,
+        slots:        c.slots || {},
+        next_num:     c.next_num,
+        urgency,
+        // True when this overlay's focused character is the chain's tank —
+        // the spot-heal window means *me* in that case.
+        is_target:    !!(c.target && active && String(c.target).toLowerCase() === String(active).toLowerCase()),
+      };
+    })(),
     updated_at: st.updatedAt || 0,
     // Cross-raid sync hasn't shipped yet — overlay reads local data only.
     // (Tier 4 work, deferred.) When it does, this flag will flip true.
