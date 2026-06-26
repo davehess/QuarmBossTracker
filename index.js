@@ -5055,6 +5055,65 @@ async function _handleAgentFunEvent(req, res) {
   res.end(JSON.stringify({ ok: true, written: Array.isArray(written) ? written.length : 0 }));
 }
 
+// Trigger timing feedback — vote from Mimic's trigger overlay buttons
+// (<< Earlier / ✓ Good! / >> Too early). Each call is one or more vote rows
+// into trigger_timing_feedback. No dedup — the overlay debounces locally; we
+//'d rather honestly count three quick clicks than risk losing a real burst
+// of disagreement. (Uilnayar 2026-06-26 — v1.1.2.)
+async function _handleAgentTriggerFeedback(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 64 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const votes = Array.isArray(payload?.votes) ? payload.votes : [];
+  if (votes.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
+  }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = votes
+    .filter(v => v && ['earlier','good','too_early'].includes(String(v.direction)))
+    .map(v => ({
+      guild_id:        guildId,
+      trigger_id:      v.trigger_id ? String(v.trigger_id).slice(0, 120) : null,
+      trigger_name:    String(v.trigger_name || '(unknown trigger)').slice(0, 200),
+      direction:       String(v.direction),
+      fired_at:        v.fired_at ? new Date(v.fired_at).toISOString() : null,
+      voted_at:        v.voted_at ? new Date(v.voted_at).toISOString() : new Date().toISOString(),
+      voter_character: v.voter_character ? String(v.voter_character).slice(0, 80) : null,
+      voter_discord_id: identity.discord_id,
+      note:            v.note ? String(v.note).slice(0, 500) : null,
+    }));
+  if (rows.length === 0) {
+    res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+
+  try {
+    await supabase.insert('trigger_timing_feedback', rows);
+  } catch (err) {
+    console.error('[trigger-feedback] insert error:', err?.message);
+    res.writeHead(500); return res.end(JSON.stringify({ error: 'persist failed' }));
+  }
+
+  _trackUpload({ endpoint: 'trigger_feedback', character: rows[0]?.voter_character, agentVersion: payload?.agent_version, payloadBytes: total, uploadedBy: identity.discord_id });
+  res.writeHead(200);
+  res.end(JSON.stringify({ ok: true, written: rows.length }));
+}
+
 // POST /api/agent/faction
 //
 // Per-character faction tracking, COMPACT design (migration 20260610150000).
@@ -10031,6 +10090,19 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentFunEvent(req, res); }
     catch (err) {
       console.error('[fun-event] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Trigger timing feedback — votes from Mimic's trigger overlay (Uilnayar
+  // 2026-06-26 — v1.1.2). Each vote inserts a trigger_timing_feedback row;
+  // officer /admin/triggers will surface aggregates in a follow-up so the
+  // guild's triggers can be tuned from evidence instead of guesswork.
+  if (req.method === 'POST' && req.url === '/api/agent/trigger_feedback') {
+    try { return await _handleAgentTriggerFeedback(req, res); }
+    catch (err) {
+      console.error('[trigger-feedback] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
