@@ -17,6 +17,9 @@ export type KillCardData = {
   player_count: number;
   top_players: { character_name: string; total_damage: number; dps: number }[];
   classification?: string | null;
+  // True ⇒ encounter is still ENGAGED (no slain line observed yet — encounters.ended_at
+  // is null). Drives the "ENGAGED" badge + sort-to-top on /parses.
+  inProgress?: boolean;
 };
 
 // One place that owns the chip styling so the listing card + detail page show
@@ -61,7 +64,7 @@ export default function KillCard({ kill, adminBar }: { kill: KillCardData; admin
     : kill.started_at;
 
   return (
-    <div className={`bg-panel border border-border rounded-lg ${dim ? 'opacity-75' : ''}`}>
+    <div className={`bg-panel border ${kill.inProgress ? 'border-orange/60' : 'border-border'} rounded-lg ${dim ? 'opacity-75' : ''}`}>
       <Link
         href={`/parses/${kill.id}`}
         className="block p-3 hover:border-blue hover:bg-[#1a212c] transition-colors no-underline rounded-lg"
@@ -70,12 +73,20 @@ export default function KillCard({ kill, adminBar }: { kill: KillCardData; admin
           <div className="text-gold text-sm font-medium truncate flex items-center gap-2 min-w-0" title={kill.boss_name}>
             <span className="truncate">{kill.boss_name}</span>
             <ClassificationChip classification={kill.classification} />
+            {kill.inProgress && (
+              <span
+                className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded border bg-orange/20 text-orange border-orange/50 animate-pulse"
+                title="Encounter is still in progress — no slain line observed yet. The boss timer is NOT set yet."
+              >ENGAGED</span>
+            )}
           </div>
           <div
             className="text-dim text-xs whitespace-nowrap"
-            title={`killed ~${fmtTime(killAt)} · engaged ${fmtTime(kill.started_at)} (${fmtDuration(kill.duration_sec)})`}
+            title={kill.inProgress
+              ? `engaged ${fmtTime(kill.started_at)} · last upload ${fmtDuration(kill.duration_sec)} in`
+              : `killed ~${fmtTime(killAt)} · engaged ${fmtTime(kill.started_at)} (${fmtDuration(kill.duration_sec)})`}
           >
-            {fmtTime(killAt)}
+            {kill.inProgress ? `engaged ${fmtTime(kill.started_at)}` : fmtTime(killAt)}
           </div>
         </div>
 

@@ -23,6 +23,7 @@ type PlayerRow      = { character_name: string; total_damage: number; dps: numbe
 type EncounterRow = {
   id: string;
   started_at: string;
+  ended_at: string | null;     // null ⇒ encounter still ENGAGED (no kill line observed yet)
   duration_sec: number | null;
   total_damage: number;
   total_dps: number;
@@ -64,7 +65,7 @@ async function loadAll(): Promise<{
     const { data: encs, error: encErr } = await sb
       .from('encounters')
       .select(`
-        id, started_at, duration_sec, total_damage, total_dps, zone_short, classification,
+        id, started_at, ended_at, duration_sec, total_damage, total_dps, zone_short, classification,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, rank )
       `)
@@ -172,6 +173,11 @@ function toCardData(enc: EncounterRow): KillCardData {
     boss_name: cleanBossName(enc.eqemu_npc_types?.name),
     player_count: players.length,
     classification: enc.classification,
+    // ENGAGED: encounters with no ended_at are mid-fight — agent flushed a
+    // partial parse but never saw a slain line for the boss. (Uilnayar
+    // 2026-06-26: 'we registered vulaks death on engage instead of on
+    // death … this should say engaged and be listed at the top'.)
+    inProgress: enc.ended_at == null,
     top_players: players.slice(0, 5).map(p => ({
       character_name: p.character_name,
       total_damage: p.total_damage,
@@ -292,12 +298,48 @@ export default async function ParsesPage() {
   const officer = await isOfficer(user.id);
 
   const { rows, zones, loot, attendance, error } = await loadAll();
-  const days = bucket(rows, zones);
+  // In-progress encounters (ended_at null, last upload within 90min so we don't
+  // surface stranded rows from old crashes forever). These render in their own
+  // 'Engaged now' section at the top of the page. (Uilnayar 2026-06-26.)
+  const NINETY_MIN_MS = 90 * 60 * 1000;
+  const nowMs = Date.now();
+  const engagedRows = rows.filter(r => {
+    if (r.ended_at != null) return false;
+    const startedMs = new Date(r.started_at).getTime();
+    return (nowMs - startedMs) < NINETY_MIN_MS;
+  });
+  // Remove engaged rows from the day-bucketed list so they don't double up.
+  const completedRows = rows.filter(r => !engagedRows.some(e => e.id === r.id));
+  const days = bucket(completedRows, zones);
   const dayEntries = [...days.entries()];
   const headlineNight = dayEntries.length > 0 ? dayEntries[0] : null;
 
   return (
     <div className="space-y-6">
+      {engagedRows.length > 0 && (
+        <section className="bg-panel border border-orange/40 rounded-lg p-5">
+          <h2 className="text-lg text-orange mb-3 flex items-center gap-2">
+            <span aria-hidden>⚔️</span>
+            <span>Engaged now</span>
+            <span className="text-dim text-xs font-normal">· {engagedRows.length} in progress (no kill confirmed)</span>
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {engagedRows.map(r => (
+              <KillCard
+                key={r.id}
+                kill={toCardData(r)}
+                adminBar={officer ? <CardAdminBar encId={r.id} current={r.classification} /> : undefined}
+              />
+            ))}
+          </div>
+          <p className="text-[10px] text-dim mt-2">
+            These encounters show parses uploaded by an agent but the boss&apos;s slain line hasn&apos;t been
+            observed yet — boss timers are not set. They&apos;ll move to the dated kill list automatically
+            once a confirmed kill arrives, or drop out after 90 minutes of no further updates.
+          </p>
+        </section>
+      )}
+
       {headlineNight && (
         <NightSummary stats={computeNightStats(headlineNight[1], headlineNight[0])} />
       )}
