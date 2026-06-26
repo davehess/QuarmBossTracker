@@ -2920,6 +2920,96 @@ const _chatDedup = new Map(); // key: "channel|speaker|normtext" → timestamp
 const CHAT_RELAY_DEDUP_WINDOW_MS = 12_000;
 const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
 
+// ── Fuzzy chat dedup + drunkard / pottymouth detection ────────────────────
+// EQ's drunk effect randomises consonants in a speaker's broadcast PER
+// RECEIVER, so 5 agents each see a different mutation of the same line
+// ("FUCK ZERG" → "Esev ZERG", "Ljyu ZERG", "Nnqj ZERG", "Tgfq ZERG"…). The
+// exact-text key above doesn't catch these — Discord gets every variant.
+// Same problem for the censor filter ("F*** ZERG" vs "FUCK ZERG" — only the
+// uncensored receiver gets the real text). (Uilnayar 2026-06-26.)
+//
+// Strategy: per-speaker rolling buffer of recent message shapes. A new
+// message is a "near-dupe" of a buffered one when the messages have the same
+// word count AND ≥50% of token POSITIONS hold an identical word (the
+// unchanged scaffolding around the slurred/censored bits). When that fires:
+//   • suppress the Discord post + Supabase upsert
+//   • increment the original's variant counter
+//   • on the SECOND or later variant of a single line, emit a `drunkard`
+//     fun_event (≥2 distinct variants ⇒ EQ actually slurred it differently
+//     for receivers; a single censor-vs-uncensored split is the floor signal)
+// Independently, ANY message containing the chat-filter asterisk-redact
+// pattern (3+ consecutive asterisks, or `\w\*+\w` mid-word) emits a
+// `pottymouth` fun_event for the speaker.
+const FUZZY_WINDOW_MS = 30_000;
+const _fuzzyChatBuffer = new Map();   // "channel|speakerLower" → [{ts, tokens, lcTokens, count, sample}]
+
+// Strip control chars + collapse whitespace; tokenize on whitespace.
+function _fuzzyTokenize(text) {
+  return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+}
+
+// Two messages are slur-variants when they have the same word count, the
+// same total character length within 25%, and ≥50% of token POSITIONS hold
+// the identical word. Identical positions = the unchanged "scaffold"
+// (consistent prefix/suffix words) that drunk slur leaves alone.
+function _isSlurVariant(aTokens, bTokens) {
+  if (!aTokens || !bTokens) return false;
+  if (aTokens.length !== bTokens.length) return false;
+  if (aTokens.length < 2) return false;   // a single-word repeat isn't slur, it's a stutter
+  const aLen = aTokens.join(' ').length;
+  const bLen = bTokens.join(' ').length;
+  if (Math.abs(aLen - bLen) > Math.max(aLen, bLen) * 0.25) return false;
+  let same = 0;
+  for (let i = 0; i < aTokens.length; i++) if (aTokens[i] === bTokens[i]) same++;
+  return same / aTokens.length >= 0.5;
+}
+
+// EQ's chat filter inserts 3+ asterisks for redacted words OR mid-word
+// asterisks ("f**k", "s*it"). Either pattern means the speaker said something
+// the filter caught. Quote-asterisk emphasis ("**bold**") is excluded by the
+// word-boundary requirement on the mid-word form.
+const POTTYMOUTH_RX = /(\*{3,}|\b\w\*+\w)/;
+function _looksCensored(text) { return POTTYMOUTH_RX.test(String(text || '')); }
+
+// Check the per-speaker buffer for a slur-variant of this message.
+// Returns the matched entry (so the caller can bump its variant counter +
+// emit a drunkard fun_event after the threshold) or null on no match.
+function _findSlurVariant(channel, speaker, tokens, nowMs) {
+  if (tokens.length < 2) return null;
+  const key = `${channel}|${String(speaker).toLowerCase()}`;
+  const buf = _fuzzyChatBuffer.get(key);
+  if (!buf || buf.length === 0) return null;
+  // Drop entries past the window before scanning.
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (nowMs - buf[i].ts > FUZZY_WINDOW_MS) buf.splice(i, 1);
+  }
+  for (const e of buf) {
+    if (_isSlurVariant(tokens, e.tokens)) return e;
+  }
+  return null;
+}
+
+// Push a fresh message into the per-speaker buffer.
+function _pushChatToFuzzyBuffer(channel, speaker, tokens, sample, nowMs) {
+  const key = `${channel}|${String(speaker).toLowerCase()}`;
+  const buf = _fuzzyChatBuffer.get(key) || [];
+  buf.push({ ts: nowMs, tokens, count: 1, sample: String(sample || '').slice(0, 200) });
+  // Cap so a single chatterbox doesn't grow unbounded; 20 messages × 30s
+  // covers any realistic spam burst.
+  while (buf.length > 20) buf.shift();
+  _fuzzyChatBuffer.set(key, buf);
+}
+
+// Periodic GC of the per-speaker buffer — every 60s, evict empty / stale
+// entries. Cheap; the Map stays bounded by raid size × channels.
+setInterval(() => {
+  const cutoff = Date.now() - FUZZY_WINDOW_MS;
+  for (const [k, buf] of _fuzzyChatBuffer.entries()) {
+    while (buf.length && buf[0].ts < cutoff) buf.shift();
+    if (buf.length === 0) _fuzzyChatBuffer.delete(k);
+  }
+}, 60_000).unref?.();
+
 // ── Chat speaker safeguard ──────────────────────────────────────────────────
 // A misconfigured agent tails a stray log (an old / foreign eqlog_<Name> file
 // still in the watched folder), so guild chat the player actually typed on
@@ -3163,6 +3253,10 @@ async function _handleAgentChat(req, res) {
   // Same dedup as the Discord-side path (speaker + text + 5s window) but
   // also backed by the chat_messages_dedup unique index for safety.
   const supabaseChatRows = [];
+  // fun_events emitted from this batch — pottymouth + drunkard. Persisted at
+  // the end of the handler with the same idempotent unique on
+  // (guild, event_type, caster, event_ts) used elsewhere. (Uilnayar 2026-06-26.)
+  const funEventRows = [];
 
   // Sanitize chat text before posting to Discord:
   //   - Strip @everyone / @here — would ping the entire server/channel
@@ -3263,6 +3357,54 @@ async function _handleAgentChat(req, res) {
     const alreadyRelayed = _chatRelayDedup.has(relayKey);
     _chatRelayDedup.set(relayKey, Date.now());
 
+    // Fuzzy dedup — drunk slur / censor variants. EQ broadcasts a different
+    // mutation of the same line to each receiver, so each agent ships a
+    // different normText and the exact-match key above lets them all through.
+    // Tokens are same length + ≥50% identical word positions ⇒ same line.
+    // (Uilnayar 2026-06-26.)
+    const tokens   = _fuzzyTokenize(text);
+    const nowMs    = Date.now();
+    const slurHit  = _findSlurVariant(channel, effectiveSpeaker, tokens, nowMs);
+    let isVariant  = false;   // true ⇒ suppress both Discord post AND Supabase upsert
+    if (slurHit) {
+      slurHit.count++;
+      isVariant = true;
+      // On the SECOND distinct variant of one underlying line, emit a
+      // drunkard fun_event. We dedupe at the table on
+      // (guild, event_type, caster, event_ts) so a burst still counts once.
+      if (slurHit.count === 2) {
+        funEventRows.push({
+          guild_id:   process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          event_ts:   new Date(slurHit.ts).toISOString(),
+          event_type: 'drunkard',
+          caster:     effectiveSpeaker,
+          raw_text:   slurHit.sample,
+          uploaded_by_discord_id: identity.discord_id,
+        });
+      }
+    } else {
+      _pushChatToFuzzyBuffer(channel, effectiveSpeaker, tokens, text, nowMs);
+    }
+
+    // Pottymouth — the chat filter scrubbed at least one word with asterisks.
+    // Emitted once per (speaker, message) regardless of variant suppression
+    // so the leaderboard counts the underlying chat occurrence, not a relay.
+    if (!isVariant && _looksCensored(text)) {
+      funEventRows.push({
+        guild_id:   process.env.SUPABASE_GUILD_ID || 'wolfpack',
+        event_ts:   msgTs || new Date().toISOString(),
+        event_type: 'pottymouth',
+        caster:     effectiveSpeaker,
+        raw_text:   String(text).slice(0, 200),
+        uploaded_by_discord_id: identity.discord_id,
+      });
+    }
+
+    // From here, isVariant === true ⇒ this is a slur/censor variant of a
+    // line we already relayed. Suppress the Discord post AND skip the
+    // Supabase upsert (the original variant is already on record).
+    if (isVariant) continue;
+
     // Stage for chat_messages upsert. Same shape as historical_chat path so
     // the table has one canonical row format regardless of ingestion route.
     supabaseChatRows.push({
@@ -3304,6 +3446,19 @@ async function _handleAgentChat(req, res) {
     } catch (err) {
       console.warn(`[chat-relay] failed to post to ${channel}:`, err?.message);
     }
+  }
+
+  // Best-effort fun_events flush — pottymouth + drunkard for /fun leaderboards.
+  // Run before chat_messages upsert so the event count survives even if the
+  // chat write later errors out for some reason.
+  if (funEventRows.length > 0) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        await supabase.upsert('fun_events', funEventRows, 'guild_id,event_type,caster,event_ts')
+          .catch(err => console.warn('[chat-relay] fun_events upsert failed:', err?.message));
+      }
+    } catch (err) { console.warn('[chat-relay] fun_events persist wrap failed:', err?.message); }
   }
 
   // Best-effort Supabase mirror — fail-open if disabled or upsert errors.

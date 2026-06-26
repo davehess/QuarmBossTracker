@@ -365,6 +365,60 @@ async function loadCounters() {
     void err;
   }
 
+  // ── 🤬 Pottymouth award — chat-filter asterisk redactions ────────────────
+  // Fires when the bot sees a chat line where EQ's filter scrubbed a word with
+  // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (Uilnayar 2026-06-26.)
+  try {
+    const { data: pmRows, count: pmTotal } = await sb
+      .from('fun_events')
+      .select('caster', { count: 'exact' })
+      .eq('event_type', 'pottymouth');
+    const tally = new Map<string, number>();
+    for (const r of (pmRows ?? []) as { caster: string | null }[]) {
+      const k = r.caster || 'unknown';
+      tally.set(k, (tally.get(k) ?? 0) + 1);
+    }
+    const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+    const total  = pmTotal ?? 0;
+    counters.push({
+      label: 'Pottymouth award',
+      emoji: '🤬',
+      value: total,
+      sub: total > 0
+        ? ranked.slice(0, 3).map(([n, c]) => `${n} ×${c}`).join(' · ')
+        : 'no asterisks logged yet — fires when EQ filters a word ("f*** zerg")',
+    });
+  } catch (err) { void err; }
+
+  // ── 🍺 Drunkard award — multiple EQ slur variants of the same line ───────
+  // EQ's drunk effect mutates a broadcast's letters per-receiver, so the bot
+  // sees a different version per agent. The bot's fuzzy chat dedup catches
+  // these and emits a drunkard fun_event on the SECOND distinct variant of
+  // one underlying line — meaning at least two agents saw differently-slurred
+  // copies, the signal Uilnayar called out ("really observed when seen by
+  // multiple people and when a player is the one that says the word").
+  try {
+    const { data: drRows, count: drTotal } = await sb
+      .from('fun_events')
+      .select('caster', { count: 'exact' })
+      .eq('event_type', 'drunkard');
+    const tally = new Map<string, number>();
+    for (const r of (drRows ?? []) as { caster: string | null }[]) {
+      const k = r.caster || 'unknown';
+      tally.set(k, (tally.get(k) ?? 0) + 1);
+    }
+    const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+    const total  = drTotal ?? 0;
+    counters.push({
+      label: 'Drunkard award',
+      emoji: '🍺',
+      value: total,
+      sub: total > 0
+        ? ranked.slice(0, 3).map(([n, c]) => `${n} ×${c}`).join(' · ')
+        : 'no slurred broadcasts yet — fires when ≥2 agents see different mutations of one line',
+    });
+  } catch (err) { void err; }
+
   // ── ⚡ Mana donated to casters — necromancer "Subversion" twitches ─────────
   // Two signals (agent v3.1.50 caster-side, v3.1.51 recipient-side):
   //   • `mana_twitch` (caster-side) — exact: reagent_qty = mana gifted per cast

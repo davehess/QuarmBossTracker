@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.122': [
+    '**Chat dedup catches drunk slurs + filter censoring** — EQ randomises consonants in a drunk player\'s broadcast PER receiver, so when 5 agents witness "FUCK ZERG" they each report a different mutation ("Esev ZERG", "Ljyu ZERG", "Nnqj ZERG"…), and Discord used to get every variant. The bot now fuzzy-dedups: same speaker + same word count + ≥50% identical token positions ⇒ same line, only the first variant gets relayed. Same fix covers the censor filter (\'f**k zerg\' vs \'fuck zerg\' from a filter-on vs filter-off receiver). New on /fun: **🤬 Pottymouth award** (asterisk redactions caught by the chat filter) and **🍺 Drunkard award** (≥2 distinct slur variants of the same line = confirmed slurred by EQ).',
+  ],
   '3.0.121': [
     '**Mimic auto-loads inventory + spellbook** — just like your combat logs flow into wolfpack.quest, your `/outputfile inventory` and `/outputfile spellbook` snapshots now upload on their own whenever you (re-)run the commands. Mimic 1.0.78+ (logsync 3.1.67+) watches the EQ folder for `<Char>-Inventory.txt` and `<Char>-Spellbook.txt` and ships the parsed rows on every file change; reruns over the same content no-op. Quarmy was already doing this; this just adds the other two. Honors the same `exclude_inventory` opt-out on /me as Quarmy — flip that off if you don\'t want gear surfaced. (Inventory page + key inference next.)',
   ],
