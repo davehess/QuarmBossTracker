@@ -192,13 +192,54 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId: 14340, name: "Magically Sealed Bag",                 depth: 1 },
   ],
   'Monk': [
-    // The importer captured Lheao's final turn-in but not the multi-step
-    // chain feeding it. Whistling Fists Shawl (12970) is the canonical
-    // precursor item every Quarm monk recognises; include it explicitly so
-    // holders see it flagged even though the chain back from it isn't yet
-    // in scripted_npc_turnins. Re-run the recursive walk after a future
-    // importer sweep to fill this list out.
+    // Final-stage anchors: Lheao's Celestial Fists turn-in takes Danl's
+    // Reference (1682) + Robe of the Whistling Fists (12970). Brother Balatin
+    // in Dreadlands takes BOTH metal pipes (12979 + 12980, from two different
+    // zones per Uilnayar 2026-06-26) + Robe of the Lost Circle (12256) →
+    // Robe of the Whistling Fists. The full pre-epic chain (Shackle of
+    // Tynnonium 4199, Whistling Fists 7836, Sash of the Dragonborn 1623,
+    // Headband of the Righteous 3532) is the famous "headbands and sashes"
+    // path Monks grind through. Depth-2 items are the Sebilis tome set +
+    // Sarnak/Iksar drops that feed those steps.
+    { itemId:  1682, name: "Danl's Reference",                     depth: 1 },
     { itemId: 12970, name: "Robe of the Whistling Fists",          depth: 1 },
+    { itemId: 12979, name: "A Metal Pipe",                         depth: 1 },
+    { itemId: 12980, name: "A Metal Pipe",                         depth: 1 },
+    { itemId: 12256, name: "Robe of the Lost Circle",              depth: 1 },
+    { itemId:  4199, name: "Shackle of Tynnonium",                 depth: 1 },
+    { itemId:  3886, name: "Chunk of Tynnonium",                   depth: 1 },
+    { itemId:  7836, name: "Whistling Fists",                      depth: 1 },
+    { itemId:  1689, name: "Book of Celestial Fists",              depth: 1 },
+    { itemId:  3532, name: "Headband of the Righteous",            depth: 1 },
+    { itemId:  1623, name: "Sash of the Dragonborn",               depth: 1 },
+    { itemId:  7879, name: "Mark of Agility",                      depth: 1 },
+    { itemId:  7881, name: "Mark of Clarity",                      depth: 1 },
+    { itemId:  7880, name: "Mark of Patience",                     depth: 1 },
+    { itemId:  8226, name: "Satchel of Cazic-Thule",               depth: 1 },
+    { itemId: 18898, name: "Flayed Skin Tome",                     depth: 1 },
+    { itemId: 18899, name: "Flayed Skin Tome",                     depth: 1 },
+    { itemId: 22918, name: "Chokadai Scale",                       depth: 2 },
+    { itemId: 18359, name: "Dark Black Tome",                      depth: 2 },
+    { itemId: 18464, name: "Dark Grey Tome",                       depth: 2 },
+    { itemId: 18467, name: "Dim White Tome",                       depth: 2 },
+    { itemId: 22922, name: "Earthenware Bowl",                     depth: 2 },
+    { itemId: 18469, name: "Faded White Tome",                     depth: 2 },
+    { itemId: 22917, name: "Frozen Soulstone",                     depth: 2 },
+    { itemId: 18465, name: "Greyed Tome",                          depth: 2 },
+    { itemId: 18195, name: "Immortals",                            depth: 2 },
+    { itemId: 22921, name: "Kromdul Bracelet",                     depth: 2 },
+    { itemId: 18463, name: "Light Black Tome",                     depth: 2 },
+    { itemId: 18466, name: "Light Grey Tome",                      depth: 2 },
+    { itemId: 18468, name: "Pale White Tome",                      depth: 2 },
+    { itemId: 18470, name: "Pure White Tome",                      depth: 2 },
+    { itemId: 22920, name: "Ring of the Construct",                depth: 2 },
+    { itemId: 22919, name: "Sarnak Hide",                          depth: 2 },
+    { itemId: 22924, name: "Sealed Journal",                       depth: 2 },
+    { itemId: 22916, name: "Skyfire Pumice",                       depth: 2 },
+    { itemId: 18462, name: "Solid Black Tome",                     depth: 2 },
+    { itemId: 22923, name: "Vine Woven Basket",                    depth: 2 },
+    { itemId: 12828, name: "Full Kwinn Pack",                      depth: 3 },
+    { itemId: 12822, name: "A Mechanical Iksar Tail",              depth: 2 },
   ],
   // Shadow Knight / Magician chains haven't been fully captured by the
   // importer yet (the importer is most thorough on classic-zone NPCs;
