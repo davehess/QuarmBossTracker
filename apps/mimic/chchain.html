@@ -7,6 +7,12 @@
      either a live 10s cast bar (the slot that just called CH) or how long
      ago they last cast. Footer: NEXT slot + beat countdown. Reads
      /api/state.chChain — fully local, every client sees the same calls. */
+  /* --bg-alpha drives every card-surface background below. 1.2 refactor:
+     slider value flows from main.js → preload `bg-alpha` → this variable, so
+     "100%" means a fully opaque surface that hides EQ. Text/icons stay at
+     full brightness regardless of slider position. Default matches the
+     pre-refactor visual. */
+  :root{ --bg-alpha:0.45; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;min-width:240px;}
@@ -18,7 +24,7 @@
   .head .beat{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
   .head .conn{font-size:11px;flex-shrink:0}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .rows{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.45);
+  .rows{display:flex;flex-direction:column;gap:2px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;padding:5px 6px}
   .row{position:relative;display:grid;
     grid-template-columns:3.2em minmax(0,1fr) 3em auto;
@@ -63,7 +69,7 @@
   .bar .fill{height:100%;background:#56d364;transition:width 120ms linear}
   /* Footer — NEXT slot + countdown to when the next cast is due (beat-based). */
   .nextrow{display:flex;align-items:center;gap:8px;margin-top:4px;
-    background:rgba(0,0,0,0.45);border-radius:5px;padding:5px 8px;
+    background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 8px;
     font-size:11px;font-weight:700;text-shadow:0 1px 2px #000}
   .nextrow .lbl{color:#f6c365;white-space:nowrap}
   .nextrow .cd-bar{flex:1;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden}
@@ -309,6 +315,12 @@
       if (p && p.scope) _setupScope = p.scope;
       else if (p && p.active) _setupScope = 'all';
       document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.45;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');

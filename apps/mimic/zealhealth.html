@@ -6,6 +6,9 @@
      tracker blank") would have been instantly diagnosable from a panel
      that says "you have type 1 + 2 flowing, no type 5 — enable raid
      roster in Zeal settings". Reads /api/zeal_event tallies via /api/state. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.5; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;min-width:240px;}
@@ -15,7 +18,7 @@
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
   .pid{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;margin-bottom:6px}
   .pid b{color:#e6edf3;font-weight:600}
-  .types{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.5);
+  .types{display:flex;flex-direction:column;gap:2px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;padding:5px 7px}
   .row{display:flex;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;
     text-shadow:0 1px 2px #000}
@@ -117,6 +120,12 @@
   var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
     window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.5;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){

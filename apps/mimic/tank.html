@@ -6,6 +6,9 @@
      who current Rampage is … DA countdown + 'start CH on <DA ramp>' at ≤10s."
      Reads /api/tank-state. Cross-raid sync (Tier 4) deferred — overlay
      shows the local agent's data only for now. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.55; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;min-width:240px;}
@@ -14,7 +17,7 @@
   .title .who{font-size:11px;color:#9aa4ad;font-weight:normal}
   .title .badge{font-size:9px;border:1px solid rgba(255,255,255,0.2);border-radius:3px;
     padding:1px 4px;color:#9aa4ad;letter-spacing:0.5px}
-  .card{background:rgba(0,0,0,0.55);border-radius:5px;padding:5px 7px;margin-bottom:4px}
+  .card{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px;margin-bottom:4px}
   .card .head{font-size:10px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;
     text-shadow:0 1px 2px #000}
   .hpwrap{position:relative;height:14px;background:#222;border-radius:3px;overflow:hidden;
@@ -129,6 +132,12 @@
   if (window.mimic && window.mimic.onSetupMode) {
     window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
   }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.55;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){
     var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
@@ -218,7 +227,7 @@
       var line = ch.is_target
         ? '🪢 <strong>Your CH</strong> in ' + dueSec + 's <span class="opacity-70">(beat ' + beatSec + 's)</span>'
         : '🪢 CH on <strong>' + esc(ch.target || '?') + '</strong> in ' + dueSec + 's <span class="opacity-70">(beat ' + beatSec + 's)</span>';
-      html += '<div class="enrage ' + urgCls + '" style="border-color:' + (ch.urgency === 'red' ? '#f87171' : ch.urgency === 'yellow' ? '#f0d264' : '#56d364') + ';background:rgba(0,0,0,0.45)">' + line + '</div>';
+      html += '<div class="enrage ' + urgCls + '" style="border-color:' + (ch.urgency === 'red' ? '#f87171' : ch.urgency === 'yellow' ? '#f0d264' : '#56d364') + ';background:rgb(0 0 0 / var(--bg-alpha))">' + line + '</div>';
     }
 
     // DS total + top breakdown

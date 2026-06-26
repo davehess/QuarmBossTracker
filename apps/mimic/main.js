@@ -1857,12 +1857,22 @@ function _overlayEntries() {
 
 // Apply the per-window opacity saved in config (defaults to 1.0). Called on
 // window create + whenever a slider in setup mode moves.
+//
+// 1.2 refactor: the slider now drives the card SURFACE alpha (via a CSS
+// variable broadcast as 'bg-alpha'), not the whole-window setOpacity that
+// dimmed text along with background. The bug it fixes: slider at 100% used
+// to leave cards at their baked rgba(0,0,0,0.55) — visibly see-through
+// despite the label saying "opaque." Now 100% genuinely means an opaque
+// card surface that hides EQ behind it; text stays at full brightness at
+// every slider position so even very transparent cards stay readable.
+// setOpacity is held at 1.0 always (no compound dim).
 function applyOverlayOpacity(win, key) {
   if (!win || win.isDestroyed()) return;
   const cfg = loadConfig();
   const o = (cfg.overlayOpacity || {})[key];
   const val = (typeof o === 'number' && o >= 0.15 && o <= 1.0) ? o : 1.0;
-  try { win.setOpacity(val); } catch {}
+  try { win.setOpacity(1.0); } catch {}
+  try { win.webContents.send('bg-alpha', val); } catch {}
 }
 function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);

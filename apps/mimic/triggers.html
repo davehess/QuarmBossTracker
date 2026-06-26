@@ -4,6 +4,10 @@
   /* Centered trigger-alert overlay (GINA / DnDOverlay style). Transparent,
      click-through, always-on-top. Flashes the trigger text big and speaks it
      via the Web Speech API. Optional per-trigger sound url. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden behind timer rows); text/alert
+     flash stays bright at every value. */
+  :root{ --bg-alpha:0.66; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;
     display:flex;align-items:center;justify-content:center}
@@ -73,7 +77,7 @@
     gap:3px;z-index:40;min-width:180px;pointer-events:none;
     font-family:ui-monospace,Menlo,Consolas,monospace}
   .timer-row{position:relative;display:flex;align-items:baseline;gap:8px;
-    padding:3px 8px 5px;background:rgba(0,0,0,0.66);border-radius:4px;
+    padding:3px 8px 5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;
     color:#fff;font-size:13px;line-height:1.25;
     text-shadow:0 1px 2px #000;border-left:3px solid #f6c365;
     animation:timer-pop .25s ease-out;overflow:hidden}
@@ -215,6 +219,12 @@
     window.mimic.onSetupMode(function(p) {
       _overlayKey = p && p.overlayKey;
       document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.66;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider');

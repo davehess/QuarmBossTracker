@@ -4,6 +4,9 @@
   /* Mob Info overlay — current target's catalog stats (HP, AC, resists, special
      attacks) from eqemu_npc_types via the bot, with the live target HP% layered
      on. Read-only; no tickdown. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.72; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:7px 9px;}
@@ -16,7 +19,7 @@
   .lvlRange:empty{margin-right:auto}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .mob{padding:5px 7px;background:rgba(8,5,16,0.72);border-radius:6px;
+  .mob{padding:5px 7px;background:rgb(8 5 16 / var(--bg-alpha));border-radius:6px;
     border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
   .mob .nm{font-size:12px;font-weight:bold;color:#e9d5ff}
   .mob .cls{font-size:10px;color:#9b8bb5;margin-left:4px}
@@ -182,6 +185,12 @@
   var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
     window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.72;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){
