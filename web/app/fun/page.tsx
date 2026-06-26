@@ -647,6 +647,25 @@ export default async function FunPage() {
         </p>
       </section>
 
+      {/* What's new tonight — small callout marking the fresh fun cards so
+          guildies can laugh at them (and at each other). Hard-coded ledger
+          rather than a feed; intentionally short. Update this list as new
+          fun stuff lands and rotate older items out. (Uilnayar 2026-06-26.) */}
+      <section className="bg-panel border border-purple/50 rounded-lg p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span aria-hidden className="text-base">🆕</span>
+          <h3 className="text-sm text-purple uppercase tracking-wide">What&apos;s new</h3>
+          <span className="text-[10px] text-dim">2026-06-26</span>
+        </div>
+        <ul className="text-xs space-y-1 text-text leading-5">
+          <li><strong>🤬 Pottymouth award</strong> — chat-filter caught a word with asterisks (<code className="text-dim">f***ing nice</code>) and we know who said it.</li>
+          <li><strong>🍺 Drunkard award</strong> — EQ slurs a drunk player&apos;s broadcast differently for every receiver. When ≥2 agents see different mutations of the same line, you&apos;re drunk and we have receipts.</li>
+          <li><strong>💀 Days since Moash died to enrage</strong> — Shavimo&apos;s hand-typed gag is now a real card. Officers log a death with <code className="text-dim">/enragedeath player:Moash</code> and the previous streak strikes through automatically.</li>
+          <li><strong>🔌 Raids since Peopleslayer crashed</strong> — flipped per his own suggestion (new machine, fresh start). Shows the date of his last LD <em>and</em> the zone it happened in. The old &quot;lifetime LD count&quot; lives on in the subtitle, scribbled out.</li>
+          <li className="text-dim">Plus, in case the bug-and-fix is funny too: <strong>chat dedup now collapses drunk-slur variants</strong> so Discord doesn&apos;t double-post when 5 agents each see a different mutation. (Bardtholemu&apos;s <code>FUCK ZERG → Esev ZERG → Ljyu ZERG → Tgfq ZERG</code> spree caught fewer eyes this week.)</li>
+        </ul>
+      </section>
+
       {/* Live cards first. */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {liveCounters.map(c => <FunCard key={c.label} c={c} />)}
