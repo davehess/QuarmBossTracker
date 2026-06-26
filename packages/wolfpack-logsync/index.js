@@ -2692,14 +2692,42 @@ function chChainSnapshot() {
   if (!_chChain) return null;
   if ((Date.now() - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) { _chChain = null; return null; }
   const beats = _chChain.beats.slice().sort((a, b) => a - b);
+  const beatMs = beats.length ? beats[Math.floor(beats.length / 2)] : null;
+  // CH-chain interruption / pivot detection — v1.1.5 (Uilnayar 2026-06-26).
+  // When the time elapsed since the last call exceeds 1.5× the measured beat
+  // AND we know whose slot was supposed to call (next_num → slots[next_num]),
+  // the chain has slipped. Caller didn't shout, didn't finish their cast,
+  // died, got interrupted. Surface the missed healer + who's next in line so
+  // the overlay can flash 'PIVOT'.
+  let slipped = null;
+  if (beatMs && _chChain.lastCh && _chChain.nextNum && _chChain.slots) {
+    const elapsed = Date.now() - _chChain.lastCh.atMs;
+    if (elapsed > beatMs * 1.5) {
+      const missedSlot = _chChain.slots[_chChain.nextNum];
+      // Next-after-the-missed healer = numeric successor wrapping at the top
+      // (same wrap rule the engine uses to advance nextNum).
+      const nums = Object.keys(_chChain.slots).map(Number).sort((a, b) => a - b);
+      const idx = nums.indexOf(_chChain.nextNum);
+      const afterNum = idx >= 0 && idx + 1 < nums.length ? nums[idx + 1] : (nums.length ? nums[0] : null);
+      const afterSlot = afterNum != null ? _chChain.slots[afterNum] : null;
+      slipped = {
+        elapsed_ms:   elapsed,
+        missed_num:   _chChain.nextNum,
+        missed_name:  missedSlot ? missedSlot.name : null,
+        next_after_num:  afterNum,
+        next_after_name: afterSlot ? afterSlot.name : null,
+      };
+    }
+  }
   return {
     target:     _chChain.target,
     slots:      _chChain.slots,
     last_ch:    _chChain.lastCh,
     next_num:   _chChain.nextNum,
-    beat_ms:    beats.length ? beats[Math.floor(beats.length / 2)] : null,
+    beat_ms:    beatMs,
     started_at: _chChain.startedAt,
     updated_at: _chChain.updatedAt,
+    slipped,
   };
 }
 

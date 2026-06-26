@@ -52,6 +52,18 @@
   .nextrow .cd{color:#f0b429;font-variant-numeric:tabular-nums;min-width:2.6em;text-align:right}
   .nextrow.due .lbl,.nextrow.due .cd{color:#f87171}
   .nextrow.due .cd-bar .fill{background:#f87171}
+  /* Pivot banner — v1.1.5. Loud red, pulsing. Sits above nextrow when active. */
+  .pivotrow{display:flex;align-items:center;gap:8px;margin-top:6px;padding:5px 8px;
+    background:rgba(220,38,38,0.55);border:1px solid #f87171;border-radius:5px;
+    font-size:12px;color:#fff;text-shadow:0 1px 2px #000;
+    animation:pivot-pulse 0.55s ease-in-out infinite alternate}
+  .pivotrow .pivot-icon{font-size:14px;flex-shrink:0}
+  .pivotrow .pivot-missed{font-weight:700;color:#fff}
+  .pivotrow .pivot-next{color:#ffe;text-decoration:underline}
+  @keyframes pivot-pulse{
+    from{box-shadow:0 0 6px rgba(248,113,113,0.7)}
+    to{box-shadow:0 0 16px rgba(248,113,113,0.35)}
+  }
   /* GAP SOON alert row — sits ABOVE the slot list when the chain is about
      to slip (the late cleric hasn't called yet and the beat is running out).
      Amber when imminent, red + pulsing when already overdue. This is the
@@ -165,6 +177,10 @@
       <span class="cleric" id="gapcleric"></span>
     </div>
     <div id="rows" class="rows"></div>
+    <!-- Pivot banner — v1.1.5 (Uilnayar 2026-06-26). Flashes red when the
+         chain has slipped (next caller didn't shout within 1.5× the beat).
+         Hidden when chain is healthy. Display name + suggest who's next. -->
+    <div id="pivotrow" class="pivotrow" style="display:none"></div>
     <div id="nextrow" class="nextrow" style="display:none">
       <span class="lbl" id="nextlbl"></span>
       <div class="cd-bar"><div class="fill" id="cdfill"></div></div>
@@ -334,14 +350,40 @@
     } catch (e) {}
   }
 
+  // v1.1.5 — pivot announcement state (only speak once per slip).
+  var _lastPivotKey = null;
   function render(){
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var nextEl  = document.getElementById('nextrow');
+    var pivotEl = document.getElementById('pivotrow');
     var gapEl   = document.getElementById('gaprow');
     var tgtEl   = document.getElementById('tgt');
     var beatEl  = document.getElementById('beat');
     var c = _last;
+    // Pivot banner — v1.1.5. Show when the snapshot reports a slip; hide
+    // otherwise. Speak the pivot ONCE per slip so we don't talk over heals.
+    if (c && c.slipped && c.slipped.missed_name) {
+      var pk = c.slipped.missed_num + '|' + (c.slipped.missed_name || '');
+      var html = '<span class="pivot-icon">⚠️</span><span><span class="pivot-missed">' + (c.slipped.missed_name || '?') + '</span> missed slot ' + c.slipped.missed_num + '.';
+      if (c.slipped.next_after_name && c.slipped.next_after_name !== c.slipped.missed_name) {
+        html += ' Pivot → <span class="pivot-next">' + c.slipped.next_after_name + '</span></span>';
+      } else {
+        html += ' Spot heal NOW.</span>';
+      }
+      pivotEl.innerHTML = html;
+      pivotEl.style.display = 'flex';
+      if (pk !== _lastPivotKey) {
+        _lastPivotKey = pk;
+        var spokenPivot = c.slipped.next_after_name && c.slipped.next_after_name !== c.slipped.missed_name
+          ? ('Pivot — ' + (c.slipped.next_after_name) + ' instead of ' + (c.slipped.missed_name) + '.')
+          : ('Spot heal — ' + (c.slipped.missed_name) + ' missed.');
+        speak(spokenPivot);
+      }
+    } else {
+      pivotEl.style.display = 'none';
+      _lastPivotKey = null;
+    }
     if (!c || !c.slots || Object.keys(c.slots).length === 0) {
       rowsEl.innerHTML = '';
       nextEl.style.display = 'none';
