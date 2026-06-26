@@ -33,6 +33,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { QuestActionButtons, QuestUnhideButton, TurninControls } from './QuestPrefsControls';
+import { EPIC_COMPONENTS, EPIC_ROOT, EPIC_CLASSES_BY_ITEM } from '@/lib/eq-epics';
 
 export const dynamic = 'force-dynamic';
 
@@ -440,6 +441,37 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const stacks     = visibleProgress.filter(p => !p.completed &&  p.quest.is_stack_turnin);
   const completed  = visibleProgress.filter(p => p.completed);
 
+  // ---- Class Epic 1.0 components held (Uilnayar 2026-06-26: "Epics section at
+  // the top that shows pieces of epic 1.0 quests that you have on your character
+  // by class … e.g. dragon scales of kedge backbone"). Walk the character's
+  // inventory; for every held item that appears in any class's Epic 1.0 chain,
+  // surface it under each class that needs it. We group by class and skip any
+  // class with no matches, so the section only renders when there's something
+  // to say. Sorted within a class by chain-depth (depth 1 = final-stage piece →
+  // closer to finishing), then alphabetically.
+  type EpicHit = { itemId: number; name: string; depth: number; qty: number };
+  const epicsByClass = new Map<string, EpicHit[]>();
+  for (const [itemId, qty] of ownInvById) {
+    if (qty <= 0) continue;
+    const classes = EPIC_CLASSES_BY_ITEM.get(itemId);
+    if (!classes) continue;
+    for (const cls of classes) {
+      const def = EPIC_COMPONENTS[cls]?.find(c => c.itemId === itemId);
+      if (!def) continue;
+      const arr = epicsByClass.get(cls) ?? [];
+      arr.push({ itemId, name: def.name, depth: def.depth, qty });
+      epicsByClass.set(cls, arr);
+    }
+  }
+  const epicClassesSorted = [...epicsByClass.entries()]
+    .map(([cls, hits]) => ({
+      cls,
+      weapon: EPIC_ROOT[cls]?.weapon ?? null,
+      rewardId: EPIC_ROOT[cls]?.rewardId ?? null,
+      hits: hits.sort((a, b) => a.depth - b.depth || a.name.localeCompare(b.name)),
+    }))
+    .sort((a, b) => b.hits.length - a.hits.length || a.cls.localeCompare(b.cls));
+
   // ---- Inventory-driven discovery presentation (Uilnayar 2026-06-24 rework) ----
   // One row per turn-in (deduped), classified for triage:
   //   • Ready to turn in (hold every component) → top
@@ -749,6 +781,52 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </p>
         )}
       </section>
+
+      {/* Class Epic 1.0 components held (Uilnayar 2026-06-26). Grouped by
+          class — the same piece can feed more than one class chain (e.g.
+          Shining Metallic Robes feeds both the Rogue and Enchanter epics),
+          so it shows up under every relevant section. Sorted by held-count
+          descending so the class the character is closest to finishing
+          floats to the top. */}
+      {epicClassesSorted.length > 0 && (
+        <section className="bg-panel border border-purple/40 rounded-lg p-5">
+          <h3 className="text-lg text-purple mb-2">⚔️ Epic 1.0 components held</h3>
+          <p className="text-xs text-dim leading-5 mb-3">
+            Pieces of Class Epic 1.0 quest chains in {decoded}&apos;s inventory, grouped by
+            class. <span className="text-dim/70">Depth = how many turn-in steps from the final
+            reward (depth 1 = the last hand-in&apos;s direct inputs).</span> A piece that feeds multiple
+            class chains is listed under each.
+          </p>
+          <div className="space-y-3">
+            {epicClassesSorted.map(({ cls, weapon, rewardId, hits }) => (
+              <div key={cls} className="border-l-2 border-purple/30 pl-3">
+                <div className="flex items-baseline gap-2 flex-wrap text-sm">
+                  <span className="text-text font-medium">{cls}</span>
+                  <span className="text-dim text-[10px]">—</span>
+                  {weapon && rewardId ? (
+                    <a href={`https://www.pqdi.cc/item/${rewardId}`} target="_blank" rel="noreferrer"
+                       className="text-blue hover:underline text-xs">{weapon}</a>
+                  ) : (
+                    <span className="text-dim text-xs">{weapon ?? '—'}</span>
+                  )}
+                  <span className="text-dim text-[10px]">· {hits.length} piece{hits.length === 1 ? '' : 's'} held</span>
+                </div>
+                <ul className="text-xs mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                  {hits.map(h => (
+                    <li key={h.itemId} className="flex items-baseline gap-1">
+                      <span className="text-green">✓</span>
+                      <a href={`https://www.pqdi.cc/item/${h.itemId}`} target="_blank" rel="noreferrer"
+                         className="text-text hover:text-blue hover:underline">{h.name}</a>
+                      {h.qty > 1 && <span className="text-dim/70">×{h.qty}</span>}
+                      <span className="text-dim/40 text-[9px]">d{h.depth}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Active quests — catalog quests + turn-ins the character pinned from
           discovery. Pinned ones render first. (Uilnayar 2026-06-24: "Let people
