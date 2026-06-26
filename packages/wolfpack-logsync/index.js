@@ -13717,7 +13717,7 @@ function runOptinBackfill(files, opts = {}) {
             // Fun-event detection runs before everything else so a single
             // line can drive a fun_event AND a normal chat/combat path. No
             // early return; the line still flows through downstream parsers.
-            const ldEvt = parsePeopleslayerLd(line);
+            const ldEvt = parsePeopleslayerLd(line, f.character);
             if (ldEvt) funEventBuffer.push(ldEvt);
             // Both Malthur counters — caster-side (only Malthur's own log,
             // ground truth) and recipient-side (every member's log, broad
@@ -15068,13 +15068,25 @@ function startChatRelay() {
 // LD and linkdead phrasing for safety.
 const PEOPLESLAYER_LD_RX = /^\[(.+?)\]\s+Peopleslayer\s+has\s+gone\s+(?:LD|linkdead)\.?\s*$/i;
 
-function parsePeopleslayerLd(line) {
+function parsePeopleslayerLd(line, selfName) {
   const m = PEOPLESLAYER_LD_RX.exec(line);
   if (!m) return null;
   const ts = parseEqTimestamp(line);
+  // Zone of the LD — observer's zone IS Peopleslayer's zone, since EQ only
+  // broadcasts "<X> has gone Linkdead" to the same zone. Pull from Zeal state
+  // for the watching character; fall back to null if Zeal hasn't reported
+  // yet (the row still records, just without a zone). (Uilnayar 2026-06-26.)
+  let zone = null;
+  try {
+    if (selfName && _zealState && _zealState[selfName]) {
+      const st = _zealState[selfName];
+      zone = _zoneName(st.zone) || (st.zone != null ? String(st.zone) : null);
+    }
+  } catch { /* no-op — zone enrichment is best-effort */ }
   return {
     type:     'peopleslayer_ld',
     caster:   'Peopleslayer',
+    target:   zone,
     ts:       ts ? ts.toISOString() : new Date().toISOString(),
     raw_text: line.slice(0, 200),
   };
@@ -18548,7 +18560,7 @@ async function main() {
         // The bot's (guild_id, event_type, caster, event_ts) upsert key
         // dedups re-runs and overlap with other agents who saw the same
         // line, so emitting freely from --since is safe.
-        const ldEvt = parsePeopleslayerLd(line);
+        const ldEvt = parsePeopleslayerLd(line, b.character);
         if (ldEvt) funEventBuffer.push(ldEvt);
         const provEvt = parseMalthurProvision(line, b.character);
         if (provEvt) funEventBuffer.push(provEvt);
@@ -18818,7 +18830,7 @@ async function main() {
         // Fun-event detection (Peopleslayer LD, Malthur provisions, future
         // CoH/DI/etc). Don't `return` after a match — fun events are pure
         // side-channel logging and the line might also feed other parsers.
-        const ldEvt = parsePeopleslayerLd(line);
+        const ldEvt = parsePeopleslayerLd(line, b.character);
         if (ldEvt && !_sourceExcluded) funEventBuffer.push(ldEvt);
         // Both Malthur counters — caster-side (only Malthur's own log,
         // ground truth) and recipient-side (every member's log, broader
