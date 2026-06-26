@@ -658,6 +658,9 @@ export default async function FunPage() {
           <span className="text-[10px] text-dim">2026-06-26</span>
         </div>
         <ul className="text-xs space-y-1 text-text leading-5">
+          <li><strong>🎯 Mimic v1.1.1 (beta)</strong> — Mimic now <em>scans your machine</em> for GINA + EQ Log Parser libraries and shows what it found. Visibility only — nothing leaves your dashboard. Settings → Info card lights up the moment a known pack (Safe Space, custom, etc.) is detected.</li>
+          <li><strong>🗳 Mimic v1.1.2 (beta)</strong> — every trigger fire shows three buttons: <code className="text-dim">« Earlier · ✓ Good! · » Too early</code>. Tap one and the vote rides the agent&apos;s durable queue up to the bot.</li>
+          <li><strong>📊 v1.1.3 — officer aggregate</strong> — those votes now show up on <code className="text-dim">/admin/triggers</code> with a per-trigger recommendation chip (≥3 votes, ≥60% consensus before it lights up). Tunes the guild trigger pack from real raid evidence.</li>
           <li><strong>🤬 Pottymouth award</strong> — chat-filter caught a word with asterisks (<code className="text-dim">f***ing nice</code>) and we know who said it.</li>
           <li><strong>🍺 Drunkard award</strong> — EQ slurs a drunk player&apos;s broadcast differently for every receiver. When ≥2 agents see different mutations of the same line, you&apos;re drunk and we have receipts.</li>
           <li><strong>💀 Days since Moash died to enrage</strong> — Shavimo&apos;s hand-typed gag is now a real card. Officers log a death with <code className="text-dim">/enragedeath player:Moash</code> and the previous streak strikes through automatically.</li>

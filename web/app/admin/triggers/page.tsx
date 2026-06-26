@@ -131,6 +131,48 @@ export default async function AdminTriggersPage({
   const { data: rows } = await q;
   const triggers = (rows ?? []) as TriggerRow[];
 
+  // ── Trigger timing feedback aggregate (Uilnayar 2026-06-26 — v1.1.3).
+  // Last 30 days of votes (« Earlier / ✓ Good! / » Too early) from Mimic's
+  // trigger overlay. Group by trigger_name (denormalised at write time so we
+  // don't need to join), compute the dominant direction + a confidence so the
+  // table can render a clear recommendation chip. Empty-state covered.
+  const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const { data: fbRows } = await admin
+    .from('trigger_timing_feedback')
+    .select('trigger_id, trigger_name, direction, voted_at')
+    .gte('voted_at', since30)
+    .order('voted_at', { ascending: false })
+    .limit(5000);
+  type FbRow = { trigger_id: string | null; trigger_name: string; direction: 'earlier' | 'good' | 'too_early'; voted_at: string };
+  const fb = (fbRows ?? []) as FbRow[];
+  type FbAgg = { name: string; total: number; earlier: number; good: number; tooEarly: number; lastVote: string | null; triggerId: string | null };
+  const fbAggMap = new Map<string, FbAgg>();
+  for (const r of fb) {
+    const k = (r.trigger_name || '(unknown)').trim();
+    let a = fbAggMap.get(k);
+    if (!a) { a = { name: k, total: 0, earlier: 0, good: 0, tooEarly: 0, lastVote: null, triggerId: r.trigger_id || null }; fbAggMap.set(k, a); }
+    a.total++;
+    if (r.direction === 'earlier')    a.earlier++;
+    else if (r.direction === 'good')  a.good++;
+    else if (r.direction === 'too_early') a.tooEarly++;
+    if (!a.lastVote || r.voted_at > a.lastVote) a.lastVote = r.voted_at;
+    if (!a.triggerId && r.trigger_id) a.triggerId = r.trigger_id;
+  }
+  // Recommendation: dominant direction with a small confidence threshold so a
+  // single drive-by vote doesn't flip a trigger to 'too early'. ≥3 votes AND
+  // ≥60% dominance flag the recommendation; everything else stays 'mixed'.
+  function recommend(a: FbAgg): { label: string; cls: string; help: string } {
+    if (a.total < 3) return { label: 'too few', cls: 'text-dim border-dim/40 bg-dim/10', help: 'need ≥3 votes before a recommendation lights up.' };
+    const max = Math.max(a.earlier, a.good, a.tooEarly);
+    const conf = max / a.total;
+    if (conf < 0.6) return { label: 'mixed', cls: 'text-dim border-dim/40 bg-dim/10', help: 'no clear consensus yet — keep collecting votes.' };
+    if (max === a.good)     return { label: '✓ leave alone', cls: 'text-green   border-green/50  bg-green/10',   help: 'consensus says timing is good.' };
+    if (max === a.earlier)  return { label: '« fire earlier', cls: 'text-orange  border-orange/50 bg-orange/10',  help: 'consensus says the actual event happens BEFORE the trigger — push the trigger earlier.' };
+    return { label: '» delay', cls: 'text-red-400 border-red-400/50 bg-red-400/10', help: 'consensus says the trigger fires BEFORE the actual event — delay the trigger.' };
+  }
+  const fbAggs = [...fbAggMap.values()].sort((a, b) => b.total - a.total).slice(0, 50);
+  const fbTotal = fb.length;
+
   const editTarget = p.edit ? triggers.find(t => t.id === p.edit) : null;
   const overlayDefault = editTarget?.actions?.find?.((a: any) => a?.type === 'text_overlay') || {};
 
@@ -164,6 +206,60 @@ export default async function AdminTriggersPage({
           <Stat label="Categories" value={counts.byCat.size} color="text-blue" />
           <Stat label="Disabled" value={counts.total - counts.enabled} color="text-dim" />
         </div>
+      </section>
+
+      {/* Trigger timing feedback — last 30d (Uilnayar 2026-06-26 — v1.1.3). */}
+      <section className="bg-panel border border-purple/40 rounded-lg p-5">
+        <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
+          <h3 className="text-lg text-purple">🗳 Trigger timing feedback</h3>
+          <span className="text-xs text-dim">
+            last 30 days · {fbTotal.toLocaleString()} vote{fbTotal === 1 ? '' : 's'} on {fbAggMap.size.toLocaleString()} trigger{fbAggMap.size === 1 ? '' : 's'}
+          </span>
+        </div>
+        <p className="text-xs text-dim leading-5 mb-3">
+          Aggregated from Mimic v1.1.2+&apos;s in-overlay vote buttons (« Earlier / ✓ Good! / » Too early).
+          The <strong>recommend</strong> column lights up at ≥3 votes with ≥60% consensus — anything weaker
+          stays <em>mixed</em> so a drive-by click can&apos;t flip a trigger&apos;s posture.
+          Direction reminder: <span className="text-orange">« earlier</span> = real event happens BEFORE the trigger → push the trigger
+          earlier; <span className="text-red-400">» delay</span> = trigger fires BEFORE the event → push the trigger later.
+        </p>
+        {fbAggs.length === 0 ? (
+          <p className="text-sm text-dim italic">No feedback yet — once members vote in the trigger overlay (Mimic v1.1.2+), the rollup will appear here.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-dim text-xs text-left">
+                <th className="py-1 pr-3">Trigger</th>
+                <th className="py-1 pr-3 text-right">Votes</th>
+                <th className="py-1 pr-3 text-right">« Earlier</th>
+                <th className="py-1 pr-3 text-right">✓ Good</th>
+                <th className="py-1 pr-3 text-right">» Too early</th>
+                <th className="py-1 pr-3">Recommend</th>
+                <th className="py-1 text-xs text-dim">Last vote</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40">
+              {fbAggs.map(a => {
+                const rec = recommend(a);
+                return (
+                  <tr key={a.name}>
+                    <td className="py-1.5 pr-3 text-text"><code className="text-text">{a.name}</code></td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{a.total}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums text-orange">{a.earlier || ''}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums text-green">{a.good || ''}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums text-red-400">{a.tooEarly || ''}</td>
+                    <td className="py-1.5 pr-3">
+                      <span className={`text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded border ${rec.cls}`} title={rec.help}>
+                        {rec.label}
+                      </span>
+                    </td>
+                    <td className="py-1.5 text-[11px] text-dim">{a.lastVote ? new Date(a.lastVote).toLocaleString() : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </section>
 
       {/* Category filter */}
