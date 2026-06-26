@@ -5000,6 +5000,7 @@ function _endpointForKind(kind, botUrl) {
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
+    case 'trigger_feedback':return base + '/trigger_feedback';
     case 'faction':         return base + '/faction';
     case 'pop_flag':        return base + '/pop_flags';
     case 'quarmy':          return base + '/quarmy';
@@ -11703,6 +11704,45 @@ function startWebDashboard(port) {
       //   • boss name + enrage hint (warns at ≤15% HP if the encounter is the
       //     kind that enrages — full per-boss table is server-side data later)
       // No cross-raid sync yet — Tier 4 lift is deferred to its own design.
+
+      // Trigger timing feedback vote — POST from the trigger overlay's three
+      // buttons (<< Earlier / ✓ Good! / >> Too early). Enqueued through the
+      // durable upload queue so a brief network blip doesn't lose votes;
+      // forwards to the bot's /api/agent/trigger_feedback which writes to
+      // trigger_timing_feedback. (Uilnayar 2026-06-26 — v1.1.2.)
+      if (req.url === '/api/triggers/feedback' && req.method === 'POST') {
+        let _body = '';
+        for await (const c of req) {
+          _body += c;
+          if (_body.length > 16 * 1024) { res.writeHead(413); return res.end(); }
+        }
+        let payload;
+        try { payload = JSON.parse(_body || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const dir = String(payload.direction || '').toLowerCase();
+        if (!['earlier','good','too_early'].includes(dir)) {
+          res.writeHead(400); return res.end('{"error":"bad direction"}');
+        }
+        let active = null, activeTs = 0;
+        for (const ch of Object.keys(_zealState || {})) {
+          const st = _zealState[ch]; const ts = (st && st.updatedAt) || 0;
+          if (ts > activeTs && (Date.now() - ts) < 60_000) { activeTs = ts; active = ch; }
+        }
+        enqueueUpload('trigger_feedback', {
+          agent_version: AGENT_VERSION,
+          votes: [{
+            trigger_id:      payload.trigger_id   || null,
+            trigger_name:    String(payload.trigger_name || '(unknown trigger)').slice(0, 200),
+            direction:       dir,
+            fired_at:        payload.fired_at || null,
+            voted_at:        new Date().toISOString(),
+            voter_character: active || null,
+            note:            payload.note ? String(payload.note).slice(0, 500) : null,
+          }],
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end('{"ok":true}');
+      }
 
       // Local trigger scanner (v1.1.1). Finds GINA + EQLP trigger files on the
       // local machine and returns paths + sizes + pack-fingerprint guess.
