@@ -4332,7 +4332,16 @@ class EncounterBuilder {
         if (name.toLowerCase() === _defL) deadDmg = dmg;
       }
       const isTop      = top && _defL === top.toLowerCase();
-      const isBossLike = deadDmg > 10000 && topDmg > 0 && deadDmg >= topDmg * 0.5;
+      // BossLike: the defender took raid-boss-level damage AND its share of
+      // the top target's pool is dominant. Old threshold of 10k @ 50% share
+      // mis-fired during long boss fights (Vulak 6/25) when a sub-mob died
+      // mid-fight after eating raid AOE — the sub had 10k+ taken and the
+      // boss was still in early phase, so the agent flagged Vulak as killed
+      // and the bot set the 7-day timer. Tightened to 100k AND ≥85% share so
+      // a real boss kill (which always lands the killing blow on the most-
+      // damaged single target) still flags but add-deaths can't. (Uilnayar
+      // 2026-06-26.)
+      const isBossLike = deadDmg > 100000 && topDmg > 0 && deadDmg >= topDmg * 0.85;
       if (top && (isTop || isBossLike)) {
         this.bossName = event.defender;
         this.bossKillConfirmed = true;
