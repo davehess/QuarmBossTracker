@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.123': [
+    '**Days since Moash died to enrage** counter — Shavimo's hand-typed \"It has been ~~167~~ 0 days since Moash died to enrage\" gag now has a real /fun card. Officers log the moment with **/enragedeath player:<name> [boss:<name>]** and the counter resets to 0, the last-death date renders in bold, the previous record strikes through automatically when a new death breaks it. Generic enough to track anyone, but Moash is the headline (Uilnayar 2026-06-26).',
+  ],
   '3.0.122': [
     '**Chat dedup catches drunk slurs + filter censoring** — EQ randomises consonants in a drunk player\'s broadcast PER receiver, so when 5 agents witness "FUCK ZERG" they each report a different mutation ("Esev ZERG", "Ljyu ZERG", "Nnqj ZERG"…), and Discord used to get every variant. The bot now fuzzy-dedups: same speaker + same word count + ≥50% identical token positions ⇒ same line, only the first variant gets relayed. Same fix covers the censor filter (\'f**k zerg\' vs \'fuck zerg\' from a filter-on vs filter-off receiver). New on /fun: **🤬 Pottymouth award** (asterisk redactions caught by the chat filter) and **🍺 Drunkard award** (≥2 distinct slur variants of the same line = confirmed slurred by EQ).',
   ],

@@ -17,7 +17,7 @@ async function loadCounters() {
   // value is `number | string` so cards like "Longest Dire Charm" can show
   // a pre-formatted "4h 23m" string while normal counter cards stay numeric.
   // The renderer calls value.toLocaleString() which works for both.
-  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string; href?: string }[] = [];
+  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string }[] = [];
 
   // Standalone — fetched separately so the Kyinen execution card can render
   // with its own gold-frame styling above the normal counter grid.
@@ -417,6 +417,67 @@ async function loadCounters() {
         ? ranked.slice(0, 3).map(([n, c]) => `${n} ×${c}`).join(' · ')
         : 'no slurred broadcasts yet — fires when ≥2 agents see different mutations of one line',
     });
+  } catch (err) { void err; }
+
+  // ── 💀 Days since Moash died to enrage ───────────────────────────────────
+  // Loud-and-tall card with the date bolded + the previous-best streak
+  // strikethrough'd when broken. Source: fun_events emitted by the
+  // /enragedeath officer command (Uilnayar 2026-06-26 — Shavimo's manual
+  // "It has been ~~167~~ 0 days since Moash died to enrage" gag goes live).
+  try {
+    const { data: enrageRows } = await sb
+      .from('fun_events')
+      .select('event_ts, caster')
+      .eq('event_type', 'enrage_death')
+      .ilike('caster', 'Moash')
+      .order('event_ts', { ascending: true });
+    const rows = ((enrageRows ?? []) as { event_ts: string; caster: string }[])
+      .map(r => new Date(r.event_ts).getTime())
+      .filter(t => Number.isFinite(t));
+    if (rows.length > 0) {
+      const lastMs   = rows[rows.length - 1];
+      const todayMs  = Date.now();
+      const dayMs    = 24 * 60 * 60 * 1000;
+      const currentDays = Math.max(0, Math.floor((todayMs - lastMs) / dayMs));
+      // Previous-best streak = the longest gap (in days) between any two
+      // consecutive enrage deaths in history. If there's only one death so
+      // far we have no prior record to compare against.
+      let prevRecordDays = 0;
+      for (let i = 1; i < rows.length; i++) {
+        const gap = Math.floor((rows[i] - rows[i - 1]) / dayMs);
+        if (gap > prevRecordDays) prevRecordDays = gap;
+      }
+      const lastDate = new Date(lastMs).toISOString().slice(0, 10);
+      const lastDateLabel = new Date(lastMs).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const showPrev = prevRecordDays > currentDays;   // only strikeout the prior record when we just broke it
+      counters.push({
+        label: 'Days since Moash died to enrage',
+        emoji: '💀',
+        value: currentDays,
+        sub: (
+          <>
+            Last death: <strong className="text-text">{lastDateLabel}</strong>
+            {' · '}
+            <span className="text-dim/70">{rows.length} on record</span>
+            {showPrev && (
+              <>
+                {' · '}
+                <span className="line-through text-dim/60">previous record {prevRecordDays}d</span>
+              </>
+            )}
+          </>
+        ),
+        href: undefined,
+      });
+      void lastDate;
+    } else {
+      counters.push({
+        label: 'Days since Moash died to enrage',
+        emoji: '💀',
+        value: '—',
+        sub: 'no enrage death recorded yet — an officer can log one with /enragedeath',
+      });
+    }
   } catch (err) { void err; }
 
   // ── ⚡ Mana donated to casters — necromancer "Subversion" twitches ─────────
