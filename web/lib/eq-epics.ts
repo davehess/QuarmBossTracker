@@ -186,10 +186,35 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId:  7020, name: "Well-Balanced Rapier",                 depth: 3 },
   ],
   'Shaman': [
+    // Spirit Sentinel's final turn-in takes Iksar Scale (the scale of Lord
+    // Rak'Ashiir, looted after killing him in City of Mist). Rak'Ashiir is
+    // triggered by handing him a Child's Tear, which drops from the Iksar
+    // Broodling that spawns after killing a Plane of Fear golem (Dread /
+    // Fright / Terror). The Erudin paper trail (depth 3) is the long-faction
+    // grind that comes before the Tear. (Uilnayar 2026-06-26: P99/quarm.guide
+    // hints + DB verify.)
     { itemId:  1674, name: "Iksar Scale",                          depth: 1 },
+    { itemId:  1673, name: "Child's Tear",                         depth: 2 },
+    { itemId: 18450, name: "Personal Diary Page",                  depth: 3 },
+    { itemId: 18451, name: "Crier's Scroll",                       depth: 3 },
+    { itemId: 18452, name: "Merchants Letter",                     depth: 3 },
+    { itemId: 18453, name: "Written Announcement",                 depth: 3 },
+    { itemId: 18454, name: "Priests Diary Page",                   depth: 3 },
+    { itemId: 18455, name: "Students Log",                         depth: 3 },
   ],
   'Wizard': [
+    // Magically Sealed Bag = the Pack you carry from Arantir Karondor in
+    // Felwithe to Solomen in Temple of Sol Ro. Pack is assembled from three
+    // staves: Blue Crystal Staff (Phinigel Autropos, Kedge Keep), Gnarled
+    // Staff (Venril Sathir, Karnor's Castle), Staff of Gabstik (Kandin
+    // Firepot chain — Sprocket + Green Oil + Note to Arantir).
     { itemId: 14340, name: "Magically Sealed Bag",                 depth: 1 },
+    { itemId: 14337, name: "Blue Crystal Staff",                   depth: 2 },
+    { itemId: 14338, name: "Gnarled Staff",                        depth: 2 },
+    { itemId: 14339, name: "Staff of Gabstik",                     depth: 2 },
+    { itemId: 14319, name: "Golem Sprocket",                       depth: 3 },
+    { itemId: 14349, name: "Green Oil",                            depth: 3 },
+    { itemId: 18168, name: "Note to Arantir",                      depth: 3 },
   ],
   'Monk': [
     // Final-stage anchors: Lheao's Celestial Fists turn-in takes Danl's
@@ -241,14 +266,56 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId: 12828, name: "Full Kwinn Pack",                      depth: 3 },
     { itemId: 12822, name: "A Mechanical Iksar Tail",              depth: 2 },
   ],
-  // Shadow Knight / Magician chains haven't been fully captured by the
-  // importer yet (the importer is most thorough on classic-zone NPCs;
-  // Innoruuk's Curse + Orb of Mastery rely on scripted turn-ins we haven't
-  // walked back from successfully). Left empty for now — the section just
-  // skips those classes. A future importer sweep + recursive re-walk fills
-  // them in.
-  'Shadow Knight': [],
-  'Magician':      [],
+  // Shadow Knight (Innoruuk's Curse). Final turn-in to Lhranc in City of Mist
+  // takes the four canonical items (Corrupted Ghoulbane + Heart of the
+  // Innocent + Head of the Valiant + Will of Innoruuk). The Glohnor/Kyrenna
+  // drops feed the crafted finals via Gerot Kastane, Marl Kastane, and the
+  // Soulcase. Built from P99/EQProgression hints + DB verify; the importer
+  // hasn't captured these turn-ins as scripted yet. (Uilnayar 2026-06-26.)
+  'Shadow Knight': [
+    { itemId: 14367, name: "Corrupted Ghoulbane",                  depth: 1 },
+    { itemId: 14368, name: "Heart of the Innocent",                depth: 1 },
+    { itemId: 14369, name: "Head of the Valiant",                  depth: 1 },
+    { itemId: 14370, name: "Will of Innoruuk",                     depth: 1 },
+    { itemId: 14378, name: "Head of Glohnor",                      depth: 2 },
+    { itemId: 14379, name: "Glohnor wrappings",                    depth: 2 },
+    { itemId: 14380, name: "Heart of Kyrenna",                     depth: 2 },
+    { itemId: 14381, name: "Blood of Kyrenna",                     depth: 2 },
+    { itemId: 17051, name: "Soulcase",                             depth: 2 },
+  ],
+  // Magician (Orb of Mastery). Final turn-in to the Master of Elements takes
+  // the four Elements (Fire / Earth / Water / Wind). Each Element is its own
+  // sub-quest with multiple components (Powers + element-specific items +
+  // Staves of Elemental Mastery). The Words quests (Mastery, Magi`kot) feed
+  // the path. Lots of overlap with other quests on Quarm — Tears of Erollisi
+  // and Shovel of Ponz both appear in unrelated chains too.
+  'Magician': [
+    { itemId: 28009, name: "Element of Fire",                      depth: 1 },
+    { itemId: 28032, name: "Element of Earth",                     depth: 1 },
+    { itemId: 28006, name: "Element of Water",                     depth: 1 },
+    { itemId: 28033, name: "Element of Wind",                      depth: 1 },
+    { itemId: 28036, name: "Power of Fire",                        depth: 2 },
+    { itemId: 28038, name: "Power of Earth",                       depth: 2 },
+    { itemId: 28039, name: "Power of Water",                       depth: 2 },
+    { itemId: 28037, name: "Power of Wind",                        depth: 2 },
+    { itemId: 28004, name: "Words of Mastery",                     depth: 2 },
+    { itemId: 28003, name: "Words of Magi`kot",                    depth: 2 },
+    { itemId: 28008, name: "Burning Embers",                       depth: 2 },
+    { itemId: 10376, name: "Blazing Wand",                         depth: 2 },
+    { itemId: 28042, name: "Dirt of Underfoot",                    depth: 2 },
+    { itemId:  6361, name: "Shovel of Ponz",                       depth: 2 },
+    { itemId: 28040, name: "Tears of Erollisi",                    depth: 2 },
+    { itemId: 28041, name: "Rain of Karana",                       depth: 2 },
+    { itemId: 20764, name: "Crown of Elemental Mastery",           depth: 2 },
+    { itemId: 28043, name: "Elemental Binder",                     depth: 2 },
+    { itemId: 11567, name: "Staff of Elemental Mastery: Earth",    depth: 2 },
+    { itemId: 11568, name: "Staff of Elemental Mastery: Air",      depth: 2 },
+    { itemId: 11569, name: "Staff of Elemental Mastery: Water",    depth: 2 },
+    { itemId: 28027, name: "Torn Page of Mastery Fire",            depth: 3 },
+    { itemId: 28028, name: "Torn Page of Mastery Wind",            depth: 3 },
+    { itemId: 28029, name: "Torn Page of Mastery Earth",           depth: 3 },
+    { itemId: 28030, name: "Torn Page of Mastery Water",           depth: 3 },
+  ],
 };
 
 // Item id → list of classes that need it (for fast lookup against an
