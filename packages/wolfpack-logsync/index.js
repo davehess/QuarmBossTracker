@@ -8659,6 +8659,76 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
   });
 }
 
+// Local trigger-library scan — v1.1.1 foundation. Hits /api/triggers/local-scan
+// once per dashboard render and paints the result into #wpTriggerScanCard.
+// Discovery only — never uploads anything; the result is visible in this
+// browser only. (Uilnayar 2026-06-26.)
+var _wpTriggerScanCacheMs = 0;
+function wpScanLocalTriggers(){
+  // Throttle to once per 60s so a re-render burst doesn't hammer the local
+  // endpoint (which walks the disk).
+  var now = Date.now();
+  if (now - _wpTriggerScanCacheMs < 60000) return;
+  _wpTriggerScanCacheMs = now;
+  fetch('/api/triggers/local-scan', { cache: 'no-store' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ _wpPaintTriggerScan(j); })
+    .catch(function(err){ _wpPaintTriggerScan({ ok: false, error: String(err && err.message || err) }); });
+}
+function _wpEscHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+function _wpPaintTriggerScan(j){
+  var card = document.getElementById('wpTriggerScanCard');
+  if (!card) return;
+  var h = '<h2>🎯 Local trigger setup <span class="dim" style="font-size:11px;font-weight:normal">(GINA + EQ Log Parser)</span></h2>';
+  if (!j || !j.ok) {
+    h += '<div class="dim" style="font-size:12px;padding:4px 0">Scan failed: ' + _wpEscHtml(j && j.error || 'unknown error') + '. Logged for diagnosis.</div>';
+    card.innerHTML = h;
+    return;
+  }
+  var sm = j.summary || { totalFiles: 0, sourcesFound: 0, packsDetected: [] };
+  if (sm.sourcesFound === 0) {
+    h += '<div class="dim" style="font-size:12px;padding:6px 0">No GINA or EQLogParser install detected on this machine. If you have one in a non-standard path, paste it into the trigger admin and we\\'ll add it as a probed location.</div>';
+    card.innerHTML = h;
+    return;
+  }
+  // Headline summary
+  var pkLabel = sm.packsDetected.length > 0 ? sm.packsDetected.map(_wpEscHtml).join(' · ') : '(no pack signatures matched yet)';
+  h += '<div style="font-size:12px;padding:4px 0 8px"><b>Found</b> ' + sm.totalFiles + ' trigger file(s) across ' + sm.sourcesFound + ' install(s) · pack hints: <span style="color:var(--gold)">' + pkLabel + '</span></div>';
+  h += '<table style="font-size:11px;width:100%"><tr><th>Source</th><th>Detected at</th><th style="text-align:right">Files</th><th style="text-align:right">Last touched</th></tr>';
+  for (var i = 0; i < (j.sources || []).length; i++) {
+    var src = j.sources[i];
+    var label = src.kind === 'gina' ? 'GINA' : src.kind === 'eqlp' ? 'EQ Log Parser' : src.kind;
+    var rootDisplay = src.detectedRoot ? '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">' + _wpEscHtml(src.detectedRoot) + '</code>' : '<span class="dim">— not present —</span>';
+    var lastTouched = '—';
+    if (src.files && src.files.length > 0) {
+      var newest = src.files.slice().sort(function(a, b){ return (b.modified || '').localeCompare(a.modified || ''); })[0];
+      if (newest && newest.modified) lastTouched = _wpEscHtml(String(newest.modified).slice(0, 19).replace('T', ' '));
+    }
+    h += '<tr><td><b>' + _wpEscHtml(label) + '</b></td><td>' + rootDisplay + '</td><td style="text-align:right">' + (src.fileCount || 0) + (src.truncated ? '+' : '') + '</td><td style="text-align:right">' + lastTouched + '</td></tr>';
+  }
+  h += '</table>';
+  // Per-source previews — top files by size, expandable so the card doesn't
+  // dominate the page when someone has 200 packs sitting around.
+  for (var s2 = 0; s2 < (j.sources || []).length; s2++) {
+    var src2 = j.sources[s2];
+    if (!src2.files || src2.files.length === 0) continue;
+    var label2 = src2.kind === 'gina' ? 'GINA' : 'EQ Log Parser';
+    h += '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--blue)">' + _wpEscHtml(label2) + ' — top ' + Math.min(src2.files.length, 50) + ' file(s) by size</summary>';
+    h += '<table style="font-size:10px;width:100%;margin-top:4px"><tr><th>File</th><th style="text-align:right">Size</th><th style="text-align:right">Modified</th></tr>';
+    for (var k = 0; k < src2.files.length; k++) {
+      var f = src2.files[k];
+      var sizeKb = Math.max(1, Math.round((f.size || 0) / 1024));
+      var mtime = _wpEscHtml(String(f.modified || '').slice(0, 10));
+      h += '<tr><td><code style="background:#0d1117;padding:1px 4px;border-radius:3px">' + _wpEscHtml(f.name) + '</code></td><td style="text-align:right">' + sizeKb + ' KB</td><td style="text-align:right">' + mtime + '</td></tr>';
+    }
+    h += '</table></details>';
+  }
+  h += '<div class="dim" style="font-size:10px;margin-top:8px;padding:4px;background:#0d1117;border-radius:4px;border:1px solid var(--border)">'
+    +  '<b style="color:var(--text)">v1.1.1 foundation — visibility only.</b> Discovery never uploads anything. Subsequent betas will offer to parse these into a preview list (1.1.2), import selected triggers as personal triggers (1.1.3), and observe which ones actually fire during raids so officers can promote the trusted ones guild-wide (1.1.4).'
+    + '</div>';
+  card.innerHTML = h;
+}
+
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -8890,7 +8960,17 @@ function renderInfo(s) {
   h += '</div>';
   // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
   h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
+  // GINA/EQLP scan placeholder card — populated by wpScanLocalTriggers() on
+  // dashboard load via /api/triggers/local-scan. (Uilnayar 2026-06-26 — v1.1.1
+  // foundation; parse + import land in 1.1.2+.) Empty placeholder so the
+  // section's HTML stays byte-stable for morphInto until the scan resolves.
+  h += '<div class="card wide" id="wpTriggerScanCard">'
+    + '<h2>🎯 Local trigger setup <span class="dim" style="font-size:11px;font-weight:normal">(GINA + EQ Log Parser)</span></h2>'
+    + '<div class="dim" style="font-size:11px;padding:4px 0">Scanning your machine for existing trigger libraries…</div>'
+    + '</div>';
   setSectionHTML('info', h);
+  // Fire the scan once per dashboard render; result populates #wpTriggerScanCard.
+  try { wpScanLocalTriggers(); } catch (e) { void e; }
   wireLoadoutControls();
   wpWireZealCapture();
 }
@@ -11623,6 +11703,24 @@ function startWebDashboard(port) {
       //   • boss name + enrage hint (warns at ≤15% HP if the encounter is the
       //     kind that enrages — full per-boss table is server-side data later)
       // No cross-raid sync yet — Tier 4 lift is deferred to its own design.
+
+      // Local trigger scanner (v1.1.1). Finds GINA + EQLP trigger files on the
+      // local machine and returns paths + sizes + pack-fingerprint guess.
+      // Discovery only — no parsing, no upload, never leaves the dashboard.
+      // The parse + import + log-correlation layers ship in 1.1.2+. (Uilnayar
+      // 2026-06-26: "mimic could review settings from Gina and eqlp directly".)
+      if (req.url === '/api/triggers/local-scan') {
+        try {
+          const { scanLocalTriggers } = require('./triggerScanner');
+          const out = scanLocalTriggers();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(out));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) }));
+        }
+      }
+
       if (req.url === '/api/tank-state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeTankState()));
