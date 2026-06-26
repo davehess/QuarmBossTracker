@@ -2361,6 +2361,87 @@ function relaySelfCastForCasting(line, character) {
     cast_secs: _spellCastSecs(spell),
   }] });
 }
+// ── Blind Mode (v1.1.8) ─────────────────────────────────────────────────────
+// Detect when the watched character is blinded — either from a self-clicky
+// like Wabumkin's Pitted Iron Ring (spell 1362, "Flames of mana spout from
+// your ring and engulf you" → +150 mana/tick for 4 ticks AND blinds the
+// caster for 24s) or a hostile NPC blind. Mimic uses the resulting per-char
+// state to auto-pop Mob Info + Pet/Charm overlays so the player can keep
+// playing through the blind without seeing their EQ window properly.
+//
+// We track per-character (multiboxers might have one toon blinded while the
+// other isn't); each entry carries source (which is what the dashboard /
+// trigger pack key off when picking a callout) and a hard expiresAt (so a
+// missed fade message doesn't leave the state stuck on forever).
+const _blindState = {};  // charLower → { active, source, since, expiresAt, target }
+// 24s = the Pitted Iron Ring blind duration; matches the spell's mana-regen
+// window so the overlay opens for the same time the player is dealing with it.
+const _BLIND_DUR_PITTED_MS = 24_000;
+// 30s fallback for generic NPC blinds — most aren't longer than a tick or two
+// and a hard expiry stops a dropped fade message from pinning the state on.
+const _BLIND_DUR_GENERIC_MS = 30_000;
+const _BLIND_RX = [
+  // Pitted Iron Ring self-cast — the only Wabumkin/raid use we know about
+  // (Uilnayar 2026-06-26). Self-only spell; no "X is blinded by a manaflare"
+  // path because no one else can land it on you.
+  { rx: /\bFlames of mana spout from your ring and engulf you\b/i, source: 'pitted_iron_ring', dur: _BLIND_DUR_PITTED_MS },
+  // Generic NPC blind landings — the standard EQ blind family ("Eye of the
+  // Blind" 60dur and friends). Duration unknown without a spell-id hook, so
+  // the 30s fallback applies; the fade detector below releases earlier if
+  // the spell actually wore off sooner.
+  { rx: /\bYour eyes are blinded\b/i,            source: 'npc_blind',         dur: _BLIND_DUR_GENERIC_MS },
+  { rx: /\bYou are blinded by a manaflare\b/i,   source: 'pitted_iron_ring',  dur: _BLIND_DUR_PITTED_MS },
+];
+const _BLIND_FADE_RX = [
+  /\bThe manaflare subsides\b/i,
+  /\bYou can see again\b/i,
+  /\bYour eyes start to focus again\b/i,
+  /\bYour vision returns\b/i,
+];
+function noteBlindLine(line, character) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  // Start.
+  for (const b of _BLIND_RX) {
+    if (b.rx.test(line)) {
+      _blindState[cl] = {
+        active: true,
+        source: b.source,
+        since: atMs,
+        expiresAt: atMs + b.dur,
+        target: _zealTargetForChar(cl) || null,
+      };
+      return;
+    }
+  }
+  // Fade.
+  for (const r of _BLIND_FADE_RX) {
+    if (r.test(line)) {
+      const s = _blindState[cl];
+      if (s && s.active) {
+        s.active = false;
+        s.endedAt = atMs;
+      }
+      return;
+    }
+  }
+}
+// Time-based auto-expire so a missed fade line doesn't leave the overlay
+// auto-popped forever. Cheap, called from the same lazy spot the dashboard
+// state poll hits.
+function _expireStaleBlinds() {
+  const now = Date.now();
+  for (const cl of Object.keys(_blindState)) {
+    const s = _blindState[cl];
+    if (s && s.active && s.expiresAt && now > s.expiresAt) {
+      s.active = false;
+      s.endedAt = now;
+    }
+  }
+}
+
 // If the observer recently cast a spell whose catalog cast_on_other matches
 // THIS landing line, return an authoritative buff-cast event for it (correct
 // spell + duration, even for spells the tracked-buff index doesn't carry, and
@@ -6079,6 +6160,10 @@ function _zealExportOnCampState() {
   return _zealCampVal;
 }
 
+  // Hard-expire any blind state past its TTL so a missed fade line doesn't
+  // leave Mimic's Blind Mode auto-pop pinned on. Cheap; runs once per poll.
+  try { _expireStaleBlinds(); } catch {}
+
   // Active-character signal — the watched character whose Zeal pipe most
   // recently sent a sample (i.e. the EQ window the user is currently in).
   // Lets overlays focus on JUST the focused character — clears pet/charm/
@@ -6096,10 +6181,29 @@ function _zealExportOnCampState() {
     return best;
   })();
 
+  // Blind state for the ACTIVE character (Mimic auto-shows Mob Info + Pet/
+  // Charm overlays while this is active; restores prior visibility on fade).
+  // Shaped as a per-char map so a future multibox UI can branch per window.
+  const _blindOut = {};
+  for (const cl of Object.keys(_blindState || {})) {
+    const s = _blindState[cl];
+    if (!s) continue;
+    _blindOut[cl] = {
+      active:    !!s.active,
+      source:    s.source || null,
+      since_ms:  s.since   || 0,
+      expires_ms:s.expiresAt || 0,
+      ended_ms:  s.endedAt || 0,
+      target:    s.target  || null,
+    };
+  }
+  const _blindActive = _activeCharacter ? (_blindOut[_activeCharacter] || null) : null;
+
   return {
     version:            AGENT_VERSION,
     startedAt:          stats.startedAt,
     activeCharacter:    _activeCharacter,
+    blind:              { byChar: _blindOut, active: _blindActive && _blindActive.active ? _blindActive : null },
     sessionEvents:      stats.sessionEvents,
     sessionTotalDamage: stats.sessionTotalDamage,
     sessionDamageBy:    stats.sessionDamageBy,
@@ -19085,6 +19189,11 @@ async function main() {
         // Relay our own cast → bot, so anyone targeting the same mob/player sees
         // it in Mob Info's Casting section (cross-client; only our casts nameable).
         if (!_sourceExcluded) relaySelfCastForCasting(line, b.character);
+        // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
+        // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,
+        // always runs (no _sourceExcluded gate — blindness is a UI thing,
+        // not stat data we'd ever want suppressed).
+        noteBlindLine(line, b.character);
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the

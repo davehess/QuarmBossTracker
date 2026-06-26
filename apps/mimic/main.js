@@ -1457,6 +1457,61 @@ function startZealCapture() {
   }
 }
 
+// ── Blind Mode poll (v1.1.8) ───────────────────────────────────────────────
+// When the active character is blinded (Pitted Iron Ring self-clicky or a
+// hostile NPC blind), auto-pop Mob Info + Pet/Charm overlays so the player
+// can keep doing useful things through the blind without alt-tabbing.
+// State source is the agent's /api/state.blind — it does the log scanning
+// and per-char tracking. We only flip the visibility override on transitions
+// so the rest of the visibility system (quietMode, locked, EQ-running gate)
+// keeps working normally outside of a blind window.
+let _blindActive   = false;
+let _blindSource   = null;
+let _blindStartMs  = 0;
+const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers'];
+function _blindForceOpen(key) { return _blindActive && _BLIND_FORCED_KEYS.includes(key); }
+function _pollBlindState() {
+  if (!agentPort) return;
+  const req = http.get({
+    host: '127.0.0.1', port: agentPort, path: '/api/state', timeout: 1500,
+  }, (res) => {
+    let body = '';
+    res.on('data', (c) => { body += c; if (body.length > 256 * 1024) { body = ''; req.destroy(); } });
+    res.on('end', () => {
+      let s;
+      try { s = JSON.parse(body || '{}'); } catch { return; }
+      const a = s && s.blind && s.blind.active;
+      const nowOn = !!(a && a.active);
+      if (nowOn && !_blindActive) {
+        _blindActive  = true;
+        _blindSource  = a.source || 'blind';
+        _blindStartMs = Date.now();
+        appendAgentLog(`[blind] entering blind mode (source=${_blindSource})\n`);
+        // Make sure the windows exist so showInactive() has something to show.
+        if (!mobInfoWindow) createMobInfoOverlay();
+        if (!charmWindow)   createCharmOverlay();
+        if (!petsWindow)    createPetsOverlay();
+        if (!triggerWindow) createTriggerOverlay();
+        applyMobInfoVisibility();
+        applyCharmVisibility();
+        applyPetsVisibility();
+        applyTriggerVisibility();
+      } else if (!nowOn && _blindActive) {
+        _blindActive = false;
+        appendAgentLog(`[blind] leaving blind mode (was ${_blindSource})\n`);
+        _blindSource = null;
+        // Restore the user's normal visibility prefs for the four overlays.
+        applyMobInfoVisibility();
+        applyCharmVisibility();
+        applyPetsVisibility();
+        applyTriggerVisibility();
+      }
+    });
+  });
+  req.on('error',   () => {});
+  req.on('timeout', () => { req.destroy(); });
+}
+
 // ── Launch the agent under Electron's Node ──────────────────────────────────
 async function launchAgent() {
   if (quitting) return;
@@ -1611,6 +1666,12 @@ async function launchAgent() {
   // unconditionally lets a freshly-cleared session also propagate.
   try { pushMimicSession(); } catch (e) { /* non-fatal */ }
   pushStatus();
+  // Blind Mode poll — 1s cadence is plenty for a state change driven by
+  // log lines that take ≥1.5s to even fully cast. Single timer, shared
+  // across all watched characters; the agent's per-char map decides which.
+  if (up && !global.__blindPollTimer) {
+    global.__blindPollTimer = setInterval(_pollBlindState, 1000);
+  }
   return up;
 }
 
@@ -2891,7 +2952,7 @@ function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.enableTriggerTts && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
 function createCharmOverlay() {
@@ -2921,7 +2982,7 @@ function applyCharmVisibility() {
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
   // Charm tracker is opt-in (default off) — it's only useful to charm classes.
-  const shouldShow = unlocked || (cfg.showCharm && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('charm') || (cfg.showCharm && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) charmWindow.showInactive(); else charmWindow.hide();
 }
 
@@ -2955,7 +3016,7 @@ function applyPetsVisibility() {
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to pet classes. EQ-gated.
-  const shouldShow = unlocked || (cfg.showPets && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('pets') || (cfg.showPets && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
 }
 
@@ -3021,7 +3082,7 @@ function applyMobInfoVisibility() {
   if (!mobInfoWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showMobInfo && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('mobinfo') || (cfg.showMobInfo && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) mobInfoWindow.showInactive(); else mobInfoWindow.hide();
 }
 
