@@ -21,12 +21,31 @@
   .rows{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.45);
     border-radius:5px;padding:5px 6px}
   .row{position:relative;display:grid;
-    grid-template-columns:2.6em minmax(0,1fr) 3em auto;
+    grid-template-columns:3.2em minmax(0,1fr) 3em auto;
     align-items:center;gap:6px;font-size:11px;line-height:1.3;
     padding:3px 6px;border-radius:3px;background:rgba(255,255,255,0.03);
     text-shadow:0 1px 2px #000;border-left:2px solid transparent;
     transition:background 200ms ease}
-  .row .num{color:#6e7681;font-size:10px;font-variant-numeric:tabular-nums}
+  /* Slot number — was hard to read at 10px / dim grey. Larger + amber +
+     bold + tabular numerals + a subtle dark chip to anchor it. (Uilnayar
+     2026-06-26: 'the left side numbers are hard to see with ch chain.
+     needs to be more distinct'.) Casting/next rows tint it brighter via
+     row-state overrides below so the active slot's number jumps. */
+  .row .num{
+    color:#f6c365;
+    font-size:13px;
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+    text-align:center;
+    background:rgba(0,0,0,0.55);
+    border:1px solid rgba(246,195,101,0.30);
+    border-radius:3px;
+    padding:1px 0;
+    letter-spacing:0.04em;
+    text-shadow:0 1px 2px #000, 0 0 4px rgba(246,195,101,0.3);
+  }
+  .row.casting .num{color:#7ee787; border-color:rgba(126,231,135,0.55)}
+  .row.next    .num{color:#f6c365; border-color:rgba(246,195,101,0.65); background:rgba(246,195,101,0.10)}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
