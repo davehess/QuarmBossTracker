@@ -167,6 +167,13 @@ function defaultConfig() {
     // Per-overlay opacity. Keyed by 'hud', 'trigger', or 'panel:<panelKey>'.
     // Defaults to 1.0 (opaque). 0.25 = mostly transparent.
     overlayOpacity: {},
+    // Per-character overlay layouts (v1.2 Phase B). When enabled, Mimic swaps
+    // the overlay visibility set to the active character's saved profile as you
+    // change toons (multibox: monk hides Charm, enchanter shows it). Opt-in —
+    // saving the first profile flips charProfilesEnabled on. Map is
+    // charLower → { show: { <flag>: bool, … }, savedAt }.
+    charProfilesEnabled: false,
+    charProfiles: {},
     // Auto-start Mimic when Windows logs in. Default ON — the installer also
     // writes the HKCU\…\Run key so a fresh install auto-starts on next login
     // without any in-app configuration. Users opt out via the tray "Start
@@ -1480,6 +1487,9 @@ function _pollBlindState() {
     res.on('end', () => {
       let s;
       try { s = JSON.parse(body || '{}'); } catch { return; }
+      // Per-character overlay profiles — swap the visibility set when the
+      // active toon changes (cheap; only acts on an actual change).
+      try { _onActiveCharacter(s && s.activeCharacter); } catch {}
       const a = s && s.blind && s.blind.active;
       const nowOn = !!(a && a.active);
       if (nowOn && !_blindActive) {
@@ -1510,6 +1520,133 @@ function _pollBlindState() {
   });
   req.on('error',   () => {});
   req.on('timeout', () => { req.destroy(); });
+}
+
+// ── Per-character overlay profiles (v1.2 Phase B) ───────────────────────────
+// A player who multiboxes wants different overlays per toon: the monk has no
+// charm pet so the Charm tracker is noise, but the same player's enchanter
+// lives by it. Mimic learns the active character from the agent's
+// /api/state.activeCharacter (the most-recently-active tailed log) and, when
+// per-character layouts are enabled, swaps the overlay visibility set to that
+// character's saved profile on every change. Opt-in: nothing happens until the
+// user saves a profile (the first save flips the master switch on).
+//
+// Scope note (B-1): this captures the eleven overlay VISIBILITY flags only —
+// the same set applyAllVisibility() manages. Per-character POSITION and OPACITY
+// are deliberately out of scope here (they carry screen-signature + on-screen
+// validation complexity); they're the B-2 follow-up. showTank is excluded — it
+// is a HUD sub-tab mode, not a standalone overlay window, and applyAllVisibility
+// doesn't manage it.
+const _CHAR_PROFILE_FLAGS = [
+  'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
+  'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
+];
+// flag → (live-window getter, creator) so apply can materialize a window for an
+// overlay the profile turns on. Getters (not captured refs) read the current
+// `let` window var each call.
+const _CHAR_PROFILE_WINDOWS = [
+  { flag: 'showHud',          get: () => overlayWindow,   create: () => createOverlayWindow() },
+  { flag: 'enableTriggerTts', get: () => triggerWindow,   create: () => createTriggerOverlay() },
+  { flag: 'showCharm',        get: () => charmWindow,     create: () => createCharmOverlay() },
+  { flag: 'showPets',         get: () => petsWindow,      create: () => createPetsOverlay() },
+  { flag: 'showMobInfo',      get: () => mobInfoWindow,   create: () => createMobInfoOverlay() },
+  { flag: 'showBuffQueue',    get: () => buffQueueWindow, create: () => createBuffQueueOverlay() },
+  { flag: 'showWho',          get: () => whoWindow,       create: () => createWhoOverlay() },
+  { flag: 'showMelody',       get: () => melodyWindow,    create: () => createMelodyOverlay() },
+  { flag: 'showZeal',         get: () => zealWindow,      create: () => createZealHealthOverlay() },
+  { flag: 'showThreat',       get: () => threatWindow,    create: () => createThreatMeterOverlay() },
+  { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
+];
+let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
+let _lastProfileChar = null;    // last char we applied a profile for (change-gate)
+
+// Snapshot the current visibility set into the character's profile. Returns the
+// saved-to char (lower) or null. First successful save enables the feature so
+// the user doesn't have to find a separate toggle to make it take effect.
+function _captureCharProfile(charLower) {
+  if (!charLower) return null;
+  const cfg = loadConfig();
+  const show = {};
+  for (const k of _CHAR_PROFILE_FLAGS) show[k] = !!cfg[k];
+  cfg.charProfiles = cfg.charProfiles || {};
+  cfg.charProfiles[charLower] = { show, savedAt: Date.now() };
+  cfg.charProfilesEnabled = true;   // first save opts in
+  saveConfig(cfg);
+  return charLower;
+}
+// Apply a saved profile's visibility set to live config + windows. No-op if the
+// character has no profile, or while a hide-all is active (we must not stomp the
+// hide-all restore snapshot — the user's explicit "clear the screen" wins).
+function _applyCharProfile(charLower) {
+  if (!charLower) return false;
+  if (_hideAllActive) return false;
+  const cfg = loadConfig();
+  const prof = cfg.charProfiles && cfg.charProfiles[charLower];
+  if (!prof || !prof.show) return false;
+  for (const k of _CHAR_PROFILE_FLAGS) {
+    if (typeof prof.show[k] === 'boolean') cfg[k] = prof.show[k];
+  }
+  saveConfig(cfg);
+  // Materialize a window for anything the profile turns on (applyXVisibility
+  // no-ops on a missing window, so it can't show what doesn't exist yet).
+  for (const d of _CHAR_PROFILE_WINDOWS) {
+    if (cfg[d.flag] && !d.get()) { try { d.create(); } catch {} }
+  }
+  applyAllVisibility();
+  pushStatus();
+  buildTrayMenu();
+  appendAgentLog(`[profile] applied overlay layout for ${charLower}\n`);
+  return true;
+}
+// Called from the 1s state poll with the agent's current activeCharacter. Only
+// fires on an actual change (and only when the feature is on), so it's free on
+// the steady-state poll. First observation of a character applies their profile
+// too — launching as that toon restores their layout.
+function _onActiveCharacter(name) {
+  const cl = name ? String(name).toLowerCase() : null;
+  _activeCharName = name || null;
+  if (!cl || cl === _lastProfileChar) return;
+  _lastProfileChar = cl;
+  const cfg = loadConfig();
+  // _applyCharProfile rebuilds the tray itself; when the feature is off we
+  // still rebuild so the "Save layout for <toon>" label tracks the new char.
+  if (cfg.charProfilesEnabled && _applyCharProfile(cl)) return;
+  try { buildTrayMenu(); } catch {}
+}
+// Tray-menu items for the per-character overlay layouts — the on/off switch,
+// "save layout for <toon>", and (if one exists) "forget". Built fresh each
+// menu render so the active-character label + profile presence stay current.
+function _charProfileTrayItems() {
+  const cfg = loadConfig();
+  const char  = _activeCharName;
+  const charLc = char ? char.toLowerCase() : null;
+  const hasProfile = !!(charLc && cfg.charProfiles && cfg.charProfiles[charLc]);
+  const items = [
+    { type: 'separator' },
+    { label: 'Per-character overlay layouts', type: 'checkbox',
+      checked: !!cfg.charProfilesEnabled,
+      click: (mi) => {
+        const c = loadConfig(); c.charProfilesEnabled = mi.checked; saveConfig(c);
+        // Turning it on while a profiled toon is active? Apply it right away
+        // (clear the change-gate so _onActiveCharacter doesn't skip it).
+        if (mi.checked && charLc) { _lastProfileChar = null; _onActiveCharacter(char); }
+        buildTrayMenu(); pushStatus();
+      } },
+    { label: char ? `💾 Save current layout for ${char}` : '💾 Save layout (no active character yet)',
+      enabled: !!charLc,
+      click: () => {
+        if (_captureCharProfile(charLc)) { _lastProfileChar = charLc; buildTrayMenu(); pushStatus(); }
+      } },
+  ];
+  if (hasProfile) {
+    items.push({ label: `🗑 Forget ${char}'s saved layout`,
+      click: () => {
+        const c = loadConfig();
+        if (c.charProfiles) { delete c.charProfiles[charLc]; saveConfig(c); }
+        buildTrayMenu();
+      } });
+  }
+  return items;
 }
 
 // ── Launch the agent under Electron's Node ──────────────────────────────────
@@ -3722,6 +3859,9 @@ function buildTrayMenu() {
     // hide/show round-trip. Bindable hotkey lives in registerHideAllHotkey().
     { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')',
       click: () => { toggleHideAllOverlays(); } },
+    // Per-character overlay layouts (v1.2 Phase B) — save/restore the visibility
+    // set per toon, swapped automatically as the active character changes.
+    ..._charProfileTrayItems(),
   ];
 
   // My /tells — its own section now (was buried inside the overlay submenu).
