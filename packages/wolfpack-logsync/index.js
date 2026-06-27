@@ -2384,13 +2384,13 @@ const _BLIND_RX = [
   // Pitted Iron Ring self-cast — the only Wabumkin/raid use we know about
   // (Uilnayar 2026-06-26). Self-only spell; no "X is blinded by a manaflare"
   // path because no one else can land it on you.
-  { rx: /\bFlames of mana spout from your ring and engulf you\b/i, source: 'pitted_iron_ring', dur: _BLIND_DUR_PITTED_MS },
+  { rx: /\bFlames of mana spout from your ring and engulf you\b/i, source: 'pitted_iron_ring', dur: _BLIND_DUR_PITTED_MS, dur_sec: 24 },
   // Generic NPC blind landings — the standard EQ blind family ("Eye of the
   // Blind" 60dur and friends). Duration unknown without a spell-id hook, so
   // the 30s fallback applies; the fade detector below releases earlier if
   // the spell actually wore off sooner.
-  { rx: /\bYour eyes are blinded\b/i,            source: 'npc_blind',         dur: _BLIND_DUR_GENERIC_MS },
-  { rx: /\bYou are blinded by a manaflare\b/i,   source: 'pitted_iron_ring',  dur: _BLIND_DUR_PITTED_MS },
+  { rx: /\bYour eyes are blinded\b/i,            source: 'npc_blind',         dur: _BLIND_DUR_GENERIC_MS, dur_sec: null },
+  { rx: /\bYou are blinded by a manaflare\b/i,   source: 'pitted_iron_ring',  dur: _BLIND_DUR_PITTED_MS,  dur_sec: 24 },
 ];
 const _BLIND_FADE_RX = [
   /\bThe manaflare subsides\b/i,
@@ -2398,6 +2398,20 @@ const _BLIND_FADE_RX = [
   /\bYour eyes start to focus again\b/i,
   /\bYour vision returns\b/i,
 ];
+// Self-hit while blind — EQ writes the self-target in ALL CAPS ("...YOURSELF...")
+// when a blind/confused swing lands on the caster. Match the common melee verbs
+// plus a catch-all "...YOURSELF for N points of damage" so we don't have to
+// enumerate every skill. (v1.1.9 — Uilnayar 2026-06-26: "alerts for … hitting
+// themselves (or attempting)".)
+const _BLIND_SELFHIT_RX = /\bYOURSELF\b.*\bpoints of damage\b/i;
+// Blind-event ring buffer — consumed by the trigger overlay (triggers.html)
+// through the same fire()/speak() path as recentTriggerFires. Each entry:
+// { ts, kind, text, tts }. Capped; the overlay dedupes on ts.
+const _blindEvents = [];
+function _pushBlindEvent(kind, text, tts, atMs) {
+  _blindEvents.push({ ts: atMs || Date.now(), kind, text, tts: tts || text });
+  if (_blindEvents.length > 40) _blindEvents.splice(0, _blindEvents.length - 40);
+}
 function noteBlindLine(line, character) {
   if (!line || !character) return;
   const cl = String(character).toLowerCase();
@@ -2412,7 +2426,16 @@ function noteBlindLine(line, character) {
         since: atMs,
         expiresAt: atMs + b.dur,
         target: _zealTargetForChar(cl) || null,
+        selfHits: 0,
       };
+      // Vocal callout on enter. Pitted ring announces its duration (known);
+      // a hostile blind just flags that it's an enemy effect.
+      if (b.source === 'pitted_iron_ring') {
+        _pushBlindEvent('blind_start', '👁 Blinded — ' + (b.dur_sec || 24) + 's',
+          'Pitted ring blind, ' + (b.dur_sec || 24) + ' seconds', atMs);
+      } else {
+        _pushBlindEvent('blind_start', '👁 Blinded by an enemy', 'Blinded', atMs);
+      }
       return;
     }
   }
@@ -2423,9 +2446,18 @@ function noteBlindLine(line, character) {
       if (s && s.active) {
         s.active = false;
         s.endedAt = atMs;
+        _pushBlindEvent('blind_end', '👁 Vision restored', 'Vision restored', atMs);
       }
       return;
     }
+  }
+  // Self-hit while blind — only meaningful (and only checked) when THIS
+  // character is currently blind, so a normal "hit yourself on a damage
+  // shield" line outside a blind doesn't false-fire.
+  const s = _blindState[cl];
+  if (s && s.active && _BLIND_SELFHIT_RX.test(line)) {
+    s.selfHits = (s.selfHits || 0) + 1;
+    _pushBlindEvent('blind_selfhit', '⚠ You hit YOURSELF', 'Hitting yourself', atMs);
   }
 }
 // Time-based auto-expire so a missed fade line doesn't leave the overlay
@@ -2438,6 +2470,28 @@ function _expireStaleBlinds() {
     if (s && s.active && s.expiresAt && now > s.expiresAt) {
       s.active = false;
       s.endedAt = now;
+      _pushBlindEvent('blind_end', '👁 Vision restored', 'Vision restored', now);
+    }
+  }
+}
+// Target-change-while-blind detection. The Zeal target gauge updates out of
+// band from the log (no log line), so we compare the stored target against the
+// live Zeal target on each poll; a change while blind means the player is now
+// swinging at something other than what they engaged — the dangerous case the
+// blind alert is for. Stamps the new target so it only fires once per change.
+function _checkBlindTargetChanges() {
+  for (const cl of Object.keys(_blindState)) {
+    const s = _blindState[cl];
+    if (!s || !s.active) continue;
+    const cur = _zealTargetForChar(cl);
+    if (cur && cur !== s.target) {
+      const prev = s.target;
+      s.target = cur;
+      // Suppress the very first acquisition (null/empty → a target) — that's
+      // just picking a target, not a blind-induced switch.
+      if (prev) {
+        _pushBlindEvent('blind_target', '🎯 Target → ' + cur, 'Target changed, ' + cur);
+      }
     }
   }
 }
@@ -6163,6 +6217,9 @@ function _zealExportOnCampState() {
   // Hard-expire any blind state past its TTL so a missed fade line doesn't
   // leave Mimic's Blind Mode auto-pop pinned on. Cheap; runs once per poll.
   try { _expireStaleBlinds(); } catch {}
+  // Emit a target-changed-while-blind callout if the Zeal target moved since
+  // the last poll (no log line for target changes — has to be polled).
+  try { _checkBlindTargetChanges(); } catch {}
 
   // Active-character signal — the watched character whose Zeal pipe most
   // recently sent a sample (i.e. the EQ window the user is currently in).
@@ -6204,6 +6261,9 @@ function _zealExportOnCampState() {
     startedAt:          stats.startedAt,
     activeCharacter:    _activeCharacter,
     blind:              { byChar: _blindOut, active: _blindActive && _blindActive.active ? _blindActive : null },
+    // Blind-event ring buffer (start / end / self-hit / target-change). The
+    // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
+    blindEvents:        _blindEvents.slice(-20),
     sessionEvents:      stats.sessionEvents,
     sessionTotalDamage: stats.sessionTotalDamage,
     sessionDamageBy:    stats.sessionDamageBy,

@@ -19,6 +19,12 @@
   }
   #alert.show{ opacity:1; animation:pop .4s ease-out; }
   @keyframes pop{ 0%{transform:scale(0.7)} 60%{transform:scale(1.08)} 100%{transform:scale(1)} }
+  /* Blind self-hit — red + a hard pulse so "you're hitting YOURSELF" is
+     impossible to miss mid-fight. (v1.1.9) */
+  #alert.blindwarn{ color:#ff6b6b;
+    text-shadow:0 0 8px #000, 0 0 20px rgba(248,81,73,0.9);
+    animation:pop .4s ease-out, blindpulse .5s ease-in-out infinite; }
+  @keyframes blindpulse{ 0%,100%{filter:brightness(1)} 50%{filter:brightness(1.5)} }
   /* Trigger timing feedback row — three buttons below the flashed text so the
      person who just heard the callout can say whether the timing was right.
      Persists ~8s after the flash so the operator has time to click without
@@ -246,6 +252,8 @@
 
   let lastTs = 0;            // newest fire ts we've already handled
   let primed = false;        // skip the backlog on first poll
+  let lastBlindTs = 0;       // newest blind-event ts handled
+  let blindPrimed = false;   // skip the blind backlog on first poll
   const el = document.getElementById('alert');
   let hideTimer = null;
 
@@ -254,7 +262,15 @@
   // script keeps running — so without this gate it would still SPEAK out loud
   // even though nothing is visible. main pushes status on every change.
   let alertsEnabled = true;
-  function applyTtsStatus(s){ alertsEnabled = !!(s && s.enableTriggerTts && !s.quietMode); }
+  // Blind callouts (v1.1.9) are safety alerts the user explicitly opted into by
+  // clicking a blind clicky (or by being blinded) — they fire even when regular
+  // trigger TTS is OFF, but still go silent under Quiet mode. Track quietMode
+  // separately so the blind path can gate on just that.
+  let quietMode = false;
+  function applyTtsStatus(s){
+    alertsEnabled = !!(s && s.enableTriggerTts && !s.quietMode);
+    quietMode = !!(s && s.quietMode);
+  }
   if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTtsStatus).catch(function(){});
   if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTtsStatus);
 
@@ -336,6 +352,22 @@
     speak(spoken);
     playSound(t.sound);
     showFeedback(t);
+  }
+
+  // Blind-mode callouts (v1.1.9). Separate from fire(): these fire even when
+  // regular trigger TTS is off (they're the alerts the user asked for when
+  // blinded), gated only on Quiet mode. Self-hits flash red + pulse; the other
+  // kinds reuse the normal amber flash. No feedback buttons (not a trigger).
+  function fireBlind(e){
+    if (quietMode) return;
+    const danger = e.kind === 'blind_selfhit';
+    el.classList.toggle('blindwarn', danger);
+    flash(e.text || e.tts || 'Blind');
+    speak(e.tts || e.text || 'Blind');
+    // Clear the danger styling after the flash window so the next normal flash
+    // isn't tinted red.
+    clearTimeout(fireBlind._t);
+    fireBlind._t = setTimeout(function(){ el.classList.remove('blindwarn'); }, 3600);
   }
 
   // Timer stack — keeps DOM nodes around between polls so the bar can
@@ -478,6 +510,17 @@
       }
       for (const f of fires){
         if ((f.ts||0) > lastTs){ lastTs = f.ts; fire(f); }
+      }
+      // Blind-mode callouts — same dedupe-on-ts pattern as trigger fires, but
+      // through fireBlind() so they sound even when regular TTS is off.
+      const blinds = (s.blindEvents || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+      if (!blindPrimed){
+        if (blinds.length) lastBlindTs = blinds[blinds.length-1].ts || 0;
+        blindPrimed = true;
+      } else {
+        for (const e of blinds){
+          if ((e.ts||0) > lastBlindTs){ lastBlindTs = e.ts; fireBlind(e); }
+        }
       }
     }catch(e){ /* agent not up yet */ }
   }
