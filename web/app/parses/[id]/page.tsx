@@ -12,6 +12,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
+import { userTz } from '@/lib/timezone';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import { ClassificationChip } from '@/components/KillCard';
 import { classifyEncounter, clearClassification } from '../actions';
@@ -309,7 +310,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     );
   }
   const officer = await isOfficer(user.id);
+  const tz = await userTz();
   const { enc, contribs, zones, loot, whoMap, bossLocalZone, petSet, date, latestAtTime } = data;
+  // `date` (from load) is the ET raid-day bucket — keep it for the loot query
+  // join. For DISPLAY, re-bucket the kill time in the viewer's chosen zone.
+  const dispDate = dayKey(enc.started_at, tz);
   // Pet detection: explicit pet_names table first, then a name-pattern
   // fallback for pets we don't track by name yet. Wizard familiars
   // ("X's familiar", generic "familiar") and the "an air/earth/fire/water
@@ -431,7 +436,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             <ClassificationChip classification={enc.classification} />
           </h2>
           <div className="text-dim text-sm">
-            {dayLabel(date)} · {fmtTime(enc.started_at)}
+            {dayLabel(dispDate, tz)} · {fmtTime(enc.started_at, tz)}
           </div>
         </div>
         {enc.classification && (
@@ -614,7 +619,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           <ul className="text-xs space-y-0.5">
             {deaths.map((d, i) => (
               <li key={i} className="flex gap-3">
-                <span className="text-dim">{fmtTime(d.ts)}</span>
+                <span className="text-dim">{fmtTime(d.ts, tz)}</span>
                 <span className="text-text">{d.name}</span>
                 {d.class && <span className="text-dim">({d.class})</span>}
                 {d.riposteDeath && <span className="text-red">⚔ riposte kill</span>}

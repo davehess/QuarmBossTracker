@@ -6,6 +6,7 @@ import { notFound, redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel } from '@/lib/format';
+import { userTz } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,6 +66,7 @@ export default async function BossPage({ params }: { params: Promise<{ id: strin
   if (!user) redirect(`/auth/signin?next=/boss/${encodeURIComponent(id)}`);
 
   const data = await load(id);
+  const tz = await userTz();
   if (data.error === 'not found' || data.error === 'invalid id') notFound();
   if (data.error || !data.boss) {
     return (
@@ -151,7 +153,7 @@ export default async function BossPage({ params }: { params: Promise<{ id: strin
                 <td className="py-1 pr-2 text-right text-dim">{p.dps ? `${fmtDmg(p.dps)}/s` : '—'}</td>
                 <td className="py-1 pr-2 text-dim">
                   <Link href={`/parses/${p.encounter_id}`} className="hover:text-blue">
-                    {dayLabel(dayKey(p.started_at))} · {fmtTime(p.started_at)}
+                    {dayLabel(dayKey(p.started_at, tz), tz)} · {fmtTime(p.started_at, tz)}
                   </Link>
                 </td>
               </tr>
@@ -188,7 +190,7 @@ export default async function BossPage({ params }: { params: Promise<{ id: strin
                 <tr key={e.id} className="border-b border-border/30 hover:bg-[#1a212c]">
                   <td className="py-1 pr-2 text-dim">
                     <Link href={`/parses/${e.id}`} className="hover:text-blue">
-                      {dayLabel(dayKey(e.started_at))} · {fmtTime(e.started_at)}
+                      {dayLabel(dayKey(e.started_at, tz), tz)} · {fmtTime(e.started_at, tz)}
                     </Link>
                   </td>
                   <td className="py-1 pr-2 text-right text-dim">{fmtDuration(e.duration_sec)}</td>

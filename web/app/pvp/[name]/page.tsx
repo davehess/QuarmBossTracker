@@ -21,6 +21,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { fmtTime, dayKey, dayLabel } from '@/lib/format';
+import { userTz } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -239,6 +240,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   if (!user) redirect(`/auth/signin?next=/pvp/${encodeURIComponent(name)}`);
 
   const { kills, deaths, assists, displayName } = await load(name);
+  const tz = await userTz();
   const owned = await ownedNames();
   const viewerOwns = owned.has(displayName.toLowerCase());
   const officer = await isOfficer(user.id);
@@ -381,7 +383,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
               {kills.slice(0, 200).map((k) => (
                 <tr key={k.id} className="border-b border-border/30 hover:bg-[#1a212c]">
                   <td className="py-1 pr-2 text-dim whitespace-nowrap">
-                    {dayLabel(dayKey(k.killed_at))} · {fmtTime(k.killed_at)}
+                    {dayLabel(dayKey(k.killed_at, tz), tz)} · {fmtTime(k.killed_at, tz)}
                   </td>
                   <td className="py-1 pr-2 text-text whitespace-nowrap">
                     {k.victim}{k.victim_guild ? <span className="text-dim"> {'<'}{k.victim_guild}{'>'}</span> : null}
@@ -439,7 +441,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
               {assistRows.slice(0, 200).map((a, i) => (
                 <tr key={`${a.pvp_kill_id ?? 'x'}-${i}`} className="border-b border-border/30 hover:bg-[#1a212c]">
                   <td className="py-1 pr-2 text-dim whitespace-nowrap">
-                    {dayLabel(dayKey(a.killed_at))} · {fmtTime(a.killed_at)}
+                    {dayLabel(dayKey(a.killed_at, tz), tz)} · {fmtTime(a.killed_at, tz)}
                   </td>
                   <td className="py-1 pr-2 text-text">
                     {a.killer

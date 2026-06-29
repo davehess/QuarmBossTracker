@@ -14,6 +14,7 @@ import KillCard, { type KillCardData } from '@/components/KillCard';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
 import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
+import { userTz } from '@/lib/timezone';
 import { classifyEncounter, clearClassification } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -298,6 +299,10 @@ export default async function ParsesPage() {
   const officer = await isOfficer(user.id);
 
   const { rows, zones, loot, attendance, error } = await loadAll();
+  // Viewer's chosen zone (wp_tz cookie) — threaded into each KillCard's time.
+  // Day GROUPING + headers stay on the canonical Eastern raid day (they join
+  // to attendance, which is bucketed in ET); only the per-kill clock shifts.
+  const tz = await userTz();
   // In-progress encounters (ended_at null, last upload within 90min so we don't
   // surface stranded rows from old crashes forever). These render in their own
   // 'Engaged now' section at the top of the page. (Uilnayar 2026-06-26.)
@@ -328,6 +333,7 @@ export default async function ParsesPage() {
               <KillCard
                 key={r.id}
                 kill={toCardData(r)}
+                tz={tz}
                 adminBar={officer ? <CardAdminBar encId={r.id} current={r.classification} /> : undefined}
               />
             ))}
@@ -415,6 +421,7 @@ export default async function ParsesPage() {
                       <KillCard
                         key={enc.id}
                         kill={toCardData(enc)}
+                        tz={tz}
                         adminBar={officer ? <CardAdminBar encId={enc.id} current={enc.classification} /> : null}
                       />
                     ))}

@@ -50,7 +50,11 @@ export function ClassificationChip({ classification }: { classification: string 
   );
 }
 
-export default function KillCard({ kill, adminBar }: { kill: KillCardData; adminBar?: ReactNode }) {
+// `tz` is the viewer's chosen zone (wp_tz cookie, resolved server-side and
+// passed down). Omitted → fmtTime falls back to RAID_TZ (Eastern). Passing the
+// same resolved value on server + client keeps the rendered string identical,
+// so there's no hydration mismatch.
+export default function KillCard({ kill, adminBar, tz }: { kill: KillCardData; adminBar?: ReactNode; tz?: string }) {
   const top = kill.top_players.slice(0, 5);
   const extra = kill.player_count - top.length;
   const dim = !!kill.classification;   // not a guild kill — visually de-emphasize
@@ -83,10 +87,10 @@ export default function KillCard({ kill, adminBar }: { kill: KillCardData; admin
           <div
             className="text-dim text-xs whitespace-nowrap"
             title={kill.inProgress
-              ? `engaged ${fmtTime(kill.started_at)} · last upload ${fmtDuration(kill.duration_sec)} in`
-              : `killed ~${fmtTime(killAt)} · engaged ${fmtTime(kill.started_at)} (${fmtDuration(kill.duration_sec)})`}
+              ? `engaged ${fmtTime(kill.started_at, tz)} · last upload ${fmtDuration(kill.duration_sec)} in`
+              : `killed ~${fmtTime(killAt, tz)} · engaged ${fmtTime(kill.started_at, tz)} (${fmtDuration(kill.duration_sec)})`}
           >
-            {kill.inProgress ? `engaged ${fmtTime(kill.started_at)}` : fmtTime(killAt)}
+            {kill.inProgress ? `engaged ${fmtTime(kill.started_at, tz)}` : fmtTime(killAt, tz)}
           </div>
         </div>
 

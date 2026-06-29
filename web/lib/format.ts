@@ -26,41 +26,49 @@ export function fmtDuration(sec: number | null | undefined) {
   return s === 0 ? `${m}m` : `${m}m${s}s`;
 }
 
-// Raid nights run in Eastern time (matches the bot's DEFAULT_TIMEZONE), so
-// bucket every timestamp by US Eastern day instead of UTC. Otherwise a 9 PM
-// ET kill lands at 01:00 UTC the next day and gets pushed into "tomorrow"
-// when rendered on Vercel's UTC server. Also used by fmtTime to keep the
-// server-rendered string identical to the client-rendered string — without
-// it React saw a hydration mismatch (UTC → local TZ) and re-rendered every
-// recent-kill timestamp on mount. That re-render IS the "blink" users saw.
+// Raid nights run in Eastern time (matches the bot's DEFAULT_TIMEZONE), so by
+// default we bucket every timestamp by US Eastern day instead of UTC. Otherwise
+// a 9 PM ET kill lands at 01:00 UTC the next day and gets pushed into "tomorrow"
+// when rendered on Vercel's UTC server.
+//
+// These formatters take an OPTIONAL `tz` so a page can render in the viewer's
+// chosen zone (the wp_tz cookie via userTz()) — that's what makes the header's
+// Timezone picker actually shift the displayed offset. It defaults to RAID_TZ
+// so any caller that doesn't thread a zone keeps the old Eastern behavior.
+//
+// Hydration note: the reason this was a hard constant is that a UTC server
+// render → local client render produced a mismatch + a re-render "blink". That
+// stays solved as long as server and client format with the SAME tz value —
+// pages resolve the cookie ONCE on the server (userTz()) and pass that string
+// to both the server markup and any client child, so both agree.
 export const RAID_TZ = 'America/New_York';
 
-export function fmtTime(iso: string) {
+export function fmtTime(iso: string, tz: string = RAID_TZ) {
   return new Date(iso).toLocaleTimeString('en-US', {
     hour: 'numeric', minute: '2-digit', hour12: true,
-    timeZone: RAID_TZ,
+    timeZone: tz,
   });
 }
 
-// YYYY-MM-DD for grouping. Forces RAID_TZ so the day boundary is midnight
-// Eastern, not midnight UTC.
-export function dayKey(iso: string) {
-  return new Date(iso).toLocaleDateString('en-CA', { timeZone: RAID_TZ });
+// YYYY-MM-DD for grouping. Forces the day boundary to midnight in `tz`
+// (Eastern by default), not midnight UTC.
+export function dayKey(iso: string, tz: string = RAID_TZ) {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: tz });
 }
 
-export function dayLabel(key: string) {
-  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: RAID_TZ });
-  // Yesterday's key — subtract 24h in Eastern via a string-based parse so we
-  // don't have to wrestle with DST math on the server.
+export function dayLabel(key: string, tz: string = RAID_TZ) {
+  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  // Yesterday's key — subtract 24h then re-bucket in `tz` so we don't have to
+  // wrestle with DST math by hand.
   const yesterday = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
-  const yesterdayKey = yesterday.toLocaleDateString('en-CA', { timeZone: RAID_TZ });
+  const yesterdayKey = yesterday.toLocaleDateString('en-CA', { timeZone: tz });
   if (key === todayKey)     return 'Today';
   if (key === yesterdayKey) return 'Yesterday';
-  // Parse the key as a noon-Eastern timestamp to avoid the DST seam on
-  // midnight boundaries flipping the displayed weekday.
-  return new Date(key + 'T12:00:00-05:00').toLocaleDateString('en-US', {
+  // Parse the key as a noon-UTC timestamp to avoid a midnight DST seam flipping
+  // the displayed weekday, then render the weekday in `tz`.
+  return new Date(key + 'T12:00:00Z').toLocaleDateString('en-US', {
     weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
-    timeZone: RAID_TZ,
+    timeZone: tz,
   });
 }
 

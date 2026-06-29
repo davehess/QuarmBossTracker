@@ -10,6 +10,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel, cleanBossName } from '@/lib/format';
+import { userTz } from '@/lib/timezone';
 import { eraForTimestamp } from '@/lib/eras';
 import { classDisplay } from '@/lib/class-titles';
 import LootBrowser, { type LootCategory, type LootEntry } from '@/components/LootBrowser';
@@ -206,6 +207,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}`);
 
   const data = await load(name);
+  const tz = await userTz();
   if (data.error || !data.displayName) {
     return (
       <div className="bg-panel border border-red rounded-lg p-4 text-red text-sm font-mono">
@@ -407,7 +409,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
                   <td className="py-1 pr-2 text-dim">
                     {ts ? (
                       <Link href={`/parses/${p.encounter_id}`} className="hover:text-blue">
-                        {dayLabel(dayKey(ts))} · {fmtTime(ts)}
+                        {dayLabel(dayKey(ts, tz), tz)} · {fmtTime(ts, tz)}
                       </Link>
                     ) : '—'}
                   </td>

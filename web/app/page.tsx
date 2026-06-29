@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
+import { userTz } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +38,7 @@ async function loadRecent() {
 export default async function HomePage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   const recent = user ? await loadRecent() : [] as RecentRow[];
+  const tz = await userTz();   // viewer's chosen zone (wp_tz cookie) → all times below
 
   return (
     <div className="space-y-6">
@@ -59,7 +61,7 @@ export default async function HomePage() {
               <li key={r.id} className="flex justify-between gap-2 border-b border-border/30 py-0.5">
                 <Link href={`/parses/${r.id}`} className="text-text hover:text-blue truncate">
                   <span className="text-gold">{cleanBossName(r.eqemu_npc_types?.name)}</span>
-                  <span className="text-dim"> · {dayLabel(dayKey(r.started_at))} {fmtTime(r.started_at)}</span>
+                  <span className="text-dim"> · {dayLabel(dayKey(r.started_at, tz), tz)} {fmtTime(r.started_at, tz)}</span>
                 </Link>
                 <span className="text-dim whitespace-nowrap">{fmtDmg(r.total_damage)}</span>
               </li>
