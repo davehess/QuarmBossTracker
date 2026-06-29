@@ -157,4 +157,70 @@ async function reconcileKillsFromSupabase(opts = {}) {
   return { ok: true, recoverList, skipped, scanned, applied };
 }
 
-module.exports = { reconcileKillsFromSupabase };
+// ── Engaged-encounter reconcile ─────────────────────────────────────────────
+// The /parses "Engaged now" section keys on encounters.ended_at IS NULL, but
+// nothing populated ended_at — so a dead boss whose slain line no agent
+// happened to catch lingered as "ENGAGED" forever (Uilnayar 2026-06-29: "this
+// looks like all of these mobs are still engaged"). The primary fix is at
+// ingest (a confirmed_kill upload sets ended_at). This is the backstop for the
+// case where no agent flagged the death but we have OTHER positive evidence the
+// mob died: LOOT was posted for it.
+//
+// Promote an engaged encounter (set ended_at = started_at + duration) when:
+//   • loot_observations exists for that npc_id near the fight (it dropped loot,
+//     so it died), AND
+//   • no OTHER encounter of the SAME npc_id overlaps the ±30min window — with
+//     multiple same-name mobs up we can't say which one the loot belongs to
+//     (Uilnayar: "where we don't have multiple mobs of the same name").
+// Set-once via the ended_at=is.null filter so a real death time from a later
+// confirmed upload is never overwritten.
+async function reconcileEngagedEncounters() {
+  if (!supabase.isEnabled()) return { ok: false, promoted: 0 };
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const enc = encodeURIComponent;
+  const now = Date.now();
+  // Engaged = ended_at null, real parse, started 10min..14d ago (older than
+  // 10min so we don't race a still-live fight; bounded to keep the scan cheap).
+  const sinceIso = new Date(now - 14 * 24 * 3600 * 1000).toISOString();
+  const untilIso = new Date(now - 10 * 60 * 1000).toISOString();
+  const engaged = await supabase.select('encounters',
+    `guild_id=eq.${enc(guildId)}&ended_at=is.null&total_damage=gt.0` +
+    `&started_at=gte.${enc(sinceIso)}&started_at=lte.${enc(untilIso)}` +
+    `&select=id,npc_id,started_at,duration_sec&order=started_at.desc&limit=100`
+  ).catch(err => { console.warn('[reconcile-engaged] select failed:', err?.message); return []; });
+  if (!Array.isArray(engaged) || engaged.length === 0) return { ok: true, promoted: 0 };
+
+  let promoted = 0;
+  for (const e of engaged) {
+    if (!e.npc_id) continue;
+    const startMs = Date.parse(e.started_at) || 0;
+    if (!startMs) continue;
+    // Same-name ambiguity guard — any OTHER encounter of this npc within ±30min?
+    const wStart = new Date(startMs - 30 * 60 * 1000).toISOString();
+    const wEnd   = new Date(startMs + 30 * 60 * 1000).toISOString();
+    const sibs = await supabase.select('encounters',
+      `guild_id=eq.${enc(guildId)}&npc_id=eq.${e.npc_id}` +
+      `&started_at=gte.${enc(wStart)}&started_at=lte.${enc(wEnd)}&select=id&limit=3`
+    ).catch(() => []);
+    if (Array.isArray(sibs) && sibs.length > 1) continue;   // ambiguous — skip
+    // Loot evidence — posted for this npc from -2h..+6h of the fight (a raid
+    // night's worth of slack for officers to paste corpse loot).
+    const lStart = new Date(startMs - 2 * 3600 * 1000).toISOString();
+    const lEnd   = new Date(startMs + 6 * 3600 * 1000).toISOString();
+    const loot = await supabase.select('loot_observations',
+      `guild_id=eq.${enc(guildId)}&npc_id=eq.${e.npc_id}` +
+      `&posted_at=gte.${enc(lStart)}&posted_at=lte.${enc(lEnd)}&select=id&limit=1`
+    ).catch(() => []);
+    if (!Array.isArray(loot) || loot.length === 0) continue;  // no death evidence
+    const endedIso = new Date(startMs + (e.duration_sec || 0) * 1000).toISOString();
+    await supabase.update('encounters',
+      `id=eq.${enc(e.id)}&ended_at=is.null`,
+      { ended_at: endedIso }
+    ).catch(err => { console.warn('[reconcile-engaged] update failed:', err?.message); });
+    promoted++;
+  }
+  if (promoted) console.log(`[reconcile-engaged] registered ${promoted} kill(s) from posted loot (no same-name ambiguity)`);
+  return { ok: true, promoted };
+}
+
+module.exports = { reconcileKillsFromSupabase, reconcileEngagedEncounters };

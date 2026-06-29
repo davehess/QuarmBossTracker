@@ -205,6 +205,21 @@ client.once(Events.ClientReady, async (readyClient) => {
     } catch (err) { console.warn('[reconcile] interval init failed:', err?.message); }
   }, 6 * 60 * 60 * 1000);
 
+  // Promote still-"engaged" encounters (ended_at null) to confirmed kills when
+  // loot was posted for the boss + there's no same-name ambiguity. Runs every
+  // 30 min (loot is pasted during/after a raid) + once at startup to clear any
+  // backlog. Cheap + bounded (≤100 engaged rows scanned). See reconcileKills.js.
+  const _runEngagedReconcile = () => {
+    try {
+      const { reconcileEngagedEncounters } = require('./utils/reconcileKills');
+      reconcileEngagedEncounters()
+        .then(r => { if (r.ok && r.promoted) console.log(`[reconcile-engaged] registered ${r.promoted} kill(s)`); })
+        .catch(err => console.warn('[reconcile-engaged] failed:', err?.message));
+    } catch (err) { console.warn('[reconcile-engaged] init failed:', err?.message); }
+  };
+  setTimeout(_runEngagedReconcile, 90 * 1000);          // once shortly after boot
+  setInterval(_runEngagedReconcile, 30 * 60 * 1000);    // then every 30 min
+
   // who_overrides → state.whoData. Officers curate class + Zek on the web
   // (/admin/who) and via /markzek; pull those overrides in at startup and
   // refresh every 30 min so a web-set flag flows into /whois + PvP auto-zek
@@ -9807,6 +9822,23 @@ async function _handleAgentUpload(req, res) {
           npcHealedTotal: encounter.npc_healed_total || 0,
           uploadedByDiscordId: identity.discord_id,
         }).catch(err => { console.warn('[agent] recordParse failed:', err?.message); return null; });
+
+        // Register the kill the moment ANY contributor's agent confirms the
+        // boss's slain line (confirmed_kill). Sets encounters.ended_at — the
+        // marker the /parses "Engaged now" section keys off — so a dead boss
+        // stops showing as ENGAGED as soon as one of the raid's agents saw it
+        // die. Set-once (ended_at=is.null filter): the first confirmed death
+        // time wins; later unconfirmed idle-flush uploads can't clear it.
+        // (Uilnayar 2026-06-29 — "anyone saw the mob die … register the parse".)
+        if (recParseResult?.encounterId && encounter.confirmed_kill === true) {
+          const endedIso = encounter.ended_at
+            ? new Date(encounter.ended_at).toISOString()
+            : new Date(startedMs + duration * 1000).toISOString();
+          await supabase.update('encounters',
+            `id=eq.${encodeURIComponent(recParseResult.encounterId)}&ended_at=is.null`,
+            { ended_at: endedIso }
+          ).catch(err => console.warn('[agent] ended_at set failed:', err?.message));
+        }
 
         // Persist charm sessions for this encounter. Upsert dedup'd by
         // (guild_id, pet_name, owner, started_at) so re-uploads from

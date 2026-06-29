@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.127': [
+    '**Dead bosses stop showing as "Engaged" on /parses.** A kill now registers the moment ANY raider\'s agent sees the boss\'s slain line — so a boss whose death line your own client happened to miss no longer lingers in the *Engaged now* section forever. As a backstop, the bot also promotes a still-engaged fight to a confirmed kill when **loot was posted** for that boss (via `/loot`) and there\'s **no other mob of the same name** up in the window (so we never guess which of two same-name mobs died). Runs automatically; clears the backlog within ~30 min of a deploy (Uilnayar 2026-06-29).',
+  ],
   '3.0.125': [
     '**Mimic v1.1 line is rolling on beta — three pieces to try.** (1.1.1) Mimic **scans your machine** for GINA + EQ Log Parser libraries on first run and shows what it found (file count, last touched, fingerprint guess like *"looks like Safe Space + custom"*). Visibility only — nothing leaves your dashboard. (1.1.2) every trigger fire now shows three buttons below the alert: **« Earlier · ✓ Good! · » Too early**. Vote on whether the timing was right; the agent\'s durable queue ships your vote up so a momentary disconnect never loses it. (1.1.3) Officers see those votes aggregated on `/admin/triggers` with a per-trigger **recommendation chip** (≥3 votes, ≥60% consensus). Subsequent betas import your high-fidelity triggers (Fittir & co.) and watch which ones actually fire — promotable to the guild pack with one click.',
   ],
