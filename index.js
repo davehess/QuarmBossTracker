@@ -6387,6 +6387,213 @@ async function _handleAgentTargetBuffs(req, res) {
   }
 }
 
+// Server-side hurt-duration tracker for the Extended Target overlay. A single
+// live-state snapshot can't answer "below 85% for >10s" — character_live_state
+// only holds the CURRENT value — so we remember when each entity first dropped
+// below the threshold, keyed guild|kind|name. GC'd by lastSeen (NOT by a single
+// poll's view) so a zone-A requester doesn't evict zone-B's in-flight entries.
+const _extHurtSince = new Map();   // guild|kind|nameLower → { since, lastSeen }
+const EXT_ONLINE_MS   = 60_000;    // live-state freshness = "in the raid now"
+const EXT_HURT_PCT    = 85;        // missing >15% health
+const EXT_HURT_MIN_MS = 10_000;    // …for >10s before it counts as "hurt"
+const EXT_HP_SPLIT_TOL = 8;        // %HP gap that separates two same-name mobs
+
+// GET /api/agent/extended-target?character=<self>
+// Powers the Extended Target raid overlay. Aggregates every ONLINE raider's
+// current target (character_live_state.target_name, Zeal slot 6) into a list of
+// targets sorted by how many raiders are on each, each carrying HP%, a
+// named/unique flag, an `ambiguous` asterisk for non-unique names, and recent
+// detrimental casts landed on it.
+//
+// Same-name disambiguation: the pipe has NO spawn id, so two "a cliff golem"
+// look identical by NAME — but if raiders report DIFFERENT HP for the same
+// name, those are provably different mobs. We sub-cluster each name by HP (a
+// gap > EXT_HP_SPLIT_TOL splits a cluster) so multiple same-name mobs at
+// different health show as separate rows (Uilnayar: "track non-unique named
+// NPCs as well if they have different health totals"). Clusters are still
+// asterisked — coincidentally-equal HP still merges, and debuffs can't be
+// pinned to one of several same-name mobs.
+//
+// Also returns players/pets that have been missing >15% HP for >10s — the
+// "someone needs attention" signal — merged into the same sorted list.
+async function _handleAgentExtendedTarget(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let selfChar = '';
+  try { selfChar = (new URL(req.url, 'http://x').searchParams.get('character') || '').trim(); } catch { /* */ }
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ targets: [], note: 'supabase disabled' }));
+  }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const onlineSince = new Date(Date.now() - EXT_ONLINE_MS).toISOString();
+  const debuffSince = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+  try {
+    const [liveRows, buffRows] = await Promise.all([
+      supabase.select('character_live_state',
+        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
+        `&select=character,zone_name,self_hp_pct,target_name,target_hp_pct,pet_name,pet_hp_pct,updated_at`),
+      supabase.select('buff_casts',
+        `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
+        `&select=target,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
+    ]);
+    const now = Date.now();
+    const live = (liveRows || []).filter(r => r && r.character);
+
+    // Scope to the requester's raid via zone (two raids can run at once); fall
+    // back to every online raider when we can't resolve the requester's zone.
+    let scopeZone = null;
+    if (selfChar) {
+      const me = live.find(r => r.character.toLowerCase() === selfChar.toLowerCase());
+      if (me && me.zone_name) scopeZone = me.zone_name;
+    }
+    const inScope = scopeZone ? live.filter(r => r.zone_name === scopeZone) : live;
+
+    const raiderNames = new Set(inScope.map(r => r.character.toLowerCase()));
+    const petNames = new Set(inScope.filter(r => r.pet_name).map(r => r.pet_name.toLowerCase()));
+
+    const median = (arr) => {
+      if (!arr.length) return null;
+      const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2);
+      return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+    };
+    const classify = (name, key) => {
+      if (raiderNames.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
+      if (petNames.has(key))    return { kind: 'pet',    is_named: true, ambiguous: false };
+      if (/^(a|an|the)\s/i.test(name)) return { kind: 'npc', is_named: false, ambiguous: true };
+      return { kind: 'npc', is_named: true, ambiguous: false };
+    };
+    // Split a name's observations into per-mob clusters by HP proximity.
+    const clusterByHp = (obs) => {
+      const withHp = obs.filter(o => o.hp != null).sort((a, b) => a.hp - b.hp);
+      const noHp   = obs.filter(o => o.hp == null);
+      if (!withHp.length) return [{ raiders: noHp.map(o => o.raider), hp: null }];
+      const clusters = []; let cur = [withHp[0]];
+      for (let i = 1; i < withHp.length; i++) {
+        if (withHp[i].hp - withHp[i - 1].hp > EXT_HP_SPLIT_TOL) { clusters.push(cur); cur = [withHp[i]]; }
+        else cur.push(withHp[i]);
+      }
+      clusters.push(cur);
+      const out = clusters.map(c => ({ raiders: c.map(o => o.raider), hp: median(c.map(o => o.hp)) }));
+      // Null-HP raiders can't be placed — attach to the most-targeted cluster.
+      if (noHp.length) { out.sort((a, b) => b.raiders.length - a.raiders.length); out[0].raiders.push(...noHp.map(o => o.raider)); }
+      return out;
+    };
+
+    // Detrimental casts landed on each target name (most-recent per spell,
+    // not yet past catalog duration). Keyed by target name — for a name that
+    // splits into multiple mobs we can't say WHICH, so it rides on all of them
+    // (the ambiguous asterisk is the caveat).
+    const debuffsByTarget = new Map();
+    for (const b of (buffRows || [])) {
+      if (!b || !b.target || !b.spell_name) continue;
+      const castMs = Date.parse(b.cast_at) || 0; if (!castMs) continue;
+      const durSecs = (Number(b.dur_ticks) || 0) * 6;
+      if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;   // expired
+      const k = String(b.target).toLowerCase();
+      if (!debuffsByTarget.has(k)) debuffsByTarget.set(k, new Map());
+      const m = debuffsByTarget.get(k);
+      const sk = String(b.spell_name).toLowerCase();
+      const prev = m.get(sk);
+      if (!prev || castMs > prev.castMs) m.set(sk, { name: b.spell_name, castMs, durSecs });
+    }
+    const debuffsFor = (key) => {
+      const m = debuffsByTarget.get(key); if (!m) return [];
+      return [...m.values()].map(d => ({
+        name: d.name,
+        remaining_secs: d.durSecs > 0 ? Math.max(0, Math.round(d.durSecs - (now - d.castMs) / 1000)) : null,
+      })).slice(0, 12);
+    };
+
+    // Aggregate targets by name, then sub-cluster each name by HP.
+    const byName = new Map();
+    for (const r of inScope) {
+      const tn = r.target_name && String(r.target_name).trim();
+      if (!tn) continue;
+      const key = tn.toLowerCase();
+      let g = byName.get(key);
+      if (!g) { g = { name: tn, key, obs: [] }; byName.set(key, g); }
+      g.obs.push({ raider: r.character, hp: (r.target_hp_pct != null ? Number(r.target_hp_pct) : null) });
+    }
+    const targets = [];
+    for (const g of byName.values()) {
+      const cls = classify(g.name, g.key);
+      const clusters = clusterByHp(g.obs);
+      const multi = clusters.length > 1;     // proven duplicate same-name mobs
+      const debuffs = debuffsFor(g.key);
+      clusters.forEach((c, idx) => {
+        targets.push({
+          name: g.name, kind: cls.kind,
+          raider_count: c.raiders.length, raiders: c.raiders.slice(0, 20),
+          hp_pct: c.hp,
+          is_named: cls.is_named,
+          ambiguous: cls.ambiguous || multi,
+          same_name_count: clusters.length,
+          dup_index: multi ? idx + 1 : null,
+          debuffs,
+          hurt: false, hurt_secs: 0,
+          zone: scopeZone || null,
+        });
+      });
+    }
+
+    // Players/pets missing >15% HP for >10s — merge into the same list. A
+    // hurt entity that's also a target updates that row; otherwise it's added
+    // (raider_count 0 sorts it to the bottom but it still shows because it
+    // needs attention).
+    const seen = new Set();
+    const noteHurt = (kind, name, hp) => {
+      const mk = guildId + '|' + kind + '|' + name.toLowerCase();
+      if (hp == null || hp >= EXT_HURT_PCT) { _extHurtSince.delete(mk); return null; }
+      let e = _extHurtSince.get(mk);
+      if (!e) { e = { since: now, lastSeen: now }; _extHurtSince.set(mk, e); }
+      e.lastSeen = now; seen.add(mk);
+      const secs = Math.round((now - e.since) / 1000);
+      return (now - e.since) >= EXT_HURT_MIN_MS ? { secs, hp } : null;
+    };
+    for (const r of inScope) {
+      const ph = noteHurt('player', r.character, r.self_hp_pct);
+      if (ph) {
+        let ent = targets.find(t => t.kind === 'player' && t.name.toLowerCase() === r.character.toLowerCase());
+        if (!ent) {
+          ent = { name: r.character, kind: 'player', raider_count: 0, raiders: [], hp_pct: r.self_hp_pct,
+            is_named: true, ambiguous: false, same_name_count: 1, dup_index: null, debuffs: [], hurt: true, hurt_secs: ph.secs, zone: scopeZone || null };
+          targets.push(ent);
+        } else { ent.hurt = true; ent.hurt_secs = ph.secs; if (ent.hp_pct == null) ent.hp_pct = r.self_hp_pct; }
+      }
+      if (r.pet_name) {
+        const peth = noteHurt('pet', r.pet_name, r.pet_hp_pct);
+        if (peth) {
+          let ent = targets.find(t => t.kind === 'pet' && t.name.toLowerCase() === r.pet_name.toLowerCase());
+          if (!ent) {
+            ent = { name: r.pet_name, kind: 'pet', owner: r.character, raider_count: 0, raiders: [], hp_pct: r.pet_hp_pct,
+              is_named: true, ambiguous: false, same_name_count: 1, dup_index: null, debuffs: [], hurt: true, hurt_secs: peth.secs, zone: scopeZone || null };
+            targets.push(ent);
+          } else { ent.hurt = true; ent.hurt_secs = peth.secs; }
+        }
+      }
+    }
+    // Age out hurt-tracking entries not refreshed in 30s (recovered or gone).
+    for (const [k, e] of _extHurtSince) if (now - e.lastSeen > 30_000) _extHurtSince.delete(k);
+
+    // Sort: most-targeted first, then hurt entities, then name.
+    targets.sort((a, b) =>
+      (b.raider_count - a.raider_count) ||
+      ((b.hurt ? 1 : 0) - (a.hurt ? 1 : 0)) ||
+      a.name.localeCompare(b.name));
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ targets, zone: scopeZone || null, online: inScope.length }));
+  } catch (err) {
+    console.error('[extended-target] fetch failed:', err && err.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'fetch failed' }));
+  }
+}
+
 // Who has the Mass Group Buff AA trained — Quarmy AA index 35 (eqemu_altadv_vars
 // eqmacid). Source is the members' own Quarmy exports via /api/agent/quarmy, so
 // it only knows characters whose owners run the gear sync; absence ≠ untrained.
@@ -7810,12 +8017,19 @@ async function _handleAgentLiveState(req, res) {
       })).filter(b => b.name);
       if (petBuffs.length === 0) petBuffs = null;
     }
+    // Current target (Zeal slot 6) — name + HP%. Powers the Extended Target
+    // overlay's "who's targeting what" aggregation. No spawn id on the pipe, so
+    // same-name mobs collapse to one name (the overlay asterisks non-unique).
+    const targetName = st?.target_name ? String(st.target_name).slice(0, 80) : null;
+    const targetHp   = (st?.target_hp_pct != null && Number.isFinite(Number(st.target_hp_pct))) ? Number(st.target_hp_pct) : null;
     rows.push({
       guild_id:    guildId,
       character,
       zone_id:     zoneId,
       zone_name:   st?.zone_name ? String(st.zone_name).slice(0, 80) : null,
       self_hp_pct: selfHp,
+      target_name: targetName,
+      target_hp_pct: targetHp,
       buffs,
       buff_count:  Number.isFinite(Number(st?.buff_count)) ? Math.trunc(Number(st.buff_count)) : buffs.length,
       pet_name:    petName,
@@ -9875,6 +10089,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentRaidBuffQueue(req, res); }
     catch (err) {
       console.error('[raid-buff-queue] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/extended-target')) {
+    try { return await _handleAgentExtendedTarget(req, res); }
+    catch (err) {
+      console.error('[extended-target] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
