@@ -8749,6 +8749,7 @@ var WP_OVERLAY_ROWS = [
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Tank focus card: own HP, current target HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target, DS reflect total this fight, and the top expiring buffs. Reads /api/tank-state.'],
+  ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
 ];
 
 function renderOverlays(s) {
@@ -8868,7 +8869,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -12031,6 +12032,27 @@ function startWebDashboard(port) {
             ? mel.order.map(e => e && (e.name || e)).filter(Boolean).slice(0, 12)
             : [];
         } catch { payload.recent_casts = []; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(payload));
+      }
+      // Extended Target overlay (extarget.html) — proxy the bot's
+      // /api/agent/extended-target with a short cache. Scopes to the active EQ
+      // window's character so the bot can pin the requester's raid by zone.
+      if (req.url && req.url.indexOf('/api/extended-target') === 0) {
+        let selfCharacter = '';
+        try {
+          const active = (stats && stats.activeCharacter) ? String(stats.activeCharacter) : '';
+          if (active) selfCharacter = active;
+          else {
+            const st = _currentTargetState();
+            for (const ch of Object.keys(_zealState)) {
+              if (_zealState[ch] === st) { selfCharacter = ch; break; }
+            }
+          }
+        } catch { /* */ }
+        fetchExtendedTarget(selfCharacter);
+        const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
+        const payload = (cached && cached.payload) || { targets: [], loading: true };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
@@ -17554,6 +17576,46 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
     req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
     req.end();
   } catch { _buffQueueInflight.delete(key); }
+}
+
+// ── Extended Target overlay proxy ───────────────────────────────────────────
+// The Mimic extarget.html overlay polls the local agent's /api/extended-target;
+// we proxy the bot's /api/agent/extended-target with a short cache so a room of
+// Mimics doesn't hammer Supabase. Same shape as the buff-queue proxy. Keyed by
+// the requesting character so the bot can scope to that raider's zone (raid).
+const _extTargetCache = new Map();     // characterLower → { at, payload }
+const _extTargetInflight = new Set();
+const EXT_TARGET_TTL_MS = parseInt(process.env.WP_EXT_TARGET_TTL_MS, 10) || 3000;
+function fetchExtendedTarget(character) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(character || '').trim().toLowerCase();
+  if (_extTargetInflight.has(key)) return;
+  const cached = _extTargetCache.get(key);
+  if (cached && (Date.now() - cached.at) < EXT_TARGET_TTL_MS) return;
+  _extTargetInflight.add(key);
+  const qs = character ? '?character=' + encodeURIComponent(character) : '';
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/extended-target') + qs;
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _extTargetInflight.delete(key);
+        try { const j = JSON.parse(body); _extTargetCache.set(key, { at: Date.now(), payload: j }); }
+        catch { _extTargetCache.set(key, { at: Date.now(), payload: { targets: [] } }); }
+      });
+    });
+    req.on('error',   () => { _extTargetInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _extTargetInflight.delete(key); });
+    req.end();
+  } catch { _extTargetInflight.delete(key); }
 }
 
 // "Buffs feel laggy" click from the buff-queue overlay. Two effects:

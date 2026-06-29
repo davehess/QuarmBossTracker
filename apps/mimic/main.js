@@ -88,6 +88,7 @@ let zealWindow    = null;
 let threatWindow  = null;
 let chChainWindow = null;
 let tankWindow    = null;
+let extTargetWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -688,6 +689,7 @@ function _boundsKeyForWindow(win) {
   if (win === zealWindow)    return 'zealBounds';
   if (win === threatWindow)  return 'threatBounds';
   if (win === chChainWindow) return 'chChainBounds';
+  if (win === extTargetWindow) return 'extTargetBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1540,6 +1542,7 @@ function _pollBlindState() {
 const _CHAR_PROFILE_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
+  'showExtTarget',
 ];
 // flag → (live-window getter, creator) so apply can materialize a window for an
 // overlay the profile turns on. Getters (not captured refs) read the current
@@ -1555,6 +1558,7 @@ const _CHAR_PROFILE_WINDOWS = [
   { flag: 'showMelody',       get: () => melodyWindow,    create: () => createMelodyOverlay() },
   { flag: 'showZeal',         get: () => zealWindow,      create: () => createZealHealthOverlay() },
   { flag: 'showThreat',       get: () => threatWindow,    create: () => createThreatMeterOverlay() },
+  { flag: 'showExtTarget',    get: () => extTargetWindow, create: () => createExtTargetOverlay() },
   { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
 ];
 let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
@@ -2047,6 +2051,7 @@ function _overlayEntries() {
   if (threatWindow  && !threatWindow.isDestroyed())  out.push(['threat',  threatWindow]);
   if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
   if (tankWindow    && !tankWindow.isDestroyed())    out.push(['tank',    tankWindow]);
+  if (extTargetWindow && !extTargetWindow.isDestroyed()) out.push(['exttarget', extTargetWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -2122,6 +2127,7 @@ function applySetupMode(on) {
     if (!threatWindow)  createThreatMeterOverlay();
     if (!chChainWindow) createChChainOverlay();
     if (!tankWindow)    createTankOverlay();
+    if (!extTargetWindow) createExtTargetOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -3395,6 +3401,40 @@ function applyThreatVisibility() {
   if (shouldShow) threatWindow.showInactive(); else threatWindow.hide();
 }
 
+// Extended Target overlay — raid-wide "who's targeting what", sorted by raider
+// count, with HP + debuffs per target. Polls /api/extended-target (agent proxy
+// of the bot aggregation). Opt-in (default off); EQ-gated. (Uilnayar 2026-06-29.)
+function createExtTargetOverlay() {
+  const b = _resolveBounds('extTargetBounds', 'extTargetBoundsSig', { x: 40, y: 360, width: 320, height: 240 });
+  extTargetWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Extended Target overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 240, minHeight: 80,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  extTargetWindow.setAlwaysOnTop(true, 'screen-saver');
+  extTargetWindow.setVisibleOnAllWorkspaces(true);
+  extTargetWindow.loadFile('extarget.html');
+  extTargetWindow.on('moved',  () => _persistBounds('extTargetBounds', extTargetWindow));
+  extTargetWindow.on('resize', () => _persistBounds('extTargetBounds', extTargetWindow));
+  extTargetWindow.once('ready-to-show', () => {
+    extTargetWindow.webContents.send('agent-port', agentPort);
+    applyExtTargetVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(extTargetWindow, 'exttarget');
+  });
+}
+function applyExtTargetVisibility() {
+  if (!extTargetWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off). EQ-gated like every other built-in.
+  const shouldShow = unlocked || (cfg.showExtTarget && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
+}
+
 // CH chain overlay — cleric Complete Heal rotation read from the zone-visible
 // shout/raid callouts ("004 - CH - Naggato - Mana: 52%" / "005 GO GO GO").
 // Slot order, caller + mana, live cast bar, NEXT cue + beat countdown.
@@ -3455,6 +3495,7 @@ function applyAllVisibility() {
   applyZealVisibility();
   applyThreatVisibility();
   applyChChainVisibility();
+  applyExtTargetVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -3490,6 +3531,7 @@ function toggleHideAllOverlays() {
       showThreat:       !!cfg.showThreat,
       showChChain:      !!cfg.showChChain,
       showTank:         !!cfg.showTank,
+      showExtTarget:    !!cfg.showExtTarget,
     };
     cfg.showHud = false;
     cfg.enableTriggerTts = false;
@@ -3503,6 +3545,7 @@ function toggleHideAllOverlays() {
     cfg.showThreat = false;
     cfg.showChChain = false;
     cfg.showTank = false;
+    cfg.showExtTarget = false;
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -3643,6 +3686,7 @@ function currentStatus() {
     showThreat: !!cfg.showThreat,
     showChChain: !!cfg.showChChain,
     showTank: !!cfg.showTank,
+    showExtTarget: !!cfg.showExtTarget,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -3833,6 +3877,11 @@ function buildTrayMenu() {
     { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showChChain = mi.checked; saveConfig(cfg);
         if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
+        pushStatus();
+      } },
+    { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showExtTarget = mi.checked; saveConfig(cfg);
+        if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -4387,6 +4436,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showTank = !cfg.showTank; saveConfig(cfg);
       if (cfg.showTank && !tankWindow) createTankOverlay(); else applyTankVisibility();
       break;
+    case 'exttarget':
+      cfg.showExtTarget = !cfg.showExtTarget; saveConfig(cfg);
+      if (cfg.showExtTarget && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
+      break;
     default:
       return null;
   }
@@ -4440,6 +4493,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === tankWindow) {
       cfg.showTank = false; saveConfig(cfg);
       try { tankWindow.hide(); } catch {}
+    } else if (win === extTargetWindow) {
+      cfg.showExtTarget = false; saveConfig(cfg);
+      try { extTargetWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -4823,8 +4879,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
     if (merged.showChChain      && !chChainWindow)   createChChainOverlay();
     if (merged.showTank         && !tankWindow)      createTankOverlay();
+    if (merged.showExtTarget    && !extTargetWindow) createExtTargetOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyExtTargetVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
