@@ -17,7 +17,7 @@ async function assertOfficer() {
   return user;
 }
 
-const ALLOWED = new Set(['wipe', 'live', 'pvp', 'test']);
+const ALLOWED = new Set(['wipe', 'live', 'pvp', 'test', 'foreign']);
 
 export async function classifyEncounter(formData: FormData) {
   const u = await assertOfficer();
@@ -37,6 +37,7 @@ export async function classifyEncounter(formData: FormData) {
   // both so the admin sees the result without a hard refresh.
   revalidatePath('/parses');
   revalidatePath(`/parses/${id}`);
+  revalidatePath('/admin/anomalies');
 }
 
 export async function clearClassification(formData: FormData) {
@@ -53,4 +54,5 @@ export async function clearClassification(formData: FormData) {
   }).eq('id', id);
   revalidatePath('/parses');
   revalidatePath(`/parses/${id}`);
+  revalidatePath('/admin/anomalies');
 }

@@ -15,6 +15,7 @@ import LootBlock, { type LootRow } from '@/components/LootBlock';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
 import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
+import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import { classifyEncounter, clearClassification } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -58,6 +59,7 @@ async function loadAll(): Promise<{
   zones: Map<string, ZoneRow>;
   loot: Map<string, LootDbRow[]>;
   attendance: Map<string, AttendanceRollup>;
+  roster: Set<string>;
   error: string | null;
 }> {
   try {
@@ -73,7 +75,18 @@ async function loadAll(): Promise<{
       .gt('total_damage', 0)
       .order('started_at', { ascending: false })
       .limit(ROW_LIMIT);
-    if (encErr) return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), error: encErr.message };
+    if (encErr) return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), roster: new Set(), error: encErr.message };
+
+    // Guild roster names (lowercased) — presence = Pack member. Used to detect
+    // "foreign" raids: an upload where almost no named player is on our roster
+    // is a guildie pugging another guild's raid, not a Wolf Pack kill.
+    const { data: rosterRows } = await sb
+      .from('characters')
+      .select('name')
+      .eq('guild_id', 'wolfpack');
+    const roster = new Set<string>(
+      (rosterRows ?? []).map((r: { name: string }) => (r.name || '').toLowerCase()).filter(Boolean),
+    );
 
     const { data: zoneRows } = await sb
       .from('eqemu_zone')
@@ -149,10 +162,10 @@ async function loadAll(): Promise<{
       }
     }
 
-    return { rows: (encs as unknown as EncounterRow[]) ?? [], zones, loot, attendance, error: null };
+    return { rows: (encs as unknown as EncounterRow[]) ?? [], zones, loot, attendance, roster, error: null };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), error: msg };
+    return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), roster: new Set(), error: msg };
   }
 }
 
@@ -214,6 +227,7 @@ function CardAdminBar({ encId, current }: { encId: string; current: string | nul
       {btn('Live', 'live', 'border-blue/50   text-blue')}
       {btn('PvP',  'pvp',  'border-red/50    text-red')}
       {btn('Test', 'test', 'border-dim/50    text-dim')}
+      {btn('Non-Guild', 'foreign', 'border-purple/50 text-purple')}
       {current && (
         <form action={clearClassification} className="ml-auto">
           <input type="hidden" name="id" value={encId} />
@@ -298,7 +312,19 @@ export default async function ParsesPage() {
   if (!user) redirect('/auth/signin?next=/parses');
   const officer = await isOfficer(user.id);
 
-  const { rows, zones, loot, attendance, error } = await loadAll();
+  const { rows: allRows, zones, loot, attendance, roster, error } = await loadAll();
+  // 'foreign' = a raid that's primarily NOT Wolf Pack members (a guildie pugging
+  // another guild, whose agent uploaded the fight). Hidden from /parses entirely
+  // — officers review these on /admin/anomalies, not dimmed inline like wipes.
+  // Hide both officer-marked foreign AND auto-detected foreign (conservative:
+  // <1/3 roster members in a 10+ raid, which a real Wolf Pack raid never is).
+  // (Uilnayar 2026-06-29: "if the majority … are not Wolfpack members … not
+  // display on parses".)
+  const rows = allRows.filter(r => {
+    if (r.classification === 'foreign') return false;
+    if (r.classification == null && isAutoForeign(guildShare(r.encounter_players ?? [], roster))) return false;
+    return true;
+  });
   // Viewer's chosen zone (wp_tz cookie) — threaded into each KillCard's time.
   // Day GROUPING + headers stay on the canonical Eastern raid day (they join
   // to attendance, which is bucketed in ET); only the per-kill clock shifts.

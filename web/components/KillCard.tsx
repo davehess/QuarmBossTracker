@@ -34,6 +34,8 @@ const CHIP: Record<string, { label: string; cls: string; title: string }> = {
           title: 'PvP / Zek server — excluded from kill counts' },
   test: { label: 'TEST',  cls: 'bg-dim/20    text-dim    border-dim/40',
           title: 'Practice / dummy pull — excluded from kill counts' },
+  foreign: { label: 'NON-GUILD', cls: 'bg-purple/20 text-purple border-purple/40',
+          title: 'Primarily non-Wolf Pack raiders (a guildie pugging another guild) — excluded from kill counts' },
 };
 
 export function ClassificationChip({ classification }: { classification: string | null | undefined }) {

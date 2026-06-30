@@ -476,6 +476,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                 desc: 'PvP / Zek server — excluded from kill counts + stats' },
               { val: 'test', label: 'Mark Test', cls: 'border-dim/60 text-dim',
                 desc: 'Practice / dummy pull — excluded from kill counts + stats' },
+              { val: 'foreign', label: 'Mark Non-Guild', cls: 'border-purple/50 text-purple',
+                desc: 'Primarily non-Wolf Pack raiders (a guildie pugging another guild) — excluded from kill counts + stats' },
             ].map(b => (
               <form key={b.val} action={classifyEncounter} className="contents">
                 <input type="hidden" name="id" value={enc.id} />

@@ -30,6 +30,11 @@ export default function AdminPage() {
           href="/admin/encounters"
         />
         <Card
+          title="🚩 Anomalies"
+          body="Raids that are mostly NOT Wolf Pack members (a guildie pugging another guild — auto-hidden from /parses, confirm or clear here), plus possible double-boxing where one person's two characters were both swinging in the same fight."
+          href="/admin/anomalies"
+        />
+        <Card
           title="👥 Member dashboard"
           body="Silent-member outreach list. Cross-references guild members against character roster, chat, parses, and /who observations to find inactive raiders and roster gaps."
           href="/admin/members"
