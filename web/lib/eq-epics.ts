@@ -84,6 +84,19 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId: 28019, name: "Zordak Ragefires Heart",               depth: 3 },
   ],
   'Druid': [
+    // Journeyman's Boots (2300), Tan Rope Bridle (21800), and Rebreather
+    // (16889) were removed 2026-06-30 (Uilnayar: "journeyman's boots are not
+    // part of the druid epic at all"). The recursive walk had picked them up
+    // because they form a joke NPC chain — "Triathalon Bike" (Lake Rathetear,
+    // takes a Rebreather) → "Triathalon Running Shoes" (South Karana, takes
+    // the Bridle) → "Triathalon Token" (North Karana, takes the Boots) —
+    // whose FINAL output happens to coincidentally be Warm Pulsing Treant
+    // Heart (20695), a real Druid component. A naive backward walk over
+    // "anything that outputs a chain item" can't distinguish the ONE
+    // canonical quest NPC from an unrelated vendor/novelty NPC that also
+    // happens to produce the same item — verified via scripted_npc_turnins:
+    // every other item below independently re-derives from the same recursive
+    // walk, so only this joke branch was pruned.
     { itemId: 20698, name: "Cleansed Spirit of Antonica",          depth: 1 },
     { itemId: 20697, name: "Cleansed Spirit of Faydwer",           depth: 1 },
     { itemId: 20699, name: "Cleansed Spirit of Kunark",            depth: 1 },
@@ -99,7 +112,6 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId: 20689, name: "Clean Lakewater",                      depth: 3 },
     { itemId: 20693, name: "Green Heartwood Branch",               depth: 3 },
     { itemId: 20485, name: "Hammer of the Ancients",               depth: 3 },
-    { itemId:  2300, name: "Journeyman's Boots",                   depth: 3 },
     { itemId: 20691, name: "Kedge Cave Crystals",                  depth: 3 },
     { itemId: 20692, name: "Ocean of Tears Seavines",              depth: 3 },
     { itemId: 20461, name: "Pulsing Green Stone",                  depth: 3 },
@@ -109,8 +121,6 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId: 20460, name: "Runecrested Bowl",                     depth: 4 },
     { itemId: 20478, name: "Soulbound Hammer",                     depth: 4 },
     { itemId: 20494, name: "Swirling Sphere of Color",             depth: 4 },
-    { itemId: 21800, name: "Tan Rope Bridle",                      depth: 4 },
-    { itemId: 16889, name: "Rebreather",                           depth: 5 },
   ],
   'Enchanter': [
     { itemId: 10639, name: "A Bundle of Staves",                   depth: 1 },
@@ -221,50 +231,26 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     // Reference (1682) + Robe of the Whistling Fists (12970). Brother Balatin
     // in Dreadlands takes BOTH metal pipes (12979 + 12980, from two different
     // zones per Uilnayar 2026-06-26) + Robe of the Lost Circle (12256) →
-    // Robe of the Whistling Fists. The full pre-epic chain (Shackle of
-    // Tynnonium 4199, Whistling Fists 7836, Sash of the Dragonborn 1623,
-    // Headband of the Righteous 3532) is the famous "headbands and sashes"
-    // path Monks grind through. Depth-2 items are the Sebilis tome set +
-    // Sarnak/Iksar drops that feed those steps.
+    // Robe of the Whistling Fists. Tomekeeper Danl (Erudin) takes Immortals
+    // (18195) → Danl's Reference.
+    //
+    // 2026-06-30 (Uilnayar: "shackle of tynnonium and Whistling Fists are not
+    // turnins for the celestial fists"): the previous version of this list
+    // also carried a large "headbands and sashes" branch (Shackle of
+    // Tynnonium, Whistling Fists, Book of Celestial Fists, Headband of the
+    // Righteous, Sash of the Dragonborn, the three Marks, and a two-dozen-item
+    // Sebilis tome/Sarnak-drop tail feeding them). Re-verified against
+    // scripted_npc_turnins: that ENTIRE branch is real (East Cabilis/Dreadlands
+    // turn-ins genuinely exist), but it's a DIFFERENT, unrelated quest chain —
+    // none of it has any database path into the five confirmed items below.
+    // It was removed wholesale rather than item-by-item once the recursive
+    // re-walk showed the whole branch was disconnected.
     { itemId:  1682, name: "Danl's Reference",                     depth: 1 },
     { itemId: 12970, name: "Robe of the Whistling Fists",          depth: 1 },
     { itemId: 12979, name: "A Metal Pipe",                         depth: 1 },
     { itemId: 12980, name: "A Metal Pipe",                         depth: 1 },
     { itemId: 12256, name: "Robe of the Lost Circle",              depth: 1 },
-    { itemId:  4199, name: "Shackle of Tynnonium",                 depth: 1 },
-    { itemId:  3886, name: "Chunk of Tynnonium",                   depth: 1 },
-    { itemId:  7836, name: "Whistling Fists",                      depth: 1 },
-    { itemId:  1689, name: "Book of Celestial Fists",              depth: 1 },
-    { itemId:  3532, name: "Headband of the Righteous",            depth: 1 },
-    { itemId:  1623, name: "Sash of the Dragonborn",               depth: 1 },
-    { itemId:  7879, name: "Mark of Agility",                      depth: 1 },
-    { itemId:  7881, name: "Mark of Clarity",                      depth: 1 },
-    { itemId:  7880, name: "Mark of Patience",                     depth: 1 },
-    { itemId:  8226, name: "Satchel of Cazic-Thule",               depth: 1 },
-    { itemId: 18898, name: "Flayed Skin Tome",                     depth: 1 },
-    { itemId: 18899, name: "Flayed Skin Tome",                     depth: 1 },
-    { itemId: 22918, name: "Chokadai Scale",                       depth: 2 },
-    { itemId: 18359, name: "Dark Black Tome",                      depth: 2 },
-    { itemId: 18464, name: "Dark Grey Tome",                       depth: 2 },
-    { itemId: 18467, name: "Dim White Tome",                       depth: 2 },
-    { itemId: 22922, name: "Earthenware Bowl",                     depth: 2 },
-    { itemId: 18469, name: "Faded White Tome",                     depth: 2 },
-    { itemId: 22917, name: "Frozen Soulstone",                     depth: 2 },
-    { itemId: 18465, name: "Greyed Tome",                          depth: 2 },
     { itemId: 18195, name: "Immortals",                            depth: 2 },
-    { itemId: 22921, name: "Kromdul Bracelet",                     depth: 2 },
-    { itemId: 18463, name: "Light Black Tome",                     depth: 2 },
-    { itemId: 18466, name: "Light Grey Tome",                      depth: 2 },
-    { itemId: 18468, name: "Pale White Tome",                      depth: 2 },
-    { itemId: 18470, name: "Pure White Tome",                      depth: 2 },
-    { itemId: 22920, name: "Ring of the Construct",                depth: 2 },
-    { itemId: 22919, name: "Sarnak Hide",                          depth: 2 },
-    { itemId: 22924, name: "Sealed Journal",                       depth: 2 },
-    { itemId: 22916, name: "Skyfire Pumice",                       depth: 2 },
-    { itemId: 18462, name: "Solid Black Tome",                     depth: 2 },
-    { itemId: 22923, name: "Vine Woven Basket",                    depth: 2 },
-    { itemId: 12828, name: "Full Kwinn Pack",                      depth: 3 },
-    { itemId: 12822, name: "A Mechanical Iksar Tail",              depth: 2 },
   ],
   // Shadow Knight (Innoruuk's Curse). Final turn-in to Lhranc in City of Mist
   // takes the four canonical items (Corrupted Ghoulbane + Heart of the
