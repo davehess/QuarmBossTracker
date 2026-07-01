@@ -227,30 +227,52 @@ export const EPIC_COMPONENTS: Record<string, EpicComponent[]> = {
     { itemId: 18168, name: "Note to Arantir",                      depth: 3 },
   ],
   'Monk': [
-    // Final-stage anchors: Lheao's Celestial Fists turn-in takes Danl's
-    // Reference (1682) + Robe of the Whistling Fists (12970). Brother Balatin
-    // in Dreadlands takes BOTH metal pipes (12979 + 12980, from two different
-    // zones per Uilnayar 2026-06-26) + Robe of the Lost Circle (12256) →
-    // Robe of the Whistling Fists. Tomekeeper Danl (Erudin) takes Immortals
-    // (18195) → Danl's Reference.
-    //
-    // 2026-06-30 (Uilnayar: "shackle of tynnonium and Whistling Fists are not
-    // turnins for the celestial fists"): the previous version of this list
-    // also carried a large "headbands and sashes" branch (Shackle of
-    // Tynnonium, Whistling Fists, Book of Celestial Fists, Headband of the
-    // Righteous, Sash of the Dragonborn, the three Marks, and a two-dozen-item
-    // Sebilis tome/Sarnak-drop tail feeding them). Re-verified against
-    // scripted_npc_turnins: that ENTIRE branch is real (East Cabilis/Dreadlands
-    // turn-ins genuinely exist), but it's a DIFFERENT, unrelated quest chain —
-    // none of it has any database path into the five confirmed items below.
-    // It was removed wholesale rather than item-by-item once the recursive
-    // re-walk showed the whole branch was disconnected.
-    { itemId:  1682, name: "Danl's Reference",                     depth: 1 },
-    { itemId: 12970, name: "Robe of the Whistling Fists",          depth: 1 },
-    { itemId: 12979, name: "A Metal Pipe",                         depth: 1 },
-    { itemId: 12980, name: "A Metal Pipe",                         depth: 1 },
-    { itemId: 12256, name: "Robe of the Lost Circle",              depth: 1 },
-    { itemId: 18195, name: "Immortals",                            depth: 2 },
+    // 2026-06-30 (Uilnayar: real epic components were missing / mis-depthed).
+    // The prior version anchored on Lheao's turn-in as if it produced the
+    // FINAL weapon — it doesn't. Re-verified end-to-end against
+    // scripted_npc_turnins AND the Quarm-specific community guide
+    // (quarm.guide / github.com/LordDemonos/Quarm.Guide), which matches our
+    // DB everywhere both exist. Real sequence, four parts:
+    //   1. Brother Balatin (Dreadlands): Robe of the Lost Circle (12256) +
+    //      both Metal Pipes (12979 + 12980, two different zones) → Robe of
+    //      the Whistling Fists (12970). [DB: turn-in 61]
+    //   2. The "Demon Fangs" fetch chain: kill Eejag (Lavastorm Mtns) for
+    //      Charred Scale → give a presence (Plane of Sky) → Breath of Gwan →
+    //      give a sleeping ogre (Nurga) → Trunt's Head → Astral Projection
+    //      (Overthere) → Eye of Kaiaren [DB: turn-in 7790] → Astral
+    //      Projection (Lake of Ill Omen) spawns Vorash/Deep/Xenevorash, kill
+    //      one → Demon Fangs. NOT in scripted_npc_turnins past Eye of
+    //      Kaiaren (kill-drop steps aren't scripted item turn-ins) — sourced
+    //      from the guide only.
+    //   3. Tomekeeper Danl (Erudin): Immortals (18195) → Danl's Reference
+    //      (1682). [DB: turn-in 3572] Then Lheao (Timorous Deep): Danl's
+    //      Reference + Robe of the Whistling Fists → Celestial Fists BOOK
+    //      (1683 — same display name as the final weapon, different item id;
+    //      labeled "(book)" here to disambiguate). [DB: turn-in 62 — this
+    //      DOES exist in our data; missed on the last pass because the
+    //      output is 1683, not the final reward id 10652]
+    //   4. Kaiaren (Trakanon's Teeth) — not in scripted_npc_turnins (a
+    //      multi-turn NPC-swap script, not a plain item turn-in): give the
+    //      book to "crazy" Kaiaren (returned, spawns the real one), give it
+    //      again to real Kaiaren for Book of Celestial Fists (1689 — this IS
+    //      a real component; it was wrongly removed as unverifiable last
+    //      pass), then Book of Celestial Fists + Demon Fangs (1688) → real
+    //      Kaiaren → the actual epic weapon.
+    // depth counts back from the true final turn-in (Kaiaren), not from
+    // Lheao — everything one tier deeper than the previous version.
+    { itemId:  1689, name: "Book of Celestial Fists",              depth: 1 },
+    { itemId:  1688, name: "Demon Fangs",                          depth: 1 },
+    { itemId:  1683, name: "Celestial Fists (book)",                depth: 2 },
+    { itemId:  1687, name: "Eye of Kaiaren",                        depth: 2 },
+    { itemId:  1682, name: "Danl's Reference",                     depth: 3 },
+    { itemId: 12970, name: "Robe of the Whistling Fists",          depth: 3 },
+    { itemId:  1686, name: "Trunt's Head",                         depth: 3 },
+    { itemId: 18195, name: "Immortals",                            depth: 4 },
+    { itemId: 12979, name: "A Metal Pipe",                         depth: 4 },
+    { itemId: 12980, name: "A Metal Pipe",                         depth: 4 },
+    { itemId: 12256, name: "Robe of the Lost Circle",              depth: 4 },
+    { itemId:  1685, name: "Breath of Gwan",                       depth: 4 },
+    { itemId:  1684, name: "Charred Scale",                        depth: 5 },
   ],
   // Shadow Knight (Innoruuk's Curse). Final turn-in to Lhranc in City of Mist
   // takes the four canonical items (Corrupted Ghoulbane + Heart of the
