@@ -5997,7 +5997,37 @@ async function _handleAgentSpellCatalog(req, res) {
       const entries = [];
       let from = 0;
       const PAGE = 1000;
-      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect';
+      // effect_id_1..3 / raw are transient — used ONLY here to detect SPA 59
+      // (damage shield) and its per-hit magnitude, then dropped. Only entries
+      // that ARE a damage shield carry the derived `ds` field onward, so the
+      // ~3.9k-spell catalog payload barely grows (undefined fields don't
+      // serialize).
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,' +
+        'effect_id_1,effect_base_value_1,effect_id_2,effect_base_value_2,effect_id_3,effect_base_value_3,raw';
+      // Damage-shield magnitude for a spell: SPA 59 with a NEGATIVE base value
+      // is the real "deal bonus damage to attackers" effect real DS spells use
+      // (Legacy of Thorn -28, Shield of Barbs -3, Bramblecoat -3 — verified
+      // against the live catalog). SPA 59 with a POSITIVE value shows up on a
+      // handful of NPC guard-mechanic spells (e.g. "Avatar Guard") that mean
+      // something else entirely (DS mitigation, not a grant) — excluded so we
+      // never mislabel a mob mechanic as a player DS buff. Checks the three
+      // indexed effect columns first (covers the overwhelming majority — real
+      // DS spells put it in slot 1-3; verified 94/117 catalog-wide), then falls
+      // back to the full raw.eff/raw.base arrays for the rest. Returns a
+      // positive per-hit number, or null.
+      function _dsMagnitude(r) {
+        const slots = [[r.effect_id_1, r.effect_base_value_1], [r.effect_id_2, r.effect_base_value_2], [r.effect_id_3, r.effect_base_value_3]];
+        for (const [id, val] of slots) {
+          if (id === 59 && val != null && val < 0) return Math.abs(val);
+        }
+        const eff = r.raw && Array.isArray(r.raw.eff) ? r.raw.eff : null;
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : null;
+        if (eff && base) {
+          const idx = eff.indexOf(59);
+          if (idx >= 0 && base[idx] != null && base[idx] < 0) return Math.abs(base[idx]);
+        }
+        return null;
+      }
       while (true) {
         // PostgREST paging via Range header is wrapped by Supabase's REST API
         // as offset/limit query params. We pass them as `&offset=X&limit=Y`
@@ -6013,13 +6043,19 @@ async function _handleAgentSpellCatalog(req, res) {
             // 1 = beneficial (buff), 0 = detrimental (debuff); null until the
             // eqemu sync populates good_effect. Lets overlays color buff/debuff.
             good: (r.good_effect == null ? null : (Number(r.good_effect) ? 1 : 0)),
+            // Damage-shield per-hit magnitude (SPA 59) — omitted entirely for
+            // the ~99% of spells that aren't a DS, so the wire payload barely
+            // grows. Lets the Tank overlay attribute "Legacy of Thorn +28/hit"
+            // from a raider's CURRENT buff list (Uilnayar 2026-06-29: "Highlight
+            // the DS spells and songs and how much you're getting from each").
+            ds: _dsMagnitude(r) || undefined,
           });
         }
         if (data.length < PAGE) break;
         from += PAGE;
       }
       const body = JSON.stringify({
-        version: 4,   // v4 adds `good` (beneficial flag) per entry
+        version: 5,   // v5 adds `ds` (damage-shield per-hit magnitude, SPA 59)
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
