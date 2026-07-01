@@ -6085,17 +6085,40 @@ function _serializeTankState() {
 
   // DS reflect total this fight — sum across all abilities + provide a tiny
   // breakdown so the overlay can render "🛡 12.4k (Thorn 8.1k · Mark 4.3k)".
+  // `name` here is the DAMAGE TYPE the reflect looked like on the attacker
+  // (crush/kick/hit/…) — EQ's combat log never says WHICH buff caused a given
+  // DS return line, so this is "by shape of the hit", not "by spell".
   const dsr = stats.currentDsReflects || null;
   let dsTotal = 0;
+  let dsHits = 0;
   const dsBreakdown = [];
   if (dsr && dsr.abilities) {
     for (const [name, v] of Object.entries(dsr.abilities)) {
       const t = (v && v.total) || 0;
+      const c = (v && v.count) || 0;
       dsTotal += t;
-      dsBreakdown.push({ name, total: t, count: (v && v.count) || 0 });
+      dsHits  += c;
+      dsBreakdown.push({ name, total: t, count: c, avg: c > 0 ? Math.round(t / c) : 0 });
     }
     dsBreakdown.sort((a, b) => b.total - a.total);
   }
+  // Known DS SOURCES currently up — cross-reference the tank's CURRENT buffs
+  // (Zeal buff list, already computed above as buffsOut) against the spell
+  // catalog's `ds` field (SPA 59 per-hit magnitude; bot v3.0.129+). This is
+  // the one place we CAN attribute "how much you're getting from each one" —
+  // the combat log can't say which buff fired, but the catalog tells us each
+  // known DS buff's DESIGNED per-hit value. Empty when no currently-active
+  // buff is a known DS spell (the true source may be worn gear/an AA, which
+  // never shows up in the buff list at all) — the overlay says so rather than
+  // silently showing nothing. (Uilnayar 2026-06-29: "Highlight the DS spells
+  // and songs and how much you're getting from each one in the damage shield
+  // section.")
+  const dsSources = [];
+  for (const b of buffsOut) {
+    const cat = _spellByNameLower.get(b.name.toLowerCase());
+    if (cat && cat.ds) dsSources.push({ name: b.name, per_hit: cat.ds });
+  }
+  dsSources.sort((a, b) => b.per_hit - a.per_hit);
 
   // Rampage target — only return when fresh (≤8s). Older than that and we
   // assume the rampage cycle is over.
@@ -6125,7 +6148,13 @@ function _serializeTankState() {
     target:    { name: targetName, hp_pct: targetHpPct },
     buffs:     buffsOut,
     da,
-    ds: { total: dsTotal, abilities: dsBreakdown.slice(0, 8) },
+    ds: {
+      total: dsTotal,
+      hits: dsHits,
+      avg_per_hit: dsHits > 0 ? Math.round(dsTotal / dsHits) : 0,
+      abilities: dsBreakdown.slice(0, 8),
+      sources: dsSources.slice(0, 8),
+    },
     rampage,
     enrage,
     // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26).

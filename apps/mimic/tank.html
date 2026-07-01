@@ -12,6 +12,11 @@
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;min-width:240px;}
+  /* De-emphasis utility for inline parenthetical text (beat countdown, hit
+     count/avg annotations). Was referenced but never defined — a latent no-op
+     on the existing CH-chain beat text; defining it now also makes the new DS
+     breakdown's "(142×, ~21/hit)" annotation read as dim/secondary as intended. */
+  .opacity-70{opacity:0.7}
   .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#f8b87b;text-shadow:0 1px 2px #000;margin-bottom:5px;}
   .title .who{font-size:11px;color:#9aa4ad;font-weight:normal}
@@ -41,7 +46,19 @@
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .who{font-weight:700;color:#fff}
   .ds-total{font-size:13px;color:#56d364;font-variant-numeric:tabular-nums;font-weight:700}
+  .ds-total .avg{color:#7ee787;font-weight:700}
+  .ds-total .hits{color:#9aa4ad;font-weight:400;font-size:10px}
   .ds-breakdown{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;line-height:1.4}
+  /* DS sources — which of the tank's CURRENT buffs are a KNOWN damage-shield
+     spell (catalog SPA-59 lookup), and its designed per-hit value. EQ's combat
+     log can't say which buff caused a given reflect line, so this is the one
+     place we CAN attribute "how much from each one" (Uilnayar 2026-06-29). */
+  .ds-sources{margin-top:3px;padding-top:3px;border-top:1px solid rgba(255,255,255,0.08);
+    display:flex;flex-direction:column;gap:1px}
+  .ds-sources .src{display:flex;justify-content:space-between;gap:6px;font-size:10px;line-height:1.4}
+  .ds-sources .src .nm{color:#7ee787;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ds-sources .src .val{color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0}
+  .ds-sources .none{font-size:9px;color:#6e7681;font-style:italic;line-height:1.3}
   .buffs{display:flex;flex-direction:column;gap:1px;font-size:10px;line-height:1.4}
   .buffs .buff{display:flex;align-items:center;gap:4px}
   .buffs .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
@@ -230,13 +247,30 @@
       html += '<div class="enrage ' + urgCls + '" style="border-color:' + (ch.urgency === 'red' ? '#f87171' : ch.urgency === 'yellow' ? '#f0d264' : '#56d364') + ';background:rgb(0 0 0 / var(--bg-alpha))">' + line + '</div>';
     }
 
-    // DS total + top breakdown
+    // DS total + per-hit average + breakdown BY DAMAGE TYPE (crush/kick/hit —
+    // EQ's combat log never says which BUFF caused a reflect line, only what
+    // the returned damage looked like) + known DS SOURCES currently up (the
+    // one place we can say "how much from each one" — from the spell catalog,
+    // not the log). (Uilnayar 2026-06-29.)
     if (s.ds && (s.ds.total > 0 || (s.ds.abilities && s.ds.abilities.length))) {
-      var bdown = (s.ds.abilities || []).slice(0, 3).map(function(a){ return esc(a.name) + ' ' + fmtDmg(a.total); }).join(' · ');
+      var bdown = (s.ds.abilities || []).slice(0, 3).map(function(a){
+        return esc(a.name) + ' ' + fmtDmg(a.total) + ' <span class="opacity-70">(' + a.count + '×, ~' + a.avg + '/hit)</span>';
+      }).join(' · ');
+      var hitsPart = s.ds.hits ? ' <span class="hits">· ' + s.ds.hits + ' hit' + (s.ds.hits === 1 ? '' : 's') + '</span>' : '';
+      var avgPart  = s.ds.avg_per_hit ? ' <span class="avg">~' + s.ds.avg_per_hit + '/hit</span>' : '';
+      var sourcesHtml;
+      if (s.ds.sources && s.ds.sources.length) {
+        sourcesHtml = '<div class="ds-sources">' + s.ds.sources.map(function(src){
+          return '<div class="src"><span class="nm">' + esc(src.name) + '</span><span class="val">+' + src.per_hit + '/hit</span></div>';
+        }).join('') + '</div>';
+      } else {
+        sourcesHtml = '<div class="ds-sources"><div class="none">no known DS buff currently up — likely worn gear/AA</div></div>';
+      }
       html += '<div class="card">'
            +    '<div class="head">Damage shield (this fight)</div>'
-           +    '<div class="ds-total">' + fmtDmg(s.ds.total || 0) + ' returned</div>'
+           +    '<div class="ds-total">' + fmtDmg(s.ds.total || 0) + ' returned' + avgPart + hitsPart + '</div>'
            +    (bdown ? '<div class="ds-breakdown">' + bdown + '</div>' : '')
+           +    sourcesHtml
            +  '</div>';
     }
 
