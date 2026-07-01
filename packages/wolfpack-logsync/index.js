@@ -17763,17 +17763,37 @@ function buildMobInfo() {
 }
 
 // ── Live character state → bot → Supabase (wolfpack.quest/me) ───────────────
-// A SNAPSHOT sync, not a heartbeat: what each watched character is currently
-// carrying (buffs) + their last-seen zone. Pushed only when something
-// meaningful changes (zone, the set of buff names, or first sight of a live
-// character) so it costs almost nothing at idle. Deliberately NOT routed
-// through the durable upload queue — live state is replaceable (latest wins via
-// the bot's upsert), so queuing stale snapshots during an outage would just
-// waste calls and could evict real encounter uploads. Fire-and-forget; the next
-// interval re-sends fresh if a send is dropped. The LOCAL dashboard stays the
-// source of truth for second-by-second data; this is the "what did they log out
-// with / where are they" view for the web.
+// Mostly a SNAPSHOT sync, not a heartbeat: what each watched character is
+// currently carrying (buffs), their target, and their last-seen zone. Pushed
+// when something meaningful changes (zone, the set of buff/pet names, a
+// target swap, or first sight of a live character) so it costs almost nothing
+// at idle. The ONE exception: a character with a target set re-sends at least
+// every LIVE_STATE_HEARTBEAT_MS even with no change, because a STABLE target
+// (most of a boss fight) would otherwise never retrigger the signature and the
+// row would silently age out of the bot's "online" window for
+// /api/agent/extended-target mid-fight — that heartbeat is gated on having a
+// target, so anyone not feeding that feature stays at the old zero-cost-at-
+// idle behavior. Deliberately NOT routed through the durable upload queue —
+// live state is replaceable (latest wins via the bot's upsert), so queuing
+// stale snapshots during an outage would just waste calls and could evict real
+// encounter uploads. Fire-and-forget; the next interval re-sends fresh if a
+// send is dropped. The LOCAL dashboard stays the source of truth for second-
+// by-second data; this is the "what did they log out with / where are they /
+// what's the raid targeting" view for the web + Mimic overlays.
 const _liveStateLastSig = new Map();   // character → last-sent signature
+// Heartbeat floor for the extended-target feed: target_name/target_hp_pct ride
+// on this same snapshot, but a stable target (the common case — most of a boss
+// fight) never trips the change-signature, so a character would go quiet and
+// fall out of the bot's 60s "online" freshness window for /api/agent/
+// extended-target even while actively fighting. Force a re-send at least this
+// often (only while a target is set — idle characters keep the old zero-cost
+// behavior) so raid- or GROUP-wide "who's targeting what" stays live even with
+// just a couple of Mimic users in a small group (Uilnayar 2026-06-29: "let's
+// get the extended target overlay working for groups as well"). Comfortably
+// under the bot's EXT_ONLINE_MS (60s) so a single 20s-interval miss (a dropped
+// request) doesn't drop the character out of the window.
+const LIVE_STATE_HEARTBEAT_MS = 45_000;
+const _liveStateLastSentAt = new Map();   // character → ms of last successful send
 function _postLiveState(targetUrl, token, payload) {
   let url;
   try { url = new URL(targetUrl); } catch { return; }
@@ -17816,6 +17836,14 @@ function flushLiveStateToBot(opts) {
       zone_id:     st.zone != null ? st.zone : null,
       zone_name:   _zoneName(st.zone),
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      // Current target (Zeal slot 6) — feeds character_live_state.target_name/
+      // target_hp_pct, which /api/agent/extended-target aggregates group- or
+      // raid-wide into "who's targeting what". Was missing entirely here (the
+      // field existed in _zealState and locally in Mob Info, but never left
+      // the machine), so the overlay showed "waiting for raid targets" for
+      // everyone regardless of party size (Uilnayar 2026-06-29).
+      target_name:    st.target_name || null,
+      target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
       buffs,
       buff_count:  buffs.length,
       pet_name:    pet ? pet.name : null,
@@ -17824,15 +17852,29 @@ function flushLiveStateToBot(opts) {
     };
     // Signature excludes HP% + buff ticks (which churn constantly) — we only
     // re-send on a zone change, a change to the SET of (own or pet) buff names,
-    // the pet appearing/vanishing, or first sight of this character.
+    // a target SWAP (not its HP — that alone shouldn't force a resend), the pet
+    // appearing/vanishing, or first sight of this character.
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
       rec.pet_name,
       petBuffs.map(b => b && b.name),
+      (rec.target_name || '').toLowerCase(),
     ]);
-    if (_liveStateLastSig.get(ch) === sig) continue;
+    // Send when the signature changed, OR (only while actively targeting
+    // something) the heartbeat floor elapsed. A STABLE target — the common
+    // case mid-fight — never trips the sig, so without a heartbeat the row
+    // goes stale and silently drops out of the bot's online window for
+    // extended-target while the fight is still live. Gated on target_name so
+    // a character standing around idle (no target) doesn't heartbeat forever —
+    // keeps the "costs nothing at idle" behavior for everyone NOT feeding the
+    // extended-target picture.
+    const sigChanged   = _liveStateLastSig.get(ch) !== sig;
+    const lastSentAt   = _liveStateLastSentAt.get(ch) || 0;
+    const heartbeatDue = !!rec.target_name && (now - lastSentAt) >= LIVE_STATE_HEARTBEAT_MS;
+    if (!sigChanged && !heartbeatDue) continue;
     _liveStateLastSig.set(ch, sig);
+    _liveStateLastSentAt.set(ch, now);
     states.push(rec);
   }
   if (states.length === 0) return;
