@@ -997,16 +997,20 @@ function parseEvent(line, ts) {
   // Covers both forms that EQ produces:
   //   summon time: "Gobn says, 'My leader is Utoh.'"
   //   /pet leader: "Gobn says, 'My leader is Utoh, Master.'"   (extra ', Master')
-  // The capture stops at the owner name (\w+) so trailing decoration is ignored.
+  // The capture stops at the trailing comma/period/quote so decoration is ignored.
   // Only reaches here because PRIORITY_KEEP_PATTERNS let the line through despite
   // the general /says?/ drop pattern. Used to build a pet→owner attribution map.
   //
-  // IMPORTANT: pet names may be multi-word (e.g. "a Shadel Bandit"). Use (.+?)
-  // lazy match between '] ' and ' says' to capture the full name, not just the
-  // first token. (\S+) would capture only "a" for "a Shadel Bandit says, ...".
-  m = line.match(/\]\s+(.+?)\s+says,?\s*['"]My leader is (\w+)/i);
+  // IMPORTANT: both pet AND owner names may be multi-word — an owner can itself
+  // be a charmed mob (e.g. "a Shadel Bandit") whose own summoned sub-pet declares
+  // "My leader is a Shadel Bandit." A bare (\w+) owner capture used to truncate
+  // that to just "a", which the bot then misattributed the sub-pet's damage to
+  // as a phantom character literally named "a". [^,.'"]+ captures the full name
+  // up to the terminating punctuation; the bot's petLeaders merge already drops
+  // any multi-word owner as unattributable noise, same as it does for pets.
+  m = line.match(/\]\s+(.+?)\s+says,?\s*['"]My leader is ([^,.'"]+)/i);
   if (m) {
-    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2] };
+    return { ts: tsIso, type: 'pet_leader', pet: m[1], owner: m[2].trim() };
   }
 
   // Charm-LAND via pet command acknowledgement (the reliable Quarm signal).
