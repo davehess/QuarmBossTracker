@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.131': [
+    '**PvP backfill no longer floods #pvp** — an agent\'s `--since` backfill run mines historical PvP kills from old logs same as it does chat and combat, but the relay was posting every single one live to #pvp as if it just happened, instead of only recording it. A single backfill could dump dozens of months-old kill/death notices into the channel at once. Backfilled kills still get recorded to the ledger and stats (who-observations, fun-event counters, boss-kill history) — they just don\'t replay into Discord or seed the live respawn-timer prediction anymore, matching how historical chat backfill already works (Uilnayar 2026-07-01).',
+  ],
   '3.0.130': [
     '**No more phantom "a" character on parses** — a charmed pet that itself owned a summoned sub-pet (e.g. a charmed "a Shadel Bandit") could have that sub-pet\'s damage misattributed to a bogus character literally named "a" on the parse breakdown, both from agent uploads and from pasted EQLogParser text. That damage now correctly falls out as unattributed rather than showing up as a fake player (Uilnayar 2026-07-01).',
   ],

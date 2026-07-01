@@ -3804,7 +3804,11 @@ async function _handleAgentPvp(req, res) {
               const alreadyActive = existing
                 && !existing.timerUnknown
                 && existing.nextSpawnLatest > Date.now();
-              if (!alreadyActive) {
+              // Backfill replays months of history — never let a stale kill
+              // seed/overwrite the LIVE respawn-timer prediction or post to
+              // the kills thread; mirrorPvpBossKill() above already recorded
+              // it to the ledger, which is all backfill is meant to do.
+              if (!alreadyActive && !b?.backfill) {
                 const killedByLabel = `auto:${killer || '?'}${killerGuild ? '/' + killerGuild : ''}`;
                 recordPvpKill(boss.name, boss.timerHours, killedByLabel, boss.id, false, killedAtMs);
                 content += `\n_⏱️ Auto-tracked — respawns in ~${boss.timerHours}h (±20%) · see /timers_`;
@@ -3869,15 +3873,23 @@ async function _handleAgentPvp(req, res) {
         });
       }
 
-      const sent = await ch.send({ content });
+      // Backfill replays historical kills for the ledger/who-harvest/fun-event
+      // data recorded above only — same policy as historical chat backfill
+      // ("collection IS in scope, display is NOT"). Without this, a single
+      // --since backfill run replays months of PvP kills into #pvp live, as
+      // if they all just happened (Uilnayar 2026-07-01: a backfill flooded
+      // #pvp with dozens of old Zek/Eclipse/Nocturnal kill notices at once).
+      if (!b?.backfill) {
+        const sent = await ch.send({ content });
 
-      // Attach Howl button only when Wolf Pack is involved (either side).
-      // PvP kills between two non-WP guilds are visible to us via /pvp
-      // channel chatter but there's nothing to celebrate or rally to.
-      if (isWpKill || isWpDeath) {
-        await sent.edit({ content, components: [buildHowlRow(sent.id)] });
+        // Attach Howl button only when Wolf Pack is involved (either side).
+        // PvP kills between two non-WP guilds are visible to us via /pvp
+        // channel chatter but there's nothing to celebrate or rally to.
+        if (isWpKill || isWpDeath) {
+          await sent.edit({ content, components: [buildHowlRow(sent.id)] });
+        }
+        posted++;
       }
-      posted++;
     } catch (err) {
       console.warn('[pvp-relay] failed to post:', err?.message);
     }
