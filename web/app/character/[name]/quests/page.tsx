@@ -720,8 +720,15 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     if (!/^(General|Bank|SharedBank)/.test(row.slot_label)) continue;   // skip equipped slots
     heldNonEquipped.set(row.item_id, (heldNonEquipped.get(row.item_id) ?? 0) + row.quantity);
   }
-  const dontNeed: { id: number; qty: number }[] = [];     // tradeable but not usable by this char
-  const brokenItems: { id: number; qty: number }[] = [];  // NO DROP + no value + dead-end + unusable
+  // Split by whether the item ACTUALLY ties to a discovered turn-in
+  // (questPieceIds) — the previous single "Quest pieces you probably don't
+  // need" bucket lumped in plain unusable loot (spell scrolls for other
+  // classes, generic droppable armor) that has nothing to do with any quest.
+  // (Uilnayar 2026-06-30: "If these items ... are not quest pieces they can
+  // be in a different section.")
+  const dontNeedQuest: { id: number; qty: number }[] = [];  // droppable quest-turn-in piece, unusable by this char
+  const dontNeedOther: { id: number; qty: number }[] = [];  // droppable non-quest loot, unusable by this char
+  const brokenItems: { id: number; qty: number }[] = [];    // NO DROP + no value + dead-end + unusable
   for (const [id, qty] of heldNonEquipped) {
     const m = itemMetaById.get(id);
     if (!m) continue;
@@ -731,14 +738,22 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     // 2026-06-24: Amulet of Necropotence / Shield of the Immaculate / Blade of
     // the Earthcaller.)
     if (hasInventoryClicky(id) || isWeapon(id)) continue;
-    if (m.nodrop === true && !usable) dontNeed.push({ id, qty });
+    if (m.nodrop === true && !usable) {
+      (questPieceIds.has(id) ? dontNeedQuest : dontNeedOther).push({ id, qty });
+    }
     // Broken = NO DROP, no value, feeds no quest, can't use, and not even
     // equippable (slotless junk). Equippable NO DROP armor is almost always a
     // quest/turn-in piece (Velious armor molds), so never call it broken.
     else if (m.nodrop === false && (m.price ?? 0) <= 0 && !questPieceIds.has(id) && !usable && !isEquippable(id)) brokenItems.push({ id, qty });
   }
-  dontNeed.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
+  dontNeedQuest.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
+  dontNeedOther.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
   brokenItems.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
+  // Bag/bank slot location for a held item — same lookup the Completed-quests
+  // section uses (ownInvSlotByName, keyed by lowercased item name). (Uilnayar
+  // 2026-06-30: "Droppable vs nondroppable with the specific bag and slot
+  // they're in.")
+  const slotsFor = (id: number) => ownInvSlotByName.get(dItemName(id).toLowerCase());
   // Compact coin value from a copper price.
   const coin = (price: number | null | undefined) => {
     const p = price ?? 0;
@@ -747,6 +762,27 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     if (p >= 100) return `${Math.floor(p / 100)}gp`;
     if (p >= 10) return `${Math.floor(p / 10)}sp`;
     return `${p}cp`;
+  };
+  // Shared row for the three dead-weight lists below: name + qty, a droppable
+  // vs NO DROP badge, class/race tags, value, and the bag/bank slot(s) it's
+  // sitting in (when known). `dropStatus` is fixed per-list (dontNeedQuest/
+  // dontNeedOther are droppable-only by construction, brokenItems is NO DROP-
+  // only) rather than re-derived per item, but shown explicitly on every row
+  // so it doesn't rely on the reader remembering which section they're in.
+  const deadWeightRow = (id: number, qty: number, dropStatus: 'droppable' | 'no drop') => {
+    const slots = slotsFor(id);
+    return (
+      <li key={id} className="flex items-baseline gap-1.5 flex-wrap">
+        <a href={itemPqdi(id)} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{dItemName(id)}</a>
+        {qty > 1 && <span className="text-dim/70">×{qty}</span>}
+        <span className={`text-[9px] uppercase tracking-wide ${dropStatus === 'droppable' ? 'text-blue/70' : 'text-orange/60'}`}>{dropStatus}</span>
+        <span className="text-red-400/70 text-[10px]">[{classTagsFor(id)}]</span>
+        <span className="text-dim/50 text-[10px]">{coin(itemMetaById.get(id)?.price)}</span>
+        {slots && slots.length > 0 && (
+          <span className="text-dim/60 text-[10px]">— in {slots.join(', ')}</span>
+        )}
+      </li>
+    );
   };
 
   return (
@@ -1129,26 +1165,42 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         </section>
       )}
 
-      {/* Dead-weight: held (bag/bank) items that are tradeable but the char's
-          class/race can't use. (Uilnayar 2026-06-24.) */}
+      {/* Dead-weight: held (bag/bank) items the char's class/race can't use,
+          split by whether they actually tie to a discovered turn-in.
+          (Uilnayar 2026-06-24; split + droppable tag + slot location added
+          2026-06-30 — "if these are not quest pieces they can be in a
+          different section... Droppable vs nondroppable with the specific
+          bag and slot they're in.") */}
       <section className="bg-panel border border-border rounded-lg p-5">
-        <h3 className="text-lg text-orange mb-2">Quest pieces you probably don&apos;t need ({dontNeed.length})</h3>
+        <h3 className="text-lg text-orange mb-2">Quest pieces you probably don&apos;t need ({dontNeedQuest.length})</h3>
         <p className="text-xs text-dim leading-6 mb-2">
-          Tradeable items in {decoded}&apos;s bags/bank that {char.class || 'this character'} can&apos;t
-          use — sell, trade, or hand off to an alt. Class/race tags + value shown.
+          Droppable turn-in components in {decoded}&apos;s bags/bank (tied to a discovered quest
+          above) that {char.class || 'this character'} can&apos;t use — sell, trade, or hand off to
+          an alt who's working that turn-in.
         </p>
-        {dontNeed.length === 0 ? (
-          <p className="text-sm text-dim italic">Nothing flagged — every tradeable item {decoded} is holding is usable by their class/race (or has no class restriction).</p>
+        {dontNeedQuest.length === 0 ? (
+          <p className="text-sm text-dim italic">Nothing flagged — no unusable quest components sitting in {decoded}&apos;s bags/bank right now.</p>
         ) : (
           <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
-            {dontNeed.map(({ id, qty }) => (
-              <li key={id} className="flex items-baseline gap-1.5">
-                <a href={itemPqdi(id)} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{dItemName(id)}</a>
-                {qty > 1 && <span className="text-dim/70">×{qty}</span>}
-                <span className="text-red-400/70 text-[10px]">[{classTagsFor(id)}]</span>
-                <span className="text-dim/50 text-[10px]">{coin(itemMetaById.get(id)?.price)}</span>
-              </li>
-            ))}
+            {dontNeedQuest.map(({ id, qty }) => deadWeightRow(id, qty, 'droppable'))}
+          </ul>
+        )}
+      </section>
+
+      {/* Everything else droppable-but-unusable: NOT tied to any discovered
+          turn-in — spell scrolls for other classes, generic loot armor, etc.
+          Kept separate so it doesn't read as "abandon this quest." */}
+      <section className="bg-panel border border-border rounded-lg p-5">
+        <h3 className="text-lg text-orange mb-2">Other droppable items you probably don&apos;t need ({dontNeedOther.length})</h3>
+        <p className="text-xs text-dim leading-6 mb-2">
+          Everything else droppable in {decoded}&apos;s bags/bank that {char.class || 'this character'} can&apos;t
+          use and isn&apos;t part of any discovered quest — sell, trade, or hand off to an alt.
+        </p>
+        {dontNeedOther.length === 0 ? (
+          <p className="text-sm text-dim italic">Nothing flagged — every other droppable item {decoded} is holding is usable by their class/race (or has no class restriction).</p>
+        ) : (
+          <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
+            {dontNeedOther.map(({ id, qty }) => deadWeightRow(id, qty, 'droppable'))}
           </ul>
         )}
       </section>
@@ -1163,13 +1215,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             use them — almost certainly safe to destroy. Double-check on PQDI first.
           </p>
           <ul className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
-            {brokenItems.map(({ id, qty }) => (
-              <li key={id} className="flex items-baseline gap-1.5">
-                <a href={itemPqdi(id)} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{dItemName(id)}</a>
-                {qty > 1 && <span className="text-dim/70">×{qty}</span>}
-                <span className="text-orange/60 text-[9px] uppercase tracking-wide">no drop</span>
-              </li>
-            ))}
+            {brokenItems.map(({ id, qty }) => deadWeightRow(id, qty, 'no drop'))}
           </ul>
         </section>
       )}
