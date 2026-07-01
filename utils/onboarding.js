@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.130': [
+    '**No more phantom "a" character on parses** — a charmed pet that itself owned a summoned sub-pet (e.g. a charmed "a Shadel Bandit") could have that sub-pet\'s damage misattributed to a bogus character literally named "a" on the parse breakdown, both from agent uploads and from pasted EQLogParser text. That damage now correctly falls out as unattributed rather than showing up as a fake player (Uilnayar 2026-07-01).',
+  ],
   '3.0.127': [
     '**Dead bosses stop showing as "Engaged" on /parses.** A kill now registers the moment ANY raider\'s agent sees the boss\'s slain line — so a boss whose death line your own client happened to miss no longer lingers in the *Engaged now* section forever. As a backstop, the bot also promotes a still-engaged fight to a confirmed kill when **loot was posted** for that boss (via `/loot`) and there\'s **no other mob of the same name** up in the window (so we never guess which of two same-name mobs died). Runs automatically; clears the backlog within ~30 min of a deploy (Uilnayar 2026-06-29).',
   ],

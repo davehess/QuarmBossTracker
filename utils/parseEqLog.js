@@ -32,6 +32,12 @@ function parseEQLog(str) {
     const raw     = m[2].trim();
     const hasPets = raw.includes('+Pets');
     const name    = raw.replace(/\s*\+Pets/g, '').trim();
+    // EQLogParser occasionally rolls an unnamed charm/summoned pet's damage
+    // into its own row rather than folding it under the owner's "+Pets" —
+    // that row's name is whatever fragment EQLogParser grabbed (e.g. a bare
+    // "a" from "a wolf"), not a real character. Real player names are always
+    // a single capitalized token, so anything else isn't a player.
+    if (!/^[A-Z][a-zA-Z'-]*$/.test(name)) continue;
     players.push({
       rank: parseInt(m[1]), name, hasPets,
       damage:   kmToInt(m[3], m[4]),
