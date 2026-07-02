@@ -2793,8 +2793,11 @@ const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
 // numbered rotation (auto-assigned a slot); anything else is a one-off
 // spot heal — surfaced as a banner, never consumes a slot.
 const _CH_PERSONAL_RX = /^([A-Za-z][A-Za-z'`\s]*?)\s+Inc to\s+([A-Z][\w`]*)\s*-\s*(\d{1,3})%\s*Mana Left/i;
-const CH_EQUIVALENT_SPELLS = new Set([
-  "tunares renewal",   // Druid's Complete-Heal-tier single-target heal
+// spellKey → display label shown on the slot row (Uilnayar 2026-07-02: "we
+// should denote Druid CH on the chain"), so the overlay reads "Pyxil [Druid
+// CH]" rather than looking like an ordinary numbered cleric slot.
+const CH_EQUIVALENT_SPELLS = new Map([
+  ["tunares renewal", "Druid CH"],   // Druid's Complete-Heal-tier single-target heal
 ]);
 const SPOT_HEAL_DISPLAY_MS = 8000; // how long a one-off spot-heal stays on the overlay
 
@@ -2826,7 +2829,10 @@ function trackChChainLine(line, character) {
       if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
     }
     const prev = c.slots[num] || {};
-    c.slots[num] = { name: speaker, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1 };
+    // kind: null — a real numbered CH call is never a labeled auto-slot;
+    // clears any stale "Druid CH" tag on the rare chance this slot number
+    // collides with one the personal-macro path auto-assigned earlier.
+    c.slots[num] = { name: speaker, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
     c.lastCh = { num, name: speaker, mana, atMs };
     // Default next = numeric successor, wrapping at the highest slot seen.
     // The explicit GO cue (below) overrides when it arrives.
@@ -2862,7 +2868,7 @@ function trackChChainLine(line, character) {
         if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
       }
       const prev = c.slots[num] || {};
-      c.slots[num] = { name: speaker, mana, lastAtMs: atMs, count: (prev.count || 0) + 1 };
+      c.slots[num] = { name: speaker, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
       c.lastCh = { num, name: speaker, mana, atMs };
       const nums = Object.keys(c.slots).map(Number);
       c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;

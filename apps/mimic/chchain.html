@@ -53,6 +53,10 @@
   .row.casting .num{color:#7ee787; border-color:rgba(126,231,135,0.55)}
   .row.next    .num{color:#f6c365; border-color:rgba(246,195,101,0.65); background:rgba(246,195,101,0.10)}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  /* Tag on an auto-slotted row folded in from a non-cleric CH-equivalent
+     cast (e.g. a druid's Tunare's Renewal) — see CH_EQUIVALENT_SPELLS in
+     the agent. Distinguishes it from an ordinary numbered cleric slot. */
+  .row .nm .slot-kind{color:#a371f7;font-size:9px;font-style:italic;font-weight:500;margin-left:4px}
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
@@ -548,7 +552,7 @@
       }
       html += '<div class="' + cls + '">'
         +   '<span class="num">' + pad3(n) + '</span>'
-        +   '<span class="nm">' + esc(s.name || '?') + '</span>'
+        +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
         +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
         +   '<span class="stat">' + stat + '</span>'
         +   bar
