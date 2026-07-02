@@ -2780,12 +2780,29 @@ const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of chara
 const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
 const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
 const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
+// Ad-hoc heal-cast broadcasts from a PERSONAL macro/trigger, not the numbered-
+// slot convention above — no slot number, no literal "CH":
+//   "TUNARE'S RENEWAL  Inc to Tikal - 91% Mana Left"   (Pyxil's Tunare's Renewal)
+//   "CHLOROBLAST  Inc to Abrahms - 100% Mana Left"     (Pyxil's Chloroblast)
+// Uilnayar 2026-07-02: "sometimes our druids will hop in and fill the CH
+// gaps, are they able to be included as well?" — confirmed via 2,349 of
+// Pyxil's actual raid-chat lines that this is her own cast-macro output,
+// firing on every heal she lands, not just gap-fills; there's no slot
+// number to key off of. Per the guild's answer: a spell that's their
+// class's real CH-equivalent (CH_EQUIVALENT_SPELLS) folds into the SAME
+// numbered rotation (auto-assigned a slot); anything else is a one-off
+// spot heal — surfaced as a banner, never consumes a slot.
+const _CH_PERSONAL_RX = /^([A-Za-z][A-Za-z'`\s]*?)\s+Inc to\s+([A-Z][\w`]*)\s*-\s*(\d{1,3})%\s*Mana Left/i;
+const CH_EQUIVALENT_SPELLS = new Set([
+  "tunares renewal",   // Druid's Complete-Heal-tier single-target heal
+]);
+const SPOT_HEAL_DISPLAY_MS = 8000; // how long a one-off spot-heal stays on the overlay
 
 function trackChChainLine(line, character) {
   if (!line) return;
   // Cheap pre-filter before any regex work — the tail loop runs this on
   // every line of every watched log.
-  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line)) return;
+  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line) && !/inc\s+to/i.test(line)) return;
   const m = line.match(_CH_SPEAKER_RX);
   if (!m) return;
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
@@ -2816,6 +2833,47 @@ function trackChChainLine(line, character) {
     const nums = Object.keys(c.slots).map(Number);
     c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
     c.updatedAt = atMs;
+    return;
+  }
+  // Personal heal-cast broadcast — no slot number in the raw line at all.
+  const personal = text.match(_CH_PERSONAL_RX);
+  if (personal) {
+    const spellRaw = personal[1].trim();
+    const spellKey = spellRaw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    const mana = Math.min(100, parseInt(personal[3], 10) || 0);
+    if (CH_EQUIVALENT_SPELLS.has(spellKey)) {
+      // Folds into the numbered rotation exactly like a CH call above — same
+      // beat tracking, same lastCh/nextNum advance — just with a slot number
+      // this caster doesn't say out loud. Auto-assign one the first time we
+      // see them THIS chain session (one past the highest slot in use) and
+      // remember it so they keep the same row for the rest of the fight.
+      _chChainEnsure(atMs);
+      const c = _chChain;
+      const key = speaker.toLowerCase();
+      c.autoSlots = c.autoSlots || {};
+      let num = c.autoSlots[key];
+      if (!num) {
+        const existing = Object.keys(c.slots).map(Number);
+        num = existing.length ? Math.max.apply(null, existing) + 1 : 1;
+        c.autoSlots[key] = num;
+      }
+      if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
+        const gap = atMs - c.lastCh.atMs;
+        if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
+      }
+      const prev = c.slots[num] || {};
+      c.slots[num] = { name: speaker, mana, lastAtMs: atMs, count: (prev.count || 0) + 1 };
+      c.lastCh = { num, name: speaker, mana, atMs };
+      const nums = Object.keys(c.slots).map(Number);
+      c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
+      c.updatedAt = atMs;
+    } else if (_chChain) {
+      // Not a CH-equivalent — a one-off spot heal riding alongside an
+      // ALREADY-running chain. Never conjures a chain of its own (mirrors
+      // the GO-cue guard below), never touches beats/lastCh/nextNum/slots.
+      _chChain.spotHeal = { name: speaker, spell: spellRaw, target: personal[2] || null, mana, atMs };
+      _chChain.updatedAt = atMs;
+    }
     return;
   }
   // GO cue only steers an EXISTING chain — a stray "3 go go go" in chat must
@@ -2865,6 +2923,11 @@ function chChainSnapshot() {
       };
     }
   }
+  // Spot heal — a one-off personal-macro heal that isn't a CH-equivalent
+  // spell (see trackChChainLine). Self-expires after SPOT_HEAL_DISPLAY_MS so
+  // the overlay's banner doesn't linger long after the heal actually landed.
+  const spotHeal = (_chChain.spotHeal && (Date.now() - _chChain.spotHeal.atMs) < SPOT_HEAL_DISPLAY_MS)
+    ? _chChain.spotHeal : null;
   return {
     target:     _chChain.target,
     slots:      _chChain.slots,
@@ -2874,6 +2937,7 @@ function chChainSnapshot() {
     started_at: _chChain.startedAt,
     updated_at: _chChain.updatedAt,
     slipped,
+    spot_heal:  spotHeal,
   };
 }
 

@@ -89,6 +89,17 @@
     from{box-shadow:0 0 6px rgba(248,113,113,0.7)}
     to{box-shadow:0 0 16px rgba(248,113,113,0.35)}
   }
+  /* Spot-heal banner — a one-off ad-hoc heal (e.g. a druid's Chloroblast)
+     riding alongside the numbered rotation without consuming a slot. Green/
+     nature-themed so it reads as "extra help arrived", distinct from the red
+     pivot (someone MISSED their slot) and amber gap-soon (someone's ABOUT
+     to be due). Self-expires — see SPOT_HEAL_DISPLAY_MS in the agent. */
+  .spotrow{display:flex;align-items:center;gap:8px;margin-top:6px;padding:5px 8px;
+    background:rgba(86,211,100,0.20);border:1px solid rgba(86,211,100,0.55);
+    border-radius:5px;font-size:12px;color:#fff;text-shadow:0 1px 2px #000}
+  .spotrow .spot-icon{font-size:14px;flex-shrink:0}
+  .spotrow .spot-name{font-weight:700;color:#7ee787}
+  .spotrow .spot-target{color:#fde68a}
   /* GAP SOON alert row — sits ABOVE the slot list when the chain is about
      to slip (the late cleric hasn't called yet and the beat is running out).
      Amber when imminent, red + pulsing when already overdue. This is the
@@ -209,6 +220,12 @@
          chain has slipped (next caller didn't shout within 1.5× the beat).
          Hidden when chain is healthy. Display name + suggest who's next. -->
     <div id="pivotrow" class="pivotrow" style="display:none"></div>
+    <!-- Spot-heal banner (Uilnayar 2026-07-02: "our druids will hop in and
+         fill the CH gaps, are they able to be included?"). A CH-equivalent
+         cast (Tunare's Renewal) folds straight into the numbered rows above
+         instead — this banner is only for a one-off heal that ISN'T a
+         rotation-tier spell. Hidden when nothing recent. -->
+    <div id="spotrow" class="spotrow" style="display:none"></div>
     <div id="nextrow" class="nextrow" style="display:none">
       <span class="lbl" id="nextlbl"></span>
       <div class="cd-bar"><div class="fill" id="cdfill"></div></div>
@@ -420,11 +437,15 @@
 
   // v1.1.5 — pivot announcement state (only speak once per slip).
   var _lastPivotKey = null;
+  // Spot-heal announcement state (only speak once per event — keyed on its
+  // atMs, which changes on every new personal-macro heal the agent reports).
+  var _lastSpotHealKey = null;
   function render(){
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var nextEl  = document.getElementById('nextrow');
     var pivotEl = document.getElementById('pivotrow');
+    var spotEl  = document.getElementById('spotrow');
     var gapEl   = document.getElementById('gaprow');
     var tgtEl   = document.getElementById('tgt');
     var beatEl  = document.getElementById('beat');
@@ -446,11 +467,32 @@
         var spokenPivot = c.slipped.next_after_name && c.slipped.next_after_name !== c.slipped.missed_name
           ? ('Pivot — ' + (c.slipped.next_after_name) + ' instead of ' + (c.slipped.missed_name) + '.')
           : ('Spot heal — ' + (c.slipped.missed_name) + ' missed.');
-        speak(spokenPivot);
+        // Was calling an undefined `speak()` — this TTS line has never
+        // actually fired. speakGap() is the file's one TTS helper (mute
+        // check + cancel-then-speak); reused here rather than duplicated.
+        speakGap(spokenPivot);
       }
     } else {
       pivotEl.style.display = 'none';
       _lastPivotKey = null;
+    }
+    // Spot-heal banner — an ad-hoc heal (e.g. a druid's Chloroblast) that
+    // isn't a rotation-tier spell, so the agent reports it separately from
+    // the numbered slots rather than forcing it into one. Self-clears once
+    // the agent stops reporting it fresh (SPOT_HEAL_DISPLAY_MS server-side).
+    if (c && c.spot_heal && c.spot_heal.name) {
+      var shk = c.spot_heal.atMs + '|' + c.spot_heal.name;
+      spotEl.innerHTML = '<span class="spot-icon">🌿</span><span><span class="spot-name">' + esc(c.spot_heal.name) + '</span> spot healing'
+        + (c.spot_heal.spell ? ' (' + esc(c.spot_heal.spell) + ')' : '')
+        + (c.spot_heal.target ? ' → <span class="spot-target">' + esc(c.spot_heal.target) + '</span>' : '') + '</span>';
+      spotEl.style.display = 'flex';
+      if (shk !== _lastSpotHealKey) {
+        _lastSpotHealKey = shk;
+        speakGap('Spot heal — ' + c.spot_heal.name + (c.spot_heal.target ? ' on ' + c.spot_heal.target : '') + '.');
+      }
+    } else {
+      spotEl.style.display = 'none';
+      _lastSpotHealKey = null;
     }
     if (!c || !c.slots || Object.keys(c.slots).length === 0) {
       rowsEl.innerHTML = '';
