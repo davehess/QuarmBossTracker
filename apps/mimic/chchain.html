@@ -7,6 +7,12 @@
      either a live 10s cast bar (the slot that just called CH) or how long
      ago they last cast. Footer: NEXT slot + beat countdown. Reads
      /api/state.chChain — fully local, every client sees the same calls. */
+  /* --bg-alpha drives every card-surface background below. 1.2 refactor:
+     slider value flows from main.js → preload `bg-alpha` → this variable, so
+     "100%" means a fully opaque surface that hides EQ. Text/icons stay at
+     full brightness regardless of slider position. Default matches the
+     pre-refactor visual. */
+  :root{ --bg-alpha:0.45; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;min-width:240px;}
@@ -18,15 +24,34 @@
   .head .beat{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
   .head .conn{font-size:11px;flex-shrink:0}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .rows{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.45);
+  .rows{display:flex;flex-direction:column;gap:2px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;padding:5px 6px}
   .row{position:relative;display:grid;
-    grid-template-columns:2.6em minmax(0,1fr) 3em auto;
+    grid-template-columns:3.2em minmax(0,1fr) 3em auto;
     align-items:center;gap:6px;font-size:11px;line-height:1.3;
     padding:3px 6px;border-radius:3px;background:rgba(255,255,255,0.03);
     text-shadow:0 1px 2px #000;border-left:2px solid transparent;
     transition:background 200ms ease}
-  .row .num{color:#6e7681;font-size:10px;font-variant-numeric:tabular-nums}
+  /* Slot number — was hard to read at 10px / dim grey. Larger + amber +
+     bold + tabular numerals + a subtle dark chip to anchor it. (Uilnayar
+     2026-06-26: 'the left side numbers are hard to see with ch chain.
+     needs to be more distinct'.) Casting/next rows tint it brighter via
+     row-state overrides below so the active slot's number jumps. */
+  .row .num{
+    color:#f6c365;
+    font-size:13px;
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+    text-align:center;
+    background:rgba(0,0,0,0.55);
+    border:1px solid rgba(246,195,101,0.30);
+    border-radius:3px;
+    padding:1px 0;
+    letter-spacing:0.04em;
+    text-shadow:0 1px 2px #000, 0 0 4px rgba(246,195,101,0.3);
+  }
+  .row.casting .num{color:#7ee787; border-color:rgba(126,231,135,0.55)}
+  .row.next    .num{color:#f6c365; border-color:rgba(246,195,101,0.65); background:rgba(246,195,101,0.10)}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
@@ -44,7 +69,7 @@
   .bar .fill{height:100%;background:#56d364;transition:width 120ms linear}
   /* Footer — NEXT slot + countdown to when the next cast is due (beat-based). */
   .nextrow{display:flex;align-items:center;gap:8px;margin-top:4px;
-    background:rgba(0,0,0,0.45);border-radius:5px;padding:5px 8px;
+    background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 8px;
     font-size:11px;font-weight:700;text-shadow:0 1px 2px #000}
   .nextrow .lbl{color:#f6c365;white-space:nowrap}
   .nextrow .cd-bar{flex:1;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden}
@@ -52,6 +77,18 @@
   .nextrow .cd{color:#f0b429;font-variant-numeric:tabular-nums;min-width:2.6em;text-align:right}
   .nextrow.due .lbl,.nextrow.due .cd{color:#f87171}
   .nextrow.due .cd-bar .fill{background:#f87171}
+  /* Pivot banner — v1.1.5. Loud red, pulsing. Sits above nextrow when active. */
+  .pivotrow{display:flex;align-items:center;gap:8px;margin-top:6px;padding:5px 8px;
+    background:rgba(220,38,38,0.55);border:1px solid #f87171;border-radius:5px;
+    font-size:12px;color:#fff;text-shadow:0 1px 2px #000;
+    animation:pivot-pulse 0.55s ease-in-out infinite alternate}
+  .pivotrow .pivot-icon{font-size:14px;flex-shrink:0}
+  .pivotrow .pivot-missed{font-weight:700;color:#fff}
+  .pivotrow .pivot-next{color:#ffe;text-decoration:underline}
+  @keyframes pivot-pulse{
+    from{box-shadow:0 0 6px rgba(248,113,113,0.7)}
+    to{box-shadow:0 0 16px rgba(248,113,113,0.35)}
+  }
   /* GAP SOON alert row — sits ABOVE the slot list when the chain is about
      to slip (the late cleric hasn't called yet and the beat is running out).
      Amber when imminent, red + pulsing when already overdue. This is the
@@ -95,8 +132,10 @@
   #cfg-panel.show{display:block}
   #cfg-panel .row{display:flex;align-items:center;gap:6px}
   #cfg-panel label{color:#8b949e;font-size:10px;white-space:nowrap}
+  #cfg-panel label input[type=checkbox]{vertical-align:middle;margin-right:2px;cursor:pointer}
   #cfg-panel input[type=range]{flex:1;cursor:pointer}
-  #cfg-panel .val{color:#f6c365;font-variant-numeric:tabular-nums;min-width:2.6em;text-align:right;font-weight:600}
+  #cfg-panel input[type=range]:disabled{opacity:0.4;cursor:default}
+  #cfg-panel .val{color:#f6c365;font-variant-numeric:tabular-nums;min-width:3.6em;text-align:right;font-weight:600}
   #cfg-panel .hint{color:#6e7681;font-size:9px;margin-top:3px;line-height:1.3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   /* Chain idle (no call in 60s+) — dim so post-fight numbers read as stale. */
@@ -151,11 +190,12 @@
     </div>
     <div id="cfg-panel">
       <div class="row">
+        <label for="leadAuto"><input id="leadAuto" type="checkbox" checked /> Auto</label>
         <label for="leadSlider">Alert lead</label>
         <input id="leadSlider" type="range" min="0.3" max="3.0" step="0.1" value="1.5" />
         <span class="val" id="leadVal">1.5s</span>
       </div>
-      <div class="hint">Fires <b>CH GAP SOON</b> this many seconds before the next cleric is due. Tight chains (3–4s beat) want 0.5–1s; loose chains 1.5–2s. Persists per-machine.</div>
+      <div class="hint"><b>Auto</b> (default) tracks this chain's own measured beat — the gap between callouts — and sets the lead to ~25% of it, so a tight 2-4s chain doesn't fire <b>CH GAP SOON</b> on nearly every single call. Drag the slider to pin a manual value instead (switches off Auto). Persists per-machine.</div>
     </div>
     <div id="gaprow" class="gaprow">
       <span class="label" id="gaplbl">CH GAP SOON</span>
@@ -165,6 +205,10 @@
       <span class="cleric" id="gapcleric"></span>
     </div>
     <div id="rows" class="rows"></div>
+    <!-- Pivot banner — v1.1.5 (Uilnayar 2026-06-26). Flashes red when the
+         chain has slipped (next caller didn't shout within 1.5× the beat).
+         Hidden when chain is healthy. Display name + suggest who's next. -->
+    <div id="pivotrow" class="pivotrow" style="display:none"></div>
     <div id="nextrow" class="nextrow" style="display:none">
       <span class="lbl" id="nextlbl"></span>
       <div class="cd-bar"><div class="fill" id="cdfill"></div></div>
@@ -215,25 +259,55 @@
   }
 
   // Alert-lead knob — how many seconds BEFORE the next cleric is due we
-  // start screaming. Default 1.5s. On a 4s beat, 1.5s leaves the relay
-  // ~2.5s into the beat before alerting, which is the right tradeoff for
-  // most chains. Tight chains (3s beat, fast clerics) want 0.5–1s so the
-  // alert doesn't fire on every single call. Persists in localStorage.
-  var _leadSec = 1.5;
+  // start screaming. AUTO (default): derived live from the chain's own
+  // measured beat_ms (median gap between callouts) instead of a fixed
+  // guess. A flat 1.5s lead on a real 2-4s chain (Uilnayar 2026-07-02: "it
+  // goes off far too frequently... we typically set delays of 2-4 seconds")
+  // left GAP SOON active for well over half of every single cycle — it
+  // fired on almost every handoff even when the chain was running exactly
+  // on schedule. LEAD_AUTO_RATIO approximates the tight/loose examples this
+  // panel used to ask users to reason about by hand (3-4s beat -> 0.5-1s
+  // lead is ~20-25%), applied uniformly so it scales with however tight
+  // THIS chain actually runs. Dragging the slider is an explicit manual
+  // override that turns Auto off; both states persist in localStorage.
+  var LEAD_AUTO_RATIO = 0.25;
+  var _leadAuto = true;
+  var _leadSec  = 1.5;   // effective lead; recomputed from beat_ms each render while auto
   try {
-    var v = parseFloat(localStorage.getItem('chchain_lead_sec'));
-    if (v >= 0.3 && v <= 3.0) _leadSec = v;
+    var savedAuto = localStorage.getItem('chchain_lead_auto');
+    var savedLead = parseFloat(localStorage.getItem('chchain_lead_sec'));
+    if (savedAuto === '0' && savedLead >= 0.3 && savedLead <= 3.0) {
+      _leadAuto = false;
+      _leadSec  = savedLead;
+    }
   } catch (e) {}
-  var cfgPanel  = document.getElementById('cfg-panel');
-  var cfgBtn    = document.getElementById('cfg-btn');
+  var cfgPanel   = document.getElementById('cfg-panel');
+  var cfgBtn     = document.getElementById('cfg-btn');
   var leadSlider = document.getElementById('leadSlider');
   var leadVal    = document.getElementById('leadVal');
-  function paintLead(){ if (leadVal) leadVal.textContent = _leadSec.toFixed(1) + 's'; if (leadSlider) leadSlider.value = _leadSec; }
+  var leadAutoEl = document.getElementById('leadAuto');
+  function paintLead(){
+    if (leadVal) leadVal.textContent = _leadSec.toFixed(1) + 's' + (_leadAuto ? ' auto' : '');
+    if (leadSlider) { leadSlider.value = _leadSec; leadSlider.disabled = _leadAuto; }
+    if (leadAutoEl) leadAutoEl.checked = _leadAuto;
+  }
   paintLead();
   if (cfgBtn) {
     cfgBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     cfgBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
     cfgBtn.addEventListener('click', function(){ if (cfgPanel) cfgPanel.classList.toggle('show'); });
+  }
+  if (leadAutoEl) {
+    leadAutoEl.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    leadAutoEl.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    leadAutoEl.addEventListener('change', function(){
+      _leadAuto = !!leadAutoEl.checked;
+      try {
+        localStorage.setItem('chchain_lead_auto', _leadAuto ? '1' : '0');
+        if (!_leadAuto) localStorage.setItem('chchain_lead_sec', String(_leadSec));
+      } catch (e) {}
+      paintLead();
+    });
   }
   if (leadSlider) {
     // Slider needs the overlay to be interactive while it's being dragged —
@@ -243,8 +317,12 @@
     leadSlider.addEventListener('input', function(){
       var v = parseFloat(leadSlider.value || '1.5');
       if (!(v >= 0.3 && v <= 3.0)) return;
+      _leadAuto = false;
       _leadSec = v;
-      try { localStorage.setItem('chchain_lead_sec', String(v)); } catch (e) {}
+      try {
+        localStorage.setItem('chchain_lead_auto', '0');
+        localStorage.setItem('chchain_lead_sec', String(v));
+      } catch (e) {}
       paintLead();
     });
   }
@@ -274,6 +352,12 @@
       if (p && p.scope) _setupScope = p.scope;
       else if (p && p.active) _setupScope = 'all';
       document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.45;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
@@ -334,14 +418,40 @@
     } catch (e) {}
   }
 
+  // v1.1.5 — pivot announcement state (only speak once per slip).
+  var _lastPivotKey = null;
   function render(){
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var nextEl  = document.getElementById('nextrow');
+    var pivotEl = document.getElementById('pivotrow');
     var gapEl   = document.getElementById('gaprow');
     var tgtEl   = document.getElementById('tgt');
     var beatEl  = document.getElementById('beat');
     var c = _last;
+    // Pivot banner — v1.1.5. Show when the snapshot reports a slip; hide
+    // otherwise. Speak the pivot ONCE per slip so we don't talk over heals.
+    if (c && c.slipped && c.slipped.missed_name) {
+      var pk = c.slipped.missed_num + '|' + (c.slipped.missed_name || '');
+      var html = '<span class="pivot-icon">⚠️</span><span><span class="pivot-missed">' + (c.slipped.missed_name || '?') + '</span> missed slot ' + c.slipped.missed_num + '.';
+      if (c.slipped.next_after_name && c.slipped.next_after_name !== c.slipped.missed_name) {
+        html += ' Pivot → <span class="pivot-next">' + c.slipped.next_after_name + '</span></span>';
+      } else {
+        html += ' Spot heal NOW.</span>';
+      }
+      pivotEl.innerHTML = html;
+      pivotEl.style.display = 'flex';
+      if (pk !== _lastPivotKey) {
+        _lastPivotKey = pk;
+        var spokenPivot = c.slipped.next_after_name && c.slipped.next_after_name !== c.slipped.missed_name
+          ? ('Pivot — ' + (c.slipped.next_after_name) + ' instead of ' + (c.slipped.missed_name) + '.')
+          : ('Spot heal — ' + (c.slipped.missed_name) + ' missed.');
+        speak(spokenPivot);
+      }
+    } else {
+      pivotEl.style.display = 'none';
+      _lastPivotKey = null;
+    }
     if (!c || !c.slots || Object.keys(c.slots).length === 0) {
       rowsEl.innerHTML = '';
       nextEl.style.display = 'none';
@@ -359,6 +469,14 @@
     tgtEl.textContent = c.target ? ('CH → ' + c.target) : 'CH chain';
     var beatSecs = c.beat_ms ? (c.beat_ms / 1000) : null;
     beatEl.textContent = beatSecs ? ('beat ' + beatSecs.toFixed(1) + 's') : '';
+    // Auto lead tracks the measured beat live — as the chain's actual
+    // cadence firms up (or a different chain with a different beat starts),
+    // the SOON threshold rescales with it instead of staying pinned to
+    // whatever the beat happened to be on the first render.
+    if (_leadAuto && beatSecs) {
+      _leadSec = Math.max(0.3, Math.min(3.0, beatSecs * LEAD_AUTO_RATIO));
+      paintLead();
+    }
 
     // Per-slot casting detection (was: only the most recent caller). With an
     // 8s beat and a 10s cast, slot N is still ~2s from landing when slot N+1

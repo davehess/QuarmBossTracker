@@ -3,9 +3,12 @@
 <style>
   /* Transparent always-on-top overlay. The window itself is frameless +
      transparent (set in main.js); this just paints a translucent HUD. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.78; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
-  .hud{background:rgba(14,17,22,0.78);border:1px solid rgba(88,166,255,0.4);
+  .hud{background:rgb(14 17 22 / var(--bg-alpha));border:1px solid rgba(88,166,255,0.4);
     border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px)}
   .title{font-size:10px;color:#58a6ff;letter-spacing:0.1em;text-transform:uppercase;
     display:flex;justify-content:space-between}
@@ -226,6 +229,12 @@
     window.mimic.onSetupMode(function(p) {
       _overlayKey = p && p.overlayKey;
       document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.78;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider');

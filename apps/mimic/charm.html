@@ -7,6 +7,9 @@
      charm — an optional user-set "recharm warn" countdown. Speaks "recharm
      pet" the instant a charm BREAKS (reliable safety net) and at the user's
      warn threshold (proactive). */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.55; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;}
@@ -14,7 +17,7 @@
     font-size:12px;color:#c9a0ff;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .charm{position:relative;padding:5px 8px;margin-bottom:5px;background:rgba(0,0,0,0.55);
+  .charm{position:relative;padding:5px 8px;margin-bottom:5px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
   /* ✕ dismiss — top-right of each card, dim by default, light up on hover.
      Click drops the entry from the agent's tracker. Pointer-events: auto on
@@ -183,6 +186,12 @@
   var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
     window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.55;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){

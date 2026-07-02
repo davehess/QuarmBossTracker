@@ -187,6 +187,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // ✥ move icon. Doesn't flip the global setupMode.
   setSetupModeThis: (on)          => ipcRenderer.invoke('set-setup-mode-this', on === undefined ? true : !!on),
   setOverlayOpacity:(key, value) => ipcRenderer.invoke('set-overlay-opacity', key, value),
+  // Background-alpha push from main → overlay renderer. The slider value drives
+  // a CSS variable (--bg-alpha) on each overlay so "100%" means an OPAQUE card
+  // surface (EQ hidden) rather than a dimmed window (text + bg fade together).
+  // Text colors stay at full brightness; only the card surface alpha changes.
+  onBgAlpha:        (cb)         => ipcRenderer.on('bg-alpha', (_e, v) => cb(v)),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on
   // transparent windows. Renderer mousedown on the ✥ handle calls

@@ -5,6 +5,9 @@
      recent /who this session but aren't anymore (Recently gone). Anonymous rows
      are de-anon'd from our who history (last known class/level/guild + Zek flag).
      All local + instant; reads the agent /api/state. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.5; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;}
@@ -15,8 +18,9 @@
   .sec{margin-bottom:6px}
   .sec-h{font-size:10px;color:#8b949e;letter-spacing:0.5px;margin:3px 0 2px;text-transform:uppercase}
   .sec-h .n{color:#7ee7c7}
-  .rowlist{display:flex;flex-direction:column;gap:1px;background:rgba(0,0,0,0.5);border-radius:5px;padding:4px 6px}
-  .gone .rowlist{background:rgba(0,0,0,0.35)}
+  .rowlist{display:flex;flex-direction:column;gap:1px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:4px 6px}
+  /* "recently gone" rolls down to ~70% of the main surface alpha so the section reads as faded. */
+  .gone .rowlist{background:rgb(0 0 0 / calc(var(--bg-alpha) * 0.7))}
   .r{display:flex;align-items:baseline;gap:5px;font-size:11px;line-height:1.45;text-shadow:0 1px 2px #000}
   .r .nm{font-weight:bold;color:#e6edf3;flex-shrink:0}
   .r.zek .nm{color:#ff7b72}
@@ -121,6 +125,12 @@
   var _setupScope = null;
   if (window.mimic && window.mimic.onSetupMode) {
     window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.5;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
   if (slider) slider.addEventListener('input', function(){

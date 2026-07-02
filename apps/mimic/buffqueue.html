@@ -5,6 +5,9 @@
      queue (buff queue + debuff/cure queue), pinned in-game so a buffer can
      work the list without alt-tabbing. Polls localhost:<port>/api/buff-queue
      which the agent proxies from the bot with a 3s TTL. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.55; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;}
@@ -30,17 +33,17 @@
   /* Burst queue (Feral Avatar / Savagery) — amber/gold border on each row so
      it reads as "the burst-buff target list" without colliding with buff
      severity tiers. */
-  .row.burst{border-left-color:#f0b429;background:rgba(40,28,8,0.55)}
+  .row.burst{border-left-color:#f0b429;background:rgb(40 28 8 / var(--bg-alpha))}
   .row.burst .miss{color:#fde68a;font-variant-numeric:tabular-nums}
   .sec .hdr .ct{color:#6e7681;font-variant-numeric:tabular-nums}
   .sec .hdr .hint{color:#6e7681;font-size:9px;text-transform:none;letter-spacing:0;font-style:italic}
   .row{position:relative;display:flex;align-items:baseline;gap:5px;padding:2px 5px;
-    background:rgba(8,5,16,0.55);border-radius:3px;border-left:3px solid #58a6ff;
+    background:rgb(8 5 16 / var(--bg-alpha));border-radius:3px;border-left:3px solid #58a6ff;
     text-shadow:0 1px 2px #000;font-size:10px;margin-bottom:2px}
   .row.r{border-left-color:#f85149}
   .row.o{border-left-color:#f0883e}
   .row.y{border-left-color:#d4a72c}
-  .row.d{border-left-color:#f87171;background:rgba(40,12,12,0.55)}
+  .row.d{border-left-color:#f87171;background:rgb(40 12 12 / var(--bg-alpha))}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
   .row .grp{color:#6e7681;font-variant-numeric:tabular-nums}
   .row .cls{color:#9aa4ad;font-size:9px}
@@ -55,7 +58,8 @@
   .row .chip.ct      {background:rgba(126,231,135,0.15);border-color:rgba(126,231,135,0.4);color:#7ee787}
   .row .chip.rec     {background:rgba(248,113,113,0.18);border-color:rgba(248,113,113,0.5);color:#fca5a5}
   /* Inferred rows dim slightly to differentiate from authoritative Mimic data. */
-  .row.inferred{background:rgba(8,5,16,0.40)}
+  /* Inferred rows scale to ~73% of the main surface alpha so they read as faded. */
+  .row.inferred{background:rgb(8 5 16 / calc(var(--bg-alpha) * 0.73))}
   .row.inferred .nm{color:#c9d1d9}
   .row .miss{margin-left:auto;color:#c9d1d9;font-size:9px;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:right}
@@ -204,6 +208,12 @@
       if (p && p.scope) _setupScope = p.scope;
       else if (p && p.active) _setupScope = 'all';
       document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.55;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');

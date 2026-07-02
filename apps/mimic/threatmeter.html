@@ -7,6 +7,9 @@
      hate number on the right. Reads stats.currentEncounterThreat — same
      data the dashboard's Tanks tab uses. Auto-fits to row count via
      window.mimic.autoFitOverlay (preload helper). */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden). Text stays bright at every value. */
+  :root{ --bg-alpha:0.45; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;min-width:280px;}
@@ -18,7 +21,7 @@
   .head .elapsed{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
   .head .conn{font-size:11px;flex-shrink:0}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .rows{display:flex;flex-direction:column;gap:2px;background:rgba(0,0,0,0.45);
+  .rows{display:flex;flex-direction:column;gap:2px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;padding:5px 6px}
   .row{position:relative;display:grid;
     grid-template-columns:1.4em minmax(0,1fr) auto;
@@ -163,6 +166,12 @@
       if (p && p.scope) _setupScope = p.scope;
       else if (p && p.active) _setupScope = 'all';
       document.body.classList.toggle('setup', !!(p && p.active));
+    });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.45;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');

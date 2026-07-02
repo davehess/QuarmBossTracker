@@ -4,6 +4,10 @@
   /* Centered trigger-alert overlay (GINA / DnDOverlay style). Transparent,
      click-through, always-on-top. Flashes the trigger text big and speaks it
      via the Web Speech API. Optional per-trigger sound url. */
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden behind timer rows); text/alert
+     flash stays bright at every value. */
+  :root{ --bg-alpha:0.66; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;
     display:flex;align-items:center;justify-content:center}
@@ -15,6 +19,32 @@
   }
   #alert.show{ opacity:1; animation:pop .4s ease-out; }
   @keyframes pop{ 0%{transform:scale(0.7)} 60%{transform:scale(1.08)} 100%{transform:scale(1)} }
+  /* Blind self-hit — red + a hard pulse so "you're hitting YOURSELF" is
+     impossible to miss mid-fight. (v1.1.9) */
+  #alert.blindwarn{ color:#ff6b6b;
+    text-shadow:0 0 8px #000, 0 0 20px rgba(248,81,73,0.9);
+    animation:pop .4s ease-out, blindpulse .5s ease-in-out infinite; }
+  @keyframes blindpulse{ 0%,100%{filter:brightness(1)} 50%{filter:brightness(1.5)} }
+  /* Trigger timing feedback row — three buttons below the flashed text so the
+     person who just heard the callout can say whether the timing was right.
+     Persists ~8s after the flash so the operator has time to click without
+     forcing the alert to linger. (Uilnayar 2026-06-26 — v1.1.2.) */
+  #feedback{display:none; position:absolute; bottom:14%; left:50%; transform:translateX(-50%);
+    gap:8px; align-items:center; pointer-events:auto;}
+  #feedback.show{display:flex}
+  .fb-btn{
+    font:600 12px ui-monospace,Menlo,Consolas,monospace;
+    color:#fff; background:rgba(14,17,22,0.85); border:1px solid rgba(255,255,255,0.25);
+    border-radius:4px; padding:5px 10px; cursor:pointer; text-shadow:0 1px 2px #000;
+    transition: background .15s, border-color .15s, opacity .15s;
+  }
+  .fb-btn:hover{ background:rgba(31,111,235,0.55); border-color:#79c0ff }
+  .fb-btn.voted{ opacity:0.45; cursor:default; pointer-events:none }
+  .fb-btn.earlier:hover{ background:rgba(240,165,45,0.55); border-color:#f0a52d }
+  .fb-btn.good:hover{    background:rgba(86,211,100,0.55); border-color:#56d364 }
+  .fb-btn.late:hover{    background:rgba(248,113,113,0.55); border-color:#f87171 }
+  #fbThanks{display:none; font-size:11px; color:#8b949e; text-shadow:0 1px 2px #000; margin-left:6px}
+  #fbThanks.show{display:inline}
   /* Move-handle ✥ button + lock — visible only when UNLOCKED. Manual drag,
      no CSS -webkit-app-region (same Chromium bug fix as overlay.html). */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -53,7 +83,7 @@
     gap:3px;z-index:40;min-width:180px;pointer-events:none;
     font-family:ui-monospace,Menlo,Consolas,monospace}
   .timer-row{position:relative;display:flex;align-items:baseline;gap:8px;
-    padding:3px 8px 5px;background:rgba(0,0,0,0.66);border-radius:4px;
+    padding:3px 8px 5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;
     color:#fff;font-size:13px;line-height:1.25;
     text-shadow:0 1px 2px #000;border-left:3px solid #f6c365;
     animation:timer-pop .25s ease-out;overflow:hidden}
@@ -124,6 +154,12 @@
   </div>
   <div id="placeholder">⚡ trigger alert box</div>
   <div id="alert"></div>
+  <div id="feedback">
+    <button class="fb-btn earlier" data-dir="earlier" title="The actual event happened BEFORE the trigger fired — push the trigger earlier next time.">« Earlier</button>
+    <button class="fb-btn good" data-dir="good" title="Timing was right.">✓ Good!</button>
+    <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
+    <span id="fbThanks">thanks — recorded.</span>
+  </div>
   <div id="timers"></div>
 <script>
   let PORT = 7779;
@@ -191,6 +227,12 @@
       document.body.classList.toggle('setup', !!(p && p.active));
     });
   }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.66;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
   var slider = document.getElementById('opacitySlider');
   var oVal   = document.getElementById('opacityVal');
   if (slider) {
@@ -210,6 +252,8 @@
 
   let lastTs = 0;            // newest fire ts we've already handled
   let primed = false;        // skip the backlog on first poll
+  let lastBlindTs = 0;       // newest blind-event ts handled
+  let blindPrimed = false;   // skip the blind backlog on first poll
   const el = document.getElementById('alert');
   let hideTimer = null;
 
@@ -218,7 +262,15 @@
   // script keeps running — so without this gate it would still SPEAK out loud
   // even though nothing is visible. main pushes status on every change.
   let alertsEnabled = true;
-  function applyTtsStatus(s){ alertsEnabled = !!(s && s.enableTriggerTts && !s.quietMode); }
+  // Blind callouts (v1.1.9) are safety alerts the user explicitly opted into by
+  // clicking a blind clicky (or by being blinded) — they fire even when regular
+  // trigger TTS is OFF, but still go silent under Quiet mode. Track quietMode
+  // separately so the blind path can gate on just that.
+  let quietMode = false;
+  function applyTtsStatus(s){
+    alertsEnabled = !!(s && s.enableTriggerTts && !s.quietMode);
+    quietMode = !!(s && s.quietMode);
+  }
   if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTtsStatus).catch(function(){});
   if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTtsStatus);
 
@@ -242,6 +294,54 @@
     hideTimer = setTimeout(()=>el.classList.remove('show'), 3500);
   }
 
+  // Trigger timing feedback — show the three vote buttons after each fire.
+  // The most-recent trigger is stored so the buttons know which one to vote on.
+  // (Uilnayar 2026-06-26 — v1.1.2.) Buttons are hover-interactive while shown
+  // so the click registers — they're inside the click-through overlay otherwise.
+  let _lastFireTs = 0;
+  let _lastTrigger = null;
+  const fbWrap   = document.getElementById('feedback');
+  const fbThanks = document.getElementById('fbThanks');
+  function showFeedback(t){
+    // Reset button visual state (un-grey if a previous fire was voted on).
+    fbWrap.querySelectorAll('.fb-btn').forEach(b => b.classList.remove('voted'));
+    fbThanks.classList.remove('show');
+    _lastFireTs  = Date.now();
+    _lastTrigger = t || null;
+    fbWrap.classList.add('show');
+    clearTimeout(showFeedback._t);
+    // Persist 8s — longer than the alert flash (3.5s) so the operator has time
+    // to vote without forcing the alert text to linger.
+    showFeedback._t = setTimeout(()=>fbWrap.classList.remove('show'), 8000);
+  }
+  async function castVote(direction){
+    if (!_lastTrigger) return;
+    try {
+      const PORT_LOCAL = (typeof PORT !== 'undefined' ? PORT : 7779);
+      await fetch('http://127.0.0.1:' + PORT_LOCAL + '/api/triggers/feedback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          direction,
+          trigger_id:   _lastTrigger.id   || null,
+          trigger_name: _lastTrigger.text || _lastTrigger.label || _lastTrigger.name || _lastTrigger.tts || '(unknown)',
+          fired_at:     new Date(_lastFireTs).toISOString(),
+        }),
+      });
+    } catch (e) { /* swallow — the agent's durable queue will replay on next online */ }
+    fbWrap.querySelectorAll('.fb-btn').forEach(b => b.classList.add('voted'));
+    fbThanks.classList.add('show');
+    clearTimeout(castVote._t);
+    castVote._t = setTimeout(()=>fbWrap.classList.remove('show'), 2000);
+  }
+  fbWrap.querySelectorAll('.fb-btn').forEach(b => {
+    // Hover-interactive handshake — the overlay is click-through by default,
+    // so these buttons must announce themselves on hover or the click falls
+    // through to EQ.
+    b.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    b.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    b.addEventListener('click', function(){ castVote(b.getAttribute('data-dir')); });
+  });
+
   function fire(t){
     // Gate the whole alert (flash + speak + sound) on the user's preference —
     // when alerts/TTS are off or Quiet mode is on, this hidden window must stay
@@ -251,6 +351,23 @@
     flash(t.text || t.label || spoken);
     speak(spoken);
     playSound(t.sound);
+    showFeedback(t);
+  }
+
+  // Blind-mode callouts (v1.1.9). Separate from fire(): these fire even when
+  // regular trigger TTS is off (they're the alerts the user asked for when
+  // blinded), gated only on Quiet mode. Self-hits flash red + pulse; the other
+  // kinds reuse the normal amber flash. No feedback buttons (not a trigger).
+  function fireBlind(e){
+    if (quietMode) return;
+    const danger = e.kind === 'blind_selfhit';
+    el.classList.toggle('blindwarn', danger);
+    flash(e.text || e.tts || 'Blind');
+    speak(e.tts || e.text || 'Blind');
+    // Clear the danger styling after the flash window so the next normal flash
+    // isn't tinted red.
+    clearTimeout(fireBlind._t);
+    fireBlind._t = setTimeout(function(){ el.classList.remove('blindwarn'); }, 3600);
   }
 
   // Timer stack — keeps DOM nodes around between polls so the bar can
@@ -393,6 +510,17 @@
       }
       for (const f of fires){
         if ((f.ts||0) > lastTs){ lastTs = f.ts; fire(f); }
+      }
+      // Blind-mode callouts — same dedupe-on-ts pattern as trigger fires, but
+      // through fireBlind() so they sound even when regular TTS is off.
+      const blinds = (s.blindEvents || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+      if (!blindPrimed){
+        if (blinds.length) lastBlindTs = blinds[blinds.length-1].ts || 0;
+        blindPrimed = true;
+      } else {
+        for (const e of blinds){
+          if ((e.ts||0) > lastBlindTs){ lastBlindTs = e.ts; fireBlind(e); }
+        }
       }
     }catch(e){ /* agent not up yet */ }
   }

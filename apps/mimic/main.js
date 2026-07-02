@@ -87,6 +87,8 @@ let melodyWindow  = null;
 let zealWindow    = null;
 let threatWindow  = null;
 let chChainWindow = null;
+let tankWindow    = null;
+let extTargetWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -166,6 +168,13 @@ function defaultConfig() {
     // Per-overlay opacity. Keyed by 'hud', 'trigger', or 'panel:<panelKey>'.
     // Defaults to 1.0 (opaque). 0.25 = mostly transparent.
     overlayOpacity: {},
+    // Per-character overlay layouts (v1.2 Phase B). When enabled, Mimic swaps
+    // the overlay visibility set to the active character's saved profile as you
+    // change toons (multibox: monk hides Charm, enchanter shows it). Opt-in —
+    // saving the first profile flips charProfilesEnabled on. Map is
+    // charLower → { show: { <flag>: bool, … }, savedAt }.
+    charProfilesEnabled: false,
+    charProfiles: {},
     // Auto-start Mimic when Windows logs in. Default ON — the installer also
     // writes the HKCU\…\Run key so a fresh install auto-starts on next login
     // without any in-app configuration. Users opt out via the tray "Start
@@ -680,6 +689,7 @@ function _boundsKeyForWindow(win) {
   if (win === zealWindow)    return 'zealBounds';
   if (win === threatWindow)  return 'threatBounds';
   if (win === chChainWindow) return 'chChainBounds';
+  if (win === extTargetWindow) return 'extTargetBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1456,6 +1466,193 @@ function startZealCapture() {
   }
 }
 
+// ── Blind Mode poll (v1.1.8) ───────────────────────────────────────────────
+// When the active character is blinded (Pitted Iron Ring self-clicky or a
+// hostile NPC blind), auto-pop Mob Info + Pet/Charm overlays so the player
+// can keep doing useful things through the blind without alt-tabbing.
+// State source is the agent's /api/state.blind — it does the log scanning
+// and per-char tracking. We only flip the visibility override on transitions
+// so the rest of the visibility system (quietMode, locked, EQ-running gate)
+// keeps working normally outside of a blind window.
+let _blindActive   = false;
+let _blindSource   = null;
+let _blindStartMs  = 0;
+const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers'];
+function _blindForceOpen(key) { return _blindActive && _BLIND_FORCED_KEYS.includes(key); }
+function _pollBlindState() {
+  if (!agentPort) return;
+  const req = http.get({
+    host: '127.0.0.1', port: agentPort, path: '/api/state', timeout: 1500,
+  }, (res) => {
+    let body = '';
+    res.on('data', (c) => { body += c; if (body.length > 256 * 1024) { body = ''; req.destroy(); } });
+    res.on('end', () => {
+      let s;
+      try { s = JSON.parse(body || '{}'); } catch { return; }
+      // Per-character overlay profiles — swap the visibility set when the
+      // active toon changes (cheap; only acts on an actual change).
+      try { _onActiveCharacter(s && s.activeCharacter); } catch {}
+      const a = s && s.blind && s.blind.active;
+      const nowOn = !!(a && a.active);
+      if (nowOn && !_blindActive) {
+        _blindActive  = true;
+        _blindSource  = a.source || 'blind';
+        _blindStartMs = Date.now();
+        appendAgentLog(`[blind] entering blind mode (source=${_blindSource})\n`);
+        // Make sure the windows exist so showInactive() has something to show.
+        if (!mobInfoWindow) createMobInfoOverlay();
+        if (!charmWindow)   createCharmOverlay();
+        if (!petsWindow)    createPetsOverlay();
+        if (!triggerWindow) createTriggerOverlay();
+        applyMobInfoVisibility();
+        applyCharmVisibility();
+        applyPetsVisibility();
+        applyTriggerVisibility();
+      } else if (!nowOn && _blindActive) {
+        _blindActive = false;
+        appendAgentLog(`[blind] leaving blind mode (was ${_blindSource})\n`);
+        _blindSource = null;
+        // Restore the user's normal visibility prefs for the four overlays.
+        applyMobInfoVisibility();
+        applyCharmVisibility();
+        applyPetsVisibility();
+        applyTriggerVisibility();
+      }
+    });
+  });
+  req.on('error',   () => {});
+  req.on('timeout', () => { req.destroy(); });
+}
+
+// ── Per-character overlay profiles (v1.2 Phase B) ───────────────────────────
+// A player who multiboxes wants different overlays per toon: the monk has no
+// charm pet so the Charm tracker is noise, but the same player's enchanter
+// lives by it. Mimic learns the active character from the agent's
+// /api/state.activeCharacter (the most-recently-active tailed log) and, when
+// per-character layouts are enabled, swaps the overlay visibility set to that
+// character's saved profile on every change. Opt-in: nothing happens until the
+// user saves a profile (the first save flips the master switch on).
+//
+// Scope note (B-1): this captures the eleven overlay VISIBILITY flags only —
+// the same set applyAllVisibility() manages. Per-character POSITION and OPACITY
+// are deliberately out of scope here (they carry screen-signature + on-screen
+// validation complexity); they're the B-2 follow-up. showTank is excluded — it
+// is a HUD sub-tab mode, not a standalone overlay window, and applyAllVisibility
+// doesn't manage it.
+const _CHAR_PROFILE_FLAGS = [
+  'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
+  'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
+  'showExtTarget',
+];
+// flag → (live-window getter, creator) so apply can materialize a window for an
+// overlay the profile turns on. Getters (not captured refs) read the current
+// `let` window var each call.
+const _CHAR_PROFILE_WINDOWS = [
+  { flag: 'showHud',          get: () => overlayWindow,   create: () => createOverlayWindow() },
+  { flag: 'enableTriggerTts', get: () => triggerWindow,   create: () => createTriggerOverlay() },
+  { flag: 'showCharm',        get: () => charmWindow,     create: () => createCharmOverlay() },
+  { flag: 'showPets',         get: () => petsWindow,      create: () => createPetsOverlay() },
+  { flag: 'showMobInfo',      get: () => mobInfoWindow,   create: () => createMobInfoOverlay() },
+  { flag: 'showBuffQueue',    get: () => buffQueueWindow, create: () => createBuffQueueOverlay() },
+  { flag: 'showWho',          get: () => whoWindow,       create: () => createWhoOverlay() },
+  { flag: 'showMelody',       get: () => melodyWindow,    create: () => createMelodyOverlay() },
+  { flag: 'showZeal',         get: () => zealWindow,      create: () => createZealHealthOverlay() },
+  { flag: 'showThreat',       get: () => threatWindow,    create: () => createThreatMeterOverlay() },
+  { flag: 'showExtTarget',    get: () => extTargetWindow, create: () => createExtTargetOverlay() },
+  { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
+];
+let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
+let _lastProfileChar = null;    // last char we applied a profile for (change-gate)
+
+// Snapshot the current visibility set into the character's profile. Returns the
+// saved-to char (lower) or null. First successful save enables the feature so
+// the user doesn't have to find a separate toggle to make it take effect.
+function _captureCharProfile(charLower) {
+  if (!charLower) return null;
+  const cfg = loadConfig();
+  const show = {};
+  for (const k of _CHAR_PROFILE_FLAGS) show[k] = !!cfg[k];
+  cfg.charProfiles = cfg.charProfiles || {};
+  cfg.charProfiles[charLower] = { show, savedAt: Date.now() };
+  cfg.charProfilesEnabled = true;   // first save opts in
+  saveConfig(cfg);
+  return charLower;
+}
+// Apply a saved profile's visibility set to live config + windows. No-op if the
+// character has no profile, or while a hide-all is active (we must not stomp the
+// hide-all restore snapshot — the user's explicit "clear the screen" wins).
+function _applyCharProfile(charLower) {
+  if (!charLower) return false;
+  if (_hideAllActive) return false;
+  const cfg = loadConfig();
+  const prof = cfg.charProfiles && cfg.charProfiles[charLower];
+  if (!prof || !prof.show) return false;
+  for (const k of _CHAR_PROFILE_FLAGS) {
+    if (typeof prof.show[k] === 'boolean') cfg[k] = prof.show[k];
+  }
+  saveConfig(cfg);
+  // Materialize a window for anything the profile turns on (applyXVisibility
+  // no-ops on a missing window, so it can't show what doesn't exist yet).
+  for (const d of _CHAR_PROFILE_WINDOWS) {
+    if (cfg[d.flag] && !d.get()) { try { d.create(); } catch {} }
+  }
+  applyAllVisibility();
+  pushStatus();
+  buildTrayMenu();
+  appendAgentLog(`[profile] applied overlay layout for ${charLower}\n`);
+  return true;
+}
+// Called from the 1s state poll with the agent's current activeCharacter. Only
+// fires on an actual change (and only when the feature is on), so it's free on
+// the steady-state poll. First observation of a character applies their profile
+// too — launching as that toon restores their layout.
+function _onActiveCharacter(name) {
+  const cl = name ? String(name).toLowerCase() : null;
+  _activeCharName = name || null;
+  if (!cl || cl === _lastProfileChar) return;
+  _lastProfileChar = cl;
+  const cfg = loadConfig();
+  // _applyCharProfile rebuilds the tray itself; when the feature is off we
+  // still rebuild so the "Save layout for <toon>" label tracks the new char.
+  if (cfg.charProfilesEnabled && _applyCharProfile(cl)) return;
+  try { buildTrayMenu(); } catch {}
+}
+// Tray-menu items for the per-character overlay layouts — the on/off switch,
+// "save layout for <toon>", and (if one exists) "forget". Built fresh each
+// menu render so the active-character label + profile presence stay current.
+function _charProfileTrayItems() {
+  const cfg = loadConfig();
+  const char  = _activeCharName;
+  const charLc = char ? char.toLowerCase() : null;
+  const hasProfile = !!(charLc && cfg.charProfiles && cfg.charProfiles[charLc]);
+  const items = [
+    { type: 'separator' },
+    { label: 'Per-character overlay layouts', type: 'checkbox',
+      checked: !!cfg.charProfilesEnabled,
+      click: (mi) => {
+        const c = loadConfig(); c.charProfilesEnabled = mi.checked; saveConfig(c);
+        // Turning it on while a profiled toon is active? Apply it right away
+        // (clear the change-gate so _onActiveCharacter doesn't skip it).
+        if (mi.checked && charLc) { _lastProfileChar = null; _onActiveCharacter(char); }
+        buildTrayMenu(); pushStatus();
+      } },
+    { label: char ? `💾 Save current layout for ${char}` : '💾 Save layout (no active character yet)',
+      enabled: !!charLc,
+      click: () => {
+        if (_captureCharProfile(charLc)) { _lastProfileChar = charLc; buildTrayMenu(); pushStatus(); }
+      } },
+  ];
+  if (hasProfile) {
+    items.push({ label: `🗑 Forget ${char}'s saved layout`,
+      click: () => {
+        const c = loadConfig();
+        if (c.charProfiles) { delete c.charProfiles[charLc]; saveConfig(c); }
+        buildTrayMenu();
+      } });
+  }
+  return items;
+}
+
 // ── Launch the agent under Electron's Node ──────────────────────────────────
 async function launchAgent() {
   if (quitting) return;
@@ -1610,6 +1807,12 @@ async function launchAgent() {
   // unconditionally lets a freshly-cleared session also propagate.
   try { pushMimicSession(); } catch (e) { /* non-fatal */ }
   pushStatus();
+  // Blind Mode poll — 1s cadence is plenty for a state change driven by
+  // log lines that take ≥1.5s to even fully cast. Single timer, shared
+  // across all watched characters; the agent's per-char map decides which.
+  if (up && !global.__blindPollTimer) {
+    global.__blindPollTimer = setInterval(_pollBlindState, 1000);
+  }
   return up;
 }
 
@@ -1847,6 +2050,8 @@ function _overlayEntries() {
   if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
   if (threatWindow  && !threatWindow.isDestroyed())  out.push(['threat',  threatWindow]);
   if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
+  if (tankWindow    && !tankWindow.isDestroyed())    out.push(['tank',    tankWindow]);
+  if (extTargetWindow && !extTargetWindow.isDestroyed()) out.push(['exttarget', extTargetWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -1855,12 +2060,22 @@ function _overlayEntries() {
 
 // Apply the per-window opacity saved in config (defaults to 1.0). Called on
 // window create + whenever a slider in setup mode moves.
+//
+// 1.2 refactor: the slider now drives the card SURFACE alpha (via a CSS
+// variable broadcast as 'bg-alpha'), not the whole-window setOpacity that
+// dimmed text along with background. The bug it fixes: slider at 100% used
+// to leave cards at their baked rgba(0,0,0,0.55) — visibly see-through
+// despite the label saying "opaque." Now 100% genuinely means an opaque
+// card surface that hides EQ behind it; text stays at full brightness at
+// every slider position so even very transparent cards stay readable.
+// setOpacity is held at 1.0 always (no compound dim).
 function applyOverlayOpacity(win, key) {
   if (!win || win.isDestroyed()) return;
   const cfg = loadConfig();
   const o = (cfg.overlayOpacity || {})[key];
   const val = (typeof o === 'number' && o >= 0.15 && o <= 1.0) ? o : 1.0;
-  try { win.setOpacity(val); } catch {}
+  try { win.setOpacity(1.0); } catch {}
+  try { win.webContents.send('bg-alpha', val); } catch {}
 }
 function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
@@ -1911,6 +2126,8 @@ function applySetupMode(on) {
     if (!zealWindow)    createZealHealthOverlay();
     if (!threatWindow)  createThreatMeterOverlay();
     if (!chChainWindow) createChChainOverlay();
+    if (!tankWindow)    createTankOverlay();
+    if (!extTargetWindow) createExtTargetOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -2878,7 +3095,7 @@ function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.enableTriggerTts && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
 function createCharmOverlay() {
@@ -2908,7 +3125,7 @@ function applyCharmVisibility() {
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
   // Charm tracker is opt-in (default off) — it's only useful to charm classes.
-  const shouldShow = unlocked || (cfg.showCharm && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('charm') || (cfg.showCharm && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) charmWindow.showInactive(); else charmWindow.hide();
 }
 
@@ -2942,7 +3159,7 @@ function applyPetsVisibility() {
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to pet classes. EQ-gated.
-  const shouldShow = unlocked || (cfg.showPets && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('pets') || (cfg.showPets && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
 }
 
@@ -3008,7 +3225,7 @@ function applyMobInfoVisibility() {
   if (!mobInfoWindow) return;
   const cfg = loadConfig();
   const unlocked  = cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showMobInfo && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('mobinfo') || (cfg.showMobInfo && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) mobInfoWindow.showInactive(); else mobInfoWindow.hide();
 }
 
@@ -3112,6 +3329,42 @@ function applyZealVisibility() {
   if (shouldShow) zealWindow.showInactive(); else zealWindow.hide();
 }
 
+// Tank overlay — DS total, buffs+timers, Divine Aura countdown, current target
+// HP, boss enrage warning, current rampage target. Reads /api/tank-state which
+// aggregates everything from the locally-watched Zeal state. Cross-raid HP sync
+// is Tier 4 (deferred); the overlay shows the active local character only.
+// (Uilnayar 2026-06-25.)
+function createTankOverlay() {
+  const b = _resolveBounds('tankBounds', 'tankBoundsSig', { x: 40, y: 480, width: 300, height: 280 });
+  tankWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Tank overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 240, minHeight: 120,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  tankWindow.setAlwaysOnTop(true, 'screen-saver');
+  tankWindow.setVisibleOnAllWorkspaces(true);
+  tankWindow.loadFile('tank.html');
+  tankWindow.on('moved',  () => _persistBounds('tankBounds', tankWindow));
+  tankWindow.on('resize', () => _persistBounds('tankBounds', tankWindow));
+  tankWindow.once('ready-to-show', () => {
+    tankWindow.webContents.send('agent-port', agentPort);
+    applyTankVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(tankWindow, 'tank');
+  });
+}
+function applyTankVisibility() {
+  if (!tankWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in — most members don't tank, so default off. EQ-gated like the rest.
+  const shouldShow = unlocked || (cfg.showTank && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) tankWindow.showInactive(); else tankWindow.hide();
+}
+
 // Threat meter overlay — per-fight per-player aggro breakdown (swing / proc /
 // spell / heal stacked bar) reading stats.currentEncounterThreat. Tanks see
 // where their hate is coming from; non-tanks see when they're about to pull.
@@ -3146,6 +3399,40 @@ function applyThreatVisibility() {
   // wants to see if they're about to pull. EQ-gated.
   const shouldShow = unlocked || (cfg.showThreat && !cfg.quietMode && _eqGateOk(cfg));
   if (shouldShow) threatWindow.showInactive(); else threatWindow.hide();
+}
+
+// Extended Target overlay — raid-wide "who's targeting what", sorted by raider
+// count, with HP + debuffs per target. Polls /api/extended-target (agent proxy
+// of the bot aggregation). Opt-in (default off); EQ-gated. (Uilnayar 2026-06-29.)
+function createExtTargetOverlay() {
+  const b = _resolveBounds('extTargetBounds', 'extTargetBoundsSig', { x: 40, y: 360, width: 320, height: 240 });
+  extTargetWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Extended Target overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 240, minHeight: 80,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  extTargetWindow.setAlwaysOnTop(true, 'screen-saver');
+  extTargetWindow.setVisibleOnAllWorkspaces(true);
+  extTargetWindow.loadFile('extarget.html');
+  extTargetWindow.on('moved',  () => _persistBounds('extTargetBounds', extTargetWindow));
+  extTargetWindow.on('resize', () => _persistBounds('extTargetBounds', extTargetWindow));
+  extTargetWindow.once('ready-to-show', () => {
+    extTargetWindow.webContents.send('agent-port', agentPort);
+    applyExtTargetVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(extTargetWindow, 'exttarget');
+  });
+}
+function applyExtTargetVisibility() {
+  if (!extTargetWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off). EQ-gated like every other built-in.
+  const shouldShow = unlocked || (cfg.showExtTarget && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
 }
 
 // CH chain overlay — cleric Complete Heal rotation read from the zone-visible
@@ -3208,6 +3495,7 @@ function applyAllVisibility() {
   applyZealVisibility();
   applyThreatVisibility();
   applyChChainVisibility();
+  applyExtTargetVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -3242,6 +3530,8 @@ function toggleHideAllOverlays() {
       showZeal:         !!cfg.showZeal,
       showThreat:       !!cfg.showThreat,
       showChChain:      !!cfg.showChChain,
+      showTank:         !!cfg.showTank,
+      showExtTarget:    !!cfg.showExtTarget,
     };
     cfg.showHud = false;
     cfg.enableTriggerTts = false;
@@ -3254,6 +3544,8 @@ function toggleHideAllOverlays() {
     cfg.showZeal = false;
     cfg.showThreat = false;
     cfg.showChChain = false;
+    cfg.showTank = false;
+    cfg.showExtTarget = false;
     _hideAllActive = true;
   } else if (_hideAllPrev) {
     // Restore from snapshot — respects whatever individual prefs the user
@@ -3393,6 +3685,8 @@ function currentStatus() {
     showZeal: !!cfg.showZeal,
     showThreat: !!cfg.showThreat,
     showChChain: !!cfg.showChChain,
+    showTank: !!cfg.showTank,
+    showExtTarget: !!cfg.showExtTarget,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -3575,9 +3869,19 @@ function buildTrayMenu() {
         if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility();
         pushStatus();
       } },
+    { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showTank = mi.checked; saveConfig(cfg);
+        if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility();
+        pushStatus();
+      } },
     { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showChChain = mi.checked; saveConfig(cfg);
         if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
+        pushStatus();
+      } },
+    { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showExtTarget = mi.checked; saveConfig(cfg);
+        if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -3604,6 +3908,9 @@ function buildTrayMenu() {
     // hide/show round-trip. Bindable hotkey lives in registerHideAllHotkey().
     { label: _hideAllActive ? '👁 Show overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')' : '🙈 Hide all overlays (' + (_hideAllHotkeyLabelNow() || 'no hotkey') + ')',
       click: () => { toggleHideAllOverlays(); } },
+    // Per-character overlay layouts (v1.2 Phase B) — save/restore the visibility
+    // set per toon, swapped automatically as the active character changes.
+    ..._charProfileTrayItems(),
   ];
 
   // My /tells — its own section now (was buried inside the overlay submenu).
@@ -4125,6 +4432,14 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showChChain = !cfg.showChChain; saveConfig(cfg);
       if (cfg.showChChain && !chChainWindow) createChChainOverlay(); else applyChChainVisibility();
       break;
+    case 'tank':
+      cfg.showTank = !cfg.showTank; saveConfig(cfg);
+      if (cfg.showTank && !tankWindow) createTankOverlay(); else applyTankVisibility();
+      break;
+    case 'exttarget':
+      cfg.showExtTarget = !cfg.showExtTarget; saveConfig(cfg);
+      if (cfg.showExtTarget && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
+      break;
     default:
       return null;
   }
@@ -4175,6 +4490,12 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === chChainWindow) {
       cfg.showChChain = false; saveConfig(cfg);
       try { chChainWindow.hide(); } catch {}
+    } else if (win === tankWindow) {
+      cfg.showTank = false; saveConfig(cfg);
+      try { tankWindow.hide(); } catch {}
+    } else if (win === extTargetWindow) {
+      cfg.showExtTarget = false; saveConfig(cfg);
+      try { extTargetWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -4557,8 +4878,10 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showZeal         && !zealWindow)      createZealHealthOverlay();
     if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
     if (merged.showChChain      && !chChainWindow)   createChChainOverlay();
+    if (merged.showTank         && !tankWindow)      createTankOverlay();
+    if (merged.showExtTarget    && !extTargetWindow) createExtTargetOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyExtTargetVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -4741,6 +5064,7 @@ app.whenReady().then(async () => {
   createMelodyOverlay();
   createZealHealthOverlay();
   createChChainOverlay();
+  createTankOverlay();
   pushStatus();
   startZealCapture();
 
