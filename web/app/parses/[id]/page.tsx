@@ -969,8 +969,16 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
               const targets   = (selfHeal?.targets || []).slice(0, 5);
               const moreCount = Math.max(0, (selfHeal?.targets || []).length - targets.length);
               // Spell-count summary — abbreviate the noisy long EQ names.
+              // "Complete Heal" (the real Cleric spell, no "ing") never
+              // matched here before — only the "Complete Healing" item-click
+              // spelling did — so a cleric's own CH casts always fell through
+              // to the raw unabbreviated name (Uilnayar 2026-07-02 confirmed
+              // via Supabase: zero rows have ever shown ANY "Complete Heal"
+              // spelling, across the whole database — the label bug masked
+              // whether that's "nobody's cast it" or "it's mislabeled," but
+              // the regex gap was real either way and is fixed here).
               const SPELL_LABELS: [RegExp, string][] = [
-                [/^complete healing$/i, 'CH'],
+                [/^complete heal(?:ing)?$/i, 'CH'],
                 [/^greater healing$/i, 'GH'],
                 [/^superior healing$/i, 'SH'],
                 [/^healing(?: light)?$/i, 'Heal'],
@@ -982,10 +990,11 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                 [/^lay on hands$/i, 'LoH'],
                 [/^touch of the divine$/i, 'ToD'],
                 [/^renewal of light$/i, 'RoL'],
-                [/^chloroplast$/i, 'Chlro'],
+                [/^chloroblast$/i, 'Chlro'],
                 [/^regrowth of the grove$/i, 'RotG'],
                 [/^regrowth$/i, 'Regrowth'],
                 [/^karana's renewal$/i, 'KR'],
+                [/^tunare'?s renewal$/i, 'Druid CH'],
                 [/^torpor$/i, 'Torpor'],
                 [/^ward of restoration$/i, 'WoR'],
               ];
@@ -1085,10 +1094,15 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       ) : null}
                     </div>
                   ) : null}
-                  {spellEntries.length > 0 && (
+                  {/* Officer-only (Uilnayar 2026-07-02: "can we start showing
+                      CHs cast per fight just for admins?"). The data has
+                      existed since v3.1.69 but was visible to every signed-in
+                      raider — gating it here, not by removing the data from
+                      the query, so nothing else that reads raw_parse breaks. */}
+                  {officer && spellEntries.length > 0 && (
                     <div className="ml-3 text-[11px] mt-0.5">
                       <span className="opacity-50">↳ </span>
-                      <span title="Heal-spell cast counts from this healer's own log. Only the caster's client logs the spell name — others see 'begins to cast a spell' — so this only counts when this healer was running the agent.">
+                      <span title="Heal-spell cast counts from this healer's own log (officer view only). Only the caster's client logs the spell name — others see 'begins to cast a spell' — so this only counts when this healer was running the agent.">
                         {spellEntries.map(([name, n], i) => (
                           <span key={name}>
                             {i > 0 && <span className="opacity-60"> · </span>}
