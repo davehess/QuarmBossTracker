@@ -4,6 +4,9 @@
   /* Wolf Pack Tank Overlay — Uilnayar 2026-06-25:
      "DS total and buffs with timers, enrage upcoming based on boss HP …
      who current Rampage is … DA countdown + 'start CH on <DA ramp>' at ≤10s."
+     Refocused 2026-07-01: centers on the MAIN TANK (CH-chain target or
+     whoever the boss's melee is connecting on) — MT HP, MT buffs, MT damage
+     shield — not the local character; local view is the no-MT fallback.
      Reads /api/tank-state. Cross-raid sync (Tier 4) deferred — overlay
      shows the local agent's data only for now. */
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
@@ -185,19 +188,33 @@
       whoEl.textContent = '';
       return;
     }
-    whoEl.textContent = '· ' + s.character;
+    whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
     if (s.fast_sync) { syncEl.textContent = 'sync'; syncEl.style.color = '#56d364'; syncEl.style.borderColor = '#56d364'; }
     else { syncEl.textContent = 'local'; syncEl.style.color = '#9aa4ad'; syncEl.style.borderColor = 'rgba(255,255,255,0.2)'; }
 
     var html = '';
 
-    // Own HP
-    var hp = s.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.hp_pct)));
-    html += '<div class="card">'
-         +    '<div class="head">Your HP</div>'
-         +    '<div class="hpwrap"><div class="hpbar ' + hpClass(hp) + '" style="width:' + (hp == null ? 0 : hp) + '%"></div>'
-         +      '<div class="val">' + (hp == null ? '—' : hp + '%') + '</div></div>'
-         +  '</div>';
+    // Main Tank HP — when the agent has resolved an MT (CH-chain target or
+    // whoever the boss's melee is connecting on), the overlay is about THEM,
+    // not the local character (2026-07-01: "focus on the Main Tank and
+    // Rampage, and THEIR buffs, not the caster"). Falls back to own HP when
+    // no MT is resolved (out of combat / solo / you ARE the tank).
+    var mt = s.mt || null;
+    if (mt && mt.name) {
+      var mthp = mt.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(mt.hp_pct)));
+      html += '<div class="card">'
+           +    '<div class="head">Main Tank — ' + esc(mt.name) + (mt.is_self ? ' (you)' : '') + '</div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(mthp) + '" style="width:' + (mthp == null ? 0 : mthp) + '%"></div>'
+           +      '<div class="val">' + (mthp == null ? 'HP not visible — target or group the MT' : mthp + '%') + '</div></div>'
+           +  '</div>';
+    } else {
+      var hp = s.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.hp_pct)));
+      html += '<div class="card">'
+           +    '<div class="head">Your HP</div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(hp) + '" style="width:' + (hp == null ? 0 : hp) + '%"></div>'
+           +      '<div class="val">' + (hp == null ? '—' : hp + '%') + '</div></div>'
+           +  '</div>';
+    }
 
     // Divine Aura — flash when ≤10s remain + "start CH on <name>" callout.
     if (s.da) {
@@ -247,37 +264,48 @@
       html += '<div class="enrage ' + urgCls + '" style="border-color:' + (ch.urgency === 'red' ? '#f87171' : ch.urgency === 'yellow' ? '#f0d264' : '#56d364') + ';background:rgb(0 0 0 / var(--bg-alpha))">' + line + '</div>';
     }
 
-    // DS total + per-hit average + breakdown BY DAMAGE TYPE (crush/kick/hit —
-    // EQ's combat log never says which BUFF caused a reflect line, only what
-    // the returned damage looked like) + known DS SOURCES currently up (the
-    // one place we can say "how much from each one" — from the spell catalog,
-    // not the log). (Uilnayar 2026-06-29.)
-    if (s.ds && (s.ds.total > 0 || (s.ds.abilities && s.ds.abilities.length))) {
-      var bdown = (s.ds.abilities || []).slice(0, 3).map(function(a){
+    // DS card — the MAIN TANK's parser-confirmed reflects this fight (never
+    // anyone's outgoing damage; the agent-side accumulator only counts
+    // curated/correlated DS events now), plus known DS SOURCES from the MT's
+    // buff list (the one place we can say "how much from each one" — spell
+    // catalog SPA-59, not the log). Falls back to the raid-wide pool when no
+    // MT is resolved. (Uilnayar 2026-06-29; refocused 2026-07-01.)
+    var ds = (mt && mt.ds) ? mt.ds : s.ds;
+    var dsWho = (mt && mt.ds) ? ' — ' + esc(mt.name) : '';
+    if (ds && (ds.total > 0 || (ds.abilities && ds.abilities.length) || (ds.sources && ds.sources.length))) {
+      var bdown = (ds.abilities || []).slice(0, 3).map(function(a){
         return esc(a.name) + ' ' + fmtDmg(a.total) + ' <span class="opacity-70">(' + a.count + '×, ~' + a.avg + '/hit)</span>';
       }).join(' · ');
-      var hitsPart = s.ds.hits ? ' <span class="hits">· ' + s.ds.hits + ' hit' + (s.ds.hits === 1 ? '' : 's') + '</span>' : '';
-      var avgPart  = s.ds.avg_per_hit ? ' <span class="avg">~' + s.ds.avg_per_hit + '/hit</span>' : '';
+      var hitsPart = ds.hits ? ' <span class="hits">· ' + ds.hits + ' hit' + (ds.hits === 1 ? '' : 's') + '</span>' : '';
+      var avgPart  = ds.avg_per_hit ? ' <span class="avg">~' + ds.avg_per_hit + '/hit</span>' : '';
       var sourcesHtml;
-      if (s.ds.sources && s.ds.sources.length) {
-        sourcesHtml = '<div class="ds-sources">' + s.ds.sources.map(function(src){
+      if (ds.sources && ds.sources.length) {
+        sourcesHtml = '<div class="ds-sources">' + ds.sources.map(function(src){
           return '<div class="src"><span class="nm">' + esc(src.name) + '</span><span class="val">+' + src.per_hit + '/hit</span></div>';
         }).join('') + '</div>';
       } else {
         sourcesHtml = '<div class="ds-sources"><div class="none">no known DS buff currently up — likely worn gear/AA</div></div>';
       }
       html += '<div class="card">'
-           +    '<div class="head">Damage shield (this fight)</div>'
-           +    '<div class="ds-total">' + fmtDmg(s.ds.total || 0) + ' returned' + avgPart + hitsPart + '</div>'
+           +    '<div class="head">Damage shield' + dsWho + ' (this fight)</div>'
+           +    '<div class="ds-total">' + fmtDmg(ds.total || 0) + ' returned' + avgPart + hitsPart + '</div>'
            +    (bdown ? '<div class="ds-breakdown">' + bdown + '</div>' : '')
            +    sourcesHtml
            +  '</div>';
     }
 
-    // Buffs with countdowns
-    if (s.buffs && s.buffs.length) {
+    // Buffs with countdowns — the MAIN TANK's buffs when an MT is resolved
+    // (their Zeal list if they're the local character, otherwise observed
+    // buff landings merged with the bot's cross-client relay), the local
+    // character's own Zeal buffs only as the no-MT fallback.
+    var buffSrc = (mt && mt.buffs && mt.buffs.length) ? mt.buffs : (mt ? [] : (s.buffs || []));
+    var buffHead = mt ? 'Buffs — ' + esc(mt.name) : 'Buffs';
+    // 'observed' = landing inference only (MT not running Mimic) — partial
+    // by nature, so say so instead of letting it read as the full list.
+    if (mt && mt.buff_source === 'observed') buffHead += ' <span style="text-transform:none;color:#6e7681">(observed — MT not on Mimic)</span>';
+    if (buffSrc.length) {
       var buffsHtml = '';
-      var buffs = s.buffs.slice().sort(function(a,b){
+      var buffs = buffSrc.slice().sort(function(a,b){
         // null ticks at the end; lowest seconds first so expiring shows up.
         var as = a.seconds == null ? 1e9 : a.seconds;
         var bs = b.seconds == null ? 1e9 : b.seconds;
@@ -285,10 +313,14 @@
       }).slice(0, 8);
       for (var i = 0; i < buffs.length; i++) {
         var b = buffs[i];
-        var cls = ''; if (b.seconds != null) { if (b.seconds <= 12) cls = 'crit'; else if (b.seconds <= 60) cls = 'soon'; }
-        buffsHtml += '<div class="buff ' + cls + '"><span class="name">' + esc(b.name) + '</span><span class="left">' + (b.seconds == null ? '—' : fmtSec(b.seconds)) + '</span></div>';
+        var cls = ''; if (b.fell_off) cls = 'crit'; else if (b.seconds != null) { if (b.seconds <= 12) cls = 'crit'; else if (b.seconds <= 60) cls = 'soon'; }
+        var left = b.fell_off ? 'fell off' : (b.seconds == null ? '—' : fmtSec(b.seconds));
+        buffsHtml += '<div class="buff ' + cls + '"><span class="name">' + esc(b.name) + '</span><span class="left">' + left + '</span></div>';
       }
-      html += '<div class="card"><div class="head">Buffs</div><div class="buffs">' + buffsHtml + '</div></div>';
+      html += '<div class="card"><div class="head">' + buffHead + '</div><div class="buffs">' + buffsHtml + '</div></div>';
+    } else if (mt && !mt.is_self) {
+      html += '<div class="card"><div class="head">' + buffHead + '</div>'
+           +  '<div class="buffs"><div class="buff"><span class="name" style="color:#6e7681;font-style:italic">no buffs observed on the MT yet</span></div></div></div>';
     }
 
     contentEl.innerHTML = html;

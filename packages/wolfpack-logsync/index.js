@@ -227,6 +227,13 @@ const CAST_HATE = {
 // a flat per-resist proxy to the caster's `spell` bucket. Named aggro clickies
 // that are cast FOR threat get a higher override; everything else (a resisted
 // slow / snare / debuff still tags you on the hate list) uses the default.
+// Real EQ formula for a standard non-damaging detrimental (snare/fear/slow/
+// stun/mez/AC debuff): `maxHP / 15, capped at 1200, minimum 25` (Torven's
+// live-hate-meter research, eqemulator.org forums thread 39819). The agent
+// has no per-mob maxHP data (only live HP %, never the absolute value), so
+// this formula can't be applied — RESIST_HATE_DEFAULT below is a flat proxy
+// that sits inside that formula's real-world range rather than a computed
+// value. Revisit if/when the agent gains access to `eqemu_npc_types` maxHP.
 const RESIST_HATE_DEFAULT = 120;
 const RESIST_HATE = {
   'holy might':            320,   // PAL stun/nuke aggro clicky (Forlorn Totem of Rolfron Zek)
@@ -3241,14 +3248,18 @@ class EncounterBuilder {
     // fight (e.g. Lady Vox Complete Heal). Surfaced on parse cards via the
     // encounter payload's npc_healed_total field.
     this.npcHealedTotal = 0;
-    // Damage-shield reflects — every damage event with no attacker landing on
-    // one of our combat targets is treated as a reflect (DS spell, thorns
-    // song, clicky shield, etc.). We track per-ability { count, total, min,
-    // max, examples[]} so the dashboard can later distinguish fixed-value
-    // shields (Inner Fire family — all hits the same number) from variable
-    // ones (Elemental Illusion bard song, clickies — values fan out).
+    // Damage-shield reflects — parser-confirmed DS events only (`event.ds`:
+    // curated allow-list form or the two-line swing-correlated pattern).
+    // We track per-ability { count, total, min, max, examples[]} so the
+    // dashboard can later distinguish fixed-value shields (Inner Fire family
+    // — all hits the same number) from variable ones (Elemental Illusion
+    // bard song, clickies — values fan out).
     //   abilityName -> { count, total, min, max, examples: number[] }
     this.dsReflects = new Map();
+    // Same reflects mirrored per DS WEARER (tank) so the Tank overlay can
+    // show the Main Tank's returns specifically, not a raid-wide pool.
+    //   tankLower -> { name, total, hits, abilities: { abil: {count,total} } }
+    this.dsByTank = new Map();
     // Charm session tracking (this encounter only).
     //   _activeCharms: petLower → open session record (started_at, owner, …)
     //   charmSessions: closed sessions (charm broke or owner re-charmed
@@ -3445,10 +3456,13 @@ class EncounterBuilder {
     }
     // Mirror current DS-reflect accumulator so the dashboard can render
     // a live "🛡 Damage Shield" panel without poking builder internals.
+    // byTank rides along for the Tank overlay's Main-Tank-focused DS card.
     if (this.dsReflects && this.dsReflects.size > 0) {
       const out = {};
       for (const [k, v] of this.dsReflects.entries()) out[k] = v;
-      stats.currentDsReflects = { bossName: this.bossName, abilities: out };
+      const byTank = {};
+      if (this.dsByTank) for (const [k, v] of this.dsByTank.entries()) byTank[k] = v;
+      stats.currentDsReflects = { bossName: this.bossName, abilities: out, byTank };
     } else {
       stats.currentDsReflects = null;
     }
@@ -3479,6 +3493,35 @@ class EncounterBuilder {
       if (!s.lastHealAt || tsMs > s.lastHealAt) s.lastHealAt = tsMs;
     }
   }
+  // Per-fight DS reflect tally (feeds the Tank overlay via
+  // stats.currentDsReflects). Keyed by ability for the breakdown, and
+  // mirrored per-TANK (the DS wearer, from the curated form's possessive or
+  // the swing-correlation) in this.dsByTank so the overlay can show the
+  // MAIN TANK's returns instead of a mixed pool. wearer === null means the
+  // uploader (first-person "YOUR thorns" form).
+  _bumpDsReflect(ability, amount, wearer) {
+    if (!amount || amount <= 0) return;
+    const abil = String(ability || 'non-melee').trim();
+    if (!abil || abil.length >= 40) return;  // sanity bound; real spell names are short
+    let r = this.dsReflects.get(abil);
+    if (!r) { r = { count: 0, total: 0, min: amount, max: amount, examples: [] }; this.dsReflects.set(abil, r); }
+    r.count++;
+    r.total += amount;
+    if (amount < r.min) r.min = amount;
+    if (amount > r.max) r.max = amount;
+    if (r.examples.length < 8) r.examples.push(amount);
+    const tank = (wearer && !/^you$/i.test(wearer)) ? wearer : (this.character || 'You');
+    const tl = tank.toLowerCase();
+    if (!this.dsByTank) this.dsByTank = new Map();
+    let bt = this.dsByTank.get(tl);
+    if (!bt) { bt = { name: tank, total: 0, hits: 0, abilities: {} }; this.dsByTank.set(tl, bt); }
+    bt.total += amount;
+    bt.hits++;
+    const ba = bt.abilities[abil] || (bt.abilities[abil] = { count: 0, total: 0 });
+    ba.count++;
+    ba.total += amount;
+  }
+
   // Commit the buffered DS attribution to stats.damageShield. Called when
   // the flavor line arrives (with the real spell name retagged onto the
   // eventRef), when a new DS attribution opens (so the previous one isn't
@@ -3493,6 +3536,9 @@ class EncounterBuilder {
     if (!byTank[spell]) byTank[spell] = { count: 0, total: 0 };
     byTank[spell].count++;
     byTank[spell].total += p.eventRef.amount;
+    // Per-fight overlay tally — done here (not in add()) so the flavor-line
+    // retag has already named the real DS spell on the eventRef.
+    this._bumpDsReflect(spell, p.eventRef.amount, p.attacker);
     this._dsPending = null;
   }
 
@@ -3785,6 +3831,20 @@ class EncounterBuilder {
       if (_isMob(att) && _isPlayer(def)) {
         const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
         this._lastIncomingHit.set(att.toLowerCase(), { tank, tsMs });
+        // Rolling record of who the mob's melee is actually connecting on —
+        // the Main-Tank signal for the Tank overlay (majority of connects
+        // over the last ~15s). Rampage hits are excluded: the rampage
+        // announce line precedes its damage line, so _rampageTarget is
+        // still set here when this connect IS the rampage hit — counting
+        // it would flip the "MT" to the rampage victim every cycle.
+        const isRampHit = this._rampageTarget && this._rampageTs
+          && tank.toLowerCase() === this._rampageTarget.toLowerCase()
+          && tsMs - this._rampageTs <= 3000;
+        if (!this.silent && !isRampHit) {
+          const rt = stats.recentTankHits || (stats.recentTankHits = []);
+          rt.push({ mob: att.toLowerCase(), tank, tsMs });
+          if (rt.length > 200) rt.splice(0, rt.length - 200);
+        }
       }
 
       // 3) PvP assist window: uploader's outbound damage to a plausible
@@ -4050,21 +4110,19 @@ class EncounterBuilder {
       // (first-person, rawAtk===null) — e.g. Backstab → Rogue, Flying Kick →
       // Monk. Only fires for the names in ABILITY_CLASS; no-op otherwise.
       if (rawAtk === null && event.ability) inferClassFromAbility(this.character, event.ability);
-      // Damage-shield reflect detection: the line is "X was hit by ABILITY for
-      // N damage" with attacker=null (EQ never reveals who applied the DS to
-      // the tank). When the defender is a mob we're currently fighting AND an
-      // ability name is present, count it as a reflect.
-      if (rawAtk === null && event.ability && event.defender && this.targets.has(event.defender)) {
-        const abil = String(event.ability).trim();
-        if (abil && abil.length < 40) { // sanity bound; real spell names are short
-          let r = this.dsReflects.get(abil);
-          if (!r) { r = { count: 0, total: 0, min: event.amount, max: event.amount, examples: [] }; this.dsReflects.set(abil, r); }
-          r.count++;
-          r.total += event.amount;
-          if (event.amount < r.min) r.min = event.amount;
-          if (event.amount > r.max) r.max = event.amount;
-          if (r.examples.length < 8) r.examples.push(event.amount);
-        }
+      // Damage-shield reflect accumulation for the Tank overlay — ONLY events
+      // the parser/correlator positively identified as DS (`event.ds`), i.e.
+      // the curated "is <verb> by <possessive> <SOURCE>" form or the two-line
+      // Quarm pattern resolved via swing-correlation (see _commitDsPending).
+      // The old filter here (`attacker === null && ability && defender is a
+      // target`) also matched the uploader's OWN first-person damage — "You
+      // slash X for 26" and "X has taken N from your <song>" both parse with
+      // attacker=null — so a bard's overlay showed their slashes and songs
+      // as "Damage shield (this fight)" (user report 2026-07-01). Buffered
+      // two-line events (`_skipDsAggregate`) are tallied at commit time
+      // instead, after the flavor line has retagged the real spell name.
+      if (event.ds && !event._skipDsAggregate) {
+        this._bumpDsReflect(event.ability, event.amount, event.attacker);
       }
       // Charm-session damage attribution. If the attacker is a pet with
       // an open charm session, add the damage to its session total so
@@ -4126,15 +4184,27 @@ class EncounterBuilder {
         // PROC_HATE catalog takes precedence for threat — known threat procs
         // use their flat hate value (e.g. Enraging Blow = 700 hate per trigger)
         // rather than a damage-proxy. Also count occurrences for the breakdown.
+        //
+        // Damage-derived hate below is 1:1 with raw damage across ALL
+        // categories (melee, unnamed proc/DoT, named spell) — confirmed by
+        // Torven's live-hate-meter research (eqemulator.org forums, thread
+        // 39819): "damage spell hate equals base damage (ignoring crits,
+        // resists, focuses)". The old ×1.3 (proc/dot) and ×1.5 (spell)
+        // multipliers here were unsourced guild heuristics that overweighted
+        // caster damage relative to melee; removed since they contradicted
+        // the confirmed formula. (PROC_HATE catalog values above 400 — e.g.
+        // Enraging Blow, Provoke, Taunt — remain correct: the thread's
+        // 400 proc-hate cap explicitly excludes procs from the wielder's
+        // own class abilities/clickies, which is what these are.)
         if (a && PROC_HATE[a] !== undefined) {
           t.proc += PROC_HATE[a];
           t.procDetail[event.ability] = (t.procDetail[event.ability] || 0) + 1;
         } else if (deepsCategory === 'melee') {
-          t.swing += event.amount;                 // 1 hate per damage (proxy)
+          t.swing += event.amount;                 // 1 hate per damage
         } else if (deepsCategory === 'proc' || deepsCategory === 'dot') {
-          t.proc  += event.amount * 1.3;           // unnamed procs / DS-style
+          t.proc  += event.amount;                 // unnamed procs / DS-style — 1 hate per damage
         } else {
-          t.spell += event.amount * 1.5;           // named spells / songs / dirges
+          t.spell += event.amount;                 // named spells / songs / dirges — 1 hate per damage
         }
       }
     }
@@ -4422,13 +4492,20 @@ class EncounterBuilder {
     if (event.type === 'heal' && (event.attacker || this.character)) {
       const healer = event.attacker || this.character;
       this._bumpHealer(healer, event.defender, event.amount || 0, Date.parse(event.ts) || Date.now());
-      // Live threat: heals generate hate roughly 0.5 per heal point in Luclin-era
+      // Live threat: heal hate = 2/3 of healed amount, capped per cast — per
+      // Torven's live-hate-meter research (eqemulator.org forums, thread
+      // 39819): "2/3rds the amount healed... capped at 800 on 1-50 targets,
+      // and 1500 on 51+ targets." The cap is keyed to the ENGAGED MOB's
+      // level, which the agent doesn't track; raid/boss content on Quarm is
+      // effectively always 51+, so we apply the 1500 cap unconditionally
+      // (the 800 cap for sub-51 trash is an unmodeled edge case). Replaces
+      // the prior flat, uncapped ×0.5 guild heuristic.
       if (healer && event.amount > 0 && (!/\s/.test(healer) || healer === this.character)) {
         if (!this.threatBy.has(healer)) {
           this.threatBy.set(healer, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
         }
         const ht = this.threatBy.get(healer);
-        ht.heal += event.amount * 0.5;             // threat-weighted (Tanks meter)
+        ht.heal += Math.min(event.amount * (2 / 3), 1500);   // threat-weighted (Tanks meter)
         ht.healRaw = (ht.healRaw || 0) + event.amount;   // raw healing (per-fight overlay)
       }
       // ── Boss self-heal (Lady Vox, Naggy, Vyrkma etc. Complete Heal themselves) ──
@@ -6132,6 +6209,136 @@ function _serializeTankState() {
     rampage = { target: r.target, attacker: r.attacker || null, ageMs: now - r.at };
   }
 
+  // ── Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
+  // focus on the Main Tank and Rampage, and THEIR buffs, not the caster").
+  // Two signals, strongest first:
+  //   1. The CH chain target — healers explicitly run the chain on the MT.
+  //   2. Majority of the engaged mob's melee connects over the last 15s
+  //      (stats.recentTankHits; rampage hits already excluded at record
+  //      time so a rampage cycle can't flip the MT).
+  // null when neither fires (out of combat / solo) — the overlay falls back
+  // to the local character view.
+  let mtName = null, mtSource = null;
+  {
+    const chc = chChainSnapshot();
+    if (chc && chc.target) { mtName = String(chc.target); mtSource = 'ch_chain'; }
+    if (!mtName) {
+      const tally = new Map();
+      for (const h of (stats.recentTankHits || [])) {
+        if (now - h.tsMs > 15_000) continue;
+        const k = h.tank.toLowerCase();
+        const t = tally.get(k) || { name: h.tank, hits: 0 };
+        t.hits++;
+        tally.set(k, t);
+      }
+      let best = null;
+      for (const t of tally.values()) if (!best || t.hits > best.hits) best = t;
+      if (best) { mtName = best.name; mtSource = 'incoming_melee'; }
+    }
+  }
+  let mt = null;
+  if (mtName) {
+    const mtLower = mtName.toLowerCase();
+    const isSelf = !!(active && mtLower === String(active).toLowerCase());
+    // MT HP — self HP if the viewer IS the tank; otherwise scan every watched
+    // character's Zeal gauges for the name: group-member gauges, or the
+    // target gauge (slot 6) when someone is targeting the MT. null when the
+    // MT isn't visible on any local gauge (cross-raid HP sync is Tier 4).
+    let mtHp = null;
+    if (isSelf && typeof st.self_hp_pct === 'number') mtHp = st.self_hp_pct;
+    else {
+      for (const ch of Object.keys(_zealState || {})) {
+        const zst = _zealState[ch];
+        if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
+        if (String(ch).toLowerCase() === mtLower && typeof zst.self_hp_pct === 'number') { mtHp = zst.self_hp_pct; break; }
+        if (Array.isArray(zst.gauges)) {
+          const g = zst.gauges.find(g => g && g.text && g.hp_pct != null
+            && String(g.text).toLowerCase() === mtLower && g.slot !== 16);
+          if (g) { mtHp = g.hp_pct; break; }
+        }
+      }
+      // No local gauge sees the MT — fall back to their own Mimic's uploaded
+      // HP (up to ~20s stale on the heartbeat cadence; better than a blank
+      // bar, and the overlay's freshness cue stays honest via buff_source).
+      if (mtHp == null) {
+        const live = _mtLiveStateByName.get(mtLower);
+        if (live && live.state && typeof live.state.self_hp_pct === 'number') mtHp = live.state.self_hp_pct;
+      }
+    }
+    // MT buffs, best source wins:
+    //   1. The viewer IS the tank → local Zeal list (full fidelity, live).
+    //   2. The MT runs Mimic → THEIR uploaded live-state row via the bot's
+    //      character-live-state relay (their own Zeal list — includes worn
+    //      clickies and pre-fight buffs that never appear as landings).
+    //   3. Fallback → locally-observed buff landings (targetBuffsFor) merged
+    //      with the bot's cross-client landing relay. fell_off entries ride
+    //      along with seconds:0 — "Aegolism just dropped" is exactly what
+    //      whoever watches this overlay needs to see.
+    let mtBuffs;
+    let mtBuffSource = 'self';
+    if (isSelf) mtBuffs = buffsOut;
+    else {
+      try { fetchCharacterLiveState(mtName); } catch {}
+      const live = _mtLiveStateByName.get(mtLower);
+      if (live && live.state && Array.isArray(live.state.buffs)) {
+        mtBuffs = live.state.buffs.map(b => ({ name: b.name, seconds: b.seconds, fell_off: false }));
+        mtBuffSource = 'mimic';
+      } else {
+        try { fetchTargetBuffs(mtName); } catch {}
+        const seen = new Map();
+        for (const b of targetBuffsFor(mtLower)) {
+          seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
+        }
+        const relay = _targetBuffsByName.get(mtLower);
+        for (const b of ((relay && relay.buffs) || [])) {
+          if (!b || !b.name || seen.has(String(b.name).toLowerCase())) continue;
+          seen.set(String(b.name).toLowerCase(), {
+            name: b.name,
+            seconds: typeof b.remaining_secs === 'number' ? b.remaining_secs : null,
+            fell_off: false,
+          });
+        }
+        mtBuffs = [...seen.values()];
+        mtBuffSource = 'observed';
+      }
+    }
+    // MT damage shield — this fight's parser-confirmed reflects credited to
+    // the MT specifically (dsByTank), NOT the raid-wide ability pool.
+    let mtDs = null;
+    const byTank = dsr && dsr.byTank ? dsr.byTank[mtLower] : null;
+    if (byTank) {
+      const abilities = Object.entries(byTank.abilities || {})
+        .map(([name, v]) => ({ name, total: v.total || 0, count: v.count || 0, avg: v.count > 0 ? Math.round(v.total / v.count) : 0 }))
+        .sort((a, b) => b.total - a.total);
+      mtDs = {
+        total: byTank.total || 0,
+        hits: byTank.hits || 0,
+        avg_per_hit: byTank.hits > 0 ? Math.round(byTank.total / byTank.hits) : 0,
+        abilities: abilities.slice(0, 8),
+      };
+    }
+    // Known DS sources on the MT — cross-reference THEIR buff list (not the
+    // viewer's) against the catalog's SPA-59 per-hit values.
+    const mtDsSources = [];
+    for (const b of (mtBuffs || [])) {
+      if (b.fell_off) continue;
+      const cat = _spellByNameLower.get(String(b.name).toLowerCase());
+      if (cat && cat.ds) mtDsSources.push({ name: b.name, per_hit: cat.ds });
+    }
+    mtDsSources.sort((a, b) => b.per_hit - a.per_hit);
+    mt = {
+      name:    mtName,
+      is_self: isSelf,
+      source:  mtSource,
+      // 'self' | 'mimic' (the MT's own uploaded Zeal list) | 'observed'
+      // (landing inference — partial; worn clickies/pre-fight buffs missing)
+      buff_source: mtBuffSource,
+      hp_pct:  mtHp,
+      buffs:   (mtBuffs || []).slice(0, 20),
+      ds:      mtDs ? { ...mtDs, sources: mtDsSources.slice(0, 8) } : { total: 0, hits: 0, avg_per_hit: 0, abilities: [], sources: mtDsSources.slice(0, 8) },
+    };
+  }
+
   // Boss + enrage hint. Drives the enrage countdown / warning. We use the
   // active boss name from the DS reflects struct as a fallback when the
   // target gauge is empty (e.g. tank is targeting an offtank).
@@ -6151,6 +6358,9 @@ function _serializeTankState() {
     hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
     target:    { name: targetName, hp_pct: targetHpPct },
     buffs:     buffsOut,
+    // Main-Tank focus block — null out of combat. When present the overlay
+    // renders the MT's HP/buffs/DS instead of the local character's.
+    mt,
     da,
     ds: {
       total: dsTotal,
@@ -8781,7 +8991,7 @@ var WP_OVERLAY_ROWS = [
   ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
-  ['tank',    'Tank HUD',            'Tank focus card: own HP, current target HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target, DS reflect total this fight, and the top expiring buffs. Reads /api/tank-state.'],
+  ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
 ];
 
@@ -17548,6 +17758,47 @@ function fetchTargetBuffs(name) {
     req.on('timeout', () => { req.destroy(); _targetBuffsInflight.delete(key); });
     req.end();
   } catch { _targetBuffsInflight.delete(key); }
+}
+
+// Main-Tank live state — the MT's OWN Mimic's uploaded Zeal snapshot (full
+// buff list + HP), via the bot's /api/agent/character-live-state relay.
+// Authoritative when the MT runs Mimic: their agent re-sends on any buff-set
+// change (20s heartbeat while targeting), so this beats observed-landing
+// inference, which never sees worn clickies or pre-fight buffs. Same lazy
+// cache/inflight pattern as fetchTargetBuffs; 8s TTL keeps a roomful of
+// Mimics from stacking Supabase reads while the overlay still feels live.
+const _mtLiveStateByName = new Map();   // nameLower → { at, state|null }
+const _mtLiveStateInflight = new Set();
+const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 8000;
+function fetchCharacterLiveState(name) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  const key = String(name || '').trim().toLowerCase();
+  if (!key || _mtLiveStateInflight.has(key)) return;
+  const cached = _mtLiveStateByName.get(key);
+  if (cached && (Date.now() - cached.at) < MT_LIVE_STATE_TTL_MS) return;
+  _mtLiveStateInflight.add(key);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/character-live-state') + '?name=' + encodeURIComponent(name);
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 6000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _mtLiveStateInflight.delete(key);
+        try { const j = JSON.parse(body); _mtLiveStateByName.set(key, { at: Date.now(), state: (j && j.state) || null }); }
+        catch { _mtLiveStateByName.set(key, { at: Date.now(), state: null }); }
+      });
+    });
+    req.on('error',   () => { _mtLiveStateInflight.delete(key); });
+    req.on('timeout', () => { req.destroy(); _mtLiveStateInflight.delete(key); });
+    req.end();
+  } catch { _mtLiveStateInflight.delete(key); }
 }
 
 // Buff queue cache (per buffer-class). Mimic's buff-queue overlay polls the
