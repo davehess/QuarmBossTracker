@@ -132,8 +132,10 @@
   #cfg-panel.show{display:block}
   #cfg-panel .row{display:flex;align-items:center;gap:6px}
   #cfg-panel label{color:#8b949e;font-size:10px;white-space:nowrap}
+  #cfg-panel label input[type=checkbox]{vertical-align:middle;margin-right:2px;cursor:pointer}
   #cfg-panel input[type=range]{flex:1;cursor:pointer}
-  #cfg-panel .val{color:#f6c365;font-variant-numeric:tabular-nums;min-width:2.6em;text-align:right;font-weight:600}
+  #cfg-panel input[type=range]:disabled{opacity:0.4;cursor:default}
+  #cfg-panel .val{color:#f6c365;font-variant-numeric:tabular-nums;min-width:3.6em;text-align:right;font-weight:600}
   #cfg-panel .hint{color:#6e7681;font-size:9px;margin-top:3px;line-height:1.3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   /* Chain idle (no call in 60s+) — dim so post-fight numbers read as stale. */
@@ -188,11 +190,12 @@
     </div>
     <div id="cfg-panel">
       <div class="row">
+        <label for="leadAuto"><input id="leadAuto" type="checkbox" checked /> Auto</label>
         <label for="leadSlider">Alert lead</label>
         <input id="leadSlider" type="range" min="0.3" max="3.0" step="0.1" value="1.5" />
         <span class="val" id="leadVal">1.5s</span>
       </div>
-      <div class="hint">Fires <b>CH GAP SOON</b> this many seconds before the next cleric is due. Tight chains (3–4s beat) want 0.5–1s; loose chains 1.5–2s. Persists per-machine.</div>
+      <div class="hint"><b>Auto</b> (default) tracks this chain's own measured beat — the gap between callouts — and sets the lead to ~25% of it, so a tight 2-4s chain doesn't fire <b>CH GAP SOON</b> on nearly every single call. Drag the slider to pin a manual value instead (switches off Auto). Persists per-machine.</div>
     </div>
     <div id="gaprow" class="gaprow">
       <span class="label" id="gaplbl">CH GAP SOON</span>
@@ -256,25 +259,55 @@
   }
 
   // Alert-lead knob — how many seconds BEFORE the next cleric is due we
-  // start screaming. Default 1.5s. On a 4s beat, 1.5s leaves the relay
-  // ~2.5s into the beat before alerting, which is the right tradeoff for
-  // most chains. Tight chains (3s beat, fast clerics) want 0.5–1s so the
-  // alert doesn't fire on every single call. Persists in localStorage.
-  var _leadSec = 1.5;
+  // start screaming. AUTO (default): derived live from the chain's own
+  // measured beat_ms (median gap between callouts) instead of a fixed
+  // guess. A flat 1.5s lead on a real 2-4s chain (Uilnayar 2026-07-02: "it
+  // goes off far too frequently... we typically set delays of 2-4 seconds")
+  // left GAP SOON active for well over half of every single cycle — it
+  // fired on almost every handoff even when the chain was running exactly
+  // on schedule. LEAD_AUTO_RATIO approximates the tight/loose examples this
+  // panel used to ask users to reason about by hand (3-4s beat -> 0.5-1s
+  // lead is ~20-25%), applied uniformly so it scales with however tight
+  // THIS chain actually runs. Dragging the slider is an explicit manual
+  // override that turns Auto off; both states persist in localStorage.
+  var LEAD_AUTO_RATIO = 0.25;
+  var _leadAuto = true;
+  var _leadSec  = 1.5;   // effective lead; recomputed from beat_ms each render while auto
   try {
-    var v = parseFloat(localStorage.getItem('chchain_lead_sec'));
-    if (v >= 0.3 && v <= 3.0) _leadSec = v;
+    var savedAuto = localStorage.getItem('chchain_lead_auto');
+    var savedLead = parseFloat(localStorage.getItem('chchain_lead_sec'));
+    if (savedAuto === '0' && savedLead >= 0.3 && savedLead <= 3.0) {
+      _leadAuto = false;
+      _leadSec  = savedLead;
+    }
   } catch (e) {}
-  var cfgPanel  = document.getElementById('cfg-panel');
-  var cfgBtn    = document.getElementById('cfg-btn');
+  var cfgPanel   = document.getElementById('cfg-panel');
+  var cfgBtn     = document.getElementById('cfg-btn');
   var leadSlider = document.getElementById('leadSlider');
   var leadVal    = document.getElementById('leadVal');
-  function paintLead(){ if (leadVal) leadVal.textContent = _leadSec.toFixed(1) + 's'; if (leadSlider) leadSlider.value = _leadSec; }
+  var leadAutoEl = document.getElementById('leadAuto');
+  function paintLead(){
+    if (leadVal) leadVal.textContent = _leadSec.toFixed(1) + 's' + (_leadAuto ? ' auto' : '');
+    if (leadSlider) { leadSlider.value = _leadSec; leadSlider.disabled = _leadAuto; }
+    if (leadAutoEl) leadAutoEl.checked = _leadAuto;
+  }
   paintLead();
   if (cfgBtn) {
     cfgBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     cfgBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
     cfgBtn.addEventListener('click', function(){ if (cfgPanel) cfgPanel.classList.toggle('show'); });
+  }
+  if (leadAutoEl) {
+    leadAutoEl.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    leadAutoEl.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    leadAutoEl.addEventListener('change', function(){
+      _leadAuto = !!leadAutoEl.checked;
+      try {
+        localStorage.setItem('chchain_lead_auto', _leadAuto ? '1' : '0');
+        if (!_leadAuto) localStorage.setItem('chchain_lead_sec', String(_leadSec));
+      } catch (e) {}
+      paintLead();
+    });
   }
   if (leadSlider) {
     // Slider needs the overlay to be interactive while it's being dragged —
@@ -284,8 +317,12 @@
     leadSlider.addEventListener('input', function(){
       var v = parseFloat(leadSlider.value || '1.5');
       if (!(v >= 0.3 && v <= 3.0)) return;
+      _leadAuto = false;
       _leadSec = v;
-      try { localStorage.setItem('chchain_lead_sec', String(v)); } catch (e) {}
+      try {
+        localStorage.setItem('chchain_lead_auto', '0');
+        localStorage.setItem('chchain_lead_sec', String(v));
+      } catch (e) {}
       paintLead();
     });
   }
@@ -432,6 +469,14 @@
     tgtEl.textContent = c.target ? ('CH → ' + c.target) : 'CH chain';
     var beatSecs = c.beat_ms ? (c.beat_ms / 1000) : null;
     beatEl.textContent = beatSecs ? ('beat ' + beatSecs.toFixed(1) + 's') : '';
+    // Auto lead tracks the measured beat live — as the chain's actual
+    // cadence firms up (or a different chain with a different beat starts),
+    // the SOON threshold rescales with it instead of staying pinned to
+    // whatever the beat happened to be on the first render.
+    if (_leadAuto && beatSecs) {
+      _leadSec = Math.max(0.3, Math.min(3.0, beatSecs * LEAD_AUTO_RATIO));
+      paintLead();
+    }
 
     // Per-slot casting detection (was: only the most recent caller). With an
     // 8s beat and a 10s cast, slot N is still ~2s from landing when slot N+1
