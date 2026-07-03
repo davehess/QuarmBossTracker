@@ -3656,6 +3656,32 @@ class EncounterBuilder {
   add(event) {
     if (!event) return;
 
+    // ── Possessive-named pet, self-owned — auto-populate petLeaders ────────
+    // Shavimo (Beastlord) 2026-07-03: "the DPS meter never reads my pet."
+    // Every pet-ownership check in this class (threatBy, DEEPS, PvP assist
+    // window, etc.) hinges entirely on petLeaders being populated from the
+    // pet's own "My leader is <Owner>." declaration line — which EQ only
+    // emits at summon time or on an explicit /pet command. A Beastlord's
+    // Warder is summoned once per session and rarely re-commanded (unlike a
+    // charm pet, which re-declares every recharm), so if the agent wasn't
+    // already tailing the log at that one moment, the declaration is gone
+    // for the rest of the raid and the Warder's damage is invisible forever.
+    // Warders (and any other class's pet, if one exists) are named
+    // "<Owner>`s <PetWord>" — a possessive we can match directly against
+    // this.character with zero reliance on catching a one-time event, so
+    // populate petLeaders from the NAME itself the first time we see it,
+    // independent of whether a declaration line ever fired.
+    if (event.attacker && this.character) {
+      const _pl = String(event.attacker);
+      const _plKey = _pl.toLowerCase();
+      if (!this.petLeaders[_plKey]) {
+        const _possessive = _pl.match(/^([A-Z][\w`]*)['`]s\s+\S/);
+        if (_possessive && _possessive[1].toLowerCase() === this.character.toLowerCase()) {
+          this.petLeaders[_plKey] = this.character;
+        }
+      }
+    }
+
     // ── Damage-shield flavor line → retag pending attribution ─────────────
     // "X was pierced by thorns." (no number, no points). The DS damage line
     // landed milliseconds earlier and is buffered in _dsPending; we update
