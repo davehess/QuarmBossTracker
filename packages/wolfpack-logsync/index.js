@@ -18264,16 +18264,26 @@ function flushLiveStateToBot(opts) {
       pet_hp_pct:  pet && pet.hp_pct != null ? pet.hp_pct : null,
       pet_buffs:   petBuffs.length ? petBuffs : null,
     };
-    // Signature excludes HP% + buff ticks (which churn constantly) — we only
-    // re-send on a zone change, a change to the SET of (own or pet) buff names,
-    // a target SWAP (not its HP — that alone shouldn't force a resend), the pet
-    // appearing/vanishing, or first sight of this character.
+    // Signature excludes raw HP% + buff ticks (which churn constantly) — we
+    // only re-send on a zone change, a change to the SET of (own or pet) buff
+    // names, a target SWAP, the pet appearing/vanishing, or first sight of
+    // this character. Target HP is the ONE exception: a COARSE 10%-bucket of
+    // it rides along, because Extended Target's whole point is showing raid-
+    // wide target HP, and without this a target's health only ever updates
+    // at acquisition + whatever the heartbeat interval happens to catch —
+    // Dave 2026-07-03 screenshotted a raid where every single target read
+    // exactly 100%, which is only plausible for a healthy fight if the value
+    // is frozen at the moment the target was acquired, not tracking it live.
+    // 10-point buckets (not raw %) keep this from re-triggering on every 1%
+    // combat tick the way a plain equality check would.
+    const targetHpBucket = (rec.target_hp_pct != null) ? Math.floor(rec.target_hp_pct / 10) : null;
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
       rec.pet_name,
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
+      targetHpBucket,
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
     // UNCONDITIONALLY, not just while targeting something. A STABLE target
