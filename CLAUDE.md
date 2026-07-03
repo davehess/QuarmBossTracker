@@ -367,8 +367,11 @@ any "should have been there" computation.
 
 ## Roadmap
 
-Live queue + in-flight notes: `docs/BACKLOG.md`. Deeper designs:
-`docs/raid-hub-roadmap.md`, `docs/trigger-system-roadmap.md`,
+Live queue + in-flight notes: `docs/BACKLOG.md`. Mimic's own 1.4.x beta
+cadence queue: `docs/mimic-1.4-roadmap.md` (Pull Tracker research findings,
+Trigger Alerts onboarding, UI Studio overlay-positioning, per-character
+overlay position/opacity — Phase B-2 — and its `/me` sync follow-up). Deeper
+designs: `docs/raid-hub-roadmap.md`, `docs/trigger-system-roadmap.md`,
 `docs/DESIGN-buff-debuff-queue.md`, `docs/DESIGN-ch-chain.md`,
 `docs/MIMIC.md` / `docs/MIMIC_AGENT.md`, `docs/opendkp-capture-playbook.md`,
 `docs/code-signing.md` (SignPath, pre-staged off), `docs/PRIVACY.md`.
