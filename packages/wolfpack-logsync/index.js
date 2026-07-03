@@ -6272,6 +6272,52 @@ function _resolveHpForName(nameLower, active, st) {
   if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
   return null;
 }
+// Resolve a named character's current buff list, mirroring _resolveHpForName's
+// waterfall: local Zeal list when it's the viewer's own active character
+// (full fidelity — ticks, everything), else their own uploaded live-state
+// (their Mimic, relayed through the bot) when they run Mimic themselves,
+// else locally-observed buff landings merged with the bot's cross-client
+// landing relay (partial, but better than nothing). Each entry has
+// { name, seconds, fell_off }. `source` is 'self' | 'mimic' | 'observed' so
+// callers can annotate partial data. Shared by MT buff resolution and
+// Rampage-target DA detection (Uilnayar 2026-07-03).
+function _resolveBuffsForName(name, active, buffsOut) {
+  const nameLower = String(name || '').toLowerCase();
+  if (active && nameLower === String(active).toLowerCase()) return { buffs: buffsOut, source: 'self' };
+  try { fetchCharacterLiveState(name); } catch {}
+  const live = _mtLiveStateByName.get(nameLower);
+  if (live && live.state && Array.isArray(live.state.buffs)) {
+    return { buffs: live.state.buffs.map(b => ({ name: b.name, seconds: b.seconds, fell_off: false })), source: 'mimic' };
+  }
+  try { fetchTargetBuffs(name); } catch {}
+  const seen = new Map();
+  for (const b of targetBuffsFor(nameLower)) {
+    seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
+  }
+  const relay = _targetBuffsByName.get(nameLower);
+  for (const b of ((relay && relay.buffs) || [])) {
+    if (!b || !b.name || seen.has(String(b.name).toLowerCase())) continue;
+    seen.set(String(b.name).toLowerCase(), {
+      name: b.name,
+      seconds: typeof b.remaining_secs === 'number' ? b.remaining_secs : null,
+      fell_off: false,
+    });
+  }
+  return { buffs: [...seen.values()], source: 'observed' };
+}
+// Divine Aura lookup within a buff list — shared by the self DA banner and
+// Rampage-target DA highlight. `greenSecs` is the "about to fall, get ready
+// to heal" threshold; the self banner and the ramp bar use different values
+// (12s vs 5s) so it's a param, not a constant.
+function _findDA(buffsList, greenSecs) {
+  for (const b of (buffsList || [])) {
+    if (b.fell_off) continue;
+    if (DA_SPELL_RX.test(b.name)) {
+      return { name: b.name, seconds: b.seconds, ticks: b.ticks, critical: typeof b.seconds === 'number' && b.seconds <= greenSecs };
+    }
+  }
+  return null;
+}
 function _serializeTankState() {
   // Active focused character — same heuristic _serializeForDashboard uses.
   const now = Date.now();
@@ -6304,19 +6350,8 @@ function _serializeTankState() {
   // Divine Aura detection on self. EQ's DA-class spells are short — the
   // duration field counts ticks remaining. Flag critical if ≤12s left so
   // the overlay can flash and call out "start CH on <name>".
-  let da = null;
-  for (const b of buffsOut) {
-    if (DA_SPELL_RX.test(b.name)) {
-      da = {
-        name:        b.name,
-        seconds:     b.seconds,
-        ticks:       b.ticks,
-        critical:    b.ticks != null && b.ticks <= DA_CRITICAL_TICKS,
-        ramp_target: active,    // who'd need to be CH'd when DA falls
-      };
-      break;
-    }
-  }
+  const da = _findDA(buffsOut, DA_CRITICAL_TICKS * 6);
+  if (da) da.ramp_target = active;    // who'd need to be CH'd when DA falls
 
   // DS reflect total this fight — sum across all abilities + provide a tiny
   // breakdown so the overlay can render "🛡 12.4k (Thorn 8.1k · Mark 4.3k)".
@@ -6364,7 +6399,17 @@ function _serializeTankState() {
   if (r && r.target && r.at && (now - r.at) <= 8000) {
     const rLower = String(r.target).toLowerCase();
     try { fetchCharacterLiveState(r.target); } catch {}
-    rampage = { target: r.target, attacker: r.attacker || null, ageMs: now - r.at, hp_pct: _resolveHpForName(rLower, active, st) };
+    // DA on the rampage target — gold-highlight the HP bar while it's up (they're
+    // invulnerable, no need to panic-heal), green once ≤5s remain (Uilnayar
+    // 2026-07-03: "once less than 5 seconds remain on DA we can highlight the
+    // ramp in green instead" — that's the cue healers should be ready to land
+    // the next heal the moment DA drops).
+    const rampBuffs = _resolveBuffsForName(r.target, active, buffsOut).buffs;
+    rampage = {
+      target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
+      hp_pct: _resolveHpForName(rLower, active, st),
+      da: _findDA(rampBuffs, 5),
+    };
   }
 
   // ── Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
@@ -6411,34 +6456,7 @@ function _serializeTankState() {
     //      with the bot's cross-client landing relay. fell_off entries ride
     //      along with seconds:0 — "Aegolism just dropped" is exactly what
     //      whoever watches this overlay needs to see.
-    let mtBuffs;
-    let mtBuffSource = 'self';
-    if (isSelf) mtBuffs = buffsOut;
-    else {
-      try { fetchCharacterLiveState(mtName); } catch {}
-      const live = _mtLiveStateByName.get(mtLower);
-      if (live && live.state && Array.isArray(live.state.buffs)) {
-        mtBuffs = live.state.buffs.map(b => ({ name: b.name, seconds: b.seconds, fell_off: false }));
-        mtBuffSource = 'mimic';
-      } else {
-        try { fetchTargetBuffs(mtName); } catch {}
-        const seen = new Map();
-        for (const b of targetBuffsFor(mtLower)) {
-          seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
-        }
-        const relay = _targetBuffsByName.get(mtLower);
-        for (const b of ((relay && relay.buffs) || [])) {
-          if (!b || !b.name || seen.has(String(b.name).toLowerCase())) continue;
-          seen.set(String(b.name).toLowerCase(), {
-            name: b.name,
-            seconds: typeof b.remaining_secs === 'number' ? b.remaining_secs : null,
-            fell_off: false,
-          });
-        }
-        mtBuffs = [...seen.values()];
-        mtBuffSource = 'observed';
-      }
-    }
+    const { buffs: mtBuffs, source: mtBuffSource } = _resolveBuffsForName(mtName, active, buffsOut);
     // MT damage shield — this fight's parser-confirmed reflects credited to
     // the MT specifically (dsByTank), NOT the raid-wide ability pool.
     let mtDs = null;
