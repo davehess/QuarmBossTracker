@@ -34,17 +34,18 @@
     transition:width .25s ease, background .25s ease}
   .hpbar.low {background:linear-gradient(to right,#f0d264,#f0a52d)}
   .hpbar.crit{background:linear-gradient(to right,#f87171,#dc2626)}
-  /* Rampage-target Divine Aura highlight — gold while DA is up (they're
-     invulnerable, don't panic-heal), green once it's about to fall (get
-     ready). Bold "DA" tags bracket the bar so it reads at a glance. */
+  /* Rampage-target invulnerability highlight — Divine Aura, Harmshield, or
+     any other short invuln buff (see DA_SPELL_RX agent-side). Gold while
+     it's up (they can't take damage, don't panic-heal), green once it's
+     about to fall (get ready). Bold "INV" tags bracket the bar. */
   .hpbar.gold{background:linear-gradient(to right,#f0c419,#d4a017)}
-  .hpbar.da-soon{background:linear-gradient(to right,#56d364,#2ea043);box-shadow:0 0 8px rgba(86,211,100,0.9) inset}
+  .hpbar.inv-soon{background:linear-gradient(to right,#56d364,#2ea043);box-shadow:0 0 8px rgba(86,211,100,0.9) inset}
   .hpwrap .val{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;
     font-size:10px;color:#fff;text-shadow:0 1px 2px #000;font-weight:600}
-  .hpwrap .da-tag{position:absolute;top:0;bottom:0;display:flex;align-items:center;
+  .hpwrap .inv-tag{position:absolute;top:0;bottom:0;display:flex;align-items:center;
     font-size:9px;font-weight:800;letter-spacing:0.5px;color:#fff;text-shadow:0 1px 2px #000;z-index:2}
-  .hpwrap .da-tag.l{left:4px}
-  .hpwrap .da-tag.r{right:4px}
+  .hpwrap .inv-tag.l{left:4px}
+  .hpwrap .inv-tag.r{right:4px}
   .da{display:flex;align-items:center;gap:6px;padding:5px 7px;background:rgba(31,75,140,0.5);
     border:1px solid #4287f5;border-radius:5px;margin-bottom:4px;font-size:11px}
   .da.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
@@ -54,6 +55,13 @@
   .enrage{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(140,72,31,0.45);
     border:1px solid #f0a52d;border-radius:5px;margin-bottom:4px;font-size:11px}
   .enrage.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  /* Death Touch countdown — mirrors any active "Death Touch"-named guild
+     trigger's timer (see agent's _serializeTankState) so both tanks see it
+     coming without needing the Triggers overlay open. */
+  .dt{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(107,33,168,0.5);
+    border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
@@ -252,19 +260,33 @@
       }
     }
 
+    // Death Touch countdown — mirrors any active "Death Touch"-named guild
+    // trigger's timer (agent relays it to every raider, so this shows even
+    // if a different raider's client is the one that actually saw it fire).
+    // Boss-level, not tied to a specific tank — both need to see it coming.
+    if (s.deathtouch && s.deathtouch.seconds != null) {
+      var dtCrit = !!s.deathtouch.critical;
+      html += '<div class="dt ' + (dtCrit ? 'crit' : '') + '">'
+           +    '<span>☠️ Death Touch' + (s.deathtouch.target ? ' — ' + esc(s.deathtouch.target) : '') + '</span>'
+           +    '<span class="sec">' + fmtSec(s.deathtouch.seconds) + '</span>'
+           +  '</div>';
+    }
+
     // Rampage target — HP resolves the same way MT HP does (local gauges,
     // then the rampage victim's own uploaded live-state), since the rampage
     // target is almost always a raider, not the local character. When they
-    // have Divine Aura up, the bar goes gold (invulnerable — don't panic-heal)
-    // with bold "DA" tags bracketing it and a countdown in place of the HP%;
-    // once ≤5s remain it flips green as the "get ready to heal" cue.
+    // have an invulnerability buff up (Divine Aura, Harmshield, etc — see
+    // DA_SPELL_RX agent-side), the bar goes gold (can't take damage — don't
+    // panic-heal) with bold "INV" tags bracketing it and a countdown in
+    // place of the HP%; once ≤5s remain it flips green as the "get ready
+    // to heal" cue.
     if (s.rampage && s.rampage.target) {
       var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
       var rda = s.rampage.da || null;
-      var barCls  = rda ? (rda.critical ? 'da-soon' : 'gold') : hpClass(rhp);
+      var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
       var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
-      var daTags  = rda ? '<span class="da-tag l">DA</span><span class="da-tag r">DA</span>' : '';
-      var valText = rda ? ('DA ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+      var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
+      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
       html += '<div class="ramp">'
            +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
            +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'

@@ -6223,6 +6223,12 @@ function loadSessionState() {
 // plus the global stats.currentDsReflects + stats.currentRampage. Always
 // returns a shape — never null — so the overlay can render a "no data yet"
 // state instead of erroring on missing fields.
+// Any short-duration invulnerability/near-invulnerability self-buff — Divine
+// Aura and kin for paladins/clerics, Harmshield for shadowknights, and
+// whatever else lands under these names. "DA" in identifiers below is a
+// holdover name for "one of these", not literally Divine Aura only (Uilnayar
+// 2026-07-03: "this should also include Shadowknights harmshield and other
+// forms of invulnerability").
 const DA_SPELL_RX = /^(divine aura|divine barrier|divine intervention|harmshield|forced sound channeling|invulnerability)/i;
 const DA_CRITICAL_TICKS = 2;  // ≤12s remaining (1 tick = 6s) → flash + ramp callout
 // Bosses that enrage at low HP — primary use is the warning gauge. ~8% on
@@ -6508,6 +6514,37 @@ function _serializeTankState() {
     projection_ready: targetHpPct != null && targetHpPct <= 15,
   };
 
+  // Death Touch countdown — piggybacks on the existing GINA-style trigger
+  // timer system (_activeTimers), not a new detection path: EQ never names
+  // a mob's cast in the log ("<Boss> begins to cast a spell." — no spell
+  // name for anyone but yourself), so there's no way to auto-recognize a
+  // deathtouch cast. Officers set up a normal guild trigger named "Death
+  // Touch" (or containing those words) with a timer_duration_sec matching
+  // the boss's cadence; that trigger already relays to every raider's agent
+  // and starts an identical countdown on each (_fireTriggerActions calls
+  // _startTimer on both the local fire and every relayed one), so this just
+  // surfaces the soonest such countdown here too — both tanks are staring
+  // at the tank bar, not the triggers overlay (Uilnayar 2026-07-03: "the
+  // deathtouch countdowns on mobs that deathtouch is important for both
+  // tanks to see coming").
+  let deathtouch = null;
+  {
+    const DT_RX = /death\s*touch/i;
+    let soonest = null;
+    for (const t of _activeTimersSnapshot()) {
+      if (!DT_RX.test(t.effect || '') && !DT_RX.test(t.name || '')) continue;
+      if (!soonest || t.remaining_ms < soonest.remaining_ms) soonest = t;
+    }
+    if (soonest) {
+      deathtouch = {
+        target:       soonest.target || bossName || null,
+        seconds:      Math.max(0, Math.round(soonest.remaining_ms / 1000)),
+        warn_seconds: soonest.warning_ms ? Math.round(soonest.warning_ms / 1000) : null,
+        critical:     soonest.warning_ms ? soonest.remaining_ms <= soonest.warning_ms : soonest.remaining_ms <= 6000,
+      };
+    }
+  }
+
   return {
     character: active,
     hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
@@ -6526,6 +6563,7 @@ function _serializeTankState() {
     },
     rampage,
     enrage,
+    deathtouch,
     // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26).
     // When a CH chain is running on a tank, predict when the next CH hits and
     // surface "spot heal in: Xs" so the tank's own healers can fill the gap
