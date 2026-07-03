@@ -258,8 +258,16 @@
   // Mute toggle for the audible gap callouts. Persists per-machine via
   // localStorage so the choice survives Mimic restarts (the overlay reloads
   // its HTML on every show). Visual swap 🔊↔🔇 + .muted class on the button.
-  var _muted = false;
-  try { _muted = localStorage.getItem('chchain_mute') === '1'; } catch (e) {}
+  // Dave 2026-07-03: "We should mute the CH gap by default." Muted unless the
+  // user has explicitly stored '0' (they turned sound back on themselves) —
+  // no stored value at all (fresh install, or an existing user who never
+  // touched this button) now means muted, not unmuted.
+  var _muted = true;
+  try {
+    var _mutedStored = localStorage.getItem('chchain_mute');
+    if (_mutedStored === '0') _muted = false;
+    else if (_mutedStored === '1') _muted = true;
+  } catch (e) {}
   var muteBtn = document.getElementById('mute-btn');
   function paintMute(){
     if (!muteBtn) return;
