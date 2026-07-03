@@ -57,9 +57,6 @@
      cast (e.g. a druid's Tunare's Renewal) — see CH_EQUIVALENT_SPELLS in
      the agent. Distinguishes it from an ordinary numbered cleric slot. */
   .row .nm .slot-kind{color:#a371f7;font-size:9px;font-style:italic;font-weight:500;margin-left:4px}
-  /* Necklace of Resolution charge-available icon (Uilnayar 2026-07-02) —
-     see the neckrow button below for how this gets set/cleared. */
-  .row .nm .neck-icon{margin-left:4px;font-size:11px}
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
@@ -125,18 +122,6 @@
   .gaprow.late .label,.gaprow.late .tank{color:#fca5a5}
   .gaprow.late .cleric{color:#fed7aa}
   @keyframes gappulse{from{box-shadow:0 0 0 rgba(248,113,113,0)}to{box-shadow:0 0 8px rgba(248,113,113,0.7)}}
-  /* "CH Neck Charged" self-declare row (Uilnayar 2026-07-02) — sits at the
-     TOP of the overlay, always visible (not gated on a chain being active),
-     so a cleric can declare before a fight even starts. Clicking only ever
-     affects the clicker's OWN character — see the agent's
-     /api/ch-neck/declare handler for why that's safe to leave ungated here. */
-  .neckrow{display:flex;align-items:center;gap:6px;margin-bottom:5px}
-  .neck-btn{flex:1;background:rgba(163,113,247,0.18);border:1px solid rgba(163,113,247,0.55);
-    border-radius:4px;padding:4px 8px;font-size:11px;font-weight:600;color:#d9c9fb;
-    font-family:inherit;cursor:pointer;text-shadow:0 1px 2px #000;transition:background 150ms ease}
-  .neck-btn:hover{background:rgba(163,113,247,0.32)}
-  .neck-btn.declared{background:rgba(86,211,100,0.22);border-color:rgba(86,211,100,0.55);color:#b7f5c2}
-  .neck-status{font-size:10px;color:#6e7681;white-space:nowrap;flex-shrink:0}
   /* Mute button — sits next to the hide button. Click to silence the TTS
      callouts without turning the whole overlay off. Persists via
      localStorage. */
@@ -212,10 +197,6 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div id="neckrow" class="neckrow">
-      <button id="neckBtn" class="neck-btn" title="Click ONLY when YOU personally have a Necklace of Resolution charge available right now (fresh, or just recharged). This only ever marks YOUR OWN character — it can't affect anyone else's row. Using the necklace's click is detected automatically and clears this.">📿 CH Neck Charged</button>
-      <span id="neckStatus" class="neck-status"></span>
-    </div>
     <div class="head">
       <span id="conn" class="conn bad">○</span>
       <span class="icon">⛑</span>
@@ -295,41 +276,6 @@
       try { localStorage.setItem('chchain_mute', _muted ? '1' : '0'); } catch (e) {}
       paintMute();
       if (_muted) { try { window.speechSynthesis.cancel(); } catch (e) {} }
-    });
-  }
-
-  // "CH Neck Charged" self-declare button (Uilnayar 2026-07-02). POSTs to the
-  // LOCAL agent, which resolves the character server-side from whichever
-  // one it's actively watching — this button never sends a name of its own,
-  // so it can only ever declare the clicker's own charge, never anyone
-  // else's. The agent's automatic click-detection (on actually using the
-  // necklace) is what clears this back to unavailable; there's no separate
-  // "un-declare" button since that path already exists.
-  var neckBtn    = document.getElementById('neckBtn');
-  var neckStatus = document.getElementById('neckStatus');
-  if (neckBtn) {
-    neckBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
-    neckBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
-    neckBtn.addEventListener('click', async function(){
-      neckBtn.disabled = true;
-      try {
-        var r = await fetch('http://127.0.0.1:' + PORT + '/api/ch-neck/declare', { method: 'POST' });
-        var body = await r.json().catch(function(){ return {}; });
-        if (r.ok && body.character) {
-          neckBtn.classList.add('declared');
-          neckStatus.textContent = 'declared for ' + body.character;
-        } else {
-          neckStatus.textContent = body.error || 'could not tell which character';
-        }
-      } catch (e) {
-        neckStatus.textContent = 'agent unreachable';
-      }
-      neckBtn.disabled = false;
-      clearTimeout(neckBtn._clearT);
-      neckBtn._clearT = setTimeout(function(){
-        neckBtn.classList.remove('declared');
-        neckStatus.textContent = '';
-      }, 6000);
     });
   }
 
@@ -604,13 +550,9 @@
       } else {
         stat = s.lastAtMs ? fmtAgo((now - s.lastAtMs) / 1000) : '—';
       }
-      var neck = s.name ? _neckCharges[s.name.toLowerCase()] : null;
-      var neckIcon = (neck && neck.available)
-        ? '<span class="neck-icon" title="' + esc(s.name) + ' has a CH neck charge available (Necklace of Resolution).">📿</span>'
-        : '';
       html += '<div class="' + cls + '">'
         +   '<span class="num">' + pad3(n) + '</span>'
-        +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + neckIcon + '</span>'
+        +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
         +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
         +   '<span class="stat">' + stat + '</span>'
         +   bar
@@ -669,7 +611,6 @@
     try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
 
-  var _neckCharges = {};   // lowercase name -> { available, lastEventAt } — sibling of chChain, not nested in it
   async function tick(){
     try {
       var r = await fetch('http://127.0.0.1:'+PORT+'/api/state', { cache: 'no-store' });
@@ -677,7 +618,6 @@
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       _last = s && s.chChain;
-      _neckCharges = (s && s.chNeckCharges) || {};
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

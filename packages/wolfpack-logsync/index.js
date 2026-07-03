@@ -4528,18 +4528,6 @@ class EncounterBuilder {
       if (!event.attacker && spell && HEAL_SPELL_RX.test(spell)) {
         this.healSpellCounts[spell] = (this.healSpellCounts[spell] || 0) + 1;
       }
-      // CH-neck (Necklace of Resolution) click detection — Uilnayar
-      // 2026-07-02. The item's click effect casts a spell literally named
-      // "Complete Healing" (distinct from the real Cleric spell "Complete
-      // Heal", no "ing") — self-cast only, so this only ever fires on the
-      // CLICKER's own log, never a bystander's. Reports 'used' so the bot
-      // flips their charge state to unavailable until they self-declare a
-      // recharge via the CH Chain overlay button (the combine's success
-      // message is generic tradeskill text shared by every item in the
-      // game, so a recharge can't be auto-detected the same way).
-      if (!event.attacker && spell && /^complete healing$/i.test(spell) && this.character) {
-        enqueueUpload('ch_neck', { agent_version: AGENT_VERSION, character: this.character, event: 'used' });
-      }
       // Charm-spell cast → stage its class + duration so the next charm-land
       // (gauge or log) can attach a duration bar to the session. Self-cast only
       // (no attacker = the builder's own character cast it); matched to the land
@@ -6671,11 +6659,6 @@ function _zealExportOnCampState() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
-    // CH-neck (Necklace of Resolution) charge state, bot-polled every 2 min —
-    // separate from chChain above (deliberately NOT nested inside it) so it
-    // still shows before a fight starts, when chChain is null. Keyed
-    // lowercase; drives chchain.html's per-row charge icon.
-    chNeckCharges: stats.chNeckCharges || {},
     // Cross-instance uploader status. active=true → this instance is the one
     // sending data to the bot; false → another Parser/Mimic on this machine
     // owns the upload lock and we're read-only (local dashboard still live).
@@ -12331,36 +12314,6 @@ function startWebDashboard(port) {
         return res.end('{"ok":true}');
       }
 
-      // "CH Neck Charged" self-declare button on the CH Chain overlay
-      // (Uilnayar 2026-07-02). No body needed — the character is ALWAYS
-      // resolved server-side from whichever character this agent is
-      // actively watching, same pattern as the trigger-feedback vote above,
-      // never from anything the button's fetch call could supply. This is
-      // the whole point: one Mimic user clicking this can only ever mark
-      // THEIR OWN character charged, never someone else's row.
-      if (req.url === '/api/ch-neck/declare' && req.method === 'POST') {
-        let active = null, activeTs = 0;
-        for (const ch of Object.keys(_zealState || {})) {
-          const st = _zealState[ch]; const ts = (st && st.updatedAt) || 0;
-          if (ts > activeTs && (Date.now() - ts) < 60_000) { activeTs = ts; active = ch; }
-        }
-        // Zeal-derived "recently active" can be empty (no Zeal, or idle) —
-        // fall back to the sole watched log when unambiguous. With more
-        // than one watched log and no fresh Zeal signal, we genuinely don't
-        // know which character clicked, so refuse rather than guess wrong.
-        if (!active) {
-          const watched = (stats.watchedLogs || []).filter(w => w && w.character);
-          if (watched.length === 1) active = watched[0].character;
-        }
-        if (!active) {
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          return res.end('{"error":"could not determine active character"}');
-        }
-        enqueueUpload('ch_neck', { agent_version: AGENT_VERSION, character: active, event: 'declared_charged' });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, character: active }));
-      }
-
       // Local trigger scanner (v1.1.1). Finds GINA + EQLP trigger files on the
       // local machine and returns paths + sizes + pack-fingerprint guess.
       // Discovery only — no parsing, no upload, never leaves the dashboard.
@@ -16928,51 +16881,6 @@ function pollCharacterPrefs({ botUrl, token }) {
   });
 }
 
-// Poll the bot for known CH-neck (Necklace of Resolution) charge state
-// (Uilnayar 2026-07-02). stats.chNeckCharges feeds the CH Chain overlay's
-// per-row charge icon. Guild-wide (not scoped to this machine's watched
-// characters) so a Mimic user can see OTHER clerics' charge state too, not
-// just their own.
-function pollChNeckStatus({ botUrl, token }) {
-  if (!botUrl || !token) return Promise.resolve();
-  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/ch-neck-status');
-  return new Promise((resolve) => {
-    try {
-      const u = new URL(url);
-      const mod = u.protocol === 'https:' ? https : http;
-      const req = mod.request({
-        method:   'GET',
-        hostname: u.hostname,
-        port:     u.port,
-        path:     u.pathname + u.search,
-        headers: {
-          'Authorization': 'Bearer ' + token,
-          'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
-        },
-        timeout: 5000,
-      }, (res) => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          try {
-            const resp = JSON.parse(data);
-            const chars = (resp && resp.characters) || {};
-            const norm = {};
-            for (const [name, v] of Object.entries(chars)) {
-              norm[String(name).toLowerCase()] = { available: !!(v && v.available), lastEventAt: (v && v.last_event_at) || null };
-            }
-            stats.chNeckCharges = norm;
-          } catch { /* non-fatal — keep previous state */ }
-          resolve();
-        });
-      });
-      req.on('error',   () => resolve());
-      req.on('timeout', () => { req.destroy(); resolve(); });
-      req.end();
-    } catch { resolve(); }
-  });
-}
-
 // Returns true when uploads for this character should proceed. False when the
 // owner has set exclude_from_stats. Always true when no pref data yet (initial
 // poll pending), so we don't accidentally drop anything during startup.
@@ -19335,12 +19243,6 @@ async function main() {
     // machine they run the agent on — no agent restart required.
     setTimeout(() => pollCharacterPrefs({ botUrl, token }), 10_000);
     setInterval(() => pollCharacterPrefs({ botUrl, token }), 10 * 60_000);
-    // CH-neck (Necklace of Resolution) charge state — 2 min cadence, faster
-    // than the prefs/triggers polls above since this feeds a live raid-facing
-    // indicator on the CH Chain overlay (a self-declare or a click can change
-    // it mid-raid, and officers/healers want to see that fairly promptly).
-    setTimeout(() => pollChNeckStatus({ botUrl, token }), 11_000);
-    setInterval(() => pollChNeckStatus({ botUrl, token }), 2 * 60_000);
     // Live character state (buffs + last-seen zone) → bot → Supabase so
     // wolfpack.quest/me can show what each character is carrying + where. Only
     // sends on change (see flushLiveStateToBot), so the 20s cadence is cheap.
