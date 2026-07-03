@@ -6584,7 +6584,14 @@ async function _handleAgentExtendedTarget(req, res) {
     const targets = [];
     for (const g of byName.values()) {
       const cls = classify(g.name, g.key);
-      const clusters = clusterByHp(g.obs);
+      // HP-clustering only makes sense for ambiguous generic mob names
+      // ("a wolf" etc.) where the same name really can be ≥2 distinct
+      // spawns. Players, pets, and uniquely-named NPCs are one entity —
+      // clustering those just turns reporter HP disagreement into fake
+      // duplicate rows, so collapse straight to a single median-HP row.
+      const clusters = cls.ambiguous
+        ? clusterByHp(g.obs)
+        : [{ raiders: g.obs.map(o => o.raider), hp: median(g.obs.filter(o => o.hp != null).map(o => o.hp)) }];
       const multi = clusters.length > 1;     // proven duplicate same-name mobs
       const debuffs = debuffsFor(g.key);
       clusters.forEach((c, idx) => {

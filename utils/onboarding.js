@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.134': [
+    '**Extended Target overlay stops splitting real targets into fake duplicates** — a single named boss/player was sometimes showing up as two rows ("★1/2", "★2/2") just because two raiders\' agents reported slightly different HP% for it at that instant. HP-based splitting is now only used for genuinely ambiguous generic mob names ("a wolf" etc.) where two same-named spawns really can coexist — a unique player, pet, or named NPC always collapses to one row with the median reported HP.',
+  ],
   '3.0.131': [
     '**PvP backfill no longer floods #pvp** — an agent\'s `--since` backfill run mines historical PvP kills from old logs same as it does chat and combat, but the relay was posting every single one live to #pvp as if it just happened, instead of only recording it. A single backfill could dump dozens of months-old kill/death notices into the channel at once. Backfilled kills still get recorded to the ledger and stats (who-observations, fun-event counters, boss-kill history) — they just don\'t replay into Discord or seed the live respawn-timer prediction anymore, matching how historical chat backfill already works (Uilnayar 2026-07-01).',
   ],
