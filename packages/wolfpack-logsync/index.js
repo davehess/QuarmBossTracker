@@ -6245,6 +6245,33 @@ function _isEnrageBoss(name) {
   if (!name) return false;
   return ENRAGE_BOSSES.has(String(name).toLowerCase());
 }
+// Resolve a named character's current HP% from every source this agent can
+// see: our own Zeal gauges (self, or via any watched character's target/
+// group gauge showing that name), then that character's own uploaded
+// live-state (their Mimic, relayed through the bot) as the cross-client
+// fallback. null when nobody currently sees them. Shared by Main-Tank
+// resolution and the Rampage-target HP card — both are "some named person,
+// find their HP from whatever's watching them" (Uilnayar 2026-07-03: "We
+// also need the Ramp tank's health on the tank bar.").
+function _resolveHpForName(nameLower, active, st) {
+  if (active && nameLower === String(active).toLowerCase() && typeof st.self_hp_pct === 'number') {
+    return st.self_hp_pct;
+  }
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const zst = _zealState[ch];
+    if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
+    if (String(ch).toLowerCase() === nameLower && typeof zst.self_hp_pct === 'number') return zst.self_hp_pct;
+    if (Array.isArray(zst.gauges)) {
+      const g = zst.gauges.find(g => g && g.text && g.hp_pct != null
+        && String(g.text).toLowerCase() === nameLower && g.slot !== 16);
+      if (g) return g.hp_pct;
+    }
+  }
+  const live = _mtLiveStateByName.get(nameLower);
+  if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
+  return null;
+}
 function _serializeTankState() {
   // Active focused character — same heuristic _serializeForDashboard uses.
   const now = Date.now();
@@ -6329,11 +6356,15 @@ function _serializeTankState() {
   dsSources.sort((a, b) => b.per_hit - a.per_hit);
 
   // Rampage target — only return when fresh (≤8s). Older than that and we
-  // assume the rampage cycle is over.
+  // assume the rampage cycle is over. HP resolves the same way MT HP does
+  // below: local gauges first, the rampage victim's own uploaded live-state
+  // as the cross-client fallback (they're almost always a raider, not us).
   let rampage = null;
   const r = stats.currentRampage || null;
   if (r && r.target && r.at && (now - r.at) <= 8000) {
-    rampage = { target: r.target, attacker: r.attacker || null, ageMs: now - r.at };
+    const rLower = String(r.target).toLowerCase();
+    try { fetchCharacterLiveState(r.target); } catch {}
+    rampage = { target: r.target, attacker: r.attacker || null, ageMs: now - r.at, hp_pct: _resolveHpForName(rLower, active, st) };
   }
 
   // ── Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
@@ -6367,31 +6398,10 @@ function _serializeTankState() {
   if (mtName) {
     const mtLower = mtName.toLowerCase();
     const isSelf = !!(active && mtLower === String(active).toLowerCase());
-    // MT HP — self HP if the viewer IS the tank; otherwise scan every watched
-    // character's Zeal gauges for the name: group-member gauges, or the
-    // target gauge (slot 6) when someone is targeting the MT. null when the
-    // MT isn't visible on any local gauge (cross-raid HP sync is Tier 4).
-    let mtHp = null;
-    if (isSelf && typeof st.self_hp_pct === 'number') mtHp = st.self_hp_pct;
-    else {
-      for (const ch of Object.keys(_zealState || {})) {
-        const zst = _zealState[ch];
-        if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
-        if (String(ch).toLowerCase() === mtLower && typeof zst.self_hp_pct === 'number') { mtHp = zst.self_hp_pct; break; }
-        if (Array.isArray(zst.gauges)) {
-          const g = zst.gauges.find(g => g && g.text && g.hp_pct != null
-            && String(g.text).toLowerCase() === mtLower && g.slot !== 16);
-          if (g) { mtHp = g.hp_pct; break; }
-        }
-      }
-      // No local gauge sees the MT — fall back to their own Mimic's uploaded
-      // HP (up to ~20s stale on the heartbeat cadence; better than a blank
-      // bar, and the overlay's freshness cue stays honest via buff_source).
-      if (mtHp == null) {
-        const live = _mtLiveStateByName.get(mtLower);
-        if (live && live.state && typeof live.state.self_hp_pct === 'number') mtHp = live.state.self_hp_pct;
-      }
-    }
+    // MT HP — see _resolveHpForName. null when the MT isn't visible on any
+    // local gauge and hasn't uploaded live-state either (cross-raid HP sync
+    // proper is Tier 4).
+    const mtHp = _resolveHpForName(mtLower, active, st);
     // MT buffs, best source wins:
     //   1. The viewer IS the tank → local Zeal list (full fidelity, live).
     //   2. The MT runs Mimic → THEIR uploaded live-state row via the bot's

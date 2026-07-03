@@ -45,8 +45,9 @@
   .enrage{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(140,72,31,0.45);
     border:1px solid #f0a52d;border-radius:5px;margin-bottom:4px;font-size:11px}
   .enrage.crit{background:rgba(220,38,38,0.45);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
-  .ramp{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,32,32,0.55);
+  .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .ramp .row{display:flex;align-items:center;gap:6px}
   .ramp .who{font-weight:700;color:#fff}
   .ds-total{font-size:13px;color:#56d364;font-variant-numeric:tabular-nums;font-weight:700}
   .ds-total .avg{color:#7ee787;font-weight:700}
@@ -242,9 +243,16 @@
       }
     }
 
-    // Rampage target
+    // Rampage target — HP resolves the same way MT HP does (local gauges,
+    // then the rampage victim's own uploaded live-state), since the rampage
+    // target is almost always a raider, not the local character.
     if (s.rampage && s.rampage.target) {
-      html += '<div class="ramp">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>';
+      var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
+      html += '<div class="ramp">'
+           +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
+           +    '<div class="hpwrap"><div class="hpbar ' + hpClass(rhp) + '" style="width:' + (rhp == null ? 0 : rhp) + '%"></div>'
+           +      '<div class="val">' + (rhp == null ? 'HP not visible' : rhp + '%') + '</div></div>'
+           +  '</div>';
     }
 
     // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26). When a chain
