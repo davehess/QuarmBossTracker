@@ -4743,70 +4743,6 @@ async function _handleAgentThreatSnapshot(req, res) {
   return res.end(JSON.stringify({ ok: true, written: 1 }));
 }
 
-// POST /api/agent/ch_neck — CH-neck (Necklace of Resolution) charge tracker
-// (Uilnayar 2026-07-02). Body: { character, event: 'used' | 'declared_charged' }.
-// `character` is trusted the same way every other agent endpoint trusts it —
-// the agent derives it server-side (locally) from whichever character it's
-// actively tailing, never from anything the overlay's button click could
-// inject; see the agent's /api/ch-neck/declare handler. 'used' comes from an
-// observed self-cast log line (always trustworthy, only the clicker's own
-// log ever shows it); 'declared_charged' is the self-service overlay button.
-async function _handleAgentChNeck(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
-  const chunks = []; let total = 0;
-  for await (const chunk of req) {
-    total += chunk.length;
-    if (total > 4 * 1024) { res.writeHead(413); return res.end(); }
-    chunks.push(chunk);
-  }
-  let payload;
-  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
-  const character = String(payload?.character || '').trim();
-  const event      = payload?.event === 'used' ? 'used' : (payload?.event === 'declared_charged' ? 'declared_charged' : null);
-  if (!character || !event) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'character + event (used|declared_charged) required' }));
-  }
-  const supabase = require('./utils/supabase');
-  if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, note: 'supabase disabled' })); }
-  const nowIso = new Date().toISOString();
-  await supabase.upsert('ch_neck_charges', [{
-    guild_id:              process.env.SUPABASE_GUILD_ID || 'wolfpack',
-    character,
-    available:             event === 'declared_charged',
-    last_event:            event,
-    last_event_at:         nowIso,
-    updated_by_discord_id: identity.discord_id,
-    updated_at:            nowIso,
-  }], 'guild_id,character').catch(err => console.warn('[ch-neck] upsert failed:', err?.message));
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ ok: true }));
-}
-
-// GET /api/agent/ch-neck-status — current known charge state for every
-// character we've ever gotten a 'used' or 'declared_charged' event for.
-// Small, guild-wide, agent-polled (see pollChNeckStatus) so the CH Chain
-// overlay can show a charge icon next to anyone with one currently available.
-async function _handleAgentChNeckStatus(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
-  const supabase = require('./utils/supabase');
-  if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ characters: {} })); }
-  const rows = await supabase.select(
-    'ch_neck_charges',
-    `guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&select=character,available,last_event_at`,
-  ).catch(() => []);
-  const characters = {};
-  for (const r of (Array.isArray(rows) ? rows : [])) {
-    if (!r?.character) continue;
-    characters[r.character] = { available: !!r.available, last_event_at: r.last_event_at || null };
-  }
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ characters }));
-}
-
 // POST /api/agent/place-bid
 // Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
 // ── UI Studio — encrypted snapshots of a player's EQ ini files ─────────────
@@ -10542,24 +10478,6 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentThreatSnapshot(req, res); }
     catch (err) {
       console.error('[threat-snap] handler error:', err);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'internal error' }));
-    }
-  }
-
-  if (req.method === 'POST' && req.url === '/api/agent/ch_neck') {
-    try { return await _handleAgentChNeck(req, res); }
-    catch (err) {
-      console.error('[ch-neck] handler error:', err);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'internal error' }));
-    }
-  }
-
-  if (req.method === 'GET' && req.url === '/api/agent/ch-neck-status') {
-    try { return await _handleAgentChNeckStatus(req, res); }
-    catch (err) {
-      console.error('[ch-neck-status] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
