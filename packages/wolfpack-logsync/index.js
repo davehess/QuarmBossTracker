@@ -18173,35 +18173,39 @@ function buildMobInfo() {
 }
 
 // ── Live character state → bot → Supabase (wolfpack.quest/me) ───────────────
-// Mostly a SNAPSHOT sync, not a heartbeat: what each watched character is
+// A snapshot sync WITH a real heartbeat: what each watched character is
 // currently carrying (buffs), their target, and their last-seen zone. Pushed
 // when something meaningful changes (zone, the set of buff/pet names, a
-// target swap, or first sight of a live character) so it costs almost nothing
-// at idle. The ONE exception: a character with a target set re-sends at least
-// every LIVE_STATE_HEARTBEAT_MS even with no change, because a STABLE target
-// (most of a boss fight) would otherwise never retrigger the signature and the
-// row would silently age out of the bot's "online" window for
-// /api/agent/extended-target mid-fight — that heartbeat is gated on having a
-// target, so anyone not feeding that feature stays at the old zero-cost-at-
-// idle behavior. Deliberately NOT routed through the durable upload queue —
-// live state is replaceable (latest wins via the bot's upsert), so queuing
-// stale snapshots during an outage would just waste calls and could evict real
-// encounter uploads. Fire-and-forget; the next interval re-sends fresh if a
-// send is dropped. The LOCAL dashboard stays the source of truth for second-
-// by-second data; this is the "what did they log out with / where are they /
-// what's the raid targeting" view for the web + Mimic overlays.
+// target swap, or first sight of a live character), OR unconditionally every
+// LIVE_STATE_HEARTBEAT_MS regardless of whether anything changed — a STABLE
+// target (most of a boss fight) or a STABLE buff loadout (the common case
+// BETWEEN pulls — fully buffed, nothing new landing, no current target)
+// never trips the change-signature on their own, so without an unconditional
+// heartbeat a character can go quiet indefinitely while still actively
+// playing. This used to be gated on having a target (built narrowly to fix
+// extended-target specifically), which left every OTHER consumer of this
+// row's freshness — the buff queue chief among them — silently starved:
+// confirmed live (Uilnayar 2026-07-03), mid-raid, ZERO of 30 rostered
+// raiders had a fresh-enough row, some multiple hours stale. Deliberately
+// NOT routed through the durable upload queue — live state is replaceable
+// (latest wins via the bot's upsert), so queuing stale snapshots during an
+// outage would just waste calls and could evict real encounter uploads.
+// Fire-and-forget; the next interval re-sends fresh if a send is dropped.
+// The LOCAL dashboard stays the source of truth for second-by-second data;
+// this is the "what did they log out with / where are they / what's the
+// raid targeting / are they missing a buff" view for the web + Mimic
+// overlays and the bot's own raid-buff-queue endpoint.
 const _liveStateLastSig = new Map();   // character → last-sent signature
-// Heartbeat floor for the extended-target feed: target_name/target_hp_pct ride
-// on this same snapshot, but a stable target (the common case — most of a boss
-// fight) never trips the change-signature, so a character would go quiet and
-// fall out of the bot's 60s "online" freshness window for /api/agent/
-// extended-target even while actively fighting. Force a re-send at least this
-// often (only while a target is set — idle characters keep the old zero-cost
-// behavior) so raid- or GROUP-wide "who's targeting what" stays live even with
-// just a couple of Mimic users in a small group (Uilnayar 2026-06-29: "let's
-// get the extended target overlay working for groups as well"). Comfortably
-// under the bot's EXT_ONLINE_MS (60s) so a single 20s-interval miss (a dropped
-// request) doesn't drop the character out of the window.
+// Heartbeat floor. Originally scoped to the extended-target feed only
+// (target_name/target_hp_pct ride on this same snapshot, and the bot's
+// online window for /api/agent/extended-target is 60s — Uilnayar
+// 2026-06-29: "let's get the extended target overlay working for groups as
+// well"); now applies unconditionally to any actively-tracked character (see
+// the flush loop below) since the buff queue needs the same freshness
+// guarantee and idle-between-pulls is exactly when a raider's row would
+// otherwise go stale. Comfortably under both the extended-target 60s window
+// and the buff-queue's 15-min ROSTER_FRESH_MS, with room for a missed cycle
+// or two.
 const LIVE_STATE_HEARTBEAT_MS = 45_000;
 const _liveStateLastSentAt = new Map();   // character → ms of last successful send
 function _postLiveState(targetUrl, token, payload) {
@@ -18271,17 +18275,30 @@ function flushLiveStateToBot(opts) {
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
     ]);
-    // Send when the signature changed, OR (only while actively targeting
-    // something) the heartbeat floor elapsed. A STABLE target — the common
-    // case mid-fight — never trips the sig, so without a heartbeat the row
-    // goes stale and silently drops out of the bot's online window for
-    // extended-target while the fight is still live. Gated on target_name so
-    // a character standing around idle (no target) doesn't heartbeat forever —
-    // keeps the "costs nothing at idle" behavior for everyone NOT feeding the
-    // extended-target picture.
+    // Send when the signature changed, OR the heartbeat floor elapsed —
+    // UNCONDITIONALLY, not just while targeting something. A STABLE target
+    // (the common case mid-fight) never trips the sig, and neither does a
+    // STABLE buff loadout (the common case BETWEEN pulls — a fully-buffed
+    // raider with nothing new landing and no current target). The
+    // target-only gate below was scoped narrowly to fix extended-target
+    // specifically, but left every idle-but-online character free to age
+    // out of the bot's freshness windows entirely — confirmed live
+    // (Uilnayar 2026-07-03, "buff queue overlay is assuming all buffs
+    // incorrectly"): mid-raid, ZERO of 30 rostered raiders had a
+    // character_live_state row inside the bot's 15-min freshness cutoff,
+    // some multiple HOURS stale despite actively playing — because nobody
+    // had a stable target long enough, or their buffs simply weren't
+    // changing. The buff queue then fell back to buff_casts inference
+    // (3h window, requires someone to have witnessed the actual cast,
+    // expires by computed duration), which drops long-duration/rarely-
+    // recast buffs (Aegolism, Circle of Seasons, resist auras) far more
+    // than short-cycle ones — exactly the lopsided "missing" pattern
+    // reported. A heartbeat that only fires for SOME reasons to stay alive
+    // isn't a heartbeat; every actively-tracked character now re-sends at
+    // least every LIVE_STATE_HEARTBEAT_MS regardless of target state.
     const sigChanged   = _liveStateLastSig.get(ch) !== sig;
     const lastSentAt   = _liveStateLastSentAt.get(ch) || 0;
-    const heartbeatDue = !!rec.target_name && (now - lastSentAt) >= LIVE_STATE_HEARTBEAT_MS;
+    const heartbeatDue = (now - lastSentAt) >= LIVE_STATE_HEARTBEAT_MS;
     if (!sigChanged && !heartbeatDue) continue;
     _liveStateLastSig.set(ch, sig);
     _liveStateLastSentAt.set(ch, now);
