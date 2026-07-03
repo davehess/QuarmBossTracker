@@ -17912,17 +17912,16 @@ const _buffQueueInflight = new Set();
 let _buffQueueSnappyUntil = 0;
 const SNAPPY_TTL_MS  = 500;
 const SNAPPY_WINDOW  = 60_000;
-// 8s (was 3s). The overlay polls every 1.5s; with the 3s TTL roughly every
-// other poll missed the cache and triggered a fresh bot fetch (which then
-// pulled 3000 buff_casts rows). 8s aligns with the overlay polling cadence
-// so each overlay tick at most refreshes the queue once per ~8s; the queue
-// content doesn't change faster than that in practice.
-// Raid-buff-queue cache TTL on the agent. Default 8s (was 3s pre-egress
-// triage). Override via WP_BUFF_QUEUE_TTL_MS.
-// 2026-06-21: cranked default 8s → 4s after the Supabase Pro upgrade.
-// Original was 3s pre-egress-squeeze. Buff queue feels live for the
-// snappier "is X already buffed" reads. Override via WP_BUFF_QUEUE_TTL_MS.
-const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 4000;
+// Raid-buff-queue cache TTL on the agent. History: 3s pre-egress-squeeze →
+// 8s during the squeeze → 4s after the 2026-06-21 Supabase Pro upgrade gave
+// back headroom → 2s on 2026-07-03 (Uilnayar: "Debuff queue definitely needs
+// to be faster") — the bigger win there was flushLiveStateToBot's own
+// interval (20s → 5s, see main()), which gates whether the bot even KNOWS
+// about a new debuff before this cache's freshness matters at all; this TTL
+// just trims the remaining read-side lag on top of that. The overlay polls
+// every 1.5s, so 2s still means most ticks reuse the cache rather than
+// re-fetching every single one. Override via WP_BUFF_QUEUE_TTL_MS.
+const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 2000;
 function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -19244,9 +19243,18 @@ async function main() {
     setTimeout(() => pollCharacterPrefs({ botUrl, token }), 10_000);
     setInterval(() => pollCharacterPrefs({ botUrl, token }), 10 * 60_000);
     // Live character state (buffs + last-seen zone) → bot → Supabase so
-    // wolfpack.quest/me can show what each character is carrying + where. Only
-    // sends on change (see flushLiveStateToBot), so the 20s cadence is cheap.
-    setInterval(() => { try { flushLiveStateToBot({ botUrl, token }); } catch {} }, 20_000);
+    // wolfpack.quest/me can show what each character is carrying + where, AND
+    // (Uilnayar 2026-07-03: "Debuff queue definitely needs to be faster") this
+    // is the PRIMARY latency source for a newly-landed curse showing up on
+    // anyone's debuff queue — this interval is how often a cursed player's own
+    // agent even CHECKS whether their buff set changed, before the bot ever
+    // hears about it; the buff-queue read-side cache (BUFF_QUEUE_TTL_MS) is a
+    // much smaller contributor on top of whatever this interval already cost.
+    // Was 20s (worst case ~20s just to detect the change, before the queue's
+    // own cache/poll latency even starts); tightened to 5s. Still cheap — the
+    // signature check below only actually POSTs on a real change, so a
+    // shorter interval mostly just means "notice sooner", not "send more".
+    setInterval(() => { try { flushLiveStateToBot({ botUrl, token }); } catch {} }, 5_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
