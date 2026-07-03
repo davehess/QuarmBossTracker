@@ -89,6 +89,7 @@ let threatWindow  = null;
 let chChainWindow = null;
 let tankWindow    = null;
 let extTargetWindow = null;
+let commandWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -689,7 +690,9 @@ function _boundsKeyForWindow(win) {
   if (win === zealWindow)    return 'zealBounds';
   if (win === threatWindow)  return 'threatBounds';
   if (win === chChainWindow) return 'chChainBounds';
+  if (win === tankWindow)    return 'tankBounds';
   if (win === extTargetWindow) return 'extTargetBounds';
+  if (win === commandWindow) return 'commandBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -2052,6 +2055,7 @@ function _overlayEntries() {
   if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
   if (tankWindow    && !tankWindow.isDestroyed())    out.push(['tank',    tankWindow]);
   if (extTargetWindow && !extTargetWindow.isDestroyed()) out.push(['exttarget', extTargetWindow]);
+  if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -2128,6 +2132,7 @@ function applySetupMode(on) {
     if (!chChainWindow) createChChainOverlay();
     if (!tankWindow)    createTankOverlay();
     if (!extTargetWindow) createExtTargetOverlay();
+    if (!commandWindow) createCommandOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -3435,6 +3440,41 @@ function applyExtTargetVisibility() {
   if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
 }
 
+// Command Center overlay — the "one window" raid board (Uilnayar 2026-07-03):
+// boss/MT/rampage/enrage/Death Touch (same data as the Tank overlay) plus
+// raid-wide DA/invuln status and healer mana parsed from raid-chat macros,
+// plus Curse/Cure alerts from the buff queue. Reads /api/command-center.
+function createCommandOverlay() {
+  const b = _resolveBounds('commandBounds', 'commandBoundsSig', { x: 40, y: 40, width: 320, height: 360 });
+  commandWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Command Center',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 260, minHeight: 160,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  commandWindow.setAlwaysOnTop(true, 'screen-saver');
+  commandWindow.setVisibleOnAllWorkspaces(true);
+  commandWindow.loadFile('command.html');
+  commandWindow.on('moved',  () => _persistBounds('commandBounds', commandWindow));
+  commandWindow.on('resize', () => _persistBounds('commandBounds', commandWindow));
+  commandWindow.once('ready-to-show', () => {
+    commandWindow.webContents.send('agent-port', agentPort);
+    applyCommandVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(commandWindow, 'command');
+  });
+}
+function applyCommandVisibility() {
+  if (!commandWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off). EQ-gated like every other built-in.
+  const shouldShow = unlocked || (cfg.showCommand && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) commandWindow.showInactive(); else commandWindow.hide();
+}
+
 // CH chain overlay — cleric Complete Heal rotation read from the zone-visible
 // shout/raid callouts ("004 - CH - Naggato - Mana: 52%" / "005 GO GO GO").
 // Slot order, caller + mana, live cast bar, NEXT cue + beat countdown.
@@ -3495,7 +3535,9 @@ function applyAllVisibility() {
   applyZealVisibility();
   applyThreatVisibility();
   applyChChainVisibility();
+  applyTankVisibility();
   applyExtTargetVisibility();
+  applyCommandVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -3687,6 +3729,7 @@ function currentStatus() {
     showChChain: !!cfg.showChChain,
     showTank: !!cfg.showTank,
     showExtTarget: !!cfg.showExtTarget,
+    showCommand: !!cfg.showCommand,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -3882,6 +3925,11 @@ function buildTrayMenu() {
     { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.showExtTarget = mi.checked; saveConfig(cfg);
         if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
+        pushStatus();
+      } },
+    { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showCommand = mi.checked; saveConfig(cfg);
+        if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
         pushStatus();
       } },
     { type: 'separator' },
@@ -4479,6 +4527,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showExtTarget = !cfg.showExtTarget; saveConfig(cfg);
       if (cfg.showExtTarget && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
       break;
+    case 'command':
+      cfg.showCommand = !cfg.showCommand; saveConfig(cfg);
+      if (cfg.showCommand && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
+      break;
     default:
       return null;
   }
@@ -4535,6 +4587,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === extTargetWindow) {
       cfg.showExtTarget = false; saveConfig(cfg);
       try { extTargetWindow.hide(); } catch {}
+    } else if (win === commandWindow) {
+      cfg.showCommand = false; saveConfig(cfg);
+      try { commandWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -4919,8 +4974,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showChChain      && !chChainWindow)   createChChainOverlay();
     if (merged.showTank         && !tankWindow)      createTankOverlay();
     if (merged.showExtTarget    && !extTargetWindow) createExtTargetOverlay();
+    if (merged.showCommand      && !commandWindow)   createCommandOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyExtTargetVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.

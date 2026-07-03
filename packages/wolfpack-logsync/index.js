@@ -2960,6 +2960,98 @@ function chChainSnapshot() {
   };
 }
 
+// ── Raid-wide Divine Aura / invuln broadcast tracker ────────────────────────
+// Several tanks run a macro that /rsay's their DA (or Harmshield/other short
+// invuln) status to the whole raid, e.g.:
+//   Naggato: ">> DA up << 18 secs" ... ">> DA DOWN IN 6 SECS" ... ">> DA DOWN <<"
+//   Abrahms: ">>DA up<< 12 seconds" ... ">> 12 SECONDS DA <<" ... ">>DA DOWN<<"
+// "DA" is matched case-sensitively (same reasoning as _CH_CALL_RX — lowercase
+// "da" is too common a chat fragment to trust as a signal). A trailing
+// "N sec(s)" ANYWHERE in the line always means "N seconds of protection
+// left" — that single rule covers both the initial "up" call (full
+// duration) and a mid-countdown re-warning whose text still says "DOWN"
+// (Naggato's own "DA DOWN IN 6 SECS" means down is coming in 6s, not down
+// now). Only a bare DOWN/UP with no number is terminal (0s) / duration-
+// unknown. These lines are raid-chat, so every Mimic already sees them in
+// its own log — purely local, no bot relay, same as the CH-chain tracker
+// (Uilnayar 2026-07-03: "That lets the whole raid know in raidchat when
+// its happening").
+const _DA_SECONDS_RX = /(\d{1,3})\s*sec/i;
+const _DA_DOWN_RX    = /\bDOWN\b/;
+const _DA_UP_RX       = /\bUP\b/;
+const DA_BROADCAST_TTL_MS = 30_000;   // drop an entry 30s after its speaker's last line
+const _daBroadcasts = new Map();      // speakerLower → { name, endsAtMs, updatedAtMs }
+function trackDaBroadcastLine(line, character) {
+  if (!line || line.indexOf('DA') === -1) return;   // cheap pre-filter, case-sensitive
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const text = m[2];
+  if (!/\bDA\b/.test(text)) return;
+  const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const secM = text.match(_DA_SECONDS_RX);
+  const key = speaker.toLowerCase();
+  if (secM) {
+    const secs = Math.min(120, parseInt(secM[1], 10));
+    _daBroadcasts.set(key, { name: speaker, endsAtMs: atMs + secs * 1000, updatedAtMs: atMs });
+  } else if (_DA_DOWN_RX.test(text)) {
+    _daBroadcasts.set(key, { name: speaker, endsAtMs: atMs, updatedAtMs: atMs });        // down now
+  } else if (_DA_UP_RX.test(text)) {
+    _daBroadcasts.set(key, { name: speaker, endsAtMs: null, updatedAtMs: atMs });        // up, unknown duration
+  }
+}
+function daBroadcastsSnapshot() {
+  const now = Date.now();
+  const out = [];
+  for (const [key, e] of _daBroadcasts) {
+    if (now - e.updatedAtMs > DA_BROADCAST_TTL_MS) { _daBroadcasts.delete(key); continue; }
+    out.push({ name: e.name, seconds: e.endsAtMs != null ? Math.max(0, Math.round((e.endsAtMs - now) / 1000)) : null });
+  }
+  out.sort((a, b) => (a.seconds ?? 999) - (b.seconds ?? 999));
+  return out;
+}
+
+// ── Raid-wide healer/caster mana roster ─────────────────────────────────────
+// Self-reported "N% mana" status tickers many healers run on a macro —
+// actual examples from guild raid chat: "Druid -- current mana 45%.",
+// "TUNARE'S RENEWAL Inc to Abrahms - 60% Mana Left", "-= Ethereal Light
+// Abrahms =- 45% Mana", "Kazmodon has 45% Mana", "cleric mana 45%". Every
+// observed variant is a SELF-report (the speaker's own mana, never someone
+// else's) with a percent near the word "mana" in either order — matching
+// that generic shape rather than per-player exact wording means a healer
+// with a brand-new macro shows up with no code change. Purely local, same
+// as the CH-chain and DA-broadcast trackers.
+const _MANA_PCT_RX = /(?:mana\D{0,12}(\d{1,3})\s*%|(\d{1,3})\s*%\D{0,12}mana)/i;
+const MANA_ROSTER_TTL_MS = 5 * 60 * 1000;   // stale after 5 min of silence from that speaker
+const _healerManaRoster = new Map();        // speakerLower → { name, class, pct, updatedAtMs }
+function trackHealerManaLine(line, character) {
+  if (!line || !/mana/i.test(line)) return;
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const text = m[2];
+  const pctM = text.match(_MANA_PCT_RX);
+  if (!pctM) return;
+  const pct = Math.min(100, parseInt(pctM[1] || pctM[2], 10));
+  const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
+  const who = whoData.get(speaker.toLowerCase());
+  const ts = parseEqTimestamp(line);
+  _healerManaRoster.set(speaker.toLowerCase(), {
+    name: speaker, class: who ? who.class : null, pct,
+    updatedAtMs: ts ? ts.getTime() : Date.now(),
+  });
+}
+function healerManaRosterSnapshot() {
+  const now = Date.now();
+  const out = [];
+  for (const [key, e] of _healerManaRoster) {
+    if (now - e.updatedAtMs > MANA_ROSTER_TTL_MS) { _healerManaRoster.delete(key); continue; }
+    out.push({ name: e.name, class: e.class, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
+  }
+  out.sort((a, b) => a.pct - b.pct);   // lowest mana first — who needs a mana break
+  return out;
+}
+
 // Long-term who_data registry filter — anonymous rows + level 50+. The
 // transient OVERLAY (whoSnapshot) shows everyone /who returned, but the
 // persistent uploads only carry threat-relevant entries: low-level bank
@@ -6609,6 +6701,42 @@ function _serializeTankState() {
   };
 }
 
+// Command Center overlay snapshot — the "one window" board (Uilnayar
+// 2026-07-03) combining everything the Tank overlay already resolves
+// (boss/MT/rampage/DA/DT/enrage) with two raid-wide sections that only
+// exist because raiders already broadcast them in chat: DA/invuln status
+// (trackDaBroadcastLine) and healer mana (trackHealerManaLine). Curse/Cure
+// alerts intentionally do NOT re-parse "please cure me" macros — the bot's
+// raid-buff-queue debuff_queue already tracks real observed curse debuffs
+// + in-flight cure casts (more reliable than manual call-outs going stale),
+// so this just surfaces that existing data instead of re-deriving it.
+function _serializeCommandCenterState() {
+  const tank = _serializeTankState();
+  const activeChar = tank.character;
+
+  fetchRaidBuffQueue('', activeChar);
+  const bqCached = _buffQueueCache.get('|' + String(activeChar || '').toLowerCase());
+  const debuffQueue = (bqCached && bqCached.payload && Array.isArray(bqCached.payload.debuff_queue))
+    ? bqCached.payload.debuff_queue : [];
+  const cures = debuffQueue.map(d => ({
+    name: d.name, class: d.class, curses: d.curses,
+    all_being_cured: !!d.all_being_cured, same_zone: !!d.same_zone,
+  }));
+
+  return {
+    character:     activeChar,
+    target:        tank.target,
+    mt:            tank.mt,
+    rampage:       tank.rampage,
+    enrage:        tank.enrage,
+    deathtouch:    tank.deathtouch,
+    da_broadcasts: daBroadcastsSnapshot(),
+    healer_mana:   healerManaRosterSnapshot(),
+    cures,
+    updated_at:    Date.now(),
+  };
+}
+
 function _serializeForDashboard() {
   const healersOut = {};
   for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
@@ -9186,6 +9314,7 @@ var WP_OVERLAY_ROWS = [
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
+  ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
 ];
 
 function renderOverlays(s) {
@@ -9305,7 +9434,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -12431,6 +12560,11 @@ function startWebDashboard(port) {
       if (req.url === '/api/tank-state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeTankState()));
+      }
+      // Command Center overlay (command.html) — the "one window" board.
+      if (req.url === '/api/command-center') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_serializeCommandCenterState()));
       }
       // Mimic's buff-queue overlay polls this — we proxy the bot's
       // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
@@ -19924,6 +20058,11 @@ async function main() {
         // callouts in shout/raid chat. Local-only (zone-visible lines);
         // feeds the Mimic CH Chain overlay via /api/state.chChain.
         if (!_sourceExcluded) { try { trackChChainLine(line, b.character); } catch {} }
+        // Raid-wide DA/invuln broadcast + healer mana roster — same
+        // shout/raid/guild-chat macro pattern as CH chain, feeding the
+        // Command Center overlay.
+        if (!_sourceExcluded) { try { trackDaBroadcastLine(line, b.character); } catch {} }
+        if (!_sourceExcluded) { try { trackHealerManaLine(line, b.character); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
