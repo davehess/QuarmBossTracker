@@ -1,0 +1,199 @@
+// Content for the public /roadmap page. Plain-language, member-facing —
+// the technical version (file paths, version numbers, backlog letter-codes)
+// lives in docs/roadmap.md. Keep this file the thing you edit when the
+// roadmap changes; the page itself is just a renderer.
+//
+// `media` is optional per feature — drop screenshots/clips in
+// `public/roadmap/<file>` and reference them here (type 'image' | 'video')
+// to get the click-to-focus lightbox on the feature card for free. Nothing
+// has media yet; the capability just doesn't render anything until it does.
+
+export type RoadmapMedia = { type: 'image' | 'video'; src: string; alt: string };
+
+export type RoadmapFeature = {
+  key: string;
+  title: string;
+  tag?: string;          // small pill, e.g. "Mimic 1.4.0"
+  summary: string;
+  media?: RoadmapMedia[];
+};
+
+export type RetroItem = {
+  title: string;
+  hit: 'shipped' | 'reworked' | 'open';
+  note: string;
+};
+
+export const retroSummary = {
+  headline: '9 of 13 tracked initiatives shipped',
+  blurb:
+    "Before starting the next push, we checked the last backlog against what's " +
+    'actually live rather than trusting old checkmarks. Most of it landed — a ' +
+    'couple of things were solved differently than originally planned, and a ' +
+    "few are still open (mostly things blocked on outside factors, not us dragging feet).",
+};
+
+export const retroItems: RetroItem[] = [
+  {
+    title: 'Charm-pet HP on the Charm/Pet overlays',
+    hit: 'shipped',
+    note: 'Live pet HP shows directly instead of only inferring it from combat lines.',
+  },
+  {
+    title: 'Resisted-spell breakdown',
+    hit: 'shipped',
+    note: 'The local dashboard shows which mobs cast a resisted spell, and how often.',
+  },
+  {
+    title: 'More overlay toggles in the tray',
+    hit: 'shipped',
+    note: 'DPS panels (Healing, Tanking, Threat, Top damage) each get their own on/off switch.',
+  },
+  {
+    title: 'Live character state syncing to the website',
+    hit: 'shipped',
+    note: "Your buffs and zone show on your /me page — this became the backbone for a lot of what's shipped since.",
+  },
+  {
+    title: 'Mimic setup overhaul',
+    hit: 'shipped',
+    note: 'Guided first-run setup, auto-detected EQ folder, opt-in overlays, a ✕ to hide any overlay.',
+  },
+  {
+    title: 'Buff & Debuff coordination queue',
+    hit: 'shipped',
+    note: 'Grew well past the original pitch — curse/cure tracking, HP-slot awareness, severity sorting, and a whole speed pass this round.',
+  },
+  {
+    title: 'CH Chain tracking',
+    hit: 'shipped',
+    note: "Not the arcade-game version we first sketched, but rotation order, live cast bar, and a beat countdown are a real, well-used feature now.",
+  },
+  {
+    title: '/who directory on the website',
+    hit: 'shipped',
+    note: 'Searchable history of everyone ever seen in a /who.',
+  },
+  {
+    title: 'Keeping Supabase storage under control',
+    hit: 'reworked',
+    note: "Instead of periodically deleting old rows, we stopped generating most of them in the first place — a counter table replaced a row-per-upload log that was growing ~30k rows a day.",
+  },
+  {
+    title: 'PvP debuff assist credit',
+    hit: 'open',
+    note: "Blocked on real combat-log samples of a landed debuff on an enemy player — we don't want to guess at this one.",
+  },
+  {
+    title: 'Named-mob kill counts on /me',
+    hit: 'open',
+    note: "Still queued — straightforward to build, just hasn't come up yet.",
+  },
+  {
+    title: 'Unified /raid operational view',
+    hit: 'open',
+    note: "Most of the data it needs is already flowing (roster, live-state, buffs); the dedicated view itself is still a work in progress.",
+  },
+  {
+    title: 'Windows code-signing for Mimic',
+    hit: 'open',
+    note: "Everything is staged and ready — waiting on SignPath Foundation's free open-source signing approval.",
+  },
+];
+
+export const recentFeatures: RoadmapFeature[] = [
+  {
+    key: 'pqdi-link',
+    title: '[PQDI] link on parse pages',
+    tag: 'web',
+    summary:
+      'Every boss on a parse page now links straight to its PQDI.cc reference page — stats, spells, loot — no more searching for it yourself.',
+  },
+  {
+    key: 'warder-damage',
+    title: 'Beastlord Warder damage now counted',
+    tag: 'agent',
+    summary:
+      "A Beastlord's Warder pet damage was quietly falling off the parse instead of crediting the owner. Fixed — pets named after their owner now self-attribute immediately, no waiting on a declaration line the pet doesn't always send.",
+  },
+  {
+    key: 'charm-break-self',
+    title: 'Enchanter charm-break alerts now catch the self-only case',
+    tag: 'agent',
+    summary:
+      "EverQuest has a charm-break log line that only the charmer ever sees (\"Your charm spell has worn off\") — no pet name attached, invisible to a bystander-based detector. That exact case is now caught, so enchanters get the callout every time a charm breaks, not just the times someone else was watching.",
+  },
+  {
+    key: 'buff-queue-speed',
+    title: 'Buff & debuff queue got dramatically faster',
+    tag: 'agent',
+    summary:
+      "Root-caused a staleness bug that meant most raiders' data reaching the queue was minutes old at best — at one point, exactly zero of thirty rostered raiders had current data flowing in at all. Now it's near real-time.",
+  },
+  {
+    key: 'ch-chain-druids',
+    title: 'CH Chain: Druids join the rotation, smarter gap warning, quieter by default',
+    tag: 'mimic',
+    summary:
+      "Druids filling Complete-Heal gaps now show up on the chain overlay labeled distinctly instead of looking like a numbered cleric slot. The \"gap coming\" warning now scales to your raid's actual chain speed instead of a fixed number, and the audible callout is off by default (still one click to turn back on).",
+  },
+  {
+    key: 'tank-overlay',
+    title: 'Tank overlay grew up',
+    tag: 'mimic',
+    summary:
+      "Follows whoever's actually tanking (not just you), shows a damage-shield breakdown with known sources, puts the Rampage target's HP right on the bar, highlights gold when they've got Divine Aura / Harmshield / any short invulnerability up (green once it's about to fall — your cue to be ready to heal), and adds a Death Touch countdown for bosses with that mechanic configured.",
+  },
+  {
+    key: 'extended-target-fixes',
+    title: 'Extended Target overlay — three bugs fixed in a row',
+    tag: 'agent + bot',
+    summary:
+      "First it showed nothing at all (a database column the feature needed had never actually been turned on). Then every target's HP froze at 100% (a staleness bug). Then a single real player or boss started showing up as two fake duplicate rows. All three are fixed now.",
+  },
+  {
+    key: 'command-center',
+    title: 'Command Center — a new one-window raid board',
+    tag: 'mimic 1.4.0',
+    summary:
+      "New overlay combining boss/tank focus with two sections built straight from what raiders already say in raid chat: a raid-wide 'who has Divine Aura up' tracker and a healer mana roster, plus curse/cure alerts. We mined 60 days of real guild raid chat to find the recurring patterns before building it, rather than guessing.",
+  },
+];
+
+export const nearTermItems: RoadmapFeature[] = [
+  {
+    key: 'pull-tracker-glide',
+    title: 'Extended Target: watch mobs climb the list',
+    tag: 'up next',
+    summary:
+      "We looked into showing exactly how far away an incoming add is and when it'll reach camp — turns out the game data we have access to doesn't include position information for mobs or players, so a real countdown isn't possible yet (that needs an upstream change from the Zeal team). What we can do without that: animate the target list so a mob visibly climbs up as more raiders engage it, and drops back down if it gets abandoned.",
+  },
+  {
+    key: 'per-char-layout',
+    title: 'Overlay layouts remember your character',
+    tag: 'up next',
+    summary:
+      "Overlay visibility already switches automatically when you swap characters. Position and size will too — so your monk's layout and your enchanter's layout can both be exactly right without you moving anything by hand.",
+  },
+  {
+    key: 'me-layout-sync',
+    title: 'Your overlay layout on /me',
+    tag: 'planned',
+    summary:
+      "Once layouts remember your character locally, we'll sync a read-only view of them to your /me page — most of what's there already lives on your machine first.",
+  },
+  {
+    key: 'trigger-onboarding',
+    title: 'Smarter first impression for new Mimic installs',
+    tag: 'planned',
+    summary:
+      'Trigger alerts linked directly to the Triggers tab, with starter suggestions based on your class and role — so a fresh install feels tailored from the first raid, not a blank slate.',
+  },
+  {
+    key: 'ui-studio-positioning',
+    title: 'Visual overlay layout tool',
+    tag: 'exploring',
+    summary:
+      "UI Studio already has a polished visual editor for your in-game UI. We're looking at borrowing that same drag-and-drop feel for laying out Mimic's own overlays.",
+  },
+];

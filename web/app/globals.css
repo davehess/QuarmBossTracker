@@ -7,3 +7,12 @@
   a { color: #58a6ff; }
   a:hover { text-decoration: underline; }
 }
+
+/* Roadmap feature-media lightbox (web/components/RoadmapFeatureCard.tsx) —
+   a focus-in effect for screenshots/clips attached to a shipped feature. */
+@layer utilities {
+  @keyframes wp-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes wp-zoom-in { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+  .animate-wp-fade-in { animation: wp-fade-in 150ms ease-out; }
+  .animate-wp-zoom-in { animation: wp-zoom-in 200ms ease-out; }
+}

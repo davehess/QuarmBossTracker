@@ -13,6 +13,7 @@ const links = [
   { href: '/pvp',           label: 'PvP' },
   { href: '/leaderboards',  label: 'Ranks' },
   { href: '/fun',           label: '🎉 Fun' },
+  { href: '/roadmap',       label: '🗺️ Roadmap' },
 ];
 
 // showAdmin / showMe are computed server-side in the root layout (signed-in

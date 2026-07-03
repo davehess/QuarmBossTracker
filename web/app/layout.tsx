@@ -141,6 +141,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <div>
               <a href="/privacy" className="text-blue hover:underline">Privacy</a>{' '}
               <span aria-hidden>·</span>{' '}
+              <a href="/roadmap" className="text-blue hover:underline">Roadmap</a>{' '}
+              <span aria-hidden>·</span>{' '}
               Your logs stay on your device. Toggle exclusions any time on{' '}
               <a href="/me" className="text-blue hover:underline">/me</a>.
             </div>
