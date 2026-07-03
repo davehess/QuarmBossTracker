@@ -433,6 +433,22 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                 <Link href={`/boss/${bossId}`} className="hover:underline">{bossName}</Link>
               ) : bossName}
             </span>
+            {/* eqemu_npc_types.id IS pqdi.cc's npc id (same EQEmu source data —
+                confirmed directly: Lord_Nagafen is 32040 in both), so this
+                needs no separate stored URL, unlike the bot's data/bosses.json
+                pqdiUrl field. Dave 2026-07-03: "a PQDI link... next to their
+                name as a '[PQDI]' link". */}
+            {bossId && (
+              <a
+                href={`https://www.pqdi.cc/npc/${bossId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm font-normal text-blue hover:underline shrink-0"
+                title="View this NPC on PQDI (pqdi.cc)"
+              >
+                [PQDI]
+              </a>
+            )}
             <ClassificationChip classification={enc.classification} />
           </h2>
           <div className="text-dim text-sm">
