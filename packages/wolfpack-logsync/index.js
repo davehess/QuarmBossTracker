@@ -1095,6 +1095,19 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'charm_break', pet: m[1] };
   }
 
+  // Charm BREAK — self-only form (Uilnayar 2026-07-03, Shavimo the
+  // enchanter: "gives buff durations and stuff, but when the key word
+  // 'Your charm spell has worn off' I dont get any notification"). This
+  // line is ONLY visible to the charmer, no third-person subject at all —
+  // completely separate wording from the three bystander-visible forms
+  // above, which is why it fell through undetected. `pet: '__SELF__'` is a
+  // sentinel EncounterBuilder.add() resolves by finding the charmer's own
+  // open charm session (an enchanter only ever has one charm active at a
+  // time, so owner-lookup is unambiguous even without a pet name here).
+  if (/\]\s+Your charm spell has worn off\.?\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'charm_break', pet: '__SELF__' };
+  }
+
   // Charm-LAND attribution (bystander-visible). Form:
   //   "A glyphed familiar regards Lihliana as an ally."
   // Visible to everyone in the zone, so any agent can pick it up and
@@ -3721,7 +3734,22 @@ class EncounterBuilder {
     // builder in this.charmSessions for inclusion in the encounter
     // payload.
     if (event.type === 'charm_break') {
-      const petKey = String(event.pet || '').toLowerCase();
+      // '__SELF__' sentinel — the self-only "Your charm spell has worn
+      // off." line names no pet at all. Resolve it to whichever open
+      // session THIS character owns; an enchanter/charmer only ever has
+      // one charm active at a time, so this is unambiguous.
+      let petKey = String(event.pet || '').toLowerCase();
+      let petDisplay = event.pet;
+      if (petKey === '__self__') {
+        petKey = '';
+        petDisplay = null;
+        const meLower = String(this.character || '').toLowerCase();
+        if (meLower && this._activeCharms) {
+          for (const [k, sess] of this._activeCharms) {
+            if (String(sess?.owner || '').toLowerCase() === meLower) { petKey = k; break; }
+          }
+        }
+      }
       if (!petKey) return;
       const open = this._activeCharms?.get(petKey);
       const ownerWas = open ? open.owner : (_charmTickTracker.get(petKey)?.owner || null);
@@ -3734,8 +3762,11 @@ class EncounterBuilder {
       }
       // The break event lands ON the mob's tick — fresh anchor for the 6s
       // cycle. Even when there was no open session (e.g. enchanter joined
-      // mid-charm), we still want to begin tracking ticks now.
-      _bumpCharmTick(event.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
+      // mid-charm), we still want to begin tracking ticks now. Display name:
+      // prefer the line's own casing when we have it (bystander form), else
+      // whatever cased name the tick tracker already knows for this pet
+      // (self-only '__SELF__' form resolved above), else the lowercase key.
+      _bumpCharmTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
       return;
     }
 
