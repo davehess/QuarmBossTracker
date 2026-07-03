@@ -4044,18 +4044,39 @@ function buildTrayMenu() {
 }
 
 // ── Auto-update ────────────────────────────────────────────────────────────
+// `verbose` (the manual "Check for updates…" click / dashboard button) used
+// to ONLY affect the "check failed to even start" case — the actual result
+// (found / not found / downloaded) came back through electron-updater's
+// events, which fire identically whether the check was manual or the silent
+// hourly poll, so a manual click when already current gave literally zero
+// feedback (Uilnayar 2026-07-03: "the check for update doesn't look like
+// it's working - no popup"). _manualCheckPending bridges that: set here,
+// consumed + cleared by whichever updater event fires next in wireAutoUpdater.
+let _manualCheckPending = false;
 function safeCheckForUpdates(verbose) {
   if (!autoUpdater) {
     if (verbose) dialog.showMessageBox({ type: 'info', message: 'Updates aren\'t available in dev mode.' });
     return;
   }
+  if (verbose) {
+    _manualCheckPending = true;
+    // Safety net — if nothing resolves it within 30s (unlikely; checkForUpdates
+    // itself times out well before that), don't leave a stale flag around to
+    // pop a dialog on some LATER unrelated background event.
+    clearTimeout(safeCheckForUpdates._clearT);
+    safeCheckForUpdates._clearT = setTimeout(() => { _manualCheckPending = false; }, 30_000);
+  }
   try {
     autoUpdater.checkForUpdates().catch((e) => {
       appendAgentLog(`[updater] check failed: ${e.message || e}\n`);
-      if (verbose) dialog.showMessageBox({ type: 'info', message: `Update check failed: ${e.message || e}` });
+      if (verbose) {
+        _manualCheckPending = false;
+        dialog.showMessageBox({ type: 'info', message: `Update check failed: ${e.message || e}` });
+      }
     });
   } catch (e) {
     appendAgentLog(`[updater] check threw: ${e.message || e}\n`);
+    if (verbose) _manualCheckPending = false;
   }
 }
 // ── In-place AGENT hot-swap (no installer, no window restart) ───────────────
@@ -4217,9 +4238,19 @@ function wireAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('update-available', (info) => {
     appendAgentLog(`[updater] update available: v${info && info.version}\n`);
+    // Don't clear _manualCheckPending here — update-downloaded (or error)
+    // follows shortly since autoDownload is on, and THAT'S the meaningful
+    // "here's your feedback" moment. Popping a dialog at both points would
+    // just be two prompts in a row for one click.
   });
   autoUpdater.on('update-not-available', () => {
     appendAgentLog(`[updater] no update available\n`);
+    // This is the case that was completely silent before — a manual "Check
+    // for updates…" click when already current produced zero feedback.
+    if (_manualCheckPending) {
+      _manualCheckPending = false;
+      dialog.showMessageBox({ type: 'info', message: `You're up to date (v${app.getVersion()}).` });
+    }
   });
   autoUpdater.on('download-progress', (p) => {
     appendAgentLog(`[updater] download ${Math.round(p.percent)}%\n`);
@@ -4230,11 +4261,15 @@ function wireAutoUpdater() {
     // pushStatus() refreshes the tray "Restart to install vX" item AND the
     // dashboard banner (preload reads status.updatePending). The update also
     // applies on its own at the next normal quit (autoInstallOnAppQuit), so a
-    // pop-up is optional. Only nag with the modal dialog when the user has
-    // explicitly opted out of quiet updates.
+    // pop-up is optional in the background-poll case. Show it either when the
+    // user has explicitly opted out of quiet updates, OR when they just
+    // clicked "Check for updates…" themselves — an explicit ask deserves an
+    // explicit answer regardless of the quiet-updates preference.
     pushStatus();
     const quiet = loadConfig().quietUpdates !== false;
-    if (!quiet && mainWindow && !mainWindow.isDestroyed()) {
+    const manual = _manualCheckPending;
+    _manualCheckPending = false;
+    if ((!quiet || manual) && mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
         type: 'info',
         buttons: ['Restart now', 'Later'],
@@ -4250,6 +4285,10 @@ function wireAutoUpdater() {
   });
   autoUpdater.on('error', (err) => {
     appendAgentLog(`[updater] error: ${err && (err.message || err)}\n`);
+    if (_manualCheckPending) {
+      _manualCheckPending = false;
+      dialog.showMessageBox({ type: 'info', message: `Update check failed: ${(err && (err.message || err)) || 'unknown error'}` });
+    }
   });
   // Initial + hourly. Delay 8s so the agent boot doesn't compete for bandwidth.
   setTimeout(() => safeCheckForUpdates(false), 8000);
