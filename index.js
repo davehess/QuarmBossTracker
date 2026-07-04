@@ -6461,6 +6461,22 @@ const EXT_HURT_PCT    = 85;        // missing >15% health
 const EXT_HURT_MIN_MS = 10_000;    // …for >10s before it counts as "hurt"
 const EXT_HP_SPLIT_TOL = 8;        // %HP gap that separates two same-name mobs
 
+// Previously-targeted mobs that drop off everyone's target gauge (an
+// off-tank's brief targeting gap, a target swap mid-fight) stay on the
+// board for a grace window if they were last seen hurt — Uilnayar
+// 2026-07-04: "keep non-targeted but previously targeted mobs that had
+// less than 100% health." Only unique (non-ambiguous, non-duplicate) mobs
+// are cached — a generic "a wolf" name can't be reliably re-identified
+// across polls once it's no longer targeted. guild|zone|nameLower →
+// { name, hp, raiders, debuffs, lastSeenMs }.
+const _extMobLastSeen = new Map();
+const EXT_STALE_GRACE_MS = 5 * 60 * 1000;
+// Off-tank freshness — how recently the agent's own recentTankHits must have
+// confirmed a mob hitting a raider for it to still count as "currently
+// hitting someone" for the 100%-HP off-tank case (Emperor-style fights: an
+// add is deliberately never targeted/damaged, only tanked).
+const EXT_OFFTANK_FRESH_MS = 30_000;
+
 // GET /api/agent/extended-target?character=<self>
 // Powers the Extended Target raid overlay. Aggregates every ONLINE raider's
 // current target (character_live_state.target_name, Zeal slot 6) into a list of
@@ -6498,7 +6514,8 @@ async function _handleAgentExtendedTarget(req, res) {
     const [liveRows, buffRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=character,zone_name,self_hp_pct,target_name,target_hp_pct,pet_name,pet_hp_pct,updated_at`),
+        `&select=character,zone_name,self_hp_pct,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
+        `incoming_mob,incoming_mob_since,updated_at`),
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
         `&select=target,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
@@ -6610,6 +6627,84 @@ async function _handleAgentExtendedTarget(req, res) {
       });
     }
 
+    // Persist unique (non-ambiguous, non-duplicate) NPC rows this poll so a
+    // brief targeting gap doesn't drop them off the board, then restore any
+    // cached mob NOT seen this poll that's still within its grace window and
+    // was last known hurt — Uilnayar 2026-07-04: "keep non-targeted but
+    // previously targeted mobs that had less than 100% health."
+    const scopeKeyPrefix = guildId + '|' + (scopeZone || '*') + '|';
+    for (const t of targets) {
+      if (t.kind !== 'npc' || t.ambiguous) continue;
+      _extMobLastSeen.set(scopeKeyPrefix + t.name.toLowerCase(), {
+        name: t.name, hp: t.hp_pct, raiders: t.raiders.slice(), debuffs: t.debuffs,
+        is_named: t.is_named, lastSeenMs: now,
+      });
+    }
+    for (const [k, cached] of _extMobLastSeen) {
+      if (!k.startsWith(scopeKeyPrefix)) continue;
+      if (now - cached.lastSeenMs > EXT_STALE_GRACE_MS) { _extMobLastSeen.delete(k); continue; }
+      const key = k.slice(scopeKeyPrefix.length);
+      if (byName.has(key)) continue;                       // already fresh this poll
+      if (cached.hp == null || cached.hp >= 100) continue;  // only "had less than 100%"
+      targets.push({
+        name: cached.name, kind: 'npc',
+        raider_count: 0, raiders: [],
+        hp_pct: cached.hp,
+        is_named: cached.is_named,
+        ambiguous: false, same_name_count: 1, dup_index: null,
+        debuffs: cached.debuffs || [],
+        hurt: false, hurt_secs: 0,
+        zone: scopeZone || null,
+        stale: true, stale_secs: Math.round((now - cached.lastSeenMs) / 1000),
+        last_raiders: cached.raiders.slice(0, 20),
+      });
+    }
+
+    // Off-tank surfacing — a mob at 100% HP that nobody's targeting but IS
+    // confirmed hitting a raider via combat log (incoming_mob, fed by the
+    // agent's recentTankHits — independent of Zeal targeting). Fights like
+    // Emperor Ssraeshza deliberately off-tank an add at full health with no
+    // one ever targeting/damaging it, so the target-gauge aggregation alone
+    // would never show it. Opt-in on the overlay (off_tank flag) since it's
+    // a niche need; off_tank_count is always returned so the overlay can
+    // show a quiet "N off-tanked" hint even with the detail view collapsed.
+    const offTankByMob = new Map();   // nameLower → { name, raiders: Set }
+    for (const r of inScope) {
+      if (!r.incoming_mob) continue;
+      const sinceMs = r.incoming_mob_since ? Date.parse(r.incoming_mob_since) : 0;
+      if (!sinceMs || (now - sinceMs) > EXT_OFFTANK_FRESH_MS) continue;
+      const myTarget = r.target_name ? String(r.target_name).trim().toLowerCase() : '';
+      const mobKey = String(r.incoming_mob).trim().toLowerCase();
+      if (!mobKey || mobKey === myTarget) continue;   // already covered — they ARE targeting it
+      let g = offTankByMob.get(mobKey);
+      if (!g) { g = { name: r.incoming_mob, raiders: new Set() }; offTankByMob.set(mobKey, g); }
+      g.raiders.add(r.character);
+    }
+    let offTankCount = 0;
+    for (const [mobKey, g] of offTankByMob) {
+      offTankCount += g.raiders.size;
+      const existing = targets.find(t => t.kind === 'npc' && t.name.toLowerCase() === mobKey);
+      if (existing) {
+        // Already on the board (someone else targets it, or it's in the
+        // stale cache) — just tag it so the toggle can highlight it and
+        // fold in raiders being hit but not shown as targeters.
+        existing.off_tank = true;
+        existing.off_tank_raiders = [...g.raiders];
+        continue;
+      }
+      const cached = _extMobLastSeen.get(scopeKeyPrefix + mobKey);
+      targets.push({
+        name: g.name, kind: 'npc',
+        raider_count: 0, raiders: [],
+        hp_pct: cached ? cached.hp : null,
+        is_named: true, ambiguous: false, same_name_count: 1, dup_index: null,
+        debuffs: debuffsFor(mobKey),
+        hurt: false, hurt_secs: 0,
+        zone: scopeZone || null,
+        off_tank: true, off_tank_raiders: [...g.raiders],
+      });
+    }
+
     // Players/pets missing >15% HP for >10s — merge into the same list. A
     // hurt entity that's also a target updates that row; otherwise it's added
     // (raider_count 0 sorts it to the bottom but it still shows because it
@@ -6656,7 +6751,9 @@ async function _handleAgentExtendedTarget(req, res) {
       a.name.localeCompare(b.name));
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ targets, zone: scopeZone || null, online: inScope.length }));
+    return res.end(JSON.stringify({
+      targets, zone: scopeZone || null, online: inScope.length, off_tank_count: offTankCount,
+    }));
   } catch (err) {
     console.error('[extended-target] fetch failed:', err && err.message);
     res.writeHead(500, { 'Content-Type': 'application/json' });

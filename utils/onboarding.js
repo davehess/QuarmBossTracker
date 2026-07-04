@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.135': [
+    '**Extended Target: off-tanked mobs stop vanishing from the board** — a mob nobody currently targets used to disappear instantly, even mid-fight (a brief targeting gap, someone glancing elsewhere). A previously-targeted mob that was last seen hurt now stays on the board for a grace window instead of dropping off. Also lays the groundwork for surfacing mobs held at 100% HP by an off-tank (Emperor Ssraeshza-style fights where an add is deliberately never damaged) — full support lands with the next Mimic update.',
+  ],
   '3.0.134': [
     '**Extended Target overlay stops splitting real targets into fake duplicates** — a single named boss/player was sometimes showing up as two rows ("★1/2", "★2/2") just because two raiders\' agents reported slightly different HP% for it at that instant. HP-based splitting is now only used for genuinely ambiguous generic mob names ("a wolf" etc.) where two same-named spawns really can coexist — a unique player, pet, or named NPC always collapses to one row with the median reported HP.',
   ],
