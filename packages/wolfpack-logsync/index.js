@@ -4061,7 +4061,7 @@ class EncounterBuilder {
           && tsMs - this._rampageTs <= 3000;
         if (!this.silent && !isRampHit) {
           const rt = stats.recentTankHits || (stats.recentTankHits = []);
-          rt.push({ mob: att.toLowerCase(), tank, tsMs });
+          rt.push({ mob: att.toLowerCase(), mobDisplay: att, tank, tsMs });
           if (rt.length > 200) rt.splice(0, rt.length - 200);
         }
       }
@@ -18445,6 +18445,29 @@ function flushLiveStateToBot(opts) {
     // agent's pet-buff tracker (timed, persisted). Owners with no pet send null.
     const pet      = livePet.get(String(ch).toLowerCase()) || null;
     const petBuffs = pet ? petBuffsForOwner(String(ch).toLowerCase()) : [];
+    // Off-tank signal — the mob most recently confirmed hitting THIS
+    // character via combat log (recentTankHits), independent of whether
+    // they currently have it targeted. Same rolling buffer the Tank
+    // overlay's MT resolution already reads; scanned newest-first so we
+    // get the LATEST connect on this character, not the oldest. Lets
+    // Extended Target surface "who's tanking something nobody's
+    // targeting" — Emperor Ssraeshza-style fights where an add is
+    // deliberately off-tanked at 100% HP and never targeted/damaged
+    // (Uilnayar 2026-07-04). 20s window matches the freshness the bot
+    // requires before treating it as "currently hitting someone".
+    let incomingMob = null, incomingMobSinceMs = null;
+    {
+      const chLower = String(ch).toLowerCase();
+      const hits = stats.recentTankHits || [];
+      for (let i = hits.length - 1; i >= 0; i--) {
+        const h = hits[i];
+        if (h && h.tank && h.tank.toLowerCase() === chLower && (now - h.tsMs) <= 20_000) {
+          incomingMob = h.mobDisplay || h.mob;
+          incomingMobSinceMs = h.tsMs;
+          break;
+        }
+      }
+    }
     const rec = {
       character:   ch,
       zone_id:     st.zone != null ? st.zone : null,
@@ -18458,6 +18481,8 @@ function flushLiveStateToBot(opts) {
       // everyone regardless of party size (Uilnayar 2026-06-29).
       target_name:    st.target_name || null,
       target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+      incoming_mob:       incomingMob,
+      incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
       buffs,
       buff_count:  buffs.length,
       pet_name:    pet ? pet.name : null,
@@ -18484,6 +18509,7 @@ function flushLiveStateToBot(opts) {
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
       targetHpBucket,
+      (rec.incoming_mob || '').toLowerCase(),
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
     // UNCONDITIONALLY, not just while targeting something. A STABLE target
