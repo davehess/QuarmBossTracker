@@ -155,6 +155,19 @@
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   /* Chain idle (no call in 60s+) — dim so post-fight numbers read as stale. */
   .rows.stale,.nextrow.stale{opacity:0.5}
+  /* Off-heal candidates — raiders taking repeated single-target damage
+     outside the MT/Rampage (see offHealCandidatesSnapshot in the agent).
+     Sits at the bottom of the overlay since healers already have this
+     window open — Uilnayar 2026-07-04. Independent of chain state (renders
+     even with no active CH chain), so it's its own card, not a table row. */
+  .offheal{margin-top:5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px}
+  .offheal-hd{font-size:9px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;
+    margin-bottom:3px;text-shadow:0 1px 2px #000}
+  .offheal-row{display:flex;align-items:center;gap:6px;font-size:10px;line-height:1.6;
+    color:#e6edf3;text-shadow:0 1px 2px #000}
+  .offheal-row .oh-nm{font-weight:600;color:#fca5a5;flex-shrink:0}
+  .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .offheal-row .oh-secs{font-variant-numeric:tabular-nums;color:#f0b429;font-weight:700;flex-shrink:0}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -236,6 +249,14 @@
       <span class="cd" id="cd"></span>
     </div>
     <div id="empty">waiting for CH calls…</div>
+    <!-- Off-heal candidates (Uilnayar 2026-07-04: "who's taking repeated
+         single target damage outside of the current main tank and rampage
+         ... CH chain could list off heal candidates at the bottom").
+         Independent of chain state — shows even with no active chain. -->
+    <div id="offheal" class="offheal" style="display:none">
+      <div class="offheal-hd">⚕ Off-heal candidates</div>
+      <div id="offhealRows"></div>
+    </div>
   </div>
 <script>
   let PORT = 7779;
@@ -429,6 +450,7 @@
   //                              (the chain is broken; nothing more to alert)
 
   var _last = null;             // last fetched chChain snapshot
+  var _lastOffHeal = [];        // last fetched offHealCandidates list
   // TTS dedup — track which gap event we've already spoken for, so a single
   // late call doesn't trigger the alert dozens of times per second. Keyed on
   // (last_ch.atMs, next_num) so a NEW chain step resets cleanly.
@@ -447,12 +469,33 @@
     } catch (e) {}
   }
 
+  // Off-heal candidates — independent of chain state, so it's rendered on
+  // its own rather than nested inside the chain-empty early return below.
+  function renderOffHeal(){
+    var el = document.getElementById('offheal');
+    var rowsEl = document.getElementById('offhealRows');
+    var list = _lastOffHeal || [];
+    if (!list.length) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      html += '<div class="offheal-row">'
+        +   '<span class="oh-nm">' + esc(o.name) + '</span>'
+        +   (o.mob ? '<span class="oh-mob">← ' + esc(o.mob) + '</span>' : '')
+        +   '<span class="oh-secs">' + (o.seconds_taking_hits || 0) + 's</span>'
+        + '</div>';
+    }
+    rowsEl.innerHTML = html;
+  }
+
   // v1.1.5 — pivot announcement state (only speak once per slip).
   var _lastPivotKey = null;
   // Spot-heal announcement state (only speak once per event — keyed on its
   // atMs, which changes on every new personal-macro heal the agent reports).
   var _lastSpotHealKey = null;
   function render(){
+    renderOffHeal();
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var nextEl  = document.getElementById('nextrow');
@@ -626,6 +669,7 @@
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       _last = s && s.chChain;
+      _lastOffHeal = (s && s.offHealCandidates) || [];
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

@@ -2960,6 +2960,50 @@ function chChainSnapshot() {
   };
 }
 
+// Off-heal candidates — raiders taking repeated single-target damage right
+// now who ISN'T the resolved Main Tank or the current Rampage target (both
+// already get dedicated coverage — Tank overlay, Rampage banner). Surfaced
+// at the bottom of the CH Chain overlay since that's where healers are
+// already looking (Uilnayar 2026-07-04: "who's taking repeated single
+// target damage outside of the current main tank and rampage... CH chain
+// could list off heal candidates at the bottom"). Reuses the same
+// recentTankHits combat-log signal as MT resolution and the Extended
+// Target off-tank surfacing — local only, no bot round trip. "Repeated"
+// requires ≥2 tracked hits in the window, not a single stray connect.
+const OFFHEAL_WINDOW_MS = 20_000;
+const OFFHEAL_MIN_HITS  = 2;
+function offHealCandidatesSnapshot() {
+  const now = Date.now();
+  const mt = _resolveMainTank();
+  const mtLower = mt ? mt.name.toLowerCase() : null;
+  const r = stats.currentRampage || null;
+  const rampLower = (r && r.target && r.at && (now - r.at) <= 8000) ? String(r.target).toLowerCase() : null;
+  const byTank = new Map();   // tankLower → { name, mob, firstMs, lastMs, count }
+  for (const h of (stats.recentTankHits || [])) {
+    if (!h || !h.tank || (now - h.tsMs) > OFFHEAL_WINDOW_MS) continue;
+    const k = h.tank.toLowerCase();
+    if (k === mtLower || k === rampLower) continue;
+    let e = byTank.get(k);
+    if (!e) { e = { name: h.tank, mob: h.mobDisplay || h.mob, firstMs: h.tsMs, lastMs: h.tsMs, count: 1 }; byTank.set(k, e); }
+    else {
+      e.count++;
+      if (h.tsMs < e.firstMs) e.firstMs = h.tsMs;
+      if (h.tsMs > e.lastMs)  { e.lastMs = h.tsMs; e.mob = h.mobDisplay || h.mob || e.mob; }
+    }
+  }
+  const out = [];
+  for (const e of byTank.values()) {
+    if (e.count < OFFHEAL_MIN_HITS) continue;
+    out.push({
+      name: e.name, mob: e.mob,
+      seconds_taking_hits: Math.round((now - e.firstMs) / 1000),
+      last_hit_secs_ago:   Math.round((now - e.lastMs) / 1000),
+    });
+  }
+  out.sort((a, b) => b.seconds_taking_hits - a.seconds_taking_hits);
+  return out;
+}
+
 // ── Raid-wide Divine Aura / invuln broadcast tracker ────────────────────────
 // Several tanks run a macro that /rsay's their DA (or Harmshield/other short
 // invuln) status to the whole raid, e.g.:
@@ -6416,6 +6460,30 @@ function _findDA(buffsList, greenSecs) {
   }
   return null;
 }
+// Main Tank resolution — shared by the Tank overlay and the off-heal-
+// candidates list (both need "who's the MT" to know who NOT to flag).
+// Two signals, strongest first:
+//   1. The CH chain target — healers explicitly run the chain on the MT.
+//   2. Majority of the engaged mob's melee connects over the last 15s
+//      (stats.recentTankHits; rampage hits already excluded at record
+//      time so a rampage cycle can't flip the MT).
+// Returns { name, source } or null when neither fires (out of combat / solo).
+function _resolveMainTank() {
+  const chc = chChainSnapshot();
+  if (chc && chc.target) return { name: String(chc.target), source: 'ch_chain' };
+  const now = Date.now();
+  const tally = new Map();
+  for (const h of (stats.recentTankHits || [])) {
+    if (now - h.tsMs > 15_000) continue;
+    const k = h.tank.toLowerCase();
+    const t = tally.get(k) || { name: h.tank, hits: 0 };
+    t.hits++;
+    tally.set(k, t);
+  }
+  let best = null;
+  for (const t of tally.values()) if (!best || t.hits > best.hits) best = t;
+  return best ? { name: best.name, source: 'incoming_melee' } : null;
+}
 function _serializeTankState() {
   // Active focused character — same heuristic _serializeForDashboard uses.
   const now = Date.now();
@@ -6510,33 +6578,12 @@ function _serializeTankState() {
     };
   }
 
-  // ── Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
-  // focus on the Main Tank and Rampage, and THEIR buffs, not the caster").
-  // Two signals, strongest first:
-  //   1. The CH chain target — healers explicitly run the chain on the MT.
-  //   2. Majority of the engaged mob's melee connects over the last 15s
-  //      (stats.recentTankHits; rampage hits already excluded at record
-  //      time so a rampage cycle can't flip the MT).
-  // null when neither fires (out of combat / solo) — the overlay falls back
-  // to the local character view.
-  let mtName = null, mtSource = null;
-  {
-    const chc = chChainSnapshot();
-    if (chc && chc.target) { mtName = String(chc.target); mtSource = 'ch_chain'; }
-    if (!mtName) {
-      const tally = new Map();
-      for (const h of (stats.recentTankHits || [])) {
-        if (now - h.tsMs > 15_000) continue;
-        const k = h.tank.toLowerCase();
-        const t = tally.get(k) || { name: h.tank, hits: 0 };
-        t.hits++;
-        tally.set(k, t);
-      }
-      let best = null;
-      for (const t of tally.values()) if (!best || t.hits > best.hits) best = t;
-      if (best) { mtName = best.name; mtSource = 'incoming_melee'; }
-    }
-  }
+  // Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
+  // focus on the Main Tank and Rampage, and THEIR buffs, not the caster") —
+  // see _resolveMainTank. null when neither signal fires (out of combat /
+  // solo) — the overlay falls back to the local character view.
+  const _mt = _resolveMainTank();
+  const mtName = _mt ? _mt.name : null, mtSource = _mt ? _mt.source : null;
   let mt = null;
   if (mtName) {
     const mtLower = mtName.toLowerCase();
@@ -6884,6 +6931,9 @@ function _zealExportOnCampState() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // Off-heal candidates — raiders taking repeated single-target damage
+    // outside the MT/Rampage, rendered at the bottom of chchain.html.
+    offHealCandidates: offHealCandidatesSnapshot(),
     // Cross-instance uploader status. active=true → this instance is the one
     // sending data to the bot; false → another Parser/Mimic on this machine
     // owns the upload lock and we're read-only (local dashboard still live).
