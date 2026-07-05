@@ -1109,14 +1109,25 @@ function _zealAbsorb(obj, pid) {
       // show what Zeal is actually sending when a row fails to match.
       const buffs = [];
       const rawDebug = [];
+      const charInfo = [];   // Zeal char-info fields (IDs 1-13): name/class/level
+                             // and — if Zeal exposes them here — raw HP cur/max.
       let casting = null;
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
-        // Skip well-known char-info IDs (1-13 are char fields like name,
-        // class, level, etc.) so the diagnostic stays focused on buff-ish
-        // payloads. Capture everything else with a non-empty value.
-        if (id >= 1 && id <= 13) continue;
+        // Char-info IDs 1-13 (char fields: name, class, level, and possibly
+        // raw HP/mana/endurance). We capture them verbatim now — both to show
+        // on the diagnostic and to DISCOVER which fields carry the player's
+        // own HP numbers (Uilnayar 2026-07-05: "if someone is reporting their
+        // own health we should show the numbers"). Zeal's HP field ids aren't
+        // documented, so _detectSelfHp() below finds them by cross-checking a
+        // numeric cur/max pair against the gauge's already-known HP%.
+        if (id >= 1 && id <= 13) {
+          if (it.value !== undefined && it.value !== null && it.value !== '') {
+            charInfo.push({ id, value: String(it.value) });
+          }
+          continue;
+        }
         const v = it.value;
         if (v !== undefined && v !== null && v !== '' && String(v).toLowerCase() !== 'none') {
           const ticks = it.meta && typeof it.meta.ticks === 'number' ? it.meta.ticks : null;
@@ -1153,7 +1164,50 @@ function _zealAbsorb(obj, pid) {
         s.buffsRawDebug = rawDebug.slice(0, 30);
         cur.dirty = true;
       }
+      // Char-info: surface it for the diagnostic + detect the player's own raw
+      // HP numbers from it. A char-info-only label packet must still forward
+      // (it never carries buffs), so mark dirty when we captured any.
+      if (charInfo.length > 0) {
+        s.charInfo = charInfo.slice(0, 16);
+        _detectSelfHp(cur, s, charInfo);
+        cur.dirty = true;
+      }
     }
+  }
+}
+
+// Discover the player's OWN current/max HP from Zeal's char-info fields.
+// We never guess ids: we take the gauge's already-trusted self HP% and look
+// for a numeric (cur ≤ max) pair among the char-info fields whose ratio
+// matches it. The first time HP is DISTINCT (< 97%, so cur ≠ max and the
+// match is unambiguous vs. mana/endurance) we PIN that id pair on the
+// per-character state, then keep reading it at any % — so the numbers stay
+// correct at full health and track max-HP buffs (Aegolism etc.) live. If
+// nothing validates (Zeal doesn't expose HP here), self_hp_cur/max stay
+// null and every overlay falls back to the plain % it already shows.
+function _detectSelfHp(cur, s, charInfo) {
+  const nums = charInfo
+    .map(ci => ({ id: ci.id, n: Number(ci.value) }))
+    .filter(x => Number.isFinite(x.n) && x.n > 0);
+  if (nums.length < 2) return;
+  const pct = (typeof s.self_hp_pct === 'number') ? s.self_hp_pct : null;
+  // (Re)learn the id pair only when the match is distinct enough to be sure.
+  if (pct != null && pct < 97) {
+    let best = null;
+    for (const a of nums) {
+      for (const b of nums) {
+        if (a.id === b.id || a.n > b.n) continue;   // a = cur, b = max
+        const err = Math.abs((a.n / b.n) * 100 - pct);
+        if (err <= 1.5 && (!best || err < best.err)) best = { curId: a.id, maxId: b.id, err };
+      }
+    }
+    if (best) cur.hpIds = { curId: best.curId, maxId: best.maxId };
+  }
+  // Read the pinned pair (works at any %, reflects live max).
+  if (cur.hpIds) {
+    const c = nums.find(x => x.id === cur.hpIds.curId);
+    const m = nums.find(x => x.id === cur.hpIds.maxId);
+    if (c && m && m.n > 0 && c.n <= m.n) { s.self_hp_cur = c.n; s.self_hp_max = m.n; }
   }
 }
 function _flushZealStateToAgent() {

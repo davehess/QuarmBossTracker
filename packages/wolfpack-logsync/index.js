@@ -6626,6 +6626,11 @@ function _serializeTankState() {
       if (cat && cat.ds) mtDsSources.push({ name: b.name, per_hit: cat.ds });
     }
     mtDsSources.sort((a, b) => b.per_hit - a.per_hit);
+    // Raw HP numbers — ONLY when the MT is the local character (their own
+    // Zeal client is the only one that reports real cur/max HP; cross-client
+    // MTs give us a % and nothing more). Uilnayar 2026-07-05.
+    const mtHpCur = isSelf && typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null;
+    const mtHpMax = isSelf && typeof st.self_hp_max === 'number' ? st.self_hp_max : null;
     mt = {
       name:    mtName,
       is_self: isSelf,
@@ -6634,6 +6639,8 @@ function _serializeTankState() {
       // (landing inference — partial; worn clickies/pre-fight buffs missing)
       buff_source: mtBuffSource,
       hp_pct:  mtHp,
+      hp_cur:  mtHpCur,
+      hp_max:  mtHpMax,
       buffs:   (mtBuffs || []).slice(0, 20),
       ds:      mtDs ? { ...mtDs, sources: mtDsSources.slice(0, 8) } : { total: 0, hits: 0, avg_per_hit: 0, abilities: [], sources: mtDsSources.slice(0, 8) },
     };
@@ -6687,6 +6694,8 @@ function _serializeTankState() {
   return {
     character: active,
     hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
+    hp_cur:    typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null,
+    hp_max:    typeof st.self_hp_max === 'number' ? st.self_hp_max : null,
     target:    { name: targetName, hp_pct: targetHpPct },
     buffs:     buffsOut,
     // Main-Tank focus block — null out of combat. When present the overlay
@@ -8968,7 +8977,13 @@ function renderZealClients(s) {
     const where = c.zone_name ? esc(c.zone_name) : (c.zone != null ? 'zone ' + esc(String(c.zone)) : 'unknown zone');
     const meta  = [];
     meta.push(where);
-    if (c.self_hp_pct != null) meta.push('self ' + Math.round(c.self_hp_pct) + '%');
+    if (c.self_hp_pct != null) {
+      // Show the raw cur/max HP numbers when Zeal's char-info exposed them
+      // (detected client-side — see _detectSelfHp); otherwise just the %.
+      meta.push((c.self_hp_cur != null && c.self_hp_max != null)
+        ? 'self ' + c.self_hp_cur + ' / ' + c.self_hp_max + ' (' + Math.round(c.self_hp_pct) + '%)'
+        : 'self ' + Math.round(c.self_hp_pct) + '%');
+    }
     if (!c.live && c.updatedAt) meta.push('last seen ' + fmtAgo(c.updatedAt));
     else if (c.live)           meta.push('autoattack ' + (c.autoattack ? 'ON' : 'off'));
     h += '<div class="wp-zeal-row" data-zeal-char="' + esc(c.character) + '">';
@@ -9012,6 +9027,20 @@ function renderZealClients(s) {
         h += '<tr><td class="dim">' + esc(String(g.slot)) + '</td>'
            + '<td class="num">' + (g.hp_pct != null ? Math.round(g.hp_pct) + '%' : '?') + '</td>'
            + '<td>' + esc(g.text || '') + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
+    // Char-info diagnostic — Zeal's type-1 fields (ids 1-13). This is where
+    // raw HP cur/max would live if Zeal exposes it; surfaced so we can
+    // confirm what's actually sent (Uilnayar 2026-07-05 self-HP-numbers ask).
+    if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
+      h += '<details style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
+         + c.char_info.length + ' char-info field' + (c.char_info.length === 1 ? '' : 's')
+         + ' <span class="dim" style="font-size:10px">(diagnostic — raw Zeal type-1 ids; HP numbers land here if present)</span></summary>';
+      h += '<table style="font-size:11px;margin-top:4px"><tr><th>Id</th><th>Value</th></tr>';
+      for (const ci of c.char_info) {
+        h += '<tr><td class="dim">' + esc(String(ci.id)) + '</td>'
+           + '<td class="num">' + esc(String(ci.value)) + '</td></tr>';
       }
       h += '</table></details>';
     }
@@ -18659,6 +18688,9 @@ function _serializeZealForWeb() {
       zone:        st.zone != null ? st.zone : null,
       zone_name:   _zoneName(st.zone),
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      self_hp_cur: st.self_hp_cur != null ? st.self_hp_cur : null,
+      self_hp_max: st.self_hp_max != null ? st.self_hp_max : null,
+      char_info:   Array.isArray(st.charInfo) ? st.charInfo : null,
       autoattack:  !!st.autoattack,
       buffs:       Array.isArray(st.buffs) ? st.buffs : [],
       casting:     st.casting || null,

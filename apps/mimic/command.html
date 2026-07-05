@@ -181,6 +181,13 @@
 
   function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
   function manaClass(pct){ if (pct == null) return ''; if (pct <= 15) return 'crit'; if (pct <= 35) return 'low'; return ''; }
+  // HP bar label — raw "cur / max · pct%" when the local character's own Zeal
+  // reported the numbers, else just the percentage.
+  function hpValText(pct, cur, max){
+    if (pct == null) return null;
+    if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
+    return pct + '%';
+  }
 
   function render(s){
     if (!s || s.character == null) {
@@ -221,10 +228,11 @@
     // Main Tank HP (compact — buffs/DS detail stays on the Tank overlay).
     if (s.mt && s.mt.name) {
       var mthp = s.mt.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.mt.hp_pct)));
+      var mtVal = hpValText(mthp, s.mt.hp_cur, s.mt.hp_max);
       html += '<div class="card">'
            +    '<div class="head">Main Tank — ' + esc(s.mt.name) + (s.mt.is_self ? ' (you)' : '') + '</div>'
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(mthp) + '" style="width:' + (mthp == null ? 0 : mthp) + '%"></div>'
-           +      '<div class="val">' + (mthp == null ? 'HP not visible' : mthp + '%') + '</div></div>'
+           +      '<div class="val">' + (mtVal == null ? 'HP not visible' : mtVal) + '</div></div>'
            +  '</div>';
     }
 

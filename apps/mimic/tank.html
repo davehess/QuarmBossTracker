@@ -199,6 +199,13 @@
   var syncEl    = document.getElementById('syncBadge');
 
   function hpClass(pct){ if (pct == null) return ''; if (pct <= 25) return 'crit'; if (pct <= 50) return 'low'; return ''; }
+  // HP bar label — raw "cur / max · pct%" when we have the real numbers (only
+  // the local character's own Zeal reports them), else just the percentage.
+  function hpValText(pct, cur, max){
+    if (pct == null) return null;
+    if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
+    return pct + '%';
+  }
 
   function render(s){
     if (!s || s.character == null) {
@@ -220,17 +227,19 @@
     var mt = s.mt || null;
     if (mt && mt.name) {
       var mthp = mt.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(mt.hp_pct)));
+      var mtVal = hpValText(mthp, mt.hp_cur, mt.hp_max);
       html += '<div class="card">'
            +    '<div class="head">Main Tank — ' + esc(mt.name) + (mt.is_self ? ' (you)' : '') + '</div>'
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(mthp) + '" style="width:' + (mthp == null ? 0 : mthp) + '%"></div>'
-           +      '<div class="val">' + (mthp == null ? 'HP not visible — target or group the MT' : mthp + '%') + '</div></div>'
+           +      '<div class="val">' + (mtVal == null ? 'HP not visible — target or group the MT' : mtVal) + '</div></div>'
            +  '</div>';
     } else {
       var hp = s.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.hp_pct)));
+      var selfVal = hpValText(hp, s.hp_cur, s.hp_max);
       html += '<div class="card">'
            +    '<div class="head">Your HP</div>'
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(hp) + '" style="width:' + (hp == null ? 0 : hp) + '%"></div>'
-           +      '<div class="val">' + (hp == null ? '—' : hp + '%') + '</div></div>'
+           +      '<div class="val">' + (selfVal == null ? '—' : selfVal) + '</div></div>'
            +  '</div>';
     }
 
