@@ -25,6 +25,7 @@ import { isOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 import UnregisteredTable from './UnregisteredTable';
+import MainCombobox from './MainCombobox';
 
 export const dynamic = 'force-dynamic';
 
@@ -951,20 +952,7 @@ export default async function AdminLinksPage({
                     <form action={setFamilyLinkBulk} className="mb-3 flex flex-wrap items-center gap-2 text-xs bg-bg/30 border border-green/40 rounded px-3 py-2">
                       <input type="hidden" name="names" value={homeFamilies.map(f => f.main.name).join(',')} />
                       <span className="text-text">✓ Confirm all {homeFamilies.length} as one family — main:</span>
-                      <input
-                        type="text"
-                        name="main"
-                        list={`mains-bulk-${g.did}`}
-                        defaultValue={defMain}
-                        placeholder="main..."
-                        autoComplete="off"
-                        spellCheck={false}
-                        size={14}
-                        className="bg-bg border border-border rounded px-2 py-1 text-xs"
-                      />
-                      <datalist id={`mains-bulk-${g.did}`}>
-                        {allMains.map(n => <option key={n} value={n} />)}
-                      </datalist>
+                      <MainCombobox name="main" options={allMains} defaultValue={defMain} placeholder="main..." />
                       <button type="submit" className="px-2 py-1 rounded border border-green bg-green/20 text-green text-xs hover:bg-green/30">Link all {homeFamilies.length} →</button>
                       <span className="text-dim">only the {homeFamilies.length} families uploaded by this account; others below stay per-row.</span>
                     </form>
@@ -1053,22 +1041,12 @@ export default async function AdminLinksPage({
                           <form action={setFamilyLink} className="flex items-center gap-1.5">
                             <input type="hidden" name="name" value={f.main.name} />
                             <span className="text-dim">link as alt of</span>
-                            <input
-                              type="text"
+                            <MainCombobox
                               name="main"
-                              list={`mains-${f.main.name}`}
+                              options={allMains.filter(n => n.toLowerCase() !== f.main.name.toLowerCase())}
                               defaultValue={defMain}
                               placeholder="type any main..."
-                              autoComplete="off"
-                              spellCheck={false}
-                              size={16}
-                              className="bg-bg border border-border rounded px-2 py-1 text-xs"
                             />
-                            <datalist id={`mains-${f.main.name}`}>
-                              {allMains.filter(n => n.toLowerCase() !== f.main.name.toLowerCase()).map(n => (
-                                <option key={n} value={n} />
-                              ))}
-                            </datalist>
                             <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">Link</button>
                           </form>
                         )}
