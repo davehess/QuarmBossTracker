@@ -163,7 +163,7 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
 }
 
 export default function RaidView({
-  rows, raidLabels, myClass, dsValues, ari,
+  rows, raidLabels, myClass, dsValues, ari, rosterMissing = false,
 }: {
   rows: RaidRow[];
   raidLabels: string[];
@@ -172,6 +172,11 @@ export default function RaidView({
   // Auto-Raid-Invite registry (officer-set via Discord /ari, mirrored to
   // ari_state). null = not configured. Password intentionally not included.
   ari: { character: string; setByName: string | null; setAt: string | null } | null;
+  // No Zeal type-5 raid snapshot from ANY uploader, yet we do have live-state
+  // characters — the roster grid can't group anyone, so surface WHY instead of
+  // a bare "No roster yet" (Uilnayar 2026-07-05: "lost Peopleslayer off the
+  // raids tab and Bstie isn't here").
+  rosterMissing?: boolean;
 }) {
   // Default Buffer-mode class = the signed-in user's own class as detected in
   // the raid roster. Override is always available; some folks swap to help
@@ -365,6 +370,23 @@ export default function RaidView({
           <a href="/buffs" className="text-xs text-blue hover:underline">← classic /buffs view</a>
         </div>
       </div>
+
+      {/* Zeal raid data missing — the grouped grid needs a type-5 "Raid"
+          snapshot from at least one Mimic in the raid. When none is flowing
+          (Raid output off in Zeal, or grouped-but-not-raided) everyone falls
+          into "Not in raid" and it looks like people vanished. Say so. */}
+      {rosterMissing && (
+        <div className="bg-panel border border-orange/50 rounded-lg p-3 text-xs text-dim leading-relaxed">
+          <span className="text-orange font-semibold">⚠ No Zeal raid roster is flowing.</span>{' '}
+          The grouped view needs the <b className="text-text">Raid</b> data type from at least one raider&apos;s
+          Mimic. If people you expect are missing here (but their <b className="text-text">/who</b> or buffs still
+          show), it&apos;s almost always this. Two things to check on a raider whose Mimic is up:
+          {' '}(1) they&apos;re in an actual <b className="text-text">raid</b>, not just a group; and
+          {' '}(2) <b className="text-text">Raid</b> output is enabled in Zeal — the Mimic <b className="text-text">Zeal health</b> overlay
+          flags it as <span className="text-orange">&ldquo;Optional types missing: Raid&rdquo;</span> when it&apos;s off.
+          {' '}Anyone with live state still appears below under <b className="text-text">Not in raid</b>.
+        </div>
+      )}
 
       {/* Concurrent raids — one tab each. Only rendered when Zeal snapshots
           cluster into MORE than one raid (two crews running at once). */}

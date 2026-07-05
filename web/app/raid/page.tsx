@@ -593,6 +593,7 @@ export default async function RaidHubPage() {
       myClass={myClass}
       dsValues={dsValues}
       ari={ari}
+      rosterMissing={rosterClean.length === 0 && liveClean.length > 0}
     />
   );
 }
