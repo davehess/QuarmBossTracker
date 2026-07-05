@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.136': [
+    '**Our own instanced boss kills stop disappearing** — when a Wolf Pack member killed a boss in an instance and *didn\'t run Mimic* (and no Mimic guildmate was in the instance), the kill vanished completely: no #pvp post, no /pvp/hate entry, nothing recorded (Timberr\'s Lord of Ire kill was the report). The bot was dropping our own `(Instanced)` kill echoes on the assumption a Mimic already had them. Now they post an informational notice to #pvp and record to /pvp/hate like any other instance kill — but they still **never** tick the open-world respawn timer, since an instance has its own private spawn (Uilnayar 2026-07-05). *(Needs Mimic 1.4.4+ on at least one guildmate in the instance to relay the kill.)*',
+  ],
   '3.0.135': [
     '**Extended Target: off-tanked mobs stop vanishing from the board** — a mob nobody currently targets used to disappear instantly, even mid-fight (a brief targeting gap, someone glancing elsewhere). A previously-targeted mob that was last seen hurt now stays on the board for a grace window instead of dropping off. Also lays the groundwork for surfacing mobs held at 100% HP by an off-tank (Emperor Ssraeshza-style fights where an add is deliberately never damaged) — full support lands with the next Mimic update.',
   ],

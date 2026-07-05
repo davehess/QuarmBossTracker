@@ -3673,18 +3673,19 @@ async function _handleAgentPvp(req, res) {
   for (const b of broadcasts) {
     if (_isPvpDupe(b)) { deduped++; continue; }
     const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
-    // Defense-in-depth (for agents pre-dating the agent-side guard): a guild
-    // (Instanced) PvE kill echoes: only drop OWN-GUILD ones (the Druzzil
-    // broadcast already routed those through /bosskill, so the [PVP] echo is
-    // a duplicate). FOREIGN-guild instance kills reach us only through the
-    // [PVP] channel — Druzzil never tells us about a Zek-guild kill — so they
-    // must pass through as informational posts and into pvp_boss_kills for
-    // "who killed this instance and when" tracking. (Uilnayar 2026-06-23:
-    // "Oakin of <Zek> killed Terror in Plane of Fear (Instanced) at 10:38
-    // and we don't have that listed in our PVP channel." The old
-    // unconditional drop discarded every foreign-guild instance kill.)
+    // (Instanced) [PVP]-channel kill echoes — recorded + posted informational,
+    // NEVER tick the open-world respawn timer (instances have private spawns —
+    // "this was a PVP instance kill, doesn't count towards our guild's
+    // resources or timer", Uilnayar 2026-07-05). This USED to drop OWN-guild
+    // instance echoes here, assuming a Druzzil → /bosskill path already had
+    // them. It doesn't when the killer runs no Mimic and no Mimic guildmate is
+    // in the instance: Timberr's Lord of Ire instance kill was lost entirely
+    // (zero records anywhere). So own-guild instance echoes now flow through
+    // exactly like foreign-guild ones — the boss auto-track below mirrors them
+    // to pvp_boss_kills for /pvp/hate and posts an informational #pvp notice,
+    // and the _isInstanceEcho guard there keeps the timer untouched. Multiple
+    // guildmates relaying the same echo collapse to one post via _isPvpDupe.
     const _isInstanceEcho = /\(Instanced\)/i.test(zone || '') || /\(Instanced\)/i.test(text || '');
-    if (_isInstanceEcho && killerGuild === WP_GUILD_NAME) { deduped++; continue; }
     try {
       const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
       if (!ch) continue;
