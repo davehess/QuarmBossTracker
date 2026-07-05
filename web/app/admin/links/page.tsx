@@ -102,6 +102,44 @@ function memberLabel(m: Member): string {
   return a || b || m.discord_id;
 }
 
+// Guild-rank ordering for picking a cluster's real main. Higher = more likely
+// to be the person's actual main character.
+const RANK_WEIGHT: Record<string, number> = {
+  'officer': 5, 'raid pack': 4, 'raid alt': 3, 'non-raid alt': 2, 'trader': 1,
+};
+function rankWeight(r: string | null | undefined): number {
+  return RANK_WEIGHT[(r || '').toLowerCase().trim()] ?? 0;
+}
+function isSelfPinChar(c: Character): boolean {
+  const ovr = c.main_name_override?.toLowerCase();
+  if (!ovr) return false;
+  return ovr === c.name.toLowerCase() || ovr === (c.main_name || c.name).toLowerCase();
+}
+
+// Pick the member's REAL main from a same-uploader cluster. The old default
+// (alphabetically-first "home" family) picked "Bonebro" for Hitya's cluster
+// purely because B < C < H — it carries the discord_id but isn't the main.
+// Prefer, in order: the home family whose name IS the member's Discord
+// identity (nickname / global_name), then the highest guild rank, then a
+// self-pinned main (an officer already declared it a main), then alpha.
+// Falls back to '' when the cluster has no home family at all.
+function defaultMainFor(
+  fams: { main: Character; isHome: boolean }[],
+  member: Member | undefined,
+): string {
+  const home = fams.filter(f => f.isHome);
+  const pool = home.length ? home : fams;
+  if (!pool.length) return '';
+  const idTokens = new Set([...tokenize(member?.nickname), ...tokenize(member?.global_name)]);
+  const byIdentity = pool.find(f => idTokens.has(f.main.name.toLowerCase()));
+  if (byIdentity) return byIdentity.main.name;
+  const ranked = [...pool].sort((a, b) =>
+    (rankWeight(b.main.rank) - rankWeight(a.main.rank))
+    || (Number(isSelfPinChar(b.main)) - Number(isSelfPinChar(a.main)))
+    || a.main.name.localeCompare(b.main.name));
+  return ranked[0].main.name;
+}
+
 async function actionAssertOfficer() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return false;
@@ -214,6 +252,57 @@ async function setFamilyLink(formData: FormData) {
     .eq('guild_id', 'wolfpack')
     .neq('name', target.name)
     .or(`name.ilike.${name},main_name.ilike.${name}`);
+  revalidatePath('/admin/links');
+  revalidatePath('/admin/agents');
+}
+
+// Shared link primitive used by the bulk action — re-points `name` (and its
+// existing alts) under `mainName`, writing both columns like setFamilyLink.
+// Guards against a non-existent target and a cycle (target resolving back to
+// name). No-op on a bad/self name so a bulk run can't corrupt on one row.
+async function _linkOneUnder(
+  admin: ReturnType<typeof supabaseAdmin>,
+  name: string,
+  mainName: string,
+): Promise<void> {
+  if (!/^[A-Za-z]{2,}$/.test(name) || !/^[A-Za-z]{2,}$/.test(mainName)) return;
+  if (name.toLowerCase() === mainName.toLowerCase()) return;
+  const { data: targetRows } = await admin
+    .from('characters')
+    .select('name, main_name')
+    .eq('guild_id', 'wolfpack')
+    .ilike('name', mainName)
+    .limit(1);
+  const target = (targetRows ?? [])[0] as { name: string; main_name: string | null } | undefined;
+  if (!target) return;
+  if ((target.main_name || target.name).toLowerCase() === name.toLowerCase()) return;   // cycle guard
+  await admin.from('characters')
+    .update({ main_name_override: target.name, main_name: target.name })
+    .eq('guild_id', 'wolfpack')
+    .neq('name', target.name)
+    .or(`name.ilike.${name},main_name.ilike.${name}`);
+}
+
+// Bulk "confirm these are all one family" — folds every family root the
+// officer selected under a single main in one action (Uilnayar 2026-07-05:
+// "needs a way to confirm these are all part of the same family/main").
+// `names` is a comma-joined list of the cluster's HOME family roots (the ones
+// that carry this Discord account); the chosen main is skipped. Deliberately
+// scoped to home families so a cluster member who's actually someone else's
+// toon (a different discord_id) is NEVER swept in — those stay per-row.
+async function setFamilyLinkBulk(formData: FormData) {
+  'use server';
+  const ok = await actionAssertOfficer();
+  if (!ok) redirect('/?error=admin_required');
+  const main = String(formData.get('main') || '').trim();
+  if (!main || !/^[A-Za-z]{2,}$/.test(main)) return;
+  const names = String(formData.get('names') || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(n => /^[A-Za-z]{2,}$/.test(n) && n.toLowerCase() !== main.toLowerCase());
+  if (names.length === 0) return;
+  const admin = supabaseAdmin();
+  for (const n of names) { await _linkOneUnder(admin, n, main); }
   revalidatePath('/admin/links');
   revalidatePath('/admin/agents');
 }
@@ -831,6 +920,10 @@ export default async function AdminLinksPage({
                   .filter(Boolean)
                   .map(n => n.trim())
               )].sort((a, b) => a.localeCompare(b));
+              // The member's real main (identity → rank → self-pin → alpha),
+              // and the home families a bulk "same family" confirm can fold.
+              const homeFamilies = g.families.filter(f => f.isHome);
+              const defMain = defaultMainFor(g.families, m);
               return (
                 <div key={g.did} className="p-4">
                   <div className="text-sm text-text mb-2">
@@ -846,6 +939,35 @@ export default async function AdminLinksPage({
                         </span>
                       ))}
                     </div>
+                  )}
+                  {/* Bulk "these are all one person" confirm — folds every
+                      home family (proven to carry THIS Discord account) under
+                      one main in a single click, instead of clicking Link on
+                      each of Bonebro / Canopy / … one at a time. Scoped to
+                      home families only: a cluster member who's actually
+                      someone else's toon (different discord_id) is never swept
+                      in and stays a per-row decision below. */}
+                  {homeFamilies.length >= 2 && (
+                    <form action={setFamilyLinkBulk} className="mb-3 flex flex-wrap items-center gap-2 text-xs bg-bg/30 border border-green/40 rounded px-3 py-2">
+                      <input type="hidden" name="names" value={homeFamilies.map(f => f.main.name).join(',')} />
+                      <span className="text-text">✓ Confirm all {homeFamilies.length} as one family — main:</span>
+                      <input
+                        type="text"
+                        name="main"
+                        list={`mains-bulk-${g.did}`}
+                        defaultValue={defMain}
+                        placeholder="main..."
+                        autoComplete="off"
+                        spellCheck={false}
+                        size={14}
+                        className="bg-bg border border-border rounded px-2 py-1 text-xs"
+                      />
+                      <datalist id={`mains-bulk-${g.did}`}>
+                        {allMains.map(n => <option key={n} value={n} />)}
+                      </datalist>
+                      <button type="submit" className="px-2 py-1 rounded border border-green bg-green/20 text-green text-xs hover:bg-green/30">Link all {homeFamilies.length} →</button>
+                      <span className="text-dim">only the {homeFamilies.length} families uploaded by this account; others below stay per-row.</span>
+                    </form>
                   )}
                   <div className="space-y-1.5">
                     {g.families.map(f => {
@@ -935,7 +1057,7 @@ export default async function AdminLinksPage({
                               type="text"
                               name="main"
                               list={`mains-${f.main.name}`}
-                              defaultValue={g.families.find(o => o.isHome)?.main.name ?? ''}
+                              defaultValue={defMain}
                               placeholder="type any main..."
                               autoComplete="off"
                               spellCheck={false}

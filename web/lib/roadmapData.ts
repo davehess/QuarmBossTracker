@@ -103,6 +103,13 @@ export const retroItems: RetroItem[] = [
 
 export const recentFeatures: RoadmapFeature[] = [
   {
+    key: 'family-links',
+    title: 'One-click "same family" confirm for officers',
+    tag: 'web · admin',
+    summary:
+      "On the character-linking page, an officer can now fold all of a member's characters under their real main in a single click, instead of linking each toon one at a time. The suggested main is now the person's actual main (their Discord identity / rank) rather than whichever alt happened to sort first alphabetically.",
+  },
+  {
     key: 'pqdi-link',
     title: '[PQDI] link on parse pages',
     tag: 'web',
