@@ -93,3 +93,25 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
   revalidatePath('/admin/links');
   return { ok: true };
 }
+
+// "Ignore" an unregistered character — a name streaming from a member's Mimic
+// that shouldn't be registered at all (a foreign guild's player whose log the
+// member's box happened to tail, an operator/junk name). These have NO row in
+// our characters mirror yet, so we upsert a stub with link_ignored=true: it
+// drops off the "Not in OpenDKP" list and lands in the Dismissed view, where
+// an officer can restore it. (Uilnayar 2026-07-05: "Dopefiend was some other
+// guild's player — we should have an ignore button.")
+export async function ignoreUnregistered(name: string): Promise<{ ok: boolean; error?: string }> {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) return { ok: false, error: 'not signed in' };
+  if (!(await isOfficer(user.id))) return { ok: false, error: 'officer role required' };
+  const clean = (name || '').trim();
+  if (!/^[A-Za-z]{2,20}$/.test(clean)) return { ok: false, error: 'bad name' };
+  const { error } = await supabaseAdmin()
+    .from('characters')
+    .upsert({ guild_id: 'wolfpack', name: clean, link_ignored: true, active: false },
+            { onConflict: 'guild_id,name' });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/admin/links');
+  return { ok: true };
+}
