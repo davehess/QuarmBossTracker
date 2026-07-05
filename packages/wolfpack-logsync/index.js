@@ -15510,22 +15510,21 @@ function _ciEq(a, b) {
   return !!(a && b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase());
 }
 
-// PvP-channel echo of an own-guild instance kill is a duplicate of the
-// Druzzil broadcast we ALREADY route through /bosskill. Drop it ONLY when
-// the killing guild matches our observed own guild — foreign-guild
-// instance kills (Freedom in Plane of Hate, etc.) DO surface to us only
-// through this echo, so dropping them here loses signal entirely.
-function _isOwnGuildInstanceEcho(text, killerGuild) {
-  if (!/\(Instanced\)/i.test(text)) return false;
-  // No own-guild observed yet → PASS THROUGH (let the bot decide). The old
-  // conservative-drop default silently lost every foreign-guild (Instanced)
-  // echo until the first Druzzil broadcast fired in the session, which
-  // explained Uilnayar's missing 10:38 Oakin/Zek Terror kill on 2026-06-23.
-  // The bot now drops own-guild instance echoes itself (via WP_GUILD_NAME),
-  // so the worst case here is a small wasted relay request — never a missed
-  // foreign kill.
-  if (!_observedOwnGuild) return false;
-  return _ciEq(killerGuild, _observedOwnGuild);
+// (Instanced) [PVP]-echo relay policy — PASS EVERYTHING through to the bot,
+// which is the single place that decides what to record/post. This used to
+// DROP own-guild instance echoes here, on the theory that a Druzzil "tells
+// the guild" broadcast already routed them through /bosskill. That theory
+// fails for a killer who doesn't run Mimic (and has no Mimic guildmate in
+// the instance): no /bosskill ever fires, and dropping the [PVP] echo lost
+// the kill entirely — Timberr's Lord of Ire instance kill vanished with no
+// ledger row, no /pvp/hate entry, and no #pvp post (Uilnayar 2026-07-05).
+// So the agent no longer second-guesses: it relays every instance echo and
+// the bot records own-guild ones (informational #pvp post, no open-world
+// timer tick — instances don't share a spawn) and dedups as needed.
+// Kept as a named no-op so the call sites read intentionally; _observedOwnGuild
+// is still learned from Druzzil for any future use.
+function _isOwnGuildInstanceEcho(_text, _killerGuild) {
+  return false;
 }
 
 function parseDruzzilKill(line) {
