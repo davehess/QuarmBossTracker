@@ -17,7 +17,13 @@ name: Release Mimic (Electron)
 #      version field → workflow runs, builds, and softprops creates a fresh
 #      release tagged v<new_version> at the merge commit. Tag, release, and
 #      assets all materialize in one pass — no human clicks.
-#   2. Manual workflow_dispatch with a tag input — for retrying a failed
+#   2. Push to beta that bumps the version → SAME flow, but the tag (and the
+#      built app version) is forced to v<version>-beta.1, so the release is
+#      flagged prerelease and electron-builder publishes on the `beta`
+#      channel (beta.yml). Stable installs (latest.yml) never see it; only
+#      "Receive beta updates" opt-ins and /mimic/beta downloads do. Keep
+#      versions PLAIN in package.json on beta — the guard adds the suffix.
+#   3. Manual workflow_dispatch with a tag input — for retrying a failed
 #      build, or rebuilding from a tag that was created some other way.
 on:
   push:
@@ -62,6 +68,21 @@ jobs:
           # Plain semver tag (v-prefixed) so electron-updater can parse the
           # prerelease channel. NOT `mimic-v…` — that breaks the updater.
           tag="v$new_version"
+          # BETA BRANCH GUARD (2026-07-06): a push to `beta` must NEVER cut a
+          # stable release. The whole 1.4.0–1.4.9 line was meant to be beta but
+          # shipped stable — plain versions produced plain tags, prerelease was
+          # derived from the tag's `-` suffix, so every stable install
+          # auto-updated to beta builds via latest.yml. If the version in
+          # package.json carries no prerelease suffix, force one here: the tag
+          # (and the pinned build version below) becomes v<version>-beta.1, so
+          # electron-builder emits beta.yml (beta channel) and the GitHub
+          # release is flagged prerelease. Keep versions PLAIN on the beta
+          # branch — graduation to stable is then just a file-checkout to main,
+          # where the same version builds the plain stable tag.
+          if [ "${{ github.ref_name }}" = "beta" ] && [[ "$new_version" != *-* ]]; then
+            tag="v${new_version}-beta.1"
+            echo "Beta branch → forcing prerelease tag: $tag"
+          fi
           echo "Detected: new=$new_version prev=$prev_version tag=$tag"
 
           if [ -z "$new_version" ] || [ "$new_version" = "null" ]; then
@@ -82,22 +103,27 @@ jobs:
           echo "name=$tag"  >> "$GITHUB_OUTPUT"
           echo "build=true" >> "$GITHUB_OUTPUT"
 
-      # On manual dispatch, pin the built version to the tag (minus the leading
-      # `v`). This lets us cut a BETA channel build from a feature branch — a tag
-      # like v1.0.20-beta.1 makes electron-builder use channel `beta` + emit
-      # beta.yml — without committing a `-beta` suffix into the branch's
-      # package.json (which would muddy the eventual merge to main). The
-      # auto-bump path (push to main) is untouched and keeps using package.json.
-      - name: Pin version to dispatch tag (beta/manual builds)
-        if: github.event_name == 'workflow_dispatch' && steps.tag.outputs.build == 'true'
+      # Pin the built version to the tag (minus the leading `v`) whenever they
+      # differ — covers BOTH manual dispatch with an explicit tag AND the beta
+      # branch guard above (which suffixes the tag without touching the
+      # committed package.json). electron-builder derives the update channel
+      # from the version's prerelease identifier, so pinning 1.5.0-beta.1 is
+      # what makes it emit beta.yml instead of latest.yml.
+      - name: Pin built version to tag (beta/manual builds)
+        if: steps.tag.outputs.build == 'true'
         shell: bash
         run: |
           set -euo pipefail
           v="${{ steps.tag.outputs.name }}"; v="${v#v}"
+          cur=$(jq -r .version apps/mimic/package.json)
+          if [ "$v" = "$cur" ]; then
+            echo "Version already matches tag ($v) — no pin needed."
+            exit 0
+          fi
           tmp=$(mktemp)
           jq --arg v "$v" '.version=$v' apps/mimic/package.json > "$tmp"
           mv "$tmp" apps/mimic/package.json
-          echo "Pinned apps/mimic/package.json version → $v"
+          echo "Pinned apps/mimic/package.json version $cur → $v"
 
       - uses: actions/setup-node@v5
         if: steps.tag.outputs.build == 'true'

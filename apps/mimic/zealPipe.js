@@ -32,6 +32,17 @@
 // install elsewhere. NB detectEqDir() (main.js) intentionally SUPPORTS in-EQ-
 // folder installs for log detection, which can steer users into this — revisit
 // a soft install-location warning if more reports land.
+//
+// FIELD ISSUE (n=1, Jankzer, 2026-07-05): the pipe IS found + connected but
+// every connection instantly DROPS (agent log churns "[zeal] disconnected from
+// \\.\pipe\zeal_<pid>" with no error reason = the server closed it), so no
+// data arrives and the health overlay wrongly says "EQ is not running". Cause:
+// EQ running ELEVATED while Mimic runs non-elevated — the named pipe's ACL
+// denies the lower-integrity process. Fix: run Mimic as Administrator to match
+// EQ (or run both non-elevated). Distinguish from the Ashieron case above by
+// the log: Ashieron = never connects (ENOENT / no pipe); this = connects then
+// close/end. The EQ-up-but-no-Zeal-data notification (main.js) and the health
+// overlay's "not running" hint both now lead with this fix.
 
 'use strict';
 const net  = require('net');

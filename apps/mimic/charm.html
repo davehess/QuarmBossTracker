@@ -352,12 +352,19 @@
         return p.broke_at && (now - p.broke_at) < LINGER_MS;
       });
 
-      // Recharm alert fires when a pet stops being charmed — but DEFERRED 3.5s
-      // so a charm-cycler who promptly kills the now-broken mob doesn't get a
-      // false-alarm "recharm pet" call: if the pet vanishes from the tracker
+      // "Charm Break" alert fires when a pet stops being charmed — but
+      // DEFERRED 3.5s so a charm-cycler who promptly kills the now-broken mob
+      // doesn't get a false-alarm call: if the pet vanishes from the tracker
       // within the defer window (death detection's killer-guard removes it on
       // a player kill) we cancel the pending speech. Unexpected breaks still
-      // fire after the window.
+      // fire after the window. Was spoken as "recharm pet" — the SAME phrase
+      // used below for the proactive early-warning callout (warnAt), which
+      // made an actual unexpected break sound identical to a routine
+      // heads-up. Dave 2026-07-03 (mainly for enchanters, who see this a lot
+      // — Quarm charms often break well early): "It needs to say 'Charm
+      // Break' when it breaks... Recharm pet is for when it's coming up."
+      // Split: this is the ACTUAL break, so it gets its own distinct phrase;
+      // "recharm pet" stays exactly as-is below for the coming-up warning.
       var charmedKeys = new Set(pets.filter(function(p){ return p && p.is_active; }).map(function(p){ return p.key; }));
       // Currently-tracked keys (active OR lingering broken) — used to decide
       // whether a pending recharm got "intentionally killed" (vanishes from
@@ -370,7 +377,7 @@
           var t = setTimeout(function(){
             // If the pet is GONE from the tracker by now → intentional kill,
             // stay silent. Otherwise → real unexpected break, speak.
-            if (trackedKeysNow().has(key)) speak('recharm pet');
+            if (trackedKeysNow().has(key)) speak('charm break');
             pendingRecharm.delete(key);
           }, 3500);
           pendingRecharm.set(key, t);

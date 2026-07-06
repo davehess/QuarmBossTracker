@@ -1095,6 +1095,19 @@ function parseEvent(line, ts) {
     return { ts: tsIso, type: 'charm_break', pet: m[1] };
   }
 
+  // Charm BREAK — self-only form (Uilnayar 2026-07-03, Shavimo the
+  // enchanter: "gives buff durations and stuff, but when the key word
+  // 'Your charm spell has worn off' I dont get any notification"). This
+  // line is ONLY visible to the charmer, no third-person subject at all —
+  // completely separate wording from the three bystander-visible forms
+  // above, which is why it fell through undetected. `pet: '__SELF__'` is a
+  // sentinel EncounterBuilder.add() resolves by finding the charmer's own
+  // open charm session (an enchanter only ever has one charm active at a
+  // time, so owner-lookup is unambiguous even without a pet name here).
+  if (/\]\s+Your charm spell has worn off\.?\s*$/i.test(line)) {
+    return { ts: tsIso, type: 'charm_break', pet: '__SELF__' };
+  }
+
   // Charm-LAND attribution (bystander-visible). Form:
   //   "A glyphed familiar regards Lihliana as an ally."
   // Visible to everyone in the zone, so any agent can pick it up and
@@ -2780,18 +2793,84 @@ const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of chara
 const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
 const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
 const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
+// Cheap gate so a chain-ROSTER announcement ("Fargan 001, Rapha 002, …")
+// survives the trackChChainLine pre-filter — it carries no CH/go/inc marker.
+// Matches a number immediately followed by a comma then a word (the "001, Rapha"
+// seam between pairs); the full validation happens on the quoted body.
+const _CH_ROSTER_HINT = /\d\s*,\s*[A-Za-z]/;
+// Ad-hoc heal-cast broadcasts from a PERSONAL macro/trigger, not the numbered-
+// slot convention above — no slot number, no literal "CH":
+//   "TUNARE'S RENEWAL  Inc to Tikal - 91% Mana Left"   (Pyxil's Tunare's Renewal)
+//   "CHLOROBLAST  Inc to Abrahms - 100% Mana Left"     (Pyxil's Chloroblast)
+// Uilnayar 2026-07-02: "sometimes our druids will hop in and fill the CH
+// gaps, are they able to be included as well?" — confirmed via 2,349 of
+// Pyxil's actual raid-chat lines that this is her own cast-macro output,
+// firing on every heal she lands, not just gap-fills; there's no slot
+// number to key off of. Per the guild's answer: a spell that's their
+// class's real CH-equivalent (CH_EQUIVALENT_SPELLS) folds into the SAME
+// numbered rotation (auto-assigned a slot); anything else is a one-off
+// spot heal — surfaced as a banner, never consumes a slot.
+const _CH_PERSONAL_RX = /^([A-Za-z][A-Za-z'`\s]*?)\s+Inc to\s+([A-Z][\w`]*)\s*-\s*(\d{1,3})%\s*Mana Left/i;
+// spellKey → display label shown on the slot row (Uilnayar 2026-07-02: "we
+// should denote Druid CH on the chain"), so the overlay reads "Pyxil [Druid
+// CH]" rather than looking like an ordinary numbered cleric slot.
+const CH_EQUIVALENT_SPELLS = new Map([
+  ["tunares renewal", "Druid CH"],   // Druid's Complete-Heal-tier single-target heal
+]);
+const SPOT_HEAL_DISPLAY_MS = 8000; // how long a one-off spot-heal stays on the overlay
+const CH_GO_DISPLAY_MS = 7000;     // how long a "NNN GO GO GO" cue flashes on its slot's row
 
 function trackChChainLine(line, character) {
   if (!line) return;
   // Cheap pre-filter before any regex work — the tail loop runs this on
-  // every line of every watched log.
-  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line)) return;
+  // every line of every watched log. `_CH_ROSTER_HINT` lets the chain-roster
+  // announcement ("Fargan 001, Rapha 002, …") through — it has no CH/go/inc.
+  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line) && !/inc\s+to/i.test(line)
+      && !_CH_ROSTER_HINT.test(line)) return;
   const m = line.match(_CH_SPEAKER_RX);
   if (!m) return;
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
   const text = m[2].trim();
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
+
+  // Chain roster announcement — a healer posts the whole planned order at the
+  // pull: "Fargan 001, Rapha 002, Mcdorf 003, Mana 004, Taey 005,". This is the
+  // raid's OWN ground truth for who owns each slot, so it wins over the noisy
+  // speaker-inference the numbered shout-calls do — a boxer shouting the number
+  // from the wrong window (or a short nickname) otherwise pins the wrong player
+  // on a slot (Uilnayar 2026-07-06: "shows Dant as 004 instead of Manamana").
+  const rosterPairs = [];
+  {
+    const RX = /([A-Za-z][A-Za-z'`]+)\s+0*(\d{1,3})(?=\s*[,;]|\s*$)/g;
+    let mm;
+    while ((mm = RX.exec(text)) !== null) {
+      const num = parseInt(mm[2], 10);
+      if (num >= 1 && num <= 30) rosterPairs.push({ token: mm[1], num });
+    }
+  }
+  const rosterNums = new Set(rosterPairs.map(p => p.num));
+  const sortedNums = [...rosterNums].sort((a, b) => a - b);
+  // Real chain rosters are called as a contiguous 1..N ("…001, …002, …003…").
+  // Requiring that (plus ≥3 distinct pairs) keeps ordinary chat and loot lists
+  // ("Sword 1, Shield 2…") from masquerading as a roster call.
+  const contiguousFrom1 = sortedNums.length >= 3
+    && sortedNums[0] === 1 && sortedNums[sortedNums.length - 1] === sortedNums.length;
+  if (rosterPairs.length >= 3 && rosterNums.size === rosterPairs.length && contiguousFrom1) {
+    _chChainEnsure(atMs);
+    const c = _chChain;
+    c.rosterNames = c.rosterNames || {};
+    for (const p of rosterPairs) {
+      c.rosterNames[p.num] = _resolveChRosterName(p.token);
+      // Seed an empty slot so the planned chain shows immediately, before
+      // anyone has called — no lastAtMs, so it never reads as casting/"ago".
+      if (!c.slots[p.num]) c.slots[p.num] = { name: c.rosterNames[p.num], mana: null, lastAtMs: 0, count: 0, kind: null };
+      else c.slots[p.num].name = c.rosterNames[p.num];
+    }
+    c.rosterAt = atMs;
+    c.updatedAt = atMs;
+    return;
+  }
 
   const call = text.match(_CH_CALL_RX);
   if (call) {
@@ -2809,13 +2888,62 @@ function trackChChainLine(line, character) {
       if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
     }
     const prev = c.slots[num] || {};
-    c.slots[num] = { name: speaker, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1 };
-    c.lastCh = { num, name: speaker, mana, atMs };
+    // A declared roster owner for this slot wins over the shout speaker — that's
+    // the whole point of the roster call (a boxer shouting from the wrong window
+    // otherwise renames the slot). Falls back to the speaker when no roster.
+    const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
+    // kind: null — a real numbered CH call is never a labeled auto-slot;
+    // clears any stale "Druid CH" tag on the rare chance this slot number
+    // collides with one the personal-macro path auto-assigned earlier.
+    c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
+    c.lastCh = { num, name: slotName, mana, atMs };
     // Default next = numeric successor, wrapping at the highest slot seen.
     // The explicit GO cue (below) overrides when it arrives.
     const nums = Object.keys(c.slots).map(Number);
     c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
     c.updatedAt = atMs;
+    return;
+  }
+  // Personal heal-cast broadcast — no slot number in the raw line at all.
+  const personal = text.match(_CH_PERSONAL_RX);
+  if (personal) {
+    const spellRaw = personal[1].trim();
+    const spellKey = spellRaw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    const mana = Math.min(100, parseInt(personal[3], 10) || 0);
+    if (CH_EQUIVALENT_SPELLS.has(spellKey)) {
+      // Folds into the numbered rotation exactly like a CH call above — same
+      // beat tracking, same lastCh/nextNum advance — just with a slot number
+      // this caster doesn't say out loud. Auto-assign one the first time we
+      // see them THIS chain session (one past the highest slot in use) and
+      // remember it so they keep the same row for the rest of the fight.
+      _chChainEnsure(atMs);
+      const c = _chChain;
+      const key = speaker.toLowerCase();
+      c.autoSlots = c.autoSlots || {};
+      let num = c.autoSlots[key];
+      if (!num) {
+        const existing = Object.keys(c.slots).map(Number);
+        num = existing.length ? Math.max.apply(null, existing) + 1 : 1;
+        c.autoSlots[key] = num;
+      }
+      if (c.lastCh && atMs > c.lastCh.atMs && c.lastCh.num !== num) {
+        const gap = atMs - c.lastCh.atMs;
+        if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
+      }
+      const prev = c.slots[num] || {};
+      const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
+      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
+      c.lastCh = { num, name: slotName, mana, atMs };
+      const nums = Object.keys(c.slots).map(Number);
+      c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
+      c.updatedAt = atMs;
+    } else if (_chChain) {
+      // Not a CH-equivalent — a one-off spot heal riding alongside an
+      // ALREADY-running chain. Never conjures a chain of its own (mirrors
+      // the GO-cue guard below), never touches beats/lastCh/nextNum/slots.
+      _chChain.spotHeal = { name: speaker, spell: spellRaw, target: personal[2] || null, mana, atMs };
+      _chChain.updatedAt = atMs;
+    }
     return;
   }
   // GO cue only steers an EXISTING chain — a stray "3 go go go" in chat must
@@ -2826,6 +2954,10 @@ function trackChChainLine(line, character) {
       const num = parseInt(go[1], 10);
       if (!num || num > 30) return;
       _chChain.nextNum = num;
+      // Stamp the explicit GO cue so the overlay can flash "GO!" on that slot's
+      // row until the cleric casts (Uilnayar 2026-07-06: "when the GO GO GO
+      // message happens it should show up on that healer's CH bubble").
+      _chChain.lastGo = { num, atMs, by: speaker };
       _chChain.updatedAt = atMs;
     }
   }
@@ -2833,6 +2965,24 @@ function trackChChainLine(line, character) {
 function _chChainEnsure(atMs) {
   if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
   if (!_chChain) _chChain = { target: null, slots: {}, lastCh: null, nextNum: null, beats: [], startedAt: atMs, updatedAt: atMs };
+}
+// Resolve a chain-roster abbreviation ("Mana", "Taey", "Rapha") to a full
+// character name via the live Zeal raid roster (unique exact-or-prefix match).
+// Falls back to the short token as-called when the roster can't disambiguate
+// (not in a raid window yet, ambiguous prefix, or a genuinely unknown name) —
+// "Mana" on the row still beats the wrong player on it.
+function _resolveChRosterName(token) {
+  const t = String(token || '').trim();
+  if (!t) return t;
+  const lc = t.toLowerCase();
+  let exact = null; const prefixHits = [];
+  for (const full of _raidRosterMembers) {   // lowercased full names
+    if (full === lc) { exact = full; break; }
+    if (full.startsWith(lc)) prefixHits.push(full);
+  }
+  const pick = exact || (prefixHits.length === 1 ? prefixHits[0] : null);
+  if (!pick) return t;
+  return pick.charAt(0).toUpperCase() + pick.slice(1);
 }
 function chChainSnapshot() {
   if (!_chChain) return null;
@@ -2865,6 +3015,22 @@ function chChainSnapshot() {
       };
     }
   }
+  // Spot heal — a one-off personal-macro heal that isn't a CH-equivalent
+  // spell (see trackChChainLine). Self-expires after SPOT_HEAL_DISPLAY_MS so
+  // the overlay's banner doesn't linger long after the heal actually landed.
+  const spotHeal = (_chChain.spotHeal && (Date.now() - _chChain.spotHeal.atMs) < SPOT_HEAL_DISPLAY_MS)
+    ? _chChain.spotHeal : null;
+  // Explicit "NNN GO GO GO" cue — surface it while fresh so the overlay can
+  // flash "GO!" on THAT slot's row until the cleric casts (Uilnayar 2026-07-06).
+  // Cleared once the cued slot has cast since the GO (their lastAtMs advanced)
+  // or the cue ages past CH_GO_DISPLAY_MS.
+  let lastGo = null;
+  if (_chChain.lastGo) {
+    const g = _chChain.lastGo;
+    const slot = _chChain.slots[g.num];
+    const casedSinceGo = slot && slot.lastAtMs && slot.lastAtMs > g.atMs;
+    if (!casedSinceGo && (Date.now() - g.atMs) < CH_GO_DISPLAY_MS) lastGo = g;
+  }
   return {
     target:     _chChain.target,
     slots:      _chChain.slots,
@@ -2874,7 +3040,181 @@ function chChainSnapshot() {
     started_at: _chChain.startedAt,
     updated_at: _chChain.updatedAt,
     slipped,
+    spot_heal:  spotHeal,
+    last_go:    lastGo,
   };
+}
+
+// Off-heal candidates — raiders taking repeated single-target damage right
+// now who ISN'T the resolved Main Tank or the current Rampage target (both
+// already get dedicated coverage — Tank overlay, Rampage banner). Surfaced
+// at the bottom of the CH Chain overlay since that's where healers are
+// already looking (Uilnayar 2026-07-04: "who's taking repeated single
+// target damage outside of the current main tank and rampage... CH chain
+// could list off heal candidates at the bottom"). Reuses the same
+// recentTankHits combat-log signal as MT resolution and the Extended
+// Target off-tank surfacing — local only, no bot round trip. "Repeated"
+// requires ≥2 tracked hits in the window, not a single stray connect.
+const OFFHEAL_WINDOW_MS = 20_000;
+const OFFHEAL_MIN_HITS  = 2;
+// A full-health offtank doesn't need an off-heal — only surface ones actually
+// hurt, so the one person who needs a heal isn't buried under a wall of 100%/
+// unknown rows (Uilnayar 2026-07-06: "a ton of offtank options that all had full
+// health ... only offtanks actually below full HP"). Zeal reports full HP as
+// 99.9%, so this is below "basically full".
+const OFFHEAL_HURT_PCT  = 90;
+function offHealCandidatesSnapshot() {
+  const now = Date.now();
+  const mt = _resolveMainTank();
+  const mtLower = mt ? mt.name.toLowerCase() : null;
+  const r = stats.currentRampage || null;
+  const rampLower = (r && r.target && r.at && (now - r.at) <= 8000) ? String(r.target).toLowerCase() : null;
+  // Active EQ window — needed to resolve each candidate's HP%. Their own self
+  // HP resolves cross-client via the same waterfall MT/Rampage HP use.
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const zs = _zealState[ch]; const ts = (zs && zs.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  const st = active ? (_zealState[active] || {}) : {};
+  const byTank = new Map();   // tankLower → { name, mob, firstMs, lastMs, count }
+  for (const h of (stats.recentTankHits || [])) {
+    if (!h || !h.tank || (now - h.tsMs) > OFFHEAL_WINDOW_MS) continue;
+    const k = h.tank.toLowerCase();
+    if (k === mtLower || k === rampLower) continue;
+    let e = byTank.get(k);
+    if (!e) { e = { name: h.tank, mob: h.mobDisplay || h.mob, firstMs: h.tsMs, lastMs: h.tsMs, count: 1 }; byTank.set(k, e); }
+    else {
+      e.count++;
+      if (h.tsMs < e.firstMs) e.firstMs = h.tsMs;
+      if (h.tsMs > e.lastMs)  { e.lastMs = h.tsMs; e.mob = h.mobDisplay || h.mob || e.mob; }
+    }
+  }
+  const out = [];
+  for (const e of byTank.values()) {
+    if (e.count < OFFHEAL_MIN_HITS) continue;
+    // Real raiders only. The mob→player tank-hit heuristic mistakes single-word
+    // NPC/pet names with a backtick/apostrophe ("Xin`Xakra", "Shavimo`s warder")
+    // for players — our own pets beating on a mob look like "a mob hit a player".
+    // EQ character names are letters only, so anything else is an NPC and has no
+    // business on an OFF-HEAL list (Uilnayar 2026-07-06: "npcs should not be on
+    // the off-heal candidates list").
+    if (!/^[A-Za-z]+$/.test(e.name)) continue;
+    const nameLower = e.name.toLowerCase();
+    try { fetchCharacterLiveState(e.name); } catch { /* prime cross-client HP */ }
+    const hp = _resolveHpForName(nameLower, active, st);
+    // Hurt offtanks only. Unknown HP (no Mimic / not yet resolved) is dropped
+    // too — we can't off-heal what we can't see, and it was the bulk of the
+    // noise (Uilnayar 2026-07-06).
+    if (hp == null || hp >= OFFHEAL_HURT_PCT) continue;
+    out.push({
+      name: e.name, mob: e.mob,
+      hp_pct: hp,
+      seconds_taking_hits: Math.round((now - e.firstMs) / 1000),
+      last_hit_secs_ago:   Math.round((now - e.lastMs) / 1000),
+    });
+  }
+  // Lowest HP first (who needs an off-heal most) — Uilnayar 2026-07-06: "we
+  // should see their percentage not seconds left". Unknown HP sorts last, then
+  // by longest under fire.
+  out.sort((a, b) => {
+    const ah = a.hp_pct == null ? 999 : a.hp_pct;
+    const bh = b.hp_pct == null ? 999 : b.hp_pct;
+    return ah - bh || b.seconds_taking_hits - a.seconds_taking_hits;
+  });
+  return out;
+}
+
+// ── Raid-wide Divine Aura / invuln broadcast tracker ────────────────────────
+// Several tanks run a macro that /rsay's their DA (or Harmshield/other short
+// invuln) status to the whole raid, e.g.:
+//   Naggato: ">> DA up << 18 secs" ... ">> DA DOWN IN 6 SECS" ... ">> DA DOWN <<"
+//   Abrahms: ">>DA up<< 12 seconds" ... ">> 12 SECONDS DA <<" ... ">>DA DOWN<<"
+// "DA" is matched case-sensitively (same reasoning as _CH_CALL_RX — lowercase
+// "da" is too common a chat fragment to trust as a signal). A trailing
+// "N sec(s)" ANYWHERE in the line always means "N seconds of protection
+// left" — that single rule covers both the initial "up" call (full
+// duration) and a mid-countdown re-warning whose text still says "DOWN"
+// (Naggato's own "DA DOWN IN 6 SECS" means down is coming in 6s, not down
+// now). Only a bare DOWN/UP with no number is terminal (0s) / duration-
+// unknown. These lines are raid-chat, so every Mimic already sees them in
+// its own log — purely local, no bot relay, same as the CH-chain tracker
+// (Uilnayar 2026-07-03: "That lets the whole raid know in raidchat when
+// its happening").
+const _DA_SECONDS_RX = /(\d{1,3})\s*sec/i;
+const _DA_DOWN_RX    = /\bDOWN\b/;
+const _DA_UP_RX       = /\bUP\b/;
+const DA_BROADCAST_TTL_MS = 30_000;   // drop an entry 30s after its speaker's last line
+const _daBroadcasts = new Map();      // speakerLower → { name, endsAtMs, updatedAtMs }
+function trackDaBroadcastLine(line, character) {
+  if (!line || line.indexOf('DA') === -1) return;   // cheap pre-filter, case-sensitive
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const text = m[2];
+  if (!/\bDA\b/.test(text)) return;
+  const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const secM = text.match(_DA_SECONDS_RX);
+  const key = speaker.toLowerCase();
+  if (secM) {
+    const secs = Math.min(120, parseInt(secM[1], 10));
+    _daBroadcasts.set(key, { name: speaker, endsAtMs: atMs + secs * 1000, updatedAtMs: atMs });
+  } else if (_DA_DOWN_RX.test(text)) {
+    _daBroadcasts.set(key, { name: speaker, endsAtMs: atMs, updatedAtMs: atMs });        // down now
+  } else if (_DA_UP_RX.test(text)) {
+    _daBroadcasts.set(key, { name: speaker, endsAtMs: null, updatedAtMs: atMs });        // up, unknown duration
+  }
+}
+function daBroadcastsSnapshot() {
+  const now = Date.now();
+  const out = [];
+  for (const [key, e] of _daBroadcasts) {
+    if (now - e.updatedAtMs > DA_BROADCAST_TTL_MS) { _daBroadcasts.delete(key); continue; }
+    out.push({ name: e.name, seconds: e.endsAtMs != null ? Math.max(0, Math.round((e.endsAtMs - now) / 1000)) : null });
+  }
+  out.sort((a, b) => (a.seconds ?? 999) - (b.seconds ?? 999));
+  return out;
+}
+
+// ── Raid-wide healer/caster mana roster ─────────────────────────────────────
+// Self-reported "N% mana" status tickers many healers run on a macro —
+// actual examples from guild raid chat: "Druid -- current mana 45%.",
+// "TUNARE'S RENEWAL Inc to Abrahms - 60% Mana Left", "-= Ethereal Light
+// Abrahms =- 45% Mana", "Kazmodon has 45% Mana", "cleric mana 45%". Every
+// observed variant is a SELF-report (the speaker's own mana, never someone
+// else's) with a percent near the word "mana" in either order — matching
+// that generic shape rather than per-player exact wording means a healer
+// with a brand-new macro shows up with no code change. Purely local, same
+// as the CH-chain and DA-broadcast trackers.
+const _MANA_PCT_RX = /(?:mana\D{0,12}(\d{1,3})\s*%|(\d{1,3})\s*%\D{0,12}mana)/i;
+const MANA_ROSTER_TTL_MS = 5 * 60 * 1000;   // stale after 5 min of silence from that speaker
+const _healerManaRoster = new Map();        // speakerLower → { name, class, pct, updatedAtMs }
+function trackHealerManaLine(line, character) {
+  if (!line || !/mana/i.test(line)) return;
+  const m = line.match(_CH_SPEAKER_RX);
+  if (!m) return;
+  const text = m[2];
+  const pctM = text.match(_MANA_PCT_RX);
+  if (!pctM) return;
+  const pct = Math.min(100, parseInt(pctM[1] || pctM[2], 10));
+  const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
+  const who = whoData.get(speaker.toLowerCase());
+  const ts = parseEqTimestamp(line);
+  _healerManaRoster.set(speaker.toLowerCase(), {
+    name: speaker, class: who ? who.class : null, pct,
+    updatedAtMs: ts ? ts.getTime() : Date.now(),
+  });
+}
+function healerManaRosterSnapshot() {
+  const now = Date.now();
+  const out = [];
+  for (const [key, e] of _healerManaRoster) {
+    if (now - e.updatedAtMs > MANA_ROSTER_TTL_MS) { _healerManaRoster.delete(key); continue; }
+    out.push({ name: e.name, class: e.class, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
+  }
+  out.sort((a, b) => a.pct - b.pct);   // lowest mana first — who needs a mana break
+  return out;
 }
 
 // Long-term who_data registry filter — anonymous rows + level 50+. The
@@ -3586,6 +3926,32 @@ class EncounterBuilder {
   add(event) {
     if (!event) return;
 
+    // ── Possessive-named pet, self-owned — auto-populate petLeaders ────────
+    // Shavimo (Beastlord) 2026-07-03: "the DPS meter never reads my pet."
+    // Every pet-ownership check in this class (threatBy, DEEPS, PvP assist
+    // window, etc.) hinges entirely on petLeaders being populated from the
+    // pet's own "My leader is <Owner>." declaration line — which EQ only
+    // emits at summon time or on an explicit /pet command. A Beastlord's
+    // Warder is summoned once per session and rarely re-commanded (unlike a
+    // charm pet, which re-declares every recharm), so if the agent wasn't
+    // already tailing the log at that one moment, the declaration is gone
+    // for the rest of the raid and the Warder's damage is invisible forever.
+    // Warders (and any other class's pet, if one exists) are named
+    // "<Owner>`s <PetWord>" — a possessive we can match directly against
+    // this.character with zero reliance on catching a one-time event, so
+    // populate petLeaders from the NAME itself the first time we see it,
+    // independent of whether a declaration line ever fired.
+    if (event.attacker && this.character) {
+      const _pl = String(event.attacker);
+      const _plKey = _pl.toLowerCase();
+      if (!this.petLeaders[_plKey]) {
+        const _possessive = _pl.match(/^([A-Z][\w`]*)['`]s\s+\S/);
+        if (_possessive && _possessive[1].toLowerCase() === this.character.toLowerCase()) {
+          this.petLeaders[_plKey] = this.character;
+        }
+      }
+    }
+
     // ── Damage-shield flavor line → retag pending attribution ─────────────
     // "X was pierced by thorns." (no number, no points). The DS damage line
     // landed milliseconds earlier and is buffered in _dsPending; we update
@@ -3625,7 +3991,22 @@ class EncounterBuilder {
     // builder in this.charmSessions for inclusion in the encounter
     // payload.
     if (event.type === 'charm_break') {
-      const petKey = String(event.pet || '').toLowerCase();
+      // '__SELF__' sentinel — the self-only "Your charm spell has worn
+      // off." line names no pet at all. Resolve it to whichever open
+      // session THIS character owns; an enchanter/charmer only ever has
+      // one charm active at a time, so this is unambiguous.
+      let petKey = String(event.pet || '').toLowerCase();
+      let petDisplay = event.pet;
+      if (petKey === '__self__') {
+        petKey = '';
+        petDisplay = null;
+        const meLower = String(this.character || '').toLowerCase();
+        if (meLower && this._activeCharms) {
+          for (const [k, sess] of this._activeCharms) {
+            if (String(sess?.owner || '').toLowerCase() === meLower) { petKey = k; break; }
+          }
+        }
+      }
       if (!petKey) return;
       const open = this._activeCharms?.get(petKey);
       const ownerWas = open ? open.owner : (_charmTickTracker.get(petKey)?.owner || null);
@@ -3638,8 +4019,11 @@ class EncounterBuilder {
       }
       // The break event lands ON the mob's tick — fresh anchor for the 6s
       // cycle. Even when there was no open session (e.g. enchanter joined
-      // mid-charm), we still want to begin tracking ticks now.
-      _bumpCharmTick(event.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
+      // mid-charm), we still want to begin tracking ticks now. Display name:
+      // prefer the line's own casing when we have it (bystander form), else
+      // whatever cased name the tick tracker already knows for this pet
+      // (self-only '__SELF__' form resolved above), else the lowercase key.
+      _bumpCharmTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
       return;
     }
 
@@ -3827,7 +4211,11 @@ class EncounterBuilder {
       // or "YOU"/"You" which the agent resolves to the uploader).
       const _isMob = (n) => n && (n === 'YOU' || n === 'You' ? false
         : /^(a|an|the)\s/i.test(n) || /\s/.test(n) || /^[a-z]/.test(n));
-      const _isPlayer = (n) => n && (n === 'YOU' || n === 'You' || /^[A-Z][a-zA-Z'`]{1,}$/.test(n));
+      // EQ character names are letters only — a backtick/apostrophe means it's
+      // an NPC or pet ("Xin`Xakra", "Shavimo`s warder"), NOT a player the mob is
+      // tanking. Allowing them here fed NPCs into MT resolution and the off-heal
+      // list (Uilnayar 2026-07-06).
+      const _isPlayer = (n) => n && (n === 'YOU' || n === 'You' || /^[A-Z][a-zA-Z]+$/.test(n));
       if (_isMob(att) && _isPlayer(def)) {
         const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
         this._lastIncomingHit.set(att.toLowerCase(), { tank, tsMs });
@@ -3842,7 +4230,7 @@ class EncounterBuilder {
           && tsMs - this._rampageTs <= 3000;
         if (!this.silent && !isRampHit) {
           const rt = stats.recentTankHits || (stats.recentTankHits = []);
-          rt.push({ mob: att.toLowerCase(), tank, tsMs });
+          rt.push({ mob: att.toLowerCase(), mobDisplay: att, tank, tsMs });
           if (rt.length > 200) rt.splice(0, rt.length - 200);
         }
       }
@@ -6096,6 +6484,12 @@ function loadSessionState() {
 // plus the global stats.currentDsReflects + stats.currentRampage. Always
 // returns a shape — never null — so the overlay can render a "no data yet"
 // state instead of erroring on missing fields.
+// Any short-duration invulnerability/near-invulnerability self-buff — Divine
+// Aura and kin for paladins/clerics, Harmshield for shadowknights, and
+// whatever else lands under these names. "DA" in identifiers below is a
+// holdover name for "one of these", not literally Divine Aura only (Uilnayar
+// 2026-07-03: "this should also include Shadowknights harmshield and other
+// forms of invulnerability").
 const DA_SPELL_RX = /^(divine aura|divine barrier|divine intervention|harmshield|forced sound channeling|invulnerability)/i;
 const DA_CRITICAL_TICKS = 2;  // ≤12s remaining (1 tick = 6s) → flash + ramp callout
 // Bosses that enrage at low HP — primary use is the warning gauge. ~8% on
@@ -6118,6 +6512,145 @@ function _isEnrageBoss(name) {
   if (!name) return false;
   return ENRAGE_BOSSES.has(String(name).toLowerCase());
 }
+// Resolve a named character's current HP% from every source this agent can
+// see: our own Zeal gauges (self, or via any watched character's target/
+// group gauge showing that name), then that character's own uploaded
+// live-state (their Mimic, relayed through the bot) as the cross-client
+// fallback. null when nobody currently sees them. Shared by Main-Tank
+// resolution and the Rampage-target HP card — both are "some named person,
+// find their HP from whatever's watching them" (Uilnayar 2026-07-03: "We
+// also need the Ramp tank's health on the tank bar.").
+function _resolveHpForName(nameLower, active, st) {
+  if (active && nameLower === String(active).toLowerCase() && typeof st.self_hp_pct === 'number') {
+    return st.self_hp_pct;
+  }
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const zst = _zealState[ch];
+    if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
+    if (String(ch).toLowerCase() === nameLower && typeof zst.self_hp_pct === 'number') return zst.self_hp_pct;
+    if (Array.isArray(zst.gauges)) {
+      const g = zst.gauges.find(g => g && g.text && g.hp_pct != null
+        && String(g.text).toLowerCase() === nameLower && g.slot !== 16);
+      if (g) return g.hp_pct;
+    }
+  }
+  const live = _mtLiveStateByName.get(nameLower);
+  if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
+  return null;
+}
+// Resolve a named character's current buff list, mirroring _resolveHpForName's
+// waterfall: local Zeal list when it's the viewer's own active character
+// (full fidelity — ticks, everything), else their own uploaded live-state
+// (their Mimic, relayed through the bot) when they run Mimic themselves,
+// else locally-observed buff landings merged with the bot's cross-client
+// landing relay (partial, but better than nothing). Each entry has
+// { name, seconds, fell_off }. `source` is 'self' | 'mimic' | 'observed' so
+// callers can annotate partial data. Shared by MT buff resolution and
+// Rampage-target DA detection (Uilnayar 2026-07-03).
+function _resolveBuffsForName(name, active, buffsOut) {
+  const nameLower = String(name || '').toLowerCase();
+  if (active && nameLower === String(active).toLowerCase()) return { buffs: buffsOut, source: 'self' };
+  try { fetchCharacterLiveState(name); } catch {}
+  const live = _mtLiveStateByName.get(nameLower);
+  if (live && live.state && Array.isArray(live.state.buffs)) {
+    return { buffs: live.state.buffs.map(b => ({ name: b.name, seconds: b.seconds, fell_off: false })), source: 'mimic' };
+  }
+  try { fetchTargetBuffs(name); } catch {}
+  const seen = new Map();
+  for (const b of targetBuffsFor(nameLower)) {
+    seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
+  }
+  const relay = _targetBuffsByName.get(nameLower);
+  for (const b of ((relay && relay.buffs) || [])) {
+    if (!b || !b.name || seen.has(String(b.name).toLowerCase())) continue;
+    seen.set(String(b.name).toLowerCase(), {
+      name: b.name,
+      seconds: typeof b.remaining_secs === 'number' ? b.remaining_secs : null,
+      fell_off: false,
+    });
+  }
+  return { buffs: [...seen.values()], source: 'observed' };
+}
+// Divine Aura lookup within a buff list — shared by the self DA banner and
+// Rampage-target DA highlight. `greenSecs` is the "about to fall, get ready
+// to heal" threshold; the self banner and the ramp bar use different values
+// (12s vs 5s) so it's a param, not a constant.
+function _findDA(buffsList, greenSecs) {
+  for (const b of (buffsList || [])) {
+    if (b.fell_off) continue;
+    if (DA_SPELL_RX.test(b.name)) {
+      return { name: b.name, seconds: b.seconds, ticks: b.ticks, critical: typeof b.seconds === 'number' && b.seconds <= greenSecs };
+    }
+  }
+  return null;
+}
+// Main Tank resolution — shared by the Tank overlay and the off-heal-
+// candidates list (both need "who's the MT" to know who NOT to flag).
+// Two signals, strongest first:
+//   1. The CH chain target — healers explicitly run the chain on the MT.
+//   2. Majority of the engaged mob's melee connects over the last 15s
+//      (stats.recentTankHits; rampage hits already excluded at record
+//      time so a rampage cycle can't flip the MT).
+// Returns { name, source } or null when neither fires (out of combat / solo).
+function _resolveMainTank(mainTargetName) {
+  const chc = chChainSnapshot();
+  if (chc && chc.target) return { name: String(chc.target), source: 'ch_chain' };
+  const now = Date.now();
+  const mtnLower = mainTargetName ? String(mainTargetName).trim().toLowerCase() : null;
+  // recentTankHits carries the ATTACKING mob per hit, so when we know the raid's
+  // main target (the NPC the most raiders are on, per Extended Target) we can
+  // pin the MT to whoever THAT mob is beating on — instead of picking whoever
+  // happens to be off-tanking a random add near the local client (Uilnayar
+  // 2026-07-06: "Main tank was wrong … use the main target from extended target").
+  const tallyMain = new Map();   // tank → hits taken FROM the main target
+  const tallyAny  = new Map();   // tank → hits taken from anything (fallback)
+  for (const h of (stats.recentTankHits || [])) {
+    if (now - h.tsMs > 15_000) continue;
+    const k = h.tank.toLowerCase();
+    const a = tallyAny.get(k) || { name: h.tank, hits: 0 }; a.hits++; tallyAny.set(k, a);
+    if (mtnLower && h.mob === mtnLower) {
+      const m = tallyMain.get(k) || { name: h.tank, hits: 0 }; m.hits++; tallyMain.set(k, m);
+    }
+  }
+  const pickBest = (tally) => { let b = null; for (const t of tally.values()) if (!b || t.hits > b.hits) b = t; return b; };
+  const bestMain = pickBest(tallyMain);
+  if (bestMain) return { name: bestMain.name, source: 'main_target_melee' };
+  const bestAny = pickBest(tallyAny);
+  return bestAny ? { name: bestAny.name, source: 'incoming_melee' } : null;
+}
+
+// The mob the raid is actually fighting = the NPC the most raiders have
+// targeted, from the bot's Extended Target aggregation. The local Zeal slot-6
+// target is per-CLIENT — a healer's is usually the TANK, not the boss — so the
+// Tank / Command-Center TARGET bar and the MT resolution key off THIS instead
+// (Uilnayar 2026-07-06). Primes the shared extended-target cache as a side
+// effect, so these overlays get fed even without the Extended Target overlay
+// open. Returns { name, hp_pct, raider_count } or null (out of combat / cold).
+function _resolveMainTarget(activeCharacter) {
+  try { fetchExtendedTarget(activeCharacter); } catch { /* best-effort prime */ }
+  const cached = _extTargetCache.get(String(activeCharacter || '').trim().toLowerCase());
+  const targets = cached && cached.payload && Array.isArray(cached.payload.targets) ? cached.payload.targets : null;
+  if (!targets || !targets.length) return null;
+  let best = null;
+  for (const t of targets) {
+    // Live NPC rows only — never a player/pet row, never a stale "last seen"
+    // mob, never an off-tank/0-targeter row (those can't win "most targeted").
+    if (!t || t.kind !== 'npc' || t.stale) continue;
+    if ((t.raider_count || 0) < 1) continue;
+    const bc = best ? (best.raider_count || 0) : -1;
+    const tc = t.raider_count || 0;
+    if (tc > bc) best = t;
+    else if (tc === bc && best) {
+      // Tie on targeters → the more-hurt mob is the one being burned (the main
+      // tank-and-spank), so prefer lower HP.
+      const bh = best.hp_pct != null ? best.hp_pct : 101;
+      const th = t.hp_pct    != null ? t.hp_pct    : 101;
+      if (th < bh) best = t;
+    }
+  }
+  return best ? { name: best.name, hp_pct: best.hp_pct != null ? best.hp_pct : null, raider_count: best.raider_count || 0 } : null;
+}
 function _serializeTankState() {
   // Active focused character — same heuristic _serializeForDashboard uses.
   const now = Date.now();
@@ -6129,12 +6662,22 @@ function _serializeTankState() {
   }
   const st = active ? (_zealState[active] || {}) : {};
 
-  // Target HP comes from gauge slot 6 (target gauge text + hp_pct).
-  let targetName = null, targetHpPct = null;
+  // Local Zeal slot-6 target (THIS client's own target). A healer's is usually
+  // the tank, not the boss, so it's the fallback — the headline TARGET is the
+  // raid's main target (below).
+  let localTargetName = null, localTargetHpPct = null;
   if (Array.isArray(st.gauges)) {
     const g = st.gauges.find(g => g && g.slot === 6);
-    if (g) { targetName = g.text || null; targetHpPct = g.hp_pct != null ? g.hp_pct : null; }
+    if (g) { localTargetName = g.text || null; localTargetHpPct = g.hp_pct != null ? g.hp_pct : null; }
   }
+  // Main target — the NPC the most raiders are on (Extended Target aggregate).
+  // This drives the TARGET bar, the enrage/boss-HP tracking, AND the MT pin;
+  // the local target only fills in when we're out of combat or the
+  // cross-client feed hasn't warmed yet (Uilnayar 2026-07-06).
+  const mainTarget   = _resolveMainTarget(active);
+  const targetName   = mainTarget ? mainTarget.name   : localTargetName;
+  const targetHpPct  = mainTarget ? mainTarget.hp_pct : localTargetHpPct;
+  const targetSource = mainTarget ? 'extended' : (localTargetName ? 'local' : null);
 
   // Buffs — passthrough with normalization. EQ buff durations come in 6s
   // ticks; convert to seconds remaining for the overlay.
@@ -6150,19 +6693,8 @@ function _serializeTankState() {
   // Divine Aura detection on self. EQ's DA-class spells are short — the
   // duration field counts ticks remaining. Flag critical if ≤12s left so
   // the overlay can flash and call out "start CH on <name>".
-  let da = null;
-  for (const b of buffsOut) {
-    if (DA_SPELL_RX.test(b.name)) {
-      da = {
-        name:        b.name,
-        seconds:     b.seconds,
-        ticks:       b.ticks,
-        critical:    b.ticks != null && b.ticks <= DA_CRITICAL_TICKS,
-        ramp_target: active,    // who'd need to be CH'd when DA falls
-      };
-      break;
-    }
-  }
+  const da = _findDA(buffsOut, DA_CRITICAL_TICKS * 6);
+  if (da) da.ramp_target = active;    // who'd need to be CH'd when DA falls
 
   // DS reflect total this fight — sum across all abilities + provide a tiny
   // breakdown so the overlay can render "🛡 12.4k (Thorn 8.1k · Mark 4.3k)".
@@ -6202,69 +6734,41 @@ function _serializeTankState() {
   dsSources.sort((a, b) => b.per_hit - a.per_hit);
 
   // Rampage target — only return when fresh (≤8s). Older than that and we
-  // assume the rampage cycle is over.
+  // assume the rampage cycle is over. HP resolves the same way MT HP does
+  // below: local gauges first, the rampage victim's own uploaded live-state
+  // as the cross-client fallback (they're almost always a raider, not us).
   let rampage = null;
   const r = stats.currentRampage || null;
   if (r && r.target && r.at && (now - r.at) <= 8000) {
-    rampage = { target: r.target, attacker: r.attacker || null, ageMs: now - r.at };
+    const rLower = String(r.target).toLowerCase();
+    try { fetchCharacterLiveState(r.target); } catch {}
+    // DA on the rampage target — gold-highlight the HP bar while it's up (they're
+    // invulnerable, no need to panic-heal), green once ≤5s remain (Uilnayar
+    // 2026-07-03: "once less than 5 seconds remain on DA we can highlight the
+    // ramp in green instead" — that's the cue healers should be ready to land
+    // the next heal the moment DA drops).
+    const rampBuffs = _resolveBuffsForName(r.target, active, buffsOut).buffs;
+    rampage = {
+      target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
+      hp_pct: _resolveHpForName(rLower, active, st),
+      da: _findDA(rampBuffs, 5),
+    };
   }
 
-  // ── Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
-  // focus on the Main Tank and Rampage, and THEIR buffs, not the caster").
-  // Two signals, strongest first:
-  //   1. The CH chain target — healers explicitly run the chain on the MT.
-  //   2. Majority of the engaged mob's melee connects over the last 15s
-  //      (stats.recentTankHits; rampage hits already excluded at record
-  //      time so a rampage cycle can't flip the MT).
-  // null when neither fires (out of combat / solo) — the overlay falls back
-  // to the local character view.
-  let mtName = null, mtSource = null;
-  {
-    const chc = chChainSnapshot();
-    if (chc && chc.target) { mtName = String(chc.target); mtSource = 'ch_chain'; }
-    if (!mtName) {
-      const tally = new Map();
-      for (const h of (stats.recentTankHits || [])) {
-        if (now - h.tsMs > 15_000) continue;
-        const k = h.tank.toLowerCase();
-        const t = tally.get(k) || { name: h.tank, hits: 0 };
-        t.hits++;
-        tally.set(k, t);
-      }
-      let best = null;
-      for (const t of tally.values()) if (!best || t.hits > best.hits) best = t;
-      if (best) { mtName = best.name; mtSource = 'incoming_melee'; }
-    }
-  }
+  // Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
+  // focus on the Main Tank and Rampage, and THEIR buffs, not the caster") —
+  // see _resolveMainTank. null when neither signal fires (out of combat /
+  // solo) — the overlay falls back to the local character view.
+  const _mt = _resolveMainTank(mainTarget ? mainTarget.name : null);
+  const mtName = _mt ? _mt.name : null, mtSource = _mt ? _mt.source : null;
   let mt = null;
   if (mtName) {
     const mtLower = mtName.toLowerCase();
     const isSelf = !!(active && mtLower === String(active).toLowerCase());
-    // MT HP — self HP if the viewer IS the tank; otherwise scan every watched
-    // character's Zeal gauges for the name: group-member gauges, or the
-    // target gauge (slot 6) when someone is targeting the MT. null when the
-    // MT isn't visible on any local gauge (cross-raid HP sync is Tier 4).
-    let mtHp = null;
-    if (isSelf && typeof st.self_hp_pct === 'number') mtHp = st.self_hp_pct;
-    else {
-      for (const ch of Object.keys(_zealState || {})) {
-        const zst = _zealState[ch];
-        if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
-        if (String(ch).toLowerCase() === mtLower && typeof zst.self_hp_pct === 'number') { mtHp = zst.self_hp_pct; break; }
-        if (Array.isArray(zst.gauges)) {
-          const g = zst.gauges.find(g => g && g.text && g.hp_pct != null
-            && String(g.text).toLowerCase() === mtLower && g.slot !== 16);
-          if (g) { mtHp = g.hp_pct; break; }
-        }
-      }
-      // No local gauge sees the MT — fall back to their own Mimic's uploaded
-      // HP (up to ~20s stale on the heartbeat cadence; better than a blank
-      // bar, and the overlay's freshness cue stays honest via buff_source).
-      if (mtHp == null) {
-        const live = _mtLiveStateByName.get(mtLower);
-        if (live && live.state && typeof live.state.self_hp_pct === 'number') mtHp = live.state.self_hp_pct;
-      }
-    }
+    // MT HP — see _resolveHpForName. null when the MT isn't visible on any
+    // local gauge and hasn't uploaded live-state either (cross-raid HP sync
+    // proper is Tier 4).
+    const mtHp = _resolveHpForName(mtLower, active, st);
     // MT buffs, best source wins:
     //   1. The viewer IS the tank → local Zeal list (full fidelity, live).
     //   2. The MT runs Mimic → THEIR uploaded live-state row via the bot's
@@ -6274,34 +6778,7 @@ function _serializeTankState() {
     //      with the bot's cross-client landing relay. fell_off entries ride
     //      along with seconds:0 — "Aegolism just dropped" is exactly what
     //      whoever watches this overlay needs to see.
-    let mtBuffs;
-    let mtBuffSource = 'self';
-    if (isSelf) mtBuffs = buffsOut;
-    else {
-      try { fetchCharacterLiveState(mtName); } catch {}
-      const live = _mtLiveStateByName.get(mtLower);
-      if (live && live.state && Array.isArray(live.state.buffs)) {
-        mtBuffs = live.state.buffs.map(b => ({ name: b.name, seconds: b.seconds, fell_off: false }));
-        mtBuffSource = 'mimic';
-      } else {
-        try { fetchTargetBuffs(mtName); } catch {}
-        const seen = new Map();
-        for (const b of targetBuffsFor(mtLower)) {
-          seen.set(b.name.toLowerCase(), { name: b.name, seconds: b.fell_off ? 0 : b.remaining_secs, fell_off: !!b.fell_off });
-        }
-        const relay = _targetBuffsByName.get(mtLower);
-        for (const b of ((relay && relay.buffs) || [])) {
-          if (!b || !b.name || seen.has(String(b.name).toLowerCase())) continue;
-          seen.set(String(b.name).toLowerCase(), {
-            name: b.name,
-            seconds: typeof b.remaining_secs === 'number' ? b.remaining_secs : null,
-            fell_off: false,
-          });
-        }
-        mtBuffs = [...seen.values()];
-        mtBuffSource = 'observed';
-      }
-    }
+    const { buffs: mtBuffs, source: mtBuffSource } = _resolveBuffsForName(mtName, active, buffsOut);
     // MT damage shield — this fight's parser-confirmed reflects credited to
     // the MT specifically (dsByTank), NOT the raid-wide ability pool.
     let mtDs = null;
@@ -6326,6 +6803,11 @@ function _serializeTankState() {
       if (cat && cat.ds) mtDsSources.push({ name: b.name, per_hit: cat.ds });
     }
     mtDsSources.sort((a, b) => b.per_hit - a.per_hit);
+    // Raw HP numbers — ONLY when the MT is the local character (their own
+    // Zeal client is the only one that reports real cur/max HP; cross-client
+    // MTs give us a % and nothing more). Uilnayar 2026-07-05.
+    const mtHpCur = isSelf && typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null;
+    const mtHpMax = isSelf && typeof st.self_hp_max === 'number' ? st.self_hp_max : null;
     mt = {
       name:    mtName,
       is_self: isSelf,
@@ -6334,6 +6816,8 @@ function _serializeTankState() {
       // (landing inference — partial; worn clickies/pre-fight buffs missing)
       buff_source: mtBuffSource,
       hp_pct:  mtHp,
+      hp_cur:  mtHpCur,
+      hp_max:  mtHpMax,
       buffs:   (mtBuffs || []).slice(0, 20),
       ds:      mtDs ? { ...mtDs, sources: mtDsSources.slice(0, 8) } : { total: 0, hits: 0, avg_per_hit: 0, abilities: [], sources: mtDsSources.slice(0, 8) },
     };
@@ -6353,10 +6837,44 @@ function _serializeTankState() {
     projection_ready: targetHpPct != null && targetHpPct <= 15,
   };
 
+  // Death Touch countdown — piggybacks on the existing GINA-style trigger
+  // timer system (_activeTimers), not a new detection path: EQ never names
+  // a mob's cast in the log ("<Boss> begins to cast a spell." — no spell
+  // name for anyone but yourself), so there's no way to auto-recognize a
+  // deathtouch cast. Officers set up a normal guild trigger named "Death
+  // Touch" (or containing those words) with a timer_duration_sec matching
+  // the boss's cadence; that trigger already relays to every raider's agent
+  // and starts an identical countdown on each (_fireTriggerActions calls
+  // _startTimer on both the local fire and every relayed one), so this just
+  // surfaces the soonest such countdown here too — both tanks are staring
+  // at the tank bar, not the triggers overlay (Uilnayar 2026-07-03: "the
+  // deathtouch countdowns on mobs that deathtouch is important for both
+  // tanks to see coming").
+  let deathtouch = null;
+  {
+    const DT_RX = /death\s*touch/i;
+    let soonest = null;
+    for (const t of _activeTimersSnapshot()) {
+      if (!DT_RX.test(t.effect || '') && !DT_RX.test(t.name || '')) continue;
+      if (!soonest || t.remaining_ms < soonest.remaining_ms) soonest = t;
+    }
+    if (soonest) {
+      deathtouch = {
+        target:       soonest.target || bossName || null,
+        seconds:      Math.max(0, Math.round(soonest.remaining_ms / 1000)),
+        warn_seconds: soonest.warning_ms ? Math.round(soonest.warning_ms / 1000) : null,
+        critical:     soonest.warning_ms ? soonest.remaining_ms <= soonest.warning_ms : soonest.remaining_ms <= 6000,
+      };
+    }
+  }
+
   return {
     character: active,
     hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
-    target:    { name: targetName, hp_pct: targetHpPct },
+    hp_cur:    typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null,
+    hp_max:    typeof st.self_hp_max === 'number' ? st.self_hp_max : null,
+    target:    { name: targetName, hp_pct: targetHpPct, source: targetSource,
+                 local_name: localTargetName, local_hp_pct: localTargetHpPct },
     buffs:     buffsOut,
     // Main-Tank focus block — null out of combat. When present the overlay
     // renders the MT's HP/buffs/DS instead of the local character's.
@@ -6371,6 +6889,7 @@ function _serializeTankState() {
     },
     rampage,
     enrage,
+    deathtouch,
     // CH chain spot-heal window — v1.1.4 (Uilnayar 2026-06-26).
     // When a CH chain is running on a tank, predict when the next CH hits and
     // surface "spot heal in: Xs" so the tank's own healers can fill the gap
@@ -6410,9 +6929,50 @@ function _serializeTankState() {
       };
     })(),
     updated_at: st.updatedAt || 0,
+    // Hurt offtanks (taking add damage outside MT/rampage, below full HP) — the
+    // Tank overlay shows the same list the CH-chain overlay does so a tank
+    // watching only that window still sees who needs an off-heal (Uilnayar
+    // 2026-07-06: "get offtanks on CH chain overlay or Tank overlay").
+    off_heal_candidates: offHealCandidatesSnapshot(),
     // Cross-raid sync hasn't shipped yet — overlay reads local data only.
     // (Tier 4 work, deferred.) When it does, this flag will flip true.
     fast_sync: false,
+  };
+}
+
+// Command Center overlay snapshot — the "one window" board (Uilnayar
+// 2026-07-03) combining everything the Tank overlay already resolves
+// (boss/MT/rampage/DA/DT/enrage) with two raid-wide sections that only
+// exist because raiders already broadcast them in chat: DA/invuln status
+// (trackDaBroadcastLine) and healer mana (trackHealerManaLine). Curse/Cure
+// alerts intentionally do NOT re-parse "please cure me" macros — the bot's
+// raid-buff-queue debuff_queue already tracks real observed curse debuffs
+// + in-flight cure casts (more reliable than manual call-outs going stale),
+// so this just surfaces that existing data instead of re-deriving it.
+function _serializeCommandCenterState() {
+  const tank = _serializeTankState();
+  const activeChar = tank.character;
+
+  fetchRaidBuffQueue('', activeChar);
+  const bqCached = _buffQueueCache.get('|' + String(activeChar || '').toLowerCase());
+  const debuffQueue = (bqCached && bqCached.payload && Array.isArray(bqCached.payload.debuff_queue))
+    ? bqCached.payload.debuff_queue : [];
+  const cures = debuffQueue.map(d => ({
+    name: d.name, class: d.class, curses: d.curses,
+    all_being_cured: !!d.all_being_cured, same_zone: !!d.same_zone,
+  }));
+
+  return {
+    character:     activeChar,
+    target:        tank.target,
+    mt:            tank.mt,
+    rampage:       tank.rampage,
+    enrage:        tank.enrage,
+    deathtouch:    tank.deathtouch,
+    da_broadcasts: daBroadcastsSnapshot(),
+    healer_mana:   healerManaRosterSnapshot(),
+    cures,
+    updated_at:    Date.now(),
   };
 }
 
@@ -6563,6 +7123,9 @@ function _zealExportOnCampState() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // Off-heal candidates — raiders taking repeated single-target damage
+    // outside the MT/Rampage, rendered at the bottom of chchain.html.
+    offHealCandidates: offHealCandidatesSnapshot(),
     // Cross-instance uploader status. active=true → this instance is the one
     // sending data to the bot; false → another Parser/Mimic on this machine
     // owns the upload lock and we're read-only (local dashboard still live).
@@ -8597,7 +9160,13 @@ function renderZealClients(s) {
     const where = c.zone_name ? esc(c.zone_name) : (c.zone != null ? 'zone ' + esc(String(c.zone)) : 'unknown zone');
     const meta  = [];
     meta.push(where);
-    if (c.self_hp_pct != null) meta.push('self ' + Math.round(c.self_hp_pct) + '%');
+    if (c.self_hp_pct != null) {
+      // Show the raw cur/max HP numbers when Zeal's char-info exposed them
+      // (detected client-side — see _detectSelfHp); otherwise just the %.
+      meta.push((c.self_hp_cur != null && c.self_hp_max != null)
+        ? 'self ' + c.self_hp_cur + ' / ' + c.self_hp_max + ' (' + Math.round(c.self_hp_pct) + '%)'
+        : 'self ' + Math.round(c.self_hp_pct) + '%');
+    }
     if (!c.live && c.updatedAt) meta.push('last seen ' + fmtAgo(c.updatedAt));
     else if (c.live)           meta.push('autoattack ' + (c.autoattack ? 'ON' : 'off'));
     h += '<div class="wp-zeal-row" data-zeal-char="' + esc(c.character) + '">';
@@ -8641,6 +9210,20 @@ function renderZealClients(s) {
         h += '<tr><td class="dim">' + esc(String(g.slot)) + '</td>'
            + '<td class="num">' + (g.hp_pct != null ? Math.round(g.hp_pct) + '%' : '?') + '</td>'
            + '<td>' + esc(g.text || '') + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
+    // Char-info diagnostic — Zeal's type-1 fields (ids 1-13). This is where
+    // raw HP cur/max would live if Zeal exposes it; surfaced so we can
+    // confirm what's actually sent (Uilnayar 2026-07-05 self-HP-numbers ask).
+    if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
+      h += '<details style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
+         + c.char_info.length + ' char-info field' + (c.char_info.length === 1 ? '' : 's')
+         + ' <span class="dim" style="font-size:10px">(diagnostic — raw Zeal type-1 ids; HP numbers land here if present)</span></summary>';
+      h += '<table style="font-size:11px;margin-top:4px"><tr><th>Id</th><th>Value</th></tr>';
+      for (const ci of c.char_info) {
+        h += '<tr><td class="dim">' + esc(String(ci.id)) + '</td>'
+           + '<td class="num">' + esc(String(ci.value)) + '</td></tr>';
       }
       h += '</table></details>';
     }
@@ -8993,6 +9576,7 @@ var WP_OVERLAY_ROWS = [
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs. Named mobs flagged; non-unique names asterisked (same-name mobs split out by HP). Players/pets hurt for >10s fold in as needs-attention rows.'],
+  ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
 ];
 
 function renderOverlays(s) {
@@ -9112,7 +9696,7 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget };
+      var on = { hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand };
       var btns = document.querySelectorAll('.wp-ov-toggle');
       for (var i = 0; i < btns.length; i++) {
         var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
@@ -12239,6 +12823,11 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeTankState()));
       }
+      // Command Center overlay (command.html) — the "one window" board.
+      if (req.url === '/api/command-center') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_serializeCommandCenterState()));
+      }
       // Mimic's buff-queue overlay polls this — we proxy the bot's
       // /api/agent/raid-buff-queue with a 3s cache so a room of Mimics doesn't
       // hammer Supabase. ?class=<bufferClass> filters the buff list to what
@@ -15104,22 +15693,21 @@ function _ciEq(a, b) {
   return !!(a && b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase());
 }
 
-// PvP-channel echo of an own-guild instance kill is a duplicate of the
-// Druzzil broadcast we ALREADY route through /bosskill. Drop it ONLY when
-// the killing guild matches our observed own guild — foreign-guild
-// instance kills (Freedom in Plane of Hate, etc.) DO surface to us only
-// through this echo, so dropping them here loses signal entirely.
-function _isOwnGuildInstanceEcho(text, killerGuild) {
-  if (!/\(Instanced\)/i.test(text)) return false;
-  // No own-guild observed yet → PASS THROUGH (let the bot decide). The old
-  // conservative-drop default silently lost every foreign-guild (Instanced)
-  // echo until the first Druzzil broadcast fired in the session, which
-  // explained Uilnayar's missing 10:38 Oakin/Zek Terror kill on 2026-06-23.
-  // The bot now drops own-guild instance echoes itself (via WP_GUILD_NAME),
-  // so the worst case here is a small wasted relay request — never a missed
-  // foreign kill.
-  if (!_observedOwnGuild) return false;
-  return _ciEq(killerGuild, _observedOwnGuild);
+// (Instanced) [PVP]-echo relay policy — PASS EVERYTHING through to the bot,
+// which is the single place that decides what to record/post. This used to
+// DROP own-guild instance echoes here, on the theory that a Druzzil "tells
+// the guild" broadcast already routed them through /bosskill. That theory
+// fails for a killer who doesn't run Mimic (and has no Mimic guildmate in
+// the instance): no /bosskill ever fires, and dropping the [PVP] echo lost
+// the kill entirely — Timberr's Lord of Ire instance kill vanished with no
+// ledger row, no /pvp/hate entry, and no #pvp post (Uilnayar 2026-07-05).
+// So the agent no longer second-guesses: it relays every instance echo and
+// the bot records own-guild ones (informational #pvp post, no open-world
+// timer tick — instances don't share a spawn) and dedups as needed.
+// Kept as a named no-op so the call sites read intentionally; _observedOwnGuild
+// is still learned from Druzzil for any future use.
+function _isOwnGuildInstanceEcho(_text, _killerGuild) {
+  return false;
 }
 
 function parseDruzzilKill(line) {
@@ -17816,17 +18404,16 @@ const _buffQueueInflight = new Set();
 let _buffQueueSnappyUntil = 0;
 const SNAPPY_TTL_MS  = 500;
 const SNAPPY_WINDOW  = 60_000;
-// 8s (was 3s). The overlay polls every 1.5s; with the 3s TTL roughly every
-// other poll missed the cache and triggered a fresh bot fetch (which then
-// pulled 3000 buff_casts rows). 8s aligns with the overlay polling cadence
-// so each overlay tick at most refreshes the queue once per ~8s; the queue
-// content doesn't change faster than that in practice.
-// Raid-buff-queue cache TTL on the agent. Default 8s (was 3s pre-egress
-// triage). Override via WP_BUFF_QUEUE_TTL_MS.
-// 2026-06-21: cranked default 8s → 4s after the Supabase Pro upgrade.
-// Original was 3s pre-egress-squeeze. Buff queue feels live for the
-// snappier "is X already buffed" reads. Override via WP_BUFF_QUEUE_TTL_MS.
-const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 4000;
+// Raid-buff-queue cache TTL on the agent. History: 3s pre-egress-squeeze →
+// 8s during the squeeze → 4s after the 2026-06-21 Supabase Pro upgrade gave
+// back headroom → 2s on 2026-07-03 (Uilnayar: "Debuff queue definitely needs
+// to be faster") — the bigger win there was flushLiveStateToBot's own
+// interval (20s → 5s, see main()), which gates whether the bot even KNOWS
+// about a new debuff before this cache's freshness matters at all; this TTL
+// just trims the remaining read-side lag on top of that. The overlay polls
+// every 1.5s, so 2s still means most ticks reuse the cache rather than
+// re-fetching every single one. Override via WP_BUFF_QUEUE_TTL_MS.
+const BUFF_QUEUE_TTL_MS = parseInt(process.env.WP_BUFF_QUEUE_TTL_MS, 10) || 2000;
 function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -18047,35 +18634,39 @@ function buildMobInfo() {
 }
 
 // ── Live character state → bot → Supabase (wolfpack.quest/me) ───────────────
-// Mostly a SNAPSHOT sync, not a heartbeat: what each watched character is
+// A snapshot sync WITH a real heartbeat: what each watched character is
 // currently carrying (buffs), their target, and their last-seen zone. Pushed
 // when something meaningful changes (zone, the set of buff/pet names, a
-// target swap, or first sight of a live character) so it costs almost nothing
-// at idle. The ONE exception: a character with a target set re-sends at least
-// every LIVE_STATE_HEARTBEAT_MS even with no change, because a STABLE target
-// (most of a boss fight) would otherwise never retrigger the signature and the
-// row would silently age out of the bot's "online" window for
-// /api/agent/extended-target mid-fight — that heartbeat is gated on having a
-// target, so anyone not feeding that feature stays at the old zero-cost-at-
-// idle behavior. Deliberately NOT routed through the durable upload queue —
-// live state is replaceable (latest wins via the bot's upsert), so queuing
-// stale snapshots during an outage would just waste calls and could evict real
-// encounter uploads. Fire-and-forget; the next interval re-sends fresh if a
-// send is dropped. The LOCAL dashboard stays the source of truth for second-
-// by-second data; this is the "what did they log out with / where are they /
-// what's the raid targeting" view for the web + Mimic overlays.
+// target swap, or first sight of a live character), OR unconditionally every
+// LIVE_STATE_HEARTBEAT_MS regardless of whether anything changed — a STABLE
+// target (most of a boss fight) or a STABLE buff loadout (the common case
+// BETWEEN pulls — fully buffed, nothing new landing, no current target)
+// never trips the change-signature on their own, so without an unconditional
+// heartbeat a character can go quiet indefinitely while still actively
+// playing. This used to be gated on having a target (built narrowly to fix
+// extended-target specifically), which left every OTHER consumer of this
+// row's freshness — the buff queue chief among them — silently starved:
+// confirmed live (Uilnayar 2026-07-03), mid-raid, ZERO of 30 rostered
+// raiders had a fresh-enough row, some multiple hours stale. Deliberately
+// NOT routed through the durable upload queue — live state is replaceable
+// (latest wins via the bot's upsert), so queuing stale snapshots during an
+// outage would just waste calls and could evict real encounter uploads.
+// Fire-and-forget; the next interval re-sends fresh if a send is dropped.
+// The LOCAL dashboard stays the source of truth for second-by-second data;
+// this is the "what did they log out with / where are they / what's the
+// raid targeting / are they missing a buff" view for the web + Mimic
+// overlays and the bot's own raid-buff-queue endpoint.
 const _liveStateLastSig = new Map();   // character → last-sent signature
-// Heartbeat floor for the extended-target feed: target_name/target_hp_pct ride
-// on this same snapshot, but a stable target (the common case — most of a boss
-// fight) never trips the change-signature, so a character would go quiet and
-// fall out of the bot's 60s "online" freshness window for /api/agent/
-// extended-target even while actively fighting. Force a re-send at least this
-// often (only while a target is set — idle characters keep the old zero-cost
-// behavior) so raid- or GROUP-wide "who's targeting what" stays live even with
-// just a couple of Mimic users in a small group (Uilnayar 2026-06-29: "let's
-// get the extended target overlay working for groups as well"). Comfortably
-// under the bot's EXT_ONLINE_MS (60s) so a single 20s-interval miss (a dropped
-// request) doesn't drop the character out of the window.
+// Heartbeat floor. Originally scoped to the extended-target feed only
+// (target_name/target_hp_pct ride on this same snapshot, and the bot's
+// online window for /api/agent/extended-target is 60s — Uilnayar
+// 2026-06-29: "let's get the extended target overlay working for groups as
+// well"); now applies unconditionally to any actively-tracked character (see
+// the flush loop below) since the buff queue needs the same freshness
+// guarantee and idle-between-pulls is exactly when a raider's row would
+// otherwise go stale. Comfortably under both the extended-target 60s window
+// and the buff-queue's 15-min ROSTER_FRESH_MS, with room for a missed cycle
+// or two.
 const LIVE_STATE_HEARTBEAT_MS = 45_000;
 const _liveStateLastSentAt = new Map();   // character → ms of last successful send
 function _postLiveState(targetUrl, token, payload) {
@@ -18115,6 +18706,29 @@ function flushLiveStateToBot(opts) {
     // agent's pet-buff tracker (timed, persisted). Owners with no pet send null.
     const pet      = livePet.get(String(ch).toLowerCase()) || null;
     const petBuffs = pet ? petBuffsForOwner(String(ch).toLowerCase()) : [];
+    // Off-tank signal — the mob most recently confirmed hitting THIS
+    // character via combat log (recentTankHits), independent of whether
+    // they currently have it targeted. Same rolling buffer the Tank
+    // overlay's MT resolution already reads; scanned newest-first so we
+    // get the LATEST connect on this character, not the oldest. Lets
+    // Extended Target surface "who's tanking something nobody's
+    // targeting" — Emperor Ssraeshza-style fights where an add is
+    // deliberately off-tanked at 100% HP and never targeted/damaged
+    // (Uilnayar 2026-07-04). 20s window matches the freshness the bot
+    // requires before treating it as "currently hitting someone".
+    let incomingMob = null, incomingMobSinceMs = null;
+    {
+      const chLower = String(ch).toLowerCase();
+      const hits = stats.recentTankHits || [];
+      for (let i = hits.length - 1; i >= 0; i--) {
+        const h = hits[i];
+        if (h && h.tank && h.tank.toLowerCase() === chLower && (now - h.tsMs) <= 20_000) {
+          incomingMob = h.mobDisplay || h.mob;
+          incomingMobSinceMs = h.tsMs;
+          break;
+        }
+      }
+    }
     const rec = {
       character:   ch,
       zone_id:     st.zone != null ? st.zone : null,
@@ -18128,34 +18742,60 @@ function flushLiveStateToBot(opts) {
       // everyone regardless of party size (Uilnayar 2026-06-29).
       target_name:    st.target_name || null,
       target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
+      incoming_mob:       incomingMob,
+      incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
       buffs,
       buff_count:  buffs.length,
       pet_name:    pet ? pet.name : null,
       pet_hp_pct:  pet && pet.hp_pct != null ? pet.hp_pct : null,
       pet_buffs:   petBuffs.length ? petBuffs : null,
     };
-    // Signature excludes HP% + buff ticks (which churn constantly) — we only
-    // re-send on a zone change, a change to the SET of (own or pet) buff names,
-    // a target SWAP (not its HP — that alone shouldn't force a resend), the pet
-    // appearing/vanishing, or first sight of this character.
+    // Signature excludes raw HP% + buff ticks (which churn constantly) — we
+    // only re-send on a zone change, a change to the SET of (own or pet) buff
+    // names, a target SWAP, the pet appearing/vanishing, or first sight of
+    // this character. Target HP is the ONE exception: a COARSE 10%-bucket of
+    // it rides along, because Extended Target's whole point is showing raid-
+    // wide target HP, and without this a target's health only ever updates
+    // at acquisition + whatever the heartbeat interval happens to catch —
+    // Dave 2026-07-03 screenshotted a raid where every single target read
+    // exactly 100%, which is only plausible for a healthy fight if the value
+    // is frozen at the moment the target was acquired, not tracking it live.
+    // 10-point buckets (not raw %) keep this from re-triggering on every 1%
+    // combat tick the way a plain equality check would.
+    const targetHpBucket = (rec.target_hp_pct != null) ? Math.floor(rec.target_hp_pct / 10) : null;
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
       rec.pet_name,
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
+      targetHpBucket,
+      (rec.incoming_mob || '').toLowerCase(),
     ]);
-    // Send when the signature changed, OR (only while actively targeting
-    // something) the heartbeat floor elapsed. A STABLE target — the common
-    // case mid-fight — never trips the sig, so without a heartbeat the row
-    // goes stale and silently drops out of the bot's online window for
-    // extended-target while the fight is still live. Gated on target_name so
-    // a character standing around idle (no target) doesn't heartbeat forever —
-    // keeps the "costs nothing at idle" behavior for everyone NOT feeding the
-    // extended-target picture.
+    // Send when the signature changed, OR the heartbeat floor elapsed —
+    // UNCONDITIONALLY, not just while targeting something. A STABLE target
+    // (the common case mid-fight) never trips the sig, and neither does a
+    // STABLE buff loadout (the common case BETWEEN pulls — a fully-buffed
+    // raider with nothing new landing and no current target). The
+    // target-only gate below was scoped narrowly to fix extended-target
+    // specifically, but left every idle-but-online character free to age
+    // out of the bot's freshness windows entirely — confirmed live
+    // (Uilnayar 2026-07-03, "buff queue overlay is assuming all buffs
+    // incorrectly"): mid-raid, ZERO of 30 rostered raiders had a
+    // character_live_state row inside the bot's 15-min freshness cutoff,
+    // some multiple HOURS stale despite actively playing — because nobody
+    // had a stable target long enough, or their buffs simply weren't
+    // changing. The buff queue then fell back to buff_casts inference
+    // (3h window, requires someone to have witnessed the actual cast,
+    // expires by computed duration), which drops long-duration/rarely-
+    // recast buffs (Aegolism, Circle of Seasons, resist auras) far more
+    // than short-cycle ones — exactly the lopsided "missing" pattern
+    // reported. A heartbeat that only fires for SOME reasons to stay alive
+    // isn't a heartbeat; every actively-tracked character now re-sends at
+    // least every LIVE_STATE_HEARTBEAT_MS regardless of target state.
     const sigChanged   = _liveStateLastSig.get(ch) !== sig;
     const lastSentAt   = _liveStateLastSentAt.get(ch) || 0;
-    const heartbeatDue = !!rec.target_name && (now - lastSentAt) >= LIVE_STATE_HEARTBEAT_MS;
+    const heartbeatDue = (now - lastSentAt) >= LIVE_STATE_HEARTBEAT_MS;
     if (!sigChanged && !heartbeatDue) continue;
     _liveStateLastSig.set(ch, sig);
     _liveStateLastSentAt.set(ch, now);
@@ -18230,6 +18870,9 @@ function _serializeZealForWeb() {
       zone:        st.zone != null ? st.zone : null,
       zone_name:   _zoneName(st.zone),
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      self_hp_cur: st.self_hp_cur != null ? st.self_hp_cur : null,
+      self_hp_max: st.self_hp_max != null ? st.self_hp_max : null,
+      char_info:   Array.isArray(st.charInfo) ? st.charInfo : null,
       autoattack:  !!st.autoattack,
       buffs:       Array.isArray(st.buffs) ? st.buffs : [],
       casting:     st.casting || null,
@@ -19148,9 +19791,18 @@ async function main() {
     setTimeout(() => pollCharacterPrefs({ botUrl, token }), 10_000);
     setInterval(() => pollCharacterPrefs({ botUrl, token }), 10 * 60_000);
     // Live character state (buffs + last-seen zone) → bot → Supabase so
-    // wolfpack.quest/me can show what each character is carrying + where. Only
-    // sends on change (see flushLiveStateToBot), so the 20s cadence is cheap.
-    setInterval(() => { try { flushLiveStateToBot({ botUrl, token }); } catch {} }, 20_000);
+    // wolfpack.quest/me can show what each character is carrying + where, AND
+    // (Uilnayar 2026-07-03: "Debuff queue definitely needs to be faster") this
+    // is the PRIMARY latency source for a newly-landed curse showing up on
+    // anyone's debuff queue — this interval is how often a cursed player's own
+    // agent even CHECKS whether their buff set changed, before the bot ever
+    // hears about it; the buff-queue read-side cache (BUFF_QUEUE_TTL_MS) is a
+    // much smaller contributor on top of whatever this interval already cost.
+    // Was 20s (worst case ~20s just to detect the change, before the queue's
+    // own cache/poll latency even starts); tightened to 5s. Still cheap — the
+    // signature check below only actually POSTs on a real change, so a
+    // shorter interval mostly just means "notice sooner", not "send more".
+    setInterval(() => { try { flushLiveStateToBot({ botUrl, token }); } catch {} }, 5_000);
   }
 
   // Optional web dashboard — bind 127.0.0.1 only, single HTML page polls /api/state.
@@ -19696,6 +20348,11 @@ async function main() {
         // callouts in shout/raid chat. Local-only (zone-visible lines);
         // feeds the Mimic CH Chain overlay via /api/state.chChain.
         if (!_sourceExcluded) { try { trackChChainLine(line, b.character); } catch {} }
+        // Raid-wide DA/invuln broadcast + healer mana roster — same
+        // shout/raid/guild-chat macro pattern as CH chain, feeding the
+        // Command Center overlay.
+        if (!_sourceExcluded) { try { trackDaBroadcastLine(line, b.character); } catch {} }
+        if (!_sourceExcluded) { try { trackHealerManaLine(line, b.character); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI

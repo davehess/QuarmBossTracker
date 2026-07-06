@@ -89,6 +89,7 @@ let threatWindow  = null;
 let chChainWindow = null;
 let tankWindow    = null;
 let extTargetWindow = null;
+let commandWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -689,7 +690,9 @@ function _boundsKeyForWindow(win) {
   if (win === zealWindow)    return 'zealBounds';
   if (win === threatWindow)  return 'threatBounds';
   if (win === chChainWindow) return 'chChainBounds';
+  if (win === tankWindow)    return 'tankBounds';
   if (win === extTargetWindow) return 'extTargetBounds';
+  if (win === commandWindow) return 'commandBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1106,14 +1109,25 @@ function _zealAbsorb(obj, pid) {
       // show what Zeal is actually sending when a row fails to match.
       const buffs = [];
       const rawDebug = [];
+      const charInfo = [];   // Zeal char-info fields (IDs 1-13): name/class/level
+                             // and — if Zeal exposes them here — raw HP cur/max.
       let casting = null;
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
-        // Skip well-known char-info IDs (1-13 are char fields like name,
-        // class, level, etc.) so the diagnostic stays focused on buff-ish
-        // payloads. Capture everything else with a non-empty value.
-        if (id >= 1 && id <= 13) continue;
+        // Char-info IDs 1-13 (char fields: name, class, level, and possibly
+        // raw HP/mana/endurance). We capture them verbatim now — both to show
+        // on the diagnostic and to DISCOVER which fields carry the player's
+        // own HP numbers (Uilnayar 2026-07-05: "if someone is reporting their
+        // own health we should show the numbers"). Zeal's HP field ids aren't
+        // documented, so _detectSelfHp() below finds them by cross-checking a
+        // numeric cur/max pair against the gauge's already-known HP%.
+        if (id >= 1 && id <= 13) {
+          if (it.value !== undefined && it.value !== null && it.value !== '') {
+            charInfo.push({ id, value: String(it.value) });
+          }
+          continue;
+        }
         const v = it.value;
         if (v !== undefined && v !== null && v !== '' && String(v).toLowerCase() !== 'none') {
           const ticks = it.meta && typeof it.meta.ticks === 'number' ? it.meta.ticks : null;
@@ -1150,7 +1164,50 @@ function _zealAbsorb(obj, pid) {
         s.buffsRawDebug = rawDebug.slice(0, 30);
         cur.dirty = true;
       }
+      // Char-info: surface it for the diagnostic + detect the player's own raw
+      // HP numbers from it. A char-info-only label packet must still forward
+      // (it never carries buffs), so mark dirty when we captured any.
+      if (charInfo.length > 0) {
+        s.charInfo = charInfo.slice(0, 16);
+        _detectSelfHp(cur, s, charInfo);
+        cur.dirty = true;
+      }
     }
+  }
+}
+
+// Discover the player's OWN current/max HP from Zeal's char-info fields.
+// We never guess ids: we take the gauge's already-trusted self HP% and look
+// for a numeric (cur ≤ max) pair among the char-info fields whose ratio
+// matches it. The first time HP is DISTINCT (< 97%, so cur ≠ max and the
+// match is unambiguous vs. mana/endurance) we PIN that id pair on the
+// per-character state, then keep reading it at any % — so the numbers stay
+// correct at full health and track max-HP buffs (Aegolism etc.) live. If
+// nothing validates (Zeal doesn't expose HP here), self_hp_cur/max stay
+// null and every overlay falls back to the plain % it already shows.
+function _detectSelfHp(cur, s, charInfo) {
+  const nums = charInfo
+    .map(ci => ({ id: ci.id, n: Number(ci.value) }))
+    .filter(x => Number.isFinite(x.n) && x.n > 0);
+  if (nums.length < 2) return;
+  const pct = (typeof s.self_hp_pct === 'number') ? s.self_hp_pct : null;
+  // (Re)learn the id pair only when the match is distinct enough to be sure.
+  if (pct != null && pct < 97) {
+    let best = null;
+    for (const a of nums) {
+      for (const b of nums) {
+        if (a.id === b.id || a.n > b.n) continue;   // a = cur, b = max
+        const err = Math.abs((a.n / b.n) * 100 - pct);
+        if (err <= 1.5 && (!best || err < best.err)) best = { curId: a.id, maxId: b.id, err };
+      }
+    }
+    if (best) cur.hpIds = { curId: best.curId, maxId: best.maxId };
+  }
+  // Read the pinned pair (works at any %, reflects live max).
+  if (cur.hpIds) {
+    const c = nums.find(x => x.id === cur.hpIds.curId);
+    const m = nums.find(x => x.id === cur.hpIds.maxId);
+    if (c && m && m.n > 0 && c.n <= m.n) { s.self_hp_cur = c.n; s.self_hp_max = m.n; }
   }
 }
 function _flushZealStateToAgent() {
@@ -1447,7 +1504,12 @@ function startZealCapture() {
         if (Notification.isSupported()) {
           const n = new Notification({
             title: 'Wolf Pack miMIC — Zeal pipes look off',
-            body:  'EQ is running but no Zeal data is flowing. Open Zeal in-game → Settings → Pipes and enable all data types. Need to verify? Tray → Overlays → Zeal health (diagnostic).',
+            // Lead with the admin-mismatch fix: EQ-running-but-no-Zeal-data is
+            // the classic signature of it. If EQ runs elevated and Mimic
+            // doesn't, Windows' pipe ACL blocks the connection (it connects
+            // then instantly drops), so no data ever arrives — cost Jankzer a
+            // couple hours before "run Mimic as admin" fixed it (2026-07-05).
+            body:  'EQ is running but no Zeal data is flowing. #1 fix: if you run EQ as Administrator, run Mimic as Administrator too (right-click Mimic → Run as administrator). Otherwise open Zeal in-game → Settings → Pipes and enable all data types. Verify: Tray → Overlays → Zeal health.',
           });
           n.on('click', () => {
             const cfg2 = loadConfig();
@@ -2052,6 +2114,7 @@ function _overlayEntries() {
   if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
   if (tankWindow    && !tankWindow.isDestroyed())    out.push(['tank',    tankWindow]);
   if (extTargetWindow && !extTargetWindow.isDestroyed()) out.push(['exttarget', extTargetWindow]);
+  if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -2128,6 +2191,7 @@ function applySetupMode(on) {
     if (!chChainWindow) createChChainOverlay();
     if (!tankWindow)    createTankOverlay();
     if (!extTargetWindow) createExtTargetOverlay();
+    if (!commandWindow) createCommandOverlay();
     // Force-show every overlay
     for (const [, win] of _overlayEntries()) {
       try { win.showInactive(); } catch {}
@@ -3435,6 +3499,41 @@ function applyExtTargetVisibility() {
   if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
 }
 
+// Command Center overlay — the "one window" raid board (Uilnayar 2026-07-03):
+// boss/MT/rampage/enrage/Death Touch (same data as the Tank overlay) plus
+// raid-wide DA/invuln status and healer mana parsed from raid-chat macros,
+// plus Curse/Cure alerts from the buff queue. Reads /api/command-center.
+function createCommandOverlay() {
+  const b = _resolveBounds('commandBounds', 'commandBoundsSig', { x: 40, y: 40, width: 320, height: 360 });
+  commandWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Command Center',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 260, minHeight: 160,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+  });
+  commandWindow.setAlwaysOnTop(true, 'screen-saver');
+  commandWindow.setVisibleOnAllWorkspaces(true);
+  commandWindow.loadFile('command.html');
+  commandWindow.on('moved',  () => _persistBounds('commandBounds', commandWindow));
+  commandWindow.on('resize', () => _persistBounds('commandBounds', commandWindow));
+  commandWindow.once('ready-to-show', () => {
+    commandWindow.webContents.send('agent-port', agentPort);
+    applyCommandVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(commandWindow, 'command');
+  });
+}
+function applyCommandVisibility() {
+  if (!commandWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = cfg.overlaysLocked === false;
+  // Opt-in (default off). EQ-gated like every other built-in.
+  const shouldShow = unlocked || (cfg.showCommand && !cfg.quietMode && _eqGateOk(cfg));
+  if (shouldShow) commandWindow.showInactive(); else commandWindow.hide();
+}
+
 // CH chain overlay — cleric Complete Heal rotation read from the zone-visible
 // shout/raid callouts ("004 - CH - Naggato - Mana: 52%" / "005 GO GO GO").
 // Slot order, caller + mana, live cast bar, NEXT cue + beat countdown.
@@ -3495,7 +3594,9 @@ function applyAllVisibility() {
   applyZealVisibility();
   applyThreatVisibility();
   applyChChainVisibility();
+  applyTankVisibility();
   applyExtTargetVisibility();
+  applyCommandVisibility();
 }
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -3687,6 +3788,7 @@ function currentStatus() {
     showChChain: !!cfg.showChChain,
     showTank: !!cfg.showTank,
     showExtTarget: !!cfg.showExtTarget,
+    showCommand: !!cfg.showCommand,
     overlaysLocked: cfg.overlaysLocked !== false,
     setupMode: !!setupMode,
     onboarded: !!cfg.onboarded,
@@ -3884,6 +3986,11 @@ function buildTrayMenu() {
         if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
         pushStatus();
       } },
+    { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.showCommand = mi.checked; saveConfig(cfg);
+        if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
+        pushStatus();
+      } },
     { type: 'separator' },
     // Panel-overlay tray toggles removed per user feedback — the per-card
     // "🪟 overlay" buttons on the dashboard cover ad-hoc pop-outs without a
@@ -4044,18 +4151,39 @@ function buildTrayMenu() {
 }
 
 // ── Auto-update ────────────────────────────────────────────────────────────
+// `verbose` (the manual "Check for updates…" click / dashboard button) used
+// to ONLY affect the "check failed to even start" case — the actual result
+// (found / not found / downloaded) came back through electron-updater's
+// events, which fire identically whether the check was manual or the silent
+// hourly poll, so a manual click when already current gave literally zero
+// feedback (Uilnayar 2026-07-03: "the check for update doesn't look like
+// it's working - no popup"). _manualCheckPending bridges that: set here,
+// consumed + cleared by whichever updater event fires next in wireAutoUpdater.
+let _manualCheckPending = false;
 function safeCheckForUpdates(verbose) {
   if (!autoUpdater) {
     if (verbose) dialog.showMessageBox({ type: 'info', message: 'Updates aren\'t available in dev mode.' });
     return;
   }
+  if (verbose) {
+    _manualCheckPending = true;
+    // Safety net — if nothing resolves it within 30s (unlikely; checkForUpdates
+    // itself times out well before that), don't leave a stale flag around to
+    // pop a dialog on some LATER unrelated background event.
+    clearTimeout(safeCheckForUpdates._clearT);
+    safeCheckForUpdates._clearT = setTimeout(() => { _manualCheckPending = false; }, 30_000);
+  }
   try {
     autoUpdater.checkForUpdates().catch((e) => {
       appendAgentLog(`[updater] check failed: ${e.message || e}\n`);
-      if (verbose) dialog.showMessageBox({ type: 'info', message: `Update check failed: ${e.message || e}` });
+      if (verbose) {
+        _manualCheckPending = false;
+        dialog.showMessageBox({ type: 'info', message: `Update check failed: ${e.message || e}` });
+      }
     });
   } catch (e) {
     appendAgentLog(`[updater] check threw: ${e.message || e}\n`);
+    if (verbose) _manualCheckPending = false;
   }
 }
 // ── In-place AGENT hot-swap (no installer, no window restart) ───────────────
@@ -4217,9 +4345,19 @@ function wireAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('update-available', (info) => {
     appendAgentLog(`[updater] update available: v${info && info.version}\n`);
+    // Don't clear _manualCheckPending here — update-downloaded (or error)
+    // follows shortly since autoDownload is on, and THAT'S the meaningful
+    // "here's your feedback" moment. Popping a dialog at both points would
+    // just be two prompts in a row for one click.
   });
   autoUpdater.on('update-not-available', () => {
     appendAgentLog(`[updater] no update available\n`);
+    // This is the case that was completely silent before — a manual "Check
+    // for updates…" click when already current produced zero feedback.
+    if (_manualCheckPending) {
+      _manualCheckPending = false;
+      dialog.showMessageBox({ type: 'info', message: `You're up to date (v${app.getVersion()}).` });
+    }
   });
   autoUpdater.on('download-progress', (p) => {
     appendAgentLog(`[updater] download ${Math.round(p.percent)}%\n`);
@@ -4230,11 +4368,15 @@ function wireAutoUpdater() {
     // pushStatus() refreshes the tray "Restart to install vX" item AND the
     // dashboard banner (preload reads status.updatePending). The update also
     // applies on its own at the next normal quit (autoInstallOnAppQuit), so a
-    // pop-up is optional. Only nag with the modal dialog when the user has
-    // explicitly opted out of quiet updates.
+    // pop-up is optional in the background-poll case. Show it either when the
+    // user has explicitly opted out of quiet updates, OR when they just
+    // clicked "Check for updates…" themselves — an explicit ask deserves an
+    // explicit answer regardless of the quiet-updates preference.
     pushStatus();
     const quiet = loadConfig().quietUpdates !== false;
-    if (!quiet && mainWindow && !mainWindow.isDestroyed()) {
+    const manual = _manualCheckPending;
+    _manualCheckPending = false;
+    if ((!quiet || manual) && mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
         type: 'info',
         buttons: ['Restart now', 'Later'],
@@ -4250,6 +4392,10 @@ function wireAutoUpdater() {
   });
   autoUpdater.on('error', (err) => {
     appendAgentLog(`[updater] error: ${err && (err.message || err)}\n`);
+    if (_manualCheckPending) {
+      _manualCheckPending = false;
+      dialog.showMessageBox({ type: 'info', message: `Update check failed: ${(err && (err.message || err)) || 'unknown error'}` });
+    }
   });
   // Initial + hourly. Delay 8s so the agent boot doesn't compete for bandwidth.
   setTimeout(() => safeCheckForUpdates(false), 8000);
@@ -4440,6 +4586,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showExtTarget = !cfg.showExtTarget; saveConfig(cfg);
       if (cfg.showExtTarget && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility();
       break;
+    case 'command':
+      cfg.showCommand = !cfg.showCommand; saveConfig(cfg);
+      if (cfg.showCommand && !commandWindow) createCommandOverlay(); else applyCommandVisibility();
+      break;
     default:
       return null;
   }
@@ -4496,6 +4646,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === extTargetWindow) {
       cfg.showExtTarget = false; saveConfig(cfg);
       try { extTargetWindow.hide(); } catch {}
+    } else if (win === commandWindow) {
+      cfg.showCommand = false; saveConfig(cfg);
+      try { commandWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -4880,8 +5033,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showChChain      && !chChainWindow)   createChChainOverlay();
     if (merged.showTank         && !tankWindow)      createTankOverlay();
     if (merged.showExtTarget    && !extTargetWindow) createExtTargetOverlay();
+    if (merged.showCommand      && !commandWindow)   createCommandOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyExtTargetVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.

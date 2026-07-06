@@ -53,6 +53,10 @@
   .row.casting .num{color:#7ee787; border-color:rgba(126,231,135,0.55)}
   .row.next    .num{color:#f6c365; border-color:rgba(246,195,101,0.65); background:rgba(246,195,101,0.10)}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  /* Tag on an auto-slotted row folded in from a non-cleric CH-equivalent
+     cast (e.g. a druid's Tunare's Renewal) — see CH_EQUIVALENT_SPELLS in
+     the agent. Distinguishes it from an ordinary numbered cleric slot. */
+  .row .nm .slot-kind{color:#a371f7;font-size:9px;font-style:italic;font-weight:500;margin-left:4px}
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
@@ -64,6 +68,21 @@
   .row.next{background:rgba(240,180,41,0.12);border-left-color:#f0b429}
   .row.next .nm{color:#f6c365}
   .row.next .stat{color:#f6c365;font-weight:700}
+  /* Explicit "NNN GO GO GO" cue — the loudest per-row state: THIS healer must
+     cast now. Gold pulsing row + a green "GO!" pill (green = go). Distinct from
+     casting (steady green row + bar) and next (static gold). Cleared server-side
+     once they cast or the cue ages out (CH_GO_DISPLAY_MS). */
+  .row.go{background:rgba(240,180,41,0.22);border-left-color:#f0b429;
+    animation:go-pulse 0.55s ease-in-out infinite alternate}
+  .row.go .num{color:#7ee787;border-color:rgba(126,231,135,0.75);background:rgba(126,231,135,0.15)}
+  .row.go .nm{color:#f6c365;font-weight:700}
+  .gobadge{display:inline-block;font-weight:800;font-size:10px;color:#052e12;
+    background:#7ee787;border-radius:8px;padding:1px 6px;letter-spacing:0.06em;
+    text-shadow:none;box-shadow:0 0 8px rgba(126,231,135,0.65)}
+  @keyframes go-pulse{
+    from{box-shadow:inset 0 0 0 rgba(240,180,41,0)}
+    to{box-shadow:inset 0 0 16px rgba(240,180,41,0.30)}
+  }
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
     border-radius:2px;overflow:hidden;margin-top:3px}
   .bar .fill{height:100%;background:#56d364;transition:width 120ms linear}
@@ -89,6 +108,17 @@
     from{box-shadow:0 0 6px rgba(248,113,113,0.7)}
     to{box-shadow:0 0 16px rgba(248,113,113,0.35)}
   }
+  /* Spot-heal banner — a one-off ad-hoc heal (e.g. a druid's Chloroblast)
+     riding alongside the numbered rotation without consuming a slot. Green/
+     nature-themed so it reads as "extra help arrived", distinct from the red
+     pivot (someone MISSED their slot) and amber gap-soon (someone's ABOUT
+     to be due). Self-expires — see SPOT_HEAL_DISPLAY_MS in the agent. */
+  .spotrow{display:flex;align-items:center;gap:8px;margin-top:6px;padding:5px 8px;
+    background:rgba(86,211,100,0.20);border:1px solid rgba(86,211,100,0.55);
+    border-radius:5px;font-size:12px;color:#fff;text-shadow:0 1px 2px #000}
+  .spotrow .spot-icon{font-size:14px;flex-shrink:0}
+  .spotrow .spot-name{font-weight:700;color:#7ee787}
+  .spotrow .spot-target{color:#fde68a}
   /* GAP SOON alert row — sits ABOVE the slot list when the chain is about
      to slip (the late cleric hasn't called yet and the beat is running out).
      Amber when imminent, red + pulsing when already overdue. This is the
@@ -140,6 +170,22 @@
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   /* Chain idle (no call in 60s+) — dim so post-fight numbers read as stale. */
   .rows.stale,.nextrow.stale{opacity:0.5}
+  /* Off-heal candidates — raiders taking repeated single-target damage
+     outside the MT/Rampage (see offHealCandidatesSnapshot in the agent).
+     Sits at the bottom of the overlay since healers already have this
+     window open — Uilnayar 2026-07-04. Independent of chain state (renders
+     even with no active CH chain), so it's its own card, not a table row. */
+  .offheal{margin-top:5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px}
+  .offheal-hd{font-size:9px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;
+    margin-bottom:3px;text-shadow:0 1px 2px #000}
+  .offheal-row{display:flex;align-items:center;gap:6px;font-size:10px;line-height:1.6;
+    color:#e6edf3;text-shadow:0 1px 2px #000}
+  .offheal-row .oh-nm{font-weight:600;color:#fca5a5;flex-shrink:0}
+  .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* HP% of the candidate (who needs an off-heal) — colored by severity, not
+     seconds-under-fire (Uilnayar 2026-07-06: "we should see their percentage"). */
+  .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
+  .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:#6e7681}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -209,12 +255,26 @@
          chain has slipped (next caller didn't shout within 1.5× the beat).
          Hidden when chain is healthy. Display name + suggest who's next. -->
     <div id="pivotrow" class="pivotrow" style="display:none"></div>
+    <!-- Spot-heal banner (Uilnayar 2026-07-02: "our druids will hop in and
+         fill the CH gaps, are they able to be included?"). A CH-equivalent
+         cast (Tunare's Renewal) folds straight into the numbered rows above
+         instead — this banner is only for a one-off heal that ISN'T a
+         rotation-tier spell. Hidden when nothing recent. -->
+    <div id="spotrow" class="spotrow" style="display:none"></div>
     <div id="nextrow" class="nextrow" style="display:none">
       <span class="lbl" id="nextlbl"></span>
       <div class="cd-bar"><div class="fill" id="cdfill"></div></div>
       <span class="cd" id="cd"></span>
     </div>
     <div id="empty">waiting for CH calls…</div>
+    <!-- Off-heal candidates (Uilnayar 2026-07-04: "who's taking repeated
+         single target damage outside of the current main tank and rampage
+         ... CH chain could list off heal candidates at the bottom").
+         Independent of chain state — shows even with no active chain. -->
+    <div id="offheal" class="offheal" style="display:none">
+      <div class="offheal-hd">⚕ Off-heal candidates</div>
+      <div id="offhealRows"></div>
+    </div>
   </div>
 <script>
   let PORT = 7779;
@@ -237,8 +297,16 @@
   // Mute toggle for the audible gap callouts. Persists per-machine via
   // localStorage so the choice survives Mimic restarts (the overlay reloads
   // its HTML on every show). Visual swap 🔊↔🔇 + .muted class on the button.
-  var _muted = false;
-  try { _muted = localStorage.getItem('chchain_mute') === '1'; } catch (e) {}
+  // Dave 2026-07-03: "We should mute the CH gap by default." Muted unless the
+  // user has explicitly stored '0' (they turned sound back on themselves) —
+  // no stored value at all (fresh install, or an existing user who never
+  // touched this button) now means muted, not unmuted.
+  var _muted = true;
+  try {
+    var _mutedStored = localStorage.getItem('chchain_mute');
+    if (_mutedStored === '0') _muted = false;
+    else if (_mutedStored === '1') _muted = true;
+  } catch (e) {}
   var muteBtn = document.getElementById('mute-btn');
   function paintMute(){
     if (!muteBtn) return;
@@ -400,6 +468,7 @@
   //                              (the chain is broken; nothing more to alert)
 
   var _last = null;             // last fetched chChain snapshot
+  var _lastOffHeal = [];        // last fetched offHealCandidates list
   // TTS dedup — track which gap event we've already spoken for, so a single
   // late call doesn't trigger the alert dozens of times per second. Keyed on
   // (last_ch.atMs, next_num) so a NEW chain step resets cleanly.
@@ -418,13 +487,40 @@
     } catch (e) {}
   }
 
+  // Off-heal candidates — independent of chain state, so it's rendered on
+  // its own rather than nested inside the chain-empty early return below.
+  function renderOffHeal(){
+    var el = document.getElementById('offheal');
+    var rowsEl = document.getElementById('offhealRows');
+    var list = _lastOffHeal || [];
+    if (!list.length) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      var hp = (o.hp_pct == null) ? null : Math.max(0, Math.min(100, Math.round(o.hp_pct)));
+      var hpCls = (hp == null) ? 'unk' : (hp < 35 ? 'lo' : (hp < 70 ? 'mid' : 'hi'));
+      html += '<div class="offheal-row">'
+        +   '<span class="oh-nm">' + esc(o.name) + '</span>'
+        +   (o.mob ? '<span class="oh-mob">← ' + esc(o.mob) + '</span>' : '')
+        +   '<span class="oh-hp ' + hpCls + '">' + (hp == null ? '—' : hp + '%') + '</span>'
+        + '</div>';
+    }
+    rowsEl.innerHTML = html;
+  }
+
   // v1.1.5 — pivot announcement state (only speak once per slip).
   var _lastPivotKey = null;
+  // Spot-heal announcement state (only speak once per event — keyed on its
+  // atMs, which changes on every new personal-macro heal the agent reports).
+  var _lastSpotHealKey = null;
   function render(){
+    renderOffHeal();
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var nextEl  = document.getElementById('nextrow');
     var pivotEl = document.getElementById('pivotrow');
+    var spotEl  = document.getElementById('spotrow');
     var gapEl   = document.getElementById('gaprow');
     var tgtEl   = document.getElementById('tgt');
     var beatEl  = document.getElementById('beat');
@@ -446,11 +542,32 @@
         var spokenPivot = c.slipped.next_after_name && c.slipped.next_after_name !== c.slipped.missed_name
           ? ('Pivot — ' + (c.slipped.next_after_name) + ' instead of ' + (c.slipped.missed_name) + '.')
           : ('Spot heal — ' + (c.slipped.missed_name) + ' missed.');
-        speak(spokenPivot);
+        // Was calling an undefined `speak()` — this TTS line has never
+        // actually fired. speakGap() is the file's one TTS helper (mute
+        // check + cancel-then-speak); reused here rather than duplicated.
+        speakGap(spokenPivot);
       }
     } else {
       pivotEl.style.display = 'none';
       _lastPivotKey = null;
+    }
+    // Spot-heal banner — an ad-hoc heal (e.g. a druid's Chloroblast) that
+    // isn't a rotation-tier spell, so the agent reports it separately from
+    // the numbered slots rather than forcing it into one. Self-clears once
+    // the agent stops reporting it fresh (SPOT_HEAL_DISPLAY_MS server-side).
+    if (c && c.spot_heal && c.spot_heal.name) {
+      var shk = c.spot_heal.atMs + '|' + c.spot_heal.name;
+      spotEl.innerHTML = '<span class="spot-icon">🌿</span><span><span class="spot-name">' + esc(c.spot_heal.name) + '</span> spot healing'
+        + (c.spot_heal.spell ? ' (' + esc(c.spot_heal.spell) + ')' : '')
+        + (c.spot_heal.target ? ' → <span class="spot-target">' + esc(c.spot_heal.target) + '</span>' : '') + '</span>';
+      spotEl.style.display = 'flex';
+      if (shk !== _lastSpotHealKey) {
+        _lastSpotHealKey = shk;
+        speakGap('Spot heal — ' + c.spot_heal.name + (c.spot_heal.target ? ' on ' + c.spot_heal.target : '') + '.');
+      }
+    } else {
+      spotEl.style.display = 'none';
+      _lastSpotHealKey = null;
     }
     if (!c || !c.slots || Object.keys(c.slots).length === 0) {
       rowsEl.innerHTML = '';
@@ -491,14 +608,20 @@
       var n = nums[i], s = c.slots[n];
       var slotElapsedMs = s.lastAtMs ? (now - s.lastAtMs) : Number.POSITIVE_INFINITY;
       var isCasting = slotElapsedMs < CH_CAST_SECS * 1000;
-      var isNext    = !isCasting && c.next_num === n;
-      var cls = 'row' + (isCasting ? ' casting' : '') + (isNext ? ' next' : '');
+      // Explicit GO cue for THIS slot (server-gated: fresh + not yet cast).
+      // Outranks the passive NEXT — a called "GO GO GO" is louder than "you're
+      // up next" (Uilnayar 2026-07-06).
+      var goActive  = !isCasting && c.last_go && c.last_go.num === n;
+      var isNext    = !isCasting && !goActive && c.next_num === n;
+      var cls = 'row' + (isCasting ? ' casting' : '') + (goActive ? ' go' : '') + (isNext ? ' next' : '');
       var stat, bar = '';
       if (isCasting) {
         var el = slotElapsedMs / 1000;
         var remain = Math.max(0, CH_CAST_SECS - el);
         stat = remain.toFixed(1);
         bar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (el / CH_CAST_SECS) * 100).toFixed(1) + '%"></div></div>';
+      } else if (goActive) {
+        stat = '<span class="gobadge">GO!</span>';
       } else if (isNext) {
         stat = 'NEXT';
       } else {
@@ -506,7 +629,7 @@
       }
       html += '<div class="' + cls + '">'
         +   '<span class="num">' + pad3(n) + '</span>'
-        +   '<span class="nm">' + esc(s.name || '?') + '</span>'
+        +   '<span class="nm">' + esc(s.name || '?') + (s.kind ? ' <span class="slot-kind">' + esc(s.kind) + '</span>' : '') + '</span>'
         +   '<span class="mana ' + manaCls(s.mana) + '">' + (s.mana != null ? s.mana + '%' : '·') + '</span>'
         +   '<span class="stat">' + stat + '</span>'
         +   bar
@@ -572,6 +695,7 @@
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       _last = s && s.chChain;
+      _lastOffHeal = (s && s.offHealCandidates) || [];
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }
