@@ -3087,6 +3087,13 @@ function offHealCandidatesSnapshot() {
   const out = [];
   for (const e of byTank.values()) {
     if (e.count < OFFHEAL_MIN_HITS) continue;
+    // Real raiders only. The mob→player tank-hit heuristic mistakes single-word
+    // NPC/pet names with a backtick/apostrophe ("Xin`Xakra", "Shavimo`s warder")
+    // for players — our own pets beating on a mob look like "a mob hit a player".
+    // EQ character names are letters only, so anything else is an NPC and has no
+    // business on an OFF-HEAL list (Uilnayar 2026-07-06: "npcs should not be on
+    // the off-heal candidates list").
+    if (!/^[A-Za-z]+$/.test(e.name)) continue;
     const nameLower = e.name.toLowerCase();
     try { fetchCharacterLiveState(e.name); } catch { /* prime cross-client HP */ }
     out.push({
@@ -4193,7 +4200,11 @@ class EncounterBuilder {
       // or "YOU"/"You" which the agent resolves to the uploader).
       const _isMob = (n) => n && (n === 'YOU' || n === 'You' ? false
         : /^(a|an|the)\s/i.test(n) || /\s/.test(n) || /^[a-z]/.test(n));
-      const _isPlayer = (n) => n && (n === 'YOU' || n === 'You' || /^[A-Z][a-zA-Z'`]{1,}$/.test(n));
+      // EQ character names are letters only — a backtick/apostrophe means it's
+      // an NPC or pet ("Xin`Xakra", "Shavimo`s warder"), NOT a player the mob is
+      // tanking. Allowing them here fed NPCs into MT resolution and the off-heal
+      // list (Uilnayar 2026-07-06).
+      const _isPlayer = (n) => n && (n === 'YOU' || n === 'You' || /^[A-Z][a-zA-Z]+$/.test(n));
       if (_isMob(att) && _isPlayer(def)) {
         const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
         this._lastIncomingHit.set(att.toLowerCase(), { tank, tsMs });
