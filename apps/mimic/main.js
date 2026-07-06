@@ -1504,7 +1504,12 @@ function startZealCapture() {
         if (Notification.isSupported()) {
           const n = new Notification({
             title: 'Wolf Pack miMIC — Zeal pipes look off',
-            body:  'EQ is running but no Zeal data is flowing. Open Zeal in-game → Settings → Pipes and enable all data types. Need to verify? Tray → Overlays → Zeal health (diagnostic).',
+            // Lead with the admin-mismatch fix: EQ-running-but-no-Zeal-data is
+            // the classic signature of it. If EQ runs elevated and Mimic
+            // doesn't, Windows' pipe ACL blocks the connection (it connects
+            // then instantly drops), so no data ever arrives — cost Jankzer a
+            // couple hours before "run Mimic as admin" fixed it (2026-07-05).
+            body:  'EQ is running but no Zeal data is flowing. #1 fix: if you run EQ as Administrator, run Mimic as Administrator too (right-click Mimic → Run as administrator). Otherwise open Zeal in-game → Settings → Pipes and enable all data types. Verify: Tray → Overlays → Zeal health.',
           });
           n.on('click', () => {
             const cfg2 = loadConfig();

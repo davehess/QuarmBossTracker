@@ -208,7 +208,14 @@
       var hintHtml = '';
       var hintCls  = '';
       if (pids.length === 0) {
-        hintHtml = 'EQ is not running (or Zeal isn`t loaded). Launch EverQuest and the panel will populate.';
+        // "No connected pipe" also covers the admin-mismatch case: if EQ runs
+        // elevated and Mimic doesn't, the connect is refused/instantly dropped,
+        // so it LOOKS like EQ isn't running even when you're in-game. Call that
+        // out — it's the usual culprit for "says not running but I'm playing"
+        // (Uilnayar 2026-07-05, Jankzer).
+        hintHtml = 'EQ is not running (or Zeal isn`t loaded). Launch EverQuest and this fills in. '
+                 + '<b>Already in-game?</b> The usual cause is an admin mismatch — if you run EQ as Administrator, '
+                 + 'Mimic must run as Administrator too (right-click Mimic → <b>Run as administrator</b>).';
       } else if (missingCritical.length > 0) {
         hintHtml = '⚠ Critical types missing: ' + missingCritical.map(function(t){ return t.label; }).join(', ') + '. Open Zeal → Settings → Pipes and enable them.';
       } else if (ageMs != null && ageMs > 30000) {
