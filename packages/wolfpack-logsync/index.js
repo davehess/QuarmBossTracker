@@ -6468,21 +6468,63 @@ function _findDA(buffsList, greenSecs) {
 //      (stats.recentTankHits; rampage hits already excluded at record
 //      time so a rampage cycle can't flip the MT).
 // Returns { name, source } or null when neither fires (out of combat / solo).
-function _resolveMainTank() {
+function _resolveMainTank(mainTargetName) {
   const chc = chChainSnapshot();
   if (chc && chc.target) return { name: String(chc.target), source: 'ch_chain' };
   const now = Date.now();
-  const tally = new Map();
+  const mtnLower = mainTargetName ? String(mainTargetName).trim().toLowerCase() : null;
+  // recentTankHits carries the ATTACKING mob per hit, so when we know the raid's
+  // main target (the NPC the most raiders are on, per Extended Target) we can
+  // pin the MT to whoever THAT mob is beating on — instead of picking whoever
+  // happens to be off-tanking a random add near the local client (Uilnayar
+  // 2026-07-06: "Main tank was wrong … use the main target from extended target").
+  const tallyMain = new Map();   // tank → hits taken FROM the main target
+  const tallyAny  = new Map();   // tank → hits taken from anything (fallback)
   for (const h of (stats.recentTankHits || [])) {
     if (now - h.tsMs > 15_000) continue;
     const k = h.tank.toLowerCase();
-    const t = tally.get(k) || { name: h.tank, hits: 0 };
-    t.hits++;
-    tally.set(k, t);
+    const a = tallyAny.get(k) || { name: h.tank, hits: 0 }; a.hits++; tallyAny.set(k, a);
+    if (mtnLower && h.mob === mtnLower) {
+      const m = tallyMain.get(k) || { name: h.tank, hits: 0 }; m.hits++; tallyMain.set(k, m);
+    }
   }
+  const pickBest = (tally) => { let b = null; for (const t of tally.values()) if (!b || t.hits > b.hits) b = t; return b; };
+  const bestMain = pickBest(tallyMain);
+  if (bestMain) return { name: bestMain.name, source: 'main_target_melee' };
+  const bestAny = pickBest(tallyAny);
+  return bestAny ? { name: bestAny.name, source: 'incoming_melee' } : null;
+}
+
+// The mob the raid is actually fighting = the NPC the most raiders have
+// targeted, from the bot's Extended Target aggregation. The local Zeal slot-6
+// target is per-CLIENT — a healer's is usually the TANK, not the boss — so the
+// Tank / Command-Center TARGET bar and the MT resolution key off THIS instead
+// (Uilnayar 2026-07-06). Primes the shared extended-target cache as a side
+// effect, so these overlays get fed even without the Extended Target overlay
+// open. Returns { name, hp_pct, raider_count } or null (out of combat / cold).
+function _resolveMainTarget(activeCharacter) {
+  try { fetchExtendedTarget(activeCharacter); } catch { /* best-effort prime */ }
+  const cached = _extTargetCache.get(String(activeCharacter || '').trim().toLowerCase());
+  const targets = cached && cached.payload && Array.isArray(cached.payload.targets) ? cached.payload.targets : null;
+  if (!targets || !targets.length) return null;
   let best = null;
-  for (const t of tally.values()) if (!best || t.hits > best.hits) best = t;
-  return best ? { name: best.name, source: 'incoming_melee' } : null;
+  for (const t of targets) {
+    // Live NPC rows only — never a player/pet row, never a stale "last seen"
+    // mob, never an off-tank/0-targeter row (those can't win "most targeted").
+    if (!t || t.kind !== 'npc' || t.stale) continue;
+    if ((t.raider_count || 0) < 1) continue;
+    const bc = best ? (best.raider_count || 0) : -1;
+    const tc = t.raider_count || 0;
+    if (tc > bc) best = t;
+    else if (tc === bc && best) {
+      // Tie on targeters → the more-hurt mob is the one being burned (the main
+      // tank-and-spank), so prefer lower HP.
+      const bh = best.hp_pct != null ? best.hp_pct : 101;
+      const th = t.hp_pct    != null ? t.hp_pct    : 101;
+      if (th < bh) best = t;
+    }
+  }
+  return best ? { name: best.name, hp_pct: best.hp_pct != null ? best.hp_pct : null, raider_count: best.raider_count || 0 } : null;
 }
 function _serializeTankState() {
   // Active focused character — same heuristic _serializeForDashboard uses.
@@ -6495,12 +6537,22 @@ function _serializeTankState() {
   }
   const st = active ? (_zealState[active] || {}) : {};
 
-  // Target HP comes from gauge slot 6 (target gauge text + hp_pct).
-  let targetName = null, targetHpPct = null;
+  // Local Zeal slot-6 target (THIS client's own target). A healer's is usually
+  // the tank, not the boss, so it's the fallback — the headline TARGET is the
+  // raid's main target (below).
+  let localTargetName = null, localTargetHpPct = null;
   if (Array.isArray(st.gauges)) {
     const g = st.gauges.find(g => g && g.slot === 6);
-    if (g) { targetName = g.text || null; targetHpPct = g.hp_pct != null ? g.hp_pct : null; }
+    if (g) { localTargetName = g.text || null; localTargetHpPct = g.hp_pct != null ? g.hp_pct : null; }
   }
+  // Main target — the NPC the most raiders are on (Extended Target aggregate).
+  // This drives the TARGET bar, the enrage/boss-HP tracking, AND the MT pin;
+  // the local target only fills in when we're out of combat or the
+  // cross-client feed hasn't warmed yet (Uilnayar 2026-07-06).
+  const mainTarget   = _resolveMainTarget(active);
+  const targetName   = mainTarget ? mainTarget.name   : localTargetName;
+  const targetHpPct  = mainTarget ? mainTarget.hp_pct : localTargetHpPct;
+  const targetSource = mainTarget ? 'extended' : (localTargetName ? 'local' : null);
 
   // Buffs — passthrough with normalization. EQ buff durations come in 6s
   // ticks; convert to seconds remaining for the overlay.
@@ -6582,7 +6634,7 @@ function _serializeTankState() {
   // focus on the Main Tank and Rampage, and THEIR buffs, not the caster") —
   // see _resolveMainTank. null when neither signal fires (out of combat /
   // solo) — the overlay falls back to the local character view.
-  const _mt = _resolveMainTank();
+  const _mt = _resolveMainTank(mainTarget ? mainTarget.name : null);
   const mtName = _mt ? _mt.name : null, mtSource = _mt ? _mt.source : null;
   let mt = null;
   if (mtName) {
@@ -6696,7 +6748,8 @@ function _serializeTankState() {
     hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
     hp_cur:    typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null,
     hp_max:    typeof st.self_hp_max === 'number' ? st.self_hp_max : null,
-    target:    { name: targetName, hp_pct: targetHpPct },
+    target:    { name: targetName, hp_pct: targetHpPct, source: targetSource,
+                 local_name: localTargetName, local_hp_pct: localTargetHpPct },
     buffs:     buffsOut,
     // Main-Tank focus block — null out of combat. When present the overlay
     // renders the MT's HP/buffs/DS instead of the local character's.
