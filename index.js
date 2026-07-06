@@ -3072,6 +3072,7 @@ let _rosterNamesAt = 0;
 const ROSTER_CACHE_TTL_MS = 10 * 60 * 1000;
 async function _rosterNameSet() {
   if (_rosterNames.size && Date.now() - _rosterNamesAt < ROSTER_CACHE_TTL_MS) return _rosterNames;
+  const supabase = require('./utils/supabase');   // module has no top-level binding — every caller requires locally
   try {
     const rows = await supabase.select('characters',
       `select=name&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}`);
@@ -6471,7 +6472,11 @@ const EXT_HP_SPLIT_TOL = 8;        // %HP gap that separates two same-name mobs
 // across polls once it's no longer targeted. guild|zone|nameLower →
 // { name, hp, raiders, debuffs, lastSeenMs }.
 const _extMobLastSeen = new Map();
-const EXT_STALE_GRACE_MS = 5 * 60 * 1000;
+// Grace for a mob that dropped off every target gauge (a targeting gap on a mob
+// still being fought). 5 min was far too long — a killed mob lingered as a
+// "corpse" on the tracker (Uilnayar 2026-07-06). 90s covers a real target swap;
+// genuinely off-tanked mobs are kept alive independently by the off-tank path.
+const EXT_STALE_GRACE_MS = 90 * 1000;
 // Off-tank freshness — how recently the agent's own recentTankHits must have
 // confirmed a mob hitting a raider for it to still count as "currently
 // hitting someone" for the 100%-HP off-tank case (Emperor-style fights: an
@@ -6550,6 +6555,13 @@ async function _handleAgentExtendedTarget(req, res) {
       if (raiderNames.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
       if (petNames.has(key))    return { kind: 'pet',    is_named: true, ambiguous: false };
       if (knownPlayers.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
+      // Possessive pet — "Kravenn`s warder" / "Shavimo's pet": when the owner
+      // before the 's is a known raider, it's OUR pet (a real mob would never
+      // be possessed by a player name), so treat it like a pet — off the bar
+      // unless it's hurt, not a full-health "mob".
+      const poss = name.match(/^([A-Za-z]+)['`]s\s/);
+      if (poss && (raiderNames.has(poss[1].toLowerCase()) || knownPlayers.has(poss[1].toLowerCase())))
+        return { kind: 'pet', is_named: true, ambiguous: false };
       if (/^(a|an|the)\s/i.test(name)) return { kind: 'npc', is_named: false, ambiguous: true };
       return { kind: 'npc', is_named: true, ambiguous: false };
     };
@@ -6608,16 +6620,18 @@ async function _handleAgentExtendedTarget(req, res) {
     const targets = [];
     for (const g of byName.values()) {
       const cls = classify(g.name, g.key);
-      // Non-mobs earn a target row only when they need attention. Someone
-      // targeting a full-health ally is just buffing/assisting — that's the
-      // full-health PC/pet clutter Uilnayar flagged. Mobs always show; players
-      // and pets show only below 100% HP (the hurt-tracking pass below still
-      // layers the ⚠ cue on the <85%-for-10s case, and surfaces badly-hurt
-      // allies nobody is targeting).
-      if (cls.kind !== 'npc') {
-        const hp = median(g.obs.filter(o => o.hp != null).map(o => o.hp));
-        if (hp == null || hp >= 100) continue;
-      }
+      // Only MOBS earn a target row. Allies (players/pets) are surfaced solely
+      // by the hurt-tracking pass below (<85% HP for 10s) — a healer targeting a
+      // tank, or the whole raid sitting at Zeal's 99.9%-"full", was flooding the
+      // bar with a corpse-length roster (Uilnayar 2026-07-06: "way too many
+      // people ... we don't need corpses"). "<100%" was the wrong cut: Zeal
+      // reports full HP as 99.9, so it matched everyone.
+      if (cls.kind !== 'npc') continue;
+      // Corpses are dead — a "…'s corpse" target, or a mob at/below 0% HP, has
+      // no business on the tracker (Shei's corpse lingering was the report).
+      if (/\bcorpse\b/i.test(g.name)) continue;
+      const mobHp = median(g.obs.filter(o => o.hp != null).map(o => o.hp));
+      if (mobHp != null && mobHp <= 0) continue;
       // HP-clustering only makes sense for ambiguous generic mob names
       // ("a wolf" etc.) where the same name really can be ≥2 distinct
       // spawns. Players, pets, and uniquely-named NPCs are one entity —

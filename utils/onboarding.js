@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.138': [
+    '**Extended Target actually declutters now — mobs + hurt allies only.** The 3.0.137 fix that was supposed to keep full-health raiders off the bar quietly did nothing: the guild-roster lookup it relied on threw on every call (a missing `require`) and always came back empty, so every raider a healer targeted got misread as a named NPC, cached, and replayed as a full-health "corpse" — the bar filled with 20+ people at "100%". Fixed the lookup, and tightened the rule: **only mobs get a row** (allies surface only when actually hurt, <85%, via the heal-alert pass), since Zeal reports full HP as 99.9% and the old "under 100%" cut matched literally everyone. Also: our own pets (`<Name>\'s warder`) are recognized as pets not mobs, **corpses/dead mobs are dropped**, and a killed mob clears in 90s instead of lingering 5 minutes (Uilnayar 2026-07-06).',
+  ],
   '3.0.137': [
     '**Extended Target: full-health players and pets stop cluttering the bar** — the overlay is meant to show mobs and allies who need attention, but a healer targeting a full-HP tank (or a pet at 100%) was surfacing that ally as its own row. Now players and pets only earn a row when they\'re actually below 100% HP; mobs always show. Also fixes raiders who\'d briefly dropped out of the live-state window being misread as named NPCs and appearing as full-health "mobs" — the durable guild roster is now consulted so a known character is always classified as a player (Uilnayar 2026-07-06).',
   ],
