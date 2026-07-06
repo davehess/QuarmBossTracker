@@ -6452,16 +6452,49 @@ async function _handleAgentTargetBuffs(req, res) {
   }
 }
 
+// ── Remote overlay tuning (officer knob overrides) ─────────────────────────
+// Flat jsonb of snake_case key → NUMBER in overlay_tuning.tuning, edited on
+// /admin/overlays. Two consumers: (1) the Extended Target handler below merges
+// these over its compiled defaults, so thresholds move without a redeploy;
+// (2) GET /api/agent/overlay-tuning serves the raw object to every agent
+// (polled ~90s) for the agent-side knobs (off-heal cutoff, CH GO window…).
+// 60s cache; fetch failure keeps the last good values (or {} — defaults).
+let _overlayTuningCache = { at: 0, values: {} };
+async function _overlayTuningMap() {
+  if (Date.now() - _overlayTuningCache.at < 60_000) return _overlayTuningCache.values;
+  const supabase = require('./utils/supabase');
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('overlay_tuning',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=tuning&limit=1`);
+    const t = Array.isArray(rows) && rows[0] && rows[0].tuning;
+    _overlayTuningCache = { at: Date.now(), values: (t && typeof t === 'object' && !Array.isArray(t)) ? t : {} };
+  } catch {
+    _overlayTuningCache.at = Date.now();   // don't hammer on failure
+  }
+  return _overlayTuningCache.values;
+}
+// GET /api/agent/overlay-tuning — bearer-auth'd raw override object for agents.
+async function _handleAgentOverlayTuning(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const tuning = await _overlayTuningMap();
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ tuning }));
+}
+
 // Server-side hurt-duration tracker for the Extended Target overlay. A single
 // live-state snapshot can't answer "below 85% for >10s" — character_live_state
 // only holds the CURRENT value — so we remember when each entity first dropped
 // below the threshold, keyed guild|kind|name. GC'd by lastSeen (NOT by a single
 // poll's view) so a zone-A requester doesn't evict zone-B's in-flight entries.
+// The EXT_* values below are DEFAULTS — each is remote-tunable via
+// overlay_tuning (see _overlayTuningMap above; key names in the comments).
 const _extHurtSince = new Map();   // guild|kind|nameLower → { since, lastSeen }
-const EXT_ONLINE_MS   = 60_000;    // live-state freshness = "in the raid now"
-const EXT_HURT_PCT    = 85;        // missing >15% health
-const EXT_HURT_MIN_MS = 10_000;    // …for >10s before it counts as "hurt"
-const EXT_HP_SPLIT_TOL = 8;        // %HP gap that separates two same-name mobs
+const EXT_ONLINE_MS   = 60_000;    // live-state freshness (ext_online_sec)
+const EXT_HURT_PCT    = 85;        // missing >15% health (ext_hurt_pct)
+const EXT_HURT_MIN_MS = 10_000;    // …for >10s = "hurt" (ext_hurt_min_sec)
+const EXT_HP_SPLIT_TOL = 8;        // same-name split %HP gap (ext_hp_split_tol)
 
 // Previously-targeted mobs that drop off everyone's target gauge (an
 // off-tank's brief targeting gap, a target swap mid-fight) stay on the
@@ -6513,7 +6546,18 @@ async function _handleAgentExtendedTarget(req, res) {
     return res.end(JSON.stringify({ targets: [], note: 'supabase disabled' }));
   }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-  const onlineSince = new Date(Date.now() - EXT_ONLINE_MS).toISOString();
+  // Officer knob overrides (see _overlayTuningMap) — numbers only, compiled
+  // defaults when unset. Lets raid leadership move these mid-raid from
+  // /admin/overlays without waiting on a redeploy (Uilnayar 2026-07-06).
+  const _tune = await _overlayTuningMap();
+  const tn = (k, d) => { const v = _tune[k]; return (typeof v === 'number' && isFinite(v)) ? v : d; };
+  const extOnlineMs      = tn('ext_online_sec', EXT_ONLINE_MS / 1000) * 1000;
+  const extHurtPct       = tn('ext_hurt_pct', EXT_HURT_PCT);
+  const extHurtMinMs     = tn('ext_hurt_min_sec', EXT_HURT_MIN_MS / 1000) * 1000;
+  const extHpSplitTol    = tn('ext_hp_split_tol', EXT_HP_SPLIT_TOL);
+  const extStaleGraceMs  = tn('ext_stale_grace_sec', EXT_STALE_GRACE_MS / 1000) * 1000;
+  const extOfftankFreshMs = tn('ext_offtank_fresh_sec', EXT_OFFTANK_FRESH_MS / 1000) * 1000;
+  const onlineSince = new Date(Date.now() - extOnlineMs).toISOString();
   const debuffSince = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
   try {
@@ -6572,7 +6616,7 @@ async function _handleAgentExtendedTarget(req, res) {
       if (!withHp.length) return [{ raiders: noHp.map(o => o.raider), hp: null }];
       const clusters = []; let cur = [withHp[0]];
       for (let i = 1; i < withHp.length; i++) {
-        if (withHp[i].hp - withHp[i - 1].hp > EXT_HP_SPLIT_TOL) { clusters.push(cur); cur = [withHp[i]]; }
+        if (withHp[i].hp - withHp[i - 1].hp > extHpSplitTol) { clusters.push(cur); cur = [withHp[i]]; }
         else cur.push(withHp[i]);
       }
       clusters.push(cur);
@@ -6673,7 +6717,7 @@ async function _handleAgentExtendedTarget(req, res) {
     }
     for (const [k, cached] of _extMobLastSeen) {
       if (!k.startsWith(scopeKeyPrefix)) continue;
-      if (now - cached.lastSeenMs > EXT_STALE_GRACE_MS) { _extMobLastSeen.delete(k); continue; }
+      if (now - cached.lastSeenMs > extStaleGraceMs) { _extMobLastSeen.delete(k); continue; }
       const key = k.slice(scopeKeyPrefix.length);
       if (byName.has(key)) continue;                       // already fresh this poll
       if (cached.hp == null || cached.hp >= 100) continue;  // only "had less than 100%"
@@ -6703,7 +6747,7 @@ async function _handleAgentExtendedTarget(req, res) {
     for (const r of inScope) {
       if (!r.incoming_mob) continue;
       const sinceMs = r.incoming_mob_since ? Date.parse(r.incoming_mob_since) : 0;
-      if (!sinceMs || (now - sinceMs) > EXT_OFFTANK_FRESH_MS) continue;
+      if (!sinceMs || (now - sinceMs) > extOfftankFreshMs) continue;
       const myTarget = r.target_name ? String(r.target_name).trim().toLowerCase() : '';
       const mobKey = String(r.incoming_mob).trim().toLowerCase();
       if (!mobKey || mobKey === myTarget) continue;   // already covered — they ARE targeting it
@@ -6743,12 +6787,12 @@ async function _handleAgentExtendedTarget(req, res) {
     const seen = new Set();
     const noteHurt = (kind, name, hp) => {
       const mk = guildId + '|' + kind + '|' + name.toLowerCase();
-      if (hp == null || hp >= EXT_HURT_PCT) { _extHurtSince.delete(mk); return null; }
+      if (hp == null || hp >= extHurtPct) { _extHurtSince.delete(mk); return null; }
       let e = _extHurtSince.get(mk);
       if (!e) { e = { since: now, lastSeen: now }; _extHurtSince.set(mk, e); }
       e.lastSeen = now; seen.add(mk);
       const secs = Math.round((now - e.since) / 1000);
-      return (now - e.since) >= EXT_HURT_MIN_MS ? { secs, hp } : null;
+      return (now - e.since) >= extHurtMinMs ? { secs, hp } : null;
     };
     for (const r of inScope) {
       const ph = noteHurt('player', r.character, r.self_hp_pct);
@@ -10349,6 +10393,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefs(req, res); }
     catch (err) {
       console.error('[character-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/overlay-tuning')) {
+    try { return await _handleAgentOverlayTuning(req, res); }
+    catch (err) {
+      console.error('[overlay-tuning] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

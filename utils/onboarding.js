@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.139': [
+    '**Overlay thresholds are now live-tunable — no redeploy, no Mimic update.** Officers get a new `/admin/overlays` page on wolfpack.quest with the knobs that keep needing raid-time adjustment: Extended Target hurt %, hurt-duration, stale-mob grace, off-tank freshness, same-name split tolerance, plus (with Mimic 1.5.0+) the off-heal hurt cutoff and CH-chain GO! flash duration. Changes reach the bot within ~60s and every running Mimic within ~90s. Empty field = built-in default; values clamp to safe ranges (Uilnayar 2026-07-06).',
+  ],
   '3.0.138': [
     '**Extended Target actually declutters now — mobs + hurt allies only.** The 3.0.137 fix that was supposed to keep full-health raiders off the bar quietly did nothing: the guild-roster lookup it relied on threw on every call (a missing `require`) and always came back empty, so every raider a healer targeted got misread as a named NPC, cached, and replayed as a full-health "corpse" — the bar filled with 20+ people at "100%". Fixed the lookup, and tightened the rule: **only mobs get a row** (allies surface only when actually hurt, <85%, via the heal-alert pass), since Zeal reports full HP as 99.9% and the old "under 100%" cut matched literally everyone. Also: our own pets (`<Name>\'s warder`) are recognized as pets not mobs, **corpses/dead mobs are dropped**, and a killed mob clears in 90s instead of lingering 5 minutes (Uilnayar 2026-07-06).',
   ],
