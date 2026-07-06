@@ -105,6 +105,11 @@ export default function AdminPage() {
           href="/admin/voice"
         />
         <Card
+          title="🎛 Overlay tuning"
+          body="Live thresholds for Extended Target + Mimic overlays (off-heal hurt cutoff, stale-mob grace, GO! flash…). Reaches the bot in ~60s and every running Mimic in ~90s — no redeploy, no Mimic release."
+          href="/admin/overlays"
+        />
+        <Card
           title="🗡️ Loadouts"
           body="Every tank's bandolier sets — who's running what weapons + procs, click through to PQDI. Parked here while not in active use."
           href="/loadouts"
