@@ -3057,6 +3057,12 @@ function chChainSnapshot() {
 // requires ≥2 tracked hits in the window, not a single stray connect.
 const OFFHEAL_WINDOW_MS = 20_000;
 const OFFHEAL_MIN_HITS  = 2;
+// A full-health offtank doesn't need an off-heal — only surface ones actually
+// hurt, so the one person who needs a heal isn't buried under a wall of 100%/
+// unknown rows (Uilnayar 2026-07-06: "a ton of offtank options that all had full
+// health ... only offtanks actually below full HP"). Zeal reports full HP as
+// 99.9%, so this is below "basically full".
+const OFFHEAL_HURT_PCT  = 90;
 function offHealCandidatesSnapshot() {
   const now = Date.now();
   const mt = _resolveMainTank();
@@ -3096,9 +3102,14 @@ function offHealCandidatesSnapshot() {
     if (!/^[A-Za-z]+$/.test(e.name)) continue;
     const nameLower = e.name.toLowerCase();
     try { fetchCharacterLiveState(e.name); } catch { /* prime cross-client HP */ }
+    const hp = _resolveHpForName(nameLower, active, st);
+    // Hurt offtanks only. Unknown HP (no Mimic / not yet resolved) is dropped
+    // too — we can't off-heal what we can't see, and it was the bulk of the
+    // noise (Uilnayar 2026-07-06).
+    if (hp == null || hp >= OFFHEAL_HURT_PCT) continue;
     out.push({
       name: e.name, mob: e.mob,
-      hp_pct: _resolveHpForName(nameLower, active, st),
+      hp_pct: hp,
       seconds_taking_hits: Math.round((now - e.firstMs) / 1000),
       last_hit_secs_ago:   Math.round((now - e.lastMs) / 1000),
     });
@@ -6918,6 +6929,11 @@ function _serializeTankState() {
       };
     })(),
     updated_at: st.updatedAt || 0,
+    // Hurt offtanks (taking add damage outside MT/rampage, below full HP) — the
+    // Tank overlay shows the same list the CH-chain overlay does so a tank
+    // watching only that window still sees who needs an off-heal (Uilnayar
+    // 2026-07-06: "get offtanks on CH chain overlay or Tank overlay").
+    off_heal_candidates: offHealCandidatesSnapshot(),
     // Cross-raid sync hasn't shipped yet — overlay reads local data only.
     // (Tier 4 work, deferred.) When it does, this flag will flip true.
     fast_sync: false,

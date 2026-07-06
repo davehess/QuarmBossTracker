@@ -86,6 +86,12 @@
   .buffs .left{color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;font-size:9px}
   .buffs .buff.soon .left{color:#f0d264}
   .buffs .buff.crit .left{color:#f87171;font-weight:700}
+  /* Hurt offtanks (off-heal candidates) — mirrors the CH-chain overlay. */
+  .offheal-row{display:flex;align-items:center;gap:6px;font-size:10px;line-height:1.6;color:#e6edf3}
+  .offheal-row .oh-nm{font-weight:600;color:#fca5a5;flex-shrink:0}
+  .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
+  .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:3px 0;text-align:center}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -378,6 +384,26 @@
     } else if (mt && !mt.is_self) {
       html += '<div class="card"><div class="head">' + buffHead + '</div>'
            +  '<div class="buffs"><div class="buff"><span class="name" style="color:#6e7681;font-style:italic">no buffs observed on the MT yet</span></div></div></div>';
+    }
+
+    // Hurt offtanks — the same list the CH-chain overlay shows, so a tank
+    // watching only this window still sees who's taking add damage and needs an
+    // off-heal (Uilnayar 2026-07-06: "get offtanks on ... Tank overlay"). Only
+    // genuinely-hurt offtanks reach here (agent-side <90% filter).
+    var oh = s.off_heal_candidates || [];
+    if (oh.length) {
+      var ohHtml = '';
+      for (var oi = 0; oi < oh.length; oi++) {
+        var o = oh[oi];
+        var ohp = (o.hp_pct == null) ? null : Math.max(0, Math.min(100, Math.round(o.hp_pct)));
+        var ohCls = (ohp == null) ? '' : (ohp < 35 ? 'lo' : (ohp < 70 ? 'mid' : 'hi'));
+        ohHtml += '<div class="offheal-row">'
+          +   '<span class="oh-nm">' + esc(o.name) + '</span>'
+          +   (o.mob ? '<span class="oh-mob">← ' + esc(o.mob) + '</span>' : '')
+          +   '<span class="oh-hp ' + ohCls + '">' + (ohp == null ? '—' : ohp + '%') + '</span>'
+          + '</div>';
+      }
+      html += '<div class="card"><div class="head">⚕ Off-heal — hurt offtanks</div>' + ohHtml + '</div>';
     }
 
     contentEl.innerHTML = html;
