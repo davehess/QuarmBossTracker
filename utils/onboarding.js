@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.137': [
+    '**Extended Target: full-health players and pets stop cluttering the bar** — the overlay is meant to show mobs and allies who need attention, but a healer targeting a full-HP tank (or a pet at 100%) was surfacing that ally as its own row. Now players and pets only earn a row when they\'re actually below 100% HP; mobs always show. Also fixes raiders who\'d briefly dropped out of the live-state window being misread as named NPCs and appearing as full-health "mobs" — the durable guild roster is now consulted so a known character is always classified as a player (Uilnayar 2026-07-06).',
+  ],
   '3.0.136': [
     '**Our own instanced boss kills stop disappearing** — when a Wolf Pack member killed a boss in an instance and *didn\'t run Mimic* (and no Mimic guildmate was in the instance), the kill vanished completely: no #pvp post, no /pvp/hate entry, nothing recorded (Timberr\'s Lord of Ire kill was the report). The bot was dropping our own `(Instanced)` kill echoes on the assumption a Mimic already had them. Now they post an informational notice to #pvp and record to /pvp/hate like any other instance kill — but they still **never** tick the open-world respawn timer, since an instance has its own private spawn (Uilnayar 2026-07-05). *(Needs Mimic 1.4.4+ on at least one guildmate in the instance to relay the kill.)*',
   ],

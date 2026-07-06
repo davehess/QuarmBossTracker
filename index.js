@@ -6535,6 +6535,11 @@ async function _handleAgentExtendedTarget(req, res) {
 
     const raiderNames = new Set(inScope.map(r => r.character.toLowerCase()));
     const petNames = new Set(inScope.filter(r => r.pet_name).map(r => r.pet_name.toLowerCase()));
+    // Durable guild roster — raiders who've dropped out of the 60s live-state
+    // window are still PCs, not named NPCs. Without this they get misread as
+    // mobs and surface at full health (Uilnayar 2026-07-06: "too many PCs with
+    // full health on Extended Target"). 10-min cached, shared with chat safeguard.
+    const knownPlayers = await _rosterNameSet();
 
     const median = (arr) => {
       if (!arr.length) return null;
@@ -6544,6 +6549,7 @@ async function _handleAgentExtendedTarget(req, res) {
     const classify = (name, key) => {
       if (raiderNames.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
       if (petNames.has(key))    return { kind: 'pet',    is_named: true, ambiguous: false };
+      if (knownPlayers.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
       if (/^(a|an|the)\s/i.test(name)) return { kind: 'npc', is_named: false, ambiguous: true };
       return { kind: 'npc', is_named: true, ambiguous: false };
     };
@@ -6602,6 +6608,16 @@ async function _handleAgentExtendedTarget(req, res) {
     const targets = [];
     for (const g of byName.values()) {
       const cls = classify(g.name, g.key);
+      // Non-mobs earn a target row only when they need attention. Someone
+      // targeting a full-health ally is just buffing/assisting — that's the
+      // full-health PC/pet clutter Uilnayar flagged. Mobs always show; players
+      // and pets show only below 100% HP (the hurt-tracking pass below still
+      // layers the ⚠ cue on the <85%-for-10s case, and surfaces badly-hurt
+      // allies nobody is targeting).
+      if (cls.kind !== 'npc') {
+        const hp = median(g.obs.filter(o => o.hp != null).map(o => o.hp));
+        if (hp == null || hp >= 100) continue;
+      }
       // HP-clustering only makes sense for ambiguous generic mob names
       // ("a wolf" etc.) where the same name really can be ≥2 distinct
       // spawns. Players, pets, and uniquely-named NPCs are one entity —
