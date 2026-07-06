@@ -68,6 +68,21 @@
   .row.next{background:rgba(240,180,41,0.12);border-left-color:#f0b429}
   .row.next .nm{color:#f6c365}
   .row.next .stat{color:#f6c365;font-weight:700}
+  /* Explicit "NNN GO GO GO" cue — the loudest per-row state: THIS healer must
+     cast now. Gold pulsing row + a green "GO!" pill (green = go). Distinct from
+     casting (steady green row + bar) and next (static gold). Cleared server-side
+     once they cast or the cue ages out (CH_GO_DISPLAY_MS). */
+  .row.go{background:rgba(240,180,41,0.22);border-left-color:#f0b429;
+    animation:go-pulse 0.55s ease-in-out infinite alternate}
+  .row.go .num{color:#7ee787;border-color:rgba(126,231,135,0.75);background:rgba(126,231,135,0.15)}
+  .row.go .nm{color:#f6c365;font-weight:700}
+  .gobadge{display:inline-block;font-weight:800;font-size:10px;color:#052e12;
+    background:#7ee787;border-radius:8px;padding:1px 6px;letter-spacing:0.06em;
+    text-shadow:none;box-shadow:0 0 8px rgba(126,231,135,0.65)}
+  @keyframes go-pulse{
+    from{box-shadow:inset 0 0 0 rgba(240,180,41,0)}
+    to{box-shadow:inset 0 0 16px rgba(240,180,41,0.30)}
+  }
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
     border-radius:2px;overflow:hidden;margin-top:3px}
   .bar .fill{height:100%;background:#56d364;transition:width 120ms linear}
@@ -167,7 +182,10 @@
     color:#e6edf3;text-shadow:0 1px 2px #000}
   .offheal-row .oh-nm{font-weight:600;color:#fca5a5;flex-shrink:0}
   .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .offheal-row .oh-secs{font-variant-numeric:tabular-nums;color:#f0b429;font-weight:700;flex-shrink:0}
+  /* HP% of the candidate (who needs an off-heal) — colored by severity, not
+     seconds-under-fire (Uilnayar 2026-07-06: "we should see their percentage"). */
+  .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
+  .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:#6e7681}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -480,10 +498,12 @@
     var html = '';
     for (var i = 0; i < list.length; i++) {
       var o = list[i];
+      var hp = (o.hp_pct == null) ? null : Math.max(0, Math.min(100, Math.round(o.hp_pct)));
+      var hpCls = (hp == null) ? 'unk' : (hp < 35 ? 'lo' : (hp < 70 ? 'mid' : 'hi'));
       html += '<div class="offheal-row">'
         +   '<span class="oh-nm">' + esc(o.name) + '</span>'
         +   (o.mob ? '<span class="oh-mob">← ' + esc(o.mob) + '</span>' : '')
-        +   '<span class="oh-secs">' + (o.seconds_taking_hits || 0) + 's</span>'
+        +   '<span class="oh-hp ' + hpCls + '">' + (hp == null ? '—' : hp + '%') + '</span>'
         + '</div>';
     }
     rowsEl.innerHTML = html;
@@ -588,14 +608,20 @@
       var n = nums[i], s = c.slots[n];
       var slotElapsedMs = s.lastAtMs ? (now - s.lastAtMs) : Number.POSITIVE_INFINITY;
       var isCasting = slotElapsedMs < CH_CAST_SECS * 1000;
-      var isNext    = !isCasting && c.next_num === n;
-      var cls = 'row' + (isCasting ? ' casting' : '') + (isNext ? ' next' : '');
+      // Explicit GO cue for THIS slot (server-gated: fresh + not yet cast).
+      // Outranks the passive NEXT — a called "GO GO GO" is louder than "you're
+      // up next" (Uilnayar 2026-07-06).
+      var goActive  = !isCasting && c.last_go && c.last_go.num === n;
+      var isNext    = !isCasting && !goActive && c.next_num === n;
+      var cls = 'row' + (isCasting ? ' casting' : '') + (goActive ? ' go' : '') + (isNext ? ' next' : '');
       var stat, bar = '';
       if (isCasting) {
         var el = slotElapsedMs / 1000;
         var remain = Math.max(0, CH_CAST_SECS - el);
         stat = remain.toFixed(1);
         bar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (el / CH_CAST_SECS) * 100).toFixed(1) + '%"></div></div>';
+      } else if (goActive) {
+        stat = '<span class="gobadge">GO!</span>';
       } else if (isNext) {
         stat = 'NEXT';
       } else {

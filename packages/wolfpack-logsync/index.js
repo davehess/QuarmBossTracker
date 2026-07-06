@@ -2793,6 +2793,11 @@ const _CH_SPEAKER_RX = /^\[[^\]]+\]\s+(\S+)\s+(?:shouts?|says?(?:\s+out of chara
 const _CH_CALL_RX = /^0*(\d{1,3})\s*(?:-+>?|—+>?|:)?\s*CH\b[\s:\-]*(?:on\s+)?([A-Z][\w`]*)?/;
 const _CH_MANA_RX = /\bmana\b\D{0,6}(\d{1,3})\s*%/i;
 const _CH_GO_RX   = /^0*(\d{1,3})\s*[-—:.\s]*go\b[\s\-]*go/i;
+// Cheap gate so a chain-ROSTER announcement ("Fargan 001, Rapha 002, …")
+// survives the trackChChainLine pre-filter — it carries no CH/go/inc marker.
+// Matches a number immediately followed by a comma then a word (the "001, Rapha"
+// seam between pairs); the full validation happens on the quoted body.
+const _CH_ROSTER_HINT = /\d\s*,\s*[A-Za-z]/;
 // Ad-hoc heal-cast broadcasts from a PERSONAL macro/trigger, not the numbered-
 // slot convention above — no slot number, no literal "CH":
 //   "TUNARE'S RENEWAL  Inc to Tikal - 91% Mana Left"   (Pyxil's Tunare's Renewal)
@@ -2813,18 +2818,59 @@ const CH_EQUIVALENT_SPELLS = new Map([
   ["tunares renewal", "Druid CH"],   // Druid's Complete-Heal-tier single-target heal
 ]);
 const SPOT_HEAL_DISPLAY_MS = 8000; // how long a one-off spot-heal stays on the overlay
+const CH_GO_DISPLAY_MS = 7000;     // how long a "NNN GO GO GO" cue flashes on its slot's row
 
 function trackChChainLine(line, character) {
   if (!line) return;
   // Cheap pre-filter before any regex work — the tail loop runs this on
-  // every line of every watched log.
-  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line) && !/inc\s+to/i.test(line)) return;
+  // every line of every watched log. `_CH_ROSTER_HINT` lets the chain-roster
+  // announcement ("Fargan 001, Rapha 002, …") through — it has no CH/go/inc.
+  if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line) && !/inc\s+to/i.test(line)
+      && !_CH_ROSTER_HINT.test(line)) return;
   const m = line.match(_CH_SPEAKER_RX);
   if (!m) return;
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
   const text = m[2].trim();
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
+
+  // Chain roster announcement — a healer posts the whole planned order at the
+  // pull: "Fargan 001, Rapha 002, Mcdorf 003, Mana 004, Taey 005,". This is the
+  // raid's OWN ground truth for who owns each slot, so it wins over the noisy
+  // speaker-inference the numbered shout-calls do — a boxer shouting the number
+  // from the wrong window (or a short nickname) otherwise pins the wrong player
+  // on a slot (Uilnayar 2026-07-06: "shows Dant as 004 instead of Manamana").
+  const rosterPairs = [];
+  {
+    const RX = /([A-Za-z][A-Za-z'`]+)\s+0*(\d{1,3})(?=\s*[,;]|\s*$)/g;
+    let mm;
+    while ((mm = RX.exec(text)) !== null) {
+      const num = parseInt(mm[2], 10);
+      if (num >= 1 && num <= 30) rosterPairs.push({ token: mm[1], num });
+    }
+  }
+  const rosterNums = new Set(rosterPairs.map(p => p.num));
+  const sortedNums = [...rosterNums].sort((a, b) => a - b);
+  // Real chain rosters are called as a contiguous 1..N ("…001, …002, …003…").
+  // Requiring that (plus ≥3 distinct pairs) keeps ordinary chat and loot lists
+  // ("Sword 1, Shield 2…") from masquerading as a roster call.
+  const contiguousFrom1 = sortedNums.length >= 3
+    && sortedNums[0] === 1 && sortedNums[sortedNums.length - 1] === sortedNums.length;
+  if (rosterPairs.length >= 3 && rosterNums.size === rosterPairs.length && contiguousFrom1) {
+    _chChainEnsure(atMs);
+    const c = _chChain;
+    c.rosterNames = c.rosterNames || {};
+    for (const p of rosterPairs) {
+      c.rosterNames[p.num] = _resolveChRosterName(p.token);
+      // Seed an empty slot so the planned chain shows immediately, before
+      // anyone has called — no lastAtMs, so it never reads as casting/"ago".
+      if (!c.slots[p.num]) c.slots[p.num] = { name: c.rosterNames[p.num], mana: null, lastAtMs: 0, count: 0, kind: null };
+      else c.slots[p.num].name = c.rosterNames[p.num];
+    }
+    c.rosterAt = atMs;
+    c.updatedAt = atMs;
+    return;
+  }
 
   const call = text.match(_CH_CALL_RX);
   if (call) {
@@ -2842,11 +2888,15 @@ function trackChChainLine(line, character) {
       if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
     }
     const prev = c.slots[num] || {};
+    // A declared roster owner for this slot wins over the shout speaker — that's
+    // the whole point of the roster call (a boxer shouting from the wrong window
+    // otherwise renames the slot). Falls back to the speaker when no roster.
+    const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
     // kind: null — a real numbered CH call is never a labeled auto-slot;
     // clears any stale "Druid CH" tag on the rare chance this slot number
     // collides with one the personal-macro path auto-assigned earlier.
-    c.slots[num] = { name: speaker, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
-    c.lastCh = { num, name: speaker, mana, atMs };
+    c.slots[num] = { name: slotName, mana: mana != null ? mana : (prev.mana ?? null), lastAtMs: atMs, count: (prev.count || 0) + 1, kind: null };
+    c.lastCh = { num, name: slotName, mana, atMs };
     // Default next = numeric successor, wrapping at the highest slot seen.
     // The explicit GO cue (below) overrides when it arrives.
     const nums = Object.keys(c.slots).map(Number);
@@ -2881,8 +2931,9 @@ function trackChChainLine(line, character) {
         if (gap > 500 && gap < 30000) { c.beats.push(gap); if (c.beats.length > 10) c.beats.shift(); }
       }
       const prev = c.slots[num] || {};
-      c.slots[num] = { name: speaker, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
-      c.lastCh = { num, name: speaker, mana, atMs };
+      const slotName = (c.rosterNames && c.rosterNames[num]) || speaker;
+      c.slots[num] = { name: slotName, mana, lastAtMs: atMs, count: (prev.count || 0) + 1, kind: CH_EQUIVALENT_SPELLS.get(spellKey) };
+      c.lastCh = { num, name: slotName, mana, atMs };
       const nums = Object.keys(c.slots).map(Number);
       c.nextNum = num >= Math.max.apply(null, nums) ? Math.min.apply(null, nums) : num + 1;
       c.updatedAt = atMs;
@@ -2903,6 +2954,10 @@ function trackChChainLine(line, character) {
       const num = parseInt(go[1], 10);
       if (!num || num > 30) return;
       _chChain.nextNum = num;
+      // Stamp the explicit GO cue so the overlay can flash "GO!" on that slot's
+      // row until the cleric casts (Uilnayar 2026-07-06: "when the GO GO GO
+      // message happens it should show up on that healer's CH bubble").
+      _chChain.lastGo = { num, atMs, by: speaker };
       _chChain.updatedAt = atMs;
     }
   }
@@ -2910,6 +2965,24 @@ function trackChChainLine(line, character) {
 function _chChainEnsure(atMs) {
   if (_chChain && (atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) _chChain = null;
   if (!_chChain) _chChain = { target: null, slots: {}, lastCh: null, nextNum: null, beats: [], startedAt: atMs, updatedAt: atMs };
+}
+// Resolve a chain-roster abbreviation ("Mana", "Taey", "Rapha") to a full
+// character name via the live Zeal raid roster (unique exact-or-prefix match).
+// Falls back to the short token as-called when the roster can't disambiguate
+// (not in a raid window yet, ambiguous prefix, or a genuinely unknown name) —
+// "Mana" on the row still beats the wrong player on it.
+function _resolveChRosterName(token) {
+  const t = String(token || '').trim();
+  if (!t) return t;
+  const lc = t.toLowerCase();
+  let exact = null; const prefixHits = [];
+  for (const full of _raidRosterMembers) {   // lowercased full names
+    if (full === lc) { exact = full; break; }
+    if (full.startsWith(lc)) prefixHits.push(full);
+  }
+  const pick = exact || (prefixHits.length === 1 ? prefixHits[0] : null);
+  if (!pick) return t;
+  return pick.charAt(0).toUpperCase() + pick.slice(1);
 }
 function chChainSnapshot() {
   if (!_chChain) return null;
@@ -2947,6 +3020,17 @@ function chChainSnapshot() {
   // the overlay's banner doesn't linger long after the heal actually landed.
   const spotHeal = (_chChain.spotHeal && (Date.now() - _chChain.spotHeal.atMs) < SPOT_HEAL_DISPLAY_MS)
     ? _chChain.spotHeal : null;
+  // Explicit "NNN GO GO GO" cue — surface it while fresh so the overlay can
+  // flash "GO!" on THAT slot's row until the cleric casts (Uilnayar 2026-07-06).
+  // Cleared once the cued slot has cast since the GO (their lastAtMs advanced)
+  // or the cue ages past CH_GO_DISPLAY_MS.
+  let lastGo = null;
+  if (_chChain.lastGo) {
+    const g = _chChain.lastGo;
+    const slot = _chChain.slots[g.num];
+    const casedSinceGo = slot && slot.lastAtMs && slot.lastAtMs > g.atMs;
+    if (!casedSinceGo && (Date.now() - g.atMs) < CH_GO_DISPLAY_MS) lastGo = g;
+  }
   return {
     target:     _chChain.target,
     slots:      _chChain.slots,
@@ -2957,6 +3041,7 @@ function chChainSnapshot() {
     updated_at: _chChain.updatedAt,
     slipped,
     spot_heal:  spotHeal,
+    last_go:    lastGo,
   };
 }
 
@@ -2978,6 +3063,14 @@ function offHealCandidatesSnapshot() {
   const mtLower = mt ? mt.name.toLowerCase() : null;
   const r = stats.currentRampage || null;
   const rampLower = (r && r.target && r.at && (now - r.at) <= 8000) ? String(r.target).toLowerCase() : null;
+  // Active EQ window — needed to resolve each candidate's HP%. Their own self
+  // HP resolves cross-client via the same waterfall MT/Rampage HP use.
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const zs = _zealState[ch]; const ts = (zs && zs.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  const st = active ? (_zealState[active] || {}) : {};
   const byTank = new Map();   // tankLower → { name, mob, firstMs, lastMs, count }
   for (const h of (stats.recentTankHits || [])) {
     if (!h || !h.tank || (now - h.tsMs) > OFFHEAL_WINDOW_MS) continue;
@@ -2994,13 +3087,23 @@ function offHealCandidatesSnapshot() {
   const out = [];
   for (const e of byTank.values()) {
     if (e.count < OFFHEAL_MIN_HITS) continue;
+    const nameLower = e.name.toLowerCase();
+    try { fetchCharacterLiveState(e.name); } catch { /* prime cross-client HP */ }
     out.push({
       name: e.name, mob: e.mob,
+      hp_pct: _resolveHpForName(nameLower, active, st),
       seconds_taking_hits: Math.round((now - e.firstMs) / 1000),
       last_hit_secs_ago:   Math.round((now - e.lastMs) / 1000),
     });
   }
-  out.sort((a, b) => b.seconds_taking_hits - a.seconds_taking_hits);
+  // Lowest HP first (who needs an off-heal most) — Uilnayar 2026-07-06: "we
+  // should see their percentage not seconds left". Unknown HP sorts last, then
+  // by longest under fire.
+  out.sort((a, b) => {
+    const ah = a.hp_pct == null ? 999 : a.hp_pct;
+    const bh = b.hp_pct == null ? 999 : b.hp_pct;
+    return ah - bh || b.seconds_taking_hits - a.seconds_taking_hits;
+  });
   return out;
 }
 
