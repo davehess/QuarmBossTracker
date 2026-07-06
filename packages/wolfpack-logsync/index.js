@@ -3029,7 +3029,7 @@ function chChainSnapshot() {
     const g = _chChain.lastGo;
     const slot = _chChain.slots[g.num];
     const casedSinceGo = slot && slot.lastAtMs && slot.lastAtMs > g.atMs;
-    if (!casedSinceGo && (Date.now() - g.atMs) < CH_GO_DISPLAY_MS) lastGo = g;
+    if (!casedSinceGo && (Date.now() - g.atMs) < tuneNum('ch_go_display_sec', CH_GO_DISPLAY_MS / 1000) * 1000) lastGo = g;
   }
   return {
     target:     _chChain.target,
@@ -3077,9 +3077,14 @@ function offHealCandidatesSnapshot() {
     if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
   }
   const st = active ? (_zealState[active] || {}) : {};
+  // Remote-tunable (see pollOverlayTuning) — officers can move these mid-raid
+  // from /admin/overlays without a Mimic release.
+  const windowMs  = tuneNum('offheal_window_sec', OFFHEAL_WINDOW_MS / 1000) * 1000;
+  const minHits   = tuneNum('offheal_min_hits', OFFHEAL_MIN_HITS);
+  const hurtPct   = tuneNum('offheal_hurt_pct', OFFHEAL_HURT_PCT);
   const byTank = new Map();   // tankLower → { name, mob, firstMs, lastMs, count }
   for (const h of (stats.recentTankHits || [])) {
-    if (!h || !h.tank || (now - h.tsMs) > OFFHEAL_WINDOW_MS) continue;
+    if (!h || !h.tank || (now - h.tsMs) > windowMs) continue;
     const k = h.tank.toLowerCase();
     if (k === mtLower || k === rampLower) continue;
     let e = byTank.get(k);
@@ -3092,7 +3097,7 @@ function offHealCandidatesSnapshot() {
   }
   const out = [];
   for (const e of byTank.values()) {
-    if (e.count < OFFHEAL_MIN_HITS) continue;
+    if (e.count < minHits) continue;
     // Real raiders only. The mob→player tank-hit heuristic mistakes single-word
     // NPC/pet names with a backtick/apostrophe ("Xin`Xakra", "Shavimo`s warder")
     // for players — our own pets beating on a mob look like "a mob hit a player".
@@ -3106,7 +3111,7 @@ function offHealCandidatesSnapshot() {
     // Hurt offtanks only. Unknown HP (no Mimic / not yet resolved) is dropped
     // too — we can't off-heal what we can't see, and it was the bulk of the
     // noise (Uilnayar 2026-07-06).
-    if (hp == null || hp >= OFFHEAL_HURT_PCT) continue;
+    if (hp == null || hp >= hurtPct) continue;
     out.push({
       name: e.name, mob: e.mob,
       hp_pct: hp,
@@ -7123,6 +7128,9 @@ function _zealExportOnCampState() {
     // CH chain rotation snapshot (cleric Complete Heal callouts) — null when
     // no chain has called in the last 5 minutes. Drives chchain.html.
     chChain: chChainSnapshot(),
+    // Officer knob overrides currently in effect (see pollOverlayTuning) —
+    // surfaced so the dashboard/overlays can show which values are remote-set.
+    overlayTuning: _overlayTuning,
     // Off-heal candidates — raiders taking repeated single-target damage
     // outside the MT/Rampage, rendered at the bottom of chchain.html.
     offHealCandidates: offHealCandidatesSnapshot(),
@@ -17442,6 +17450,53 @@ function _escapeForLiteralMatch(s) {
   return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// ── Remote overlay tuning ───────────────────────────────────────────────────
+// Officer-set knob overrides (guild_settings.overlay_tuning, edited on
+// /admin/overlays) polled from the bot so thresholds like the off-heal hurt
+// cutoff can be changed mid-raid WITHOUT cutting a new Mimic release (Uilnayar
+// 2026-07-06: "make more of these configuration changes without a full
+// redeployment"). Missing/invalid keys fall back to the compiled defaults, so
+// a cold agent (or a bot without the endpoint yet) behaves exactly as shipped.
+// To make a new knob tunable: replace its use site with
+// `tuneNum('<key>', COMPILED_DEFAULT)` and add the key to the /admin/overlays
+// catalog — nothing else. Numbers only, by design (no strings/regex from the
+// network reach parsing code).
+let _overlayTuning = {};
+function tuneNum(key, dflt) {
+  const v = _overlayTuning[key];
+  return (typeof v === 'number' && isFinite(v)) ? v : dflt;
+}
+function pollOverlayTuning({ botUrl, token }) {
+  if (!botUrl || !token) return Promise.resolve();
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/overlay-tuning');
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+        headers: { 'Authorization': 'Bearer ' + token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+        timeout: 5000,
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const resp = JSON.parse(data);
+            if (resp && resp.tuning && typeof resp.tuning === 'object' && !Array.isArray(resp.tuning)) {
+              _overlayTuning = resp.tuning;
+            }
+          } catch { /* non-fatal — keep last good values */ }
+          resolve();
+        });
+      });
+      req.on('error',   () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
 function pollGuildTriggers({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
   // Pass our characters so server-side targeting can pre-filter
@@ -19790,6 +19845,10 @@ async function main() {
     // machine they run the agent on — no agent restart required.
     setTimeout(() => pollCharacterPrefs({ botUrl, token }), 10_000);
     setInterval(() => pollCharacterPrefs({ botUrl, token }), 10 * 60_000);
+    // Remote overlay tuning (officer knob overrides from /admin/overlays).
+    // 90s so a mid-raid threshold tweak lands on every Mimic within ~1.5 min.
+    setTimeout(() => pollOverlayTuning({ botUrl, token }), 6_000);
+    setInterval(() => pollOverlayTuning({ botUrl, token }), 90_000);
     // Live character state (buffs + last-seen zone) → bot → Supabase so
     // wolfpack.quest/me can show what each character is carrying + where, AND
     // (Uilnayar 2026-07-03: "Debuff queue definitely needs to be faster") this
