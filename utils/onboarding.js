@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.144': [
+    '**✉ Mimic Mail + efficiency round 2.** Officers get `/admin/notices` on wolfpack.quest: publish a notice and every running Mimic (1.6+) shows a **pulsing mail icon** on its dashboard within ~90 seconds — mark **critical** and the bot also posts it to Discord within a minute. Works on every future Mimic version with zero further plumbing, so "update before Sunday" style alerts always reach people. Efficiency: the two hottest agent endpoints (buff queue + Extended Target) now compute once per ~2s for the whole raid instead of once per agent (~20× less database traffic), the shaman burst query is cached, and the long-deprecated era-thread chat routing + `/initerathreads` command are gone. Paired with Mimic 1.6.0 (beta): every overlay skips repainting unchanged frames, the melody overlay stops fetching the full state 6×/second, agent log-line parsing got cheap pre-filters across the board, the trigger relay stops polling 24/7 when nobody is playing, and agent.log rotates instead of growing forever.',
+  ],
   '3.0.143': [
     '**"✓ cured" — clear stuck cure needs by hand.** When neither the afflicted player nor the curer runs Mimic, no agent can see the cure land, so the curse/poison/disease chip sat on everyone\'s buff-queue overlay until the debuff\'s full catalog duration ran out. Now every chip on an **inferred** row (🔍 = that player isn\'t uploading) has a ✓ button — one click by ANY Mimic user clears it from the whole raid\'s queues within a few seconds. Safeties: Mimic-verified players can\'t be hand-cleared (their own Zeal list is the truth), and if the debuff LANDS AGAIN after the click, the chip comes right back. Needs Mimic 1.5.4+ to see the button; the clear itself works raid-wide immediately (Uilnayar 2026-07-07).',
   ],

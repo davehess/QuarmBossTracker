@@ -3180,41 +3180,8 @@ setInterval(() => {
 //   Velious        — Apr 1, 2025
 //   Luclin         — Oct 1, 2025
 //   Planes of Power — Oct 1, 2026
-const ERA_BOUNDARIES = [
-  // Descending order — first match wins
-  { thresholdMs: Date.UTC(2026, 9, 1), era: 'PoP',     key: 'POP'     },
-  { thresholdMs: Date.UTC(2025, 9, 1), era: 'Luclin',  key: 'LUCLIN'  },
-  { thresholdMs: Date.UTC(2025, 3, 1), era: 'Velious', key: 'VELIOUS' },
-  { thresholdMs: Date.UTC(2024, 6, 1), era: 'Kunark',  key: 'KUNARK'  },
-  { thresholdMs: 0,                    era: 'Classic', key: 'CLASSIC' },
-];
-
-function getEraForTimestamp(ts) {
-  const ms = ts instanceof Date ? ts.getTime()
-            : typeof ts === 'string' ? Date.parse(ts)
-            : typeof ts === 'number' ? ts
-            : NaN;
-  if (!ms || isNaN(ms)) return ERA_BOUNDARIES[0];
-  for (const b of ERA_BOUNDARIES) {
-    if (ms >= b.thresholdMs) return b;
-  }
-  return ERA_BOUNDARIES[ERA_BOUNDARIES.length - 1];
-}
-
-function getChatThreadId(channel, eraKey) {
-  // channel: 'guild' | 'raid' | 'pvp'
-  // eraKey:  'CLASSIC' | 'KUNARK' | 'VELIOUS' | 'LUCLIN' | 'POP'
-  const envName = `${channel.toUpperCase()}_CHAT_${eraKey}_THREAD_ID`;
-  return process.env[envName] || null;
-}
-
-// "Current era" = whatever era we're in right now (based on system clock).
-// Messages from the current era go to the main channel, NOT the era thread.
-// When the next era starts, old current-era content stops posting to main and
-// starts routing to its reserved thread automatically.
-function getCurrentEra() {
-  return getEraForTimestamp(Date.now());
-}
+// (Era-boundary helpers removed 2026-07-07 — era-thread chat routing was
+// deprecated; commands/chatstats.js keeps its own independent ERA_BOUNDARIES.)
 
 // Fire-and-forget — bump a per-(character, endpoint) COUNTER in
 // agent_upload_stats so the /admin/agents board (and /me upload panel) can show
@@ -3363,12 +3330,10 @@ async function _handleAgentChat(req, res) {
     //   - Messages from PAST eras go to that era's reserved thread
     // When a new era starts, today's "current" becomes yesterday's past and its
     // content automatically routes to the matching era thread.
-    const era       = getEraForTimestamp(msgTs);
-    const current   = getCurrentEra();
-    const fallback  = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
-    const channelId = era.key === current.key
-      ? fallback                                          // current era → main channel
-      : (getChatThreadId(channel, era.key) || fallback);  // past era → thread (or main if unset)
+    // Era-thread routing removed (2026-07-07; deprecated per CLAUDE.md scope
+    // boundary — live chat is always current-era and posts directly; historical
+    // chat only ever fills chat_messages, never Discord).
+    const channelId = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
     if (!channelId) continue; // channel not configured — silently skip
 
     // Dedup: same speaker + text = multiple parsers saw the same line.
@@ -6773,13 +6738,58 @@ async function _overlayTuningMap() {
   }
   return _overlayTuningCache.values;
 }
-// GET /api/agent/overlay-tuning — bearer-auth'd raw override object for agents.
+// ── Mimic Mail — guild notices (Uilnayar 2026-07-07) ────────────────────────
+// Officer broadcasts from /admin/notices (mimic_notices table). Served to
+// every agent alongside the overlay tuning (same poll, zero new timers) →
+// pulsing ✉ on the dashboard. CRITICAL notices additionally post to Discord
+// below. 60s cache; failure keeps last good.
+let _noticesCache = { at: 0, rows: [] };
+async function _activeNotices() {
+  if (Date.now() - _noticesCache.at < 60_000) return _noticesCache.rows;
+  const supabase = require('./utils/supabase');
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const nowIso = new Date().toISOString();
+    const rows = await supabase.select('mimic_notices',
+      `guild_id=eq.${encodeURIComponent(guildId)}&active=eq.true` +
+      `&or=(expires_at.is.null,expires_at.gt.${encodeURIComponent(nowIso)})` +
+      `&select=id,title,body,severity,created_at&order=id.desc&limit=10`);
+    _noticesCache = { at: Date.now(), rows: Array.isArray(rows) ? rows : [] };
+  } catch { _noticesCache.at = Date.now(); }
+  return _noticesCache.rows;
+}
+// Critical notices → Discord (MIMIC_NOTICE_CHANNEL_ID, falling back to the
+// trigger broadcast channel). Once each — stamped via discord_posted_at.
+async function _postCriticalNotices() {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const chId = process.env.MIMIC_NOTICE_CHANNEL_ID || process.env.TRIGGER_BROADCAST_CHANNEL_ID;
+  if (!chId) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('mimic_notices',
+    `guild_id=eq.${encodeURIComponent(guildId)}&severity=eq.critical&active=eq.true&discord_posted_at=is.null&select=id,title,body&limit=5`).catch(() => []);
+  for (const n of (rows || [])) {
+    try {
+      const ch = await client.channels.fetch(chId);
+      await ch.send({ content: ('🚨 **' + n.title + '**\n' + n.body).slice(0, 1900) });
+      await supabase.update('mimic_notices', `id=eq.${n.id}`, { discord_posted_at: new Date().toISOString() });
+      console.log(`[notices] posted critical notice #${n.id} to Discord`);
+    } catch (err) {
+      console.warn('[notices] Discord post failed:', err?.message);
+    }
+  }
+}
+setInterval(() => { _postCriticalNotices().catch(() => {}); }, 60_000);
+
+// GET /api/agent/overlay-tuning — bearer-auth'd override object for agents,
+// with active guild notices riding along (Mimic Mail; agents 3.2.0+ read
+// `notices`, older ones ignore the extra field).
 async function _handleAgentOverlayTuning(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  const tuning = await _overlayTuningMap();
+  const [tuning, notices] = await Promise.all([_overlayTuningMap(), _activeNotices()]);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ tuning }));
+  return res.end(JSON.stringify({ tuning, notices }));
 }
 
 // GET /api/agent/character-live-state?name=<char> — one character's uploaded
@@ -6915,7 +6925,14 @@ async function _handleAgentExtendedTarget(req, res) {
   const debuffSince = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
   try {
-    const [liveRows, buffRows] = await Promise.all([
+    // Bundle memo (2026-07-07 review): ~20 agents poll this every ~2-3s and
+    // the two selects are identical across them (scoping happens in JS after
+    // the fetch). One 1.5s memo cuts the Supabase traffic ~20x.
+    let liveRows, buffRows;
+    if (globalThis._extBundleCache && Date.now() - globalThis._extBundleCache.at < 1500) {
+      ({ liveRows, buffRows } = globalThis._extBundleCache);
+    } else {
+    [liveRows, buffRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
         `&select=character,zone_name,self_hp_pct,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
@@ -6924,6 +6941,8 @@ async function _handleAgentExtendedTarget(req, res) {
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
         `&select=target,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
     ]);
+    globalThis._extBundleCache = { at: Date.now(), liveRows, buffRows };
+    }
     const now = Date.now();
     const live = (liveRows || []).filter(r => r && r.character);
 
@@ -7400,7 +7419,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // fetching them just shipped every parked character's buffs jsonb on
     // every poll. Bound the query to what the filter keeps.
     const liveSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
-    const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
+    // Bundle memo (2026-07-07 review): identical guild-wide selects for every
+    // polling agent (~1 bundle/2s each across the raid); per-buffer scoping
+    // happens in JS afterwards. One 2s memo collapses them.
+    let liveRows, rosterRows, charRows, buffCastRows;
+    if (globalThis._rbqBundleCache && Date.now() - globalThis._rbqBundleCache.at < 2000) {
+      ({ liveRows, rosterRows, charRows, buffCastRows } = globalThis._rbqBundleCache);
+    } else {
+    [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,updated_at`),
       supabase.select('raid_roster',
@@ -7417,6 +7443,8 @@ async function _handleAgentRaidBuffQueue(req, res) {
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
         `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=${parseInt(process.env.BUFF_QUEUE_POLL_LIMIT, 10) || 2000}`),
     ]);
+    globalThis._rbqBundleCache = { at: Date.now(), liveRows, rosterRows, charRows, buffCastRows };
+    }
 
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
     const classByName = new Map();
@@ -7835,9 +7863,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
       const sinceIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
       const dmgByName = new Map();
       try {
-        const dmg = await supabase.select('encounter_players',
+        // 20s memo (2026-07-07 review): a 5000-row join per shaman/beastlord
+        // poll, but tonight's damage totals move slowly.
+        let dmg;
+        if (globalThis._burstDmgCache && Date.now() - globalThis._burstDmgCache.at < 20_000) {
+          dmg = globalThis._burstDmgCache.dmg;
+        } else {
+          dmg = await supabase.select('encounter_players',
           `encounters.guild_id=eq.${encodeURIComponent(guildId)}&encounters.started_at=gte.${encodeURIComponent(sinceIso)}` +
           `&select=character_name,total_damage,encounters!inner(guild_id,started_at)&limit=5000`);
+          globalThis._burstDmgCache = { at: Date.now(), dmg };
+        }
         for (const r of (dmg || [])) {
           const nm = r && r.character_name;
           const td = r && Number(r.total_damage);
