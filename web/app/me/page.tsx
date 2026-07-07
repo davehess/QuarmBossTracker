@@ -875,15 +875,24 @@ export default async function MePage() {
               <div className={`text-sm font-semibold ${bannerTextClass}`}>{bannerHeadline}</div>
               <div className="text-xs text-dim mt-0.5">{bannerSub}</div>
             </div>
-            <a
-              href="http://localhost:7779"
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-blue hover:underline whitespace-nowrap"
-              title="The local parser dashboard — only opens if your wolfpack-logsync agent is running on this machine."
-            >
-              localhost:7779 ↗
-            </a>
+            <div className="flex items-center gap-3 whitespace-nowrap">
+              <a
+                href="/me/ui"
+                className="text-xs text-blue hover:underline"
+                title="Web UI Studio — your backed-up layouts + social macros, editable from anywhere; applied by Mimic once the character logs out."
+              >
+                🪟 UI Studio
+              </a>
+              <a
+                href="http://localhost:7779"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-blue hover:underline"
+                title="The local parser dashboard — only opens if your wolfpack-logsync agent is running on this machine."
+              >
+                localhost:7779 ↗
+              </a>
+            </div>
           </div>
           {syncRows.length > 0 && (
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-xs">
