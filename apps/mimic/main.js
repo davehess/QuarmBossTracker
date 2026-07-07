@@ -1208,14 +1208,36 @@ function _detectSelfHp(cur, s, charInfo) {
     .filter(x => Number.isFinite(x.n) && x.n > 0);
   if (nums.length < 2) return;
   const pct = (typeof s.self_hp_pct === 'number') ? s.self_hp_pct : null;
-  // (Re)learn the id pair only when the match is distinct enough to be sure.
+  // Stickiness: if the pair we already pinned STILL tracks the current HP%,
+  // keep it. Without this, a coincidental stat pair (e.g. STR 150 / cap 157 ≈
+  // 95.5%) steals the slot at the exact frame real HP% sweeps past its fixed
+  // ratio — and then re-steals it every time HP crosses back. A real HP pair
+  // matches at EVERY %, a stray pair only near its one fixed ratio.
+  if (cur.hpIds && pct != null) {
+    const c0 = nums.find(x => x.id === cur.hpIds.curId);
+    const m0 = nums.find(x => x.id === cur.hpIds.maxId);
+    if (c0 && m0 && m0.n > 0 && c0.n <= m0.n) {
+      const err0 = Math.abs((c0.n / m0.n) * 100 - pct);
+      if (err0 <= 2) { s.self_hp_cur = c0.n; s.self_hp_max = m0.n; return; }
+    }
+  }
+  // (Re)learn the id pair only when the match is distinct enough to be sure
+  // (< 97%, so cur != max and the ratio is unambiguous vs mana/endurance).
+  // Among the pairs whose ratio matches, prefer the LARGEST max: a
+  // level-appropriate HP pool (thousands) dwarfs the other char-info numbers
+  // (STR / AC / weight / stats), so a stray small pair that coincidentally
+  // shares the HP% loses to the real HP. Err only breaks ties between pairs of
+  // the same magnitude.
   if (pct != null && pct < 97) {
     let best = null;
     for (const a of nums) {
       for (const b of nums) {
         if (a.id === b.id || a.n > b.n) continue;   // a = cur, b = max
         const err = Math.abs((a.n / b.n) * 100 - pct);
-        if (err <= 1.5 && (!best || err < best.err)) best = { curId: a.id, maxId: b.id, err };
+        if (err > 1.5) continue;
+        if (!best || b.n > best.max || (b.n === best.max && err < best.err)) {
+          best = { curId: a.id, maxId: b.id, max: b.n, err };
+        }
       }
     }
     if (best) cur.hpIds = { curId: best.curId, maxId: best.maxId };
