@@ -9205,15 +9205,19 @@ function _fmtBuffTicks(t) {
 function renderZealClients(s) {
   const el = document.getElementById('wpZealClients');
   if (!el) return;   // Dashboard section not painted yet
-  // Preserve which per-character gauge <details> are open ACROSS this poll's
-  // rewrite. morphInto replaces innerHTML, which would otherwise snap an
-  // expanded gauge dump shut every 2s (the bug: "opening gauge slots
-  // immediately refreshes/collapses"). Re-stamp the open attribute on the ones
-  // the user had expanded.
+  // Preserve which per-character gauge/char-info <details> are open ACROSS
+  // this poll's rewrite. morphInto replaces innerHTML, which would otherwise
+  // snap an expanded dump shut every 2s (the bug: "opening gauge slots
+  // immediately refreshes/collapses"; same report for the char-info fields
+  // 2026-07-07). Re-stamp the open attribute on the ones the user expanded.
   const _openGauges = {};
+  const _openCharInfo = {};
   try {
     el.querySelectorAll('details[data-gauge]').forEach(function(d){
       if (d.open) _openGauges[d.getAttribute('data-gauge')] = 1;
+    });
+    el.querySelectorAll('details[data-charinfo]').forEach(function(d){
+      if (d.open) _openCharInfo[d.getAttribute('data-charinfo')] = 1;
     });
   } catch (e) { void e; }
   // Per-machine "don't care" filter — hide boxes/alts you aren't tracking.
@@ -9296,7 +9300,8 @@ function renderZealClients(s) {
     // raw HP cur/max would live if Zeal exposes it; surfaced so we can
     // confirm what's actually sent (Uilnayar 2026-07-05 self-HP-numbers ask).
     if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
-      h += '<details style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
+      h += '<details data-charinfo="' + esc(c.character) + '"' + (_openCharInfo[c.character] ? ' open' : '')
+         + ' style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
          + c.char_info.length + ' char-info field' + (c.char_info.length === 1 ? '' : 's')
          + ' <span class="dim" style="font-size:10px">(diagnostic — raw Zeal type-1 ids; HP numbers land here if present)</span></summary>';
       h += '<table style="font-size:11px;margin-top:4px"><tr><th>Id</th><th>Value</th></tr>';
