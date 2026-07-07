@@ -2113,7 +2113,7 @@ const _BUFF_KEYWORDS = {
   mana:      ['brilliance','iridescence','gift of brilliance'],
   manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
   haste:     ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
-  runSpeed:  ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew','spirit of bih'],
+  runSpeed:  ['spirit of wolf','spirit of the wolf','spirit of eagle','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew','spirit of bih'],
   attack:    ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
   ds:        ['thorn','thistle','shield of fire','shield of lava','bramblecoat','damage shield','legacy of','shield of barbs'],
 };
@@ -2135,7 +2135,9 @@ const _RESIST_LADDERS = [
   ['endure cold', 'resist cold', 'circle of seasons'],                                                            // CR
   // Run speed is a ladder too: Bih`Li overrides SoW, and SoW will NOT land
   // over Bih`Li — the unranked category overwrite got that backwards.
-  ['journeyman', 'spirit of wolf', 'spirit of the wolf', 'spirit of bih'],                                        // runSpeed
+  // Spirit of Eagle (ranger) sits above SoW and must overwrite Journeyman's
+  // Boots; Flight of Eagle is the top run-speed link.
+  ['journeyman', 'spirit of wolf', 'spirit of the wolf', 'spirit of eagle', 'pack spirit', 'spirit of bih', 'flight of eagle'],   // runSpeed
 ];
 // Returns { skip:true } when an existing strictly-higher same-ladder buff
 // blocks the new cast, else { drop:[keys...] } — the lower links to delete.
@@ -2165,6 +2167,45 @@ function _categorizeBuff(name) {
     for (const k of _BUFF_KEYWORDS[cat]) if (n.includes(k)) return cat;
   }
   return null;
+}
+// Slot-group key for a buff name — used to collapse the MERGED (local +
+// cross-client) Mob Info buff list down to one entry per EQ buff slot. Resist
+// ladders and the run-speed ladder each collapse to a single slot ('L<idx>');
+// other known categories collapse by category ('C<cat>'). Null for buffs we
+// can't slot — those are kept as-is. Ladder check first so run-speed buffs
+// that live in BOTH a ladder and the runSpeed category share one group.
+function _buffSlotGroup(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return null;
+  for (let i = 0; i < _RESIST_LADDERS.length; i++) {
+    if (_RESIST_LADDERS[i].some(k => n.includes(k))) return 'L' + i;
+  }
+  const cat = _categorizeBuff(name);
+  return cat ? 'C' + cat : null;
+}
+// Collapse observed buffs to one entry per slot group, keeping the entry with
+// the newest observed_at_ms — a fresh Spirit of Eagle landing supersedes an
+// older Journeyman's Boots in the same run-speed slot. Un-slotted buffs are
+// always kept. Local buffs and cross-client relay buffs BOTH carry
+// observed_at_ms (landed_at / cast_at), so newest-wins is comparable across
+// sources. Survivor order is preserved.
+function _collapseObservedBuffSlots(buffs) {
+  if (!Array.isArray(buffs) || buffs.length < 2) return buffs;
+  const winnerByGroup = new Map();   // group → index of current newest
+  for (let i = 0; i < buffs.length; i++) {
+    const g = _buffSlotGroup(buffs[i] && buffs[i].name);
+    if (!g) continue;
+    const prev = winnerByGroup.get(g);
+    if (prev == null) { winnerByGroup.set(g, i); continue; }
+    const a = Number(buffs[prev] && buffs[prev].observed_at_ms) || 0;
+    const b = Number(buffs[i] && buffs[i].observed_at_ms) || 0;
+    if (b >= a) winnerByGroup.set(g, i);
+  }
+  const keep = new Set(winnerByGroup.values());
+  return buffs.filter((b, i) => {
+    const g = _buffSlotGroup(b && b.name);
+    return !g || keep.has(i);
+  });
 }
 // True if the buff is a heal-over-time / regen buff — these get NO 5-min
 // linger when they expire (per user feedback: 'Heals over time should fall
@@ -19001,6 +19042,11 @@ function buildMobInfo() {
       buffs.push(b);
       seen.add(k);
     }
+    // Name-dedup above only collapses IDENTICAL spell names. Different buffs
+    // that share one EQ slot (Spirit of Eagle vs Journeyman's Boots, both run
+    // speed) can arrive from different clients — keep only the most-recently
+    // observed occupant of each slot so a stale overwritten buff doesn't linger.
+    buffs = _collapseObservedBuffSlots(buffs);
   }
   // Slot occupancy for PC targets (authoritative via Zeal): the classic
   // buff window holds 15 buff/debuff slots, the song window 6. Null for
