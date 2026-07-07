@@ -6751,6 +6751,61 @@ async function _handleAgentOverlayTuning(req, res) {
   return res.end(JSON.stringify({ tuning }));
 }
 
+// GET /api/agent/character-live-state?name=<char> — one character's uploaded
+// Zeal state (HP + buffs) for the agents' cross-client MT/Rampage resolution
+// (_mtLiveStateByName). The agent has polled this route since the Tank
+// overlay's MT refocus — but it was NEVER implemented bot-side, so every
+// 8s poll 404'd and the "MT runs Mimic → use THEIR buff list/HP" waterfall
+// step silently never fired (found in the 2026-07-07 efficiency review).
+// Freshness gates: HP is only useful live (≤90s); buffs tolerate more
+// (≤10 min). 4s per-name cache blunts a raid of agents polling the same MT.
+const _liveStateRelayCache = new Map();   // nameLower → { at, payload }
+async function _handleAgentCharacterLiveState(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let name = '';
+  try { name = (new URL(req.url, 'http://x').searchParams.get('name') || '').trim(); } catch { /* */ }
+  if (!name) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'name required' })); }
+  const key = name.toLowerCase();
+  const cached = _liveStateRelayCache.get(key);
+  if (cached && Date.now() - cached.at < 4_000) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(cached.payload);
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('character_live_state',
+    `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(name)}` +
+    `&select=character,zone_name,self_hp_pct,buffs,updated_at&limit=1`).catch(() => []);
+  const r = Array.isArray(rows) && rows[0];
+  let state = null;
+  if (r && r.updated_at) {
+    const ageMs = Date.now() - Date.parse(r.updated_at);
+    if (ageMs < 10 * 60 * 1000) {
+      state = {
+        character: r.character,
+        zone_name: r.zone_name || null,
+        // Stale HP is worse than no HP for the healers watching the MT bar.
+        self_hp_pct: (ageMs < 90_000 && typeof r.self_hp_pct === 'number') ? r.self_hp_pct : null,
+        buffs: Array.isArray(r.buffs)
+          ? r.buffs.map(b => ({
+              name: b && b.name,
+              seconds: (b && typeof b.seconds === 'number') ? b.seconds
+                     : (b && typeof b.ticks === 'number') ? b.ticks * 6 : null,
+            })).filter(b => b.name)
+          : [],
+        updated_at: r.updated_at,
+      };
+    }
+  }
+  const payload = JSON.stringify({ state });
+  if (_liveStateRelayCache.size > 200) _liveStateRelayCache.clear();
+  _liveStateRelayCache.set(key, { at: Date.now(), payload });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(payload);
+}
+
 // Server-side hurt-duration tracker for the Extended Target overlay. A single
 // live-state snapshot can't answer "below 85% for >10s" — character_live_state
 // only holds the CURRENT value — so we remember when each entity first dropped
@@ -7309,9 +7364,14 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // further per-row by spell duration + post-death cutoff below.
     const buffCastsSince = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
 
+    // Live-state freshness bound: rows older than the roster window are
+    // logged-off characters the handler filters out ANYWAY (liveCutoffMs) —
+    // fetching them just shipped every parked character's buffs jsonb on
+    // every poll. Bound the query to what the filter keeps.
+    const liveSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
     const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&select=character,buffs,buff_count,zone_name,self_hp_pct,updated_at`),
+        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,updated_at`),
       supabase.select('raid_roster',
         `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
       supabase.select('characters',
@@ -10670,6 +10730,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentOverlayTuning(req, res); }
     catch (err) {
       console.error('[overlay-tuning] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/character-live-state')) {
+    try { return await _handleAgentCharacterLiveState(req, res); }
+    catch (err) {
+      console.error('[character-live-state] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

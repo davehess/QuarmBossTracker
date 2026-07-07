@@ -22,13 +22,36 @@ function _empty() {
   };
 }
 
+// Memoized snapshot — the file is read + JSON.parse'd ONCE and the same
+// object is returned until saveState replaces it or the file's mtime changes
+// (an out-of-band edit). Before this, EVERY loadState() call synchronously
+// re-read and re-parsed the whole (forever-growing) state.json — and hot
+// paths like /api/agent/who-lookup called it up to 80× per request via
+// getWhoEntry, blocking the event loop for all agents (2026-07-07 efficiency
+// review, finding H1). Callers already follow load→mutate→save, so handing
+// back the cached object is semantics-preserving; parse-error paths stay
+// UNCACHED so a corrupted file keeps being retried instead of pinning an
+// empty state in memory.
+let _stateCache = null;
+let _stateCacheMtimeMs = 0;
+function _cacheState(s) {
+  try { _stateCacheMtimeMs = fs.statSync(STATE_FILE).mtimeMs; } catch { _stateCacheMtimeMs = 0; }
+  _stateCache = s;
+  return s;
+}
+
 function loadState() {
+  if (_stateCache) {
+    try {
+      if (fs.statSync(STATE_FILE).mtimeMs === _stateCacheMtimeMs) return _stateCache;
+    } catch { /* file vanished — fall through to the fresh-create path */ }
+  }
   // If file doesn't exist, create it fresh
   if (!fs.existsSync(STATE_FILE)) {
     console.log('[state] state.json not found — creating fresh state');
     const e = _empty();
     fs.writeFileSync(STATE_FILE, JSON.stringify(e, null, 2), 'utf8');
-    return e;
+    return _cacheState(e);
   }
 
   let raw;
@@ -55,7 +78,7 @@ function loadState() {
   if (!hasKnownKey && Object.keys(raw).length > 0) {
     // Old format: the whole object IS the bosses map
     console.log('[state] Migrating old flat boss state format →', Object.keys(raw).length, 'entries');
-    return { ..._empty(), bosses: raw };
+    return _cacheState({ ..._empty(), bosses: raw });
   }
 
   // Normal load — merge with empty defaults so new keys always exist
@@ -91,7 +114,7 @@ function loadState() {
     console.log(`[state] Loaded state: ${bossCount} active kill(s)`);
   }
 
-  return s;
+  return _cacheState(s);
 }
 
 function saveState(state) {
@@ -100,6 +123,7 @@ function saveState(state) {
     const tmp = STATE_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
     fs.renameSync(tmp, STATE_FILE);
+    _cacheState(state);
   } catch (err) {
     console.error('[state] CRITICAL: could not save state.json:', err.message);
   }

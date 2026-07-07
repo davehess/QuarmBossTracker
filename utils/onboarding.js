@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.141': [
+    '**Faster everything — first fixes from the 2026-07-07 efficiency review.** The `/fun` page had slowed to a crawl: its ~25 counter queries ran one-after-another, and two of them scanned tables that have been growing all along (chat_messages hit 284k rows — the Tunare counter alone cost ~3s; the dirge counter shipped 20k rows of ability data per view AND silently under-counted). All counters now load in parallel with the heavy two moved into indexed SQL (measured 1.5s → 18ms on Tunare). Bot side: the buff queue stops fetching every parked character\'s buffs on every poll, state.json is parsed once instead of on every read (the who-lookup endpoint re-parsed it up to 80× per request), and a missing endpoint agents had been polling for weeks now exists — **cross-client Main Tank HP/buffs on the Tank overlay actually work now** (the "MT runs Mimic → use their real HP" path had silently never fired).',
+  ],
   '3.0.140': [
     '**UI Studio comes to wolfpack.quest — `/me/ui`.** Your backed-up UI layouts and **social macros**, viewable and editable from anywhere: edit or add a macro on the web, and Mimic on the machine that plays that character applies it to the ini automatically once the character is **logged out** (safe from EQ\'s camp-time ini rewrite; needs Mimic 1.5.2+). Also on the page: the guild\'s **common-macro library** — any macro carried by 3+ characters (below that your macros stay private) — and the same suggested-macro catalog that ships in Mimic\'s UI Studio (CH chain call, DA announce, bard stopsong→click→melody clickies…). Macro data comes from your UI Studio backups: run Mimic → UI Studio → ☁ Backup once per character to fill it in (Uilnayar 2026-07-06).',
   ],
