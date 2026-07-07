@@ -33,6 +33,14 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **EQ Legends config formats — documented, nothing built.** Uilnayar provided
+  real Legends client files (2026-07-06); full spec + candidate work items
+  (UI Studio backup support, spell-loadout ingest, feasibility map) in
+  `docs/eq-legends-formats.md`. Key facts: `UI_<Char>_<server>_LO<n>.ini`
+  naming (numbered layouts!), `<account>_characters.ini` character index,
+  percent-anchored window positions, named `[SpellLoadouts]`. No Zeal on
+  Legends — anything Zeal-fed can't port. Need a Legends LOG sample before
+  scoping log-driven features.
 - **/me named-mob kill counts.** Show per-named-mob totals of how many of each
   the member has killed / been part of the kill on. Buildable from
   `encounter_players` ⋈ `encounters.npc_id` ⋈ `eqemu_npc_types.name`: count
