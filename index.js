@@ -3088,27 +3088,33 @@ setInterval(() => {
 // the same line, we RELABEL to it. We never drop a line on this path (a
 // genuinely-unlinked solo speaker passes through unchanged) — relabel only.
 //
-// The witness buffer keys on the IN-GAME line (channel | EQ-second | text) so
-// only the same broadcast is unified, never two people who happened to type the
-// same word at different times.
+// The witness buffer keys on the IN-GAME line (channel | text). It used to
+// include the EQ-second, but each agent stamps the line with its OWN
+// machine's clock — 2-5s of skew between machines meant two perspectives of
+// the same broadcast almost never landed on the same key, so corroboration
+// silently never fired (found 2026-07-07: the same Wabumkin line arrived at
+// :51 from one machine and :54 from another). The 90s slot window bounds
+// unification now; two people genuinely typing the same word close together
+// share a slot, which is safe because relabeling only ever applies to
+// distrusted or guess-sourced names.
 const CHAT_WITNESS_WINDOW_MS = 90_000;
-const _chatWitness = new Map();   // key → { at, bySpeaker: Map<lc, { uploaders:Set, original }> }
+const _chatWitness = new Map();   // key → { at, bySpeaker: Map<lc, { uploaders:Set, sources:Set, original }> }
 function _witnessKey(channel, msgTs, normText) {
-  const sec = msgTs ? new Date(msgTs).toISOString().slice(0, 19) : '';
-  return `${channel}|${sec}|${normText}`;
+  return `${channel}|${normText}`;
 }
-function _recordWitness(key, speaker, uploaderId) {
+function _recordWitness(key, speaker, uploaderId, source) {
   const now = Date.now();
   if (_chatWitness.size > 8000) {
     for (const [k, v] of _chatWitness) if (now - v.at > CHAT_WITNESS_WINDOW_MS) _chatWitness.delete(k);
   }
   let slot = _chatWitness.get(key);
-  if (!slot) { slot = { at: now, bySpeaker: new Map() }; _chatWitness.set(key, slot); }
+  if (!slot || (now - slot.at) > CHAT_WITNESS_WINDOW_MS) { slot = { at: now, bySpeaker: new Map() }; _chatWitness.set(key, slot); }
   slot.at = now;
   const lc = speaker.toLowerCase();
   let w = slot.bySpeaker.get(lc);
-  if (!w) { w = { uploaders: new Set(), original: speaker }; slot.bySpeaker.set(lc, w); }
+  if (!w) { w = { uploaders: new Set(), sources: new Set(), original: speaker }; slot.bySpeaker.set(lc, w); }
   w.uploaders.add(uploaderId);
+  if (source) w.sources.add(source);
   return slot;
 }
 // Roster cache (lowercased WP character names), refreshed lazily.
@@ -3182,7 +3188,7 @@ setInterval(() => {
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of _chatDedup)      if (v < now - CHAT_DEDUP_WINDOW_MS)       _chatDedup.delete(k);
-  for (const [k, v] of _chatRelayDedup) if (v < now - CHAT_RELAY_DEDUP_WINDOW_MS) _chatRelayDedup.delete(k);
+  for (const [k, v] of _chatRelayDedup) if (((v && v.at) || 0) < now - CHAT_RELAY_DEDUP_WINDOW_MS) _chatRelayDedup.delete(k);
   for (const [k, v] of _triggerDedup)   if (v < now - TRIGGER_DEDUP_WINDOW_MS)    _triggerDedup.delete(k);
   for (const [k, arr] of _triggerRate) {
     const kept = arr.filter(t => now - t < TRIGGER_RATE_WINDOW_MS);
@@ -3345,6 +3351,15 @@ async function _handleAgentChat(req, res) {
   for (const msg of messages) {
     const { channel, speaker, text, ts: msgTs, who: uploadedWho } = msg || {};
     if (!channel || !speaker || !text) continue;
+    // Attribution provenance from the agent (3.2.2+): 'line' = the name was in
+    // the log line itself (server-authoritative third-person form); 'log_name'
+    // = guessed from the log FILENAME (self-form line — wrong whenever the EQ
+    // client kept writing the previous character's log after a swap); 'zeal' =
+    // filename guess corrected agent-side via Zeal live state. Older agents
+    // send nothing → null, which never triggers adoption or healing.
+    const rawSrc = msg?.speaker_source;
+    const speakerSource = rawSrc === 'line' || rawSrc === 'log_name' || rawSrc === 'zeal' ? rawSrc : null;
+    const speakerIsGuess = speakerSource === 'log_name' || speakerSource === 'zeal';
 
     // Era-aware routing:
     //   - Messages from the CURRENT era go to the main channel (in order)
@@ -3366,22 +3381,42 @@ async function _handleAgentChat(req, res) {
     // whitespace in the KEY (display text keeps original casing) closes it.
     const normText = String(text).toLowerCase().replace(/\s+/g, ' ').trim();
     // Speaker safeguard: relabel a stray-log ghost name (e.g. Wabumkin's agent
-    // emitting "Dopefiend") to a trusted alternative witnessed on the same line.
-    // Witness is keyed on the in-game line (channel|EQ-second|text). See the
-    // _safeguardSpeaker comment above.
-    const witnessSlot = _recordWitness(_witnessKey(channel, msgTs, normText), speaker, identity.discord_id);
-    const effectiveSpeaker = _safeguardSpeaker(witnessSlot, speaker, identity.discord_id, rosterSet, uploaderCharacters);
+    // emitting "Dopefiend") to a trusted alternative witnessed on the same
+    // line. See the _safeguardSpeaker comment above.
+    const witnessSlot = _recordWitness(_witnessKey(channel, msgTs, normText), speaker, identity.discord_id, speakerSource);
+    // Authoritative adoption: a guess-sourced speaker (filename / zeal) loses
+    // to any witness of the same line whose name was IN the line ('line' —
+    // server truth). This is what the roster-trust check below can't catch:
+    // the stale-log ghost is usually the player's OWN other character, which
+    // passes every trust test (Starrburst — roster member, linked to the same
+    // Discord account — posting Wabumkin's words, 2026-07-07).
+    let effectiveSpeaker = speaker;
+    if (speakerIsGuess) {
+      for (const [otherLc, w] of witnessSlot.bySpeaker) {
+        if (otherLc === speaker.toLowerCase()) continue;
+        if (w.sources && w.sources.has('line')) { effectiveSpeaker = w.original; break; }
+      }
+    }
+    effectiveSpeaker = _safeguardSpeaker(witnessSlot, effectiveSpeaker, identity.discord_id, rosterSet, uploaderCharacters);
+    // The agent-attached who block describes the ORIGINAL name — never let it
+    // decorate a relabeled speaker (it's what stamped "[48 Troll Shaman]" on
+    // Wabumkin's words).
+    const whoForSpeaker = effectiveSpeaker.toLowerCase() === speaker.toLowerCase() ? uploadedWho : null;
     const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${normText}`;
     if (_chatDedup.has(key)) continue;
     _chatDedup.set(key, Date.now());
 
     // Relay-only dedup keyed on text alone (ignores speaker) — see the
-    // _chatRelayDedup comment. If another uploader already relayed this exact
-    // line within the window, still record the Supabase perspective below but
-    // skip the duplicate Discord post.
-    const relayKey      = `${channel}|${normText}`;
-    const alreadyRelayed = _chatRelayDedup.has(relayKey);
-    _chatRelayDedup.set(relayKey, Date.now());
+    // _chatRelayDedup comment. Entries carry the posted Discord message +
+    // attribution source so a later authoritative copy can HEAL a post made
+    // under a filename-guessed name (edit-in-place), and so two genuinely
+    // different speakers typing the same text both get posted.
+    const relayKey = `${channel}|${normText}`;
+    let relayEntry = _chatRelayDedup.get(relayKey);
+    if (relayEntry && (Date.now() - relayEntry.at) > CHAT_RELAY_DEDUP_WINDOW_MS) relayEntry = null;
+    const alreadyRelayed = !!relayEntry;
+    if (relayEntry) relayEntry.at = Date.now();
+    else { relayEntry = { at: Date.now(), speaker: effectiveSpeaker, source: speakerSource, msg: null }; _chatRelayDedup.set(relayKey, relayEntry); }
 
     // Fuzzy dedup — drunk slur / censor variants. EQ broadcasts a different
     // mutation of the same line to each receiver, so each agent ships a
@@ -3439,7 +3474,7 @@ async function _handleAgentChat(req, res) {
       channel,
       speaker:     effectiveSpeaker,
       text:        String(text).slice(0, 2000),
-      who:         uploadedWho || null,
+      who:         whoForSpeaker || null,
       uploaded_by: identity.discord_id,
     });
 
@@ -3448,26 +3483,53 @@ async function _handleAgentChat(req, res) {
     // otherwise an empty whoEntry produced a bare " []" after the name
     // (the bug behind "Wabumkin []: no :(").
     const { getWhoEntry } = require('./utils/state');
-    const whoEntry = getWhoEntry(effectiveSpeaker) || uploadedWho || null;
+    const whoEntry = getWhoEntry(effectiveSpeaker) || whoForSpeaker || null;
     const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
     const whoTag   = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
+    // Format matches Quarm's #ingame-general style:  "**Name** [60 Race Class]: message"
+    // Both speaker name and text are sanitized — no @pings, no code-block injection.
+    const safeSpeaker = sanitizeChatText(effectiveSpeaker).replace(/\*/g, '');  // strip bold markers from name
+    // Sanitize FIRST (strips control chars, pings) then linkify items.
+    // Order matters: if we linkified first the sanitizer's backslash-doubling
+    // could break our markdown URLs (URLs have no backslashes so this is just
+    // belt-and-suspenders).
+    const safeText = linkifyEqItems(sanitizeChatText(text));
 
     // Another uploader already relayed this exact line to Discord within the
-    // window — corpus row was recorded above; skip the duplicate post.
-    if (alreadyRelayed) continue;
+    // window. Usually skip the duplicate post — but two repairs live here:
+    //   • HEAL: the posted copy ran under a filename-guessed name and THIS
+    //     copy carries the server-authoritative in-line name → edit the posted
+    //     Discord message to the true speaker (the Starrburst→Wabumkin case).
+    //   • DISTINCT REPEAT: both copies are authoritative with different names
+    //     → two people genuinely typed the same text; post this one too
+    //     (the old text-only dedup silently swallowed raid "111" count-offs).
+    if (alreadyRelayed) {
+      const sameName = String(relayEntry.speaker || '').toLowerCase() === effectiveSpeaker.toLowerCase();
+      const distinctRepeat = !sameName && relayEntry.source === 'line' && speakerSource === 'line';
+      const healable = !sameName && relayEntry.source !== 'line' && speakerSource === 'line';
+      if (healable && relayEntry.msg) {
+        try {
+          await relayEntry.msg.edit(`**${safeSpeaker}**${whoTag}: ${safeText}`);
+          relayEntry.speaker = effectiveSpeaker;
+          relayEntry.source  = 'line';
+          console.log(`[chat-relay] healed speaker attribution: ${relayEntry.msg.id} → ${effectiveSpeaker}`);
+        } catch (err) {
+          console.warn('[chat-relay] speaker-heal edit failed:', err?.message);
+        }
+      }
+      // Fall through to post when this is a genuine second utterance, or when
+      // the guessed copy never actually reached Discord (nothing to heal).
+      if (!distinctRepeat && !(healable && !relayEntry.msg)) continue;
+    }
 
     try {
       const ch = await client.channels.fetch(channelId).catch(() => null);
       if (!ch) continue;
-      // Format matches Quarm's #ingame-general style:  "**Name** [60 Race Class]: message"
-      // Both speaker name and text are sanitized — no @pings, no code-block injection.
-      const safeSpeaker = sanitizeChatText(effectiveSpeaker).replace(/\*/g, '');  // strip bold markers from name
-      // Sanitize FIRST (strips control chars, pings) then linkify items.
-      // Order matters: if we linkified first the sanitizer's backslash-doubling
-      // could break our markdown URLs (URLs have no backslashes so this is just
-      // belt-and-suspenders).
-      const safeText    = linkifyEqItems(sanitizeChatText(text));
-      await ch.send(`**${safeSpeaker}**${whoTag}: ${safeText}`);
+      const sent = await ch.send(`**${safeSpeaker}**${whoTag}: ${safeText}`);
+      relayEntry.at = Date.now();
+      relayEntry.speaker = effectiveSpeaker;
+      relayEntry.source = speakerSource;
+      relayEntry.msg = sent;
       posted++;
     } catch (err) {
       console.warn(`[chat-relay] failed to post to ${channel}:`, err?.message);

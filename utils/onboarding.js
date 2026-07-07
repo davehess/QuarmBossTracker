@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.146': [
+    '**Guild chat stops renaming people.** The Adiwen/Wabumkin-posted-as-Starrburst bug (also Jankzer→Dant, Fargan→Bardtholemu): EQ keeps writing your OLD character\'s log file after you swap characters, so your own machine attributed everything you said to the previous character — and its upload usually beat everyone else\'s correct copy to Discord. Three layers of fix: agents 3.2.2+ ask Zeal (which always knows your real character) before trusting a log filename, prefer the server-authoritative "X tells the guild" form when their own logs disagree, and the bot now **edits an already-posted message to the right name within seconds** when a corroborating copy arrives. Bonus fixes: cross-machine corroboration had never actually worked (clock skew between machines broke the matching), the wrong character\'s class tag can no longer decorate a relabeled name, and two people genuinely typing the same thing ("111") both show up instead of the second being swallowed.',
+  ],
   '3.0.145': [
     '**/who history stops hoarding — 60% smaller, no info lost.** who_observations had never been pruned (170k rows / 102MB, back to Nov 2023) — one row per player per minute per uploader, mostly redundant. It now keeps the last 60 days of raw sightings (needed for the ±3-min Zek-proximity inference and the ±15-min raid-attendance reconstruction on /admin/encounters + /admin/signups) and, before that, only each character\'s single latest sighting. The /who directory still lists every character ever seen with their last-known class/level/guild/Zek status — all 10,193 of them survived the cleanup — we just dropped 101k duplicate historical rows and sweep nightly going forward (`WHO_OBS_RETENTION_DAYS`).',
   ],

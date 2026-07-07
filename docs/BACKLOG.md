@@ -33,6 +33,18 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **Stale-log-filename attribution — extend beyond chat.** Root cause found
+  2026-07-07 (the Starrburst/Dant/Bardtholemu chat renames): after a character
+  swap the EQ client keeps appending to the PREVIOUS character's log, so
+  everything keyed on the log FILENAME misattributes for the rest of that
+  session. Chat is fixed end-to-end (agent 3.2.2 `speaker_source` + Zeal
+  resolution + cross-log arbitration; bot 3.0.146 witness adoption + Discord
+  post heal). Still filename-keyed and therefore still wrong after a swap:
+  **encounter/parse self-damage credit** (`builder.character` — post-swap
+  parses credit the old character), buff-landing observer, faction/pop-flag
+  attribution, `/who` uploadedBy, live-state `uploaded_by`. The
+  `_resolveSelfChatSpeaker` Zeal mapping is the reusable hook — apply it at
+  EncounterBuilder line-ingest (or builder creation refresh) next raid window.
 - **Efficiency review burn-down (2026-07-07).** Full ranked findings + growth
   rules in `docs/EFFICIENCY-REVIEW-2026-07-07.md`. Round 1 shipped (bot
   3.0.141 / web 1.0.176): /fun parallel + RPCs (1.5s→18ms Tunare), state.json
