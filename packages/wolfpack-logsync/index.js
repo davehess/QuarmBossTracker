@@ -1209,7 +1209,11 @@ function isConfirmedPlayer(name) {
   return false;
 }
 function confirmPlayer(name) {
-  if (name) confirmedPlayers.add(String(name).toLowerCase());
+  // Cap (2026-07-07 review): grows one entry per speaker//who row for the
+  // whole session. Past the cap we stop ADDING rather than evicting — losing
+  // a confirmation could reclassify a player as an NPC mid-fight, while a
+  // missing new confirmation only delays one classification path.
+  if (name && confirmedPlayers.size < 8000) confirmedPlayers.add(String(name).toLowerCase());
 }
 
 // Module-level pet owner tracker. Persists for the whole agent session so pet
@@ -1720,6 +1724,7 @@ const _SLAIN_BY_RX  = /\]\s+(.+?)\s+has been slain by\s+(.+?)\.?\s*$/i;
 const _SLAIN_YOU_RX = /\]\s+You have slain\s+(.+?)\.?\s*$/i;
 function checkCharmPetDeath(line, character) {
   if (!line) return false;
+  if (line.indexOf('slain') === -1) return false;   // cheap gate — both regexes require it
   let slainName = null, killerName = null;
   let m = line.match(_SLAIN_BY_RX);
   if (m) { slainName = m[1].trim(); killerName = m[2].trim(); }
@@ -2327,6 +2332,7 @@ function _zealTargetForChar(charLower) {
 }
 function noteSelfCast(line, character) {
   if (!line || !character) return;
+  if (line.indexOf('You begin') === -1) return;   // cheap gate
   const m = line.match(/\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i);
   if (!m) return;
   const ts = parseEqTimestamp(line);
@@ -2366,6 +2372,7 @@ const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloropl|regrowth|torpor|lay on h
 const _lastCastRelay = new Map();   // charLower → { sig, at }
 function relaySelfCastForCasting(line, character) {
   if (!line || !character) return;
+  if (line.indexOf('You begin') === -1) return;   // cheap gate
   const m = line.match(_CAST_BEGIN_RX);
   if (!m) return;
   const cl = String(character).toLowerCase();
@@ -2437,6 +2444,12 @@ function _pushBlindEvent(kind, text, tts, atMs) {
   if (_blindEvents.length > 40) _blindEvents.splice(0, _blindEvents.length - 40);
 }
 function noteBlindLine(line, character) {
+  // Cheap gate covering every land/fade/self-hit pattern below: blind lines,
+  // the manaflare pair, the fade texts, and the ALL-CAPS YOURSELF self-hit.
+  if (line.indexOf('lind') === -1 && line.indexOf('manaflare') === -1
+      && line.indexOf('YOURSELF') === -1 && line.indexOf('see again') === -1
+      && line.indexOf('focus again') === -1 && line.indexOf('vision returns') === -1
+      && line.indexOf('Flames of mana') === -1) return;
   if (!line || !character) return;
   const cl = String(character).toLowerCase();
   const ts = parseEqTimestamp(line);
@@ -3235,6 +3248,14 @@ function _isRegistryWho(v) {
 
 function recordWhoEvent(ev) {
   if (!ev || !ev.name) return;
+  // Session-length growth cap (2026-07-07 review): a busy server's /who alls
+  // accumulate one entry per distinct name forever. Map preserves first-insert
+  // order, so evicting from the front drops the longest-known (staleness-prone)
+  // entries; anyone still around re-registers on the next /who.
+  if (whoData.size > 6000) {
+    let n = 0;
+    for (const key of whoData.keys()) { whoData.delete(key); if (++n >= 1000) break; }
+  }
   // Keep ALL /who rows in the transient registry so the overlay can render
   // everyone in the zone (Quarm pickup raids include L30-60 characters).
   // The persistence/upload paths apply _isRegistryWho to drop low-level
@@ -6981,16 +7002,6 @@ function _serializeCommandCenterState() {
   };
 }
 
-function _serializeForDashboard() {
-  const healersOut = {};
-  for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
-    healersOut[name] = {
-      healed:  s.healed || 0,
-      ticks:   s.ticks  || 0,
-      targets: [...(s.targets || [])],
-    };
-  }
-
 // Zeal writes zeal.ini into the EQ folder; the "Export data on /camp" option
 // persists as ExportOnCamp=TRUE. Reading it lets the Setup checklist verify
 // the gear/AA export is actually enabled instead of just reminding. EQ dirs
@@ -7021,6 +7032,20 @@ function _zealExportOnCampState() {
   } catch { _zealCampVal = null; }
   return _zealCampVal;
 }
+
+function _serializeForDashboard() {
+  const healersOut = {};
+  for (const [name, s] of Object.entries(stats.sessionHealers || {})) {
+    healersOut[name] = {
+      healed:  s.healed || 0,
+      ticks:   s.ticks  || 0,
+      targets: [...(s.targets || [])],
+    };
+  }
+
+// (zeal.ini export-on-camp probe hoisted to module scope — see above
+// _zealExportOnCampState; its cache vars were function-local here, which made
+// the 60s cache DEAD and re-read zeal.ini from disk on every 2s poll.)
 
   // Hard-expire any blind state past its TTL so a missed fade line doesn't
   // leave Mimic's Blind Mode auto-pop pinned on. Cheap; runs once per poll.
@@ -7902,6 +7927,8 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
 .wp-quicklinks { display:flex; gap:8px; align-items:center; margin:6px 0 12px 0; font-size:12px; color:var(--dim); flex-wrap:wrap; }
 .wp-quicklinks a { color:var(--blue); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; }
 .wp-quicklinks a:hover { background:#21262d; border-color:var(--blue); }
+@keyframes wpMailPulse{from{box-shadow:0 0 2px rgba(240,180,41,0.4)}to{box-shadow:0 0 10px rgba(240,180,41,0.95)}}
+.wp-mail-unread{border-color:var(--orange) !important;color:var(--orange) !important;animation:wpMailPulse 0.9s ease-in-out infinite alternate}
 .wp-gear { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 11px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:13px; }
 .wp-gear:hover { background:#30363d; border-color:var(--blue); color:var(--blue) }
 .wp-menu { position:absolute; z-index:1000; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; box-shadow:0 8px 24px rgba(0,0,0,.5); max-height:60vh; overflow:auto; min-width:240px; }
@@ -8002,6 +8029,8 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
     <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
        style="color:var(--orange);border:1px solid var(--orange);border-radius:5px;padding:3px 9px;text-decoration:none"
        title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
+    <button id="wpMailBtn" type="button" style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;position:relative"
+       title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
     <button id="wpUiStudioBtn" type="button"
        style="background:transparent;border:1px solid var(--green);color:var(--green);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
        title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
@@ -8019,6 +8048,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button id="wpGear" class="wp-gear" style="margin-left:auto" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
+<div id="wpMailPanel" style="display:none;margin:8px 0;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:rgba(88,166,255,0.04)"></div>
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
@@ -10851,6 +10881,71 @@ setInterval(() => { var r = document.getElementById('raid'); if (r && r.classLis
 // visible but its click silently no-ops, since the IPC is the only entry
 // point. The button is OUTSIDE the [data-tab] selector above so it doesn't
 // participate in the in-page tab swap — it's a side door, not a tab body.
+// ── Mimic Mail — guild notices from the Wolf Pack team ─────────────────
+// Polls the tiny /api/notices endpoint (fed by the bot via the overlay-
+// tuning poll). Unread = any notice id above the locally-remembered last-
+// read id -> the header mail icon pulses. Opening the panel marks all read.
+// NOTE: double-quoted strings + single-quote HTML attributes ONLY — this
+// code lives inside the WEB_HTML template literal and escaped quotes get
+// eaten by the outer layer (the classic dashboard escape hazard).
+var _wpNotices = [];
+function wpEscN(s){ return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function wpNoticesReadId(){ return parseInt(localStorage.getItem("wpNoticeReadId") || "0", 10) || 0; }
+function wpRenderMailBtn(){
+  var btn = document.getElementById("wpMailBtn");
+  var dot = document.getElementById("wpMailDot");
+  if (!btn) return;
+  var readId = wpNoticesReadId();
+  var unread = 0;
+  for (var i = 0; i < _wpNotices.length; i++) { if (_wpNotices[i] && _wpNotices[i].id > readId) unread++; }
+  btn.style.display = _wpNotices.length ? "inline-flex" : "none";
+  if (unread > 0) { btn.classList.add("wp-mail-unread"); if (dot) dot.style.display = "block"; btn.title = unread + " unread notice" + (unread === 1 ? "" : "s") + " from the Wolf Pack team"; }
+  else { btn.classList.remove("wp-mail-unread"); if (dot) dot.style.display = "none"; btn.title = "Notices from the Wolf Pack team"; }
+}
+function wpRenderMailPanel(){
+  var panel = document.getElementById("wpMailPanel");
+  if (!panel) return;
+  var h = "<div style='font-weight:700;margin-bottom:6px'>✉ Notices</div>";
+  if (!_wpNotices.length) h += "<div style='color:var(--dim)'>No notices right now.</div>";
+  for (var i = 0; i < _wpNotices.length; i++) {
+    var n = _wpNotices[i]; if (!n) continue;
+    var crit = n.severity === "critical";
+    h += "<div style='border:1px solid " + (crit ? "var(--red,#f87171)" : "var(--border)") + ";border-radius:6px;padding:7px 9px;margin:5px 0'>"
+       + (crit ? "<span style='color:var(--red,#f87171);font-weight:700'>CRITICAL · </span>" : "")
+       + "<span style='font-weight:700'>" + wpEscN(n.title) + "</span>"
+       + "<div style='margin-top:3px;white-space:pre-wrap'>" + wpEscN(n.body) + "</div>"
+       + "<div style='color:var(--dim);font-size:11px;margin-top:3px'>" + wpEscN((n.created_at || "").slice(0, 10)) + "</div>"
+       + "</div>";
+  }
+  panel.innerHTML = h;
+}
+function wpPollNotices(){
+  fetch("/api/notices").then(function(r){ return r.json(); }).then(function(j){
+    _wpNotices = (j && Array.isArray(j.notices)) ? j.notices : [];
+    wpRenderMailBtn();
+    var panel = document.getElementById("wpMailPanel");
+    if (panel && panel.style.display !== "none") wpRenderMailPanel();
+  }).catch(function(){});
+}
+var _wpMailBtn = document.getElementById("wpMailBtn");
+if (_wpMailBtn) {
+  _wpMailBtn.addEventListener("click", function(){
+    var panel = document.getElementById("wpMailPanel");
+    if (!panel) return;
+    var opening = panel.style.display === "none";
+    panel.style.display = opening ? "block" : "none";
+    if (opening) {
+      wpRenderMailPanel();
+      var maxId = wpNoticesReadId();
+      for (var i = 0; i < _wpNotices.length; i++) { if (_wpNotices[i] && _wpNotices[i].id > maxId) maxId = _wpNotices[i].id; }
+      try { localStorage.setItem("wpNoticeReadId", String(maxId)); } catch (e) {}
+      wpRenderMailBtn();
+    }
+  });
+}
+wpPollNotices();
+setInterval(wpPollNotices, 5 * 60 * 1000);
+
 var _uiStudioBtn = document.getElementById('wpUiStudioBtn');
 if (_uiStudioBtn) {
   _uiStudioBtn.addEventListener('click', function(){
@@ -12898,6 +12993,12 @@ function startWebDashboard(port) {
       }
       // "Buffs feel laggy" click from the buff-queue overlay. Drops the agent
       // into snappy mode for 60s AND forwards the click to the bot for audit.
+      // Guild notices for the dashboard mail icon (tiny — avoids hooking the
+      // heavy /api/state poll for a value that changes rarely).
+      if (req.url === '/api/notices') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ notices: _guildNotices }));
+      }
       // "✓ cured" from the buff-queue overlay → raid-wide manual clear mark.
       if (req.url === '/api/debuff-clear' && req.method === 'POST') {
         let dcBody = '';
@@ -14966,33 +15067,7 @@ function runOptinBackfill(files, opts = {}) {
             // Fun-event detection runs before everything else so a single
             // line can drive a fun_event AND a normal chat/combat path. No
             // early return; the line still flows through downstream parsers.
-            const ldEvt = parsePeopleslayerLd(line, f.character);
-            if (ldEvt) funEventBuffer.push(ldEvt);
-            // Both Malthur counters — caster-side (only Malthur's own log,
-            // ground truth) and recipient-side (every member's log, broad
-            // reach) cross-validate each other.
-            const provEvt = parseMalthurProvision(line, f.character);
-            if (provEvt) funEventBuffer.push(provEvt);
-            const sumProvEvt = parseSummonProvisions(line, f.character);
-            if (sumProvEvt) funEventBuffer.push(sumProvEvt);
-            const cursorEvt = parseCursorFull(line, f.character);
-            if (cursorEvt) funEventBuffer.push(cursorEvt);
-            const htEvt = parseHarmTouch(line, f.character);
-            if (htEvt) funEventBuffer.push(htEvt);
-            const lohEvt = parseLayOnHands(line, f.character);
-            if (lohEvt) funEventBuffer.push(lohEvt);
-            const pkEvt = parsePvpFlag(line, f.character);
-            if (pkEvt) funEventBuffer.push(pkEvt);
-            const dpEvt = parseDragonPunch(line, f.character);
-            if (dpEvt) funEventBuffer.push(dpEvt);
-            const dirgeEvt = parseDirgeCast(line, f.character);
-            if (dirgeEvt) funEventBuffer.push(dirgeEvt);
-            // Necro mana share — Subversion twitches (mana donated) + Mind
-            // Wrack. Self-cast only (the spell name is invisible to bystanders).
-            const twitchEvt = parseNecroManaShare(line, f.character);
-            if (twitchEvt) funEventBuffer.push(twitchEvt);
-            const twitchRecvEvt = parseNecroManaReceived(line, f.character);
-            if (twitchRecvEvt) funEventBuffer.push(twitchRecvEvt);
+            for (const evt of _collectFunEvents(line, f.character)) funEventBuffer.push(evt);
             // Faction hits + /con standing transitions — self-only lines; rides
             // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
             // complete-log backfill crawls idempotent.
@@ -15002,19 +15077,6 @@ function runOptinBackfill(files, opts = {}) {
             if (conFacEvt) factionBuffer.push(conFacEvt);
             const pfEvt = parsePopFlagLine(line, f.character);
             if (pfEvt) popFlagBuffer.push(pfEvt);
-            // Feral Avatar cast-begin (caster-side AND bystander-side).
-            // Complementary to parseFeralAvatarReceived below — that one fires
-            // on the buff land, this one on the cast begin. Both push so the
-            // bot's dedup collapses overlap across multiple agents in zone.
-            const faCastEvt = parseFeralAvatar(line, f.character);
-            if (faCastEvt) funEventBuffer.push(faCastEvt);
-            // Beastlord buff receives — recipient-side. The bot correlates
-            // these to specific encounters at display time via ts range, so
-            // the agent only needs to emit the bare event.
-            const faEvt = parseFeralAvatarReceived(line, f.character);
-            if (faEvt) funEventBuffer.push(faEvt);
-            const savEvt = parseSavageryReceived(line, f.character);
-            if (savEvt) funEventBuffer.push(savEvt);
             // Observed buff landing on another player. Backfilled casts are
             // almost always already-expired by display time (harmless — the web
             // filters expired), but they cost nothing and cover the case where a
@@ -15738,6 +15800,7 @@ function _isOwnGuildInstanceEcho(_text, _killerGuild) {
 }
 
 function parseDruzzilKill(line) {
+  if (line.indexOf('Druzzil Ro') === -1) return null;   // cheap gate
   const m = DRUZZIL_KILL_RX.exec(line);
   if (!m) return null;
   // Druzzil only addresses our guild — record it for the [PVP] echo filter.
@@ -15753,6 +15816,9 @@ function parseDruzzilKill(line) {
 }
 
 function parsePvpBroadcast(line) {
+  // Cheap gate — every broadcast form carries one of these fragments.
+  if (line.indexOf('PVP') === -1 && line.indexOf('has killed') === -1
+      && line.indexOf('has been killed') === -1 && line.indexOf('has died to') === -1) return null;
   const tsOf = () => {
     const ts = parseEqTimestamp(line);
     return ts ? ts.toISOString() : new Date().toISOString();
@@ -15986,6 +16052,8 @@ function transformEqItemLinks(text) {
 }
 
 function parseChatLine(line, selfName) {
+  // Cheap gate — all four channel regexes require "guild," or "raid,".
+  if (line.indexOf('guild,') === -1 && line.indexOf('raid,') === -1) return null;
   for (const { rx, channel, self: isSelf } of CHAT_LINE_PATTERNS) {
     const m = line.match(rx);
     if (!m) continue;
@@ -16034,6 +16102,8 @@ function _isNpcTellText(text) {
   return false;
 }
 function parseTellLine(line, selfName) {
+  // Cheap gate — both tell regexes require one of these literals.
+  if (line.indexOf('tells you') === -1 && line.indexOf('You told') === -1) return null;
   let m = line.match(TELL_OUTGOING_RX);
   let direction = null;
   if (m) direction = 'outgoing';
@@ -16314,6 +16384,37 @@ function startChatRelay() {
 //
 // Linkdead line on Quarm: "[ts] <Name> has gone linkdead." Accept both
 // LD and linkdead phrasing for safety.
+// ── Fun-event dispatcher ────────────────────────────────────────────────────
+// One shared, GATED pass over the fun-event detectors. The three call sites
+// (live tail, opt-in backfill, --since) used to each inline the whole block —
+// running every detector's regexes on EVERY log line with no pre-filter
+// (2026-07-07 efficiency review), and drifting apart (the live copy had lost
+// the Feral-Avatar/Savagery RECIPIENT detectors — recipient-side burst chips
+// only worked via backfill). One line.toLowerCase() + substring gates skip
+// essentially every detector on ordinary combat lines; each detector's own
+// regex remains the source of truth, so a gate can only ever be too wide,
+// never wrong.
+function _collectFunEvents(line, selfName) {
+  const out = [];
+  const lower = line.toLowerCase();
+  const push = (e) => { if (e) out.push(e); };
+  if (lower.includes('peopleslayer'))      push(parsePeopleslayerLd(line, selfName));
+  if (lower.includes('sedated') || lower.includes('quenched')) push(parseMalthurProvision(line, selfName));
+  if (lower.includes('blessing of the'))   push(parseSummonProvisions(line, selfName));
+  if (lower.includes('cursor'))            push(parseCursorFull(line, selfName));
+  if (lower.includes('harm'))              push(parseHarmTouch(line, selfName));
+  if (lower.includes('hands'))             push(parseLayOnHands(line, selfName));
+  if (lower.includes('player kill') || lower.includes('ways of order')) push(parsePvpFlag(line, selfName));
+  if (lower.includes('force of a dragon')) push(parseDragonPunch(line, selfName));
+  if (lower.includes('dirge'))             push(parseDirgeCast(line, selfName));
+  if (lower.includes('subversion') || lower.includes('mind wrack')) push(parseNecroManaShare(line, selfName));
+  if (lower.includes('foreign'))           push(parseNecroManaReceived(line, selfName));
+  if (lower.includes('feral avatar'))      push(parseFeralAvatar(line, selfName));
+  if (lower.includes('feral avatar') || lower.includes('spirit of the wolf')) push(parseFeralAvatarReceived(line, selfName));
+  if (lower.includes('savagery'))          push(parseSavageryReceived(line, selfName));
+  return out;
+}
+
 const PEOPLESLAYER_LD_RX = /^\[(.+?)\]\s+Peopleslayer\s+has\s+gone\s+(?:LD|linkdead)\.?\s*$/i;
 
 function parsePeopleslayerLd(line, selfName) {
@@ -17497,6 +17598,11 @@ function _escapeForLiteralMatch(s) {
 // catalog — nothing else. Numbers only, by design (no strings/regex from the
 // network reach parsing code).
 let _overlayTuning = {};
+// Guild notices ("Mimic Mail") — officer broadcasts from /admin/notices, served
+// by the bot alongside overlay tuning (same poll, zero extra timers). Shown as
+// a pulsing ✉ in the dashboard header; critical ones ALSO post to Discord
+// bot-side. Version-independent from 1.6 forward: any future agent sees them.
+let _guildNotices = [];
 function tuneNum(key, dflt) {
   const v = _overlayTuning[key];
   return (typeof v === 'number' && isFinite(v)) ? v : dflt;
@@ -17521,6 +17627,7 @@ function pollOverlayTuning({ botUrl, token }) {
             if (resp && resp.tuning && typeof resp.tuning === 'object' && !Array.isArray(resp.tuning)) {
               _overlayTuning = resp.tuning;
             }
+            if (resp && Array.isArray(resp.notices)) _guildNotices = resp.notices;
           } catch { /* non-fatal — keep last good values */ }
           resolve();
         });
@@ -18280,6 +18387,25 @@ async function _pollRelayFires() {
   const base = _getApiBase();
   const token = _getAgentToken();
   if (!base || !token) return;
+  // Idle gate (2026-07-07 review): the trigger relay only matters while
+  // someone is actually PLAYING. Skip the fetch when no Zeal client has
+  // sampled and no watched log has been written for 10+ minutes — this was
+  // the agent's largest standing network cost (a poll every 1.5s, 24/7).
+  {
+    const idleCutoff = Date.now() - 10 * 60 * 1000;
+    let active = false;
+    try {
+      for (const ch of Object.keys(_zealState || {})) {
+        if (((_zealState[ch] && _zealState[ch].updatedAt) || 0) > idleCutoff) { active = true; break; }
+      }
+      if (!active) {
+        for (const w of (stats.watchedLogs || [])) {
+          if (w && w.logPath && fs.statSync(w.logPath).mtimeMs > idleCutoff) { active = true; break; }
+        }
+      }
+    } catch { active = true; }   // can't tell → keep polling (fail open)
+    if (!active) return;
+  }
   _relayPollerActive = true;
   try {
     const url = base.replace(/\/+$/, '') + '/recent-fires?since_id=' + _lastRelayFireId;
@@ -20246,28 +20372,7 @@ async function main() {
         // The bot's (guild_id, event_type, caster, event_ts) upsert key
         // dedups re-runs and overlap with other agents who saw the same
         // line, so emitting freely from --since is safe.
-        const ldEvt = parsePeopleslayerLd(line, b.character);
-        if (ldEvt) funEventBuffer.push(ldEvt);
-        const provEvt = parseMalthurProvision(line, b.character);
-        if (provEvt) funEventBuffer.push(provEvt);
-        const sumProvEvt = parseSummonProvisions(line, b.character);
-        if (sumProvEvt) funEventBuffer.push(sumProvEvt);
-        const cursorEvt = parseCursorFull(line, b.character);
-        if (cursorEvt) funEventBuffer.push(cursorEvt);
-        const htEvt = parseHarmTouch(line, b.character);
-        if (htEvt) funEventBuffer.push(htEvt);
-        const lohEvt = parseLayOnHands(line, b.character);
-        if (lohEvt) funEventBuffer.push(lohEvt);
-        const pkEvt = parsePvpFlag(line, b.character);
-        if (pkEvt) funEventBuffer.push(pkEvt);
-        const dpEvt = parseDragonPunch(line, b.character);
-        if (dpEvt) funEventBuffer.push(dpEvt);
-        const dirgeEvt = parseDirgeCast(line, b.character);
-        if (dirgeEvt) funEventBuffer.push(dirgeEvt);
-        const twitchEvt = parseNecroManaShare(line, b.character);
-        if (twitchEvt) funEventBuffer.push(twitchEvt);
-        const twitchRecvEvt = parseNecroManaReceived(line, b.character);
-        if (twitchRecvEvt) funEventBuffer.push(twitchRecvEvt);
+        for (const evt of _collectFunEvents(line, b.character)) funEventBuffer.push(evt);
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
         // complete-log backfill crawls idempotent.
@@ -20277,12 +20382,6 @@ async function main() {
         if (conFacEvt) factionBuffer.push(conFacEvt);
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt) popFlagBuffer.push(pfEvt);
-        const faCastEvt = parseFeralAvatar(line, b.character);
-        if (faCastEvt) funEventBuffer.push(faCastEvt);
-        const faEvt = parseFeralAvatarReceived(line, b.character);
-        if (faEvt) funEventBuffer.push(faEvt);
-        const savEvt = parseSavageryReceived(line, b.character);
-        if (savEvt) funEventBuffer.push(savEvt);
         // Observed buff landings on other players — same as opt-in path.
         // Almost always expired by the time --since runs, but the web
         // filters expired so this costs nothing and occasionally rescues
@@ -20513,34 +20612,13 @@ async function main() {
         // the raw line for diagnosis (guildless/novel boss-kill phrasings).
         if (!_sourceExcluded) captureUnmatchedPvpKill(line);
 
-        // Fun-event detection (Peopleslayer LD, Malthur provisions, future
-        // CoH/DI/etc). Don't `return` after a match — fun events are pure
-        // side-channel logging and the line might also feed other parsers.
-        const ldEvt = parsePeopleslayerLd(line, b.character);
-        if (ldEvt && !_sourceExcluded) funEventBuffer.push(ldEvt);
-        // Both Malthur counters — caster-side (only Malthur's own log,
-        // ground truth) and recipient-side (every member's log, broader
-        // reach) cross-validate each other.
-        const provEvt = parseMalthurProvision(line, b.character);
-        if (provEvt && !_sourceExcluded) funEventBuffer.push(provEvt);
-        const sumProvEvt = parseSummonProvisions(line, b.character);
-        if (sumProvEvt && !_sourceExcluded) funEventBuffer.push(sumProvEvt);
-        const cursorEvt = parseCursorFull(line, b.character);
-        if (cursorEvt && !_sourceExcluded) funEventBuffer.push(cursorEvt);
-        const htEvt = parseHarmTouch(line, b.character);
-        if (htEvt && !_sourceExcluded) funEventBuffer.push(htEvt);
-        const lohEvt = parseLayOnHands(line, b.character);
-        if (lohEvt && !_sourceExcluded) funEventBuffer.push(lohEvt);
-        const pkEvt = parsePvpFlag(line, b.character);
-        if (pkEvt && !_sourceExcluded) funEventBuffer.push(pkEvt);
-        const dpEvt = parseDragonPunch(line, b.character);
-        if (dpEvt && !_sourceExcluded) funEventBuffer.push(dpEvt);
-        const dirgeEvt = parseDirgeCast(line, b.character);
-        if (dirgeEvt && !_sourceExcluded) funEventBuffer.push(dirgeEvt);
-        const twitchEvt = parseNecroManaShare(line, b.character);
-        if (twitchEvt && !_sourceExcluded) funEventBuffer.push(twitchEvt);
-        const twitchRecvEvt = parseNecroManaReceived(line, b.character);
-        if (twitchRecvEvt && !_sourceExcluded) funEventBuffer.push(twitchRecvEvt);
+        // Fun-event detection — shared gated dispatcher (_collectFunEvents):
+        // one toLowerCase + substring gates instead of every detector's
+        // regexes per line. Don't `return` after a match — fun events are
+        // pure side-channel logging; the line still feeds other parsers.
+        if (!_sourceExcluded) {
+          for (const evt of _collectFunEvents(line, b.character)) funEventBuffer.push(evt);
+        }
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Honors the per-character
         // exclude_from_stats opt-out like every other upload stream.
@@ -20550,11 +20628,6 @@ async function main() {
         if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
-        // Feral Avatar — caster-side fires only on the BL's own log; bystander
-        // form fires on anyone in zone. Both push so the bot's (guild_id,
-        // event_type, caster, event_ts) dedup collapses overlap.
-        const faEvt = parseFeralAvatar(line, b.character);
-        if (faEvt && !_sourceExcluded) funEventBuffer.push(faEvt);
 
         // Observed buff landing on another player (fills coverage for raiders
         // not running the agent). Cross-log dedup so a buff seen in main + alt

@@ -372,10 +372,27 @@ function waitForAgent(port, timeoutMs = 20000) {
 // ── Recent-line agent log (capped, persisted to disk) ───────────────────────
 const LOG_TAIL_MAX = 2000;
 const logTail = [];
+// agent.log rotation (2026-07-07 review): the file previously grew without
+// bound — the zeal connect/drop failure loop (elevation mismatch) could churn
+// it indefinitely. Check size every 200 appends; at 5MB rotate to a single
+// .1 sibling (older history discarded — the in-memory tail + the .1 file
+// cover every real support case we've had).
+let _agentLogAppends = 0;
 function appendAgentLog(line) {
   logTail.push(line);
   if (logTail.length > LOG_TAIL_MAX) logTail.shift();
-  try { fs.appendFileSync(AGENT_LOG(), line); } catch {}
+  try {
+    if (++_agentLogAppends % 200 === 0) {
+      const p = AGENT_LOG();
+      try {
+        if (fs.statSync(p).size > 5 * 1024 * 1024) {
+          try { fs.rmSync(p + '.1', { force: true }); } catch {}
+          fs.renameSync(p, p + '.1');
+        }
+      } catch {}
+    }
+    fs.appendFileSync(AGENT_LOG(), line);
+  } catch {}
 }
 
 // ── Raw Zeal capture (opt-in diagnostic) ────────────────────────────────────
@@ -1542,6 +1559,9 @@ let _blindStartMs  = 0;
 const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers'];
 function _blindForceOpen(key) { return _blindActive && _BLIND_FORCED_KEYS.includes(key); }
 function _pollBlindState() {
+  // Idle gate (2026-07-07 review): blind auto-pop only matters in game — no
+  // point fetching the full agent state blob at 1Hz on an idle desktop.
+  if (!_eqRunning) return;
   if (!agentPort) return;
   const req = http.get({
     host: '127.0.0.1', port: agentPort, path: '/api/state', timeout: 1500,
@@ -3131,7 +3151,7 @@ async function _pollEqPresence() {
 function _startEqPolling() {
   if (_eqPollTimer || process.platform !== 'win32') return;
   _pollEqPresence().catch(() => {});
-  _eqPollTimer = setInterval(() => { _pollEqPresence().catch(() => {}); }, 5000);
+  _eqPollTimer = setInterval(() => { _pollEqPresence().catch(() => {}); }, 10000);   // 5s->10s (2026-07-07 review: tasklist spawn pressure)
 }
 function _stopEqPolling() {
   if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }

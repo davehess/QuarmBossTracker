@@ -168,7 +168,7 @@ function startZealWatch({ onEvent, onStatus, log } = {}) {
   // Initial + every 15s — picks up newly-launched clients / Zeal coming online,
   // and reconnects after a transient drop.
   _poll();
-  const timer = setInterval(_poll, 15000);
+  const timer = setInterval(_poll, 25000);   // 15s->25s (2026-07-07 review: second always-on tasklist spawner)
 
   return {
     stop() {

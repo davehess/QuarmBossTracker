@@ -635,7 +635,10 @@
         +   bar
         + '</div>';
     }
-    rowsEl.innerHTML = html;
+    if (rowsEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+      rowsEl.innerHTML = html;
+      rowsEl.__wpHtml = html;
+    }
     rowsEl.classList.toggle('stale', stale);
 
     // Footer: NEXT <last> → <next> with a beat-based countdown — due when the

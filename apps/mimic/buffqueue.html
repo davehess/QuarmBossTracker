@@ -535,10 +535,14 @@
       for (var i = 0; i < burst.length; i++) html += renderRow(burst[i], 'burst');
       html += '</div>';
     }
-    body.innerHTML = html;
-    // Auto-fit window height to the queue so 30 raiders worth of rows don't
-    // clip and an empty queue shrinks back to its empty-state line.
-    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+    // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
+    // innerHTML re-layout and the auto-fit (window height only changes when
+    // the content does). Delegated listeners on #body survive either way.
+    if (body.__wpHtml !== html) {
+      body.innerHTML = html;
+      body.__wpHtml = html;
+      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+    }
   }
   // Collapse/expand a category section. Delegated once (render replaces the
   // body's innerHTML every poll); re-renders from the last payload so the

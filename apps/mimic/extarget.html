@@ -305,9 +305,14 @@
       html += rowHtml(targets[i]);
       if (targets[i].ambiguous) anyAmb = true;
     }
-    rowsEl.innerHTML = html;
+    // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
+    // innerHTML re-layout AND the autofit IPC round-trip.
+    if (rowsEl.__wpHtml !== html) {
+      rowsEl.innerHTML = html;
+      rowsEl.__wpHtml = html;
+      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+    }
     footEl.style.display = anyAmb ? 'block' : 'none';
-    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
 
   async function tick(){

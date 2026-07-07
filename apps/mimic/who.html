@@ -195,8 +195,11 @@
         for (var j=0;j<w.recentGone.length;j++) h += rowHtml(w.recentGone[j], true);
         h += '</div></div>';
       }
-      bodyEl.innerHTML = h;
-      _requestAutoHeight();
+      if (bodyEl.__wpHtml !== h) {   // byte-stability guard (2026-07-07)
+        bodyEl.innerHTML = h;
+        bodyEl.__wpHtml = h;
+        _requestAutoHeight();
+      }
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

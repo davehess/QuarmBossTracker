@@ -258,8 +258,17 @@
 
   async function tick(){
     try {
-      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
-      const s = await r.json();
+      // Fetch/paint decoupled (2026-07-07 review): this tick runs at 150ms so
+      // the cast bar animates, but the FULL /api/state fetch (the dashboard-
+      // sized blob) only refreshes every 600ms — was ~6.6 req/s of the
+      // heaviest endpoint the agent serves.
+      var _nowMs = Date.now();
+      if (!window.__wpMelState || _nowMs - (window.__wpMelAt || 0) >= 600) {
+        const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+        window.__wpMelState = await r.json();
+        window.__wpMelAt = _nowMs;
+      }
+      const s = window.__wpMelState;
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       const now = Date.now();
@@ -516,9 +525,12 @@
               + nowCastingHtml
               + '</div>';
       }
-      listEl.innerHTML = html;
+      if (listEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+        listEl.innerHTML = html;
+        listEl.__wpHtml = html;
+        _requestAutoHeight();
+      }
       emptyEl.style.display = html ? 'none' : 'block';
-      _requestAutoHeight();
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

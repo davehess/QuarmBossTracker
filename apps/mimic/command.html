@@ -300,8 +300,11 @@
 
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, or curses seen yet.</div>';
 
-    contentEl.innerHTML = html;
-    _requestAutoHeight();
+    if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+      contentEl.innerHTML = html;
+      contentEl.__wpHtml = html;
+      _requestAutoHeight();
+    }
   }
 
   async function tick(){

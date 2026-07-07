@@ -447,12 +447,17 @@
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';
       }
-      ul.innerHTML = bodyHtml;
+      // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
+      // innerHTML re-layout AND the autofit IPC round-trip.
+      if (ul.__wpHtml !== bodyHtml) {
+        ul.innerHTML = bodyHtml;
+        ul.__wpHtml = bodyHtml;
+        // Auto-fit the window height to the rendered scoreboard so a long fight
+        // (8 rows) doesn't clip the bottom and an empty meter shrinks back.
+        try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.querySelector('.hud')); } catch (e) {}
+      }
       document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
       document.getElementById('colhdr').style.display = rows.length ? 'grid' : 'none';
-      // Auto-fit the window height to the rendered scoreboard so a long fight
-      // (8 rows) doesn't clip the bottom and an empty meter shrinks back.
-      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.querySelector('.hud')); } catch (e) {}
       // Header labels track tab mode so the user can tell DPS vs Tank apart
       // even without looking at the tab buttons (e.g. screenshots).
       var colD   = document.getElementById('colD');
