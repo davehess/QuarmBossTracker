@@ -17123,9 +17123,25 @@ function _rebuildBuffMatchers() {
       dm.set(suffix, arr);
     }
   }
+  // Junk-text guard (2026-07-07): a landing message shared by MANY unrelated
+  // spells is unattributable garbage, not a family. Real families cap out
+  // around 7 ("glances nervously about." = the 7 Tash spells; "looks very
+  // uncomfortable." = 6 Malos) — but generic effect texts go far wider:
+  // "is struck by a sudden force." is 33 knockback-type spells, and the
+  // ambiguous-family resolver kept crowning EQEmu's internal "Kneel Test"
+  // (the only one with a nonzero duration) as its representative, writing
+  // 10k phantom rows into buff_casts and phantom entries onto Mob Info.
+  // Anything shared by >8 distinct spell names is dropped from both indexes.
+  let junked = 0;
+  for (const [suffix, arr] of [...m]) {
+    if (new Set(arr.map(h => h.name)).size > 8) { m.delete(suffix); junked++; }
+  }
+  for (const [suffix, arr] of [...dm]) {
+    if (new Set(arr.map(h => h.name)).size > 8) { dm.delete(suffix); junked++; }
+  }
   _buffLandingBySuffix = m;
   _debuffLandingBySuffix = dm;
-  if (m.size || dm.size) console.log(`[buff-landing] indexed ${m.size} buff + ${dm.size} debuff landing messages`);
+  if (m.size || dm.size) console.log(`[buff-landing] indexed ${m.size} buff + ${dm.size} debuff landing messages (${junked} unattributable shared texts dropped)`);
 }
 
 // EQ first names: a single capitalized word. Rejects "You", pets ("`s warder"),
@@ -19589,7 +19605,13 @@ function uploadFunEvents(events, { dryRun } = {}) {
 // bot dedups across observers, so every nearby agent uploading what it saw is
 // fine (and desirable — more observers = better coverage).
 function uploadBuffCasts(casts, { dryRun } = {}) {
-  if (!Array.isArray(casts) || casts.length === 0) return Promise.resolve();
+  if (!Array.isArray(casts)) return Promise.resolve();
+  // Nameless (unresolved-ambiguous) landings stay useful LOCALLY (Mob Info
+  // shows the raw landing text), but every bot-side consumer requires a
+  // spell_name — uploading them just grew buff_casts (18% of the table before
+  // the 2026-07-07 purge; the bot also rejects them at ingest now).
+  casts = casts.filter(c => c && c.spell_name);
+  if (casts.length === 0) return Promise.resolve();
   if (dryRun) {
     for (const c of casts) console.log(`[buff-cast] ${c.target} ← ${c.spell_name || '(ambiguous: ' + c.landing_text + ')'} @ ${c.cast_at}`);
     return Promise.resolve();
