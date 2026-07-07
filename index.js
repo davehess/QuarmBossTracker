@@ -2651,6 +2651,30 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] threat snapshot retention skipped:', err?.message);
       }
 
+      // ── Retention sweep: buff_casts ───────────────────────────────────────
+      // Observed buff/debuff LANDINGS — the live "who has what buff" truth is
+      // character_live_state (replaced in place per character); buff_casts is
+      // only landing history, and every consumer (target-buffs, buff queue,
+      // /raid page: 3h; extended-target debuffs: 30min) reads ≤3h back. Rows
+      // older than that are pure storage weight — the table hit 118MB/232k
+      // rows before the 2026-07-07 review, largely bard-song + DoT re-lands
+      // plus a Jan-2025 backfill nothing could ever read. 7-day default keeps
+      // an enormous safety margin over the 3h reads; BUFF_CASTS_RETENTION_DAYS
+      // overrides (0 disables). Nameless rows are rejected at ingest now, so
+      // no special-casing here.
+      try {
+        const supabase = require('./utils/supabase');
+        const retainDays = parseInt(process.env.BUFF_CASTS_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(retainDays) ? retainDays : 7;
+        if (supabase.isEnabled() && keep > 0) {
+          const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
+          await supabase.del('buff_casts', `cast_at=lt.${encodeURIComponent(cutoff)}`);
+          console.log(`[midnight] swept buff_casts older than ${keep} days`);
+        }
+      } catch (err) {
+        console.warn('[midnight] buff_casts retention skipped:', err?.message);
+      }
+
       // ── ARI staleness sweep ───────────────────────────────────────────────
       // Auto-raid-invite state hangs around until an officer manually
       // clears it. Stale ARI confuses members ("ARI via Hitya · 6/4/2026"
@@ -5932,6 +5956,13 @@ async function _handleAgentBuffCasts(req, res) {
   const ambiguous = [];
   for (const c of casts) {
     if (!c || !c.target || !c.cast_at) continue;
+    // Nameless landings are UNREADABLE downstream — every consumer
+    // (target-buffs, extended-target debuffs, raid-buff-queue, /raid) skips
+    // rows without spell_name, yet they'd grown to 18% of the table (41k
+    // rows) before the 2026-07-07 review. Reject at ingest; charm rows keep
+    // their synthesized names so they pass untouched. Agents 3.1.107+ stop
+    // sending them at all — this guard covers every older agent.
+    if (!c.spell_name) continue;
     const sid = Number.isFinite(c.spell_id) ? Math.trunc(c.spell_id) : 0;
     const row = {
       guild_id:     guildId,

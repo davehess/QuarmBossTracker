@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.142': [
+    '**buff_casts stops hoarding — 73% of the table purged, zero user-visible change.** The buff-landing history table had grown to 118MB/232k rows, but every consumer (Mob Info target-buffs, buff/cure queue, Extended Target debuffs, /raid) reads at most **3 hours** back — live "who has what buff" comes from each character\'s own Zeal snapshot, not this table. Purged: 41k rows with no spell name (written but unreadable — now rejected at ingest), 10k phantom **"Kneel Test"** rows (EQEmu\'s internal test spell shares its landing text with 33 knockback effects and kept winning the ambiguous-match), and everything older than 7 days including a Jan-2025 backfill. The midnight chain now sweeps buff_casts to a rolling 7 days (`BUFF_CASTS_RETENTION_DAYS`). Agents 3.1.107+ also stop generating both junk classes at the source.',
+  ],
   '3.0.141': [
     '**Faster everything — first fixes from the 2026-07-07 efficiency review.** The `/fun` page had slowed to a crawl: its ~25 counter queries ran one-after-another, and two of them scanned tables that have been growing all along (chat_messages hit 284k rows — the Tunare counter alone cost ~3s; the dirge counter shipped 20k rows of ability data per view AND silently under-counted). All counters now load in parallel with the heavy two moved into indexed SQL (measured 1.5s → 18ms on Tunare). Bot side: the buff queue stops fetching every parked character\'s buffs on every poll, state.json is parsed once instead of on every read (the who-lookup endpoint re-parsed it up to 80× per request), and a missing endpoint agents had been polling for weeks now exists — **cross-client Main Tank HP/buffs on the Tank overlay actually work now** (the "MT runs Mimic → use their real HP" path had silently never fired).',
   ],
