@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.145': [
+    '**/who history stops hoarding — 60% smaller, no info lost.** who_observations had never been pruned (170k rows / 102MB, back to Nov 2023) — one row per player per minute per uploader, mostly redundant. It now keeps the last 60 days of raw sightings (needed for the ±3-min Zek-proximity inference and the ±15-min raid-attendance reconstruction on /admin/encounters + /admin/signups) and, before that, only each character\'s single latest sighting. The /who directory still lists every character ever seen with their last-known class/level/guild/Zek status — all 10,193 of them survived the cleanup — we just dropped 101k duplicate historical rows and sweep nightly going forward (`WHO_OBS_RETENTION_DAYS`).',
+  ],
   '3.0.144': [
     '**✉ Mimic Mail + efficiency round 2.** Officers get `/admin/notices` on wolfpack.quest: publish a notice and every running Mimic (1.6+) shows a **pulsing mail icon** on its dashboard within ~90 seconds — mark **critical** and the bot also posts it to Discord within a minute. Works on every future Mimic version with zero further plumbing, so "update before Sunday" style alerts always reach people. Efficiency: the two hottest agent endpoints (buff queue + Extended Target) now compute once per ~2s for the whole raid instead of once per agent (~20× less database traffic), the shaman burst query is cached, and the long-deprecated era-thread chat routing + `/initerathreads` command are gone. Paired with Mimic 1.6.0 (beta): every overlay skips repainting unchanged frames, the melody overlay stops fetching the full state 6×/second, agent log-line parsing got cheap pre-filters across the board, the trigger relay stops polling 24/7 when nobody is playing, and agent.log rotates instead of growing forever.',
   ],

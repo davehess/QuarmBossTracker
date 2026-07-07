@@ -2675,6 +2675,27 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] buff_casts retention skipped:', err?.message);
       }
 
+      // ── Retention sweep: who_observations ─────────────────────────────────
+      // Keep the who INFORMATION but not every instance (Uilnayar 2026-07-07):
+      // everything from the last N days stays raw (feeds the ±3-min Zek
+      // proximity inference + the ±15-min raid-attendance reconstruction on
+      // /admin/encounters + /admin/signups), and before that each character
+      // keeps ONLY their single latest sighting — so the /who directory never
+      // loses a player while the redundant historical dupes drop. The RPC
+      // protects each character's newest row at any age (see the
+      // 20260707110000 migration). WHO_OBS_RETENTION_DAYS overrides (0 = skip).
+      try {
+        const supabase = require('./utils/supabase');
+        const retainDays = parseInt(process.env.WHO_OBS_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(retainDays) ? retainDays : 60;
+        if (supabase.isEnabled() && keep > 0) {
+          const deleted = await supabase.rpc('prune_who_observations', { p_keep_days: keep });
+          console.log(`[midnight] pruned who_observations (kept last ${keep}d raw + latest-per-character) → ${Array.isArray(deleted) ? deleted[0] : deleted} rows deleted`);
+        }
+      } catch (err) {
+        console.warn('[midnight] who_observations retention skipped:', err?.message);
+      }
+
       // ── ARI staleness sweep ───────────────────────────────────────────────
       // Auto-raid-invite state hangs around until an officer manually
       // clears it. Stale ARI confuses members ("ARI via Hitya · 6/4/2026"
