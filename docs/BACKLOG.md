@@ -33,6 +33,14 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **Efficiency review burn-down (2026-07-07).** Full ranked findings + growth
+  rules in `docs/EFFICIENCY-REVIEW-2026-07-07.md`. Round 1 shipped (bot
+  3.0.141 / web 1.0.176): /fun parallel + RPCs (1.5s→18ms Tunare), state.json
+  memo, missing character-live-state route (cross-client MT HP was silently
+  dead), bounded buff-queue select. Next up: bot hot-handler memos, agent
+  tail-loop pre-filters + dead zeal.ini cache, Mimic melody 150ms poll +
+  byte-stability, Supabase retention (chat 138MB / buff_casts 118MB /
+  who_observations 102MB and growing).
 - **EQ Legends config formats — documented, nothing built.** Uilnayar provided
   real Legends client files (2026-07-06); full spec + candidate work items
   (UI Studio backup support, spell-loadout ingest, feasibility map) in
