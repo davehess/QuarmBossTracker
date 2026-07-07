@@ -105,6 +105,11 @@ export default function AdminPage() {
           href="/admin/voice"
         />
         <Card
+          title="✉ Mimic Mail"
+          body="Broadcast notices to every Mimic user — pulsing mail icon on their dashboard within ~90s, plus a Discord post for critical ones. Version-independent: reaches all future Mimic versions with no release."
+          href="/admin/notices"
+        />
+        <Card
           title="🎛 Overlay tuning"
           body="Live thresholds for Extended Target + Mimic overlays (off-heal hurt cutoff, stale-mob grace, GO! flash…). Reaches the bot in ~60s and every running Mimic in ~90s — no redeploy, no Mimic release."
           href="/admin/overlays"
