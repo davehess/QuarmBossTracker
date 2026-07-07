@@ -4413,6 +4413,270 @@ const HISTORICAL_CHAT_PATH = require('path').join(__dirname, 'data', 'historical
 // table. The table's unique constraint on (guild_id, event_type, caster,
 // event_ts) makes backfill replays idempotent — re-running the same opt-in
 // ── Server-view panels for the local dashboard (increment 2f) ──────────────
+// ── Web UI Studio (/me/ui) support ──────────────────────────────────────────
+// ui_snapshots payloads are encrypted with the bot's key, so the WEB can't
+// read them. The bot extracts what /me/ui needs (Uilnayar 2026-07-06):
+//   • ui_socials_index — [Socials] macros per character, written in plaintext
+//     at UPLOAD time (we hold the plaintext right before encrypting) and
+//     backfilled once from each character's latest snapshot on startup.
+//   • common_macros — macros observed on ≥3 DISTINCT characters (the
+//     commonality bar doubles as the privacy filter — one person's personal
+//     macro can never surface). Recomputed after indexing.
+//   • ui_pending_edits — web-staged macro edits; agents poll
+//     GET /api/agent/ui-pending-edits and apply them to the character's ini
+//     once that character is logged out, then POST /api/agent/ui-edit-result.
+const COMMON_MACRO_MIN_CHARS = 3;
+
+// Parse [Socials] Page<P>Button<B>{Name,Color,Line<N>} out of a char ini text.
+// Returns [{ page, button, name, color, lines[] }] — same flat-key shape the
+// Mimic UI Studio inspector parses.
+function _extractSocialsFromIniText(text) {
+  const out = new Map();   // 'P|B' → cell
+  let inSocials = false;
+  for (const L of String(text || '').split(/\r?\n/)) {
+    const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (sm) { inSocials = (sm[1] === 'Socials'); continue; }
+    if (!inSocials) continue;
+    const kv = L.match(/^\s*Page(\d+)Button(\d+)(Name|Color|Line(\d+))\s*=\s*(.*)\s*$/i);
+    if (!kv) continue;
+    const [, P, B, field, lineNo, val] = kv;
+    const key = P + '|' + B;
+    let cell = out.get(key);
+    if (!cell) { cell = { page: parseInt(P, 10), button: parseInt(B, 10), name: null, color: null, lines: [] }; out.set(key, cell); }
+    if (/^Name$/i.test(field)) cell.name = val;
+    else if (/^Color$/i.test(field)) cell.color = parseInt(val, 10) || 0;
+    else if (lineNo) cell.lines[parseInt(lineNo, 10) - 1] = val;
+  }
+  const cells = [...out.values()];
+  for (const c of cells) c.lines = c.lines.filter(x => x != null && x !== '');
+  // Only keep cells with actual content — Name-only ghosts happen when a
+  // social was deleted in-game (EQ leaves stale keys behind sometimes).
+  return cells.filter(c => (c.name && c.name.trim()) || c.lines.length);
+}
+
+// Index one snapshot's socials into ui_socials_index (replace-per-character).
+async function _indexSnapshotSocials({ character, ownerDiscord, snapshotId, files }) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled() || !character || !files) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  // The socials live in <Char>_pq.proj.ini (the file EQ reads); Sock_/Socials_
+  // variants are fallbacks some setups carry.
+  const names = Object.keys(files);
+  const lc = character.toLowerCase();
+  const pick =
+    names.find(n => n.toLowerCase() === `${lc}_pq.proj.ini`) ||
+    names.find(n => /^(sock|socials)_/i.test(n) && n.toLowerCase().includes(lc)) ||
+    names.find(n => new RegExp('^' + lc + '_.*\\.ini$', 'i').test(n));
+  if (!pick) return;
+  const socials = _extractSocialsFromIniText(files[pick]);
+  try {
+    await supabase.del('ui_socials_index',
+      `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(character)}`);
+    if (socials.length) {
+      const rows = socials.map(c => ({
+        guild_id: guildId, character, owner_discord_id: ownerDiscord || null,
+        page: c.page, button: c.button, name: c.name, color: c.color,
+        lines: c.lines, source_file: pick, snapshot_id: snapshotId || null,
+        updated_at: new Date().toISOString(),
+      }));
+      await supabase.insert('ui_socials_index', rows);
+    }
+    _scheduleCommonMacroRecompute();
+  } catch (err) {
+    console.warn('[ui-socials-index] index failed for', character, err?.message);
+  }
+}
+
+// Common-macro aggregation — normalized line-signature, counted by DISTINCT
+// character; only rows clearing COMMON_MACRO_MIN_CHARS get written. Debounced
+// so a burst of uploads recomputes once.
+let _commonMacroTimer = null;
+function _scheduleCommonMacroRecompute() {
+  if (_commonMacroTimer) return;
+  _commonMacroTimer = setTimeout(() => {
+    _commonMacroTimer = null;
+    _recomputeCommonMacros().catch(err => console.warn('[common-macros] recompute failed:', err?.message));
+  }, 30_000);
+}
+async function _recomputeCommonMacros() {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  // Page through the whole index (PostgREST caps a single response at 1000).
+  const all = [];
+  for (let from = 0; ; from += 1000) {
+    const rows = await supabase.select('ui_socials_index',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=character,name,lines&offset=${from}&limit=1000`);
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    all.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  const bySig = new Map();   // sig → { chars:Set, names:Map, lines }
+  for (const r of all) {
+    const lines = Array.isArray(r.lines) ? r.lines : [];
+    if (!lines.length) continue;
+    const sig = lines.join('\n').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!sig) continue;
+    let e = bySig.get(sig);
+    if (!e) { e = { chars: new Set(), names: new Map(), lines }; bySig.set(sig, e); }
+    e.chars.add(String(r.character).toLowerCase());
+    if (r.name) e.names.set(r.name, (e.names.get(r.name) || 0) + 1);
+  }
+  const out = [];
+  for (const [sig, e] of bySig) {
+    if (e.chars.size < COMMON_MACRO_MIN_CHARS) continue;
+    let bestName = null, bestN = 0;
+    for (const [n, c] of e.names) if (c > bestN) { bestN = c; bestName = n; }
+    out.push({
+      guild_id: guildId, sig: sig.slice(0, 500), name: bestName,
+      lines: e.lines, char_count: e.chars.size, updated_at: new Date().toISOString(),
+    });
+  }
+  await supabase.del('common_macros', `guild_id=eq.${encodeURIComponent(guildId)}`);
+  if (out.length) await supabase.insert('common_macros', out);
+  console.log(`[common-macros] recomputed: ${out.length} macros on ≥${COMMON_MACRO_MIN_CHARS} characters (from ${all.length} indexed socials)`);
+}
+
+// Startup backfill — characters whose LATEST snapshot predates the index get
+// decrypted (bot key) + indexed once. Runs 90s after boot, off the hot path.
+async function _backfillSocialsIndex() {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const { decryptBlob, isEncryptionEnabled } = require('./utils/bidCrypto');
+  if (!isEncryptionEnabled()) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  try {
+    const indexed = new Set();
+    const idxRows = await supabase.select('ui_socials_index',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=character&limit=1000`);
+    for (const r of (idxRows || [])) indexed.add(String(r.character).toLowerCase());
+    // Newest snapshots first; first hit per character wins.
+    const snaps = await supabase.select('ui_snapshots',
+      `select=id,character_name,owner_discord_id,created_at&order=created_at.desc&limit=500`);
+    const seen = new Set();
+    let done = 0;
+    for (const s of (snaps || [])) {
+      const cl = String(s.character_name || '').toLowerCase();
+      if (!cl || seen.has(cl) || indexed.has(cl)) continue;
+      seen.add(cl);
+      const full = await supabase.select('ui_snapshots', `id=eq.${s.id}&select=payload_enc&limit=1`);
+      const enc = Array.isArray(full) && full[0] && full[0].payload_enc;
+      if (!enc) continue;
+      const plain = decryptBlob(enc);
+      if (!plain) continue;
+      let parsed; try { parsed = JSON.parse(plain); } catch { continue; }
+      await _indexSnapshotSocials({
+        character: s.character_name, ownerDiscord: s.owner_discord_id,
+        snapshotId: s.id, files: parsed && parsed.files,
+      });
+      done++;
+    }
+    if (done) console.log(`[ui-socials-index] backfilled ${done} character(s) from latest snapshots`);
+  } catch (err) {
+    console.warn('[ui-socials-index] backfill failed:', err?.message);
+  }
+}
+setTimeout(() => { _backfillSocialsIndex().catch(() => {}); }, 90_000);
+
+// GET /api/agent/ui-pending-edits?characters=a,b — pending web-staged macro
+// edits for the agent's watched characters. Section allowlist enforced here
+// AND at insert time (web server action): only Socials/HotButtons keys ever
+// reach an agent, so a compromised row can't touch arbitrary ini sections.
+async function _handleAgentUiPendingEdits(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  let chars = [];
+  try {
+    chars = (new URL(req.url, 'http://x').searchParams.get('characters') || '')
+      .split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
+  } catch { /* */ }
+  if (!chars.length) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ edits: [] })); }
+  const inList = chars.map(c => `"${c.replace(/"/g, '')}"`).join(',');
+  const rows = await supabase.select('ui_pending_edits',
+    `guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending&character=in.(${encodeURIComponent(inList)})` +
+    `&select=id,character,target_file,edits,created_at&order=created_at.asc&limit=50`).catch(() => []);
+  const safe = (Array.isArray(rows) ? rows : []).map(r => ({
+    ...r,
+    edits: (Array.isArray(r.edits) ? r.edits : []).filter(e =>
+      e && /^(Socials|HotButtons)$/.test(String(e.section)) && /^Page\d+Button\d+/.test(String(e.key))),
+  }));
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ edits: safe }));
+}
+
+// POST /api/agent/ui-edit-result { id, ok, error? } — agent reports an apply.
+// On success we also merge the edit into ui_socials_index so /me/ui reflects
+// it immediately instead of waiting for the next UI Studio backup.
+async function _handleAgentUiEditResult(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  let body = '';
+  await new Promise(resolve => { req.on('data', c => { body += c; if (body.length > 64 * 1024) { req.destroy(); resolve(); } }); req.on('end', resolve); req.on('error', resolve); });
+  let p; try { p = JSON.parse(body); } catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+  const id = parseInt(p && p.id, 10);
+  if (!Number.isFinite(id)) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const ok = !!(p && p.ok);
+  await supabase.update('ui_pending_edits', `id=eq.${id}&guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending`, {
+    status: ok ? 'applied' : 'failed',
+    error: ok ? null : String(p.error || 'apply failed').slice(0, 400),
+    applied_at: new Date().toISOString(),
+  }).catch(() => {});
+  if (ok) {
+    // Merge into the socials index. Group the row's edits by (page,button).
+    try {
+      const rows = await supabase.select('ui_pending_edits', `id=eq.${id}&select=character,edits,owner_discord_id&limit=1`);
+      const row = Array.isArray(rows) && rows[0];
+      if (row && Array.isArray(row.edits)) {
+        const byCell = new Map();
+        for (const e of row.edits) {
+          const mk = String(e.key || '').match(/^Page(\d+)Button(\d+)(Name|Color|Line(\d+))$/i);
+          if (!mk || String(e.section) !== 'Socials') continue;
+          const ck = mk[1] + '|' + mk[2];
+          if (!byCell.has(ck)) byCell.set(ck, { page: parseInt(mk[1], 10), button: parseInt(mk[2], 10), sets: [] });
+          byCell.get(ck).sets.push({ field: mk[3], lineNo: mk[4] ? parseInt(mk[4], 10) : null, value: e.value });
+        }
+        for (const cell of byCell.values()) {
+          const cur = await supabase.select('ui_socials_index',
+            `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(row.character)}&page=eq.${cell.page}&button=eq.${cell.button}&limit=1`);
+          const existing = Array.isArray(cur) && cur[0];
+          const next = {
+            guild_id: guildId, character: row.character,
+            owner_discord_id: (existing && existing.owner_discord_id) || row.owner_discord_id || null,
+            page: cell.page, button: cell.button,
+            name: existing ? existing.name : null,
+            color: existing ? existing.color : 0,
+            lines: existing && Array.isArray(existing.lines) ? existing.lines.slice() : [],
+            source_file: (existing && existing.source_file) || null,
+            snapshot_id: (existing && existing.snapshot_id) || null,
+            updated_at: new Date().toISOString(),
+          };
+          for (const s of cell.sets) {
+            if (/^Name$/i.test(s.field)) next.name = s.value;
+            else if (/^Color$/i.test(s.field)) next.color = parseInt(s.value, 10) || 0;
+            else if (s.lineNo) {
+              if (s.value == null) next.lines[s.lineNo - 1] = null;
+              else next.lines[s.lineNo - 1] = String(s.value);
+            }
+          }
+          next.lines = next.lines.filter(x => x != null && x !== '');
+          await supabase.upsert('ui_socials_index', [next], 'guild_id,character,page,button');
+        }
+        _scheduleCommonMacroRecompute();
+      }
+    } catch (err) {
+      console.warn('[ui-edit-result] index merge failed:', err?.message);
+    }
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true }));
+}
+
 // The local agent dashboard panels show LOCAL (this-session) data. Members
 // can click 🌐 server on a panel to see the SERVER-AGGREGATED view of the
 // same scope. The agent calls GET /api/agent/server-panel/<key> with
@@ -4876,6 +5140,10 @@ async function _handleAgentUiLayoutUpload(req, res) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'insert failed' }));
   }
+  // Index this snapshot's [Socials] for /me/ui while we still hold the
+  // plaintext (the stored payload is encrypted — the web can't read it).
+  _indexSnapshotSocials({ character, ownerDiscord, snapshotId: written[0].id, files })
+    .catch(err => console.warn('[ui_layout] socials index failed:', err?.message));
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, id: written[0].id, pending_link: pendingLink }));
 }
@@ -10689,6 +10957,24 @@ http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/ui-pending-edits')) {
+    try { return await _handleAgentUiPendingEdits(req, res); }
+    catch (err) {
+      console.error('[ui-pending-edits] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/ui-edit-result') {
+    try { return await _handleAgentUiEditResult(req, res); }
+    catch (err) {
+      console.error('[ui-edit-result] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/agent/ui_layout?')) {
     try { return await _handleAgentUiLayoutList(req, res); }
     catch (err) {

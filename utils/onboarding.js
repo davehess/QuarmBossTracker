@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.140': [
+    '**UI Studio comes to wolfpack.quest — `/me/ui`.** Your backed-up UI layouts and **social macros**, viewable and editable from anywhere: edit or add a macro on the web, and Mimic on the machine that plays that character applies it to the ini automatically once the character is **logged out** (safe from EQ\'s camp-time ini rewrite; needs Mimic 1.5.2+). Also on the page: the guild\'s **common-macro library** — any macro carried by 3+ characters (below that your macros stay private) — and the same suggested-macro catalog that ships in Mimic\'s UI Studio (CH chain call, DA announce, bard stopsong→click→melody clickies…). Macro data comes from your UI Studio backups: run Mimic → UI Studio → ☁ Backup once per character to fill it in (Uilnayar 2026-07-06).',
+  ],
   '3.0.139': [
     '**Overlay thresholds are now live-tunable — no redeploy, no Mimic update.** Officers get a new `/admin/overlays` page on wolfpack.quest with the knobs that keep needing raid-time adjustment: Extended Target hurt %, hurt-duration, stale-mob grace, off-tank freshness, same-name split tolerance, plus (with Mimic 1.5.0+) the off-heal hurt cutoff and CH-chain GO! flash duration. Changes reach the bot within ~60s and every running Mimic within ~90s. Empty field = built-in default; values clamp to safe ranges (Uilnayar 2026-07-06).',
   ],
