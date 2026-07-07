@@ -6,21 +6,47 @@
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { unstable_cache } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-async function loadCounters() {
-  const sb = supabaseAdmin();
-  // value is `number | string` so cards like "Longest Dire Charm" can show
-  // a pre-formatted "4h 23m" string while normal counter cards stay numeric.
-  // The renderer calls value.toLocaleString() which works for both.
-  const counters: { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string }[] = [];
+// value is `number | string` so cards like "Longest Dire Charm" can show
+// a pre-formatted "4h 23m" string while normal counter cards stay numeric.
+// The renderer calls value.toLocaleString() which works for both.
+type Counter = { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string };
+type Sb = ReturnType<typeof supabaseAdmin>;
 
-  // Standalone — fetched separately so the Kyinen execution card can render
-  // with its own gold-frame styling above the normal counter grid.
+// Each card is an independent SECTION closure; loadCounters runs them ALL
+// CONCURRENTLY and concatenates results in declaration order. This page used
+// to be one long sequential await chain — ~25 query round-trips SUMMED into
+// the load time, and two of them scanned growing tables (the 2026-07-07
+// regression: chat_messages hit 284k rows → the Tunare ILIKE scans cost ~1.5s
+// EACH; encounter_combat_rollup hit 28k rows → the dirge card shipped 20k
+// jsonb rows per load AND silently under-counted past its .limit). Those two
+// now use SQL-side RPCs (fun_tunare_stats / fun_dirge_damage, see the
+// 20260707050000 migration); everything else just runs in parallel.
+const SECTIONS: Array<(sb: Sb, counters: Counter[]) => Promise<void>> = [];
+
+// Dirge totals — SQL-side aggregate over encounter_combat_rollup's by_skill
+// jsonb (fun_dirge_damage RPC, ~1.2s), cached 10 min: the number only moves
+// when a bard uploads a new fight, so nearly every page view pays ~0 instead
+// of the old 20k-row jsonb fetch (which was also silently truncated once the
+// table outgrew its .limit(20000) — 28k rows as of 2026-07-07).
+const getDirgeTotals = unstable_cache(
+  async () => {
+    const { data } = await supabaseAdmin().rpc('fun_dirge_damage');
+    return (Array.isArray(data) ? data : []) as { character_name: string; dmg: number; hits: number }[];
+  },
+  ['fun-dirge-damage'],
+  { revalidate: 600 },
+);
+
+// Standalone — fetched separately so the Kyinen execution card can render
+// with its own gold-frame styling above the normal counter grid.
+async function loadKyinen(sb: Sb) {
   let kyinenExecutions = 0;
   let kyinenLatest: string | null = null;
   let kyinenZone:   string | null = null;
@@ -36,7 +62,10 @@ async function loadCounters() {
     kyinenLatest = data?.[0]?.killed_at ?? null;
     kyinenZone   = data?.[0]?.zone      ?? null;
   } catch { /* table not yet populated — show 0 */ }
+  return { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone };
+}
 
+SECTIONS.push(async (sb, counters) => {
   // Peopleslayer LD card — count + damage he logged in fights he was ACTUALLY
   // disconnected during. The joke: he goes linkdead mid-fight and his character
   // keeps swinging. The earlier version summed his total_damage across EVERY
@@ -157,7 +186,9 @@ async function loadCounters() {
     });
     void err;
   }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // Tunare mentions from Naggato + alts. Two queries: first the family name
   // list, then the chat scan.
   try {
@@ -168,20 +199,15 @@ async function loadCounters() {
       .or('main_name.eq.Naggato,name.eq.Naggato');
     const familyNames = (family ?? []).map((r: { name: string }) => r.name);
     if (familyNames.length > 0) {
-      // PostgREST doesn't have a direct case-insensitive IN, so we build an
-      // .or() chain of speaker.ilike for each family member.
-      const orFilter = familyNames.map(n => `speaker.ilike.${n}`).join(',');
-      // Two queries: total invocations + most recent for the "N days since"
-      // rant timer. Running in parallel keeps the page snappy.
-      const [{ count }, { data: latest }] = await Promise.all([
-        sb.from('chat_messages')
-          .select('*', { count: 'exact', head: true })
-          .ilike('text', '%tunare%').or(orFilter),
-        sb.from('chat_messages')
-          .select('ts').ilike('text', '%tunare%').or(orFilter)
-          .order('ts', { ascending: false }).limit(1).maybeSingle(),
-      ]);
-      const lastTs = latest?.ts ? new Date(latest.ts) : null;
+      // ONE indexed RPC (count + latest together). The old version ran two
+      // parallel `text ILIKE '%tunare%'` scans through PostgREST — each a
+      // full seq scan of chat_messages, ~1.5s apiece by the time the table
+      // hit 284k rows. fun_tunare_stats walks the lower(speaker) index to
+      // touch only the family's rows: ~18ms measured.
+      const { data: stats } = await sb.rpc('fun_tunare_stats', { p_names: familyNames });
+      const row = (Array.isArray(stats) ? stats[0] : stats) as { invocations: number | null; last_ts: string | null } | undefined;
+      const count = Number(row?.invocations ?? 0);
+      const lastTs = row?.last_ts ? new Date(row.last_ts) : null;
       const days   = lastTs ? Math.floor((Date.now() - lastTs.getTime()) / 86400000) : null;
       const sub = days === null
         ? 'no Tunare invocations on record yet — first rant resets the clock.'
@@ -210,7 +236,9 @@ async function loadCounters() {
       sub: 'query failed: ' + (err instanceof Error ? err.message : String(err)),
     });
   }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── Malthur's Bounty — stacks of food + water distributed. Recipient-side
   // detector means each member's agent reports what THEY received; summing
   // approximates total stacks Malthur put out. Plain captured count (the
@@ -239,7 +267,9 @@ async function loadCounters() {
     });
     void err;
   }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── Longest Dire Charm — for the bragging-rights enchanter who walked off
   //    with a charmed mob and held it the longest. Pulls from charm_sessions
   //    where is_dire_charm=true; pick the row with the highest duration_sec.
@@ -280,7 +310,9 @@ async function loadCounters() {
   } catch (err) {
     void err;
   }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── Lord of Ire vanquished — counts every Plane of Hate instance boss kill
   // 🐉 Dragon Punch — monk "Stunning Kick / Force of Disruption" proc card.
   // The proc line "<target> is stricken by the force of a dragon." names only
@@ -309,7 +341,9 @@ async function loadCounters() {
       });
     }
   } catch (err) { void err; }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── 🎵 Dirge damage — bard targeted-AoE damage songs (Denon's Desperate
   //    Dirge et al.) ────────────────────────────────────────────────────────
   // DAMAGE-driven, not cast-count-driven. The old card gated on a
@@ -324,27 +358,15 @@ async function loadCounters() {
   // number grows as more bards upload. Cast count is parked until/if a
   // bystander-side "begins singing Dirge of …" detector ships.
   try {
-    const { data: rollupRows } = await sb
-      .from('encounter_combat_rollup')
-      .select('character_name, by_skill')
-      .limit(20000);
-    type RollupRow = { character_name: string; by_skill: Record<string, { hits?: number; dmg?: number }> | null };
+    const totals = await getDirgeTotals();
     let dirgeDamage = 0;
     let dirgeHits = 0;
     const byBard = new Map<string, number>();
-    for (const r of (rollupRows ?? []) as RollupRow[]) {
-      const bs = r.by_skill || {};
-      let charDmg = 0;
-      for (const k of Object.keys(bs)) {
-        if (k.toLowerCase().includes('dirge')) {
-          charDmg   += Number(bs[k]?.dmg)  || 0;
-          dirgeHits += Number(bs[k]?.hits) || 0;
-        }
-      }
-      if (charDmg > 0) {
-        dirgeDamage += charDmg;
-        byBard.set(r.character_name, (byBard.get(r.character_name) ?? 0) + charDmg);
-      }
+    for (const r of totals) {
+      const dmg = Number(r.dmg) || 0;
+      dirgeDamage += dmg;
+      dirgeHits   += Number(r.hits) || 0;
+      if (dmg > 0) byBard.set(r.character_name, (byBard.get(r.character_name) ?? 0) + dmg);
     }
     const ranked = [...byBard.entries()].sort((a, b) => b[1] - a[1]);
     if (dirgeDamage > 0) {
@@ -370,7 +392,9 @@ async function loadCounters() {
   // (Avg-haste card removed 2026-06-22 per owner request — it was a noisy
   // "right now" snapshot that depended on two specific buffs being live and
   // mostly read "—".)
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── 😈 Lord of Ire vanquished ─────────────────────────────────────────────
   // by a Wolf Pack member. Sub-text shows the top killer + their tally so the
   // bragging rights are explicit. Source: fun_events emitted from the bot's
@@ -408,7 +432,9 @@ async function loadCounters() {
   } catch (err) {
     void err;
   }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── 🤬 Pottymouth award — chat-filter asterisk redactions ────────────────
   // Fires when the bot sees a chat line where EQ's filter scrubbed a word with
   // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (Uilnayar 2026-06-26.)
@@ -433,7 +459,9 @@ async function loadCounters() {
         : 'no asterisks logged yet — fires when EQ filters a word ("f*** zerg")',
     });
   } catch (err) { void err; }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── 🍺 Drunkard award — multiple EQ slur variants of the same line ───────
   // EQ's drunk effect mutates a broadcast's letters per-receiver, so the bot
   // sees a different version per agent. The bot's fuzzy chat dedup catches
@@ -462,7 +490,9 @@ async function loadCounters() {
         : 'no slurred broadcasts yet — fires when ≥2 agents see different mutations of one line',
     });
   } catch (err) { void err; }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── 💀 Days since Moash died to enrage ───────────────────────────────────
   // Loud-and-tall card with the date bolded + the previous-best streak
   // strikethrough'd when broken. Source: fun_events emitted by the
@@ -523,7 +553,9 @@ async function loadCounters() {
       });
     }
   } catch (err) { void err; }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── ⚡ Mana donated to casters — necromancer "Subversion" twitches ─────────
   // Two signals (agent v3.1.50 caster-side, v3.1.51 recipient-side):
   //   • `mana_twitch` (caster-side) — exact: reagent_qty = mana gifted per cast
@@ -574,7 +606,9 @@ async function loadCounters() {
       });
     }
   } catch (err) { void err; }
+});
 
+SECTIONS.push(async (sb, counters) => {
   // ── 🧠 Mind Wrack — enemy mana burned ─────────────────────────────────────
   // Caster-side `mind_wrack_cast` (one per cast, the true count) + recipient-side
   // `mind_wrack_recourse` ("You feel foreign mana strengthen your mind." — the
@@ -612,8 +646,21 @@ async function loadCounters() {
       });
     }
   } catch (err) { void err; }
+});
 
-  return { counters, kyinen: { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone } };
+async function loadCounters() {
+  const sb = supabaseAdmin();
+  const kyinenP = loadKyinen(sb);
+  // All sections in flight at once — page latency ≈ the slowest single
+  // section instead of the sum of every query. Each section already has its
+  // own try/catch; this outer guard is belt-and-suspenders so one bad card
+  // can never blank the page.
+  const results = await Promise.all(SECTIONS.map(async fn => {
+    const out: Counter[] = [];
+    try { await fn(sb, out); } catch { /* card omitted */ }
+    return out;
+  }));
+  return { counters: results.flat(), kyinen: await kyinenP };
 }
 
 export default async function FunPage() {
