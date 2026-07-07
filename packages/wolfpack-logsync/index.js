@@ -12898,6 +12898,25 @@ function startWebDashboard(port) {
       }
       // "Buffs feel laggy" click from the buff-queue overlay. Drops the agent
       // into snappy mode for 60s AND forwards the click to the bot for audit.
+      // "✓ cured" from the buff-queue overlay → raid-wide manual clear mark.
+      if (req.url === '/api/debuff-clear' && req.method === 'POST') {
+        let dcBody = '';
+        req.on('data', c => { dcBody += c; if (dcBody.length > 8192) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(dcBody || '{}');
+            const target = String(p.target || '').trim().slice(0, 64);
+            const spell  = String(p.spell_name || '').trim().slice(0, 128);
+            if (target && spell) reportDebuffClear(target, spell);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: !!(target && spell) }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+          }
+        });
+        return;
+      }
       if (req.url === '/api/buff-lag-report' && req.method === 'POST') {
         let character = '';
         try {
@@ -18707,6 +18726,38 @@ function fetchExtendedTarget(character) {
 //   2. Forward the click to the bot so we can audit lag-felt timestamps
 //      vs the throttle config in Supabase. Fire-and-forget; if the bot is
 //      down the local snappy mode still works.
+// "✓ cured" click from the buff-queue overlay — forwards a raid-wide manual
+// debuff-clear mark to the bot (see bot /api/agent/debuff-clear: only
+// suppresses INFERRED rows, re-landings resurrect the chip), then flushes the
+// local queue cache so the chip disappears on the next overlay tick instead
+// of waiting out the 3s proxy TTL.
+function reportDebuffClear(target, spellName) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  try {
+    const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/debuff-clear');
+    const u   = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify({ target, spell_name: spellName });
+    const req = mod.request({
+      method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
+      headers: {
+        'Authorization': 'Bearer ' + opts.token,
+        'Content-Type':  'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent':    `wolfpack-logsync/${AGENT_VERSION}`,
+      },
+      timeout: 5000,
+    }, (res) => {
+      res.resume();
+      res.on('end', () => { try { _buffQueueCache.clear(); } catch { /* */ } });
+    });
+    req.on('error',   () => {});
+    req.on('timeout', () => req.destroy());
+    req.write(body); req.end();
+  } catch { /* best-effort — worst case the chip lingers until catalog expiry */ }
+}
+
 function reportBuffLag(character) {
   _buffQueueSnappyUntil = Date.now() + SNAPPY_WINDOW;
   const opts = _uploadOpts;

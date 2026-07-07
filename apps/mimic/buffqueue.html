@@ -57,6 +57,13 @@
   .row .chip.avatar  {background:rgba(240,180,41,0.18);border-color:rgba(240,180,41,0.5);color:#f0b429}
   .row .chip.ct      {background:rgba(126,231,135,0.15);border-color:rgba(126,231,135,0.4);color:#7ee787}
   .row .chip.rec     {background:rgba(248,113,113,0.18);border-color:rgba(248,113,113,0.5);color:#fca5a5}
+  /* "✓ cured" — manual raid-wide clear for INFERRED debuff chips (neither
+     party on Mimic → nothing can observe the cure; the button is the human
+     fallback). Subtle until hover so the chip stays readable. */
+  .ch .chClear{background:none;border:1px solid rgba(126,231,135,0.4);color:#7ee787;
+    border-radius:3px;font-size:9px;line-height:1;padding:0 3px;margin-left:3px;
+    cursor:pointer;opacity:0.55;vertical-align:middle}
+  .ch .chClear:hover{opacity:1;background:rgba(126,231,135,0.18)}
   /* Inferred rows dim slightly to differentiate from authoritative Mimic data. */
   /* Inferred rows scale to ~73% of the main surface alpha so they read as faded. */
   .row.inferred{background:rgb(8 5 16 / calc(var(--bg-alpha) * 0.73))}
@@ -247,6 +254,42 @@
   // BUFF_QUEUE_TTL into 500ms-snappy mode for 60s AND forwards the click to
   // the bot for audit. The overlay's own 1.5s tick is unchanged — the cache
   // dropping is what makes ticks fetch fresh data.
+  // Delegated "✓ cured" handling — the rows container is rebuilt every poll,
+  // so bind ONCE on #body. mouseover/out delegation keeps the click-through
+  // handshake honest for buttons that didn't exist at bind time.
+  (function(){
+    var bodyEl = document.getElementById('body');
+    if (!bodyEl) return;
+    bodyEl.addEventListener('mouseover', function(e){
+      if (e.target && e.target.classList && e.target.classList.contains('chClear')) {
+        try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
+      }
+    });
+    bodyEl.addEventListener('mouseout', function(e){
+      if (e.target && e.target.classList && e.target.classList.contains('chClear')) {
+        try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
+      }
+    });
+    bodyEl.addEventListener('click', function(e){
+      var btn = e.target && e.target.closest ? e.target.closest('.chClear') : null;
+      if (!btn) return;
+      e.preventDefault(); e.stopPropagation();
+      var target = btn.getAttribute('data-target');
+      var spell  = btn.getAttribute('data-spell');
+      if (!target || !spell) return;
+      // Optimistic: strike the chip immediately; the bot-side mark makes it
+      // stick raid-wide on the next queue refresh.
+      var chip = btn.closest('.ch');
+      if (chip) { chip.style.opacity = '0.35'; chip.style.textDecoration = 'line-through'; }
+      btn.disabled = true;
+      fetch('http://127.0.0.1:'+PORT+'/api/debuff-clear', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: target, spell_name: spell }),
+      }).catch(function(){});
+    });
+  })();
+
   var lagBtn = document.getElementById('lag-btn');
   if (lagBtn) {
     lagBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
@@ -396,7 +439,14 @@
           chipStyle = 'opacity:0.5;text-decoration:line-through';
           cured = ' <span style="color:#7ee787;text-decoration:none" title="'+esc(c.cured_by||'someone')+' is curing this — skip it">✓ '+esc(c.cured_by||'curing')+(c.cure_secs ? ' '+c.cure_secs+'s' : '')+'</span>';
         }
-        chips += '<span class="ch" style="'+chipStyle+'">'+esc(c.name)+t+cu+sl+cured+'</span>';
+        // Manual clear — only meaningful on 🔍 inferred rows (a Mimic-verified
+        // player's own Zeal list governs; the bot ignores marks for them).
+        var clearBtn = '';
+        if (r.inferred && !c.being_cured) {
+          clearBtn = '<button class="chClear" data-target="'+esc(r.name)+'" data-spell="'+esc(c.name)+'"'
+                   + ' title="Mark cured — clears this chip from the WHOLE raid\'s queues (shown because '+esc(r.name)+' isn\'t on Mimic, so no agent can see the cure land). Comes back automatically if it lands again.">✓</button>';
+        }
+        chips += '<span class="ch" style="'+chipStyle+'">'+esc(c.name)+t+cu+sl+cured+clearBtn+'</span>';
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {
