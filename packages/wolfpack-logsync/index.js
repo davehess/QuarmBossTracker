@@ -16109,6 +16109,14 @@ function parseChatLine(line, selfName) {
       text,
       ts:  ts ? ts.toISOString() : new Date().toISOString(),
       who: who ? { name: who.name, level: who.level, race: who.race, class: who.class } : null,
+      // Attribution provenance. 'line' = the speaker's name was IN the log
+      // line ("Wabumkin tells the guild") — server-authoritative, can't be
+      // wrong. 'log_name' = a self-form line ("You say to your guild") whose
+      // speaker is GUESSED from the log FILENAME — wrong whenever the EQ
+      // client keeps writing to the previous character's log after a swap
+      // (the Starrburst/Dant/Bardtholemu ghost-rename bug, 2026-07-07). The
+      // bot uses this to let authoritative copies win over filename guesses.
+      speaker_source: isSelf ? 'log_name' : 'line',
     };
   }
   return null;
@@ -16331,6 +16339,82 @@ function _crossLogDupe(fp) {
   const exp = _crossLogSeen.get(fp);
   if (exp && exp > now) return true;
   _crossLogSeen.set(fp, now + CROSSLOG_TTL_MS);
+  return false;
+}
+
+// ── Chat speaker truth (stale-log-filename fix) ─────────────────────────────
+// Self-form chat lines ("You say to your guild") carry NO name — the speaker
+// is guessed from the log FILENAME. But the EQ client keeps appending to the
+// PREVIOUS character's log after a character swap, so that guess is wrong for
+// the whole post-swap session: Jankzer's raid chat posted as "Dant" all night,
+// Fargan's CE calls as "Bardtholemu", Wabumkin as "Starrburst" (2026-07-07 —
+// confirmed in chat_messages: the ghost copy always comes from the speaker's
+// own machine; every other observer's third-person copy has the true name).
+// Two recovery layers here, plus a bot-side heal for whatever still escapes:
+//
+// 1. _resolveSelfChatSpeaker — Zeal knows the client's REAL character name
+//    (every pipe message carries it; _zealState is keyed by it). If the log's
+//    filename character is NOT a live Zeal character, the line was written by
+//    a live client with a stale-named log — re-attribute when the mapping is
+//    unambiguous. Watch mode only (backfill replays old sessions where the
+//    CURRENT Zeal state proves nothing).
+function _resolveSelfChatSpeaker(fileChar) {
+  const now = Date.now();
+  const fileLc = String(fileChar || '').toLowerCase();
+  const live = [];
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (st && (now - (st.updatedAt || 0)) <= 90_000) live.push(ch);
+  }
+  if (live.length === 0) return fileChar;                              // no Zeal — can't improve
+  if (live.some(ch => ch.toLowerCase() === fileLc)) return fileChar;   // filename char IS live — trust it
+  if (live.length === 1) return live[0];                               // single client — must be them
+  // Multiple live clients: the true speaker is the live character whose OWN
+  // log is silent (their client is writing into fileChar's file instead).
+  const activeLogChars = new Set();
+  for (const w of (stats.watchedLogs || [])) {
+    if (w && w.lastSeen && (now - w.lastSeen) <= 3 * 60_000) activeLogChars.add(String(w.character || '').toLowerCase());
+  }
+  const candidates = live.filter(ch => !activeLogChars.has(ch.toLowerCase()));
+  return candidates.length === 1 ? candidates[0] : fileChar;
+}
+// 2. Cross-log arbitration — within one machine, the same utterance can land
+//    in several watched logs: self-form in the (possibly stale-named) sender
+//    log, third-person in every other log. The third-person copy is
+//    authoritative. Instead of blind first-seen-wins dropping (_crossLogDupe),
+//    remember the pending buffered message per fingerprint and UPGRADE its
+//    speaker in place when an authoritative copy shows up before flush.
+//    Returns true when the new message should be dropped (dupe/absorbed).
+const _chatFpSeen = new Map();   // fp → { at, msg } (msg = object pushed to chatBuffer)
+function _chatCrossLogArbitrate(fp, chatMsg) {
+  const now = Date.now();
+  if (_chatFpSeen.size > 500) {
+    for (const [k, v] of _chatFpSeen) if (now - v.at > CROSSLOG_TTL_MS) _chatFpSeen.delete(k);
+  }
+  const seen = _chatFpSeen.get(fp);
+  if (!seen || (now - seen.at) > CROSSLOG_TTL_MS) {
+    _chatFpSeen.set(fp, { at: now, msg: chatMsg });
+    return false;                                    // first sighting — keep it
+  }
+  seen.at = now;
+  const prev = seen.msg;
+  const sameSpeaker = String(prev.speaker || '').toLowerCase() === String(chatMsg.speaker || '').toLowerCase();
+  if (sameSpeaker) return true;                      // plain duplicate
+  const prevAuthoritative = prev.speaker_source === 'line';
+  const newAuthoritative  = chatMsg.speaker_source === 'line';
+  if (!prevAuthoritative && newAuthoritative) {
+    // Filename-guessed copy got buffered first; the in-line name wins. Mutate
+    // in place — if it already flushed this is a harmless no-op and the
+    // bot-side heal covers it.
+    prev.speaker = chatMsg.speaker;
+    prev.who = chatMsg.who;
+    prev.speaker_source = 'line';
+    return true;
+  }
+  if (prevAuthoritative && !newAuthoritative) return true;   // ghost self-copy of an already-correct line
+  // Both authoritative (or both guesses) with different names — two people
+  // genuinely typed the same text (raid "111" count-offs). Keep both.
+  _chatFpSeen.set(fp, { at: now, msg: chatMsg });
   return false;
 }
 // _lockoutBuffer is declared above near parseSllLine (module-level _lockoutBuffer)
@@ -20769,18 +20853,33 @@ async function main() {
         // Guild / raid chat relay
         const chatMsg = parseChatLine(line, b.character);
         if (chatMsg) {
+          // Self-form speaker is a filename guess — after a character swap the
+          // client keeps writing the OLD character's log, so ask Zeal (which
+          // knows the client's real character) before trusting it. See
+          // _resolveSelfChatSpeaker.
+          if (chatMsg.speaker_source === 'log_name') {
+            const resolved = _resolveSelfChatSpeaker(b.character);
+            if (resolved && resolved.toLowerCase() !== String(chatMsg.speaker || '').toLowerCase()) {
+              const w = whoData.get(resolved.toLowerCase()) || null;
+              console.log(`[chat] self line in ${b.character}'s log, but ${b.character} isn't a live Zeal character — re-attributed to ${resolved}`);
+              chatMsg.speaker = resolved;
+              chatMsg.who = w ? { name: w.name, level: w.level, race: w.race, class: w.class } : null;
+              chatMsg.speaker_source = 'zeal';
+            }
+          }
           // Anyone speaking in guild/raid chat is, by definition, a player —
           // add to the whitelist so their incoming damage / deaths show up on
           // the Tank dashboard (NPCs never use /gu or /rs).
           confirmPlayer(chatMsg.speaker);
-          // Cross-log dedup: same channel + normalized text within 90s = the
-          // same message captured from this person's main + alt logs (self-
-          // form in one, bystander-form in the other). Speaker is intentionally
-          // excluded from the fingerprint since the two forms resolve to
-          // different names ("Wabumkin" via self vs "Adiwen" if the alt log
-          // also carried a self-form). Drop the duplicate.
+          // Cross-log arbitration: same channel + normalized text within 90s =
+          // the same message captured from this person's main + alt logs
+          // (self-form in one, bystander-form in the others). The speaker is
+          // excluded from the fingerprint since the two forms can resolve to
+          // different names — and when they DO disagree, the in-line
+          // (third-person) name is server truth and upgrades a buffered
+          // filename-guessed copy in place. See _chatCrossLogArbitrate.
           const _chatFp = `chat|${chatMsg.channel}|${String(chatMsg.text).toLowerCase().replace(/\s+/g, ' ').trim()}`;
-          if (!_sourceExcluded && !_crossLogDupe(_chatFp)) chatBuffer.push(chatMsg);
+          if (!_sourceExcluded && !_chatCrossLogArbitrate(_chatFp, chatMsg)) chatBuffer.push(chatMsg);
           return;
         }
 
