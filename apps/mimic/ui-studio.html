@@ -759,6 +759,19 @@
     // Default OFF — these are the big chat-window clutter the user doesn't
     // arrange (one per person who's ever /tell'd them).
     { key:'tells',   label:'🗨 Tell windows',  on:false, test:function(){ return false; } },
+    // Windows the Quarm (Titanium-era) client never shows IN-GAME: character-
+    // select / login-screen surfaces (the zone selector lives on the char
+    // select screen), transient system dialogs nobody arranges, and live-era
+    // windows that don't exist on this emu (mail, barter, tribute,
+    // marketplace, mercenaries…). EQ still writes position sections for all
+    // of them, which is why they appeared on the stage as arrangeable
+    // windows (Uilnayar 2026-07-06: "plenty of windows that show up in the
+    // UI studio that are not displayed during the game"). Default OFF —
+    // toggle the category on if you really need to move one. Extend the
+    // pattern as more are reported.
+    { key:'offscreen', label:'🚫 Not in-game / popups', on:false, test:function(n){
+        return /^(zoneselect|characterlist|charselect|charactercreate|charcreate|serverselect|login|connection|cursorattachment|confirmationdialog|largedialog|editlabel|colorpicker|fileselection|videomodes|bugreport|betaqa|tipwnd|tipwindow|loadskin|alarmwnd|respawnwnd|aggrometer|zoneguide|zonepath|blockedbuff|storewnd|marketplace|claimwnd|mailwnd|mailcompose|mailaddress|mailignore|barter|tribute|guildbank|dzmembers|expedition|taskoverlay|adventure|leadership|pointmerchant|mercenary|overseer|voicemacro)/i.test(n);
+      } },
     { key:'group',   label:'👥 Group',         on:true,  test:function(n){ return /^group/i.test(n); } },
     { key:'raid',    label:'⚔️ Raid',          on:true,  test:function(n){ return /^raid/i.test(n); } },
     { key:'player',  label:'❤️ Player / Pet',  on:true,  test:function(n){ return /^player|^pet/i.test(n); } },
@@ -1473,6 +1486,53 @@
     openSocialsInspector(res);
   });
 
+  // ── Macro suggestion catalog (Uilnayar 2026-07-06) ────────────────────────
+  // Seeded from the raid's REAL callout macros observed in raid chat — the
+  // same line shapes the agent's CH-chain / DA-broadcast / healer-mana
+  // trackers parse — plus clicky templates (incl. the bard stopsong→click→
+  // melody-resume pattern). {PLACEHOLDERS} are for the user to replace before
+  // saving; %T / %mana are expanded by EQ/Zeal at runtime and stay literal.
+  // btnName = the in-game social button label (EQ caps these short).
+  var MACRO_SUGGESTIONS = [
+    { id:'ch_num',   btnName:'CH CALL',  name:'CH call (numbered chain)', who:'Cleric',
+      lines:['/rs {NUM} - CH - %T - Mana: %mana'],
+      note:'The numbered chain call the CH Chain overlay reads. Replace {NUM} with your slot (001, 002…). %T = your target (the tank); %mana = your mana % (Zeal).' },
+    { id:'ch_plain', btnName:'CH INC',   name:'CH announce (unnumbered)', who:'Cleric',
+      lines:['/rs CH < %T >   %mana mana.'],
+      note:'Unnumbered CH announce (Mcdorf style) — the healer-mana tracker parses this shape too.' },
+    { id:'da',       btnName:'DA UP',    name:'DA announce (timed)', who:'Tank / Cleric',
+      lines:['/pause 120, /rs >> DA up << 18 secs',
+             '/pause 55, /rs >> DA DOWN IN 6 SECS <<',
+             '/rs >> DA DOWN <<'],
+      note:'Divine Aura call (Naggato style) — feeds the Command Center DA board. Hit it the moment DA lands. /pause is tenths of a second; tune 120/55 to your DA duration (18s shown).' },
+    { id:'tanking',  btnName:'TANKING',  name:'TANKING announce', who:'Tank',
+      lines:['/rs TANKING - %T - HEALS FAST!'],
+      note:'Tells healers who you actually have (Ashieron style). %T = your current target.' },
+    { id:'assist',   btnName:'ASSIST',   name:'Assist call (MA)', who:'Main assist',
+      lines:['/rs ASSIST ME ON ~<={ %T }=>~'],
+      note:'Assist banner (Damyu style) — fires with your current target.' },
+    { id:'assistma', btnName:'HIT MA',   name:'/assist the MA', who:'Everyone',
+      lines:['/assist {MA}'],
+      note:'Replace {MA} with your main assist\'s name (the raid\'s observed one is literally "/assist Gump").' },
+    { id:'mana',     btnName:'MANA',     name:'Mana check-in', who:'Healers / casters',
+      lines:['/rs %mana - {CLASS}'],
+      note:'Feeds the Command Center healer-mana board (Mcdorf\'s "44% - Cleric"). Replace {CLASS}; %mana = Zeal.' },
+    { id:'slow',     btnName:'SLOWED',   name:'Slow landed', who:'Shaman',
+      lines:['/rs %T is Shaman Slowed 75%'],
+      note:'Slow announce (Ghalix style) — tune the % to the slow you actually landed.' },
+    { id:'inc',      btnName:'INC',      name:'Incoming pull', who:'Puller',
+      lines:['/rs Incoming < %T >'],
+      note:'Incoming call (Fittir style).' },
+    { id:'clicky',   btnName:'CLICKY',   name:'Clicky item', who:'Anyone',
+      lines:['/useitem {SLOT}'],
+      note:'Zeal /useitem clicks the item in slot {SLOT}. Chain several clickies with /pause between lines (tenths of a second — cover each cast time).' },
+    { id:'bardclick',btnName:'BRD CLICK',name:'Bard clicky (stopsong → click → melody)', who:'Bard',
+      lines:['/pause 3, /stopsong',
+             '/pause 30, /useitem {SLOT}',
+             '/melody {GEMS}'],
+      note:'Stops your song, clicks {SLOT} (the /pause 30 = 3s covers the click cast — tune to the item), then resumes /melody {GEMS} (e.g. 1 2 3 4).' },
+  ];
+
   function openSocialsInspector(res) {
     var files = (res && res.files) || [];
     var chat  = res && res.chat;
@@ -1640,6 +1700,65 @@
       }
       html += '</div></div>';
     }
+
+    // ── Macro suggestions ─────────────────────────────────────────────────
+    // Queue a template into an EMPTY [Socials] slot of the character's ini.
+    // Never touches an existing macro (those are edited in the page grids
+    // below). Target file = whichever candidate actually carries [Socials]
+    // pages, falling back to <char>_pq.proj.ini (the file EQ reads).
+    var _sugTargetFile = null;
+    for (var sf = 0; sf < files.length; sf++) {
+      var pf = files[sf];
+      if (pf && !pf.error && pf.pages && pf.pages.socials && Object.keys(pf.pages.socials).length) { _sugTargetFile = pf.file; break; }
+    }
+    if (!_sugTargetFile) {
+      for (var sf2 = 0; sf2 < files.length; sf2++) {
+        var pf2 = files[sf2];
+        if (pf2 && !pf2.error && new RegExp('^' + STATE.character + '_', 'i').test(pf2.file)) { _sugTargetFile = pf2.file; break; }
+      }
+    }
+    if (!_sugTargetFile && files.length && !files[files.length - 1].error) _sugTargetFile = files[files.length - 1].file;
+    var _sugUsed = {};   // 'P|B' → true for slots that already hold a social
+    for (var uf = 0; uf < files.length; uf++) {
+      if (!files[uf] || files[uf].file !== _sugTargetFile || !files[uf].pages) continue;
+      var usp = files[uf].pages.socials || {};
+      for (var upk in usp) for (var ubk in usp[upk]) _sugUsed[upk + '|' + ubk] = true;
+    }
+    function _emptySlots(){
+      // EQ socials: 10 pages × 12 buttons, 1-indexed (matches observed
+      // Page1Button10-style keys in real Quarm inis).
+      var out = [];
+      for (var eP = 1; eP <= 10; eP++) for (var eB = 1; eB <= 12; eB++) {
+        var ek = eP + '|' + eB;
+        if (!_sugUsed[ek]) out.push(ek);
+      }
+      return out;
+    }
+    if (_sugTargetFile) {
+      html += '<details id="sugBlock" style="margin-bottom:14px;background:#0d1117;border:1px solid #21262d;border-radius:5px;padding:6px 8px">' +
+        '<summary style="color:#f6c365;cursor:pointer;font-family:sans-serif;font-weight:600">📚 Suggested macros ' +
+        '<span style="color:#8b949e;font-weight:400;font-size:10px">— CH chain, DA announce, clickies… queue into an empty social slot</span></summary>' +
+        '<p style="color:#8b949e;font-size:10px;margin:6px 0;font-family:sans-serif">Seeded from the raid\'s real callouts (the same shapes the ' +
+        'CH-chain / DA / healer-mana overlays parse). <b>Queue</b> writes a NEW social into an empty slot of <code>' + escapeHtml(_sugTargetFile) + '</code> on ' +
+        '<b>Save changes</b> — existing macros are never touched. Replace {PLACEHOLDERS} in the page grid after queueing; %T and %mana expand in-game (Zeal). ' +
+        'After saving, drag the social from the in-game Socials window (Ctrl+O → Socials) onto a hotbar.</p>' +
+        '<div id="sugQueued" style="margin:4px 0"></div>';
+      for (var sgi = 0; sgi < MACRO_SUGGESTIONS.length; sgi++) {
+        var sg = MACRO_SUGGESTIONS[sgi];
+        html += '<div style="margin:5px 0;padding:5px 7px;background:#161b22;border:1px solid #21262d;border-radius:4px">' +
+          '<div style="display:flex;align-items:center;gap:6px">' +
+            '<b style="color:#56d364;font-size:11px;font-family:sans-serif">' + escapeHtml(sg.name) + '</b>' +
+            '<span style="color:#a371f7;font-size:9px;font-family:sans-serif">' + escapeHtml(sg.who) + '</span>' +
+            '<span style="margin-left:auto;color:#8b949e;font-size:9px;font-family:sans-serif">slot</span>' +
+            '<select class="sugSlot" data-sug="' + sg.id + '" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;font-size:10px;padding:1px 3px"></select>' +
+            '<button class="sugQueue" data-sug="' + sg.id + '" style="background:#1f6feb;border:none;color:#fff;border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:sans-serif">Queue</button>' +
+          '</div>' +
+          '<div style="color:#e6edf3;font-size:10px;margin-top:3px;white-space:pre-wrap">' + escapeHtml(sg.lines.join('\n')) + '</div>' +
+          '<div style="color:#8b949e;font-size:9px;margin-top:2px;font-family:sans-serif">' + escapeHtml(sg.note) + '</div>' +
+        '</div>';
+      }
+      html += '</details>';
+    }
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
@@ -1800,6 +1919,7 @@
       var inputs = dlg.querySelectorAll('.uiEdit');
       for (var i = 0; i < inputs.length; i++) if (isDirty(inputs[i])) { anyDirty = true; break; }
       if (!anyDirty && typeof _chatEdits !== 'undefined' && _chatEdits.size > 0) anyDirty = true;
+      if (!anyDirty && typeof _sugStaged !== 'undefined' && _sugStaged.size > 0) anyDirty = true;
       if (anyDirty) {
         saveBtn.disabled = false;
         saveBtn.style.background = '#1f6feb';
@@ -1953,8 +2073,84 @@
       }
     }
 
+    // ── Macro-suggestion staging ─────────────────────────────────────────
+    // 'P|B' → { name, page, btn, edits: [{file,section,key,value}] }. Folded
+    // into the same writePages call as field edits + chat routing on Save.
+    var _sugStaged = new Map();
+    function _sugRefreshSlots(){
+      var free = _emptySlots().filter(function(k){ return !_sugStaged.has(k); });
+      var sels = dlg.querySelectorAll('.sugSlot');
+      for (var si = 0; si < sels.length; si++) {
+        var cur = sels[si].value;
+        var opts = '';
+        for (var fj = 0; fj < free.length; fj++) {
+          var pb = free[fj].split('|');
+          opts += '<option value="' + free[fj] + '"' + (free[fj] === cur ? ' selected' : '') + '>P' + pb[0] + ' · B' + pb[1] + '</option>';
+        }
+        sels[si].innerHTML = opts || '<option value="">(no empty slots)</option>';
+      }
+    }
+    function _sugRenderQueued(){
+      var qEl = document.getElementById('sugQueued');
+      if (!qEl) return;
+      if (_sugStaged.size === 0) { qEl.innerHTML = ''; return; }
+      var qh = '<div style="color:#f6c365;font-size:10px;font-family:sans-serif;margin-bottom:2px">Queued — written on Save changes:</div>';
+      _sugStaged.forEach(function(v, k){
+        qh += '<div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#c9d1d9;padding:1px 0">' +
+          '<span style="color:#56d364">' + escapeHtml(v.name) + '</span> → Page ' + v.page + ' · Button ' + v.btn +
+          ' <button class="sugRemove" data-slot="' + escapeHtml(k) + '" title="Un-queue"' +
+          ' style="background:none;border:none;color:#f87171;cursor:pointer;font-size:11px;padding:0 3px;line-height:1">×</button></div>';
+      });
+      qEl.innerHTML = qh;
+      var rms = qEl.querySelectorAll('.sugRemove');
+      for (var ri2 = 0; ri2 < rms.length; ri2++) {
+        rms[ri2].addEventListener('click', function(){
+          _sugStaged.delete(this.getAttribute('data-slot'));
+          _sugRenderQueued(); _sugRefreshSlots(); refreshSaveBtn();
+        });
+      }
+    }
+    var qBtns = dlg.querySelectorAll('.sugQueue');
+    for (var qi = 0; qi < qBtns.length; qi++) {
+      qBtns[qi].addEventListener('click', function(){
+        var id = this.getAttribute('data-sug');
+        var sg = null;
+        for (var mi2 = 0; mi2 < MACRO_SUGGESTIONS.length; mi2++) if (MACRO_SUGGESTIONS[mi2].id === id) sg = MACRO_SUGGESTIONS[mi2];
+        if (!sg || typeof _sugTargetFile === 'undefined' || !_sugTargetFile) return;
+        var sel = dlg.querySelector('.sugSlot[data-sug="' + id + '"]');
+        var slot = sel && sel.value;
+        if (!slot) { setStatus('no empty social slot left to queue into', 'err'); return; }
+        if (_sugStaged.has(slot)) return;
+        var pb = slot.split('|');
+        var base = 'Page' + pb[0] + 'Button' + pb[1];
+        var eds = [
+          { file: _sugTargetFile, section: 'Socials', key: base + 'Name',  value: sg.btnName },
+          { file: _sugTargetFile, section: 'Socials', key: base + 'Color', value: '0' },
+        ];
+        for (var li2 = 0; li2 < sg.lines.length; li2++) {
+          eds.push({ file: _sugTargetFile, section: 'Socials', key: base + 'Line' + (li2 + 1), value: sg.lines[li2] });
+        }
+        _sugStaged.set(slot, { name: sg.btnName, page: pb[0], btn: pb[1], edits: eds });
+        _sugRenderQueued(); _sugRefreshSlots(); refreshSaveBtn();
+        setStatus('queued "' + sg.btnName + '" → Page ' + pb[0] + ' Button ' + pb[1] + ' — remember to replace {PLACEHOLDERS}, then Save changes', 'ok');
+      });
+    }
+    _sugRefreshSlots();
+
     saveBtn.addEventListener('click', async function(){
       if (saveBtn.disabled) return;
+      // EQ rewrites the character INI from memory on /camp — anything we write
+      // while the client is up gets clobbered (or half-merged). The layout
+      // save path defers around this; for socials/hotbutton/chat edits we
+      // simply block and KEEP the staged edits so Save works the moment the
+      // character logs out.
+      try {
+        var eqUp = await window.mimic.uiStudioIsEqRunning();
+        if (eqUp) {
+          setStatus('EQ is running — log the character out first. EQ rewrites this INI from memory on /camp, which would clobber these edits. Your changes are still staged; hit Save again once logged out.', 'err');
+          return;
+        }
+      } catch (e) { /* detection unavailable → proceed as before */ }
       // Collect dirty edits — for blanked-out Line slots we send value=null so
       // the backend deletes the key. For all other fields we send the new value.
       var edits = [];
@@ -1978,6 +2174,13 @@
         for (var ce of _chatEdits.values()) {
           edits.push({ file: chatF, section: ce.section, key: ce.key, value: ce.value });
         }
+      }
+      // Queued macro suggestions — each expands to Name/Color/Line keys for
+      // its (empty) target slot.
+      if (_sugStaged.size > 0) {
+        _sugStaged.forEach(function(v){
+          for (var se = 0; se < v.edits.length; se++) edits.push(v.edits[se]);
+        });
       }
       if (edits.length === 0) return;
       saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
