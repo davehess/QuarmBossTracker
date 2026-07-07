@@ -7661,6 +7661,13 @@ async function _handleAgentRaidBuffQueue(req, res) {
         }
         if (!cure && rb.isCurseBuff(b.name)) { cure = 'curse'; cnt = _CURSE_COUNTERS_FOR(b.name) || 0; }
         if (!cure) continue;
+        // Manual "✓ cured" override — only for INFERRED rows (neither party on
+        // Mimic, so nothing can observe the cure). A newer re-landing than the
+        // mark resurrects the chip; Mimic-verified targets ignore marks.
+        if (isInferred) {
+          const mark = _debuffClearMarks.get(`${guildId}|${k}|${String(b.name).toLowerCase()}`);
+          if (mark && (!b.castMs || b.castMs <= mark)) continue;
+        }
         if (cnt > maxCounters) maxCounters = cnt;
         curses.push({
           name: b.name,
@@ -8786,6 +8793,41 @@ function _pruneCasts(now) {
 // flight on each target. Drives "being cured" marking + optimistic removal.
 const _cureCastByTarget = new Map();
 const _CURE_SUPPRESS_MS = 8000;   // hide a cured debuff this long after the cure lands
+
+// Manual "✓ cured" overrides from the buff-queue overlay (Uilnayar
+// 2026-07-07: "need a way to prune curse/poison/disease cure needs when both
+// the curer and the affected player are not using Mimic"). When NEITHER party
+// uploads, no agent can observe the cure landing, so the inferred debuff chip
+// sits on everyone's queue until its catalog duration runs out (curses run
+// long). Any Mimic user can click ✓ on the chip → the mark suppresses that
+// (target, spell) RAID-WIDE — but ONLY on inferred rows: a target who runs
+// Mimic is truth-driven from their own Zeal list and can't be hand-waved.
+// A RE-landing after the click (cast_at newer than the mark) resurrects the
+// chip automatically. In-memory (a bot restart just un-hides; harmless);
+// swept after 3h alongside the read window.
+const _debuffClearMarks = new Map();   // guild|targetLower|spellLower → clearedAtMs
+const _DEBUFF_CLEAR_TTL_MS = 3 * 3600 * 1000;
+function _sweepDebuffClearMarks() {
+  const now = Date.now();
+  for (const [k, at] of _debuffClearMarks) if (now - at > _DEBUFF_CLEAR_TTL_MS) _debuffClearMarks.delete(k);
+}
+// POST /api/agent/debuff-clear { target, spell_name } — bearer-auth'd.
+async function _handleAgentDebuffClear(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let body = '';
+  await new Promise(resolve => { req.on('data', c => { body += c; if (body.length > 16 * 1024) { req.destroy(); resolve(); } }); req.on('end', resolve); req.on('error', resolve); });
+  let p; try { p = JSON.parse(body); } catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+  const target = String(p && p.target || '').trim().slice(0, 64);
+  const spell  = String(p && p.spell_name || '').trim().slice(0, 128);
+  if (!target || !spell) { res.writeHead(400); return res.end(JSON.stringify({ error: 'target + spell_name required' })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  _sweepDebuffClearMarks();
+  _debuffClearMarks.set(`${guildId}|${target.toLowerCase()}|${spell.toLowerCase()}`, Date.now());
+  console.log(`[debuff-clear] ${identity.display_name || identity.discord_id} marked "${spell}" cured on ${target}`);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true }));
+}
 // For a target + cure type: is a cure in flight (→ being_cured), or did one
 // just land (→ suppress the debuff)? Returns { state:'casting'|'done'|null,
 // caster, secs }.
@@ -10770,6 +10812,15 @@ http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterLiveState(req, res); }
     catch (err) {
       console.error('[character-live-state] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/debuff-clear') {
+    try { return await _handleAgentDebuffClear(req, res); }
+    catch (err) {
+      console.error('[debuff-clear] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

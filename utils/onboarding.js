@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.143': [
+    '**"✓ cured" — clear stuck cure needs by hand.** When neither the afflicted player nor the curer runs Mimic, no agent can see the cure land, so the curse/poison/disease chip sat on everyone\'s buff-queue overlay until the debuff\'s full catalog duration ran out. Now every chip on an **inferred** row (🔍 = that player isn\'t uploading) has a ✓ button — one click by ANY Mimic user clears it from the whole raid\'s queues within a few seconds. Safeties: Mimic-verified players can\'t be hand-cleared (their own Zeal list is the truth), and if the debuff LANDS AGAIN after the click, the chip comes right back. Needs Mimic 1.5.4+ to see the button; the clear itself works raid-wide immediately (Uilnayar 2026-07-07).',
+  ],
   '3.0.142': [
     '**buff_casts stops hoarding — 73% of the table purged, zero user-visible change.** The buff-landing history table had grown to 118MB/232k rows, but every consumer (Mob Info target-buffs, buff/cure queue, Extended Target debuffs, /raid) reads at most **3 hours** back — live "who has what buff" comes from each character\'s own Zeal snapshot, not this table. Purged: 41k rows with no spell name (written but unreadable — now rejected at ingest), 10k phantom **"Kneel Test"** rows (EQEmu\'s internal test spell shares its landing text with 33 knockback effects and kept winning the ambiguous-match), and everything older than 7 days including a Jan-2025 backfill. The midnight chain now sweeps buff_casts to a rolling 7 days (`BUFF_CASTS_RETENTION_DAYS`). Agents 3.1.107+ also stop generating both junk classes at the source.',
   ],
