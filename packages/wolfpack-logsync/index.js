@@ -9300,13 +9300,20 @@ function renderZealClients(s) {
     // raw HP cur/max would live if Zeal exposes it; surfaced so we can
     // confirm what's actually sent (Uilnayar 2026-07-05 self-HP-numbers ask).
     if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
+      // Confirmed 1-13 mapping (Canopy side-by-side, 2026-07-07); 17/18 are
+      // the classic-UI EQTypes for cur/max HP — flagged as expected so the
+      // next screenshot confirms or corrects. Unlabeled ids are the discovery
+      // targets (mana / AC / ATK / remaining resists).
+      var ciLabels = { 1: 'Name', 2: 'Level', 3: 'Class', 4: 'Deity', 5: 'STR', 6: 'STA', 7: 'DEX', 8: 'AGI',
+        9: 'WIS', 10: 'INT', 11: 'CHA', 12: 'Disease resist?', 13: 'Poison resist', 17: 'HP cur (expected)', 18: 'HP max (expected)' };
       h += '<details data-charinfo="' + esc(c.character) + '"' + (_openCharInfo[c.character] ? ' open' : '')
          + ' style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
          + c.char_info.length + ' char-info field' + (c.char_info.length === 1 ? '' : 's')
-         + ' <span class="dim" style="font-size:10px">(diagnostic — raw Zeal type-1 ids; HP numbers land here if present)</span></summary>';
-      h += '<table style="font-size:11px;margin-top:4px"><tr><th>Id</th><th>Value</th></tr>';
+         + ' <span class="dim" style="font-size:10px">(diagnostic — raw Zeal label ids; unlabeled rows are what we still need to identify)</span></summary>';
+      h += '<table style="font-size:11px;margin-top:4px"><tr><th>Id</th><th>Field</th><th>Value</th></tr>';
       for (const ci of c.char_info) {
         h += '<tr><td class="dim">' + esc(String(ci.id)) + '</td>'
+           + '<td class="dim">' + esc(ciLabels[ci.id] || '?') + '</td>'
            + '<td class="num">' + esc(String(ci.value)) + '</td></tr>';
       }
       h += '</table></details>';

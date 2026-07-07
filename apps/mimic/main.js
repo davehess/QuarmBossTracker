@@ -1126,20 +1126,22 @@ function _zealAbsorb(obj, pid) {
       // show what Zeal is actually sending when a row fails to match.
       const buffs = [];
       const rawDebug = [];
-      const charInfo = [];   // Zeal char-info fields (IDs 1-13): name/class/level
-                             // and — if Zeal exposes them here — raw HP cur/max.
+      const charInfo = [];   // Zeal char-info label fields (EQType ids 1-44).
       let casting = null;
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
-        // Char-info IDs 1-13 (char fields: name, class, level, and possibly
-        // raw HP/mana/endurance). We capture them verbatim now — both to show
-        // on the diagnostic and to DISCOVER which fields carry the player's
-        // own HP numbers (Uilnayar 2026-07-05: "if someone is reporting their
-        // own health we should show the numbers"). Zeal's HP field ids aren't
-        // documented, so _detectSelfHp() below finds them by cross-checking a
-        // numeric cur/max pair against the gauge's already-known HP%.
-        if (id >= 1 && id <= 13) {
+        // Char-info label ids. The 1-13 block is now CONFIRMED against a live
+        // side-by-side (Canopy, 2026-07-07 screenshot vs in-game stats window):
+        //   1 Name · 2 Level · 3 Class · 4 Deity · 5 STR · 6 STA · 7 DEX ·
+        //   8 AGI · 9 WIS · 10 INT · 11 CHA · 12 disease resist (likely) ·
+        //   13 poison resist (confirmed)
+        // — i.e. NO HP anywhere in 1-13. The in-game window's HP/mana/AC/ATK
+        // live at HIGHER label ids, which the old 1-13 filter threw away, so
+        // the HP detector was matching pure stat noise. Capture everything up
+        // to 44 (the buff window starts at 45); _detectSelfHp() scans only the
+        // 14-44 band for the HP cur/max pair.
+        if (id >= 1 && id <= 44) {
           if (it.value !== undefined && it.value !== null && it.value !== '') {
             charInfo.push({ id, value: String(it.value) });
           }
@@ -1185,7 +1187,7 @@ function _zealAbsorb(obj, pid) {
       // HP numbers from it. A char-info-only label packet must still forward
       // (it never carries buffs), so mark dirty when we captured any.
       if (charInfo.length > 0) {
-        s.charInfo = charInfo.slice(0, 16);
+        s.charInfo = charInfo.slice(0, 48);
         _detectSelfHp(cur, s, charInfo);
         cur.dirty = true;
       }
@@ -1194,25 +1196,29 @@ function _zealAbsorb(obj, pid) {
 }
 
 // Discover the player's OWN current/max HP from Zeal's char-info fields.
-// We never guess ids: we take the gauge's already-trusted self HP% and look
-// for a numeric (cur ≤ max) pair among the char-info fields whose ratio
-// matches it. The first time HP is DISTINCT (< 97%, so cur ≠ max and the
-// match is unambiguous vs. mana/endurance) we PIN that id pair on the
-// per-character state, then keep reading it at any % — so the numbers stay
-// correct at full health and track max-HP buffs (Aegolism etc.) live. If
-// nothing validates (Zeal doesn't expose HP here), self_hp_cur/max stay
-// null and every overlay falls back to the plain % it already shows.
+// Ids 1-13 are a CONFIRMED non-HP block (name/level/class/deity/stats/
+// resists — Canopy side-by-side, 2026-07-07), so only the 14-44 band is
+// scanned. Candidates are validated against the gauge's already-trusted HP%:
+//   • The classic UI EQTypes put current HP at label 17 and max HP at 18 —
+//     if that exact pair is present and its ratio matches the gauge, pin it
+//     immediately (known-prior fast path, still data-validated).
+//   • Any other (cur ≤ max) pair must match the gauge at TWO readings at
+//     least 3 points apart before it pins. A real HP pair tracks the gauge
+//     at every level; a coincidental stat or mana pair matches only near one
+//     fixed ratio, so requiring agreement at two distinct HP levels
+//     eliminates it (a druid's 3406 mana vs 1662 HP would beat any
+//     size-based tiebreak — only behavior over time separates them).
+// Once pinned, the pair is read at any % (tracks max-HP buffs live) and kept
+// while it still agrees with the gauge. If nothing validates, self_hp_cur/max
+// stay null and every overlay falls back to the plain % it already shows.
 function _detectSelfHp(cur, s, charInfo) {
   const nums = charInfo
     .map(ci => ({ id: ci.id, n: Number(ci.value) }))
-    .filter(x => Number.isFinite(x.n) && x.n > 0);
+    .filter(x => x.id >= 14 && x.id <= 44 && Number.isFinite(x.n) && x.n > 0);
   if (nums.length < 2) return;
   const pct = (typeof s.self_hp_pct === 'number') ? s.self_hp_pct : null;
-  // Stickiness: if the pair we already pinned STILL tracks the current HP%,
-  // keep it. Without this, a coincidental stat pair (e.g. STR 150 / cap 157 ≈
-  // 95.5%) steals the slot at the exact frame real HP% sweeps past its fixed
-  // ratio — and then re-steals it every time HP crosses back. A real HP pair
-  // matches at EVERY %, a stray pair only near its one fixed ratio.
+  // Stickiness: keep the pinned pair while it still tracks the gauge. A wrong
+  // pin (coincidental ratio) self-evicts as soon as the ratios diverge.
   if (cur.hpIds && pct != null) {
     const c0 = nums.find(x => x.id === cur.hpIds.curId);
     const m0 = nums.find(x => x.id === cur.hpIds.maxId);
@@ -1220,27 +1226,36 @@ function _detectSelfHp(cur, s, charInfo) {
       const err0 = Math.abs((c0.n / m0.n) * 100 - pct);
       if (err0 <= 2) { s.self_hp_cur = c0.n; s.self_hp_max = m0.n; return; }
     }
+    cur.hpIds = null;   // stopped tracking — was a coincidence, relearn
   }
-  // (Re)learn the id pair only when the match is distinct enough to be sure
-  // (< 97%, so cur != max and the ratio is unambiguous vs mana/endurance).
-  // Among the pairs whose ratio matches, prefer the LARGEST max: a
-  // level-appropriate HP pool (thousands) dwarfs the other char-info numbers
-  // (STR / AC / weight / stats), so a stray small pair that coincidentally
-  // shares the HP% loses to the real HP. Err only breaks ties between pairs of
-  // the same magnitude.
+  // Learn only when HP is distinct from full (< 97%) so cur ≠ max.
   if (pct != null && pct < 97) {
-    let best = null;
-    for (const a of nums) {
-      for (const b of nums) {
-        if (a.id === b.id || a.n > b.n) continue;   // a = cur, b = max
-        const err = Math.abs((a.n / b.n) * 100 - pct);
-        if (err > 1.5) continue;
-        if (!best || b.n > best.max || (b.n === best.max && err < best.err)) {
-          best = { curId: a.id, maxId: b.id, max: b.n, err };
+    // Known-prior fast path: EQType 17/18 (cur/max HP in the classic UI).
+    const c17 = nums.find(x => x.id === 17);
+    const m18 = nums.find(x => x.id === 18);
+    if (c17 && m18 && c17.n <= m18.n && Math.abs((c17.n / m18.n) * 100 - pct) <= 1.5) {
+      cur.hpIds = { curId: 17, maxId: 18 };
+    } else {
+      // Generic scan with two-point agreement. _hpCand remembers, per id
+      // pair, the HP% it last matched at; a second match ≥3 points away
+      // proves the pair FOLLOWS the gauge rather than crossing it once.
+      if (!cur._hpCand) cur._hpCand = {};
+      for (const a of nums) {
+        for (const b of nums) {
+          if (a.id === b.id || a.n > b.n) continue;   // a = cur, b = max
+          if (Math.abs((a.n / b.n) * 100 - pct) > 1.5) continue;
+          const key = a.id + '|' + b.id;
+          const prior = cur._hpCand[key];
+          if (prior != null && Math.abs(prior - pct) >= 3) {
+            cur.hpIds = { curId: a.id, maxId: b.id };
+            cur._hpCand = {};
+            break;
+          }
+          if (prior == null) cur._hpCand[key] = pct;
         }
+        if (cur.hpIds) break;
       }
     }
-    if (best) cur.hpIds = { curId: best.curId, maxId: best.maxId };
   }
   // Read the pinned pair (works at any %, reflects live max).
   if (cur.hpIds) {
