@@ -17497,6 +17497,147 @@ function pollOverlayTuning({ botUrl, token }) {
   });
 }
 
+// ── Web-staged macro edits (wolfpack.quest /me/ui) ──────────────────────────
+// Members edit/add social macros on the web; the edits land in the bot's
+// ui_pending_edits and THIS loop applies them to the character's ini — but
+// only when the character is safely LOGGED OUT (EQ rewrites the ini from
+// memory on /camp, so writing under a live client gets clobbered). Gates:
+// no Zeal sample for the character in 2 min AND the log file untouched for
+// 90s. Applied (or failed) results POST back so /me/ui shows live status.
+// Section allowlist (Socials/HotButtons + Page<N>Button<N> keys) is enforced
+// bot-side AND re-checked here — web rows can never touch arbitrary ini keys.
+function _applyIniKeyEditsToFile(fp, edits) {
+  // Port of Mimic's ui-studio-write-pages walk: in-place update/delete of
+  // matching section keys, then append still-missing keys at the end of their
+  // section (creating the section at EOF if absent). Preserves EOL style.
+  const orig = fs.readFileSync(fp, 'utf8');
+  const eol = /\r\n/.test(orig) ? '\r\n' : '\n';
+  const lines = orig.split(/\r?\n/);
+  const want = new Map();
+  for (const e of edits) want.set(e.section + '\x01' + e.key, e.value == null ? null : String(e.value));
+  const sectionEnds = new Map();
+  let curSec = null;
+  const out = [];
+  for (const L of lines) {
+    const ms = L.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (ms) { if (curSec) sectionEnds.set(curSec, out.length); curSec = ms[1]; out.push(L); continue; }
+    if (curSec) {
+      const mk = L.match(/^(\s*)([\w.]+)\s*=\s*(.*?)(\s*)$/);
+      if (mk) {
+        const sig = curSec + '\x01' + mk[2];
+        if (want.has(sig)) {
+          const nv = want.get(sig); want.delete(sig);
+          if (nv === null) continue;              // delete the key line
+          out.push(mk[1] + mk[2] + '=' + nv + mk[4]);
+          continue;
+        }
+      }
+    }
+    out.push(L);
+  }
+  if (curSec) sectionEnds.set(curSec, out.length);
+  const remaining = [...want.entries()].map(([sig, value]) => {
+    const ix = sig.indexOf('\x01');
+    return { section: sig.slice(0, ix), key: sig.slice(ix + 1), value };
+  }).filter(e => e.value !== null);
+  remaining.sort((a, b) => (sectionEnds.get(b.section) ?? -1) - (sectionEnds.get(a.section) ?? -1));
+  for (const e of remaining) {
+    const idx = sectionEnds.get(e.section);
+    if (idx == null) { out.push('[' + e.section + ']'); out.push(e.key + '=' + e.value); }
+    else {
+      out.splice(idx, 0, e.key + '=' + e.value);
+      for (const [s, n] of sectionEnds) if (n > idx) sectionEnds.set(s, n + 1);
+    }
+  }
+  const next = out.join(eol);
+  if (next === orig) return { changed: false };
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  fs.writeFileSync(fp + '.webedit-' + ts + '.bak', orig);
+  fs.writeFileSync(fp, next);
+  return { changed: true };
+}
+function _postUiEditResult(opts, id, ok, error) {
+  try {
+    const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/ui-edit-result');
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify({ id, ok: !!ok, error: error || undefined });
+    const req = mod.request({
+      method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'Content-Type': 'application/json',
+                 'Content-Length': Buffer.byteLength(body), 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => { res.resume(); });
+    req.on('error', () => {});
+    req.on('timeout', () => req.destroy());
+    req.end(body);
+  } catch { /* result POST is best-effort — the row stays pending and retries */ }
+}
+function _maybeApplyWebEdit(row, watched, opts) {
+  try {
+    const charLower = String(row.character || '').toLowerCase();
+    const w = watched.find(x => x.character.toLowerCase() === charLower);
+    if (!w) return;
+    const now = Date.now();
+    // Logged-in gates — silently skip (row stays pending, retried next poll).
+    for (const ch of Object.keys(_zealState || {})) {
+      if (ch.toLowerCase() !== charLower) continue;
+      const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+      if (now - ts < 120_000) return;
+    }
+    try { const st = fs.statSync(w.logPath); if (now - st.mtimeMs < 90_000) return; } catch { /* no log = fine */ }
+    let dir = path.dirname(w.logPath);
+    if (/^logs$/i.test(path.basename(dir))) dir = path.dirname(dir);
+    const fname = (row.target_file && /^[\w.-]+\.ini$/i.test(String(row.target_file)))
+      ? String(row.target_file)
+      : `${w.character}_pq.proj.ini`;
+    let fp = path.join(dir, fname);
+    if (!fs.existsSync(fp)) {
+      const found = fs.readdirSync(dir).find(f => f.toLowerCase() === fname.toLowerCase());
+      if (!found) { _postUiEditResult(opts, row.id, false, 'ini not found: ' + fname); return; }
+      fp = path.join(dir, found);
+    }
+    const safe = (Array.isArray(row.edits) ? row.edits : []).filter(e =>
+      e && /^(Socials|HotButtons)$/.test(String(e.section)) && /^Page\d+Button\d+/.test(String(e.key)));
+    if (!safe.length) { _postUiEditResult(opts, row.id, false, 'no valid edits in row'); return; }
+    _applyIniKeyEditsToFile(fp, safe);
+    console.log(`[web-ui-edit] applied ${safe.length} edit(s) to ${path.basename(fp)} for ${row.character} (id ${row.id})`);
+    _postUiEditResult(opts, row.id, true, null);
+  } catch (err) {
+    _postUiEditResult(opts, row.id, false, (err && err.message) || 'apply failed');
+  }
+}
+function pollUiPendingEdits({ botUrl, token }) {
+  if (!botUrl || !token) return;
+  const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
+  if (!watched.length) return;
+  const qs = '?characters=' + encodeURIComponent(watched.map(w => w.character).join(','));
+  const url = botUrl.replace(/\/encounter(\?.*)?$/, '/ui-pending-edits') + qs;
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const resp = JSON.parse(data);
+          for (const row of (Array.isArray(resp.edits) ? resp.edits : [])) {
+            _maybeApplyWebEdit(row, watched, { botUrl, token });
+          }
+        } catch { /* non-fatal */ }
+      });
+    });
+    req.on('error', () => {});
+    req.on('timeout', () => req.destroy());
+    req.end();
+  } catch { /* */ }
+}
+
 function pollGuildTriggers({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
   // Pass our characters so server-side targeting can pre-filter
@@ -19849,6 +19990,11 @@ async function main() {
     // 90s so a mid-raid threshold tweak lands on every Mimic within ~1.5 min.
     setTimeout(() => pollOverlayTuning({ botUrl, token }), 6_000);
     setInterval(() => pollOverlayTuning({ botUrl, token }), 90_000);
+    // Web-staged macro edits (/me/ui) — applied only while the character is
+    // logged out; 5 min poll keeps "staged on the web → on my hotbar next
+    // session" comfortably true without hammering anything.
+    setTimeout(() => pollUiPendingEdits({ botUrl, token }), 25_000);
+    setInterval(() => pollUiPendingEdits({ botUrl, token }), 5 * 60_000);
     // Live character state (buffs + last-seen zone) → bot → Supabase so
     // wolfpack.quest/me can show what each character is carrying + where, AND
     // (Uilnayar 2026-07-03: "Debuff queue definitely needs to be faster") this
