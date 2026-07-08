@@ -81,7 +81,37 @@ function main() {
     console.error(`\n${failed} dashboard script block(s) broken — the localhost page would render BLANK.`);
     process.exit(1);
   }
-  console.log('\nAll dashboard script blocks parse cleanly. ✅');
+
+  // RULE (Uilnayar 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
+  // every <details> the dashboard emits MUST persist its open state through
+  // the wpKeep store — section repaints (and PARENT-section repaints, which
+  // destroy nested placeholders before their own render runs) reset plain
+  // <details> to closed every poll. Enforced here so it can't regress: any
+  // '<details' emitted in agent source without wpKeep( in the same statement
+  // fails the build.
+  const src = fs.readFileSync(AGENT, 'utf8');
+  const srcLines = src.split('\n');
+  let unkept = 0;
+  for (let i = 0; i < srcLines.length; i++) {
+    const line = srcLines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue;   // prose mentions
+    // Only EMITTED markup counts: '<details inside a string literal.
+    if (!/['"]<details\b/.test(line)) continue;
+    // Same-statement scan: this line plus the next two (concatenations wrap).
+    const stmt = line + (srcLines[i + 1] || '') + (srcLines[i + 2] || '');
+    if (!stmt.includes('wpKeep(')) {
+      unkept++;
+      console.error(`✗ <details> without wpKeep() at index.js:${i + 1} — it will collapse on every dashboard repaint.`);
+      console.error(`    ${trimmed.slice(0, 140)}`);
+    }
+  }
+  if (unkept > 0) {
+    console.error(`\n${unkept} <details> element(s) missing wpKeep() — build with: '<details ' + wpKeep('stable|key') + ' ...>'`);
+    process.exit(1);
+  }
+
+  console.log('\nAll dashboard script blocks parse cleanly; all <details> carry wpKeep. ✅');
 }
 
 main();

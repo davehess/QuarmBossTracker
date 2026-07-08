@@ -8172,6 +8172,26 @@ function spellLink(name) {
 // last HTML on the element so an unchanged update is a no-op. Used by section
 // renders AND by the injected cards (My Crits, Charm Pets, DS, bidding) so
 // their inner tables update without an innerHTML flash too.
+// ── <details> open-state persistence (RULE — see CLAUDE.md dashboard rules) ──
+// Sections repaint via innerHTML, which DESTROYS the live DOM including every
+// <details>' open attribute — and a nested placeholder (e.g. the Zeal Pipe
+// explorer inside #info) gets wiped by its PARENT's repaint before its own
+// render fn could snapshot the DOM (1.7.0-beta.2: "Zeal pipe closes
+// immediately"). So the truth lives HERE, in a store updated on every user
+// toggle and never read back from the DOM. EVERY <details> emitted anywhere
+// in this dashboard MUST be built with wpKeep('<stable unique key>') — the
+// dashboard checker (scripts/check-agent-dashboard.js) fails the build
+// otherwise.
+var _wpOpenDetails = {};
+document.addEventListener('toggle', function (e) {
+  var d = e.target;
+  if (!d || !d.tagName || d.tagName !== 'DETAILS') return;
+  var key = d.getAttribute('data-keep');
+  if (key) _wpOpenDetails[key] = !!d.open;
+}, true);   // capture phase — 'toggle' does not bubble
+function wpKeep(key) {
+  return 'data-keep="' + esc(String(key)) + '"' + (_wpOpenDetails[key] ? ' open' : '');
+}
 function morphInto(el, html) {
   if (!el) return false;
   if (el._wpLastHtml === html) return false;   // change-detection: skip identical
@@ -9009,7 +9029,7 @@ function buildLoadoutsHtml(s) {
     }
     h += '</table>';
     if (hiddenList.length > 0) {
-      h += '<details style="margin-top:10px"><summary class="dim" style="cursor:pointer">Hidden (' + hiddenList.length + ') — click to expand</summary>';
+      h += '<details ' + wpKeep('zc-hidden') + ' style="margin-top:10px"><summary class="dim" style="cursor:pointer">Hidden (' + hiddenList.length + ') — click to expand</summary>';
       h += '<table><tr><th>Character</th><th></th></tr>';
       for (const [char] of hiddenList) {
         h += '<tr><td class="dim">' + esc(char) + '</td>' +
@@ -9241,21 +9261,8 @@ var WP_ZGAUGES = { 1: 'Self HP', 2: 'Mana', 3: 'Endurance', 4: 'XP', 5: 'AA XP',
 function renderZealClients(s) {
   const el = document.getElementById('wpZealClients');
   if (!el) return;   // Dashboard section not painted yet
-  // Preserve which per-character gauge/char-info <details> are open ACROSS
-  // this poll's rewrite. morphInto replaces innerHTML, which would otherwise
-  // snap an expanded dump shut every 2s (the bug: "opening gauge slots
-  // immediately refreshes/collapses"; same report for the char-info fields
-  // 2026-07-07). Re-stamp the open attribute on the ones the user expanded.
-  const _openGauges = {};
-  const _openCharInfo = {};
-  try {
-    el.querySelectorAll('details[data-gauge]').forEach(function(d){
-      if (d.open) _openGauges[d.getAttribute('data-gauge')] = 1;
-    });
-    el.querySelectorAll('details[data-charinfo]').forEach(function(d){
-      if (d.open) _openCharInfo[d.getAttribute('data-charinfo')] = 1;
-    });
-  } catch (e) { void e; }
+  // <details> open state persists via the wpKeep store (see morphInto header)
+  // — DOM snapshots died the moment a PARENT section repainted first.
   // Per-machine "don't care" filter — hide boxes/alts you aren't tracking.
   // Persisted in localStorage (same idea as the panel ✕). The ✕ on each row
   // adds the name; "show all" clears the set.
@@ -9320,7 +9327,7 @@ function renderZealClients(s) {
     // wire it into the absorption directly (rather than via charm cross-ref).
     // Live clients only — frozen logged-out gauges aren't useful.
     if (c.live && Array.isArray(c.gauges) && c.gauges.length) {
-      h += '<details data-gauge="' + esc(c.character) + '"' + (_openGauges[c.character] ? ' open' : '')
+      h += '<details ' + wpKeep('gauge|' + c.character)
          + ' style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
          + c.gauges.length + ' gauge slot' + (c.gauges.length === 1 ? '' : 's')
          + ' <span class="dim" style="font-size:10px">(diagnostic — helps identify the pet slot)</span></summary>';
@@ -9339,7 +9346,7 @@ function renderZealClients(s) {
       // Field names come from the shared WP_ZLABELS map (Zeal named_pipe.cpp
       // LabelNames — see the definition above renderZealClients).
       var ciLabels = WP_ZLABELS;
-      h += '<details data-charinfo="' + esc(c.character) + '"' + (_openCharInfo[c.character] ? ' open' : '')
+      h += '<details ' + wpKeep('charinfo|' + c.character)
          + ' style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
          + c.char_info.length + ' char-info field' + (c.char_info.length === 1 ? '' : 's')
          + ' <span class="dim" style="font-size:10px">(diagnostic — classic-UI EQType label ids via Zeal)</span></summary>';
@@ -9896,7 +9903,7 @@ function _wpPaintTriggerScan(j){
     var src2 = j.sources[s2];
     if (!src2.files || src2.files.length === 0) continue;
     var label2 = src2.kind === 'gina' ? 'GINA' : 'EQ Log Parser';
-    h += '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--blue)">' + _wpEscHtml(label2) + ' — top ' + Math.min(src2.files.length, 50) + ' file(s) by size</summary>';
+    h += '<details ' + wpKeep('files|' + label2) + ' style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--blue)">' + _wpEscHtml(label2) + ' — top ' + Math.min(src2.files.length, 50) + ' file(s) by size</summary>';
     h += '<table style="font-size:10px;width:100%;margin-top:4px"><tr><th>File</th><th style="text-align:right">Size</th><th style="text-align:right">Modified</th></tr>';
     for (var k = 0; k < src2.files.length; k++) {
       var f = src2.files[k];
@@ -9929,15 +9936,12 @@ function renderZealExplorer(s) {
     return;
   }
   if (el.style.display === 'none') el.style.display = '';
-  // Snapshot open groups before the rewrite.
-  var openSet = {};
-  try {
-    el.querySelectorAll('details[data-zx]').forEach(function(d){
-      if (d.open) openSet[d.getAttribute('data-zx')] = 1;
-    });
-  } catch (e) { void e; }
+  // Open state comes from the wpKeep store — NOT a DOM snapshot. This card is
+  // NESTED inside #info, whose own repaint (session counters change every
+  // poll) destroys this element's DOM before we run: a snapshot here always
+  // read freshly-wiped, all-closed nodes (1.7.0-beta.2 collapse bug).
   function grp(key, title, count, inner) {
-    return '<details data-zx="' + esc(key) + '"' + (openSet[key] ? ' open' : '')
+    return '<details ' + wpKeep(key)
       + ' style="margin:2px 0 2px 12px;font-size:11px"><summary class="dim" style="cursor:pointer">'
       + title + (count != null ? ' <span class="dim">(' + count + ')</span>' : '') + '</summary>'
       + inner + '</details>';
@@ -10152,15 +10156,7 @@ function renderInfo(s) {
   const cc = s.castCounts || {};
   const casters = Object.keys(cc);
   if (casters.length > 0) {
-    // Snapshot which character rows are currently open so the 1-3s refresh
-    // doesn't collapse them. We re-apply the open set after innerHTML rewrite.
-    var _spOpen = new Set();
-    try {
-      var _ex = document.querySelectorAll('#info details[data-cc-name]');
-      for (var _i = 0; _i < _ex.length; _i++) {
-        if (_ex[_i].hasAttribute('open')) _spOpen.add(_ex[_i].getAttribute('data-cc-name'));
-      }
-    } catch (e) {}
+    // Open rows persist via the wpKeep store (see morphInto header).
     // Player vs NPC split — single-word Title-cased names that have been
     // confirmed via /who, parses, or chat are likely real players. Everything
     // else (multi-word, lowercased, "(unknown)", "a frog") falls into the
@@ -10198,8 +10194,7 @@ function renderInfo(s) {
       }).sort(function(a, b){ return b.total - a.total; });
       ordered.slice(0, 10).forEach(function(c) {
         var spellEntries = Object.entries(c.spells).sort(function(a, b){ return b[1] - a[1]; }).slice(0, 8);
-        var openAttr = _spOpen.has(c.name) ? ' open' : '';
-        html += '<details data-cc-name="' + esc(c.name) + '"' + openAttr + '>';
+        html += '<details ' + wpKeep('cc|' + c.name) + '>';
         html += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + c.total + ' cast' + (c.total === 1 ? '' : 's') + '</span></summary>';
         html += '<table>';
         for (var k = 0; k < spellEntries.length; k++) {
@@ -10237,15 +10232,6 @@ function renderInfo(s) {
   var _rs = s.resistedSpells || {};
   var _rsNames = Object.keys(_rs);
   if (_rsNames.length > 0) {
-    // Preserve which spell rows are expanded across the 1s re-render (same
-    // pattern as the inbound-spell-damage card below).
-    var _rsOpen = new Set();
-    try {
-      var _re = document.querySelectorAll('#info details[data-rs-name]');
-      for (var _rk = 0; _rk < _re.length; _rk++) {
-        if (_re[_rk].hasAttribute('open')) _rsOpen.add(_re[_rk].getAttribute('data-rs-name'));
-      }
-    } catch (e) {}
     h += '<div class="card wide"><h2>🛡 Spells Resisted (incoming)</h2>';
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spells mobs cast at you that you resisted — this names what their "a spell" casts actually were. Expand a row to see which mobs cast it + how many times.</div>';
     _rsNames.map(function (n) { return [n, _rs[n]]; })
@@ -10255,8 +10241,7 @@ function renderInfo(s) {
         var byMob = rec.byMob || {};
         var mobs = Object.keys(byMob).map(function (m) { return [m, byMob[m]]; })
           .sort(function (a, b) { return (b[1] || 0) - (a[1] || 0); }).slice(0, 20);
-        var openAttr = _rsOpen.has(e[0]) ? ' open' : '';
-        h += '<details data-rs-name="' + esc(e[0]) + '"' + openAttr + '>';
+        h += '<details ' + wpKeep('rs|' + e[0]) + '>';
         h += '<summary><span class="name">' + spellLink(e[0]) + '</span> '
            + '<span class="dim">— ' + (rec.count || 0) + ' resisted'
            + (rec.lastMob ? ', last from ' + esc(rec.lastMob) : '') + '</span></summary>';
@@ -10280,13 +10265,6 @@ function renderInfo(s) {
   var _isd = s.inboundSpellDamage || {};
   var _isdCasters = Object.keys(_isd);
   if (_isdCasters.length > 0) {
-    var _isdOpen = new Set();
-    try {
-      var _ie = document.querySelectorAll('#info details[data-isd-name]');
-      for (var _j = 0; _j < _ie.length; _j++) {
-        if (_ie[_j].hasAttribute('open')) _isdOpen.add(_ie[_j].getAttribute('data-isd-name'));
-      }
-    } catch (e) {}
     h += '<div class="card wide"><h2>🔥 Spell Damage Inbound (who cast it)</h2>';
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spell / DoT / proc damage that landed on <b>you</b> this session, grouped by caster then spell. <code>(unknown)</code> = EQ logged the spell but not the caster.</div>';
     var _isdOrdered = _isdCasters.map(function (name) {
@@ -10296,8 +10274,7 @@ function renderInfo(s) {
       var spells = Object.entries(c.rec.spells || {})
         .sort(function (a, b) { return (b[1].total || 0) - (a[1].total || 0); })
         .slice(0, 12);
-      var openAttr = _isdOpen.has(c.name) ? ' open' : '';
-      h += '<details data-isd-name="' + esc(c.name) + '"' + openAttr + '>';
+      h += '<details ' + wpKeep('isd|' + c.name) + '>';
       h += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + fmtK(c.rec.total || 0) + ' over ' + (c.rec.count || 0) + ' hit' + ((c.rec.count === 1) ? '' : 's') + '</span></summary>';
       h += '<table><tr><th>Spell</th><th class="num">Total</th><th class="num">Hits</th><th class="num">Max</th></tr>';
       for (var k = 0; k < spells.length; k++) {

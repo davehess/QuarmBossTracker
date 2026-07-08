@@ -232,6 +232,15 @@ dedicated render fn (`wpZealCard`, `wpRecentFires`, `wpCharmDiag` are the
 pattern). Never put `class="name"` on a cell whose text isn't a character
 name — the click delegation slices to the first word and opens
 `/character/<token>` (404s for trigger names, ability labels, etc.).
+**Every `<details>` the dashboard emits MUST be built as
+`'<details ' + wpKeep('stable|unique|key') + ' …>'`** — repaints (including a
+PARENT section's repaint, which wipes nested placeholders before their own
+render runs) reset a plain `<details>` to closed every poll (the 1.7.0-beta.2
+"Zeal pipe closes immediately" bug). wpKeep persists open-state in a
+JS-side store fed by a capture-phase `toggle` listener; DOM snapshots taken
+inside render fns are NOT safe. `check-agent-dashboard.js` fails the build
+on any emitted `<details>` without `wpKeep(` — this rule is enforced, not
+advisory.
 
 ---
 
