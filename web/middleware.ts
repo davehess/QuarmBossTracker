@@ -32,7 +32,23 @@ function normalizeRoute(pathname: string): string {
   return pathname;
 }
 
+// Link-preview crawlers (they can't sign in, so they'd only ever see the
+// sign-in redirect + the site-wide description). Rewritten to /api/embed-meta
+// which serves per-path OG tags (web/lib/pageMeta.ts). Case-insensitive.
+const PREVIEW_BOT_RX = /discordbot|slackbot|twitterbot|facebookexternalhit|whatsapp|telegrambot|linkedinbot|skypeuripreview|redditbot|mastodon|pinterestbot/i;
+
 export async function middleware(request: NextRequest) {
+  // Per-page link unfurls (Uilnayar 2026-07-08) — serve crawlers the meta
+  // document BEFORE any session work; bots carry no cookies anyway.
+  if (request.method === 'GET'
+      && !request.nextUrl.pathname.startsWith('/api/')
+      && PREVIEW_BOT_RX.test(request.headers.get('user-agent') || '')) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/api/embed-meta';
+    url.search = `path=${encodeURIComponent(request.nextUrl.pathname)}`;
+    return NextResponse.rewrite(url);
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
