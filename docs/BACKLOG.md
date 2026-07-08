@@ -33,6 +33,40 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 - The PvP overnight board got "howl through the night" theming + lists the wolves.
 
 ## Quick requested features (buildable, queued)
+- **Capture the `wolfpacktag` raid channel → live raid-leader overlays.**
+  (Uilnayar 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
+  yet.) The guild already runs an in-game custom chat channel (`ztwolfpacktag`
+  / `wolfpacktag`) to tag mobs: pull, tank picked up an add, which to assist,
+  "this charmed mob is a pet", etc. This IS the raid-intent stream we were
+  otherwise going to synthesize from `/pipe ASSIST %t` macros (see the Zeal
+  pipe protocol discussion) — consuming the existing channel beats inventing a
+  macro protocol. Plan:
+  1. **Capture** — the agent's privacy filter drops ALL custom channels at
+     `DEFAULT_DROP_PATTERNS` line ~261 (`/\btells\s+\w+:\d+,\s*['"]/i`). Chat
+     is parsed BEFORE `shouldKeep`, so add ONE allowlisted parser that matches
+     ONLY `wolfpacktag` and captures it; Wolfpackofficer / Lfg / Ports / tells
+     / group stay dropped exactly as today. Surgical hole, not a weakened
+     filter.
+  2. **Structure** — parse the tag grammar into typed events (assist /
+     add-pickup / pull / charm-is-pet / mark / …) so it drives overlays, not
+     just a log timeline.
+  3. **Feed overlays** — the kill-target skull + add/CC board, relayed via the
+     existing trigger fan-out (bot ring buffer → every Mimic polls
+     `/recent-fires`), so one tagger lights up the whole raid.
+  4. **Privacy** — amend `docs/PRIVACY.md` AND `web/app/privacy/page.tsx`
+     TOGETHER with the capture (never ship the claim before the behavior). It's
+     an explicit named carve-out ("one raid channel, coordination only —
+     everything else custom/tells/officer stays filtered"), not a quiet
+     widening of "we never upload private channels". Draft wording already
+     written in the 2026-07-08 session.
+  **NEEDED before writing the regex (load-bearing — guessing ships a broken
+  parser or captures the WRONG channel):** (a) 3-5 raw `ztwolfpacktag` lines
+  straight from the EQ log file — exact on-disk format, or confirmation it only
+  comes via the Zeal pipe (type 0 log stream) and not the log file at all;
+  (b) is it players typing vs Zeal auto-broadcasting on a target tag; (c) the
+  exact channel token (`ztwolfpacktag` vs `wolfpacktag` + a `zt` display
+  prefix). Open product Q: mirror to web as a searchable tag timeline (like the
+  chat log) or stay purely live-overlay + ephemeral?
 - **Stale-log-filename attribution — extend beyond chat.** Root cause found
   2026-07-07 (the Starrburst/Dant/Bardtholemu chat renames): after a character
   swap the EQ client keeps appending to the PREVIOUS character's log, so
