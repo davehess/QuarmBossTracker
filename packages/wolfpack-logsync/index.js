@@ -3200,40 +3200,104 @@ function offHealCandidatesSnapshot() {
 // its own log — purely local, no bot relay, same as the CH-chain tracker
 // (Uilnayar 2026-07-03: "That lets the whole raid know in raidchat when
 // its happening").
-const _DA_SECONDS_RX = /(\d{1,3})\s*sec/i;
-const _DA_DOWN_RX    = /\bDOWN\b/;
-const _DA_UP_RX       = /\bUP\b/;
+// Kinds we recognize, checked in order (DA first — it's the case-sensitive,
+// most-specific token). Wording is whatever each tank's trigger /rsay's:
+//   DA:            ">> DA up << 18 secs"  ·  "divine aura up"
+//   Defensive:     "Defensive is activated" · "DEFENSIVE is ACTIVE" ·
+//                  "Defensive Active! 3 minutes!" · "1 min on defensive" ·
+//                  "defensive down"   (Currygoat, 2026-07-08 — the miss that
+//                  prompted broadening this beyond DA)
+//   Weapon Shield: "Weapon Shield activated for the next 15s!"
+const _PROT_KINDS = [
+  { kind: 'DA',            rx: /\bDA\b|divine aura/i,  caseSensitiveToken: /\bDA\b/ },
+  { kind: 'Weapon Shield', rx: /weapon\s*shield/i },
+  { kind: 'Defensive',     rx: /defensiv/i },
+];
+// "3 minutes" / "1 min on defensive" → seconds; "15s" / "18 secs" → seconds.
+function _parseProtSeconds(text) {
+  const min = text.match(/(\d{1,3})\s*(?:min|minute)/i);
+  if (min) return Math.min(600, parseInt(min[1], 10) * 60);
+  const sec = text.match(/(\d{1,3})\s*(?:sec|s\b)/i);
+  if (sec) return Math.min(600, parseInt(sec[1], 10));
+  return null;
+}
 const DA_BROADCAST_TTL_MS = 30_000;   // drop an entry 30s after its speaker's last line
-const _daBroadcasts = new Map();      // speakerLower → { name, endsAtMs, updatedAtMs }
+const _daBroadcasts = new Map();      // "speakerLower|kind" → { name, kind, endsAtMs, updatedAtMs }
 function trackDaBroadcastLine(line, character) {
-  if (!line || line.indexOf('DA') === -1) return;   // cheap pre-filter, case-sensitive
+  // Cheap pre-filter: 'DA' substring (case-sensitive) OR a defensive/weapon-
+  // shield word. Only pays the regex when the fast substring misses.
+  if (!line) return;
+  if (line.indexOf('DA') === -1 && !/defensiv|weapon\s*shield|divine aura/i.test(line)) return;
   const m = line.match(_CH_SPEAKER_RX);
   if (!m) return;
   const text = m[2];
-  if (!/\bDA\b/.test(text)) return;
+  let kind = null;
+  for (const k of _PROT_KINDS) {
+    const rx = k.caseSensitiveToken || k.rx;   // DA must match case-sensitively (lowercase "da" is noise)
+    if (rx.test(text)) { kind = k.kind; break; }
+  }
+  if (!kind) return;
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
-  const secM = text.match(_DA_SECONDS_RX);
-  const key = speaker.toLowerCase();
-  if (secM) {
-    const secs = Math.min(120, parseInt(secM[1], 10));
-    _daBroadcasts.set(key, { name: speaker, endsAtMs: atMs + secs * 1000, updatedAtMs: atMs });
-  } else if (_DA_DOWN_RX.test(text)) {
-    _daBroadcasts.set(key, { name: speaker, endsAtMs: atMs, updatedAtMs: atMs });        // down now
-  } else if (_DA_UP_RX.test(text)) {
-    _daBroadcasts.set(key, { name: speaker, endsAtMs: null, updatedAtMs: atMs });        // up, unknown duration
+  const key = speaker.toLowerCase() + '|' + kind;
+  const secs = _parseProtSeconds(text);
+  if (secs != null) {
+    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: atMs + secs * 1000, updatedAtMs: atMs });
+  } else if (/\bdown\b/i.test(text) && !/cool\s*down/i.test(text)) {   // "cool down" = ready, not down
+    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: atMs, updatedAtMs: atMs });         // down now
+  } else if (/activ|\bup\b/i.test(text)) {
+    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: null, updatedAtMs: atMs });          // up, unknown duration
   }
 }
 function daBroadcastsSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [key, e] of _daBroadcasts) {
-    if (now - e.updatedAtMs > DA_BROADCAST_TTL_MS) { _daBroadcasts.delete(key); continue; }
-    out.push({ name: e.name, seconds: e.endsAtMs != null ? Math.max(0, Math.round((e.endsAtMs - now) / 1000)) : null });
+    // Chat broadcasts re-announce, so 30s-since-last-line clears them. But a
+    // LOG-detected disc (e.g. Defensive, ~3 min) fires ONCE — keep it alive
+    // until its known end even after the 30s window, so it doesn't vanish
+    // mid-duration. Delete only when stale AND (no known end, or the end passed).
+    const stale = now - e.updatedAtMs > DA_BROADCAST_TTL_MS;
+    const ended = e.endsAtMs != null && e.endsAtMs <= now;
+    if (stale && (e.endsAtMs == null || ended)) { _daBroadcasts.delete(key); continue; }
+    out.push({ name: e.name, kind: e.kind || 'DA', seconds: e.endsAtMs != null ? Math.max(0, Math.round((e.endsAtMs - now) / 1000)) : null });
   }
-  out.sort((a, b) => (a.seconds ?? 999) - (b.seconds ?? 999));
+  out.sort((a, b) => (a.seconds ?? 999) - (b.seconds ?? 999) || a.name.localeCompare(b.name));
   return out;
+}
+
+// ── Defensive Discipline via the COMBAT LOG (Uilnayar 2026-07-08) ────────────
+// Warriors' Defensive Discipline emits bystander-visible lines, so we don't
+// need the tank to run an announce macro — every nearby raider's own log has:
+//   up (self):   "You assume a defensive fighting style."
+//   up (other):  "Soandso assumes a defensive fighting style."
+//   fade (self): "You return to your normal fighting style."
+//   fade (other):"Soandso returns to his/her/their normal fighting style."
+// Feeds the SAME _daBroadcasts map (key "name|Defensive"), so a log detection
+// and a chat announce for the same tank merge into one entry. The ~3 min cap
+// auto-clears if the fade line is missed; the fade line ends it early.
+const DEFENSIVE_DISC_SECS = 180;
+const _DEF_UP_SELF_RX   = /\bYou assume a defensive fighting style\b/i;
+const _DEF_UP_OTHER_RX  = /\b(\w+) assumes a defensive fighting style\b/i;
+const _DEF_DOWN_SELF_RX = /\bYou return to your normal fighting style\b/i;
+const _DEF_DOWN_OTHER_RX= /\b(\w+) returns to (?:his|her|their) normal fighting style\b/i;
+function trackDefensiveDiscLine(line, character) {
+  if (!line || line.indexOf('fighting style') === -1) return;   // cheap gate
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  let name = null, up = null, m;
+  if (_DEF_UP_SELF_RX.test(line))            { name = character || 'You'; up = true; }
+  else if ((m = line.match(_DEF_UP_OTHER_RX)))   { name = m[1]; up = true; }
+  else if (_DEF_DOWN_SELF_RX.test(line))     { name = character || 'You'; up = false; }
+  else if ((m = line.match(_DEF_DOWN_OTHER_RX)))  { name = m[1]; up = false; }
+  if (!name) return;
+  const key = name.toLowerCase() + '|Defensive';
+  _daBroadcasts.set(key, {
+    name, kind: 'Defensive',
+    endsAtMs: up ? atMs + DEFENSIVE_DISC_SECS * 1000 : atMs,
+    updatedAtMs: atMs,
+  });
 }
 
 // ── Raid-wide healer/caster mana roster ─────────────────────────────────────
@@ -21119,6 +21183,7 @@ async function main() {
         // shout/raid/guild-chat macro pattern as CH chain, feeding the
         // Command Center overlay.
         if (!_sourceExcluded) { try { trackDaBroadcastLine(line, b.character); } catch {} }
+        if (!_sourceExcluded) { try { trackDefensiveDiscLine(line, b.character); } catch {} }
         if (!_sourceExcluded) { try { trackHealerManaLine(line, b.character); } catch {} }
 
         // /pet health output (Quarm: standalone HP line + bare buff names in the
