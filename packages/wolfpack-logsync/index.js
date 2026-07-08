@@ -5703,6 +5703,7 @@ function _endpointForKind(kind, botUrl) {
     case 'faction':         return base + '/faction';
     case 'pop_flag':        return base + '/pop_flags';
     case 'quarmy':          return base + '/quarmy';
+    case 'spellbook':       return base + '/spellbook';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
     case 'threat_snapshot': return base + '/threat-snapshot';
@@ -15073,6 +15074,81 @@ function scanQuarmyExports() {
   }
 }
 
+// ── Spellbook export ingest ──────────────────────────────────────────────────
+// EQ's `/outputfile spellbook` writes <Char>-Spellbook.txt to the EQ dir, TSV:
+// Index <tab> SpellId <tab> Level <tab> Name. Auto-ingested the same way as
+// the Quarmy export so the /character/<name>/spells "missing spells" page stays
+// current with zero manual paste (Uilnayar 2026-07-08: "built in please").
+// Bot side (/api/agent/spellbook) already replaces + checksum-dedups + honors
+// exclude_inventory; we just have to ship the file. KEEP the parse in sync with
+// web/app/me/spellbook-actions.ts parseSpellbook (same columns).
+const SPELLBOOK_FILENAME_RX = /^([A-Za-z]+)[-_ ]?Spellbook\.txt$/i;
+const _spellbookUploaded = {};   // char(lower) → content checksum already enqueued
+
+function parseSpellbookFile(text) {
+  const out = [];
+  const seen = new Set();
+  for (const rawLine of String(text || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let cols = line.split('\t');
+    if (cols.length < 4) cols = line.split(/\s{2,}/);
+    if (cols.length < 4) continue;
+    const idStr = (cols[1] || '').trim();
+    if (/^spellid$/i.test(idStr)) continue;            // header row
+    const id = parseInt(idStr, 10);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const lvl  = parseInt((cols[2] || '').trim(), 10);
+    const name = cols.slice(3).join(' ').trim();
+    if (!name) continue;
+    out.push({ spell_id: id, spell_name: name.slice(0, 96), spell_level: Number.isFinite(lvl) ? lvl : null });
+  }
+  return out;
+}
+
+// Content checksum over the scribed spell-id SET (order/mtime independent) so a
+// re-output with no new spells is a no-op both here and at the bot.
+function _spellbookChecksum(spells) {
+  const ids = spells.map(s => s.spell_id).sort((a, b) => a - b).join(',');
+  return 'sb' + spells.length + '-' + crypto.createHash('sha1').update(ids).digest('hex').slice(0, 16);
+}
+
+function scanSpellbookFiles() {
+  if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog) return;
+  const dir = path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  const envExcluded = new Set(
+    (process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  );
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+  for (const name of entries) {
+    const m = name.match(SPELLBOOK_FILENAME_RX);
+    if (!m) continue;
+    const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    const lower = character.toLowerCase();
+    if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
+    const fullPath = path.join(dir, name);
+    try {
+      const spells = parseSpellbookFile(fs.readFileSync(fullPath, 'utf8'));
+      if (spells.length === 0) continue;
+      const checksum = _spellbookChecksum(spells);
+      if (_spellbookUploaded[lower] === checksum) continue;
+      if (dryRun) {
+        console.log(`[spellbook] DRY RUN — would upload ${character}: ${spells.length} spells (checksum ${checksum})`);
+        continue;
+      }
+      _spellbookUploaded[lower] = checksum;
+      enqueueUpload('spellbook', { agent_version: AGENT_VERSION, character, checksum, spells });
+      console.log(`[spellbook] queued ${spells.length} spells for ${character}`);
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
 function _scanOptInFiles() {
   _loadOptInState();
   _optinState.files   = [];
@@ -20496,6 +20572,12 @@ async function main() {
   // be known, not assumed), so the first useful pass is the 30s one.
   setTimeout(scanQuarmyExports, 30_000);
   setInterval(scanQuarmyExports, 10 * 60_000);
+
+  // Spellbook export ingest — <Char>-Spellbook.txt from EQ's /outputfile
+  // spellbook, same dir + same prefs gate as Quarmy. Keeps the /character
+  // "missing spells" page current with no manual paste.
+  setTimeout(scanSpellbookFiles, 35_000);
+  setInterval(scanSpellbookFiles, 10 * 60_000);
 
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter
