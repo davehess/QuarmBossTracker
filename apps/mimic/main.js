@@ -1131,21 +1131,28 @@ function _zealAbsorb(obj, pid) {
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
-        // Char-info label ids — these are the classic EQ client UI "EQType"
-        // label ids (Zeal's pipe forwards label updates keyed by them; the
-        // semantics come from the base client, not Zeal, which is why Zeal's
-        // repo doesn't document them). CONFIRMED against two live
-        // side-by-sides (Canopy, 2026-07-07/08):
-        //   1 Name · 2 Level · 3 Class · 4 Deity · 5 STR · 6 STA · 7 DEX ·
-        //   8 AGI · 9 WIS · 10 INT · 11 CHA · 12 poison resist ·
-        //   13 disease resist · 14 fire resist · 15 cold resist ·
-        //   16 magic resist · 17 HP cur · 18 HP max · 19 HP % · 20 mana % ·
-        //   21 endurance · 22 AC · 23 ATK · 24 weight cur ·
-        //   25 weight max · 26 XP % · 27 AA XP % · 28 pet name · 29 pet HP %
-        // Raw mana cur/max does NOT appear in this band (only the % at 20).
-        // Capture everything up to 44 (the buff window starts at 45);
-        // _detectSelfHp() reads the confirmed 17/18 pair.
-        if (id >= 1 && id <= 44) {
+        // Char-info label ids — the classic EQ client UI "EQType" label ids.
+        // Zeal queries a fixed LabelNames map and forwards whatever the client
+        // populates (CoastalRedwood/Zeal named_pipe.cpp — the authoritative
+        // list, confirmed against two live side-by-sides, Canopy + Manamana
+        // 2026-07-07/08):
+        //   1 Name · 2 Level · 3 Class · 4 Deity · 5-11 STR/STA/DEX/AGI/WIS/
+        //   INT/CHA · 12 poison / 13 disease / 14 fire / 15 cold / 16 magic
+        //   resists · 17 HP cur · 18 HP max · 19 HP % · 20 mana % ·
+        //   21 endurance % · 22 AC (mitigation) · 23 ATK (offense) ·
+        //   24/25 weight cur/max · 26 XP % · 27 AA XP % · 28 target name ·
+        //   29 target HP % (NOT pet — earlier guess corrected by the source) ·
+        //   30-34 group member 1-5 name · 35-39 group member 1-5 HP % ·
+        //   40-44 group pet 1-5 HP % · 60-67 spell gem 1-8 name ·
+        //   68 pet name · 69 pet HP % · 70 "cur/max" HP text ·
+        //   71 AA points banked · 72 AA % · 73 last name · 74 title ·
+        //   80 "cur/max" mana text · 81 exp per hour · 82 target pet owner ·
+        //   124 mana cur · 125 mana max
+        // Buff slots (45-59, 135-140) and casting (134) are parsed separately
+        // below; every other label id is captured verbatim for the Info tab
+        // Zeal Pipe explorer + the self HP/mana readers.
+        const isBuffBand = (id >= 45 && id <= 59) || (id >= 134 && id <= 140);
+        if (!isBuffBand) {
           if (it.value !== undefined && it.value !== null && it.value !== '') {
             charInfo.push({ id, value: String(it.value) });
           }
@@ -1191,10 +1198,25 @@ function _zealAbsorb(obj, pid) {
       // HP numbers from it. A char-info-only label packet must still forward
       // (it never carries buffs), so mark dirty when we captured any.
       if (charInfo.length > 0) {
-        s.charInfo = charInfo.slice(0, 48);
+        s.charInfo = charInfo.slice(0, 80);
         _detectSelfHp(cur, s, charInfo);
+        _detectSelfMana(s, charInfo);
         cur.dirty = true;
       }
+    }
+  } else if (type === 4) {                            // custom — in-game /pipe <text>
+    // The player typed /pipe <string> in EQ — Zeal forwards the raw string.
+    // Keep a small recent ring per character for the Info tab explorer; this
+    // is also the future hook for in-game → Mimic commands ("/pipe timer 30").
+    const inner = _zealParseData(obj);
+    const text = typeof inner === 'string' ? inner
+               : (inner && typeof inner.text === 'string') ? inner.text
+               : (inner != null ? JSON.stringify(inner) : null);
+    if (text) {
+      if (!Array.isArray(s.custom_recent)) s.custom_recent = [];
+      s.custom_recent.push({ at: Date.now(), text: String(text).slice(0, 300) });
+      while (s.custom_recent.length > 8) s.custom_recent.shift();
+      cur.dirty = true;
     }
   }
 }
@@ -1275,6 +1297,28 @@ function _detectSelfHp(cur, s, charInfo) {
     const c = nums.find(x => x.id === cur.hpIds.curId);
     const m = nums.find(x => x.id === cur.hpIds.maxId);
     if (c && m && m.n > 0 && c.n <= m.n) { s.self_hp_cur = c.n; s.self_hp_max = m.n; }
+  }
+}
+// Raw mana from the label band — no inference needed, the ids are in Zeal's
+// LabelNames map: 124 = current mana, 125 = max mana, with 80 = "cur/max" as
+// a combined-text fallback. Whether the 2002-era client populates them varies
+// by UI state; nulls simply mean not exposed right now.
+function _detectSelfMana(s, charInfo) {
+  let cur = null, max = null;
+  for (const ci of charInfo) {
+    if (ci.id === 124) { const n = Number(ci.value); if (Number.isFinite(n)) cur = n; }
+    else if (ci.id === 125) { const n = Number(ci.value); if (Number.isFinite(n)) max = n; }
+  }
+  if (cur == null || max == null) {
+    const combo = charInfo.find(ci => ci.id === 80 && /^\d+\s*\/\s*\d+$/.test(String(ci.value || '')));
+    if (combo) {
+      const m = String(combo.value).match(/^(\d+)\s*\/\s*(\d+)$/);
+      if (m) { cur = Number(m[1]); max = Number(m[2]); }
+    }
+  }
+  if (cur != null && max != null && max > 0 && cur <= max) {
+    s.self_mana_cur = cur;
+    s.self_mana_max = max;
   }
 }
 function _flushZealStateToAgent() {

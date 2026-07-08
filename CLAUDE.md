@@ -41,8 +41,8 @@ Other fixed facts: Node 20, discord.js v14, Supabase project
 |---|---|---|
 | Bot (`index.js`, `commands/`, `utils/`) | `main` | root `package.json` (+ a `CHANGELOGS` entry in `utils/onboarding.js` — drives `/onboarding` "what's new"; skip if nothing user-facing) |
 | Web (`web/`) | `main` | `web/package.json` |
-| Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` AND `apps/mimic/package.json` (the Mimic bump is what triggers the build) |
-| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` |
+| Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` only. Since 2026-07-08 ANY beta push touching `apps/mimic/**` or `packages/wolfpack-logsync/**` builds; do NOT bump Mimic per iteration |
+| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target (e.g. 1.7.0 for the whole 1.7 beta cycle) — the workflow auto-increments the `-beta.N` tag per push (v1.7.0-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main` |
 | Supabase migration | `main` (file) + apply | see Migrations below |
 | Docs only | `main` | none |
 

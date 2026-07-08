@@ -9202,6 +9202,32 @@ function _fmtBuffTicks(t) {
   if (h > 0) return h + 'h' + m + 'm';
   return m + 'm';
 }
+// Authoritative Zeal pipe field names — from CoastalRedwood/Zeal
+// named_pipe.cpp (LabelNames + GaugeNames maps; the ids are the classic EQ
+// client UI EQType label ids, which is why they are not documented in Zeal
+// itself). Confirmed against live side-by-sides (Canopy + Manamana,
+// 2026-07-07/08). Shared by the Buffs &amp; Zone char-info table and the
+// Info tab Zeal Pipe explorer.
+var WP_ZLABELS = { 1: 'Name', 2: 'Level', 3: 'Class', 4: 'Deity', 5: 'STR', 6: 'STA', 7: 'DEX', 8: 'AGI',
+  9: 'WIS', 10: 'INT', 11: 'CHA', 12: 'Poison resist', 13: 'Disease resist', 14: 'Fire resist',
+  15: 'Cold resist', 16: 'Magic resist', 17: 'HP current', 18: 'HP max', 19: 'HP %', 20: 'Mana %',
+  21: 'Endurance %', 22: 'AC (mitigation)', 23: 'ATK (offense)', 24: 'Weight', 25: 'Weight max',
+  26: 'XP %', 27: 'AA XP %', 28: 'Target name', 29: 'Target HP %',
+  30: 'Group 1 name', 31: 'Group 2 name', 32: 'Group 3 name', 33: 'Group 4 name', 34: 'Group 5 name',
+  35: 'Group 1 HP %', 36: 'Group 2 HP %', 37: 'Group 3 HP %', 38: 'Group 4 HP %', 39: 'Group 5 HP %',
+  40: 'Group pet 1 HP %', 41: 'Group pet 2 HP %', 42: 'Group pet 3 HP %', 43: 'Group pet 4 HP %', 44: 'Group pet 5 HP %',
+  60: 'Spell gem 1', 61: 'Spell gem 2', 62: 'Spell gem 3', 63: 'Spell gem 4',
+  64: 'Spell gem 5', 65: 'Spell gem 6', 66: 'Spell gem 7', 67: 'Spell gem 8',
+  68: 'Pet name', 69: 'Pet HP %', 70: 'HP cur/max text', 71: 'AA points banked', 72: 'AA %',
+  73: 'Last name', 74: 'Title', 80: 'Mana cur/max text', 81: 'XP per hour', 82: 'Target pet owner',
+  124: 'Mana current', 125: 'Mana max', 134: 'Casting' };
+var WP_ZGAUGES = { 1: 'Self HP', 2: 'Mana', 3: 'Endurance', 4: 'XP', 5: 'AA XP', 6: 'Target HP',
+  7: 'Cast progress', 8: 'Breath', 9: 'Memorize', 10: 'Scribe',
+  11: 'Group 1 HP', 12: 'Group 2 HP', 13: 'Group 3 HP', 14: 'Group 4 HP', 15: 'Group 5 HP',
+  16: 'Pet HP', 17: 'Group pet 1 HP', 18: 'Group pet 2 HP', 19: 'Group pet 3 HP', 20: 'Group pet 4 HP', 21: 'Group pet 5 HP',
+  23: 'XP per hour', 24: 'Server tick', 25: 'Spell cooldown',
+  26: 'Gem 1 recast', 27: 'Gem 2 recast', 28: 'Gem 3 recast', 29: 'Gem 4 recast',
+  30: 'Gem 5 recast', 31: 'Gem 6 recast', 32: 'Gem 7 recast', 33: 'Gem 8 recast' };
 function renderZealClients(s) {
   const el = document.getElementById('wpZealClients');
   if (!el) return;   // Dashboard section not painted yet
@@ -9300,14 +9326,9 @@ function renderZealClients(s) {
     // raw HP cur/max would live if Zeal exposes it; surfaced so we can
     // confirm what's actually sent (Uilnayar 2026-07-05 self-HP-numbers ask).
     if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
-      // Fully confirmed mapping (Canopy side-by-sides, 2026-07-07/08). These
-      // are the classic EQ client UI EQType label ids — Zeal forwards them
-      // verbatim, so the semantics come from the base client.
-      var ciLabels = { 1: 'Name', 2: 'Level', 3: 'Class', 4: 'Deity', 5: 'STR', 6: 'STA', 7: 'DEX', 8: 'AGI',
-        9: 'WIS', 10: 'INT', 11: 'CHA', 12: 'Poison resist', 13: 'Disease resist', 14: 'Fire resist',
-        15: 'Cold resist', 16: 'Magic resist', 17: 'HP cur', 18: 'HP max', 19: 'HP %', 20: 'Mana %',
-        21: 'Endurance', 22: 'AC', 23: 'ATK', 24: 'Weight cur', 25: 'Weight max', 26: 'XP %',
-        27: 'AA XP %', 28: 'Pet name', 29: 'Pet HP %' };
+      // Field names come from the shared WP_ZLABELS map (Zeal named_pipe.cpp
+      // LabelNames — see the definition above renderZealClients).
+      var ciLabels = WP_ZLABELS;
       h += '<details data-charinfo="' + esc(c.character) + '"' + (_openCharInfo[c.character] ? ' open' : '')
          + ' style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
          + c.char_info.length + ' char-info field' + (c.char_info.length === 1 ? '' : 's')
@@ -9881,6 +9902,144 @@ function _wpPaintTriggerScan(j){
   card.innerHTML = h;
 }
 
+// 🔌 Zeal Pipe explorer (Info tab) — surfaces EVERY data element the pipe
+// carries, per character, each group in its own <details> with open-state
+// preserved across the 2s repaint (same pattern as the gauge/char-info dumps
+// on Buffs &amp; Zone). Field names from WP_ZLABELS / WP_ZGAUGES (Zeal
+// named_pipe.cpp). This is the ground-truth surface: gauges are per-mille
+// from the client, labels are the classic-UI EQType strings.
+function renderZealExplorer(s) {
+  const el = document.getElementById('wpZealExplorer');
+  if (!el) return;
+  const clients = Array.isArray(s.zealClients) ? s.zealClients : [];
+  const z = s.zeal || {};
+  if (clients.length === 0 && !(z.total > 0)) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    morphInto(el, '');
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = '';
+  // Snapshot open groups before the rewrite.
+  var openSet = {};
+  try {
+    el.querySelectorAll('details[data-zx]').forEach(function(d){
+      if (d.open) openSet[d.getAttribute('data-zx')] = 1;
+    });
+  } catch (e) { void e; }
+  function grp(key, title, count, inner) {
+    return '<details data-zx="' + esc(key) + '"' + (openSet[key] ? ' open' : '')
+      + ' style="margin:2px 0 2px 12px;font-size:11px"><summary class="dim" style="cursor:pointer">'
+      + title + (count != null ? ' <span class="dim">(' + count + ')</span>' : '') + '</summary>'
+      + inner + '</details>';
+  }
+  function tbl(rows, headers) {
+    var t = '<table style="font-size:11px;margin-top:4px"><tr>';
+    for (var i = 0; i < headers.length; i++) t += '<th>' + headers[i] + '</th>';
+    t += '</tr>' + rows + '</table>';
+    return t;
+  }
+  function ciMap(c) {
+    var m = {};
+    for (var i = 0; i < (c.char_info || []).length; i++) { var ci = c.char_info[i]; m[ci.id] = ci.value; }
+    return m;
+  }
+  function rowsForIds(m, ids) {
+    var r = '', n = 0;
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      if (m[id] === undefined || m[id] === '' || m[id] === '0' && id >= 30) continue;
+      r += '<tr><td class="dim">' + id + '</td><td class="dim">' + esc(WP_ZLABELS[id] || '?') + '</td>'
+         + '<td class="num">' + esc(String(m[id])) + '</td></tr>';
+      n++;
+    }
+    return { rows: r, n: n };
+  }
+  let h = '<h2>🔌 Zeal Pipe <span class="dim" style="font-size:11px;font-weight:normal">· everything the pipe carries, decoded — field names from Zeal named_pipe.cpp; gauges are per-mille</span></h2>';
+  for (const c of clients) {
+    var m = ciMap(c);
+    var k = 'zx|' + c.character;
+    var dot = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
+    h += '<div style="margin-top:8px">' + dot + ' <b>' + esc(c.character) + '</b>'
+       + (c.zone_name ? ' <span class="dim">· ' + esc(c.zone_name) + '</span>' : '') + '</div>';
+    // Vitals & stats — the identity/stat/vital label band.
+    var vit = rowsForIds(m, [2, 3, 4, 73, 74, 17, 18, 19, 124, 125, 80, 20, 21, 22, 23, 24, 25, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    if (vit.n) h += grp(k + '|vitals', 'Vitals &amp; stats', vit.n, tbl(vit.rows, ['Id', 'Field', 'Value']));
+    // Progress.
+    var prog = rowsForIds(m, [26, 27, 71, 72, 81]);
+    if (prog.n) h += grp(k + '|prog', 'Progress (XP / AA)', prog.n, tbl(prog.rows, ['Id', 'Field', 'Value']));
+    // Target.
+    var tgt = rowsForIds(m, [28, 29, 82]);
+    if (tgt.n) h += grp(k + '|target', 'Target', tgt.n, tbl(tgt.rows, ['Id', 'Field', 'Value']));
+    // Group members (labels 30-44; zeros = empty slots, filtered in rowsForIds).
+    var gm = rowsForIds(m, [30, 35, 40, 31, 36, 41, 32, 37, 42, 33, 38, 43, 34, 39, 44]);
+    if (gm.n) h += grp(k + '|group', 'Group', gm.n, tbl(gm.rows, ['Id', 'Field', 'Value']));
+    // Spell gems: names (60-67) joined with recast gauges (26-33).
+    var gemRows = '', gemN = 0;
+    for (var gi = 0; gi < 8; gi++) {
+      var gname = m[60 + gi];
+      if (gname === undefined || gname === '') continue;
+      var rg = (c.gauges || []).find(function(g){ return g && g.slot === 26 + gi; });
+      gemRows += '<tr><td class="dim">' + (gi + 1) + '</td><td>' + esc(String(gname)) + '</td>'
+        + '<td class="num">' + (rg && rg.hp_pct != null ? Math.round(rg.hp_pct) + '%' : '&mdash;') + '</td></tr>';
+      gemN++;
+    }
+    if (gemN) h += grp(k + '|gems', 'Spell gems', gemN, tbl(gemRows, ['Gem', 'Spell', 'Recast']));
+    // Pet (labels 68/69 + gauge 16 as the live per-mille signal).
+    var pet = rowsForIds(m, [68, 69]);
+    if (pet.n || c.pet_name) {
+      var petInner = pet.n ? tbl(pet.rows, ['Id', 'Field', 'Value']) : '';
+      if (c.pet_name) petInner += '<div class="dim" style="margin-top:2px">gauge 16: ' + esc(c.pet_name) + ' ' + (c.pet_hp_pct != null ? Math.round(c.pet_hp_pct) + '%' : '') + '</div>';
+      h += grp(k + '|pet', 'Pet', null, petInner);
+    }
+    // Buffs & songs with remaining ticks.
+    var bf = c.buffs || [];
+    if (bf.length) {
+      var bfRows = '';
+      for (var bi = 0; bi < bf.length; bi++) {
+        var b = bf[bi];
+        var rem = (b.ticks != null) ? (Math.floor(b.ticks * 6 / 60) + ':' + ('0' + Math.round(b.ticks * 6 % 60)).slice(-2)) : '&mdash;';
+        bfRows += '<tr><td class="dim">' + (b.song ? 'song ' : 'buff ') + b.slot + '</td><td>' + esc(b.name) + '</td><td class="num">' + rem + '</td></tr>';
+      }
+      h += grp(k + '|buffs', 'Buffs &amp; songs', bf.length, tbl(bfRows, ['Slot', 'Name', 'Left']));
+    }
+    // Casting (label 134 + gauge 7 progress).
+    if (c.casting) {
+      var cg = (c.gauges || []).find(function(g){ return g && g.slot === 7; });
+      h += grp(k + '|cast', 'Casting', null, '<div style="margin-top:2px">' + esc(c.casting)
+        + (cg && cg.hp_pct != null ? ' <span class="dim">&middot; ' + Math.round(cg.hp_pct) + '%</span>' : '') + '</div>');
+    }
+    // In-game /pipe strings (custom type 4).
+    var cr = c.custom_recent || [];
+    if (cr.length) {
+      var crRows = '';
+      for (var cri = cr.length - 1; cri >= 0; cri--) {
+        crRows += '<tr><td class="dim">' + fmtAgo(cr[cri].at) + '</td><td>' + esc(cr[cri].text) + '</td></tr>';
+      }
+      h += grp(k + '|custom', '/pipe messages', cr.length, tbl(crRows, ['When', 'Text']));
+    }
+    // Full gauge dump with names.
+    var gg = c.gauges || [];
+    if (gg.length) {
+      var ggRows = '';
+      for (var ggi = 0; ggi < gg.length; ggi++) {
+        var g2 = gg[ggi];
+        ggRows += '<tr><td class="dim">' + g2.slot + '</td><td class="dim">' + esc(WP_ZGAUGES[g2.slot] || '?') + '</td>'
+          + '<td class="num">' + (g2.hp_pct != null ? Math.round(g2.hp_pct) + '%' : '') + '</td>'
+          + '<td>' + esc(g2.text || '') + '</td></tr>';
+      }
+      h += grp(k + '|gauges', 'All gauges', gg.length, tbl(ggRows, ['Slot', 'Gauge', 'Value', 'Text']));
+    }
+    // Every raw label, verbatim — the discovery surface for anything new.
+    var allRows = '';
+    for (var ai = 0; ai < (c.char_info || []).length; ai++) {
+      var aci = c.char_info[ai];
+      allRows += '<tr><td class="dim">' + aci.id + '</td><td class="dim">' + esc(WP_ZLABELS[aci.id] || '?') + '</td>'
+        + '<td class="num">' + esc(String(aci.value)) + '</td></tr>';
+    }
+    if (allRows) h += grp(k + '|raw', 'All labels (raw)', (c.char_info || []).length, tbl(allRows, ['Id', 'Field', 'Value']));
+  }
+  morphInto(el, h);
+}
 function renderInfo(s) {
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   // totalMinutes now accumulates the live session incrementally (saveStatsSoon),
@@ -9893,6 +10052,10 @@ function renderInfo(s) {
   // raid-night card). Self-updating #wpWatchedLogs filled by
   // renderWatchedLogsCard; placeholder hidden until logs are seen.
   h += '<div id="wpWatchedLogs" class="card wide" style="display:none"></div>';
+  // Zeal Pipe explorer — every data element the pipe carries, per character,
+  // each group expandable. Volatile (live gauges/labels), so it fills its own
+  // placeholder via renderZealExplorer to keep the rest of #info byte-stable.
+  h += '<div id="wpZealExplorer" class="card wide" style="display:none"></div>';
   h += '<div class="grid">';
   // 🥋 Monk Mending — only if attempts > 0
   const m = s.sessionMends || {};
@@ -10859,7 +11022,10 @@ async function refresh() {
                      ['tanks', renderTanks], ['deeps', renderDeeps],
                      ['triggers', renderTriggers], ['zealcard', renderZealCard],
                      ['charmdiag', renderCharmDiag],
-                     ['overlays', renderOverlays], ['info', renderInfo]];
+                     ['overlays', renderOverlays], ['info', renderInfo],
+                     // After info: fills the #wpZealExplorer placeholder that
+                     // renderInfo just (re)painted, so it shows same-tick.
+                     ['zealexplorer', renderZealExplorer]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
       try { _sfn(s); }
@@ -19383,7 +19549,8 @@ function _serializeZealForWeb() {
   }
   const clients = Object.keys(_zealState).map(ch => {
     const st = _zealState[ch] || {};
-    const gauges = Array.isArray(st.gauges) ? st.gauges.slice(0, 20) : [];
+    // 40 covers the full gauge id space (1-33 incl. spell-gem recasts 26-33).
+    const gauges = Array.isArray(st.gauges) ? st.gauges.slice(0, 40) : [];
     let petName = null, petHp = null, petSlot = null;
     // Primary: gauge slot 16 (require a name so an empty/fixed UI gauge never
     // masquerades as a pet).
@@ -19405,10 +19572,13 @@ function _serializeZealForWeb() {
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
       self_hp_cur: st.self_hp_cur != null ? st.self_hp_cur : null,
       self_hp_max: st.self_hp_max != null ? st.self_hp_max : null,
+      self_mana_cur: st.self_mana_cur != null ? st.self_mana_cur : null,
+      self_mana_max: st.self_mana_max != null ? st.self_mana_max : null,
       char_info:   Array.isArray(st.charInfo) ? st.charInfo : null,
       autoattack:  !!st.autoattack,
       buffs:       Array.isArray(st.buffs) ? st.buffs : [],
       casting:     st.casting || null,
+      custom_recent: Array.isArray(st.custom_recent) ? st.custom_recent : [],
       gauges,
       pet_name:    petName,
       pet_hp_pct:  petHp,
