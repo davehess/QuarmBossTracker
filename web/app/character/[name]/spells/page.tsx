@@ -21,6 +21,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { classBit, normalizeClass } from '@/lib/class-titles';
+import SpellLevelEditor from './SpellLevelEditor';
 
 export const dynamic = 'force-dynamic';
 
@@ -176,6 +177,9 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
                     <h3 className="text-sm text-orange mb-1.5">
                       {lk === 'unknown' ? 'Level unknown' : `Level ${lk}`}
                       <span className="text-dim font-normal"> · {rows.length}</span>
+                      {lk === 'unknown' && officer && (
+                        <span className="text-dim font-normal text-[10px]"> · type a level to file it (applies guild-wide)</span>
+                      )}
                     </h3>
                     <ul className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
                       {rows.map(m => (
@@ -195,6 +199,9 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
                             <span className="text-green text-[10px]" title="A guildmate is holding this scroll">
                               🎒 {m.held_by.join(', ')}
                             </span>
+                          )}
+                          {officer && lk === 'unknown' && m.spell_id && (
+                            <SpellLevelEditor spellId={m.spell_id} character={decoded} />
                           )}
                         </li>
                       ))}

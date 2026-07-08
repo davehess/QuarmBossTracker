@@ -43,6 +43,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'spell-levels',
+    title: 'Fill in levels for spells nobody has yet',
+    version: 'Web 1.0.184',
+    date: '2026-07-08',
+    headline: 'Officers can now file the level for PoP (and any un-scribed) spells so the missing-spells page stops dumping them all under “Level unknown.”',
+    features: [
+      { name: 'Officer spell-level editor', blurb: 'The missing-spells page groups by level, but a spell nobody has scribed yet (every PoP 61-65 spell, until the October unlock) has no level to group by — the game data mirror doesn’t carry class levels. Officers now get a little “type a level” box next to each unknown-level spell; set it once and it applies guild-wide. The instant a real druid scribes the spell and uploads their book, their actual level takes over automatically.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'spellbook-auto',
     title: 'Spellbook uploads itself now',
     version: 'Mimic 1.7 · Agent 3.3.3',
