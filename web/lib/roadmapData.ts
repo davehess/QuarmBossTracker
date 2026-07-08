@@ -24,6 +24,78 @@ export type RetroItem = {
   note: string;
 };
 
+// ── Release log — the member-facing changelog. NEWEST FIRST. ─────────────────
+// RULE (Uilnayar 2026-07-08): EVERY release updates this list. Call out the
+// version, give a SIMPLIFIED plain-language line per headline feature, and put
+// the bug fixes at the bottom of that release. Keep it human — this is what a
+// raider reads, not a git log. (Technical detail lives in the component
+// changelogs + docs/roadmap.md.)
+export type Release = {
+  key: string;
+  title: string;         // short human name for the release
+  version: string;       // the version pill, e.g. "Web 1.0.180 · Bot 3.0.147"
+  date: string;          // YYYY-MM-DD
+  channel?: 'beta';      // omit for stable
+  headline: string;      // one-line "why this release matters"
+  features: { name: string; blurb: string }[];   // main things, simplified
+  fixes: string[];       // bug fixes — rendered at the bottom of the release
+};
+
+export const releases: Release[] = [
+  {
+    key: 'pop-roster-polish',
+    title: 'PoP flags, roster, and a site-wide polish pass',
+    version: 'Web 1.0.181 · Bot 3.0.147',
+    date: '2026-07-08',
+    headline: 'The road to Quarm gets a map, and the whole site gets more flexible.',
+    features: [
+      { name: 'PoP Flags (Preview)', blurb: 'A live chart of the guild’s Planes of Power flagging — who can enter each zone today, and a planner that ranks what to raid next by how many people each kill pushes forward.' },
+      { name: 'Raid Roster', blurb: 'Your typical raiders, grouped by role and class, sorted by 60-day attendance. Notable alts are called out in italics under their class.' },
+      { name: 'Expandable time windows', blurb: 'Leaderboards, parses, and PvP now let you expand or contract the window — day, week, 30/60/90 days, the whole expansion, or lifetime.' },
+      { name: 'Sharper link previews', blurb: 'Sharing any page link in Discord now unfurls with that page’s own description instead of the generic site blurb.' },
+    ],
+    fixes: [
+      'Guild chat stopped posting under the wrong character name after someone swaps characters mid-raid (and the bot now edits an already-posted line to the right name within seconds).',
+      'The /fun dirge and Lord of Ire cards now fold alts into their main and drop stray log-file names — no more mystery raiders like “Ashaiya.”',
+      'The /fun “What’s new” box is collapsed by default so the counters are front-and-center.',
+    ],
+  },
+  {
+    key: 'zeal-deep-dive',
+    title: 'Zeal deep-dive + real tank HP',
+    version: 'Mimic 1.7.0 · Agent 3.3',
+    date: '2026-07-08',
+    channel: 'beta',
+    headline: 'Mimic now surfaces every scrap of live game data Zeal exposes.',
+    features: [
+      { name: 'Zeal Pipe explorer', blurb: 'A new Info-tab panel that decodes everything the Zeal pipe carries — your stats, buffs, group, spell gems, position — each section expandable. Fully documented, so nothing is guesswork anymore.' },
+      { name: 'Real HP on the tank overlay', blurb: 'The tank overlay’s raw HP numbers used to be nonsense; now they read your actual current/max HP, correct even at full health.' },
+      { name: 'Raid-wide HP via /pipeverbose', blurb: 'Turning on /pipeverbose in-game streams exact HP and zone for the whole raid, not just percentages.' },
+    ],
+    fixes: [
+      'The Zeal Pipe panels no longer snap shut the instant you open them — and that’s now an enforced rule so no future dashboard change can regress it.',
+      'Beta builds version themselves correctly (beta.2, beta.3…) instead of forcing a version bump every iteration.',
+    ],
+  },
+  {
+    key: 'mimic-mail-speed',
+    title: 'Mimic Mail + a big speed pass',
+    version: 'Bot 3.0.144 · Mimic 1.6.0',
+    date: '2026-07-07',
+    channel: 'beta',
+    headline: 'Officers can reach every Mimic at once, and the whole stack got faster.',
+    features: [
+      { name: 'Mimic Mail', blurb: 'Officers publish a notice on the site and every running Mimic shows a pulsing mail icon within ~90 seconds — mark it critical and the bot also posts it to Discord. Works on every future Mimic version with no extra plumbing.' },
+      { name: '“✓ cured” button', blurb: 'When nobody near a cursed player runs Mimic, anyone can now clear a stuck cure-need from the whole raid’s queue with one click.' },
+      { name: 'Efficiency pass', blurb: 'Overlays skip repainting unchanged frames, the buff queue computes once for the whole raid instead of once per person (~20× less database traffic), and agent log parsing got cheap pre-filters across the board.' },
+    ],
+    fixes: [
+      'The /fun page had slowed to a crawl — its counters now load in parallel with the two heaviest moved into fast indexed queries (measured 1.5s → 18ms on one of them).',
+      'Two storage tables that had been hoarding rows (buff history and /who sightings) now prune themselves — 60–73% smaller with no visible change.',
+    ],
+  },
+];
+
 export const retroSummary = {
   headline: '9 of 13 tracked initiatives shipped',
   blurb:
@@ -101,7 +173,11 @@ export const retroItems: RetroItem[] = [
   },
 ];
 
-export const recentFeatures: RoadmapFeature[] = [
+// Retired 2026-07-08 — the flat feature grid was replaced by the release log
+// (`releases` above). Kept (exported to avoid an unused-symbol lint) as archive
+// context for older shipped work that predates the release log; NOT rendered.
+// Add new work to `releases`, not here.
+export const archivedFeatures: RoadmapFeature[] = [
   {
     key: 'family-links',
     title: 'One-click "same family" confirm for officers',

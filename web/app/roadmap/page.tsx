@@ -5,7 +5,7 @@
 // GitHub-level detail.
 
 import RoadmapFeatureCard from '@/components/RoadmapFeatureCard';
-import { retroSummary, retroItems, recentFeatures, nearTermItems } from '@/lib/roadmapData';
+import { retroSummary, retroItems, releases, nearTermItems } from '@/lib/roadmapData';
 
 export const dynamic = 'force-static';
 
@@ -63,12 +63,42 @@ export default function RoadmapPage() {
       <section className="space-y-4">
         <h2 className="text-lg text-orange">Recently shipped</h2>
         <p className="text-sm text-dim">
-          The most recent batch of fixes and features, newest ideas at the bottom of this
-          list feeding straight into what's next below.
+          The release log — newest first. Each release lists the headline features in plain
+          language, with the bug fixes tucked at the bottom.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {recentFeatures.map((f) => (
-            <RoadmapFeatureCard key={f.key} feature={f} />
+        <div className="space-y-4">
+          {releases.map((r) => (
+            <article key={r.key} className="bg-panel border border-border rounded-lg p-5 space-y-3">
+              <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h3 className="text-base text-text font-semibold">{r.title}</h3>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-green/15 text-green border-green/40">
+                  {r.version}
+                </span>
+                {r.channel === 'beta' && (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-orange/15 text-orange border-orange/40">beta</span>
+                )}
+                <span className="text-[10px] text-dim ml-auto">{r.date}</span>
+              </header>
+              <p className="text-sm text-dim italic">{r.headline}</p>
+              <ul className="space-y-1.5">
+                {r.features.map((f) => (
+                  <li key={f.name} className="text-sm text-text leading-6">
+                    <span className="text-gold font-semibold">{f.name}</span>
+                    <span className="text-dim"> — {f.blurb}</span>
+                  </li>
+                ))}
+              </ul>
+              {r.fixes.length > 0 && (
+                <div className="pt-2 border-t border-border/60">
+                  <div className="text-[11px] uppercase tracking-wide text-blue mb-1">Bug fixes</div>
+                  <ul className="space-y-1 list-disc list-inside">
+                    {r.fixes.map((fix, i) => (
+                      <li key={i} className="text-xs text-dim leading-5">{fix}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </article>
           ))}
         </div>
       </section>

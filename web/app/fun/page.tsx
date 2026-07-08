@@ -10,6 +10,7 @@ import { unstable_cache } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
+import { loadNameMap } from '@/lib/roster';
 
 export const dynamic = 'force-dynamic';
 
@@ -358,15 +359,24 @@ SECTIONS.push(async (sb, counters) => {
   // number grows as more bards upload. Cast count is parked until/if a
   // bystander-side "begins singing Dirge of …" detector ships.
   try {
-    const totals = await getDirgeTotals();
+    const [totals, names] = await Promise.all([getDirgeTotals(), loadNameMap(sb)]);
     let dirgeDamage = 0;
     let dirgeHits = 0;
     const byBard = new Map<string, number>();
     for (const r of totals) {
+      // Drop stray-log ghosts (an old/foreign eqlog_<Name> a member's agent
+      // tailed — e.g. "Ashaiya" — which isn't a roster character), then fold
+      // real alts into their main (Chadivarius → Moash) so the card names and
+      // total only ever reflect actual Wolf Pack bards. Ghost damage is
+      // dropped from the TOTAL too — we don't credit mystery names.
+      if (!names.isKnown(r.character_name)) continue;
       const dmg = Number(r.dmg) || 0;
       dirgeDamage += dmg;
       dirgeHits   += Number(r.hits) || 0;
-      if (dmg > 0) byBard.set(r.character_name, (byBard.get(r.character_name) ?? 0) + dmg);
+      if (dmg > 0) {
+        const main = names.mainOf(r.character_name);
+        byBard.set(main, (byBard.get(main) ?? 0) + dmg);
+      }
     }
     const ranked = [...byBard.entries()].sort((a, b) => b[1] - a[1]);
     if (dirgeDamage > 0) {
@@ -401,14 +411,19 @@ SECTIONS.push(async (sb, counters) => {
   // PvP relay when a Wolf-Pack-attributed broadcast names "Lord of Ire" as the
   // victim.
   try {
-    const { data: loiRows, count: loiTotal } = await sb
-      .from('fun_events')
-      .select('caster', { count: 'exact' })
-      .eq('event_type', 'lord_of_ire_killed');
+    const [{ data: loiRows, count: loiTotal }, names] = await Promise.all([
+      sb.from('fun_events')
+        .select('caster', { count: 'exact' })
+        .eq('event_type', 'lord_of_ire_killed'),
+      loadNameMap(sb),
+    ]);
+    // Fold alts into their main (Adiwen → Wabumkin, Timberr → Timberowl) so the
+    // card's top-3 matches /fun/lord-of-ire's "By main" list — the outside was
+    // showing raw per-character names while the page folded to mains.
     const tally = new Map<string, number>();
     for (const r of (loiRows ?? []) as { caster: string | null }[]) {
-      const k = r.caster || 'unknown';
-      tally.set(k, (tally.get(k) ?? 0) + 1);
+      const main = names.mainOf(r.caster || 'unknown');
+      tally.set(main, (tally.get(main) ?? 0) + 1);
     }
     const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1]);
     const total  = loiTotal ?? 0;
@@ -698,13 +713,15 @@ export default async function FunPage() {
           guildies can laugh at them (and at each other). Hard-coded ledger
           rather than a feed; intentionally short. Update this list as new
           fun stuff lands and rotate older items out. (Uilnayar 2026-06-26.) */}
-      <section className="bg-panel border border-purple/50 rounded-lg p-4">
-        <div className="flex items-center gap-2 mb-2">
+      <details className="bg-panel border border-purple/50 rounded-lg p-4 group">
+        <summary className="flex items-center gap-2 cursor-pointer list-none select-none">
           <span aria-hidden className="text-base">🆕</span>
           <h3 className="text-sm text-purple uppercase tracking-wide">What&apos;s new</h3>
           <span className="text-[10px] text-dim">2026-06-26</span>
-        </div>
-        <ul className="text-xs space-y-1 text-text leading-5">
+          <span className="ml-auto text-[10px] text-dim group-open:hidden">click to expand ▾</span>
+          <span className="ml-auto text-[10px] text-dim hidden group-open:inline">collapse ▴</span>
+        </summary>
+        <ul className="text-xs space-y-1 text-text leading-5 mt-2">
           <li><strong>🎯 Mimic v1.1.1 (beta)</strong> — Mimic now <em>scans your machine</em> for GINA + EQ Log Parser libraries and shows what it found. Visibility only — nothing leaves your dashboard. Settings → Info card lights up the moment a known pack (Safe Space, custom, etc.) is detected.</li>
           <li><strong>🗳 Mimic v1.1.2 (beta)</strong> — every trigger fire shows three buttons: <code className="text-dim">« Earlier · ✓ Good! · » Too early</code>. Tap one and the vote rides the agent&apos;s durable queue up to the bot.</li>
           <li><strong>📊 v1.1.3 — officer aggregate</strong> — those votes now show up on <code className="text-dim">/admin/triggers</code> with a per-trigger recommendation chip (≥3 votes, ≥60% consensus before it lights up). Tunes the guild trigger pack from real raid evidence.</li>
@@ -714,7 +731,7 @@ export default async function FunPage() {
           <li><strong>🔌 Raids since Peopleslayer crashed</strong> — flipped per his own suggestion (new machine, fresh start). Shows the date of his last LD <em>and</em> the zone it happened in. The old &quot;lifetime LD count&quot; lives on in the subtitle, scribbled out.</li>
           <li className="text-dim">Plus, in case the bug-and-fix is funny too: <strong>chat dedup now collapses drunk-slur variants</strong> so Discord doesn&apos;t double-post when 5 agents each see a different mutation. (Bardtholemu&apos;s <code>FUCK ZERG → Esev ZERG → Ljyu ZERG → Tgfq ZERG</code> spree caught fewer eyes this week.)</li>
         </ul>
-      </section>
+      </details>
 
       {/* Live cards first. */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

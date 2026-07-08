@@ -54,6 +54,15 @@ file-checkout between branches rather than merging whole branches (the beta
 branch must never promote stale bot/web files to `main`). Graduating a Mimic
 beta to stable: merge the Mimic/agent state to `main` with a stable version.
 
+**Every release updates the roadmap** (Uilnayar 2026-07-08). Add/extend a
+`releases[]` entry at the TOP of `web/lib/roadmapData.ts` (newest first) for
+any user-facing change — bot, web, agent, or Mimic. Each entry: the version
+pill (`Web 1.0.x · Bot 3.0.y`, add a `beta` channel flag for beta-only), a
+one-line headline, the headline features as SIMPLIFIED plain-language bullets,
+and the **bug fixes at the bottom**. This is what a raider reads (mirrors the
+`/onboarding` CHANGELOGS in tone) — keep it human, not a git log. Bump
+`web/package.json` for the roadmap edit like any web change.
+
 ### Migrations
 Timestamped `YYYYMMDDHHMMSS_description.sql` in `supabase/migrations/`,
 idempotent (`IF NOT EXISTS`). The GitHub integration auto-applies on merge to
