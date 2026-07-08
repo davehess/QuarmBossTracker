@@ -43,6 +43,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'account-inventory',
+    title: 'See everything your characters own, all at once',
+    version: 'Web 1.0.185',
+    date: '2026-07-08',
+    headline: 'A new account-wide inventory on /me: the total count of every item across all your characters, and exactly who’s holding it.',
+    features: [
+      { name: 'Account inventory (/me → 🎒)', blurb: 'One list of every item across all your characters, with a running total and the per-character breakdown — “3 total: Bowvendor ×2 (shared bank), Manamana ×1 (bags)”. Items sitting in your shared bank are tagged, since any of your characters can pull them.' },
+      { name: 'Filters + include/exclude', blurb: 'Filter by Weapon / Armor / Tradeskill / No-Drop / Spell, search by name, and toggle which characters or which places (equipped / bags / bank / shared bank) to count — totals recompute live. It’s private to you, built from your /outputfile inventory uploads.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'spell-levels',
     title: 'Fill in levels for spells nobody has yet',
     version: 'Web 1.0.184',

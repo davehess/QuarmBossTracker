@@ -928,9 +928,14 @@ export default async function MePage() {
               )}
             </p>
           </div>
-          <Link href="/me/tells" className="text-blue hover:underline text-sm whitespace-nowrap">
-            📬 Inbound /tell →
-          </Link>
+          <div className="flex flex-col items-end gap-1">
+            <Link href="/me/inventory" className="text-blue hover:underline text-sm whitespace-nowrap">
+              🎒 Account inventory →
+            </Link>
+            <Link href="/me/tells" className="text-blue hover:underline text-sm whitespace-nowrap">
+              📬 Inbound /tell →
+            </Link>
+          </div>
         </div>
 
         {allChars.length === 0 ? (
