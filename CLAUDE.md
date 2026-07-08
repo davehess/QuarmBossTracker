@@ -4,10 +4,6 @@ A guild platform for Wolf Pack on Project Quarm (EverQuest emu), grown from a
 Discord raid-timer bot into four independently-versioned components in one
 monorepo. This file is the authoritative architectural map; `README.md` is the
 user-facing setup guide + command reference. When they conflict, this file wins.
-**`docs/HOW-ITS-BUILT.md` is the long-form companion** — per-feature "how X is
-built" entries (data flow, file locations, non-obvious mechanics) for every
-feature across all four components. Update the relevant entry when you
-materially change a feature.
 
 | Component | Path | Runs on | Ships from |
 |---|---|---|---|
@@ -45,8 +41,8 @@ Other fixed facts: Node 20, discord.js v14, Supabase project
 |---|---|---|
 | Bot (`index.js`, `commands/`, `utils/`) | `main` | root `package.json` (+ a `CHANGELOGS` entry in `utils/onboarding.js` — drives `/onboarding` "what's new"; skip if nothing user-facing) |
 | Web (`web/`) | `main` | `web/package.json` |
-| Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` AND `apps/mimic/package.json` (the Mimic bump is what triggers the build) |
-| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` |
+| Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` only. Since 2026-07-08 ANY beta push touching `apps/mimic/**` or `packages/wolfpack-logsync/**` builds; do NOT bump Mimic per iteration |
+| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target (e.g. 1.7.0 for the whole 1.7 beta cycle) — the workflow auto-increments the `-beta.N` tag per push (v1.7.0-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main` |
 | Supabase migration | `main` (file) + apply | see Migrations below |
 | Docs only | `main` | none |
 
@@ -371,11 +367,8 @@ any "should have been there" computation.
 
 ## Roadmap
 
-Live queue + in-flight notes: `docs/BACKLOG.md`. Mimic's own 1.4.x beta
-cadence queue: `docs/mimic-1.4-roadmap.md` (Pull Tracker research findings,
-Trigger Alerts onboarding, UI Studio overlay-positioning, per-character
-overlay position/opacity — Phase B-2 — and its `/me` sync follow-up). Deeper
-designs: `docs/raid-hub-roadmap.md`, `docs/trigger-system-roadmap.md`,
+Live queue + in-flight notes: `docs/BACKLOG.md`. Deeper designs:
+`docs/raid-hub-roadmap.md`, `docs/trigger-system-roadmap.md`,
 `docs/DESIGN-buff-debuff-queue.md`, `docs/DESIGN-ch-chain.md`,
 `docs/MIMIC.md` / `docs/MIMIC_AGENT.md`, `docs/opendkp-capture-playbook.md`,
 `docs/code-signing.md` (SignPath, pre-staged off), `docs/PRIVACY.md`.

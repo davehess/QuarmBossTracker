@@ -17,18 +17,25 @@ name: Release Mimic (Electron)
 #      version field → workflow runs, builds, and softprops creates a fresh
 #      release tagged v<new_version> at the merge commit. Tag, release, and
 #      assets all materialize in one pass — no human clicks.
-#   2. Push to beta that bumps the version → SAME flow, but the tag (and the
-#      built app version) is forced to v<version>-beta.1, so the release is
-#      flagged prerelease and electron-builder publishes on the `beta`
-#      channel (beta.yml). Stable installs (latest.yml) never see it; only
-#      "Receive beta updates" opt-ins and /mimic/beta downloads do. Keep
-#      versions PLAIN in package.json on beta — the guard adds the suffix.
+#   2. Push to beta touching Mimic or the bundled agent → prerelease build.
+#      The tag (and built app version) is v<version>-beta.N where N
+#      AUTO-INCREMENTS across existing tags for that version (2026-07-08:
+#      previously hardcoded beta.1, which forced a patch bump per iteration —
+#      v1.6.3-beta.1, v1.6.4-beta.1… — instead of v1.6.x-beta.2/3/4). Keep
+#      the version PLAIN on beta and parked at the line's target (e.g. 1.7.0
+#      for the whole 1.7 beta cycle); every beta push then ships the next
+#      -beta.N on the `beta` channel (beta.yml). Stable installs (latest.yml)
+#      never see it. Graduation to stable = file-checkout to main where the
+#      same plain version builds the plain tag.
 #   3. Manual workflow_dispatch with a tag input — for retrying a failed
 #      build, or rebuilding from a tag that was created some other way.
 on:
   push:
     branches: [main, beta]
-    paths:    ['apps/mimic/package.json']
+    # Mimic bundles the agent, so agent-only fixes must also cut a beta
+    # build. On main, pushes that don't change the version still no-op in
+    # the resolve step below.
+    paths:    ['apps/mimic/**', 'packages/wolfpack-logsync/**']
   workflow_dispatch:
     inputs:
       tag:
@@ -73,15 +80,25 @@ jobs:
           # shipped stable — plain versions produced plain tags, prerelease was
           # derived from the tag's `-` suffix, so every stable install
           # auto-updated to beta builds via latest.yml. If the version in
-          # package.json carries no prerelease suffix, force one here: the tag
-          # (and the pinned build version below) becomes v<version>-beta.1, so
+          # package.json carries no prerelease suffix, force one here so
           # electron-builder emits beta.yml (beta channel) and the GitHub
           # release is flagged prerelease. Keep versions PLAIN on the beta
           # branch — graduation to stable is then just a file-checkout to main,
           # where the same version builds the plain stable tag.
+          #
+          # beta.N AUTO-INCREMENT (2026-07-08): the suffix used to be a
+          # hardcoded beta.1, which forced a patch bump for every beta
+          # iteration. Now: find the highest existing v<version>-beta.N tag
+          # and use N+1, so iterating on one version ships beta.2, beta.3, …
           if [ "${{ github.ref_name }}" = "beta" ] && [[ "$new_version" != *-* ]]; then
-            tag="v${new_version}-beta.1"
-            echo "Beta branch → forcing prerelease tag: $tag"
+            last=$(git ls-remote --tags origin "refs/tags/v${new_version}-beta.*" \
+                     | grep -v '\^{}' \
+                     | sed -E 's/.*-beta\.([0-9]+)$/\1/' \
+                     | grep -E '^[0-9]+$' \
+                     | sort -n | tail -1 || true)
+            next=$(( ${last:-0} + 1 ))
+            tag="v${new_version}-beta.${next}"
+            echo "Beta branch → prerelease tag: $tag (previous beta.N: ${last:-none})"
           fi
           echo "Detected: new=$new_version prev=$prev_version tag=$tag"
 
@@ -89,7 +106,10 @@ jobs:
             echo "No version in package.json — skipping."
             echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [ "$new_version" = "$prev_version" ]; then
+          if [ "$new_version" = "$prev_version" ] && [ "${{ github.ref_name }}" != "beta" ]; then
+            # main: version unchanged = nothing to release. beta: unchanged is
+            # the NORMAL iteration case — the auto-incremented beta.N above
+            # makes each push a distinct prerelease.
             echo "Version unchanged — nothing to release."
             echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
