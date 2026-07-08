@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.147': [
+    '**🌀 PoP Flags (Preview) — wolfpack.quest/pop.** The guild\'s road to Quarm as a live progression chart: every zone gate by tier (modeled on the classic Samanna chart), how many of us hold each flag, who can enter each zone TODAY, and a **raid-night planner** that ranks what to run next by how many raiders each kill pushes through a later gate ("Kill Saryrn → +9 into Sol Ro"). Counts fill automatically from the flag grants agents already detect — nothing to do but raid with Mimic running once PoP unlocks 2026-10-01. The progression catalog was re-verified against the classic sources and two draft errors fixed (Terris Thule gates **Torment**; Manaetic Behemoth gates **Tactics**); gates marked * get confirmed against Quarm\'s documented QoL changes at launch.',
+  ],
   '3.0.146': [
     '**Guild chat stops renaming people.** The Adiwen/Wabumkin-posted-as-Starrburst bug (also Jankzer→Dant, Fargan→Bardtholemu): EQ keeps writing your OLD character\'s log file after you swap characters, so your own machine attributed everything you said to the previous character — and its upload usually beat everyone else\'s correct copy to Discord. Three layers of fix: agents 3.2.2+ ask Zeal (which always knows your real character) before trusting a log filename, prefer the server-authoritative "X tells the guild" form when their own logs disagree, and the bot now **edits an already-posted message to the right name within seconds** when a corroborating copy arrives. Bonus fixes: cross-machine corroboration had never actually worked (clock skew between machines broke the matching), the wrong character\'s class tag can no longer decorate a relabeled name, and two people genuinely typing the same thing ("111") both show up instead of the second being swallowed.',
   ],

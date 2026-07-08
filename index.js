@@ -5606,26 +5606,36 @@ async function _handleAgentFaction(req, res) {
 // context -- {character, ts, zone, boss} -- and we resolve flag_key from the
 // DRAFT catalog below. Unrecognized combos store as 'unmapped' with zone +
 // boss preserved: launch-week catalog fixes are a map edit + one UPDATE.
-// KEEP IN SYNC with web/lib/popFlags.ts (zones/tiers live there). Verify
-// against wiki.takp.info + takp.info/flag-check before launch -- both were
-// network-blocked from the dev sandbox when this was written.
+// KEEP IN SYNC with web/lib/popFlags.ts (the full catalog + gate graph lives
+// there). Rebuilt 2026-07-08 against the corroborated classic progression —
+// corrections from the first draft: Terris Thule flags TORMENT (not Tactics),
+// Manaetic Behemoth flags TACTICS (the Zek arc). Trials, quests, and events
+// (Justice trials, Hedge, Askr, Carprin cycle, Sol Ro minis, air avatars,
+// elemental loots) have no boss-kill context, so their grants land in the
+// 'unmapped' funnel until Seer Mal Nae recital parsing ships at launch.
 const POP_FLAG_BY_BOSS = {
-  'grummus':                'cod_access',        // PoDisease -> Crypt of Decay
-  'aerin`dar':              'hoh_access',        // PoValor -> Halls of Honor
-  "aerin'dar":              'hoh_access',
-  'terris thule':           'tactics_access',    // Lair of Terris -> Drunder
-  'manaetic behemoth':      'mb_dead',           // PoInnovation
-  'saryrn':                 'saryrn_dead',       // PoTorment
-  'bertoxxulous':           'bert_dead',         // Crypt of Decay
-  'mithaniel marr':         'marr_dead',         // Temple of Marr
-  'rallos zek':             'earth_access',      // Tactics -> PoEarth
-  'agnarr the storm lord':  'agnarr_dead',       // Bastion of Thunder
-  'solusek ro':             'fire_access',       // SolRo Tower -> Doomfire
-  'fennin ro':              'fennin_dead',       // Doomfire
-  'coirnav':                'coirnav_dead',      // Reef of Coirnav
-  'the rathe council':      'rathe_dead',        // PoEarth
-  'xegony':                 'xegony_dead',       // PoAir
-  'quarm':                  'time_complete',     // Plane of Time
+  'grummus':                 'grummus_dead',    // PoDisease → gates Crypt of Decay
+  'aerin`dar':               'aerindar_dead',   // PoValor → gates Halls of Honor
+  "aerin'dar":               'aerindar_dead',
+  'terris thule':            'tthule_dead',     // Lair of Terris → gates TORMENT
+  'manaetic behemoth':       'behemoth_dead',   // PoInnovation → gates TACTICS
+  'keeper of sorrows':       'keeper_dead',     // PoTorment mini (Sol Ro gate)
+  'saryrn':                  'saryrn_dead',     // PoTorment (Sol Ro + elemental bundle)
+  'bertoxxulous':            'bert_dead',       // Crypt lower (Sol Ro + elemental bundle)
+  'mithaniel marr':          'marr_dead',       // Temple of Marr (elemental bundle)
+  'agnarr the storm lord':   'agnarr_dead',     // Bastion of Thunder (elemental bundle)
+  'agnarr':                  'agnarr_dead',
+  'tallon zek':              'tallon_dead',     // Tactics minis
+  'vallon zek':              'vallon_dead',
+  'rallos zek':              'rallos_dead',     // Tactics → PoEarth + elemental bundle
+  'solusek ro':              'solro_dead',      // Tower → gates Doomfire
+  'the arbitor of earth':    'arbitor_dead',    // PoEarth → gates Ragrax
+  'fennin ro':               'fennin_dead',     // Doomfire (Time gate)
+  'coirnav':                 'coirnav_dead',    // Reef (Time gate)
+  'the rathe council':       'rathe_dead',      // Ragrax (Time gate)
+  'xegony':                  'xegony_dead',     // Eryslai (Time gate)
+  'xegony the queen of air': 'xegony_dead',
+  'quarm':                   'quarm_dead',      // Plane of Time, Phase VI
 };
 async function _handleAgentPopFlags(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
