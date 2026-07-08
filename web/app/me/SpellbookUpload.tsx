@@ -46,9 +46,11 @@ export default function SpellbookUpload({ character }: { character: string }) {
       {open && (
         <div className="mt-2 bg-bg/40 border border-border/60 rounded p-2.5 space-y-2 max-w-md">
           <p className="text-[11px] text-dim leading-5">
-            In EQ, run <code className="text-text">/outputfile spellbook</code> — it writes
-            <code className="text-text"> {character}-Spellbook.txt</code> to your EQ folder.
-            Re-upload whenever you scribe new ones.
+            <b className="text-text">Running Mimic 1.7+?</b> Just run{' '}
+            <code className="text-text">/outputfile spellbook</code> in game — Mimic finds{' '}
+            <code className="text-text">{character}-Spellbook.txt</code> and uploads it
+            automatically within a few minutes, like your Quarmy gear. No need to touch this box.
+            Manual fallback (older Mimic / standalone) below.
           </p>
           <input
             ref={fileRef}

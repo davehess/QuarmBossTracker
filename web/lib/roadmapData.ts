@@ -43,6 +43,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'spellbook-auto',
+    title: 'Spellbook uploads itself now',
+    version: 'Mimic 1.7 · Agent 3.3.3',
+    date: '2026-07-08',
+    channel: 'beta',
+    headline: 'Your spellbook flows to the site automatically, so the missing-spells page stays current on its own.',
+    features: [
+      { name: 'Automatic spellbook ingest', blurb: 'Run /outputfile spellbook in game and Mimic uploads it within a few minutes — same as your Quarmy gear and inventory. No more copy-pasting into the site. The manual paste stays as a fallback for standalone/older setups, and it honors your inventory opt-out.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'missing-spells',
     title: 'Missing-spells page shows the whole picture',
     version: 'Web 1.0.182',
