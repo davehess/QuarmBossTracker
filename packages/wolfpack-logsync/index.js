@@ -5753,14 +5753,24 @@ function _maybeUploadRaidRoster(sample) {
     const compact = members
       .filter(m => m && m.name)
       .map(m => {
-        const hp = liveHpByName.get(String(m.name).toLowerCase());
+        // HP source priority: Zeal VERBOSE fields (exact hp_current/hp_max,
+        // present raid-wide when the raider ran /pipeverbose on) beat the
+        // gauge-slot cross-ref (which only covers the uploader's own ~5-person
+        // group). See docs/zeal-pipe-protocol.md.
+        let hpPct = null;
+        if (m.hp_current != null && m.hp_max != null && Number(m.hp_max) > 0) {
+          hpPct = Math.max(0, Math.min(100, Math.round((Number(m.hp_current) / Number(m.hp_max)) * 100)));
+        } else {
+          const hp = liveHpByName.get(String(m.name).toLowerCase());
+          if (typeof hp === 'number') hpPct = Math.max(0, Math.min(100, Math.round(hp)));
+        }
         return {
           name:   String(m.name),
           class:  m.class != null ? String(m.class) : null,
           group:  m.group != null ? String(m.group) : null,
           level:  m.level != null ? String(m.level) : null,
           rank:   m.rank  != null ? String(m.rank)  : null,
-          hp_pct: typeof hp === 'number' ? Math.max(0, Math.min(100, Math.round(hp))) : null,
+          hp_pct: hpPct,
         };
       });
     if (compact.length === 0) return;
@@ -9959,8 +9969,21 @@ function renderZealExplorer(s) {
     var m = ciMap(c);
     var k = 'zx|' + c.character;
     var dot = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
+    // /pipeverbose state — verbose unlocks raid/group HP + zone. Prove it's on
+    // by the presence of hp_current on group members; nudge to enable if off.
+    var verbose = !!c.pipe_verbose;
+    var vbadge = verbose
+      ? '<span class="dim" style="font-size:10px;color:var(--green)">· verbose on</span>'
+      : '<span class="dim" style="font-size:10px" title="Run /pipeverbose on in EQ to stream raid/group HP + zone">· verbose off (/pipeverbose on for raid HP)</span>';
     h += '<div style="margin-top:8px">' + dot + ' <b>' + esc(c.character) + '</b>'
-       + (c.zone_name ? ' <span class="dim">· ' + esc(c.zone_name) + '</span>' : '') + '</div>';
+       + (c.zone_name ? ' <span class="dim">· ' + esc(c.zone_name) + '</span>' : '') + ' ' + vbadge + '</div>';
+    // Position — Zeal player payload (loc {x,y,z} + heading). EQ /loc prints
+    // Y, X, Z, so we show that order (transposed from the raw Zeal x/y/z).
+    if (c.loc && (c.loc.x != null || c.loc.y != null)) {
+      var locStr = 'Y ' + Math.round(c.loc.y) + ', X ' + Math.round(c.loc.x) + ', Z ' + Math.round(c.loc.z)
+        + (c.heading != null ? ' · heading ' + Math.round(c.heading) : '');
+      h += grp(k + '|pos', 'Position', null, '<div style="margin-top:2px" class="dim">' + esc(locStr) + '</div>');
+    }
     // Vitals & stats — the identity/stat/vital label band.
     var vit = rowsForIds(m, [2, 3, 4, 73, 74, 17, 18, 19, 124, 125, 80, 20, 21, 22, 23, 24, 25, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
     if (vit.n) h += grp(k + '|vitals', 'Vitals &amp; stats', vit.n, tbl(vit.rows, ['Id', 'Field', 'Value']));
@@ -9972,7 +9995,23 @@ function renderZealExplorer(s) {
     if (tgt.n) h += grp(k + '|target', 'Target', tgt.n, tbl(tgt.rows, ['Id', 'Field', 'Value']));
     // Group members (labels 30-44; zeros = empty slots, filtered in rowsForIds).
     var gm = rowsForIds(m, [30, 35, 40, 31, 36, 41, 32, 37, 42, 33, 38, 43, 34, 39, 44]);
-    if (gm.n) h += grp(k + '|group', 'Group', gm.n, tbl(gm.rows, ['Id', 'Field', 'Value']));
+    if (gm.n) h += grp(k + '|group', 'Group (labels)', gm.n, tbl(gm.rows, ['Id', 'Field', 'Value']));
+    // Group members from the type-6 group pipe — richer than the labels: loc +
+    // heading always, and hp/class/level/zone when /pipeverbose is on.
+    var gmp = c.group_members || [];
+    if (gmp.length) {
+      var gmpRows = '';
+      for (var gpi = 0; gpi < gmp.length; gpi++) {
+        var gp = gmp[gpi];
+        var hp = (gp.hp_current != null && gp.hp_max != null && gp.hp_max > 0)
+          ? Math.round(gp.hp_current / gp.hp_max * 100) + '% (' + gp.hp_current + '/' + gp.hp_max + ')' : '&mdash;';
+        var loc = gp.loc ? ('Y ' + Math.round(gp.loc.y) + ' X ' + Math.round(gp.loc.x)) : '&mdash;';
+        gmpRows += '<tr><td>' + esc(gp.name) + '</td><td class="num">' + hp + '</td>'
+          + '<td class="dim">' + (gp.level != null ? gp.level + ' ' : '') + esc(gp.class != null ? String(gp.class) : '') + '</td>'
+          + '<td class="dim">' + loc + '</td></tr>';
+      }
+      h += grp(k + '|grouppipe', 'Group (pipe)', gmp.length, tbl(gmpRows, ['Name', 'HP', 'Lvl/Class', 'Loc']));
+    }
     // Spell gems: names (60-67) joined with recast gauges (26-33).
     var gemRows = '', gemN = 0;
     for (var gi = 0; gi < 8; gi++) {
@@ -19576,9 +19615,13 @@ function _serializeZealForWeb() {
       self_mana_max: st.self_mana_max != null ? st.self_mana_max : null,
       char_info:   Array.isArray(st.charInfo) ? st.charInfo : null,
       autoattack:  !!st.autoattack,
+      loc:         st.loc || null,
+      heading:     st.heading != null ? st.heading : null,
       buffs:       Array.isArray(st.buffs) ? st.buffs : [],
       casting:     st.casting || null,
       custom_recent: Array.isArray(st.custom_recent) ? st.custom_recent : [],
+      group_members: Array.isArray(st.group_members) ? st.group_members : [],
+      pipe_verbose: !!st.pipe_verbose,
       gauges,
       pet_name:    petName,
       pet_hp_pct:  petHp,

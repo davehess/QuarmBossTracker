@@ -1110,6 +1110,14 @@ function _zealAbsorb(obj, pid) {
       }
       s.zone = inner.zone;
       s.autoattack = !!inner.autoattack;
+      // Live position + facing (Zeal named_pipe.cpp player payload:
+      // location {x,y,z}, heading). Note EQ's in-game /loc prints as Y, X, Z
+      // — these are the raw Zeal Vec3 fields (x,y,z), transpose when matching
+      // /loc. Exposed for the Info-tab explorer + future proximity features.
+      if (inner.location && typeof inner.location === 'object') {
+        s.loc = { x: inner.location.x, y: inner.location.y, z: inner.location.z };
+      }
+      if (typeof inner.heading === 'number') s.heading = inner.heading;
       cur.dirty = true;
     }
   } else if (type === 1) {                            // label — buff window + casting
@@ -1216,6 +1224,34 @@ function _zealAbsorb(obj, pid) {
       if (!Array.isArray(s.custom_recent)) s.custom_recent = [];
       s.custom_recent.push({ at: Date.now(), text: String(text).slice(0, 300) });
       while (s.custom_recent.length > 8) s.custom_recent.shift();
+      cur.dirty = true;
+    }
+  } else if (type === 6) {                            // group — this char's group
+    // Zeal group payload per member: { name, loc {x,y,z}, heading } always,
+    // plus { hp_current, hp_max, class, level, zone_id } when /pipeverbose is
+    // ON. Absorb the roster; the verbose HP fields are strictly better than
+    // the gauge-slot HP cross-ref the agent falls back to. pipe_verbose is a
+    // client-global setting, so seeing hp_current on ANY member proves it's on.
+    const inner = _zealParseData(obj);
+    if (Array.isArray(inner)) {
+      const gm = [];
+      let verbose = false;
+      for (const mrec of inner) {
+        if (!mrec || !mrec.name) continue;
+        if (mrec.hp_current != null) verbose = true;
+        gm.push({
+          name:       String(mrec.name),
+          loc:        mrec.loc || null,
+          heading:    typeof mrec.heading === 'number' ? mrec.heading : null,
+          hp_current: mrec.hp_current != null ? Number(mrec.hp_current) : null,
+          hp_max:     mrec.hp_max     != null ? Number(mrec.hp_max)     : null,
+          class:      mrec.class != null ? mrec.class : null,
+          level:      mrec.level != null ? mrec.level : null,
+          zone_id:    mrec.zone_id != null ? mrec.zone_id : null,
+        });
+      }
+      s.group_members = gm;
+      if (verbose) s.pipe_verbose = true;
       cur.dirty = true;
     }
   }

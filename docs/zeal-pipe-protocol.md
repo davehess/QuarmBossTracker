@@ -15,15 +15,39 @@ Transport: `\\.\pipe\zeal_<PID>` per eqgame.exe, a stream of JSON objects
 
 ## Top-level message types
 
-| type | name   | payload                                                        | Mimic today |
-|------|--------|----------------------------------------------------------------|-------------|
-| 0    | log    | each chat/output line `{ type: <msgType>, text }`              | counted + sampled only (chat comes from log files) |
-| 1    | label  | array of `{ type: <EQType id>, value, meta.ticks? }`           | buffs/songs/casting/char-info absorbed |
-| 2    | gauge  | array of `{ type: <gauge id>, value (per-mille 0-1000), text }`| self/target/pet HP, group-min absorbed; full dump kept |
-| 3    | player | `{ zone, location, heading, autoattack }`                      | zone + autoattack absorbed |
-| 4    | custom | output of the in-game **`/pipe <string>`** command             | recent ring per character (Info tab explorer); future in-game→Mimic command hook |
-| 5    | raid   | raid member list (name/class/group/rank)                       | agent uploads to `raid_roster` |
-| 6    | group  | group member list `{ name, … }`                                | counted + sampled only |
+`enum struct pipe_data_type { log, label, gauge, player, custom, raid, group };`
+— fully reproduced from `named_pipe.cpp` below; every field is verbatim from
+source, not inferred.
+
+| type | name   | payload | Mimic/agent today (as of Mimic 1.7.0) |
+|------|--------|---------|----------------------------------------|
+| 0    | log    | `{ type: <color index>, text }` per output line | counted + sampled only — chat comes from log files (privacy-filtered); the pipe log stream bypasses that filter, so we deliberately do NOT relay it |
+| 1    | label  | array of `{ type: <EQType id>, value, meta.ticks? }` | buffs/songs/casting/char-info/HP/mana absorbed; full explorer |
+| 2    | gauge  | array of `{ type: <gauge id>, value (per-mille 0-1000), text }` | self/target/pet/group HP absorbed; full dump kept |
+| 3    | player | `{ zone, location: {x,y,z}, heading, autoattack }` | **all four now absorbed** (loc+heading added 1.7.0) |
+| 4    | custom | `{ text }` — output of the in-game **`/pipe <string>`** command | recent ring per character; future in-game→Mimic command hook |
+| 5    | raid   | per-member `{ name, class, level, group, rank, loc, heading }` + verbose `{ hp_current, hp_max, zone_id }` | agent → `raid_roster` (name/class/level/group/rank + hp%); verbose HP now preferred over gauge cross-ref |
+| 6    | group  | per-member `{ name, loc, heading }` + verbose `{ hp_current, hp_max, class, level, zone_id }` | absorbed to snapshot + explorer (1.7.0) |
+
+### Settings & cadence (Zeal ini `[Zeal]`, set in-game)
+
+| command | ini key | default | effect |
+|---------|---------|---------|--------|
+| `/pipedelay <ms>` | `PipeDelay` | 100 | throttle — the whole pipe only emits once per interval |
+| `/pipeverbose on\|off` | `PipeVerbose` | off | **unlocks `hp_current`/`hp_max`/`zone_id` on raid(5) and group(6)** — the only way to get exact raid-wide HP numbers instead of per-mille of self/target/pet |
+| `/pipe <string>` | — | — | emits a custom(4) message; the in-game→Mimic command channel |
+
+Verbose is the big unlock: without it we only have HP **percent** (label 19,
+gauge 1) for the local player + per-mille of the current target/pet, plus
+whatever groupmate gauges the local client happens to render. With it, every
+raid member carries their true `hp_current/hp_max` and `zone_id`. The explorer
+shows a "verbose on/off" badge per character and nudges toward enabling it.
+
+### Coordinate order
+
+`toJson(Vec3)` writes `{x, y, z}` from the raw Zeal Vec3 fields. The in-game
+`/loc` command prints **Y, X, Z** — so when matching /loc, transpose (the
+explorer shows Y, X, Z to match what players read in EQ).
 
 ## Label ids (type 1) — Zeal `LabelNames`, confirmed live
 
@@ -107,14 +131,30 @@ Zeal's map.
   combined text at 80). If a capture shows neither, only Mana % (label 20)
   and the per-mille gauge (2) are available.
 - **Raw endurance** has no label at all — percent only (21 / gauge 3).
-- Group member surface is name + HP% (+ pet HP%) — no class/level/mana for
-  groupmates via the pipe (class/level come from /who or raid type 5).
+- Groupmate class/level/zone + exact HP require **`/pipeverbose on`**; without
+  it groupmates are name + HP% only (label 30-44 / gauge 11-21). Groupmate
+  mana is never exposed.
+- Log stream (type 0) is intentionally unused for chat — it bypasses the
+  agent's byte-level privacy filter (officer chat / tells / group), so chat
+  stays sourced from the log files where the filter runs.
 
 ## Surfaced in Mimic/agent
 
 Everything above is visible per character in the dashboard **Info tab →
 "🔌 Zeal Pipe" explorer** (each group expandable; raw label dump at the
-bottom is the discovery surface if a future Zeal build adds ids). Available
-but not yet wired into features: gem recast timers (26-33), breath (8),
-memorize/scribe (9/10), group pet HP (40-44 / 17-21), XP/hr (81/23),
-server tick (24), target pet owner (82).
+bottom is the discovery surface if a future Zeal build adds ids). Groups:
+Position (loc+heading), Vitals & stats, Progress, Target, Group (labels),
+Group (pipe — verbose HP/class/level), Spell gems + recast, Pet, Buffs &
+songs, Casting, /pipe messages, All gauges, All labels (raw). A per-character
+"verbose on/off" badge shows whether `/pipeverbose` HP is flowing.
+
+**Absorbed into snapshot** (`_zealState` → `/api/state` zealClients): zone,
+autoattack, loc, heading, self HP cur/max/%, self mana cur/max, target,
+pet, group_members, buffs, casting, custom_recent, full gauge + label dumps.
+**Consumed by features:** self/MT HP (tank overlay), target buffs (Mob Info),
+group/self HP % (buff queue), pet HP (charm overlay), raid roster + HP
+(/raid, /buffs), gauge-condition triggers.
+**Available, not yet wired into features:** gem recast timers (26-33),
+breath (8), memorize/scribe (9/10), server tick (24), XP/hr (81/23), live
+position (loc/heading — proximity/positioning tools), target pet owner (82),
+per-raider zone_id (verbose — cross-zone raid view).
