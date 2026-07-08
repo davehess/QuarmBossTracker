@@ -202,7 +202,10 @@
               + '<span class="count">' + (c >= 1000 ? (c/1000).toFixed(1) + 'k' : c) + '</span>'
               + '</div>';
       }
-      typesEl.innerHTML = html;
+      if (typesEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+        typesEl.innerHTML = html;
+        typesEl.__wpHtml = html;
+      }
 
       // Hint: prioritize critical missing > optional missing > stale > all good.
       var hintHtml = '';

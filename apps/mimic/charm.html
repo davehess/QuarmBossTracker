@@ -497,10 +497,13 @@
           + renderPetBuffs(p)
           + '</div>';
       }
-      listEl.innerHTML = html;
+      if (listEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+        listEl.innerHTML = html;
+        listEl.__wpHtml = html;
+        _requestAutoHeight();
+      }
       document.body.classList.toggle('imminent', anyImminent);
       emptyEl.style.display = shown.length ? 'none' : 'block';
-      _requestAutoHeight();
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }

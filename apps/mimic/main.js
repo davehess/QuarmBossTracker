@@ -372,10 +372,27 @@ function waitForAgent(port, timeoutMs = 20000) {
 // ── Recent-line agent log (capped, persisted to disk) ───────────────────────
 const LOG_TAIL_MAX = 2000;
 const logTail = [];
+// agent.log rotation (2026-07-07 review): the file previously grew without
+// bound — the zeal connect/drop failure loop (elevation mismatch) could churn
+// it indefinitely. Check size every 200 appends; at 5MB rotate to a single
+// .1 sibling (older history discarded — the in-memory tail + the .1 file
+// cover every real support case we've had).
+let _agentLogAppends = 0;
 function appendAgentLog(line) {
   logTail.push(line);
   if (logTail.length > LOG_TAIL_MAX) logTail.shift();
-  try { fs.appendFileSync(AGENT_LOG(), line); } catch {}
+  try {
+    if (++_agentLogAppends % 200 === 0) {
+      const p = AGENT_LOG();
+      try {
+        if (fs.statSync(p).size > 5 * 1024 * 1024) {
+          try { fs.rmSync(p + '.1', { force: true }); } catch {}
+          fs.renameSync(p, p + '.1');
+        }
+      } catch {}
+    }
+    fs.appendFileSync(AGENT_LOG(), line);
+  } catch {}
 }
 
 // ── Raw Zeal capture (opt-in diagnostic) ────────────────────────────────────
@@ -1093,6 +1110,14 @@ function _zealAbsorb(obj, pid) {
       }
       s.zone = inner.zone;
       s.autoattack = !!inner.autoattack;
+      // Live position + facing (Zeal named_pipe.cpp player payload:
+      // location {x,y,z}, heading). Note EQ's in-game /loc prints as Y, X, Z
+      // — these are the raw Zeal Vec3 fields (x,y,z), transpose when matching
+      // /loc. Exposed for the Info-tab explorer + future proximity features.
+      if (inner.location && typeof inner.location === 'object') {
+        s.loc = { x: inner.location.x, y: inner.location.y, z: inner.location.z };
+      }
+      if (typeof inner.heading === 'number') s.heading = inner.heading;
       cur.dirty = true;
     }
   } else if (type === 1) {                            // label — buff window + casting
@@ -1109,20 +1134,33 @@ function _zealAbsorb(obj, pid) {
       // show what Zeal is actually sending when a row fails to match.
       const buffs = [];
       const rawDebug = [];
-      const charInfo = [];   // Zeal char-info fields (IDs 1-13): name/class/level
-                             // and — if Zeal exposes them here — raw HP cur/max.
+      const charInfo = [];   // Zeal char-info label fields (EQType ids 1-44).
       let casting = null;
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
-        // Char-info IDs 1-13 (char fields: name, class, level, and possibly
-        // raw HP/mana/endurance). We capture them verbatim now — both to show
-        // on the diagnostic and to DISCOVER which fields carry the player's
-        // own HP numbers (Uilnayar 2026-07-05: "if someone is reporting their
-        // own health we should show the numbers"). Zeal's HP field ids aren't
-        // documented, so _detectSelfHp() below finds them by cross-checking a
-        // numeric cur/max pair against the gauge's already-known HP%.
-        if (id >= 1 && id <= 13) {
+        // Char-info label ids — the classic EQ client UI "EQType" label ids.
+        // Zeal queries a fixed LabelNames map and forwards whatever the client
+        // populates (CoastalRedwood/Zeal named_pipe.cpp — the authoritative
+        // list, confirmed against two live side-by-sides, Canopy + Manamana
+        // 2026-07-07/08):
+        //   1 Name · 2 Level · 3 Class · 4 Deity · 5-11 STR/STA/DEX/AGI/WIS/
+        //   INT/CHA · 12 poison / 13 disease / 14 fire / 15 cold / 16 magic
+        //   resists · 17 HP cur · 18 HP max · 19 HP % · 20 mana % ·
+        //   21 endurance % · 22 AC (mitigation) · 23 ATK (offense) ·
+        //   24/25 weight cur/max · 26 XP % · 27 AA XP % · 28 target name ·
+        //   29 target HP % (NOT pet — earlier guess corrected by the source) ·
+        //   30-34 group member 1-5 name · 35-39 group member 1-5 HP % ·
+        //   40-44 group pet 1-5 HP % · 60-67 spell gem 1-8 name ·
+        //   68 pet name · 69 pet HP % · 70 "cur/max" HP text ·
+        //   71 AA points banked · 72 AA % · 73 last name · 74 title ·
+        //   80 "cur/max" mana text · 81 exp per hour · 82 target pet owner ·
+        //   124 mana cur · 125 mana max
+        // Buff slots (45-59, 135-140) and casting (134) are parsed separately
+        // below; every other label id is captured verbatim for the Info tab
+        // Zeal Pipe explorer + the self HP/mana readers.
+        const isBuffBand = (id >= 45 && id <= 59) || (id >= 134 && id <= 140);
+        if (!isBuffBand) {
           if (it.value !== undefined && it.value !== null && it.value !== '') {
             charInfo.push({ id, value: String(it.value) });
           }
@@ -1168,46 +1206,155 @@ function _zealAbsorb(obj, pid) {
       // HP numbers from it. A char-info-only label packet must still forward
       // (it never carries buffs), so mark dirty when we captured any.
       if (charInfo.length > 0) {
-        s.charInfo = charInfo.slice(0, 16);
+        s.charInfo = charInfo.slice(0, 80);
         _detectSelfHp(cur, s, charInfo);
+        _detectSelfMana(s, charInfo);
         cur.dirty = true;
       }
+    }
+  } else if (type === 4) {                            // custom — in-game /pipe <text>
+    // The player typed /pipe <string> in EQ — Zeal forwards the raw string.
+    // Keep a small recent ring per character for the Info tab explorer; this
+    // is also the future hook for in-game → Mimic commands ("/pipe timer 30").
+    const inner = _zealParseData(obj);
+    const text = typeof inner === 'string' ? inner
+               : (inner && typeof inner.text === 'string') ? inner.text
+               : (inner != null ? JSON.stringify(inner) : null);
+    if (text) {
+      if (!Array.isArray(s.custom_recent)) s.custom_recent = [];
+      s.custom_recent.push({ at: Date.now(), text: String(text).slice(0, 300) });
+      while (s.custom_recent.length > 8) s.custom_recent.shift();
+      cur.dirty = true;
+    }
+  } else if (type === 6) {                            // group — this char's group
+    // Zeal group payload per member: { name, loc {x,y,z}, heading } always,
+    // plus { hp_current, hp_max, class, level, zone_id } when /pipeverbose is
+    // ON. Absorb the roster; the verbose HP fields are strictly better than
+    // the gauge-slot HP cross-ref the agent falls back to. pipe_verbose is a
+    // client-global setting, so seeing hp_current on ANY member proves it's on.
+    const inner = _zealParseData(obj);
+    if (Array.isArray(inner)) {
+      const gm = [];
+      let verbose = false;
+      for (const mrec of inner) {
+        if (!mrec || !mrec.name) continue;
+        if (mrec.hp_current != null) verbose = true;
+        gm.push({
+          name:       String(mrec.name),
+          loc:        mrec.loc || null,
+          heading:    typeof mrec.heading === 'number' ? mrec.heading : null,
+          hp_current: mrec.hp_current != null ? Number(mrec.hp_current) : null,
+          hp_max:     mrec.hp_max     != null ? Number(mrec.hp_max)     : null,
+          class:      mrec.class != null ? mrec.class : null,
+          level:      mrec.level != null ? mrec.level : null,
+          zone_id:    mrec.zone_id != null ? mrec.zone_id : null,
+        });
+      }
+      s.group_members = gm;
+      if (verbose) s.pipe_verbose = true;
+      cur.dirty = true;
     }
   }
 }
 
 // Discover the player's OWN current/max HP from Zeal's char-info fields.
-// We never guess ids: we take the gauge's already-trusted self HP% and look
-// for a numeric (cur ≤ max) pair among the char-info fields whose ratio
-// matches it. The first time HP is DISTINCT (< 97%, so cur ≠ max and the
-// match is unambiguous vs. mana/endurance) we PIN that id pair on the
-// per-character state, then keep reading it at any % — so the numbers stay
-// correct at full health and track max-HP buffs (Aegolism etc.) live. If
-// nothing validates (Zeal doesn't expose HP here), self_hp_cur/max stay
-// null and every overlay falls back to the plain % it already shows.
+// Ids 1-13 are a CONFIRMED non-HP block (name/level/class/deity/stats/
+// resists — Canopy side-by-side, 2026-07-07), so only the 14-44 band is
+// scanned. Candidates are validated against the gauge's already-trusted HP%:
+//   • The classic UI EQTypes put current HP at label 17 and max HP at 18 —
+//     if that exact pair is present and its ratio matches the gauge, pin it
+//     immediately (known-prior fast path, still data-validated).
+//   • Any other (cur ≤ max) pair must match the gauge at TWO readings at
+//     least 3 points apart before it pins. A real HP pair tracks the gauge
+//     at every level; a coincidental stat or mana pair matches only near one
+//     fixed ratio, so requiring agreement at two distinct HP levels
+//     eliminates it (a druid's 3406 mana vs 1662 HP would beat any
+//     size-based tiebreak — only behavior over time separates them).
+// Once pinned, the pair is read at any % (tracks max-HP buffs live) and kept
+// while it still agrees with the gauge. If nothing validates, self_hp_cur/max
+// stay null and every overlay falls back to the plain % it already shows.
 function _detectSelfHp(cur, s, charInfo) {
   const nums = charInfo
     .map(ci => ({ id: ci.id, n: Number(ci.value) }))
-    .filter(x => Number.isFinite(x.n) && x.n > 0);
+    .filter(x => x.id >= 14 && x.id <= 44 && Number.isFinite(x.n) && x.n > 0);
   if (nums.length < 2) return;
   const pct = (typeof s.self_hp_pct === 'number') ? s.self_hp_pct : null;
-  // (Re)learn the id pair only when the match is distinct enough to be sure.
+  // Stickiness: keep the pinned pair while it still tracks the gauge. A wrong
+  // pin (coincidental ratio) self-evicts as soon as the ratios diverge.
+  if (cur.hpIds && pct != null) {
+    const c0 = nums.find(x => x.id === cur.hpIds.curId);
+    const m0 = nums.find(x => x.id === cur.hpIds.maxId);
+    if (c0 && m0 && m0.n > 0 && c0.n <= m0.n) {
+      const err0 = Math.abs((c0.n / m0.n) * 100 - pct);
+      if (err0 <= 2) { s.self_hp_cur = c0.n; s.self_hp_max = m0.n; return; }
+    }
+    cur.hpIds = null;   // stopped tracking — was a coincidence, relearn
+  }
+  // Known-prior fast path: EQType 17/18 — CONFIRMED cur/max HP (Canopy
+  // side-by-side 2026-07-08: 17=1422, 18=1662 vs in-game 1425/1662). Since
+  // the ids are field-verified, pin at ANY HP level when the ratio agrees —
+  // including full HP, where the generic learner can't (cur == max matches
+  // every full bar). Without this, raw numbers only appeared after the first
+  // hit of the session.
+  if (pct != null && !cur.hpIds) {
+    const c17 = nums.find(x => x.id === 17);
+    const m18 = nums.find(x => x.id === 18);
+    if (c17 && m18 && c17.n <= m18.n && Math.abs((c17.n / m18.n) * 100 - pct) <= 1.5) {
+      cur.hpIds = { curId: 17, maxId: 18 };
+    }
+  }
+  // Generic fallback (no 17/18 on this client): learn only when HP is
+  // distinct from full (< 97%) so cur ≠ max.
   if (pct != null && pct < 97) {
-    let best = null;
-    for (const a of nums) {
-      for (const b of nums) {
-        if (a.id === b.id || a.n > b.n) continue;   // a = cur, b = max
-        const err = Math.abs((a.n / b.n) * 100 - pct);
-        if (err <= 1.5 && (!best || err < best.err)) best = { curId: a.id, maxId: b.id, err };
+    if (!cur.hpIds) {
+      // Generic scan with two-point agreement. _hpCand remembers, per id
+      // pair, the HP% it last matched at; a second match ≥3 points away
+      // proves the pair FOLLOWS the gauge rather than crossing it once.
+      if (!cur._hpCand) cur._hpCand = {};
+      for (const a of nums) {
+        for (const b of nums) {
+          if (a.id === b.id || a.n > b.n) continue;   // a = cur, b = max
+          if (Math.abs((a.n / b.n) * 100 - pct) > 1.5) continue;
+          const key = a.id + '|' + b.id;
+          const prior = cur._hpCand[key];
+          if (prior != null && Math.abs(prior - pct) >= 3) {
+            cur.hpIds = { curId: a.id, maxId: b.id };
+            cur._hpCand = {};
+            break;
+          }
+          if (prior == null) cur._hpCand[key] = pct;
+        }
+        if (cur.hpIds) break;
       }
     }
-    if (best) cur.hpIds = { curId: best.curId, maxId: best.maxId };
   }
   // Read the pinned pair (works at any %, reflects live max).
   if (cur.hpIds) {
     const c = nums.find(x => x.id === cur.hpIds.curId);
     const m = nums.find(x => x.id === cur.hpIds.maxId);
     if (c && m && m.n > 0 && c.n <= m.n) { s.self_hp_cur = c.n; s.self_hp_max = m.n; }
+  }
+}
+// Raw mana from the label band — no inference needed, the ids are in Zeal's
+// LabelNames map: 124 = current mana, 125 = max mana, with 80 = "cur/max" as
+// a combined-text fallback. Whether the 2002-era client populates them varies
+// by UI state; nulls simply mean not exposed right now.
+function _detectSelfMana(s, charInfo) {
+  let cur = null, max = null;
+  for (const ci of charInfo) {
+    if (ci.id === 124) { const n = Number(ci.value); if (Number.isFinite(n)) cur = n; }
+    else if (ci.id === 125) { const n = Number(ci.value); if (Number.isFinite(n)) max = n; }
+  }
+  if (cur == null || max == null) {
+    const combo = charInfo.find(ci => ci.id === 80 && /^\d+\s*\/\s*\d+$/.test(String(ci.value || '')));
+    if (combo) {
+      const m = String(combo.value).match(/^(\d+)\s*\/\s*(\d+)$/);
+      if (m) { cur = Number(m[1]); max = Number(m[2]); }
+    }
+  }
+  if (cur != null && max != null && max > 0 && cur <= max) {
+    s.self_mana_cur = cur;
+    s.self_mana_max = max;
   }
 }
 function _flushZealStateToAgent() {
@@ -1542,6 +1689,9 @@ let _blindStartMs  = 0;
 const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers'];
 function _blindForceOpen(key) { return _blindActive && _BLIND_FORCED_KEYS.includes(key); }
 function _pollBlindState() {
+  // Idle gate (2026-07-07 review): blind auto-pop only matters in game — no
+  // point fetching the full agent state blob at 1Hz on an idle desktop.
+  if (!_eqRunning) return;
   if (!agentPort) return;
   const req = http.get({
     host: '127.0.0.1', port: agentPort, path: '/api/state', timeout: 1500,
@@ -3131,7 +3281,7 @@ async function _pollEqPresence() {
 function _startEqPolling() {
   if (_eqPollTimer || process.platform !== 'win32') return;
   _pollEqPresence().catch(() => {});
-  _eqPollTimer = setInterval(() => { _pollEqPresence().catch(() => {}); }, 5000);
+  _eqPollTimer = setInterval(() => { _pollEqPresence().catch(() => {}); }, 10000);   // 5s->10s (2026-07-07 review: tasklist spawn pressure)
 }
 function _stopEqPolling() {
   if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }

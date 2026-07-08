@@ -257,12 +257,13 @@
     // via their own raid-chat macro (Naggato's ">> DA up << 18 secs" etc),
     // not just whoever's the current Rampage target above.
     if (s.da_broadcasts && s.da_broadcasts.length) {
-      html += '<div class="card"><div class="head">DA / Invuln status</div><div class="list">';
+      html += '<div class="card"><div class="head">Defensives up (DA / Disc)</div><div class="list">';
       for (var i = 0; i < s.da_broadcasts.length; i++) {
         var d = s.da_broadcasts[i];
         var chipCls = d.seconds == null ? 'up' : (d.seconds <= 0 ? 'down' : (d.seconds <= 5 ? 'soon' : 'up'));
         var chipTxt = d.seconds == null ? 'UP' : (d.seconds <= 0 ? 'DOWN' : fmtSec(d.seconds));
         html += '<div class="row"><span class="nm">' + esc(d.name) + '</span>'
+             +    (d.kind ? '<span class="cls">' + esc(d.kind) + '</span>' : '')
              +    '<span class="da-chip ' + chipCls + '">' + chipTxt + '</span></div>';
       }
       html += '</div></div>';
@@ -300,8 +301,11 @@
 
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, or curses seen yet.</div>';
 
-    contentEl.innerHTML = html;
-    _requestAutoHeight();
+    if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+      contentEl.innerHTML = html;
+      contentEl.__wpHtml = html;
+      _requestAutoHeight();
+    }
   }
 
   async function tick(){

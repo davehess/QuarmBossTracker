@@ -406,8 +406,11 @@
       html += '<div class="card"><div class="head">⚕ Off-heal — hurt offtanks</div>' + ohHtml + '</div>';
     }
 
-    contentEl.innerHTML = html;
-    _requestAutoHeight();
+    if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+      contentEl.innerHTML = html;
+      contentEl.__wpHtml = html;
+      _requestAutoHeight();
+    }
   }
 
   async function tick(){
