@@ -1131,16 +1131,20 @@ function _zealAbsorb(obj, pid) {
       for (const it of inner) {
         if (!it || it.type == null) continue;
         const id = it.type;
-        // Char-info label ids. The 1-13 block is now CONFIRMED against a live
-        // side-by-side (Canopy, 2026-07-07 screenshot vs in-game stats window):
+        // Char-info label ids — these are the classic EQ client UI "EQType"
+        // label ids (Zeal's pipe forwards label updates keyed by them; the
+        // semantics come from the base client, not Zeal, which is why Zeal's
+        // repo doesn't document them). CONFIRMED against two live
+        // side-by-sides (Canopy, 2026-07-07/08):
         //   1 Name · 2 Level · 3 Class · 4 Deity · 5 STR · 6 STA · 7 DEX ·
-        //   8 AGI · 9 WIS · 10 INT · 11 CHA · 12 disease resist (likely) ·
-        //   13 poison resist (confirmed)
-        // — i.e. NO HP anywhere in 1-13. The in-game window's HP/mana/AC/ATK
-        // live at HIGHER label ids, which the old 1-13 filter threw away, so
-        // the HP detector was matching pure stat noise. Capture everything up
-        // to 44 (the buff window starts at 45); _detectSelfHp() scans only the
-        // 14-44 band for the HP cur/max pair.
+        //   8 AGI · 9 WIS · 10 INT · 11 CHA · 12 poison resist ·
+        //   13 disease resist · 14 fire resist · 15 cold resist ·
+        //   16 magic resist · 17 HP cur · 18 HP max · 19 HP % · 20 mana % ·
+        //   21 endurance · 22 AC · 23 ATK · 24 weight cur ·
+        //   25 weight max · 26 XP % · 27 AA XP % · 28 pet name · 29 pet HP %
+        // Raw mana cur/max does NOT appear in this band (only the % at 20).
+        // Capture everything up to 44 (the buff window starts at 45);
+        // _detectSelfHp() reads the confirmed 17/18 pair.
         if (id >= 1 && id <= 44) {
           if (it.value !== undefined && it.value !== null && it.value !== '') {
             charInfo.push({ id, value: String(it.value) });
@@ -1228,14 +1232,23 @@ function _detectSelfHp(cur, s, charInfo) {
     }
     cur.hpIds = null;   // stopped tracking — was a coincidence, relearn
   }
-  // Learn only when HP is distinct from full (< 97%) so cur ≠ max.
-  if (pct != null && pct < 97) {
-    // Known-prior fast path: EQType 17/18 (cur/max HP in the classic UI).
+  // Known-prior fast path: EQType 17/18 — CONFIRMED cur/max HP (Canopy
+  // side-by-side 2026-07-08: 17=1422, 18=1662 vs in-game 1425/1662). Since
+  // the ids are field-verified, pin at ANY HP level when the ratio agrees —
+  // including full HP, where the generic learner can't (cur == max matches
+  // every full bar). Without this, raw numbers only appeared after the first
+  // hit of the session.
+  if (pct != null && !cur.hpIds) {
     const c17 = nums.find(x => x.id === 17);
     const m18 = nums.find(x => x.id === 18);
     if (c17 && m18 && c17.n <= m18.n && Math.abs((c17.n / m18.n) * 100 - pct) <= 1.5) {
       cur.hpIds = { curId: 17, maxId: 18 };
-    } else {
+    }
+  }
+  // Generic fallback (no 17/18 on this client): learn only when HP is
+  // distinct from full (< 97%) so cur ≠ max.
+  if (pct != null && pct < 97) {
+    if (!cur.hpIds) {
       // Generic scan with two-point agreement. _hpCand remembers, per id
       // pair, the HP% it last matched at; a second match ≥3 points away
       // proves the pair FOLLOWS the gauge rather than crossing it once.

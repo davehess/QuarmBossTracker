@@ -9300,16 +9300,18 @@ function renderZealClients(s) {
     // raw HP cur/max would live if Zeal exposes it; surfaced so we can
     // confirm what's actually sent (Uilnayar 2026-07-05 self-HP-numbers ask).
     if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
-      // Confirmed 1-13 mapping (Canopy side-by-side, 2026-07-07); 17/18 are
-      // the classic-UI EQTypes for cur/max HP — flagged as expected so the
-      // next screenshot confirms or corrects. Unlabeled ids are the discovery
-      // targets (mana / AC / ATK / remaining resists).
+      // Fully confirmed mapping (Canopy side-by-sides, 2026-07-07/08). These
+      // are the classic EQ client UI EQType label ids — Zeal forwards them
+      // verbatim, so the semantics come from the base client.
       var ciLabels = { 1: 'Name', 2: 'Level', 3: 'Class', 4: 'Deity', 5: 'STR', 6: 'STA', 7: 'DEX', 8: 'AGI',
-        9: 'WIS', 10: 'INT', 11: 'CHA', 12: 'Disease resist?', 13: 'Poison resist', 17: 'HP cur (expected)', 18: 'HP max (expected)' };
+        9: 'WIS', 10: 'INT', 11: 'CHA', 12: 'Poison resist', 13: 'Disease resist', 14: 'Fire resist',
+        15: 'Cold resist', 16: 'Magic resist', 17: 'HP cur', 18: 'HP max', 19: 'HP %', 20: 'Mana %',
+        21: 'Endurance', 22: 'AC', 23: 'ATK', 24: 'Weight cur', 25: 'Weight max', 26: 'XP %',
+        27: 'AA XP %', 28: 'Pet name', 29: 'Pet HP %' };
       h += '<details data-charinfo="' + esc(c.character) + '"' + (_openCharInfo[c.character] ? ' open' : '')
          + ' style="margin-left:14px;font-size:11px"><summary class="dim" style="cursor:pointer">'
          + c.char_info.length + ' char-info field' + (c.char_info.length === 1 ? '' : 's')
-         + ' <span class="dim" style="font-size:10px">(diagnostic — raw Zeal label ids; unlabeled rows are what we still need to identify)</span></summary>';
+         + ' <span class="dim" style="font-size:10px">(diagnostic — classic-UI EQType label ids via Zeal)</span></summary>';
       h += '<table style="font-size:11px;margin-top:4px"><tr><th>Id</th><th>Field</th><th>Value</th></tr>';
       for (const ci of c.char_info) {
         h += '<tr><td class="dim">' + esc(String(ci.id)) + '</td>'
