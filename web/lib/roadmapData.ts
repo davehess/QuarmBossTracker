@@ -43,6 +43,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'command-center-defensive',
+    title: 'Command Center now sees Defensive Discipline',
+    version: 'Mimic 1.7 · Agent 3.3.4',
+    date: '2026-07-08',
+    channel: 'beta',
+    headline: 'Warrior Defensive Discipline (and Weapon Shield) now show up on the Command Center’s defensives list, not just Divine Aura.',
+    features: [
+      { name: 'Defensives, straight from the log', blurb: 'The Command Center reads Defensive Discipline directly off the combat log (“Soandso assumes a defensive fighting style”), so it lights up for any tank who pops it — no announce macro required — and clears when it fades. It also understands the chat call-outs tanks already use (“Defensive is activated”, “1 min on defensive”, “Weapon Shield activated for the next 15s!”), and each row is labeled with which cooldown it is.' },
+    ],
+    fixes: [
+      'The defensives tracker used to only recognize “DA” (Divine Aura), so a tank popping Defensive went completely unseen.',
+    ],
+  },
+  {
     key: 'account-inventory',
     title: 'See everything your characters own, all at once',
     version: 'Web 1.0.185',
