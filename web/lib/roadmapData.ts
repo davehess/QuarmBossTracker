@@ -43,6 +43,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'missing-spells',
+    title: 'Missing-spells page shows the whole picture',
+    version: 'Web 1.0.182',
+    date: '2026-07-08',
+    headline: 'Your character’s missing-spell list now includes the ones you have to go get, not just what a vendor sells.',
+    features: [
+      { name: 'Every missing spell, not just buyable', blurb: 'The missing-spells page now lists all of a class’s spells you haven’t scribed — quest, drop, and planar spells (Divine Intervention, Mark of Karn, …) included. Each is tagged 🛒 buyable or ⚔ go-get, and the “find ↗” link opens PQDI so you can see exactly where a non-vendor spell drops.' },
+    ],
+    fixes: [
+      'Fixed spells you already have showing as missing — a junk duplicate item in the game data ("Spell: Courage*") was masquerading as a separate spell you hadn’t scribed. Courage and its cousins now match correctly.',
+    ],
+  },
+  {
     key: 'pop-roster-polish',
     title: 'PoP flags, roster, and a site-wide polish pass',
     version: 'Web 1.0.181 · Bot 3.0.147',

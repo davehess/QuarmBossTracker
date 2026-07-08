@@ -30,6 +30,7 @@ type MissingSpell = {
   spell_id: number | null;
   scribe_level: number | null;
   held_by: string[];
+  buyable: boolean;
 };
 
 export default async function CharacterSpellsPage({ params }: { params: Promise<{ name: string }> }) {
@@ -110,6 +111,8 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
     return (a as number) - (b as number);
   });
   const heldCount = missing.filter(m => m.held_by.length > 0).length;
+  const buyableCount = missing.filter(m => m.buyable).length;
+  const otherCount = missing.length - buyableCount;
 
   return (
     <div className="space-y-6">
@@ -124,23 +127,27 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
         </h2>
         <p className="text-sm text-dim leading-6">
-          Vendor-buyable {baseClass ?? 'class'} spells {decoded} hasn&apos;t
-          scribed yet. <span className="text-green">🎒</span> means a guildmate
-          is currently holding the scroll — ask them before buying. Levels are
-          derived from guild spellbooks, so a few may be blank until someone
-          with the spell uploads. Locations deep-link to{' '}
-          <a href="https://pqdi.cc" target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI</a>.
+          Every {baseClass ?? 'class'} spell {decoded} hasn&apos;t scribed yet —
+          both vendor-buyable ones and the quest/drop/planar spells you have to
+          go get. <span className="text-orange">🛒</span> = sold by a vendor;{' '}
+          <span className="text-purple">⚔</span> = not sold, acquire it in the world
+          (the <b>find ↗</b> link opens PQDI so you can see where it drops).{' '}
+          <span className="text-green">🎒</span> = a guildmate is holding the
+          scroll right now — ask them first. Levels come from guild spellbooks,
+          so a few may be blank until someone with the spell uploads.
         </p>
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Class: <span className="text-text">{baseClass ?? '—'}</span></span>
           <span>Scribed: <span className="text-text">{scribedCount ?? 0}</span></span>
-          <span>Missing (buyable): <span className="text-text">{missing.length}</span></span>
-          <span>Held by a guildmate: <span className="text-green">{heldCount}</span></span>
+          <span>Missing: <span className="text-text">{missing.length}</span></span>
+          <span>🛒 Buyable: <span className="text-orange">{buyableCount}</span></span>
+          <span>⚔ Go get: <span className="text-purple">{otherCount}</span></span>
+          <span>🎒 Held by a guildmate: <span className="text-green">{heldCount}</span></span>
         </div>
         {!hasBook && (
           <p className="text-xs text-orange mt-3">
-            ⚠ No spellbook uploaded for {decoded} yet, so this is the full
-            buyable list for the class. Upload via 📖 on{' '}
+            ⚠ No spellbook uploaded for {decoded} yet, so this is the full class
+            spell list. Paste the in-game spellbook via 📖 on{' '}
             <Link href="/me" className="text-blue hover:underline">/me</Link> to
             filter to what they still need.
           </p>
@@ -173,11 +180,14 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
                     <ul className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
                       {rows.map(m => (
                         <li key={m.spell_name} className="flex items-baseline gap-2">
-                          <span className="text-red-400">✗</span>
+                          <span title={m.buyable ? 'Sold by a vendor' : 'Not sold — quest / drop / planar'}>
+                            {m.buyable ? '🛒' : '⚔'}
+                          </span>
                           <span className="text-text">{m.spell_name}</span>
                           {m.scroll_item_id && (
                             <a href={`https://pqdi.cc/item/${m.scroll_item_id}`} target="_blank" rel="noreferrer"
-                               className="text-blue text-[10px] hover:underline" title="Where to buy (PQDI item page)">
+                               className="text-blue text-[10px] hover:underline"
+                               title={m.buyable ? 'Where to buy (PQDI item page)' : 'Where it drops / quests from (PQDI item page)'}>
                               find ↗
                             </a>
                           )}
