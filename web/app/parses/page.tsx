@@ -17,6 +17,8 @@ import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import { classifyEncounter, clearClassification } from './actions';
+import WindowPicker from '@/components/WindowPicker';
+import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +56,7 @@ type AttendanceRollup = {
 
 const ROW_LIMIT = 250;
 
-async function loadAll(): Promise<{
+async function loadAll(w: ResolvedWindow): Promise<{
   rows: EncounterRow[];
   zones: Map<string, ZoneRow>;
   loot: Map<string, LootDbRow[]>;
@@ -65,7 +67,7 @@ async function loadAll(): Promise<{
   try {
     const sb = supabaseAdmin();
 
-    const { data: encs, error: encErr } = await sb
+    let encQuery = sb
       .from('encounters')
       .select(`
         id, started_at, ended_at, duration_sec, total_damage, total_dps, zone_short, classification,
@@ -75,6 +77,8 @@ async function loadAll(): Promise<{
       .gt('total_damage', 0)
       .order('started_at', { ascending: false })
       .limit(ROW_LIMIT);
+    if (w.sinceIso) encQuery = encQuery.gte('started_at', w.sinceIso);
+    const { data: encs, error: encErr } = await encQuery;
     if (encErr) return { rows: [], zones: new Map(), loot: new Map(), attendance: new Map(), roster: new Set(), error: encErr.message };
 
     // Guild roster names (lowercased) — presence = Pack member. Used to detect
@@ -95,13 +99,15 @@ async function loadAll(): Promise<{
       (zoneRows ?? []).map((z: ZoneRow) => [z.short_name, z]),
     );
 
-    // Loot: pull 60 days back so a long backfill scroll still shows context.
-    const since = new Date(Date.now() - 60 * 86400 * 1000).toISOString().slice(0, 10);
-    const { data: lootRows } = await sb
+    // Loot + attendance context follow the page window (was a hardcoded 60d).
+    // The loot view is a "recent" sync window — long lookbacks under-count.
+    const since = (w.sinceIso ?? '1970-01-01').slice(0, 10);
+    let lootQuery = sb
       .from('opendkp_loot_recent')
       .select('raid_date, raid_id, raid_name, item_name, character_name, dkp, game_item_id, notes')
-      .gte('raid_date', since)
       .order('dkp', { ascending: false });
+    if (w.sinceIso) lootQuery = lootQuery.gte('raid_date', since);
+    const { data: lootRows } = await lootQuery;
     const loot = new Map<string, LootDbRow[]>();
     for (const r of (lootRows ?? []) as LootDbRow[]) {
       // raid_date is YYYY-MM-DD from the view
@@ -114,11 +120,12 @@ async function loadAll(): Promise<{
     // We compute this in app code from opendkp_raids + opendkp_ticks rather
     // than trying to build a view that handles all the edge cases (multi-pool
     // nights, bonus ticks, etc).
-    const { data: raidRows } = await sb
+    let raidQuery = sb
       .from('opendkp_raids')
       .select('raid_id, ts')
-      .gte('ts', since)
       .range(0, 19999);
+    if (w.sinceIso) raidQuery = raidQuery.gte('ts', since);
+    const { data: raidRows } = await raidQuery;
     // opendkp_ticks has no per-window filter, so it must carry an explicit
     // range — PostgREST's default 1000-row cap was silently dropping ~28% of
     // attendance ticks (table is 1396 rows and growing). Bound to the raids
@@ -307,12 +314,17 @@ function computeNightStats(day: DayBucket, dayDate: string): NightStats {
   };
 }
 
-export default async function ParsesPage() {
+export default async function ParsesPage(
+  { searchParams }: { searchParams: Promise<{ w?: string }> },
+) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/parses');
   const officer = await isOfficer(user.id);
 
-  const { rows: allRows, zones, loot, attendance, roster, error } = await loadAll();
+  const { w: wParam } = await searchParams;
+  const w = resolveWindow(wParam, '60d');
+  const caveat = windowCaveat('parses', w);
+  const { rows: allRows, zones, loot, attendance, roster, error } = await loadAll(w);
   // 'foreign' = a raid that's primarily NOT Wolf Pack members (a guildie pugging
   // another guild, whose agent uploaded the fight). Hidden from /parses entirely
   // — officers review these on /admin/anomalies, not dimmed inline like wipes.
@@ -377,15 +389,19 @@ export default async function ParsesPage() {
       )}
 
       <section className="bg-panel border border-border rounded-lg p-6">
-        <h2 className="text-xl text-gold mb-1">📊 Boss Kills</h2>
+        <h2 className="text-xl text-gold mb-1 flex items-center gap-3 flex-wrap">
+          <span>📊 Boss Kills</span>
+          <WindowPicker page="parses" current={w.key} options={['7d', '30d', '60d', '90d', 'exp', 'life']} />
+        </h2>
         <p className="text-sm text-dim">
-          Last {ROW_LIMIT} merged encounters, grouped by raid night and zone.
-          Within each zone, kills are shown in the order they happened. Damage
+          {w.key === 'life' ? `Newest ${ROW_LIMIT} merged encounters` : `${w.label} window (newest ${ROW_LIMIT})`},
+          grouped by raid night and zone. Within each zone, kills are shown in the order they happened. Damage
           is the max-per-player merge across all parser uploads for the same
           kill. Click a card for the full breakdown. Loot blocks and attendance
           rollups come from OpenDKP, mirrored every 6h (or via{' '}
           <code>/syncopendkp</code>).
         </p>
+        {caveat && <p className="text-xs text-orange mt-1">⚠ {caveat}</p>}
       </section>
 
       {error && (

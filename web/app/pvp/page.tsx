@@ -15,6 +15,8 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import QuakeBanner from './QuakeBanner';
+import WindowPicker from '@/components/WindowPicker';
+import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +37,7 @@ type LeaderboardRow = {
 };
 type SortKey = 'total' | 'unique' | 'assists' | 'last';
 
-async function loadLeaderboard(sortKey: SortKey) {
+async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   const sb = supabaseAdmin();
   // Ownership = "is the killer currently a Wolf Pack character", NOT "was the
   // killer's pvp_kills.killer_guild equal to 'Wolf Pack' at the time of the
@@ -70,19 +72,22 @@ async function loadLeaderboard(sortKey: SortKey) {
   // Two queries in parallel — kills (the existing source-of-truth ledger) and
   // assists (the new pvp_assists table populated by the agent's correlation).
   // Merge by killer name into one row per character.
-  const [killRes, assistRes] = await Promise.all([
-    sb.from('pvp_kills')
-      .select('killer, victim, via_pet, killed_at')
-      .eq('guild_id', 'wolfpack')
-      .in('killer', rosterNames)
-      .order('killed_at', { ascending: false })
-      .limit(20000),
-    sb.from('pvp_assists')
-      .select('assister')
-      .eq('guild_id', 'wolfpack')
-      .in('assister', rosterNames)
-      .limit(20000),
-  ]);
+  let killQuery = sb.from('pvp_kills')
+    .select('killer, victim, via_pet, killed_at')
+    .eq('guild_id', 'wolfpack')
+    .in('killer', rosterNames)
+    .order('killed_at', { ascending: false })
+    .limit(20000);
+  let assistQuery = sb.from('pvp_assists')
+    .select('assister')
+    .eq('guild_id', 'wolfpack')
+    .in('assister', rosterNames)
+    .limit(20000);
+  if (w.sinceIso) {
+    killQuery = killQuery.gte('killed_at', w.sinceIso);
+    assistQuery = assistQuery.gte('killed_at', w.sinceIso);
+  }
+  const [killRes, assistRes] = await Promise.all([killQuery, assistQuery]);
   if (killRes.error) return { rows: [] as LeaderboardRow[], error: killRes.error.message };
 
   const byKiller = new Map<string, {
@@ -266,7 +271,7 @@ function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
 export default async function PvpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string }>;
+  searchParams: Promise<{ sort?: string; w?: string }>;
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp');
@@ -277,10 +282,13 @@ export default async function PvpPage({
       ? sp.sort
       : 'total'
   );
+  // PvP kills are public server events with no data floor, so the historical
+  // default stays Lifetime; the picker narrows for "who's hot lately".
+  const w = resolveWindow(sp?.w, 'life');
 
   const tz = await userTz();
   const [{ rows, error }, bossTimers, quakeAt, hotZones] = await Promise.all([
-    loadLeaderboard(sortKey),
+    loadLeaderboard(sortKey, w),
     loadBossTimers(),
     loadQuake(),
     loadHotZones(),
@@ -298,9 +306,10 @@ export default async function PvpPage({
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
-        <h2 className="text-2xl text-gold flex items-center gap-3">
+        <h2 className="text-2xl text-gold flex items-center gap-3 flex-wrap">
           <span aria-hidden>⚔️</span>
           <span>PvP Kills</span>
+          <WindowPicker page="pvp" current={w.key} options={['7d', '30d', '90d', 'exp', 'life']} />
         </h2>
         <p className="text-sm text-dim mt-2">
           Wolf Pack PvP kill leaderboard. Each row shows total kills and, in
@@ -309,7 +318,7 @@ export default async function PvpPage({
           for the full kill history — your own deaths are visible only to you.
         </p>
         <div className="text-xs text-dim mt-2 flex items-center gap-3 flex-wrap">
-          <span>{rows.length} killer{rows.length === 1 ? '' : 's'} · {totalKills} total kill{totalKills === 1 ? '' : 's'}</span>
+          <span>{rows.length} killer{rows.length === 1 ? '' : 's'} · {totalKills} kill{totalKills === 1 ? '' : 's'}{w.key !== 'life' ? ` · ${w.label}` : ''}</span>
           <Link href="/pvp/server" className="text-blue hover:underline">See the server-wide top 10 →</Link>
           <Link href="/pvp/hate" className="text-blue hover:underline">Plane of Hate tracker →</Link>
         </div>

@@ -13,10 +13,10 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtDkp, cleanBossName } from '@/lib/format';
+import WindowPicker from '@/components/WindowPicker';
+import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 
 export const dynamic = 'force-dynamic';
-
-const WINDOW_DAYS = 30;
 
 type TopDamageRow = {
   encounter_id: string;
@@ -36,22 +36,25 @@ type AttendanceRow = {
 
 type LootSpend = { character_name: string; total_dkp: number; items: number };
 
-async function load() {
+async function load(w: ResolvedWindow) {
   const sb = supabaseAdmin();
-  const since = new Date(Date.now() - WINDOW_DAYS * 86400 * 1000).toISOString();
+  const since = w.sinceIso;
 
   // 1. Top damage parses in the window — pull encounter_players joined with
   // encounters. Sorted desc, cut to top 30 to keep payload reasonable.
-  const { data: dmgRaw } = await sb
+  // Lifetime stays cheap: the sort is a total_damage index scan with LIMIT,
+  // the window filter only narrows it.
+  let dmgQuery = sb
     .from('encounter_players')
     .select(`
       encounter_id, character_name, total_damage, dps, duration_sec,
       encounters!inner ( id, started_at, eqemu_npc_types ( name ) )
     `)
-    .gte('encounters.started_at', since)
     .gt('total_damage', 0)
     .order('total_damage', { ascending: false })
     .limit(30);
+  if (since) dmgQuery = dmgQuery.gte('encounters.started_at', since);
+  const { data: dmgRaw } = await dmgQuery;
   const topDamage = (dmgRaw as unknown as TopDamageRow[]) ?? [];
 
   // 2. Attendance: top 20 by last_30d ticks.
@@ -64,11 +67,13 @@ async function load() {
 
   // 3. Loot spend: aggregate from opendkp_loot_recent by character. Postgres
   // does the heavy lifting via a single fetch + JS sum since the view doesn't
-  // expose a per-character rollup natively.
-  const { data: lootRaw } = await sb
+  // expose a per-character rollup natively. NOTE: the view itself is a
+  // "recent" sync window — long lookbacks under-count (caveat shown in UI).
+  let lootQuery = sb
     .from('opendkp_loot_recent')
-    .select('character_name, dkp')
-    .gte('raid_date', since.slice(0, 10));
+    .select('character_name, dkp');
+  if (since) lootQuery = lootQuery.gte('raid_date', since.slice(0, 10));
+  const { data: lootRaw } = await lootQuery;
   const lootByChar = new Map<string, { total_dkp: number; items: number }>();
   for (const r of (lootRaw ?? []) as { character_name: string; dkp: number }[]) {
     const k = r.character_name;
@@ -85,20 +90,30 @@ async function load() {
   return { topDamage, attendance, lootSpend };
 }
 
-export default async function LeaderboardsPage() {
+export default async function LeaderboardsPage(
+  { searchParams }: { searchParams: Promise<{ w?: string }> },
+) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/leaderboards');
 
-  const { topDamage, attendance, lootSpend } = await load();
+  const { w: wParam } = await searchParams;
+  const w = resolveWindow(wParam, '30d');
+  const caveat = windowCaveat('parses', w) ?? windowCaveat('loot', w);
+  const { topDamage, attendance, lootSpend } = await load(w);
 
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
-        <h2 className="text-xl text-gold mb-1">🏆 Leaderboards</h2>
+        <h2 className="text-xl text-gold mb-1 flex items-center gap-3 flex-wrap">
+          <span>🏆 Leaderboards</span>
+          <WindowPicker page="leaderboards" current={w.key} options={['7d', '30d', '60d', '90d', 'exp', 'life']} />
+        </h2>
         <p className="text-sm text-dim">
-          Last {WINDOW_DAYS} days. Updates as new parses land and OpenDKP sync
-          completes (every 6h, or manually via <code>/syncopendkp</code>).
+          {w.label === 'Lifetime' ? 'All recorded history' : `Window: ${w.label}`}. Updates as new parses land and
+          OpenDKP sync completes (every 6h, or manually via <code>/syncopendkp</code>).
+          {' '}<i>Attendance below is fixed 30d/90d (view-backed) regardless of window.</i>
         </p>
+        {caveat && <p className="text-xs text-orange mt-1">⚠ {caveat}</p>}
       </section>
 
       {/* Top damage parses */}
@@ -141,7 +156,7 @@ export default async function LeaderboardsPage() {
               </tr>
             ))}
             {topDamage.length === 0 && (
-              <tr><td colSpan={6} className="py-2 text-dim italic">No parses in the last {WINDOW_DAYS} days.</td></tr>
+              <tr><td colSpan={6} className="py-2 text-dim italic">No parses in this window.</td></tr>
             )}
           </tbody>
         </table>
