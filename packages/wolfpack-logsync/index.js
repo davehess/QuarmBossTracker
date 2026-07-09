@@ -5990,9 +5990,14 @@ function _maybeUploadRaidRoster(sample) {
         let hpPct = null;
         let hpCur = null, hpMax = null;
         if (m.hp_current != null && m.hp_max != null && Number(m.hp_max) > 0) {
-          hpCur = Math.max(0, Math.trunc(Number(m.hp_current)));
-          hpMax = Math.trunc(Number(m.hp_max));
-          hpPct = Math.max(0, Math.min(100, Math.round((hpCur / hpMax) * 100)));
+          const c = Math.max(0, Math.trunc(Number(m.hp_current)));
+          const x = Math.trunc(Number(m.hp_max));
+          // The EQ client only knows REAL cur/max for the uploader themself —
+          // other raid members arrive as a percent with hp_max=100. Only a
+          // pool > 100 is genuinely exact ("88 / 100 · 88%" bug, 2026-07-09);
+          // either way the ratio still gives the percent.
+          if (x > 100) { hpCur = c; hpMax = x; }
+          hpPct = Math.max(0, Math.min(100, Math.round((c / x) * 100)));
         } else {
           const hp = liveHpByName.get(String(m.name).toLowerCase());
           if (typeof hp === 'number') hpPct = Math.max(0, Math.min(100, Math.round(hp)));
@@ -6897,7 +6902,10 @@ function _resolveHpForName(nameLower, active, st) {
 // labels 17/18 (self), another watched box on this machine, or the bot's relay
 // (which now backfills cur/max from a /pipeverbose groupmate's raid_roster row).
 function _resolveHpValuesForName(nameLower, active, st) {
-  const ok = (o) => o && typeof o.self_hp_cur === 'number' && typeof o.self_hp_max === 'number' && o.self_hp_max > 0;
+  // max > 100: a ≤100 "pool" is a percent in disguise (the verbose raid sample
+  // reports non-self members as pct/100) — showing it as "88 / 100" is worse
+  // than showing the plain %. Real raiders' pools are always in the thousands.
+  const ok = (o) => o && typeof o.self_hp_cur === 'number' && typeof o.self_hp_max === 'number' && o.self_hp_max > 100;
   if (active && nameLower === String(active).toLowerCase() && ok(st)) {
     return { cur: st.self_hp_cur, max: st.self_hp_max };
   }

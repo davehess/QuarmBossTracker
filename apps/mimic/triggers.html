@@ -31,10 +31,13 @@
      forcing the alert to linger. (Uilnayar 2026-06-26 — v1.1.2.)
      Stacked in a column UNDER the alert (was position:absolute bottom:14%,
      which floated the buttons right on top of the flashed text — 2026-07-09).
-     Hidden → no height, so the alert stays centered until a vote is offered. */
-  #alertcol{display:flex; flex-direction:column; align-items:center; gap:18px}
-  #feedback{display:none; gap:8px; align-items:center; pointer-events:auto;}
-  #feedback.show{display:flex}
+     The row's height is ALWAYS reserved (visibility, not display) so the
+     alert text sits at the same spot whether or not a vote is offered —
+     appearing buttons must never shove the callout around mid-fight
+     ("include the buttons in the default spacing", Uilnayar 2026-07-09). */
+  #alertcol{display:flex; flex-direction:column; align-items:center; gap:10px}
+  #feedback{display:flex; visibility:hidden; gap:8px; align-items:center; pointer-events:auto;}
+  #feedback.show{visibility:visible}
   .fb-btn{
     font:600 12px ui-monospace,Menlo,Consolas,monospace;
     color:#fff; background:rgba(14,17,22,0.85); border:1px solid rgba(255,255,255,0.25);
