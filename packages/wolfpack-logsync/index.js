@@ -3402,21 +3402,30 @@ function trackHealerManaLine(line, character) {
 // The "Healer Mana" roster is for the three prep classes only. A Mage healing
 // its pet ("Statlander") or a Warrior with a mana macro shouldn't land here —
 // they broadcast a "% mana" line but aren't who a raid leader calls for a mana
-// break. Class comes from /who; match the base name case-insensitively.
+// break. Class resolves /who → Zeal raid roster → recorded-at value.
 function _isHealerClass(cls) {
   return typeof cls === 'string' && /^(cleric|druid|shaman)$/i.test(cls.trim());
 }
 function healerManaRosterSnapshot() {
   const now = Date.now();
+  // Readings stay up for the LENGTH OF THE FIGHT (Uilnayar 2026-07-09) — the
+  // 5-min silence GC only runs between fights, so a cleric who called mana
+  // once at the pull is still on the board ten minutes into the encounter.
+  const fightLive = !!(stats.currentEncounterThreat && !stats.currentEncounterThreat.flushedAt);
   const out = [];
   for (const [key, e] of _healerManaRoster) {
-    if (now - e.updatedAtMs > MANA_ROSTER_TTL_MS) { _healerManaRoster.delete(key); continue; }
-    // Re-resolve class from whoData at read time so a /who that lands AFTER the
-    // mana line (class was null when recorded) still classifies the speaker.
+    if (!fightLive && now - e.updatedAtMs > MANA_ROSTER_TTL_MS) { _healerManaRoster.delete(key); continue; }
+    // Class waterfall, re-resolved at read time (a /who or Zeal raid sample
+    // landing AFTER the mana line still classifies the speaker).
     const who = whoData.get(key);
-    const cls = (who && who.class) || e.class;
-    if (!_isHealerClass(cls)) continue;   // Cleric/Druid/Shaman only
-    out.push({ name: e.name, class: cls, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
+    const cls = (who && who.class) || _raidClassByName.get(key) || e.class;
+    // Drop KNOWN non-healers only. An UNKNOWN class stays — requiring a
+    // resolved class emptied the whole list whenever /who data was cold
+    // ("We no longer see Cleric/CH chain Mana", 2026-07-09): virtually only
+    // healers run % -mana macros, so unknowns are far more likely a cleric
+    // than a Statlander.
+    if (cls && !_isHealerClass(cls)) continue;
+    out.push({ name: e.name, class: cls || null, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
   }
   out.sort((a, b) => a.pct - b.pct);   // lowest mana first — who needs a mana break
   return out;
@@ -6044,7 +6053,12 @@ function _maybeUploadRaidRoster(sample) {
     // values like victim/target. Replaces (not merges) so a raider leaving
     // the raid clears them out of the set on the next Zeal Type 5 fire.
     _raidRosterMembers.clear();
-    for (const m of compact) _raidRosterMembers.add(String(m.name).toLowerCase());
+    _raidClassByName.clear();
+    for (const m of compact) {
+      const lower = String(m.name).toLowerCase();
+      _raidRosterMembers.add(lower);
+      if (m.class) _raidClassByName.set(lower, String(m.class));
+    }
     // Hash composition only — NOT HP. HP changes constantly in combat and we
     // don't want every 1% drop to fire an upload. The heartbeat refreshes HP on
     // a fixed cadence (RAID_ROSTER_HP_HEARTBEAT_MS) so the /raid page + Tank
@@ -20274,6 +20288,11 @@ function evaluateTriggersAgainstLine(line, tsMs) {
 // case the filter falls open (any captured name is allowed) so non-raid
 // triggers still work.
 const _raidRosterMembers = new Set();
+// nameLower → class ("Cleric", "Druid", …) from the same Zeal type-5 sample.
+// The Healer Mana roster resolves class through this when /who data is absent
+// — /who-only resolution left class null for most of the raid and the healer
+// filter dropped them all ("We no longer see Cleric/CH chain Mana", 2026-07-09).
+const _raidClassByName = new Map();
 function _raidRosterHas(name) {
   if (!name || _raidRosterMembers.size === 0) return false;
   return _raidRosterMembers.has(String(name).toLowerCase());
