@@ -3329,12 +3329,24 @@ function trackHealerManaLine(line, character) {
     updatedAtMs: ts ? ts.getTime() : Date.now(),
   });
 }
+// The "Healer Mana" roster is for the three prep classes only. A Mage healing
+// its pet ("Statlander") or a Warrior with a mana macro shouldn't land here —
+// they broadcast a "% mana" line but aren't who a raid leader calls for a mana
+// break. Class comes from /who; match the base name case-insensitively.
+function _isHealerClass(cls) {
+  return typeof cls === 'string' && /^(cleric|druid|shaman)$/i.test(cls.trim());
+}
 function healerManaRosterSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [key, e] of _healerManaRoster) {
     if (now - e.updatedAtMs > MANA_ROSTER_TTL_MS) { _healerManaRoster.delete(key); continue; }
-    out.push({ name: e.name, class: e.class, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
+    // Re-resolve class from whoData at read time so a /who that lands AFTER the
+    // mana line (class was null when recorded) still classifies the speaker.
+    const who = whoData.get(key);
+    const cls = (who && who.class) || e.class;
+    if (!_isHealerClass(cls)) continue;   // Cleric/Druid/Shaman only
+    out.push({ name: e.name, class: cls, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
   }
   out.sort((a, b) => a.pct - b.pct);   // lowest mana first — who needs a mana break
   return out;
@@ -5625,6 +5637,17 @@ const STATS_FILE = path.join(__dirname, 'logsync.stats.json');
 // queue with a loud warning — those won't fix themselves by retrying.
 const QUEUE_FILE             = path.join(__dirname, 'logsync.queue.json');
 const QUEUE_MAX_SIZE         = 5000;     // FIFO cap; oldest dropped with a warning
+// BYTE cap — the entry-count cap alone let the queue file grow to 2.6GB in the
+// field (5000 backfill-encounter entries averaged ~520KB each). A multi-GB
+// queue is re-serialized synchronously to disk on every save, locking the
+// event loop for SECONDS and freezing the local overlays. Cap total serialized
+// bytes too, and evict (backfill → ephemeral → FIFO) until under. 128MB is far
+// more than a healthy live backlog ever needs while keeping each flush cheap.
+const QUEUE_MAX_BYTES        = 128 * 1024 * 1024;
+// A single payload larger than this is refused at enqueue — the bot caps
+// encounter at 10MB (413s anything bigger), so a >12MB entry is DOA and would
+// only bloat the file until it drained as a permanent failure.
+const QUEUE_ENTRY_MAX_BYTES_ENQUEUE = 12 * 1024 * 1024;
 // Backpressure watermarks (hysteresis): when a backfill is filling the queue
 // faster than the drain loop empties it, PAUSE the file read at HIGH and don't
 // resume until it drains below LOW. This stops the cap from FIFO-evicting good
@@ -5663,43 +5686,117 @@ let _queueUploadOpts   = null;      // { botUrl, token } — set by startUploadQ
 let _queuePermanentDropCount = 0;   // 4xx responses since startup
 let _queueCapEvictCount      = 0;   // FIFO evictions because queue hit MAX_SIZE
 
+// Serialized byte size of one entry, cached on the entry so the byte-cap can
+// sum without re-stringifying. Falls back to a live stringify when absent.
+function _entryBytes(entry) {
+  if (entry && typeof entry._bytes === 'number') return entry._bytes;
+  try { return Buffer.byteLength(JSON.stringify(entry)); } catch { return 0; }
+}
+function _queueByteTotal() {
+  let t = 0;
+  for (const e of _uploadQueue) t += _entryBytes(e);
+  return t;
+}
+// Evict (backfill → ephemeral → oldest) until the queue is under the BYTE cap.
+// Complements the entry-count cap: 5000 large backfill entries once grew the
+// file to 2.6GB, which locked the event loop on every save and froze overlays.
+function _enforceQueueByteCap(reason) {
+  let total = _queueByteTotal();
+  if (total <= QUEUE_MAX_BYTES) return 0;
+  let evicted = 0, freed = 0;
+  while (_uploadQueue.length && total > QUEUE_MAX_BYTES) {
+    let idx = _uploadQueue.findIndex(e => e?.payload?.backfill === true);
+    if (idx < 0) idx = _uploadQueue.findIndex(e => _EPHEMERAL_KINDS.has(e.kind));
+    if (idx < 0) idx = 0;
+    const [d] = _uploadQueue.splice(idx, 1);
+    const b = _entryBytes(d);
+    total -= b; freed += b; evicted++; _queueCapEvictCount++;
+  }
+  if (evicted) console.warn(`[upload-queue] byte cap (${Math.round(QUEUE_MAX_BYTES / 1048576)}MB) ${reason}: evicted ${evicted} entr${evicted === 1 ? 'y' : 'ies'} (~${Math.round(freed / 1048576)}MB)`);
+  return evicted;
+}
+
+// One-time startup sweep of stale sidecar files the queue used to leave behind
+// forever: `.corrupt-*` aside-files (see the load-detection note below — the
+// old first-byte format check mis-parsed NDJSON as legacy and moved the WHOLE
+// queue aside as corrupt on every restart, so these accumulated to ~1.4GB in
+// the field) and any orphaned `.tmp` from a flush killed mid-write. Both are
+// safe to delete before load: the live queue is QUEUE_FILE itself.
+function _cleanupQueueArtifacts() {
+  let dir, base;
+  try { dir = path.dirname(QUEUE_FILE); base = path.basename(QUEUE_FILE); } catch { return; }
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return; }
+  let removed = 0, bytes = 0;
+  for (const f of files) {
+    if (!(f.startsWith(base + '.corrupt-') || f === base + '.tmp')) continue;
+    const full = path.join(dir, f);
+    try { bytes += (fs.statSync(full).size || 0); } catch {}
+    try { fs.unlinkSync(full); removed++; } catch { /* locked — skip */ }
+  }
+  if (removed) console.log(`[upload-queue] cleaned ${removed} stale queue artifact(s), reclaimed ~${Math.round(bytes / 1048576)}MB`);
+}
+
+// A healthy live queue is bounded by QUEUE_MAX_BYTES (128MB). Anything past this
+// hard read ceiling is unrecoverable bloat (the 2.6GB field case) — reading it
+// risks OOM and there's nothing worth salvaging, so discard and start clean.
+const QUEUE_HARD_READ_LIMIT = 512 * 1024 * 1024;
 function _loadQueueFromDisk() {
   if (!fs.existsSync(QUEUE_FILE)) return;
+  let sz = 0;
+  try { sz = fs.statSync(QUEUE_FILE).size; } catch {}
+  if (sz > QUEUE_HARD_READ_LIMIT) {
+    console.warn(`[upload-queue] queue file is ${Math.round(sz / 1048576)}MB — far past the ${Math.round(QUEUE_MAX_BYTES / 1048576)}MB cap; discarding unrecoverable bloat and starting clean`);
+    try { fs.unlinkSync(QUEUE_FILE); } catch (e) { console.warn(`[upload-queue] could not remove oversized queue: ${e.message}`); }
+    return;
+  }
   let buf;
-  try { buf = fs.readFileSync(QUEUE_FILE); }   // Buffer (up to ~2GB) — never a giant string
+  try { buf = fs.readFileSync(QUEUE_FILE); }   // Buffer — guarded above to < hard limit
   catch (err) { console.warn(`[upload-queue] could not read queue file (${err.message}); starting empty`); return; }
   try {
-    // Detect format from the first non-whitespace byte: '{' → legacy
-    // single-object `{ "pending": [...] }`; anything else → NDJSON (one entry
-    // per line, the current format). Legacy files are necessarily small (the
-    // old code couldn't successfully WRITE an oversized queue), so a one-shot
-    // string parse is safe there.
-    let i = 0;
-    while (i < buf.length && (buf[i] === 0x20 || buf[i] === 0x09 || buf[i] === 0x0a || buf[i] === 0x0d)) i++;
-    if (buf[i] === 0x7b /* '{' */) {
-      const raw = JSON.parse(buf.toString('utf8'));
-      if (Array.isArray(raw?.pending)) _uploadQueue = raw.pending;
-    } else {
-      // NDJSON — walk the buffer splitting on '\n' (0x0a) so we only ever
-      // stringify one (small) line at a time. A single corrupt line is
-      // skipped rather than nuking the whole queue.
-      const out = [];
-      let start = 0;
-      for (let j = 0; j <= buf.length; j++) {
-        if (j === buf.length || buf[j] === 0x0a) {
-          if (j > start) {
-            const line = buf.toString('utf8', start, j).trim();
-            if (line) { try { out.push(JSON.parse(line)); } catch { /* skip bad line */ } }
+    // Format detection by STRUCTURE, not first byte. NDJSON (current format)
+    // starts with '{' — but so does legacy `{ "pending": [...] }`, so the old
+    // first-byte check fed multi-line NDJSON to a whole-file JSON.parse, threw,
+    // and moved the entire queue aside as `.corrupt-*` on EVERY restart (the
+    // source of the corrupt-file pile AND why the durable queue never actually
+    // survived a restart). Instead: walk lines as NDJSON, keeping only lines
+    // that parse to a real entry (has `kind`); a legacy pretty-printed object's
+    // lines don't parse individually, so they're skipped and we fall through to
+    // the whole-file legacy parse below.
+    const out = [];
+    let start = 0;
+    for (let j = 0; j <= buf.length; j++) {
+      if (j === buf.length || buf[j] === 0x0a) {
+        if (j > start) {
+          const line = buf.toString('utf8', start, j).trim();
+          if (line) {
+            try {
+              const e = JSON.parse(line);
+              if (e && typeof e === 'object' && e.kind) { e._bytes = Buffer.byteLength(line); out.push(e); }
+            } catch { /* skip non-NDJSON line */ }
           }
-          start = j + 1;
         }
+        start = j + 1;
       }
-      _uploadQueue = out;
     }
+    if (out.length > 0) {
+      _uploadQueue = out;
+    } else {
+      // No NDJSON entries — try the legacy single-object form. Safe to
+      // string-parse: the hard-read guard already bounded the buffer.
+      const raw = JSON.parse(buf.toString('utf8'));
+      if (Array.isArray(raw?.pending)) {
+        _uploadQueue = raw.pending;
+        for (const e of _uploadQueue) e._bytes = _entryBytes(e);
+      }
+    }
+    // Self-heal a file that grew past the byte cap while an old build was
+    // running (or during a long outage) so it can't stay bloated.
+    _enforceQueueByteCap('after load');
     console.log(`[upload-queue] loaded ${_uploadQueue.length} pending entr${_uploadQueue.length === 1 ? 'y' : 'ies'} from disk`);
   } catch (err) {
-    // The file exists but couldn't be parsed at all — move it aside (instead
-    // of silently dropping its contents) so the user can recover or report it.
+    // Genuinely unparseable (neither NDJSON nor legacy) — move aside once so
+    // it can be inspected. _cleanupQueueArtifacts GCs these on later startups.
     const aside = QUEUE_FILE + '.corrupt-' + Date.now();
     try { fs.renameSync(QUEUE_FILE, aside); }
     catch (renameErr) { console.warn(`[upload-queue] could not move corrupt queue aside: ${renameErr.message}`); }
@@ -5962,7 +6059,18 @@ function enqueueUpload(kind, payload) {
     next_try_at: Date.now(),
     last_error:  null,
   };
+  // Size the entry once and cache it for the byte-cap. A single payload past
+  // the enqueue ceiling is DOA — the bot 413s anything over its 10MB encounter
+  // limit — so drop it here instead of letting it bloat the file until it
+  // drains as a permanent failure. (A stringify failure → treat as 0 bytes;
+  // the flush already skips unserializable entries.)
+  try { entry._bytes = Buffer.byteLength(JSON.stringify(entry)); } catch { entry._bytes = 0; }
+  if (entry._bytes > QUEUE_ENTRY_MAX_BYTES_ENQUEUE) {
+    console.warn(`[upload-queue] dropping oversized ${kind} at enqueue (${Math.round(entry._bytes / 1048576)}MB > ${Math.round(QUEUE_ENTRY_MAX_BYTES_ENQUEUE / 1048576)}MB cap)`);
+    return null;
+  }
   _uploadQueue.push(entry);
+  _enforceQueueByteCap('on enqueue');   // bound the FILE size, not just the count
   _saveQueueToDisk();
   // Kick the drain loop immediately so live uploads still feel real-time
   // when the network is healthy.
@@ -6144,6 +6252,7 @@ async function _drainUploadQueue(opts = {}) {
 
 function startUploadQueueDrain(uploadOpts) {
   _queueUploadOpts = uploadOpts;
+  _cleanupQueueArtifacts();   // GC stale .corrupt-*/.tmp before we load
   _loadQueueFromDisk();
   if (_queueDrainTimer) clearInterval(_queueDrainTimer);
   // Immediate kick on startup so anything left from a crashed previous
@@ -6173,8 +6282,10 @@ function uploadQueueSnapshot() {
   let oldest = null;
   let maxAttempts = 0;
   let lastError = null;
+  let bytes = 0;
   for (const e of _uploadQueue) {
     byKind[e.kind] = (byKind[e.kind] || 0) + 1;
+    bytes += _entryBytes(e);
     if (!oldest || e.queued_at < oldest) oldest = e.queued_at;
     if (e.attempts > maxAttempts) {
       maxAttempts = e.attempts;
@@ -6184,6 +6295,8 @@ function uploadQueueSnapshot() {
   return {
     pending:           _uploadQueue.length,
     byKind,
+    bytes,                              // total serialized size — the real cap
+    maxBytes:          QUEUE_MAX_BYTES,
     oldestQueuedAt:    oldest,
     maxAttempts,
     lastError,
