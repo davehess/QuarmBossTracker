@@ -6933,6 +6933,26 @@ async function _handleAgentCharacterLiveState(req, res) {
       };
     }
   }
+  // Cross-client HP fallback. When the character isn't running Mimic (no
+  // live_state row) or their self-HP is stale, borrow the freshest hp_pct a
+  // GROUPMATE's agent uploaded for them via raid_roster (Zeal group gauge →
+  // _maybeUploadRaidRoster). This is what lets healers see a NON-Mimic MT's HP
+  // in the Tank overlay ("MT not on Mimic") as long as someone in their group
+  // runs Mimic — the group-gauge HP already lands in raid_roster, it just
+  // wasn't wired into this per-name relay. Same 90s freshness gate as above.
+  // No agent change needed: the agent reads state.self_hp_pct in _resolveHpForName.
+  if (!state || typeof state.self_hp_pct !== 'number') {
+    const rr = await supabase.select('raid_roster',
+      `guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(name)}` +
+      `&hp_pct=not.is.null&select=name,hp_pct,captured_at&order=captured_at.desc&limit=1`).catch(() => []);
+    const rrRow = Array.isArray(rr) && rr[0];
+    if (rrRow && rrRow.captured_at && typeof rrRow.hp_pct === 'number' &&
+        (Date.now() - Date.parse(rrRow.captured_at)) < 90_000) {
+      if (!state) state = { character: rrRow.name || name, zone_name: null, self_hp_pct: null, buffs: [], updated_at: rrRow.captured_at };
+      state.self_hp_pct = Math.max(0, Math.min(100, Math.round(rrRow.hp_pct)));
+      state.hp_source = 'raid_roster';   // cross-client — a groupmate's Zeal gauge
+    }
+  }
   const payload = JSON.stringify({ state });
   if (_liveStateRelayCache.size > 200) _liveStateRelayCache.clear();
   _liveStateRelayCache.set(key, { at: Date.now(), payload });

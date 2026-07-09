@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.148': [
+    '**The Tank overlay now shows a non-Mimic tank\'s HP.** If the main tank isn\'t running Mimic (and you\'re not targeting or grouped with them), the Tank overlay used to say "HP not visible." Now, as long as **anyone in that tank\'s group runs Mimic**, their Zeal group gauge already knows the tank\'s HP — the bot relays it to your overlay within a couple seconds. Same live cross-client HP the /raid grid has always shown, now on the Tank bar too. Nothing to update: your existing Mimic picks it up automatically.',
+  ],
   '3.0.147': [
     '**🌀 PoP Flags (Preview) — wolfpack.quest/pop.** The guild\'s road to Quarm as a live progression chart: every zone gate by tier (modeled on the classic Samanna chart), how many of us hold each flag, who can enter each zone TODAY, and a **raid-night planner** that ranks what to run next by how many raiders each kill pushes through a later gate ("Kill Saryrn → +9 into Sol Ro"). Counts fill automatically from the flag grants agents already detect — nothing to do but raid with Mimic running once PoP unlocks 2026-10-01. The progression catalog was re-verified against the classic sources and two draft errors fixed (Terris Thule gates **Torment**; Manaetic Behemoth gates **Tactics**); gates marked * get confirmed against Quarm\'s documented QoL changes at launch.',
   ],

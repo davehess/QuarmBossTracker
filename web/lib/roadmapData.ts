@@ -43,6 +43,32 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'tank-hp-cross-client',
+    title: 'Tank overlay shows a non-Mimic tank’s HP',
+    version: 'Bot 3.0.148',
+    date: '2026-07-09',
+    headline: 'The Tank overlay can now show the main tank’s HP even when the tank isn’t running Mimic — as long as someone in their group is.',
+    features: [
+      { name: 'Borrowed HP from a groupmate', blurb: 'When the main tank isn’t on Mimic and you aren’t targeting or grouped with them, the Tank overlay used to just say “HP not visible.” Now it uses the tank’s HP as seen by any Mimic-running groupmate’s Zeal window — the same cross-client HP the /raid grid already shows — and it lights up on your Tank bar within a couple seconds. No Mimic update needed; your current agent picks it up on its own.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-queue-reliability',
+    title: 'Mimic stops eating disk space and freezing overlays',
+    version: 'Agent 3.3.6',
+    date: '2026-07-09',
+    channel: 'beta',
+    headline: 'A rare pile-up in Mimic’s upload backlog could balloon to multiple GB and freeze every overlay mid-raid. It now bounds itself and cleans up after itself.',
+    features: [
+      { name: 'Self-healing upload backlog', blurb: 'If the connection to the bot stalls during a raid, Mimic’s outbound queue used to grow without limit (one player’s hit 2.6 GB) and lock up the app so the DPS/Tank overlays stopped updating. The backlog is now capped by size, throwaway data (live casts, roster snapshots) is dropped first, and stale leftover files are swept on startup — a bloated folder shrinks itself the next time Mimic launches.' },
+    ],
+    fixes: [
+      'A format-detection bug meant the saved backlog was mis-read and set aside as “corrupt” on almost every restart, quietly leaving multi-hundred-MB files behind that never got cleaned up.',
+      'The Command Center’s Healer Mana list no longer shows non-healers — only Clerics, Druids, and Shamans appear, so a Mage healing its pet doesn’t clutter it.',
+    ],
+  },
+  {
     key: 'command-center-defensive',
     title: 'Command Center now sees Defensive Discipline',
     version: 'Mimic 1.7 · Agent 3.3.4',
