@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.0.155': [
+    '**Raid mana at a glance + Twitch Queue.** The wolfpack.quest/raid sidebar now shows **everyone\'s mana** and a **⚡ Twitch Queue** (lowest-mana casters up top — Wizards and Enchanters first, then Clerics, then the rest). It fills from TWO sources: casters running Mimic report exact mana straight off their client, and everyone else is covered by the **"% mana" macros** healers already call in raid chat — if any one Mimic user hears the call-out, it lands on the board. Readings persist through the whole fight. Also: Quarm\'s **PoP-beta buffs now rank above the era tops** (Beta Virtue fills the Aego slots instead of reading as "missing HP buff"), and the phantom "Kneel Test" debuff is gone from the target panel.',
+  ],
   '3.0.148': [
     '**The Tank overlay now shows a non-Mimic tank\'s HP.** If the main tank isn\'t running Mimic (and you\'re not targeting or grouped with them), the Tank overlay used to say "HP not visible." Now, as long as **anyone in that tank\'s group runs Mimic**, their Zeal group gauge already knows the tank\'s HP — the bot relays it to your overlay within a couple seconds. Same live cross-client HP the /raid grid has always shown, now on the Tank bar too. Nothing to update: your existing Mimic picks it up automatically.',
   ],

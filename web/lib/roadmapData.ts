@@ -86,9 +86,8 @@ export const releases: Release[] = [
   {
     key: 'tank-overlay-live-hp-defensives',
     title: 'Tank overlay: exact HP + defensive recharge timers',
-    version: 'Agent 3.3.13',
+    version: 'Mimic 1.7.1 · Agent 3.3.13',
     date: '2026-07-09',
-    channel: 'beta',
     headline: 'The Tank overlay shows a non-Mimic tank’s exact HP near-live, and the Command Center now counts down defensives — active AND recharge.',
     features: [
       { name: 'Exact tank HP, fast', blurb: 'When someone in the tank’s group runs /pipeverbose, the Tank overlay shows the tank’s real HP numbers (“4211 / 4348”), not just a percent — and it now refreshes about every 3 seconds instead of every 15-20.' },
@@ -120,7 +119,6 @@ export const releases: Release[] = [
     title: 'Mimic stops eating disk space and freezing overlays',
     version: 'Agent 3.3.6',
     date: '2026-07-09',
-    channel: 'beta',
     headline: 'A rare pile-up in Mimic’s upload backlog could balloon to multiple GB and freeze every overlay mid-raid. It now bounds itself and cleans up after itself.',
     features: [
       { name: 'Self-healing upload backlog', blurb: 'If the connection to the bot stalls during a raid, Mimic’s outbound queue used to grow without limit (one player’s hit 2.6 GB) and lock up the app so the DPS/Tank overlays stopped updating. The backlog is now capped by size, throwaway data (live casts, roster snapshots) is dropped first, and stale leftover files are swept on startup — a bloated folder shrinks itself the next time Mimic launches.' },
@@ -135,7 +133,6 @@ export const releases: Release[] = [
     title: 'Command Center now sees Defensive Discipline',
     version: 'Mimic 1.7 · Agent 3.3.4',
     date: '2026-07-08',
-    channel: 'beta',
     headline: 'Warrior Defensive Discipline (and Weapon Shield) now show up on the Command Center’s defensives list, not just Divine Aura.',
     features: [
       { name: 'Defensives, straight from the log', blurb: 'The Command Center reads Defensive Discipline directly off the combat log (“Soandso assumes a defensive fighting style”), so it lights up for any tank who pops it — no announce macro required — and clears when it fades. It also understands the chat call-outs tanks already use (“Defensive is activated”, “1 min on defensive”, “Weapon Shield activated for the next 15s!”), and each row is labeled with which cooldown it is.' },
@@ -172,7 +169,6 @@ export const releases: Release[] = [
     title: 'Spellbook uploads itself now',
     version: 'Mimic 1.7 · Agent 3.3.3',
     date: '2026-07-08',
-    channel: 'beta',
     headline: 'Your spellbook flows to the site automatically, so the missing-spells page stays current on its own.',
     features: [
       { name: 'Automatic spellbook ingest', blurb: 'Run /outputfile spellbook in game and Mimic uploads it within a few minutes — same as your Quarmy gear and inventory. No more copy-pasting into the site. The manual paste stays as a fallback for standalone/older setups, and it honors your inventory opt-out.' },
@@ -215,7 +211,6 @@ export const releases: Release[] = [
     title: 'Zeal deep-dive + real tank HP',
     version: 'Mimic 1.7.0 · Agent 3.3',
     date: '2026-07-08',
-    channel: 'beta',
     headline: 'Mimic now surfaces every scrap of live game data Zeal exposes.',
     features: [
       { name: 'Zeal Pipe explorer', blurb: 'A new Info-tab panel that decodes everything the Zeal pipe carries — your stats, buffs, group, spell gems, position — each section expandable. Fully documented, so nothing is guesswork anymore.' },
@@ -232,7 +227,6 @@ export const releases: Release[] = [
     title: 'Mimic Mail + a big speed pass',
     version: 'Bot 3.0.144 · Mimic 1.6.0',
     date: '2026-07-07',
-    channel: 'beta',
     headline: 'Officers can reach every Mimic at once, and the whole stack got faster.',
     features: [
       { name: 'Mimic Mail', blurb: 'Officers publish a notice on the site and every running Mimic shows a pulsing mail icon within ~90 seconds — mark it critical and the bot also posts it to Discord. Works on every future Mimic version with no extra plumbing.' },

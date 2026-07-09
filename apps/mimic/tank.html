@@ -262,10 +262,13 @@
     // Target HP + boss enrage warning
     if (s.target && s.target.name) {
       var thp = s.target.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.target.hp_pct)));
+      // Full cur/max when the target is a raider a verbose groupmate can see;
+      // a mob only ever has a gauge %, so this stays "80%" for boss targets.
+      var tval = hpValText(thp, s.target.hp_cur, s.target.hp_max);
       html += '<div class="card">'
            +    '<div class="head">Target — ' + esc(s.target.name) + '</div>'
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
-           +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
+           +      '<div class="val">' + (tval == null ? '—' : tval) + '</div></div>'
            +  '</div>';
       if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
         var critEnrage = thp <= (s.enrage.threshold_pct + 2);
@@ -301,7 +304,8 @@
       var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
       var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
       var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
-      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+      var rval    = hpValText(rhp, s.rampage.hp_cur, s.rampage.hp_max);
+      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rval == null ? 'HP not visible' : rval);
       html += '<div class="ramp">'
            +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
            +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'

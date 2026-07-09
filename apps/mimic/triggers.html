@@ -28,10 +28,16 @@
   /* Trigger timing feedback row — three buttons below the flashed text so the
      person who just heard the callout can say whether the timing was right.
      Persists ~8s after the flash so the operator has time to click without
-     forcing the alert to linger. (Uilnayar 2026-06-26 — v1.1.2.) */
-  #feedback{display:none; position:absolute; bottom:14%; left:50%; transform:translateX(-50%);
-    gap:8px; align-items:center; pointer-events:auto;}
-  #feedback.show{display:flex}
+     forcing the alert to linger. (Uilnayar 2026-06-26 — v1.1.2.)
+     Stacked in a column UNDER the alert (was position:absolute bottom:14%,
+     which floated the buttons right on top of the flashed text — 2026-07-09).
+     The row's height is ALWAYS reserved (visibility, not display) so the
+     alert text sits at the same spot whether or not a vote is offered —
+     appearing buttons must never shove the callout around mid-fight
+     ("include the buttons in the default spacing", Uilnayar 2026-07-09). */
+  #alertcol{display:flex; flex-direction:column; align-items:center; gap:10px}
+  #feedback{display:flex; visibility:hidden; gap:8px; align-items:center; pointer-events:auto;}
+  #feedback.show{visibility:visible}
   .fb-btn{
     font:600 12px ui-monospace,Menlo,Consolas,monospace;
     color:#fff; background:rgba(14,17,22,0.85); border:1px solid rgba(255,255,255,0.25);
@@ -153,12 +159,14 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="placeholder">⚡ trigger alert box</div>
-  <div id="alert"></div>
-  <div id="feedback">
-    <button class="fb-btn earlier" data-dir="earlier" title="The actual event happened BEFORE the trigger fired — push the trigger earlier next time.">« Earlier</button>
-    <button class="fb-btn good" data-dir="good" title="Timing was right.">✓ Good!</button>
-    <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
-    <span id="fbThanks">thanks — recorded.</span>
+  <div id="alertcol">
+    <div id="alert"></div>
+    <div id="feedback">
+      <button class="fb-btn earlier" data-dir="earlier" title="The actual event happened BEFORE the trigger fired — push the trigger earlier next time.">« Earlier</button>
+      <button class="fb-btn good" data-dir="good" title="Timing was right.">✓ Good!</button>
+      <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
+      <span id="fbThanks">thanks — recorded.</span>
+    </div>
   </div>
   <div id="timers"></div>
 <script>

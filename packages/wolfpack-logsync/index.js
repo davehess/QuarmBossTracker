@@ -3109,6 +3109,29 @@ function chChainSnapshot() {
 // recentTankHits combat-log signal as MT resolution and the Extended
 // Target off-tank surfacing — local only, no bot round trip. "Repeated"
 // requires ≥2 tracked hits in the window, not a single stray connect.
+// Rampage-target visibility for the Tank / Command Center cards. In EQ the
+// rampage target is effectively FIXED for the whole fight (second seat on the
+// hate list), so the card must persist for the fight's duration — not vanish
+// 8s after each rampage swing, which had it strobing on and off between
+// rampage cycles (Uilnayar 2026-07-09: "rampage should not be falling off of
+// the command center or tank overlay during a fight"). Show while EITHER:
+//   • fresh — a rampage line landed in the last 8s (also covers pulls where
+//     the threat tracker never spun up), or
+//   • the encounter is still LIVE (threat snapshot exists, not flushed) and
+//     the rampage was seen during THIS fight — the startedAt bound keeps last
+//     fight's victim from haunting the next pull.
+const RAMPAGE_FRESH_MS = 8000;
+function _currentRampageForDisplay(now) {
+  const r = stats.currentRampage;
+  if (!r || !r.target || !r.at) return null;
+  if ((now - r.at) <= RAMPAGE_FRESH_MS) return r;
+  const et = stats.currentEncounterThreat;
+  if (et && !et.flushedAt) {
+    const startMs = et.startedAt ? (Date.parse(et.startedAt) || 0) : 0;
+    if (r.at >= startMs - 30_000) return r;
+  }
+  return null;
+}
 const OFFHEAL_WINDOW_MS = 20_000;
 const OFFHEAL_MIN_HITS  = 2;
 // A full-health offtank doesn't need an off-heal — only surface ones actually
@@ -3121,8 +3144,8 @@ function offHealCandidatesSnapshot() {
   const now = Date.now();
   const mt = _resolveMainTank();
   const mtLower = mt ? mt.name.toLowerCase() : null;
-  const r = stats.currentRampage || null;
-  const rampLower = (r && r.target && r.at && (now - r.at) <= 8000) ? String(r.target).toLowerCase() : null;
+  const r = _currentRampageForDisplay(now);
+  const rampLower = r ? String(r.target).toLowerCase() : null;
   // Active EQ window — needed to resolve each candidate's HP%. Their own self
   // HP resolves cross-client via the same waterfall MT/Rampage HP use.
   let active = null, activeTs = 0;
@@ -3221,8 +3244,39 @@ function _parseProtSeconds(text) {
   if (sec) return Math.min(600, parseInt(sec[1], 10));
   return null;
 }
-const DA_BROADCAST_TTL_MS = 30_000;   // drop an entry 30s after its speaker's last line
-const _daBroadcasts = new Map();      // "speakerLower|kind" → { name, kind, endsAtMs, updatedAtMs }
+const DA_BROADCAST_TTL_MS = 30_000;   // drop a chat "up" entry 30s after its speaker's last line
+// Default ACTIVE durations so an "up, unknown duration" announce still shows a
+// countdown instead of a bare "UP". And DISCIPLINE reuse timers measured from
+// ACTIVATION (not from fade): a discipline is on cooldown for this long total,
+// so it's "DOWN, ready in (reuse − elapsed)" after its active window ends. DAs
+// are proccable (clickies/items — no fixed reuse), so they get no cooldown.
+const _PROT_ACTIVE_SECS   = { Defensive: 180, 'Weapon Shield': 15, DA: 18 };
+const _PROT_COOLDOWN_SECS = { Defensive: 631 };   // 10m31s from activation (Uilnayar 2026-07-09)
+const _daBroadcasts = new Map();      // "speakerLower|kind" → { name, kind, activeEndsAtMs, readyAtMs, updatedAtMs }
+// Centralized state setter for a protective. up=true records an activation
+// (active window + discipline cooldown); up=false is a fade (active ends now,
+// the cooldown keeps running to its ready time — estimated back from the fade
+// when we never saw the activation line).
+function _recordProt(key, name, kind, atMs, up, secs) {
+  const prev = _daBroadcasts.get(key);
+  if (up) {
+    const activeSecs = (secs != null) ? secs : (_PROT_ACTIVE_SECS[kind] != null ? _PROT_ACTIVE_SECS[kind] : null);
+    const activeEndsAtMs = activeSecs != null ? atMs + activeSecs * 1000 : null;
+    const cd = _PROT_COOLDOWN_SECS[kind];
+    const readyAtMs = cd ? atMs + cd * 1000 : null;
+    _daBroadcasts.set(key, { name, kind, activeEndsAtMs, readyAtMs, updatedAtMs: atMs });
+  } else {
+    let readyAtMs = (prev && prev.readyAtMs != null) ? prev.readyAtMs : null;
+    if (readyAtMs == null) {
+      const cd = _PROT_COOLDOWN_SECS[kind];
+      if (cd) {
+        const activeSecs = _PROT_ACTIVE_SECS[kind] || 0;   // estimate activation = fade − active window
+        readyAtMs = atMs - activeSecs * 1000 + cd * 1000;
+      }
+    }
+    _daBroadcasts.set(key, { name, kind, activeEndsAtMs: atMs, readyAtMs, updatedAtMs: atMs });
+  }
+}
 function trackDaBroadcastLine(line, character) {
   // Cheap pre-filter: 'DA' substring (case-sensitive) OR a defensive/weapon-
   // shield word. Only pays the regex when the fast substring misses.
@@ -3243,27 +3297,46 @@ function trackDaBroadcastLine(line, character) {
   const key = speaker.toLowerCase() + '|' + kind;
   const secs = _parseProtSeconds(text);
   if (secs != null) {
-    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: atMs + secs * 1000, updatedAtMs: atMs });
+    _recordProt(key, speaker, kind, atMs, true, secs);                                          // up, known duration
   } else if (/\bdown\b/i.test(text) && !/cool\s*down/i.test(text)) {   // "cool down" = ready, not down
-    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: atMs, updatedAtMs: atMs });         // down now
+    _recordProt(key, speaker, kind, atMs, false);                                               // fade → cooldown
   } else if (/activ|\bup\b/i.test(text)) {
-    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: null, updatedAtMs: atMs });          // up, unknown duration
+    _recordProt(key, speaker, kind, atMs, true, null);                                           // up, default/unknown duration
   }
 }
 function daBroadcastsSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [key, e] of _daBroadcasts) {
-    // Chat broadcasts re-announce, so 30s-since-last-line clears them. But a
-    // LOG-detected disc (e.g. Defensive, ~3 min) fires ONCE — keep it alive
-    // until its known end even after the 30s window, so it doesn't vanish
-    // mid-duration. Delete only when stale AND (no known end, or the end passed).
-    const stale = now - e.updatedAtMs > DA_BROADCAST_TTL_MS;
-    const ended = e.endsAtMs != null && e.endsAtMs <= now;
-    if (stale && (e.endsAtMs == null || ended)) { _daBroadcasts.delete(key); continue; }
-    out.push({ name: e.name, kind: e.kind || 'DA', seconds: e.endsAtMs != null ? Math.max(0, Math.round((e.endsAtMs - now) / 1000)) : null });
+    const activeUp   = e.activeEndsAtMs != null && now < e.activeEndsAtMs;   // still up (known duration)
+    const unknownUp  = e.activeEndsAtMs == null;                            // "up" with no duration
+    const onCooldown = e.readyAtMs != null && now < e.readyAtMs;            // discipline recharging
+    const stale      = now - e.updatedAtMs > DA_BROADCAST_TTL_MS;
+    // Keep while active or recharging. A chat "up" with unknown duration is
+    // re-announced, so clear it 30s after the last line. Everything else GCs
+    // once it's neither active nor on cooldown.
+    if (!activeUp && !onCooldown) {
+      if (!unknownUp || stale) { _daBroadcasts.delete(key); continue; }
+    }
+    if (activeUp) {
+      out.push({ name: e.name, kind: e.kind || 'DA', state: 'up',
+                 seconds: Math.max(0, Math.round((e.activeEndsAtMs - now) / 1000)),
+                 cooldown_secs: onCooldown ? Math.max(0, Math.round((e.readyAtMs - now) / 1000)) : null });
+    } else if (onCooldown) {
+      out.push({ name: e.name, kind: e.kind || 'DA', state: 'cooldown', seconds: null,
+                 cooldown_secs: Math.max(0, Math.round((e.readyAtMs - now) / 1000)) });
+    } else {   // unknownUp, not stale
+      out.push({ name: e.name, kind: e.kind || 'DA', state: 'up', seconds: null, cooldown_secs: null });
+    }
   }
-  out.sort((a, b) => (a.seconds ?? 999) - (b.seconds ?? 999) || a.name.localeCompare(b.name));
+  // Active ones first (soonest to fall), then disciplines recharging (soonest ready).
+  out.sort((a, b) => {
+    const ra = a.state === 'up' ? 0 : 1, rb = b.state === 'up' ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    const av = a.state === 'up' ? (a.seconds ?? 999) : (a.cooldown_secs ?? 9999);
+    const bv = b.state === 'up' ? (b.seconds ?? 999) : (b.cooldown_secs ?? 9999);
+    return av - bv || a.name.localeCompare(b.name);
+  });
   return out;
 }
 
@@ -3293,11 +3366,8 @@ function trackDefensiveDiscLine(line, character) {
   else if ((m = line.match(_DEF_DOWN_OTHER_RX)))  { name = m[1]; up = false; }
   if (!name) return;
   const key = name.toLowerCase() + '|Defensive';
-  _daBroadcasts.set(key, {
-    name, kind: 'Defensive',
-    endsAtMs: up ? atMs + DEFENSIVE_DISC_SECS * 1000 : atMs,
-    updatedAtMs: atMs,
-  });
+  // up → activation (180s active + 631s reuse); fade → active ends, cooldown runs on.
+  _recordProt(key, name, 'Defensive', atMs, up, up ? DEFENSIVE_DISC_SECS : null);
 }
 
 // ── Raid-wide healer/caster mana roster ─────────────────────────────────────
@@ -3329,12 +3399,33 @@ function trackHealerManaLine(line, character) {
     updatedAtMs: ts ? ts.getTime() : Date.now(),
   });
 }
+// The "Healer Mana" roster is for the three prep classes only. A Mage healing
+// its pet ("Statlander") or a Warrior with a mana macro shouldn't land here —
+// they broadcast a "% mana" line but aren't who a raid leader calls for a mana
+// break. Class resolves /who → Zeal raid roster → recorded-at value.
+function _isHealerClass(cls) {
+  return typeof cls === 'string' && /^(cleric|druid|shaman)$/i.test(cls.trim());
+}
 function healerManaRosterSnapshot() {
   const now = Date.now();
+  // Readings stay up for the LENGTH OF THE FIGHT (Uilnayar 2026-07-09) — the
+  // 5-min silence GC only runs between fights, so a cleric who called mana
+  // once at the pull is still on the board ten minutes into the encounter.
+  const fightLive = !!(stats.currentEncounterThreat && !stats.currentEncounterThreat.flushedAt);
   const out = [];
   for (const [key, e] of _healerManaRoster) {
-    if (now - e.updatedAtMs > MANA_ROSTER_TTL_MS) { _healerManaRoster.delete(key); continue; }
-    out.push({ name: e.name, class: e.class, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
+    if (!fightLive && now - e.updatedAtMs > MANA_ROSTER_TTL_MS) { _healerManaRoster.delete(key); continue; }
+    // Class waterfall, re-resolved at read time (a /who or Zeal raid sample
+    // landing AFTER the mana line still classifies the speaker).
+    const who = whoData.get(key);
+    const cls = (who && who.class) || _raidClassByName.get(key) || e.class;
+    // Drop KNOWN non-healers only. An UNKNOWN class stays — requiring a
+    // resolved class emptied the whole list whenever /who data was cold
+    // ("We no longer see Cleric/CH chain Mana", 2026-07-09): virtually only
+    // healers run % -mana macros, so unknowns are far more likely a cleric
+    // than a Statlander.
+    if (cls && !_isHealerClass(cls)) continue;
+    out.push({ name: e.name, class: cls || null, pct: e.pct, stale_secs: Math.round((now - e.updatedAtMs) / 1000) });
   }
   out.sort((a, b) => a.pct - b.pct);   // lowest mana first — who needs a mana break
   return out;
@@ -5625,6 +5716,17 @@ const STATS_FILE = path.join(__dirname, 'logsync.stats.json');
 // queue with a loud warning — those won't fix themselves by retrying.
 const QUEUE_FILE             = path.join(__dirname, 'logsync.queue.json');
 const QUEUE_MAX_SIZE         = 5000;     // FIFO cap; oldest dropped with a warning
+// BYTE cap — the entry-count cap alone let the queue file grow to 2.6GB in the
+// field (5000 backfill-encounter entries averaged ~520KB each). A multi-GB
+// queue is re-serialized synchronously to disk on every save, locking the
+// event loop for SECONDS and freezing the local overlays. Cap total serialized
+// bytes too, and evict (backfill → ephemeral → FIFO) until under. 128MB is far
+// more than a healthy live backlog ever needs while keeping each flush cheap.
+const QUEUE_MAX_BYTES        = 128 * 1024 * 1024;
+// A single payload larger than this is refused at enqueue — the bot caps
+// encounter at 10MB (413s anything bigger), so a >12MB entry is DOA and would
+// only bloat the file until it drained as a permanent failure.
+const QUEUE_ENTRY_MAX_BYTES_ENQUEUE = 12 * 1024 * 1024;
 // Backpressure watermarks (hysteresis): when a backfill is filling the queue
 // faster than the drain loop empties it, PAUSE the file read at HIGH and don't
 // resume until it drains below LOW. This stops the cap from FIFO-evicting good
@@ -5638,7 +5740,22 @@ const QUEUE_MAX_PER_DRAIN_PASS = 50;     // cap parallel work per drain so a
                                          // 5000-entry backlog doesn't wedge
                                          // a single pass for hours
 const QUEUE_BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
-const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 422]);
+// 413 (payload too large) / 431 (headers too large) never succeed on retry —
+// treat them as permanent so an over-limit encounter doesn't retry forever and
+// hold a slot. 4xx already means "the bot is intentionally rejecting".
+const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 413, 422, 431]);
+// Ephemeral, latest-wins streams. During a raid these are the ones that can
+// FLOOD the queue when the drain stalls (bot unreachable): `casting` enqueues
+// per self-cast, `raid_roster` is a full-snapshot upsert, `threat_snapshot` is
+// a periodic full picture. A stale one is worthless — Mob Info's "Casting" is a
+// live view and the roster/threat snapshots are always superseded by the next.
+// We collapse/shed these on enqueue so a stalled drain can't let them pile up
+// to 5000, wedge the FIFO cap (evicting durable chat/pvp/bosskill events), and
+// starve — via the repeated full-queue disk flush — the event loop that serves
+// the local DPS/Tank overlays. Bounding them keeps the queue small so the flush
+// stays cheap and durable events are what actually persist.
+const _EPHEMERAL_KINDS   = new Set(['casting', 'raid_roster', 'threat_snapshot']);
+const _CASTING_STALE_MS  = 90_000;   // a cast relayed >90s late is useless
 
 let _uploadQueue       = [];        // in-memory mirror, persisted to QUEUE_FILE
 let _queueDrainTimer   = null;
@@ -5648,43 +5765,117 @@ let _queueUploadOpts   = null;      // { botUrl, token } — set by startUploadQ
 let _queuePermanentDropCount = 0;   // 4xx responses since startup
 let _queueCapEvictCount      = 0;   // FIFO evictions because queue hit MAX_SIZE
 
+// Serialized byte size of one entry, cached on the entry so the byte-cap can
+// sum without re-stringifying. Falls back to a live stringify when absent.
+function _entryBytes(entry) {
+  if (entry && typeof entry._bytes === 'number') return entry._bytes;
+  try { return Buffer.byteLength(JSON.stringify(entry)); } catch { return 0; }
+}
+function _queueByteTotal() {
+  let t = 0;
+  for (const e of _uploadQueue) t += _entryBytes(e);
+  return t;
+}
+// Evict (backfill → ephemeral → oldest) until the queue is under the BYTE cap.
+// Complements the entry-count cap: 5000 large backfill entries once grew the
+// file to 2.6GB, which locked the event loop on every save and froze overlays.
+function _enforceQueueByteCap(reason) {
+  let total = _queueByteTotal();
+  if (total <= QUEUE_MAX_BYTES) return 0;
+  let evicted = 0, freed = 0;
+  while (_uploadQueue.length && total > QUEUE_MAX_BYTES) {
+    let idx = _uploadQueue.findIndex(e => e?.payload?.backfill === true);
+    if (idx < 0) idx = _uploadQueue.findIndex(e => _EPHEMERAL_KINDS.has(e.kind));
+    if (idx < 0) idx = 0;
+    const [d] = _uploadQueue.splice(idx, 1);
+    const b = _entryBytes(d);
+    total -= b; freed += b; evicted++; _queueCapEvictCount++;
+  }
+  if (evicted) console.warn(`[upload-queue] byte cap (${Math.round(QUEUE_MAX_BYTES / 1048576)}MB) ${reason}: evicted ${evicted} entr${evicted === 1 ? 'y' : 'ies'} (~${Math.round(freed / 1048576)}MB)`);
+  return evicted;
+}
+
+// One-time startup sweep of stale sidecar files the queue used to leave behind
+// forever: `.corrupt-*` aside-files (see the load-detection note below — the
+// old first-byte format check mis-parsed NDJSON as legacy and moved the WHOLE
+// queue aside as corrupt on every restart, so these accumulated to ~1.4GB in
+// the field) and any orphaned `.tmp` from a flush killed mid-write. Both are
+// safe to delete before load: the live queue is QUEUE_FILE itself.
+function _cleanupQueueArtifacts() {
+  let dir, base;
+  try { dir = path.dirname(QUEUE_FILE); base = path.basename(QUEUE_FILE); } catch { return; }
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return; }
+  let removed = 0, bytes = 0;
+  for (const f of files) {
+    if (!(f.startsWith(base + '.corrupt-') || f === base + '.tmp')) continue;
+    const full = path.join(dir, f);
+    try { bytes += (fs.statSync(full).size || 0); } catch {}
+    try { fs.unlinkSync(full); removed++; } catch { /* locked — skip */ }
+  }
+  if (removed) console.log(`[upload-queue] cleaned ${removed} stale queue artifact(s), reclaimed ~${Math.round(bytes / 1048576)}MB`);
+}
+
+// A healthy live queue is bounded by QUEUE_MAX_BYTES (128MB). Anything past this
+// hard read ceiling is unrecoverable bloat (the 2.6GB field case) — reading it
+// risks OOM and there's nothing worth salvaging, so discard and start clean.
+const QUEUE_HARD_READ_LIMIT = 512 * 1024 * 1024;
 function _loadQueueFromDisk() {
   if (!fs.existsSync(QUEUE_FILE)) return;
+  let sz = 0;
+  try { sz = fs.statSync(QUEUE_FILE).size; } catch {}
+  if (sz > QUEUE_HARD_READ_LIMIT) {
+    console.warn(`[upload-queue] queue file is ${Math.round(sz / 1048576)}MB — far past the ${Math.round(QUEUE_MAX_BYTES / 1048576)}MB cap; discarding unrecoverable bloat and starting clean`);
+    try { fs.unlinkSync(QUEUE_FILE); } catch (e) { console.warn(`[upload-queue] could not remove oversized queue: ${e.message}`); }
+    return;
+  }
   let buf;
-  try { buf = fs.readFileSync(QUEUE_FILE); }   // Buffer (up to ~2GB) — never a giant string
+  try { buf = fs.readFileSync(QUEUE_FILE); }   // Buffer — guarded above to < hard limit
   catch (err) { console.warn(`[upload-queue] could not read queue file (${err.message}); starting empty`); return; }
   try {
-    // Detect format from the first non-whitespace byte: '{' → legacy
-    // single-object `{ "pending": [...] }`; anything else → NDJSON (one entry
-    // per line, the current format). Legacy files are necessarily small (the
-    // old code couldn't successfully WRITE an oversized queue), so a one-shot
-    // string parse is safe there.
-    let i = 0;
-    while (i < buf.length && (buf[i] === 0x20 || buf[i] === 0x09 || buf[i] === 0x0a || buf[i] === 0x0d)) i++;
-    if (buf[i] === 0x7b /* '{' */) {
-      const raw = JSON.parse(buf.toString('utf8'));
-      if (Array.isArray(raw?.pending)) _uploadQueue = raw.pending;
-    } else {
-      // NDJSON — walk the buffer splitting on '\n' (0x0a) so we only ever
-      // stringify one (small) line at a time. A single corrupt line is
-      // skipped rather than nuking the whole queue.
-      const out = [];
-      let start = 0;
-      for (let j = 0; j <= buf.length; j++) {
-        if (j === buf.length || buf[j] === 0x0a) {
-          if (j > start) {
-            const line = buf.toString('utf8', start, j).trim();
-            if (line) { try { out.push(JSON.parse(line)); } catch { /* skip bad line */ } }
+    // Format detection by STRUCTURE, not first byte. NDJSON (current format)
+    // starts with '{' — but so does legacy `{ "pending": [...] }`, so the old
+    // first-byte check fed multi-line NDJSON to a whole-file JSON.parse, threw,
+    // and moved the entire queue aside as `.corrupt-*` on EVERY restart (the
+    // source of the corrupt-file pile AND why the durable queue never actually
+    // survived a restart). Instead: walk lines as NDJSON, keeping only lines
+    // that parse to a real entry (has `kind`); a legacy pretty-printed object's
+    // lines don't parse individually, so they're skipped and we fall through to
+    // the whole-file legacy parse below.
+    const out = [];
+    let start = 0;
+    for (let j = 0; j <= buf.length; j++) {
+      if (j === buf.length || buf[j] === 0x0a) {
+        if (j > start) {
+          const line = buf.toString('utf8', start, j).trim();
+          if (line) {
+            try {
+              const e = JSON.parse(line);
+              if (e && typeof e === 'object' && e.kind) { e._bytes = Buffer.byteLength(line); out.push(e); }
+            } catch { /* skip non-NDJSON line */ }
           }
-          start = j + 1;
         }
+        start = j + 1;
       }
-      _uploadQueue = out;
     }
+    if (out.length > 0) {
+      _uploadQueue = out;
+    } else {
+      // No NDJSON entries — try the legacy single-object form. Safe to
+      // string-parse: the hard-read guard already bounded the buffer.
+      const raw = JSON.parse(buf.toString('utf8'));
+      if (Array.isArray(raw?.pending)) {
+        _uploadQueue = raw.pending;
+        for (const e of _uploadQueue) e._bytes = _entryBytes(e);
+      }
+    }
+    // Self-heal a file that grew past the byte cap while an old build was
+    // running (or during a long outage) so it can't stay bloated.
+    _enforceQueueByteCap('after load');
     console.log(`[upload-queue] loaded ${_uploadQueue.length} pending entr${_uploadQueue.length === 1 ? 'y' : 'ies'} from disk`);
   } catch (err) {
-    // The file exists but couldn't be parsed at all — move it aside (instead
-    // of silently dropping its contents) so the user can recover or report it.
+    // Genuinely unparseable (neither NDJSON nor legacy) — move aside once so
+    // it can be inspected. _cleanupQueueArtifacts GCs these on later startups.
     const aside = QUEUE_FILE + '.corrupt-' + Date.now();
     try { fs.renameSync(QUEUE_FILE, aside); }
     catch (renameErr) { console.warn(`[upload-queue] could not move corrupt queue aside: ${renameErr.message}`); }
@@ -5788,6 +5979,12 @@ function _endpointForKind(kind, botUrl) {
 // any one running agent uploading it is sufficient — the bot dedups latest.
 let _raidRosterLastUpload = 0;
 let _raidRosterLastHash   = '';
+// HP heartbeat cadence — how often the roster (incl. cross-client HP for the
+// Tank overlay) is re-uploaded when composition is unchanged. Was 10s, which
+// made a non-local tank's HP bar step only every ~10s (+ the relay/fetch lag on
+// top). 3s keeps the tank bar feeling live during combat; the collapse-to-latest
+// queue rule (3.3.6) means these never pile up. Tunable for load control.
+const RAID_ROSTER_HP_HEARTBEAT_MS = parseInt(process.env.WP_RAID_ROSTER_HP_MS, 10) || 3000;
 function _maybeUploadRaidRoster(sample) {
   try {
     if (!sample || !sample.data) return;
@@ -5823,8 +6020,16 @@ function _maybeUploadRaidRoster(sample) {
         // gauge-slot cross-ref (which only covers the uploader's own ~5-person
         // group). See docs/zeal-pipe-protocol.md.
         let hpPct = null;
+        let hpCur = null, hpMax = null;
         if (m.hp_current != null && m.hp_max != null && Number(m.hp_max) > 0) {
-          hpPct = Math.max(0, Math.min(100, Math.round((Number(m.hp_current) / Number(m.hp_max)) * 100)));
+          const c = Math.max(0, Math.trunc(Number(m.hp_current)));
+          const x = Math.trunc(Number(m.hp_max));
+          // The EQ client only knows REAL cur/max for the uploader themself —
+          // other raid members arrive as a percent with hp_max=100. Only a
+          // pool > 100 is genuinely exact ("88 / 100 · 88%" bug, 2026-07-09);
+          // either way the ratio still gives the percent.
+          if (x > 100) { hpCur = c; hpMax = x; }
+          hpPct = Math.max(0, Math.min(100, Math.round((c / x) * 100)));
         } else {
           const hp = liveHpByName.get(String(m.name).toLowerCase());
           if (typeof hp === 'number') hpPct = Math.max(0, Math.min(100, Math.round(hp)));
@@ -5836,6 +6041,10 @@ function _maybeUploadRaidRoster(sample) {
           level:  m.level != null ? String(m.level) : null,
           rank:   m.rank  != null ? String(m.rank)  : null,
           hp_pct: hpPct,
+          // Exact values only when /pipeverbose fed them; the bot stores them so
+          // the Tank/Target overlays can show real numbers cross-client.
+          hp_current: hpCur,
+          hp_max:     hpMax,
         };
       });
     if (compact.length === 0) return;
@@ -5844,13 +6053,19 @@ function _maybeUploadRaidRoster(sample) {
     // values like victim/target. Replaces (not merges) so a raider leaving
     // the raid clears them out of the set on the next Zeal Type 5 fire.
     _raidRosterMembers.clear();
-    for (const m of compact) _raidRosterMembers.add(String(m.name).toLowerCase());
+    _raidClassByName.clear();
+    for (const m of compact) {
+      const lower = String(m.name).toLowerCase();
+      _raidRosterMembers.add(lower);
+      if (m.class) _raidClassByName.set(lower, String(m.class));
+    }
     // Hash composition only — NOT HP. HP changes constantly in combat and we
-    // don't want every 1% drop to fire an upload. Heartbeat (10s) refreshes HP
-    // on a cadence the /raid page can show "live-ish" without spam.
+    // don't want every 1% drop to fire an upload. The heartbeat refreshes HP on
+    // a fixed cadence (RAID_ROSTER_HP_HEARTBEAT_MS) so the /raid page + Tank
+    // overlay stay live-ish without spamming a row per HP tick.
     const hash = compact.map(m => m.name + ':' + m.group + ':' + m.class).sort().join('|');
     const now = Date.now();
-    if (hash === _raidRosterLastHash && (now - _raidRosterLastUpload) < 10000) return;
+    if (hash === _raidRosterLastHash && (now - _raidRosterLastUpload) < RAID_ROSTER_HP_HEARTBEAT_MS) return;
     _raidRosterLastHash   = hash;
     _raidRosterLastUpload = now;
     enqueueUpload('raid_roster', { members: compact });
@@ -5877,6 +6092,22 @@ function enqueueUpload(kind, payload) {
   // drops outbound uploads so the same line isn't posted twice. Its local
   // dashboard still works — local stats come from parseEvent, not the queue.
   if (!_isUploaderInstance) return null;
+  // Collapse/shed ephemeral latest-wins streams BEFORE the cap check so a
+  // stalled drain can't let them accumulate (and so collapsing might bring us
+  // back under the cap, sparing a durable entry from eviction). raid_roster is
+  // a full-snapshot upsert — never keep more than the newest queued. casting is
+  // a live relay — drop any queued relay already older than the stale window.
+  if (kind === 'raid_roster') {
+    for (let i = _uploadQueue.length - 1; i >= 0; i--) {
+      if (_uploadQueue[i].kind === 'raid_roster') _uploadQueue.splice(i, 1);
+    }
+  } else if (kind === 'casting') {
+    const cutoff = Date.now() - _CASTING_STALE_MS;
+    for (let i = _uploadQueue.length - 1; i >= 0; i--) {
+      const e = _uploadQueue[i];
+      if (e.kind === 'casting' && e.queued_at < cutoff) _uploadQueue.splice(i, 1);
+    }
+  }
   if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
     // Prefer to evict BACKFILL uploads over live ones. Pre-2026-06-21 this
     // was straight FIFO — during a big --since/opt-in run, live PvP/chat/
@@ -5887,11 +6118,17 @@ function enqueueUpload(kind, payload) {
     // findOrCreateEncounter ±30min window), so dropping its oldest is
     // far cheaper than dropping a live event the user expected to see
     // post in Discord.
+    // Eviction priority: rerunnable backfill first, then the oldest ephemeral
+    // latest-wins entry (a stale casting/roster/threat snapshot is worthless),
+    // and only then straight FIFO — so a durable live event (chat / pvp /
+    // bosskill / buff_cast the user expects to see) is the LAST thing dropped.
     let evictIdx = _uploadQueue.findIndex(e => e?.payload?.backfill === true);
-    if (evictIdx < 0) evictIdx = 0;   // no backfill in queue → fall back to FIFO
+    if (evictIdx < 0) evictIdx = _uploadQueue.findIndex(e => _EPHEMERAL_KINDS.has(e.kind));
+    if (evictIdx < 0) evictIdx = 0;   // nothing sheddable → fall back to FIFO
     const [dropped] = _uploadQueue.splice(evictIdx, 1);
     _queueCapEvictCount++;
-    const tag = dropped?.payload?.backfill ? 'backfill ' : 'live ';
+    const tag = dropped?.payload?.backfill ? 'backfill '
+              : _EPHEMERAL_KINDS.has(dropped.kind) ? 'ephemeral ' : 'live ';
     console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped ${tag}${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
   }
   // Attribute operator-level streams (chat / pvp / fun_event / historical_chat)
@@ -5925,7 +6162,18 @@ function enqueueUpload(kind, payload) {
     next_try_at: Date.now(),
     last_error:  null,
   };
+  // Size the entry once and cache it for the byte-cap. A single payload past
+  // the enqueue ceiling is DOA — the bot 413s anything over its 10MB encounter
+  // limit — so drop it here instead of letting it bloat the file until it
+  // drains as a permanent failure. (A stringify failure → treat as 0 bytes;
+  // the flush already skips unserializable entries.)
+  try { entry._bytes = Buffer.byteLength(JSON.stringify(entry)); } catch { entry._bytes = 0; }
+  if (entry._bytes > QUEUE_ENTRY_MAX_BYTES_ENQUEUE) {
+    console.warn(`[upload-queue] dropping oversized ${kind} at enqueue (${Math.round(entry._bytes / 1048576)}MB > ${Math.round(QUEUE_ENTRY_MAX_BYTES_ENQUEUE / 1048576)}MB cap)`);
+    return null;
+  }
   _uploadQueue.push(entry);
+  _enforceQueueByteCap('on enqueue');   // bound the FILE size, not just the count
   _saveQueueToDisk();
   // Kick the drain loop immediately so live uploads still feel real-time
   // when the network is healthy.
@@ -6107,6 +6355,7 @@ async function _drainUploadQueue(opts = {}) {
 
 function startUploadQueueDrain(uploadOpts) {
   _queueUploadOpts = uploadOpts;
+  _cleanupQueueArtifacts();   // GC stale .corrupt-*/.tmp before we load
   _loadQueueFromDisk();
   if (_queueDrainTimer) clearInterval(_queueDrainTimer);
   // Immediate kick on startup so anything left from a crashed previous
@@ -6136,8 +6385,10 @@ function uploadQueueSnapshot() {
   let oldest = null;
   let maxAttempts = 0;
   let lastError = null;
+  let bytes = 0;
   for (const e of _uploadQueue) {
     byKind[e.kind] = (byKind[e.kind] || 0) + 1;
+    bytes += _entryBytes(e);
     if (!oldest || e.queued_at < oldest) oldest = e.queued_at;
     if (e.attempts > maxAttempts) {
       maxAttempts = e.attempts;
@@ -6147,6 +6398,8 @@ function uploadQueueSnapshot() {
   return {
     pending:           _uploadQueue.length,
     byKind,
+    bytes,                              // total serialized size — the real cap
+    maxBytes:          QUEUE_MAX_BYTES,
     oldestQueuedAt:    oldest,
     maxAttempts,
     lastError,
@@ -6681,6 +6934,28 @@ function _resolveHpForName(nameLower, active, st) {
   if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
   return null;
 }
+// EXACT cur/max HP for a name, when available — {cur, max} or null. Only three
+// sources carry raw numbers (gauges are per-mille only): the viewer's own Zeal
+// labels 17/18 (self), another watched box on this machine, or the bot's relay
+// (which now backfills cur/max from a /pipeverbose groupmate's raid_roster row).
+function _resolveHpValuesForName(nameLower, active, st) {
+  // max > 100: a ≤100 "pool" is a percent in disguise (the verbose raid sample
+  // reports non-self members as pct/100) — showing it as "88 / 100" is worse
+  // than showing the plain %. Real raiders' pools are always in the thousands.
+  const ok = (o) => o && typeof o.self_hp_cur === 'number' && typeof o.self_hp_max === 'number' && o.self_hp_max > 100;
+  if (active && nameLower === String(active).toLowerCase() && ok(st)) {
+    return { cur: st.self_hp_cur, max: st.self_hp_max };
+  }
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const zst = _zealState[ch];
+    if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
+    if (String(ch).toLowerCase() === nameLower && ok(zst)) return { cur: zst.self_hp_cur, max: zst.self_hp_max };
+  }
+  const live = _mtLiveStateByName.get(nameLower);
+  if (live && ok(live.state)) return { cur: live.state.self_hp_cur, max: live.state.self_hp_max };
+  return null;
+}
 // Resolve a named character's current buff list, mirroring _resolveHpForName's
 // waterfall: local Zeal list when it's the viewer's own active character
 // (full fidelity — ticks, everything), else their own uploaded live-state
@@ -6875,13 +7150,15 @@ function _serializeTankState() {
   }
   dsSources.sort((a, b) => b.per_hit - a.per_hit);
 
-  // Rampage target — only return when fresh (≤8s). Older than that and we
-  // assume the rampage cycle is over. HP resolves the same way MT HP does
-  // below: local gauges first, the rampage victim's own uploaded live-state
-  // as the cross-client fallback (they're almost always a raider, not us).
+  // Rampage target — persists for the WHOLE fight (see
+  // _currentRampageForDisplay: the rampage target doesn't change between
+  // swings, so the card must not strobe off 8s after each one). HP resolves
+  // the same way MT HP does below: local gauges first, the rampage victim's
+  // own uploaded live-state as the cross-client fallback (they're almost
+  // always a raider, not us).
   let rampage = null;
-  const r = stats.currentRampage || null;
-  if (r && r.target && r.at && (now - r.at) <= 8000) {
+  const r = _currentRampageForDisplay(now);
+  if (r) {
     const rLower = String(r.target).toLowerCase();
     try { fetchCharacterLiveState(r.target); } catch {}
     // DA on the rampage target — gold-highlight the HP bar while it's up (they're
@@ -6890,9 +7167,15 @@ function _serializeTankState() {
     // ramp in green instead" — that's the cue healers should be ready to land
     // the next heal the moment DA drops).
     const rampBuffs = _resolveBuffsForName(r.target, active, buffsOut).buffs;
+    const rVals = _resolveHpValuesForName(rLower, active, st);
     rampage = {
       target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
+      // fresh = a rampage swing landed within the last few seconds — lets the
+      // overlays pulse on the hit while the card itself stays up all fight.
+      fresh:  (now - r.at) <= RAMPAGE_FRESH_MS,
       hp_pct: _resolveHpForName(rLower, active, st),
+      hp_cur: rVals ? rVals.cur : null,
+      hp_max: rVals ? rVals.max : null,
       da: _findDA(rampBuffs, 5),
     };
   }
@@ -6945,11 +7228,12 @@ function _serializeTankState() {
       if (cat && cat.ds) mtDsSources.push({ name: b.name, per_hit: cat.ds });
     }
     mtDsSources.sort((a, b) => b.per_hit - a.per_hit);
-    // Raw HP numbers — ONLY when the MT is the local character (their own
-    // Zeal client is the only one that reports real cur/max HP; cross-client
-    // MTs give us a % and nothing more). Uilnayar 2026-07-05.
-    const mtHpCur = isSelf && typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null;
-    const mtHpMax = isSelf && typeof st.self_hp_max === 'number' ? st.self_hp_max : null;
+    // Raw cur/max HP. Self is always exact (Zeal labels 17/18); cross-client we
+    // now ALSO get real numbers when a /pipeverbose groupmate fed them through
+    // raid_roster → the character-live-state relay (else just a %, as before).
+    const mtVals = _resolveHpValuesForName(mtLower, active, st);
+    const mtHpCur = mtVals ? mtVals.cur : null;
+    const mtHpMax = mtVals ? mtVals.max : null;
     mt = {
       name:    mtName,
       is_self: isSelf,
@@ -7010,13 +7294,19 @@ function _serializeTankState() {
     }
   }
 
+  // Exact cur/max for the target IF it's a raider we already have cross-client
+  // numbers for (no extra fetch — mobs are never in raid_roster, so this stays
+  // null and the overlay shows a plain gauge %).
+  const targetVals = targetName ? _resolveHpValuesForName(String(targetName).toLowerCase(), active, st) : null;
   return {
     character: active,
     hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
     hp_cur:    typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null,
     hp_max:    typeof st.self_hp_max === 'number' ? st.self_hp_max : null,
     target:    { name: targetName, hp_pct: targetHpPct, source: targetSource,
-                 local_name: localTargetName, local_hp_pct: localTargetHpPct },
+                 local_name: localTargetName, local_hp_pct: localTargetHpPct,
+                 hp_cur: targetVals ? targetVals.cur : null,
+                 hp_max: targetVals ? targetVals.max : null },
     buffs:     buffsOut,
     // Main-Tank focus block — null out of combat. When present the overlay
     // renders the MT's HP/buffs/DS instead of the local character's.
@@ -19175,7 +19465,11 @@ function fetchTargetBuffs(name) {
 // Mimics from stacking Supabase reads while the overlay still feels live.
 const _mtLiveStateByName = new Map();   // nameLower → { at, state|null }
 const _mtLiveStateInflight = new Set();
-const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 8000;
+// 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
+// refreshed every ~8s on top of the roster/relay lag). 2.5s keeps the Tank bar
+// live; reads dedup through the bot's own relay cache so a roomful of Mimics
+// doesn't multiply Supabase load. Tunable via WP_MT_LIVE_STATE_TTL_MS.
+const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 2500;
 function fetchCharacterLiveState(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
@@ -19589,6 +19883,13 @@ function flushLiveStateToBot(opts) {
       zone_id:     st.zone != null ? st.zone : null,
       zone_name:   _zoneName(st.zone),
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      // Self mana — feeds the web /raid mana list + Twitch Queue. pct from
+      // cur/max (labels 124/125) so it's exact when the pipe supplies them.
+      self_mana_pct: (st.self_mana_cur != null && st.self_mana_max != null && st.self_mana_max > 0)
+        ? Math.max(0, Math.min(100, Math.round((st.self_mana_cur / st.self_mana_max) * 100)))
+        : null,
+      self_mana_cur: st.self_mana_cur != null ? st.self_mana_cur : null,
+      self_mana_max: st.self_mana_max != null ? st.self_mana_max : null,
       // Current target (Zeal slot 6) — feeds character_live_state.target_name/
       // target_hp_pct, which /api/agent/extended-target aggregates group- or
       // raid-wide into "who's targeting what". Was missing entirely here (the
@@ -19618,6 +19919,9 @@ function flushLiveStateToBot(opts) {
     // 10-point buckets (not raw %) keep this from re-triggering on every 1%
     // combat tick the way a plain equality check would.
     const targetHpBucket = (rec.target_hp_pct != null) ? Math.floor(rec.target_hp_pct / 10) : null;
+    // Same coarse-bucket trick for self mana so the /raid mana list + Twitch
+    // Queue track drain without a re-send on every 1% tick.
+    const selfManaBucket = (rec.self_mana_pct != null) ? Math.floor(rec.self_mana_pct / 10) : null;
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
@@ -19625,6 +19929,7 @@ function flushLiveStateToBot(opts) {
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
       targetHpBucket,
+      selfManaBucket,
       (rec.incoming_mob || '').toLowerCase(),
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
@@ -19983,6 +20288,11 @@ function evaluateTriggersAgainstLine(line, tsMs) {
 // case the filter falls open (any captured name is allowed) so non-raid
 // triggers still work.
 const _raidRosterMembers = new Set();
+// nameLower → class ("Cleric", "Druid", …) from the same Zeal type-5 sample.
+// The Healer Mana roster resolves class through this when /who data is absent
+// — /who-only resolution left class null for most of the raid and the healer
+// filter dropped them all ("We no longer see Cleric/CH chain Mana", 2026-07-09).
+const _raidClassByName = new Map();
 function _raidRosterHas(name) {
   if (!name || _raidRosterMembers.size === 0) return false;
   return _raidRosterMembers.has(String(name).toLowerCase());
