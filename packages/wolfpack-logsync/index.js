@@ -5638,7 +5638,22 @@ const QUEUE_MAX_PER_DRAIN_PASS = 50;     // cap parallel work per drain so a
                                          // 5000-entry backlog doesn't wedge
                                          // a single pass for hours
 const QUEUE_BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
-const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 422]);
+// 413 (payload too large) / 431 (headers too large) never succeed on retry —
+// treat them as permanent so an over-limit encounter doesn't retry forever and
+// hold a slot. 4xx already means "the bot is intentionally rejecting".
+const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 413, 422, 431]);
+// Ephemeral, latest-wins streams. During a raid these are the ones that can
+// FLOOD the queue when the drain stalls (bot unreachable): `casting` enqueues
+// per self-cast, `raid_roster` is a full-snapshot upsert, `threat_snapshot` is
+// a periodic full picture. A stale one is worthless — Mob Info's "Casting" is a
+// live view and the roster/threat snapshots are always superseded by the next.
+// We collapse/shed these on enqueue so a stalled drain can't let them pile up
+// to 5000, wedge the FIFO cap (evicting durable chat/pvp/bosskill events), and
+// starve — via the repeated full-queue disk flush — the event loop that serves
+// the local DPS/Tank overlays. Bounding them keeps the queue small so the flush
+// stays cheap and durable events are what actually persist.
+const _EPHEMERAL_KINDS   = new Set(['casting', 'raid_roster', 'threat_snapshot']);
+const _CASTING_STALE_MS  = 90_000;   // a cast relayed >90s late is useless
 
 let _uploadQueue       = [];        // in-memory mirror, persisted to QUEUE_FILE
 let _queueDrainTimer   = null;
@@ -5877,6 +5892,22 @@ function enqueueUpload(kind, payload) {
   // drops outbound uploads so the same line isn't posted twice. Its local
   // dashboard still works — local stats come from parseEvent, not the queue.
   if (!_isUploaderInstance) return null;
+  // Collapse/shed ephemeral latest-wins streams BEFORE the cap check so a
+  // stalled drain can't let them accumulate (and so collapsing might bring us
+  // back under the cap, sparing a durable entry from eviction). raid_roster is
+  // a full-snapshot upsert — never keep more than the newest queued. casting is
+  // a live relay — drop any queued relay already older than the stale window.
+  if (kind === 'raid_roster') {
+    for (let i = _uploadQueue.length - 1; i >= 0; i--) {
+      if (_uploadQueue[i].kind === 'raid_roster') _uploadQueue.splice(i, 1);
+    }
+  } else if (kind === 'casting') {
+    const cutoff = Date.now() - _CASTING_STALE_MS;
+    for (let i = _uploadQueue.length - 1; i >= 0; i--) {
+      const e = _uploadQueue[i];
+      if (e.kind === 'casting' && e.queued_at < cutoff) _uploadQueue.splice(i, 1);
+    }
+  }
   if (_uploadQueue.length >= QUEUE_MAX_SIZE) {
     // Prefer to evict BACKFILL uploads over live ones. Pre-2026-06-21 this
     // was straight FIFO — during a big --since/opt-in run, live PvP/chat/
@@ -5887,11 +5918,17 @@ function enqueueUpload(kind, payload) {
     // findOrCreateEncounter ±30min window), so dropping its oldest is
     // far cheaper than dropping a live event the user expected to see
     // post in Discord.
+    // Eviction priority: rerunnable backfill first, then the oldest ephemeral
+    // latest-wins entry (a stale casting/roster/threat snapshot is worthless),
+    // and only then straight FIFO — so a durable live event (chat / pvp /
+    // bosskill / buff_cast the user expects to see) is the LAST thing dropped.
     let evictIdx = _uploadQueue.findIndex(e => e?.payload?.backfill === true);
-    if (evictIdx < 0) evictIdx = 0;   // no backfill in queue → fall back to FIFO
+    if (evictIdx < 0) evictIdx = _uploadQueue.findIndex(e => _EPHEMERAL_KINDS.has(e.kind));
+    if (evictIdx < 0) evictIdx = 0;   // nothing sheddable → fall back to FIFO
     const [dropped] = _uploadQueue.splice(evictIdx, 1);
     _queueCapEvictCount++;
-    const tag = dropped?.payload?.backfill ? 'backfill ' : 'live ';
+    const tag = dropped?.payload?.backfill ? 'backfill '
+              : _EPHEMERAL_KINDS.has(dropped.kind) ? 'ephemeral ' : 'live ';
     console.warn(`[upload-queue] cap reached (${QUEUE_MAX_SIZE}); dropped ${tag}${dropped.kind} from ${new Date(dropped.queued_at).toISOString()}`);
   }
   // Attribute operator-level streams (chat / pvp / fun_event / historical_chat)
