@@ -2629,16 +2629,18 @@ function scheduleMidnightSummary(readyClient) {
 
       // ── Retention sweep: encounter_threat_snapshots ───────────────────────
       // Per-fight tank-pull telemetry. Useful during the fight + /parses
-      // post-mortem, NOT for long-term storage. Default 60 days; configure
-      // via THREAT_SNAPSHOT_RETENTION_DAYS (set to 0 to disable the sweep
-      // entirely — e.g. on a tier with abundant storage).
+      // post-mortem, NOT for long-term storage. Configure via
+      // THREAT_SNAPSHOT_RETENTION_DAYS (0 disables the sweep entirely).
       try {
         const supabase = require('./utils/supabase');
         const retainDays = parseInt(process.env.THREAT_SNAPSHOT_RETENTION_DAYS, 10);
-        // Cranked default 60 → 120 days 2026-06-21 (Supabase Pro upgrade —
-        // 100 GB storage cap, threat snapshots at ~75k rows/week sit at
-        // ~7 MB/week so 120d = ~120 MB, comfortably within budget).
-        const keep = Number.isFinite(retainDays) ? retainDays : 120;
+        // Default 120 → 30 days (2026-07-09 cleanup round): the 120d budget
+        // assumed ~7 MB/week but reality is ~78 MB/week (per_player grew with
+        // pets + per-verb detail + the 18s cadence) — the table hit 351 MB in
+        // a month. 30d matches the ONLY reader (the per-character threat-rank
+        // card queries exactly 30 days back, limit 2000; nothing on the web
+        // reads this table).
+        const keep = Number.isFinite(retainDays) ? retainDays : 30;
         if (supabase.isEnabled() && keep > 0) {
           const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
           await supabase.del(
@@ -2646,6 +2648,14 @@ function scheduleMidnightSummary(readyClient) {
             `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
           );
           console.log(`[midnight] swept encounter_threat_snapshots older than ${keep} days`);
+        }
+        // Downsample the survivors: rows older than 7 days thin to the FIRST
+        // snapshot per minute per (uploader, boss) — the rank card samples
+        // per-minute shape fine, and this removes ~70% of aged volume
+        // (migration 20260709050000; one-time backfill already applied).
+        if (supabase.isEnabled()) {
+          const thinned = await supabase.rpc('thin_threat_snapshots', { p_older_than_days: 7 });
+          if (thinned) console.log(`[midnight] thinned ${thinned} old threat snapshots to 1/min`);
         }
       } catch (err) {
         console.warn('[midnight] threat snapshot retention skipped:', err?.message);
@@ -6678,6 +6688,7 @@ async function _dropsForNpc(guildId, npcId) {
       `npc_id=eq.${npcId}&select=item_id,item_name&limit=200`);
     if (Array.isArray(rows)) for (const r of rows) items.set(r.item_id, r.item_name);
   } catch (err) { console.warn('[chat-loot] drops fetch failed:', err?.message); }
+  if (_npcDropsCache.size > 500) _npcDropsCache.clear();   // cap set-only growth (efficiency review rule 4)
   _npcDropsCache.set(key, { at: Date.now(), items });
   return items;
 }
@@ -8635,6 +8646,7 @@ async function _handleAgentMobInfo(req, res) {
   } catch (err) {
     console.warn('[mob-info] lookup failed:', err?.message);
   }
+  if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
   _mobInfoCache.set(norm, { at: Date.now(), row: mob });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, mob }));
