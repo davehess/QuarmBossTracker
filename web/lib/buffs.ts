@@ -60,7 +60,7 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'aegolism', 'symbol of', 'temperance', 'hand of conviction', 'blessing of',
     'brell', 'riotous health', 'inner fire', 'courage', 'daring', 'bravery',
     'valor', 'resolution', 'heroic bond', 'virtue', 'health', 'center', 'fortitude',
-    'khura', 'focus of spirit', 'arch shielding',
+    'khura', 'focus of spirit', 'arch shielding', 'spiritual purity',
     'protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
   ],
   // HP regeneration over time. Nature's Recovery (lvl 49 druid line) and
@@ -82,10 +82,13 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   // 1 is +58% attack speed; users were seeing it land in "Other" because
   // none of the older patterns hit. Listed by full name rather than just
   // "visions" so we don't accidentally grab unrelated visions-of-X buffs.
+  // 'beta vog' — Quarm's PoP-beta reward haste is literally named "Beta VoG";
+  // it contains none of the patterns below, so it fell into "Other" and the
+  // haste category read as missing for the holder.
   haste: [
     'haste', 'celerity', 'quickness', 'swift', 'speed of', 'augmentation',
     'alacrity', 'aanya', 'battle cry', 'warsong', 'verses of victory',
-    'visions of grandeur',
+    'visions of grandeur', 'beta vog',
   ],
   // Movement / run speed (SoW family + bard travel songs).
   runSpeed: [
@@ -141,6 +144,7 @@ export function categorizeBuff(name: string): BuffCategory | null {
 // "Attack — missing" lie on raiders carrying them.
 const SECONDARY_CATEGORY: [string, BuffCategory][] = [
   ['visions of grandeur', 'attack'],
+  ['beta vog',            'attack'],   // Quarm PoP-beta VoG — same +ATK rider
   ['spirit of bihli',     'attack'],
   // POTG/POTC carry a mana-regen component — the reason casters take the
   // druid line over group Aego in HP slot A.
@@ -169,6 +173,9 @@ const HASTE_RANK: [string, number][] = [
   ['wonderous rapidity', 6],
   ['visions of grandeur', 7],
   ['speed of the shissar', 8],
+  // Quarm PoP-beta reward — beta buffs sit ABOVE the era tops, so a holder is
+  // never told to "upgrade" to VoG (and never gets the unknown-haste warning).
+  ['beta vog', 8],
 ];
 export function hasteRank(name: string | null | undefined): number {
   const n = String(name || '').toLowerCase();
@@ -432,9 +439,15 @@ const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
       'heroism', 'heroic bond', 'fortitude'],
   B: ['symbol of'],
   C: ['khura', 'focus of spirit', 'talisman of kragg', 'talisman of tnarg', 'inner fire',
-      'brell', 'arch shielding'],
+      'brell', 'arch shielding', 'spiritual purity'],
 };
-const AEGOLISM_KEYWORDS = ['aegolism'];
+// 'virtue' — Virtue is the PoP successor to Aegolism (same Type-One slot,
+// bigger numbers) and matches Quarm's PoP-beta reward "Beta Virtue" too.
+// Beta buffs OUTRANK the era tops (Uilnayar 2026-07-09: "beta virtue should
+// show as above ancient aego") — without this, a Beta Virtue holder read as
+// HP slots A+B EMPTY, went orange, and the queue told clerics to land Ancient
+// Aego over the strictly better buff.
+const AEGOLISM_KEYWORDS = ['aegolism', 'virtue'];
 
 export type HpSlotState = { A: string | null; B: string | null; C: string | null };
 

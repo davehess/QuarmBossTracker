@@ -17,7 +17,7 @@ const CATEGORY_LABELS = {
 const KEYWORDS = {
   // MUST cover everything analyzeHpSlots recognizes (drift = Khura's in
   // 'Other'); potg/potc here so resists' 'protection of' can't steal them.
-  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroism','heroic bond','virtue','health','center','fortitude','khura','focus of spirit','arch shielding','talisman of kragg','talisman of tnarg','protection of the glades','protection of the cabbage','talisman of wunshi'],
+  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroism','heroic bond','virtue','health','center','fortitude','khura','focus of spirit','arch shielding','spiritual purity','talisman of kragg','talisman of tnarg','protection of the glades','protection of the cabbage','talisman of wunshi'],
   // HoT (long-duration heal-over-time) is its own EQ buff slot — healers
   // want to know if it's open. Elixir family = Celestial/Ethereal/Supernal
   // (cleric + bard song HoTs).
@@ -29,7 +29,7 @@ const KEYWORDS = {
           "nature's recovery", 'natures recovery'],
   mana: ['brilliance','iridescence','gift of brilliance'],
   manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
-  haste: ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur'],
+  haste: ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur','beta vog'],
   runSpeed: ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
   attack: ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
   // Damage shields. Mage line: Shield of Flame / Cadeau of Flame /
@@ -66,6 +66,7 @@ const KEYWORDS = {
 // cleric's group Aego AND shouldn't be flagged missing mana regen).
 const SECONDARY_CATEGORY = [
   ['visions of grandeur', 'attack'],
+  ['beta vog', 'attack'],   // Quarm PoP-beta VoG — same +ATK rider
   ['spirit of bihli', 'attack'],
   ['protection of the glades', 'manaRegen'],
   ['protection of the cabbage', 'manaRegen'],
@@ -175,9 +176,14 @@ const HP_SLOT_KEYWORDS = {
   // (L57 group) → Khura's Focusing (L60). Plus Cleric Brell's line + Wizard
   // Arch Shielding. All same slot; higher overwrites lower.
   C: ['khura', 'focus of spirit', 'talisman of kragg', 'talisman of tnarg', 'inner fire',
-      'brell', 'arch shielding'],
+      'brell', 'arch shielding', 'spiritual purity'],
 };
-const AEGOLISM_KEYWORDS = ['aegolism'];
+// 'virtue' — Virtue is the PoP successor to Aegolism (same Type-One slot) and
+// matches Quarm's PoP-beta reward "Beta Virtue" too. Beta buffs OUTRANK the
+// era tops (Uilnayar 2026-07-09) — without this, a Beta Virtue holder read as
+// HP slots A+B empty and the queue told clerics to land Aego over the
+// strictly better buff. Kept in sync with web/lib/buffs.ts.
+const AEGOLISM_KEYWORDS = ['aegolism', 'virtue'];
 function analyzeHpSlots(buffNames) {
   const out = { A: null, B: null, C: null };
   for (const raw of (buffNames || [])) {

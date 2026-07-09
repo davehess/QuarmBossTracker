@@ -43,6 +43,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'beta-buffs-outrank',
+    title: 'PoP-beta buffs count as the best in slot',
+    version: 'Web 1.0.190 · Bot 3.0.154',
+    date: '2026-07-09',
+    headline: 'Quarm’s PoP-beta reward buffs (Beta Virtue, Beta VoG, …) now rank above the era tops instead of reading as missing buffs.',
+    features: [
+      { name: 'Beta buffs recognized', blurb: 'Someone carrying Beta Virtue used to show empty HP slots on /raid — the queue would tell clerics to land Ancient Aego right over the strictly better buff. Beta Virtue now fills the Aego slots (and Beta VoG counts as top haste with its attack bonus), so beta-buffed raiders read as fully covered.' },
+    ],
+    fixes: [
+      'Spiritual Purity is now recognized as an HP buff filling the Khura/Brell slot instead of landing in “Other”.',
+      'The Tank overlay no longer shows a percentage dressed up as exact HP (“88 / 100”) — real numbers only appear when a /pipeverbose groupmate supplies a genuine HP pool.',
+    ],
+  },
+  {
     key: 'raid-mana-twitch',
     title: 'Raid mana list + Twitch Queue',
     version: 'Web 1.0.189 · Bot 3.0.152',
