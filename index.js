@@ -6904,7 +6904,10 @@ async function _handleAgentOverlayTuning(req, res) {
 // 8s poll 404'd and the "MT runs Mimic → use THEIR buff list/HP" waterfall
 // step silently never fired (found in the 2026-07-07 efficiency review).
 // Freshness gates: HP is only useful live (≤90s); buffs tolerate more
-// (≤10 min). 4s per-name cache blunts a raid of agents polling the same MT.
+// (≤10 min). Per-name cache blunts a raid of agents polling the same MT — 2s
+// (was 4s) to keep the cross-client tank HP bar feeling live; the cache still
+// collapses N agents asking about one MT into a single Supabase read per window.
+const LIVE_STATE_RELAY_CACHE_MS = 2_000;
 const _liveStateRelayCache = new Map();   // nameLower → { at, payload }
 async function _handleAgentCharacterLiveState(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -6914,7 +6917,7 @@ async function _handleAgentCharacterLiveState(req, res) {
   if (!name) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'name required' })); }
   const key = name.toLowerCase();
   const cached = _liveStateRelayCache.get(key);
-  if (cached && Date.now() - cached.at < 4_000) {
+  if (cached && Date.now() - cached.at < LIVE_STATE_RELAY_CACHE_MS) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(cached.payload);
   }
