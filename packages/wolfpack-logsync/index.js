@@ -3221,8 +3221,39 @@ function _parseProtSeconds(text) {
   if (sec) return Math.min(600, parseInt(sec[1], 10));
   return null;
 }
-const DA_BROADCAST_TTL_MS = 30_000;   // drop an entry 30s after its speaker's last line
-const _daBroadcasts = new Map();      // "speakerLower|kind" → { name, kind, endsAtMs, updatedAtMs }
+const DA_BROADCAST_TTL_MS = 30_000;   // drop a chat "up" entry 30s after its speaker's last line
+// Default ACTIVE durations so an "up, unknown duration" announce still shows a
+// countdown instead of a bare "UP". And DISCIPLINE reuse timers measured from
+// ACTIVATION (not from fade): a discipline is on cooldown for this long total,
+// so it's "DOWN, ready in (reuse − elapsed)" after its active window ends. DAs
+// are proccable (clickies/items — no fixed reuse), so they get no cooldown.
+const _PROT_ACTIVE_SECS   = { Defensive: 180, 'Weapon Shield': 15, DA: 18 };
+const _PROT_COOLDOWN_SECS = { Defensive: 631 };   // 10m31s from activation (Uilnayar 2026-07-09)
+const _daBroadcasts = new Map();      // "speakerLower|kind" → { name, kind, activeEndsAtMs, readyAtMs, updatedAtMs }
+// Centralized state setter for a protective. up=true records an activation
+// (active window + discipline cooldown); up=false is a fade (active ends now,
+// the cooldown keeps running to its ready time — estimated back from the fade
+// when we never saw the activation line).
+function _recordProt(key, name, kind, atMs, up, secs) {
+  const prev = _daBroadcasts.get(key);
+  if (up) {
+    const activeSecs = (secs != null) ? secs : (_PROT_ACTIVE_SECS[kind] != null ? _PROT_ACTIVE_SECS[kind] : null);
+    const activeEndsAtMs = activeSecs != null ? atMs + activeSecs * 1000 : null;
+    const cd = _PROT_COOLDOWN_SECS[kind];
+    const readyAtMs = cd ? atMs + cd * 1000 : null;
+    _daBroadcasts.set(key, { name, kind, activeEndsAtMs, readyAtMs, updatedAtMs: atMs });
+  } else {
+    let readyAtMs = (prev && prev.readyAtMs != null) ? prev.readyAtMs : null;
+    if (readyAtMs == null) {
+      const cd = _PROT_COOLDOWN_SECS[kind];
+      if (cd) {
+        const activeSecs = _PROT_ACTIVE_SECS[kind] || 0;   // estimate activation = fade − active window
+        readyAtMs = atMs - activeSecs * 1000 + cd * 1000;
+      }
+    }
+    _daBroadcasts.set(key, { name, kind, activeEndsAtMs: atMs, readyAtMs, updatedAtMs: atMs });
+  }
+}
 function trackDaBroadcastLine(line, character) {
   // Cheap pre-filter: 'DA' substring (case-sensitive) OR a defensive/weapon-
   // shield word. Only pays the regex when the fast substring misses.
@@ -3243,27 +3274,46 @@ function trackDaBroadcastLine(line, character) {
   const key = speaker.toLowerCase() + '|' + kind;
   const secs = _parseProtSeconds(text);
   if (secs != null) {
-    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: atMs + secs * 1000, updatedAtMs: atMs });
+    _recordProt(key, speaker, kind, atMs, true, secs);                                          // up, known duration
   } else if (/\bdown\b/i.test(text) && !/cool\s*down/i.test(text)) {   // "cool down" = ready, not down
-    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: atMs, updatedAtMs: atMs });         // down now
+    _recordProt(key, speaker, kind, atMs, false);                                               // fade → cooldown
   } else if (/activ|\bup\b/i.test(text)) {
-    _daBroadcasts.set(key, { name: speaker, kind, endsAtMs: null, updatedAtMs: atMs });          // up, unknown duration
+    _recordProt(key, speaker, kind, atMs, true, null);                                           // up, default/unknown duration
   }
 }
 function daBroadcastsSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [key, e] of _daBroadcasts) {
-    // Chat broadcasts re-announce, so 30s-since-last-line clears them. But a
-    // LOG-detected disc (e.g. Defensive, ~3 min) fires ONCE — keep it alive
-    // until its known end even after the 30s window, so it doesn't vanish
-    // mid-duration. Delete only when stale AND (no known end, or the end passed).
-    const stale = now - e.updatedAtMs > DA_BROADCAST_TTL_MS;
-    const ended = e.endsAtMs != null && e.endsAtMs <= now;
-    if (stale && (e.endsAtMs == null || ended)) { _daBroadcasts.delete(key); continue; }
-    out.push({ name: e.name, kind: e.kind || 'DA', seconds: e.endsAtMs != null ? Math.max(0, Math.round((e.endsAtMs - now) / 1000)) : null });
+    const activeUp   = e.activeEndsAtMs != null && now < e.activeEndsAtMs;   // still up (known duration)
+    const unknownUp  = e.activeEndsAtMs == null;                            // "up" with no duration
+    const onCooldown = e.readyAtMs != null && now < e.readyAtMs;            // discipline recharging
+    const stale      = now - e.updatedAtMs > DA_BROADCAST_TTL_MS;
+    // Keep while active or recharging. A chat "up" with unknown duration is
+    // re-announced, so clear it 30s after the last line. Everything else GCs
+    // once it's neither active nor on cooldown.
+    if (!activeUp && !onCooldown) {
+      if (!unknownUp || stale) { _daBroadcasts.delete(key); continue; }
+    }
+    if (activeUp) {
+      out.push({ name: e.name, kind: e.kind || 'DA', state: 'up',
+                 seconds: Math.max(0, Math.round((e.activeEndsAtMs - now) / 1000)),
+                 cooldown_secs: onCooldown ? Math.max(0, Math.round((e.readyAtMs - now) / 1000)) : null });
+    } else if (onCooldown) {
+      out.push({ name: e.name, kind: e.kind || 'DA', state: 'cooldown', seconds: null,
+                 cooldown_secs: Math.max(0, Math.round((e.readyAtMs - now) / 1000)) });
+    } else {   // unknownUp, not stale
+      out.push({ name: e.name, kind: e.kind || 'DA', state: 'up', seconds: null, cooldown_secs: null });
+    }
   }
-  out.sort((a, b) => (a.seconds ?? 999) - (b.seconds ?? 999) || a.name.localeCompare(b.name));
+  // Active ones first (soonest to fall), then disciplines recharging (soonest ready).
+  out.sort((a, b) => {
+    const ra = a.state === 'up' ? 0 : 1, rb = b.state === 'up' ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    const av = a.state === 'up' ? (a.seconds ?? 999) : (a.cooldown_secs ?? 9999);
+    const bv = b.state === 'up' ? (b.seconds ?? 999) : (b.cooldown_secs ?? 9999);
+    return av - bv || a.name.localeCompare(b.name);
+  });
   return out;
 }
 
@@ -3293,11 +3343,8 @@ function trackDefensiveDiscLine(line, character) {
   else if ((m = line.match(_DEF_DOWN_OTHER_RX)))  { name = m[1]; up = false; }
   if (!name) return;
   const key = name.toLowerCase() + '|Defensive';
-  _daBroadcasts.set(key, {
-    name, kind: 'Defensive',
-    endsAtMs: up ? atMs + DEFENSIVE_DISC_SECS * 1000 : atMs,
-    updatedAtMs: atMs,
-  });
+  // up → activation (180s active + 631s reuse); fade → active ends, cooldown runs on.
+  _recordProt(key, name, 'Defensive', atMs, up, up ? DEFENSIVE_DISC_SECS : null);
 }
 
 // ── Raid-wide healer/caster mana roster ─────────────────────────────────────
