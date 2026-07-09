@@ -5900,6 +5900,12 @@ function _endpointForKind(kind, botUrl) {
 // any one running agent uploading it is sufficient — the bot dedups latest.
 let _raidRosterLastUpload = 0;
 let _raidRosterLastHash   = '';
+// HP heartbeat cadence — how often the roster (incl. cross-client HP for the
+// Tank overlay) is re-uploaded when composition is unchanged. Was 10s, which
+// made a non-local tank's HP bar step only every ~10s (+ the relay/fetch lag on
+// top). 3s keeps the tank bar feeling live during combat; the collapse-to-latest
+// queue rule (3.3.6) means these never pile up. Tunable for load control.
+const RAID_ROSTER_HP_HEARTBEAT_MS = parseInt(process.env.WP_RAID_ROSTER_HP_MS, 10) || 3000;
 function _maybeUploadRaidRoster(sample) {
   try {
     if (!sample || !sample.data) return;
@@ -5965,11 +5971,12 @@ function _maybeUploadRaidRoster(sample) {
     _raidRosterMembers.clear();
     for (const m of compact) _raidRosterMembers.add(String(m.name).toLowerCase());
     // Hash composition only — NOT HP. HP changes constantly in combat and we
-    // don't want every 1% drop to fire an upload. Heartbeat (10s) refreshes HP
-    // on a cadence the /raid page can show "live-ish" without spam.
+    // don't want every 1% drop to fire an upload. The heartbeat refreshes HP on
+    // a fixed cadence (RAID_ROSTER_HP_HEARTBEAT_MS) so the /raid page + Tank
+    // overlay stay live-ish without spamming a row per HP tick.
     const hash = compact.map(m => m.name + ':' + m.group + ':' + m.class).sort().join('|');
     const now = Date.now();
-    if (hash === _raidRosterLastHash && (now - _raidRosterLastUpload) < 10000) return;
+    if (hash === _raidRosterLastHash && (now - _raidRosterLastUpload) < RAID_ROSTER_HP_HEARTBEAT_MS) return;
     _raidRosterLastHash   = hash;
     _raidRosterLastUpload = now;
     enqueueUpload('raid_roster', { members: compact });
@@ -19361,7 +19368,11 @@ function fetchTargetBuffs(name) {
 // Mimics from stacking Supabase reads while the overlay still feels live.
 const _mtLiveStateByName = new Map();   // nameLower → { at, state|null }
 const _mtLiveStateInflight = new Set();
-const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 8000;
+// 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
+// refreshed every ~8s on top of the roster/relay lag). 2.5s keeps the Tank bar
+// live; reads dedup through the bot's own relay cache so a roomful of Mimics
+// doesn't multiply Supabase load. Tunable via WP_MT_LIVE_STATE_TTL_MS.
+const MT_LIVE_STATE_TTL_MS = parseInt(process.env.WP_MT_LIVE_STATE_TTL_MS, 10) || 2500;
 function fetchCharacterLiveState(name) {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;
