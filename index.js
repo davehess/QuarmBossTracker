@@ -3239,6 +3239,17 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
   }
 }
 
+// Self-reported "% mana" macro call-outs riding the relayed /gu + /rs chat —
+// "Kazmodon has 45% Mana", "-= Ethereal Light Abrahms =- 45% Mana", "cleric
+// mana 45%". Every observed variant is the SPEAKER's own mana with a percent
+// near the word "mana" in either order (same shape the agent's Command Center
+// tracks locally). Extracted here into mana_reports so the /raid Mana list +
+// Twitch Queue cover casters who DON'T run Mimic — the Zeal pipe
+// (character_live_state.self_mana_pct) covers those who do. Group chat never
+// reaches the relay (privacy), so this adds no new data leaving any machine.
+const _MANA_PCT_RX = /(?:mana\D{0,12}(\d{1,3})\s*%|(\d{1,3})\s*%\D{0,12}mana)/i;
+const _manaReportLast = new Map();   // speakerLower → last write ms (rate limit)
+
 async function _handleAgentChat(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -3270,6 +3281,13 @@ async function _handleAgentChat(req, res) {
   const raidChId  = process.env.RAID_CHAT_CHANNEL_ID;
   let posted = 0;
 
+  // Module has no top-level supabase binding — every consumer requires it
+  // locally. The uploader-characters query below referenced a bare `supabase`
+  // and its ReferenceError was swallowed by the catch, so uploaderCharacters
+  // was ALWAYS empty (silently weakening the speaker safeguard's self-view
+  // trust). Found 2026-07-09 while adding the mana-report extraction.
+  const supabase = require('./utils/supabase');
+
   // Speaker safeguard inputs: the uploader's own linked characters (a self-view
   // of one of these is trusted) + the full WP roster (cached). One small query
   // per upload for the former; the roster is cached ~10min.
@@ -3291,6 +3309,9 @@ async function _handleAgentChat(req, res) {
   // the end of the handler with the same idempotent unique on
   // (guild, event_type, caster, event_ts) used elsewhere. (Uilnayar 2026-06-26.)
   const funEventRows = [];
+  // "% mana" self-reports in this batch — keyed by speaker so a multi-line
+  // batch keeps only the newest, upserted fire-and-forget after the loop.
+  const manaReportRows = new Map();
 
   // Sanitize chat text before posting to Discord:
   //   - Strip @everyone / @here — would ping the entire server/channel
@@ -3478,6 +3499,30 @@ async function _handleAgentChat(req, res) {
       uploaded_by: identity.discord_id,
     });
 
+    // "% mana" self-report → mana_reports (see _MANA_PCT_RX above). Post-dedup
+    // and post-speaker-resolution, so N agents hearing one macro write once,
+    // under the corrected name. Per-speaker 10s rate limit — macros re-fire
+    // per cast and the /raid read window is minutes, not seconds.
+    {
+      const manaM = String(text).match(_MANA_PCT_RX);
+      const pct = manaM ? Math.min(100, parseInt(manaM[1] || manaM[2], 10)) : NaN;
+      if (Number.isFinite(pct)) {
+        const spLower = effectiveSpeaker.toLowerCase();
+        const nowMs = Date.now();
+        if (nowMs - (_manaReportLast.get(spLower) || 0) >= 10_000) {
+          _manaReportLast.set(spLower, nowMs);
+          if (_manaReportLast.size > 500) _manaReportLast.clear();
+          manaReportRows.set(spLower, {
+            guild_id:    process.env.SUPABASE_GUILD_ID || 'wolfpack',
+            character:   effectiveSpeaker,
+            pct,
+            source:      'macro',
+            reported_at: msgTs || new Date().toISOString(),
+          });
+        }
+      }
+    }
+
     // Class/level tag: try server-side whoData first, fall back to what the agent sent.
     // Only render the tag when we actually have level/race/class content —
     // otherwise an empty whoEntry produced a bare " []" after the name
@@ -3571,6 +3616,13 @@ async function _handleAgentChat(req, res) {
     } catch (err) {
       console.warn('[chat-relay] supabase mirror failed:', err?.message);
     }
+  }
+
+  // "% mana" self-reports — fire-and-forget upsert (last report per character
+  // wins via the PK) so the chat relay's latency never grows for this.
+  if (manaReportRows.size > 0 && supabase.isEnabled()) {
+    supabase.upsert('mana_reports', [...manaReportRows.values()], 'guild_id,character', { minimal: true })
+      .catch(err => console.warn('[mana-reports] upsert failed:', err?.message));
   }
 
   _trackUpload({ endpoint: 'chat', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });

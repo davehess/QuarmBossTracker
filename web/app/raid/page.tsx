@@ -127,7 +127,12 @@ export default async function RaidHubPage() {
   // every extended-duration group buff in era without dragging in stale
   // observations.
   const buffCastsSince = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }, { data: ariRow }] = await Promise.all([
+  // Mana freshness — a report older than this is stale for a "who needs a
+  // twitch NOW" view, but the window is long enough to survive a full fight
+  // (the user's ask: readings stay up for the length of the fight).
+  const MANA_FRESH_MS = 10 * 60 * 1000;
+  const manaSince = new Date(Date.now() - MANA_FRESH_MS).toISOString();
+  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }, { data: ariRow }, { data: manaRows }] = await Promise.all([
     admin.from('character_live_state')
       .select('character, zone_name, self_hp_pct, self_mana_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
       .eq('guild_id', 'wolfpack')
@@ -165,7 +170,19 @@ export default async function RaidHubPage() {
       .select('character, set_by_name, set_at')
       .eq('guild_id', 'wolfpack')
       .maybeSingle(),
+    // "% mana" macro self-reports, extracted bot-side from the /gu + /rs chat
+    // relay — covers casters NOT running Mimic. Zeal-pipe mana (live-state)
+    // wins when fresh; this fills everyone else in.
+    admin.from('mana_reports')
+      .select('character, pct, reported_at')
+      .eq('guild_id', 'wolfpack')
+      .gte('reported_at', manaSince),
   ]);
+  // Macro-reported mana by character (lowercased) — merge source #2.
+  const macroManaByChar = new Map<string, number>();
+  for (const r of (manaRows ?? [])) {
+    if (r?.character && r.pct != null) macroManaByChar.set(String(r.character).toLowerCase(), Math.max(0, Math.min(100, Number(r.pct))));
+  }
   // Per-target, per-spell: most recent cast still within its catalog duration
   // becomes an inferred buff entry. Two Mimic raiders in the same group can
   // both witness the same group cast — last-write-wins on castMs dedups them.
@@ -482,7 +499,12 @@ export default async function RaidHubPage() {
       // own-self HP from character_live_state fills in when this raider runs
       // Mimic themselves and their group has no other broadcaster yet.
       hpPct: rr.hp_pct ?? live?.self_hp_pct ?? null,
-      manaPct: live?.self_mana_pct ?? null,   // self-reported via their own Mimic (casters only)
+      // Mana: Zeal pipe (their own Mimic — continuous, exact) wins while their
+      // live-state row is fresh; else the "% mana" macro report the bot heard
+      // in /gu·/rs — so non-Mimic healers show up too.
+      manaPct: (live?.self_mana_pct != null && live?.updated_at && (Date.now() - new Date(live.updated_at).getTime()) < MANA_FRESH_MS)
+        ? live.self_mana_pct
+        : macroManaByChar.get(lower) ?? null,
       buffCount: live?.buff_count ?? buffsForRow.length,
       byCategory,
       categoryEntries,
@@ -524,7 +546,9 @@ export default async function RaidHubPage() {
       zone: r.zone_name,
       updatedAt: r.updated_at,
       hpPct: r.self_hp_pct ?? null,
-      manaPct: r.self_mana_pct ?? null,
+      manaPct: (r.self_mana_pct != null && r.updated_at && (Date.now() - new Date(r.updated_at).getTime()) < MANA_FRESH_MS)
+        ? r.self_mana_pct
+        : macroManaByChar.get(lower) ?? null,
       buffCount: r.buff_count ?? (r.buffs?.length ?? 0),
       byCategory,
       categoryEntries,

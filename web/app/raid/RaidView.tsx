@@ -936,7 +936,7 @@ function ManaPanel({ rows, onSelect }: { rows: RaidRow[]; onSelect: (n: string) 
     <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start">
       <div className="text-[10px] uppercase tracking-widest text-dim mb-2">Mana</div>
       {rows.length === 0 ? (
-        <div className="text-dim italic">No mana reported yet — casters need Mimic running.</div>
+        <div className="text-dim italic">No mana data yet — fills from Mimic casters (Zeal pipe) and “% mana” macros called in /rs or /gu.</div>
       ) : (
         <ul className="space-y-0.5">
           {rows.map(r => <ManaRow key={r.name} row={r} onSelect={onSelect} />)}
@@ -953,7 +953,7 @@ function TwitchQueuePanel({ rows, onSelect }: { rows: RaidRow[]; onSelect: (n: s
     <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start">
       <div className="text-[10px] uppercase tracking-widest text-dim mb-2">⚡ Twitch queue</div>
       {rows.length === 0 ? (
-        <div className="text-dim italic">Nobody low — full mana across the board.</div>
+        <div className="text-dim italic">No mana data yet — the queue builds from the same reports as the Mana list.</div>
       ) : (
         <ul className="space-y-0.5">
           {rows.map((r, i) => <ManaRow key={r.name} row={r} onSelect={onSelect} rank={i + 1} />)}

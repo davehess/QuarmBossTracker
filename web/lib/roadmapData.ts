@@ -43,6 +43,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mana-macro-reports',
+    title: 'Mana list hears your macros',
+    version: 'Web 1.0.192 · Bot 3.0.155',
+    date: '2026-07-09',
+    headline: 'The /raid Mana list and Twitch Queue now fill from the “% mana” macros healers already call out — not just from casters running Mimic.',
+    features: [
+      { name: 'Two mana sources, merged', blurb: 'Casters on Mimic report exact mana straight off their client (Zeal pipe). Everyone else is covered by their “% mana” raid-chat macros — if any one Mimic user hears the call-out, it lands on the board under the caller’s name. Readings persist through the whole fight (10-minute window), freshest source wins.' },
+    ],
+    fixes: [
+      'The Twitch Queue no longer claims “full mana across the board” when it simply had no data yet.',
+    ],
+  },
+  {
     key: 'beta-buffs-outrank',
     title: 'PoP-beta buffs count as the best in slot',
     version: 'Web 1.0.190 · Bot 3.0.154',
