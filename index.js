@@ -6975,7 +6975,9 @@ async function _handleAgentCharacterLiveState(req, res) {
         state.hp_source = 'raid_roster';   // cross-client — a groupmate's Zeal gauge
       }
       // Exact cur/max let the Tank/Target overlays show real numbers, not %.
-      if (Number.isFinite(rrRow.hp_current) && Number.isFinite(rrRow.hp_max) && rrRow.hp_max > 0) {
+      // > 100 gate: rows written before the hp_max sanity guard carry the
+      // percent-as-pool artifact (88/100) — never relay those as "exact".
+      if (Number.isFinite(rrRow.hp_current) && Number.isFinite(rrRow.hp_max) && rrRow.hp_max > 100) {
         state.self_hp_cur = Math.max(0, Math.trunc(rrRow.hp_current));
         state.self_hp_max = Math.trunc(rrRow.hp_max);
       }
@@ -9137,9 +9139,13 @@ async function _handleAgentRaidRoster(req, res) {
     const hp  = Number.parseFloat(m?.hp_pct);
     // Exact HP (cur/max) rides along only when a groupmate ran /pipeverbose;
     // otherwise these are null and only the gauge hp_pct is available.
+    // hp_max must be > 100: the EQ client only knows REAL cur/max for the
+    // uploader themself — raid members arrive as a percent with hp_max=100,
+    // and storing that as "exact" made the Tank overlay read "88 / 100 · 88%"
+    // (Uilnayar 2026-07-09). A ≤100 pool means "that's a %, keep hp_pct only".
     const hpc = Number.parseInt(m?.hp_current, 10);
     const hpm = Number.parseInt(m?.hp_max, 10);
-    const hasExact = Number.isFinite(hpc) && Number.isFinite(hpm) && hpm > 0;
+    const hasExact = Number.isFinite(hpc) && Number.isFinite(hpm) && hpm > 100;
     rows.push({
       guild_id:               guildId,
       name,
