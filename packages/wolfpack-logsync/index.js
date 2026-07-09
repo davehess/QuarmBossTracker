@@ -3109,6 +3109,29 @@ function chChainSnapshot() {
 // recentTankHits combat-log signal as MT resolution and the Extended
 // Target off-tank surfacing — local only, no bot round trip. "Repeated"
 // requires ≥2 tracked hits in the window, not a single stray connect.
+// Rampage-target visibility for the Tank / Command Center cards. In EQ the
+// rampage target is effectively FIXED for the whole fight (second seat on the
+// hate list), so the card must persist for the fight's duration — not vanish
+// 8s after each rampage swing, which had it strobing on and off between
+// rampage cycles (Uilnayar 2026-07-09: "rampage should not be falling off of
+// the command center or tank overlay during a fight"). Show while EITHER:
+//   • fresh — a rampage line landed in the last 8s (also covers pulls where
+//     the threat tracker never spun up), or
+//   • the encounter is still LIVE (threat snapshot exists, not flushed) and
+//     the rampage was seen during THIS fight — the startedAt bound keeps last
+//     fight's victim from haunting the next pull.
+const RAMPAGE_FRESH_MS = 8000;
+function _currentRampageForDisplay(now) {
+  const r = stats.currentRampage;
+  if (!r || !r.target || !r.at) return null;
+  if ((now - r.at) <= RAMPAGE_FRESH_MS) return r;
+  const et = stats.currentEncounterThreat;
+  if (et && !et.flushedAt) {
+    const startMs = et.startedAt ? (Date.parse(et.startedAt) || 0) : 0;
+    if (r.at >= startMs - 30_000) return r;
+  }
+  return null;
+}
 const OFFHEAL_WINDOW_MS = 20_000;
 const OFFHEAL_MIN_HITS  = 2;
 // A full-health offtank doesn't need an off-heal — only surface ones actually
@@ -3121,8 +3144,8 @@ function offHealCandidatesSnapshot() {
   const now = Date.now();
   const mt = _resolveMainTank();
   const mtLower = mt ? mt.name.toLowerCase() : null;
-  const r = stats.currentRampage || null;
-  const rampLower = (r && r.target && r.at && (now - r.at) <= 8000) ? String(r.target).toLowerCase() : null;
+  const r = _currentRampageForDisplay(now);
+  const rampLower = r ? String(r.target).toLowerCase() : null;
   // Active EQ window — needed to resolve each candidate's HP%. Their own self
   // HP resolves cross-client via the same waterfall MT/Rampage HP use.
   let active = null, activeTs = 0;
@@ -7113,13 +7136,15 @@ function _serializeTankState() {
   }
   dsSources.sort((a, b) => b.per_hit - a.per_hit);
 
-  // Rampage target — only return when fresh (≤8s). Older than that and we
-  // assume the rampage cycle is over. HP resolves the same way MT HP does
-  // below: local gauges first, the rampage victim's own uploaded live-state
-  // as the cross-client fallback (they're almost always a raider, not us).
+  // Rampage target — persists for the WHOLE fight (see
+  // _currentRampageForDisplay: the rampage target doesn't change between
+  // swings, so the card must not strobe off 8s after each one). HP resolves
+  // the same way MT HP does below: local gauges first, the rampage victim's
+  // own uploaded live-state as the cross-client fallback (they're almost
+  // always a raider, not us).
   let rampage = null;
-  const r = stats.currentRampage || null;
-  if (r && r.target && r.at && (now - r.at) <= 8000) {
+  const r = _currentRampageForDisplay(now);
+  if (r) {
     const rLower = String(r.target).toLowerCase();
     try { fetchCharacterLiveState(r.target); } catch {}
     // DA on the rampage target — gold-highlight the HP bar while it's up (they're
@@ -7131,6 +7156,9 @@ function _serializeTankState() {
     const rVals = _resolveHpValuesForName(rLower, active, st);
     rampage = {
       target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
+      // fresh = a rampage swing landed within the last few seconds — lets the
+      // overlays pulse on the hit while the card itself stays up all fight.
+      fresh:  (now - r.at) <= RAMPAGE_FRESH_MS,
       hp_pct: _resolveHpForName(rLower, active, st),
       hp_cur: rVals ? rVals.cur : null,
       hp_max: rVals ? rVals.max : null,
