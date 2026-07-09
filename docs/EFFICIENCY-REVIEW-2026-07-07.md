@@ -114,3 +114,49 @@ growth quardrails. Adopt these as review rules for every future change:
 4. Web /who + auth-dedup + revalidate sweep (main).
 5. Supabase retention: agent_uploads + buff_casts prune job.
 6. Superfluous deletions (era threads, dead helpers, stubs) — anytime.
+
+## Status ledger — 2026-07-09 (cleanup round 3)
+
+Verified in-code + against prod sizes. ✅ = shipped, ⏳ = still open.
+
+**Shipped (rounds 1–3):**
+- ✅ Order items 1–2 and most of 3: hot-handler memos + shaman-burst cache
+  (bot 3.0.144), agent pre-filters + relay-fires gate + melody decouple +
+  byte-stability + agent.log rotation (Mimic 1.6.0). tasklist polls slowed
+  (10s/25s) but not unified.
+- ✅ Retention (order item 5, superseded specifics): `agent_uploads` no longer
+  exists (RPC stat-bump replaced it); `buff_casts` 7d sweep (bot 3.0.142);
+  `who_observations` identity-preserving prune + nightly sweep (bot 3.0.145);
+  **`encounter_threat_snapshots`** — the NEW top grower (351MB/411k rows in a
+  month; real growth ~78MB/wk vs the ~7MB/wk the 120d default was budgeted
+  on) — retention 120→30d + `thin_threat_snapshots()` midnight downsample
+  (>7d → 1/min per uploader+boss); one-time purge applied, 411k → 208k rows
+  (bot 3.0.156).
+- ✅ Web /who: one round trip via `who_directory_json()` jsonb_agg RPC (was ~9
+  sequential range pages); auth dedup: `isOfficer` React-cache()'d + singleton
+  client, `lib/session.ts` `getSessionUser()` (layout adopted; pages migrate
+  opportunistically); quests page inventory fetch scoped to the family (was
+  whole-guild, silently truncating at 10k) (web 1.0.195).
+- ✅ Deletions: era-thread routing + `/initerathreads` (bot 3.0.144);
+  `_isOwnGuildInstanceEcho` no-op + dead call sites, duplicate self-cast
+  regex (noteSelfCast now feeds the relay), dead preload wrappers
+  `overlayResizePreset`/`overlayEnsureMinHeight` (agent 3.3.14). Agent
+  `whoData`/`confirmedPlayers` now capped; bot `_extMobLastSeen` pruned;
+  `_mobInfoCache`/`_npcDropsCache` capped (bot 3.0.156).
+
+**Still open (next rounds):**
+- ⏳ Web revalidate sweep: /leaderboards, /boards, /pop, /fun/lord-of-ire,
+  /character/[name]/factions are still force-dynamic (verify no cookie use
+  per page before switching).
+- ⏳ Web family/household-walk extraction (still copy-pasted ×3: me,
+  me/ui page, me/ui actions; lib/character-family.ts is a different concept).
+- ⏳ Web heavy fetches: /character/[name] `.limit(10000)` encounters (renders
+  top-30 — wants an aggregate RPC); /parses `opendkp_ticks .range(0,99999)`.
+- ⏳ Web /planner + /loadouts stubs (retire or build); /test-server is now a
+  real page — its force-dynamic is justified, drop from this list.
+- ⏳ Mimic: unify the 3 tasklist spawners; lazy overlay renderer creation
+  (10 Chromium processes eager at boot regardless of config).
+- ⏳ Disk reclaim: buff_casts (120MB held / 67k rows) + who_observations
+  (100MB / 73k rows) + threat_snapshots hold dead-tuple space from their
+  purges — one-off `VACUUM FULL` per table in an off-raid window returns it
+  (plain autovacuum reuses but never shrinks the files).
