@@ -2371,11 +2371,17 @@ function _zealTargetForChar(charLower) {
   }
   return null;
 }
+// "You begin casting/singing <Spell>." — shared by noteSelfCast (landing
+// attribution) and relaySelfCastForCasting (cross-client Casting relay).
+const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
+// Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
+// match instead of re-running the identical regex on the same line (the two
+// ran back-to-back per log line — efficiency review 2026-07-07).
 function noteSelfCast(line, character) {
-  if (!line || !character) return;
-  if (line.indexOf('You begin') === -1) return;   // cheap gate
-  const m = line.match(/\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i);
-  if (!m) return;
+  if (!line || !character) return null;
+  if (line.indexOf('You begin') === -1) return null;   // cheap gate
+  const m = line.match(_CAST_BEGIN_RX);
+  if (!m) return null;
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
   const cl = String(character).toLowerCase();
@@ -2398,12 +2404,12 @@ function noteSelfCast(line, character) {
   // regex match we just did, same character context.
   const ci = CHARM_SPELLS.get(spellLower);
   if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.dur, name: m[1].trim(), owner: String(character), ts: atMs };
+  return { name: m[1].trim(), atMs };
 }
 // Cross-client casting relay: when WE begin a cast with a target, tell the bot
 // so anyone with that target up sees it in Mob Info's "Casting" section. Only
 // our own casts are nameable (EQ hides others' spell/target), so coverage scales
 // with Mimic adoption. LIVE path only (never backfill — stale casts are useless).
-const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // Heal-spell name detector for the per-encounter spell-count tally surfaced on
 // the heal perspective panel (Uilnayar 2026-06-25). Word-boundary'd so we
 // don't pick up unrelated names like "Annul Magic" or "Reflect Spell"; a
@@ -2411,17 +2417,24 @@ const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // they're named recognisably.
 const HEAL_SPELL_RX = /\b(heal(?:ing)?|renewal|chloropl|regrowth|torpor|lay on hands|restoration|touch of the divine|vigor|salve)\b/i;
 const _lastCastRelay = new Map();   // charLower → { sig, at }
-function relaySelfCastForCasting(line, character) {
+function relaySelfCastForCasting(line, character, pre) {
   if (!line || !character) return;
-  if (line.indexOf('You begin') === -1) return;   // cheap gate
-  const m = line.match(_CAST_BEGIN_RX);
-  if (!m) return;
+  // `pre` = the cast noteSelfCast already parsed from this exact line — skip
+  // the duplicate regex. The standalone path stays for any caller without it.
+  let spell, atMs;
+  if (pre) {
+    spell = pre.name; atMs = pre.atMs;
+  } else {
+    if (line.indexOf('You begin') === -1) return;   // cheap gate
+    const m = line.match(_CAST_BEGIN_RX);
+    if (!m) return;
+    spell = m[1].trim();
+    const ts = parseEqTimestamp(line);
+    atMs = ts ? ts.getTime() : Date.now();
+  }
   const cl = String(character).toLowerCase();
   const target = _zealTargetForChar(cl);
   if (!target) return;                       // can't attribute without a target
-  const spell = m[1].trim();
-  const ts = parseEqTimestamp(line);
-  const atMs = ts ? ts.getTime() : Date.now();
   // Dedup a duplicated log line for the same cast within 2s.
   const sig = cl + '|' + spell.toLowerCase() + '|' + String(target).toLowerCase();
   const prev = _lastCastRelay.get(cl);
@@ -16450,22 +16463,14 @@ function _ciEq(a, b) {
 }
 
 // (Instanced) [PVP]-echo relay policy — PASS EVERYTHING through to the bot,
-// which is the single place that decides what to record/post. This used to
-// DROP own-guild instance echoes here, on the theory that a Druzzil "tells
-// the guild" broadcast already routed them through /bosskill. That theory
-// fails for a killer who doesn't run Mimic (and has no Mimic guildmate in
-// the instance): no /bosskill ever fires, and dropping the [PVP] echo lost
-// the kill entirely — Timberr's Lord of Ire instance kill vanished with no
-// ledger row, no /pvp/hate entry, and no #pvp post (Uilnayar 2026-07-05).
-// So the agent no longer second-guesses: it relays every instance echo and
-// the bot records own-guild ones (informational #pvp post, no open-world
-// timer tick — instances don't share a spawn) and dedups as needed.
-// Kept as a named no-op so the call sites read intentionally; _observedOwnGuild
-// is still learned from Druzzil for any future use.
-function _isOwnGuildInstanceEcho(_text, _killerGuild) {
-  return false;
-}
-
+// which is the single place that decides what to record/post. The agent used
+// to DROP own-guild instance echoes (via an _isOwnGuildInstanceEcho check,
+// deleted 2026-07-09 as a shipped no-op) on the theory that Druzzil's "tells
+// the guild" broadcast already routed them through /bosskill — which fails
+// when the killer doesn't run Mimic: Timberr's Lord of Ire instance kill
+// vanished with no ledger row, no /pvp/hate entry, and no #pvp post
+// (Uilnayar 2026-07-05). The bot records own-guild echoes (informational
+// #pvp post, no open-world timer tick) and dedups as needed.
 function parseDruzzilKill(line) {
   if (line.indexOf('Druzzil Ro') === -1) return null;   // cheap gate
   const m = DRUZZIL_KILL_RX.exec(line);
@@ -16531,13 +16536,6 @@ function parsePvpBroadcast(line) {
     // the kill credits to the Wolf Pack killer on /pvp/server.
     const bossA = PVP_BOSS_KILL_ACTIVE_RX.exec(text);
     if (bossA) {
-      // OWN-guild PvE instance kill is the Druzzil-Ro broadcast that the
-      // /bosskill path already turns into a normal instance timer; the
-      // [PVP] echo is a duplicate, drop it. FOREIGN-guild instance kills
-      // are silently dropped under the old behavior — they reach us only
-      // through this echo, and Uilnayar's missed-Lord-of-Ire-by-<Freedom>
-      // report (2026-06-21) was exactly that. Now we let those through.
-      if (_isOwnGuildInstanceEcho(text, bossA[2])) return null;
       return {
         ts: tsOf(), text, killType: 'pvp',
         killer: bossA[1], killerGuild: bossA[2],
@@ -16604,10 +16602,6 @@ function parsePvpBroadcast(line) {
 
   const bossBareA = PVP_BARE_BOSS_ACTIVE_RX.exec(line);
   if (bossBareA) {
-    // Own-guild PvE instance kill echoed in the [PVP] channel — duplicate
-    // of the Druzzil broadcast that drives /bosskill. Foreign-guild kills
-    // pass through (see Path A's note for the Uilnayar fix).
-    if (_isOwnGuildInstanceEcho(line, bossBareA[3])) return null;
     return {
       ts: tsOf(),
       text: `${bossBareA[2]} of <${bossBareA[3]}> has killed ${bossBareA[4]}${bossBareA[5] ? ` in ${bossBareA[5]}` : ''}!`,
@@ -21426,10 +21420,15 @@ async function main() {
         // Track our own casts so a landing can be named from what WE cast
         // (authoritative — disambiguates shared landing messages + catches
         // spells the tracked-buff index doesn't carry).
-        if (!_sourceExcluded) noteSelfCast(line, b.character);
-        // Relay our own cast → bot, so anyone targeting the same mob/player sees
-        // it in Mob Info's Casting section (cross-client; only our casts nameable).
-        if (!_sourceExcluded) relaySelfCastForCasting(line, b.character);
+        // One parse feeds both: noteSelfCast returns the parsed cast, and the
+        // relay reuses it instead of re-running the identical regex.
+        if (!_sourceExcluded) {
+          const selfCast = noteSelfCast(line, b.character);
+          // Relay our own cast → bot, so anyone targeting the same mob/player
+          // sees it in Mob Info's Casting section (cross-client; only our
+          // casts nameable).
+          if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
+        }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,
         // always runs (no _sourceExcluded gate — blindness is a UI thing,

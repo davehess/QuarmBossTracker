@@ -201,15 +201,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Renderer reports its content height; main resizes the window to fit so
   // multi-card overlays (charm, pets, /who) grow with their content.
   overlayAutoHeight: (h) => ipcRenderer.invoke('overlay-auto-height', h),
-  // Per-overlay named-size preset (xs / sm / md / lg / xl). Driven by the
-  // right-click context menu on each overlay's ✥ move icon so users can size
-  // a single overlay without diving into Setup mode.
-  overlayResizePreset: (preset) => ipcRenderer.invoke('overlay-resize-preset', preset),
-  // Grow the window vertically to at least `h` px before showing the shared
-  // right-click chrome menu — keeps the bottom of the menu from being clipped
-  // when an XS-preset overlay is shorter than the menu DOM. Overlay's regular
-  // overlayAutoHeight call shrinks back to content size after the menu closes.
-  overlayEnsureMinHeight: (h) => ipcRenderer.invoke('overlay-ensure-min-height', h),
+  // (overlayResizePreset / overlayEnsureMinHeight bridge wrappers deleted
+  // 2026-07-09 — no overlay ever called them; the shared chrome below invokes
+  // the 'overlay-resize-preset' / 'overlay-ensure-min-height' IPC directly.)
   // Shared chrome — wires the right-click "resize presets + Setup THIS/ALL"
   // menu on the ✥ move icon and a content-size auto-fit helper. Every overlay
   // calls these instead of re-implementing them, so they're guaranteed to
