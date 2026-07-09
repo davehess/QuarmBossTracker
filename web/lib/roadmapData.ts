@@ -51,7 +51,9 @@ export const releases: Release[] = [
     features: [
       { name: 'Borrowed HP from a groupmate', blurb: 'When the main tank isn’t on Mimic and you aren’t targeting or grouped with them, the Tank overlay used to just say “HP not visible.” Now it uses the tank’s HP as seen by any Mimic-running groupmate’s Zeal window — the same cross-client HP the /raid grid already shows — and it lights up on your Tank bar within a couple seconds. No Mimic update needed; your current agent picks it up on its own.' },
     ],
-    fixes: [],
+    fixes: [
+      'The target panel no longer shows a phantom “Kneel Test” debuff — an EQEmu internal test spell that older agents in the raid were still reporting on every mob. Filtered out and the stale rows purged.',
+    ],
   },
   {
     key: 'mimic-queue-reliability',

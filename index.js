@@ -5977,6 +5977,16 @@ async function _handleAgentSpellbook(req, res) {
 
 // POST /api/agent/buff_casts
 //
+// EQEmu internal/test spells that are pure noise on the target panel. "Kneel
+// Test" (SPA test spell) shares its landing text with 33 knockback effects and
+// keeps winning the ambiguous-match, so it lands on every mob as a phantom
+// debuff. Agents 3.1.107+ stop sending it, but OLDER agents in the raid still
+// do (566 fresh rows during the 2026-07-09 raid), so filter bot-side at BOTH
+// ingest and the target-buffs read — that covers every agent version and the
+// rows already in the table.
+const _JUNK_SPELL_RX = /^(kneel test)$/i;
+function _isJunkSpellName(n) { return !!n && _JUNK_SPELL_RX.test(String(n).trim()); }
+
 // Observed buff landings on other players (see migration 20260605120000). The
 // agent reverse-matches a spell's cast_on_other message in the log and reports
 // { target, spell_id, spell_name, landing_text, dur_ticks, dur_formula, cast_at,
@@ -6021,6 +6031,7 @@ async function _handleAgentBuffCasts(req, res) {
     // their synthesized names so they pass untouched. Agents 3.1.107+ stop
     // sending them at all — this guard covers every older agent.
     if (!c.spell_name) continue;
+    if (_isJunkSpellName(c.spell_name)) continue;   // drop EQEmu "Kneel Test" phantom
     const sid = Number.isFinite(c.spell_id) ? Math.trunc(c.spell_id) : 0;
     const row = {
       guild_id:     guildId,
@@ -6778,6 +6789,7 @@ async function _handleAgentTargetBuffs(req, res) {
     const bySpell = new Map();
     for (const r of (rows || [])) {
       if (!r || !r.spell_name) continue;
+      if (_isJunkSpellName(r.spell_name)) continue;   // hide phantom "Kneel Test"
       const castMs  = Date.parse(r.cast_at) || 0;
       if (!castMs) continue;
       const durSecs = (Number(r.dur_ticks) || 0) * 6;
@@ -7119,6 +7131,7 @@ async function _handleAgentExtendedTarget(req, res) {
     const debuffsByTarget = new Map();
     for (const b of (buffRows || [])) {
       if (!b || !b.target || !b.spell_name) continue;
+      if (_isJunkSpellName(b.spell_name)) continue;   // hide phantom "Kneel Test"
       const castMs = Date.parse(b.cast_at) || 0; if (!castMs) continue;
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
       if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;   // expired
