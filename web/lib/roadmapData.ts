@@ -86,7 +86,7 @@ export const releases: Release[] = [
   {
     key: 'tank-overlay-live-hp-defensives',
     title: 'Tank overlay: exact HP + defensive recharge timers',
-    version: 'Agent 3.3.12',
+    version: 'Agent 3.3.13',
     date: '2026-07-09',
     channel: 'beta',
     headline: 'The Tank overlay shows a non-Mimic tank’s exact HP near-live, and the Command Center now counts down defensives — active AND recharge.',
@@ -95,6 +95,8 @@ export const releases: Release[] = [
       { name: 'Defensive recharge timers', blurb: 'The Command Center shows a discipline’s remaining ACTIVE time counting down, then flips to “DOWN · m:ss” counting down the recharge until it’s usable again — so you always know when the next Defensive is ready.' },
     ],
     fixes: [
+      'The Command Center’s Healer Mana list stopped hiding clerics whose class it couldn’t look up — only KNOWN non-healers are filtered now, and the Zeal raid roster fills in classes when /who data is cold.',
+      'Healer mana readings stay on the board for the whole fight — the old 5-minute timeout only applies between fights.',
       'The Rampage card no longer blinks off mid-fight — the rampage target stays on the Tank overlay and Command Center for the whole encounter, and clears when the fight ends.',
       'The trigger-alert timing buttons («Earlier / ✓Good! / »Too early) no longer sit on top of the callout text — they sit in a fixed spot below it, so the message never jumps.',
       'Mimic’s upload backlog can no longer balloon to gigabytes and freeze the overlays; it bounds itself and cleans up stale files on startup.',
