@@ -19833,6 +19833,13 @@ function flushLiveStateToBot(opts) {
       zone_id:     st.zone != null ? st.zone : null,
       zone_name:   _zoneName(st.zone),
       self_hp_pct: st.self_hp_pct != null ? st.self_hp_pct : null,
+      // Self mana — feeds the web /raid mana list + Twitch Queue. pct from
+      // cur/max (labels 124/125) so it's exact when the pipe supplies them.
+      self_mana_pct: (st.self_mana_cur != null && st.self_mana_max != null && st.self_mana_max > 0)
+        ? Math.max(0, Math.min(100, Math.round((st.self_mana_cur / st.self_mana_max) * 100)))
+        : null,
+      self_mana_cur: st.self_mana_cur != null ? st.self_mana_cur : null,
+      self_mana_max: st.self_mana_max != null ? st.self_mana_max : null,
       // Current target (Zeal slot 6) — feeds character_live_state.target_name/
       // target_hp_pct, which /api/agent/extended-target aggregates group- or
       // raid-wide into "who's targeting what". Was missing entirely here (the
@@ -19862,6 +19869,9 @@ function flushLiveStateToBot(opts) {
     // 10-point buckets (not raw %) keep this from re-triggering on every 1%
     // combat tick the way a plain equality check would.
     const targetHpBucket = (rec.target_hp_pct != null) ? Math.floor(rec.target_hp_pct / 10) : null;
+    // Same coarse-bucket trick for self mana so the /raid mana list + Twitch
+    // Queue track drain without a re-send on every 1% tick.
+    const selfManaBucket = (rec.self_mana_pct != null) ? Math.floor(rec.self_mana_pct / 10) : null;
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
@@ -19869,6 +19879,7 @@ function flushLiveStateToBot(opts) {
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
       targetHpBucket,
+      selfManaBucket,
       (rec.incoming_mob || '').toLowerCase(),
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
