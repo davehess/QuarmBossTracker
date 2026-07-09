@@ -45,6 +45,7 @@ export type RaidRow = {
   zone: string | null;
   updatedAt: string | null;
   hpPct: number | null;          // live HP%: roster broadcast (any Mimic groupmate) or self-state HP
+  manaPct: number | null;        // self-reported mana% (only when this raider runs Mimic; casters)
   buffCount: number;
   byCategory: Record<string, string[]>;
   // Rich per-category entries — { name, value, isSong }. A song like
@@ -162,6 +163,22 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
   return '';
 }
 
+// Twitch Queue priority tier — who to feed mana first when several are low.
+// Wizards + Enchanters (0), then Clerics (1), then everyone else (2).
+function twitchTier(className: string | null): number {
+  const c = (className || '').trim().toLowerCase();
+  if (c === 'wizard' || c === 'enchanter') return 0;
+  if (c === 'cleric') return 1;
+  return 2;
+}
+
+// Mana bar colour by fullness — mirrors the Command Center overlay's cue.
+function manaFillClass(pct: number): string {
+  if (pct <= 20) return 'bg-red-500';
+  if (pct <= 45) return 'bg-amber-500';
+  return 'bg-blue';
+}
+
 export default function RaidView({
   rows, raidLabels, myClass, dsValues, ari, rosterMissing = false,
 }: {
@@ -183,11 +200,6 @@ export default function RaidView({
   // cover a shortage and the chip strip lets them flip.
   const [bufferClass, setBufferClass] = useState<BufferClass | ''>(() => asBufferClass(myClass));
   const [selectedName, setSelectedName] = useState<string | null>(null);
-  // Top-level view: 'roster' (default — the full grouped buff grid) or
-  // 'cursed' (filtered to raiders with at least one curse-type debuff).
-  // Tracked here so the user can flip mid-pull without losing the side panel
-  // selection; the cure caster's whole flow is on /raid?view=cursed.
-  const [view, setView] = useState<'roster' | 'cursed'>('roster');
   // Concurrent raids → one tab each (Raid 1 = biggest). Defaults to the raid
   // containing the signed-in user's character.
   const [activeRaid, setActiveRaid] = useState<number>(() => {
@@ -351,6 +363,22 @@ export default function RaidView({
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [tabRows]);
 
+  // Mana list — everyone in raid with a live self-mana reading (they run Mimic
+  // and have a mana pool), highest first: a glance at "who still has gas".
+  const manaList = useMemo(() =>
+    tabRows.filter(r => r.inRaid && typeof r.manaPct === 'number')
+           .sort((a, b) => (b.manaPct! - a.manaPct!) || a.name.localeCompare(b.name)),
+    [tabRows]);
+  // Twitch Queue — who to feed mana next: lowest mana up top, with Wizards +
+  // Enchanters prioritized, then Clerics, then everyone else (Uilnayar
+  // 2026-07-09). Same source list, re-sorted by twitch priority.
+  const twitchQueue = useMemo(() =>
+    manaList.slice().sort((a, b) =>
+      twitchTier(a.className) - twitchTier(b.className)
+      || (a.manaPct! - b.manaPct!)
+      || a.name.localeCompare(b.name)),
+    [manaList]);
+
   const focused = bufferClass !== '';
 
   return (
@@ -447,33 +475,9 @@ export default function RaidView({
         </div>
       )}
 
-      {/* Top-level view tabs. Roster is the existing grouped buff grid +
-          buffer mode + queue. Cursed pulls just the raiders that any
-          Mimic-running raider has reported as carrying a known curse —
-          Gravel Rain on Vyzh`dra pulls, etc. — so the cure caster can
-          see who needs Remove Curse without scanning the full roster.
-          Badge shows live count so flipping is unprompted. */}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className={`px-3 py-1.5 text-xs rounded border transition-colors ${view === 'roster' ? 'bg-[#2a1d3d] text-[#d2a8ff] border-[#a371f7]' : 'bg-panel text-dim border-border hover:border-blue'}`}
-          onClick={() => setView('roster')}
-        >Roster</button>
-        <button
-          type="button"
-          className={`px-3 py-1.5 text-xs rounded border transition-colors ${view === 'cursed' ? 'bg-[#2a1010]/70 text-red-300 border-red-400/60' : 'bg-panel text-dim border-border hover:border-red-400/60'}`}
-          onClick={() => setView('cursed')}
-        >
-          Cursed
-          {cursedRows.length > 0 && (
-            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-red-500/30 text-red-200 font-semibold">{cursedRows.length}</span>
-          )}
-        </button>
-      </div>
-
-      {view === 'cursed' ? (
-        <CursedPanel rows={cursedRows} onSelect={(n) => setSelectedName(n)} />
-      ) : (
+      {/* Roster/Cursed tab boxes removed (2026-07-09) — the roster is the only
+          view now, and cursed raiders surface in the debuff queue at the top.
+          The cursed data (cursedRows) still feeds that queue below. */}
       <>
       {/* Buffer mode — when OFF, show the class picker. When ON, show ONLY the
           picked class as a single elevated chip with the queue underneath, so
@@ -495,8 +499,12 @@ export default function RaidView({
 
       {/* The raid grid + sidebars */}
       <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr_320px] gap-4">
-        {/* Class-count panel — at-a-glance "what classes do we have tonight". */}
-        <ClassCountPanel counts={classCounts} raidSize={raidSize} />
+        {/* Left column — class counts, then the mana list + Twitch Queue. */}
+        <div className="space-y-4">
+          <ClassCountPanel counts={classCounts} raidSize={raidSize} />
+          <ManaPanel rows={manaList} onSelect={(n) => setSelectedName(n)} />
+          <TwitchQueuePanel rows={twitchQueue} onSelect={(n) => setSelectedName(n)} />
+        </div>
 
         <div className="space-y-3">
           {groups.length === 0 ? (
@@ -640,7 +648,6 @@ export default function RaidView({
         </aside>
       </div>
       </>
-      )}
     </div>
   );
 }
@@ -898,6 +905,58 @@ function ClassCountPanel({ counts, raidSize }: { counts: [string, number][]; rai
             <span>Total</span>
             <span className="tabular-nums">{raidSize}</span>
           </li>
+        </ul>
+      )}
+    </aside>
+  );
+}
+
+// One compact mana row — name, class, a bar + %. Click opens the detail panel.
+function ManaRow({ row, onSelect, rank }: { row: RaidRow; onSelect: (n: string) => void; rank?: number }) {
+  const pct = Math.max(0, Math.min(100, Math.round(row.manaPct ?? 0)));
+  return (
+    <li
+      className="flex items-center gap-1.5 cursor-pointer hover:bg-[#161b22] rounded px-1 -mx-1 py-0.5"
+      onClick={() => onSelect(row.name)}
+      title={`${row.name}${row.className ? ' · ' + row.className : ''} · ${pct}% mana`}
+    >
+      {rank != null && <span className="text-[9px] text-dim tabular-nums w-3.5 shrink-0">{rank}</span>}
+      <span className="truncate text-text flex-1 min-w-0">{row.name}</span>
+      <span className="h-2 w-10 rounded-sm bg-[#222] overflow-hidden shrink-0 border border-border/40">
+        <span className={`block h-full ${manaFillClass(pct)}`} style={{ width: pct + '%' }} />
+      </span>
+      <span className="text-dim tabular-nums w-8 text-right shrink-0">{pct}%</span>
+    </li>
+  );
+}
+
+// Everyone's mana, highest first — "who still has gas".
+function ManaPanel({ rows, onSelect }: { rows: RaidRow[]; onSelect: (n: string) => void }) {
+  return (
+    <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start">
+      <div className="text-[10px] uppercase tracking-widest text-dim mb-2">Mana</div>
+      {rows.length === 0 ? (
+        <div className="text-dim italic">No mana reported yet — casters need Mimic running.</div>
+      ) : (
+        <ul className="space-y-0.5">
+          {rows.map(r => <ManaRow key={r.name} row={r} onSelect={onSelect} />)}
+        </ul>
+      )}
+    </aside>
+  );
+}
+
+// Twitch Queue — who to feed mana next: lowest mana up top, Wizards +
+// Enchanters prioritized, then Clerics, then the rest.
+function TwitchQueuePanel({ rows, onSelect }: { rows: RaidRow[]; onSelect: (n: string) => void }) {
+  return (
+    <aside className="bg-panel border border-border rounded-lg p-3 text-xs self-start">
+      <div className="text-[10px] uppercase tracking-widest text-dim mb-2">⚡ Twitch queue</div>
+      {rows.length === 0 ? (
+        <div className="text-dim italic">Nobody low — full mana across the board.</div>
+      ) : (
+        <ul className="space-y-0.5">
+          {rows.map((r, i) => <ManaRow key={r.name} row={r} onSelect={onSelect} rank={i + 1} />)}
         </ul>
       )}
     </aside>

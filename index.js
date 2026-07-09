@@ -8789,6 +8789,10 @@ async function _handleAgentLiveState(req, res) {
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
+    // Self mana (agent v3.3.10+) — powers the /raid mana list + Twitch Queue.
+    const selfManaPct = (st?.self_mana_pct != null && Number.isFinite(Number(st.self_mana_pct))) ? Math.max(0, Math.min(100, Number(st.self_mana_pct))) : null;
+    const selfManaCur = (st?.self_mana_cur != null && Number.isFinite(Number(st.self_mana_cur))) ? Math.max(0, Math.trunc(Number(st.self_mana_cur))) : null;
+    const selfManaMax = (st?.self_mana_max != null && Number.isFinite(Number(st.self_mana_max))) ? Math.max(0, Math.trunc(Number(st.self_mana_max))) : null;
     // Pet snapshot (charm or summoned) — name + HP% + the buffs we've timed on
     // it. Same sanitize/caps as the owner's buffs.
     const petName   = st?.pet_name ? String(st.pet_name).slice(0, 80) : null;
@@ -8814,6 +8818,9 @@ async function _handleAgentLiveState(req, res) {
       zone_id:     zoneId,
       zone_name:   st?.zone_name ? String(st.zone_name).slice(0, 80) : null,
       self_hp_pct: selfHp,
+      self_mana_pct: selfManaPct,
+      self_mana_cur: selfManaCur,
+      self_mana_max: selfManaMax,
       target_name: targetName,
       target_hp_pct: targetHp,
       buffs,

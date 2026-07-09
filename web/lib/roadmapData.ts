@@ -43,6 +43,36 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-mana-twitch',
+    title: 'Raid mana list + Twitch Queue',
+    version: 'Web 1.0.189 · Bot 3.0.152',
+    date: '2026-07-09',
+    headline: 'The /raid page now shows everyone’s mana at a glance and a Twitch Queue telling enchanters exactly who to feed next.',
+    features: [
+      { name: 'Mana at a glance', blurb: 'A new Mana list in the /raid sidebar (under “Classes in raid”) shows every caster’s current mana — pulled straight from their own client via Mimic — sorted highest first, so you can see who still has gas.' },
+      { name: 'Twitch Queue', blurb: 'A prioritized list of who to twitch mana to next: lowest mana up top, Wizards and Enchanters first, then Clerics, then everyone else. No more guessing who’s about to go OOM.' },
+    ],
+    fixes: [
+      'Removed the Roster / Cursed toggle buttons — the roster is the only view now, and cursed raiders already show up in the debuff queue at the top.',
+    ],
+  },
+  {
+    key: 'tank-overlay-live-hp-defensives',
+    title: 'Tank overlay: exact HP + defensive recharge timers',
+    version: 'Agent 3.3.9',
+    date: '2026-07-09',
+    channel: 'beta',
+    headline: 'The Tank overlay shows a non-Mimic tank’s exact HP near-live, and the Command Center now counts down defensives — active AND recharge.',
+    features: [
+      { name: 'Exact tank HP, fast', blurb: 'When someone in the tank’s group runs /pipeverbose, the Tank overlay shows the tank’s real HP numbers (“4211 / 4348”), not just a percent — and it now refreshes about every 3 seconds instead of every 15-20.' },
+      { name: 'Defensive recharge timers', blurb: 'The Command Center shows a discipline’s remaining ACTIVE time counting down, then flips to “DOWN · m:ss” counting down the recharge until it’s usable again — so you always know when the next Defensive is ready.' },
+    ],
+    fixes: [
+      'The trigger-alert timing buttons («Earlier / ✓Good! / »Too early) no longer sit on top of the callout text — they’re tucked below it.',
+      'Mimic’s upload backlog can no longer balloon to gigabytes and freeze the overlays; it bounds itself and cleans up stale files on startup.',
+    ],
+  },
+  {
     key: 'tank-hp-cross-client',
     title: 'Tank overlay shows a non-Mimic tank’s HP',
     version: 'Bot 3.0.148',

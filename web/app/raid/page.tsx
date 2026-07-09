@@ -35,6 +35,7 @@ type LiveStateRow = {
   character: string;
   zone_name: string | null;
   self_hp_pct: number | null;
+  self_mana_pct: number | null;
   buffs: { name: string; ticks: number | null; song?: boolean }[] | null;
   buff_count: number | null;
   pet_name: string | null;
@@ -128,7 +129,7 @@ export default async function RaidHubPage() {
   const buffCastsSince = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
   const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }, { data: ariRow }] = await Promise.all([
     admin.from('character_live_state')
-      .select('character, zone_name, self_hp_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
+      .select('character, zone_name, self_hp_pct, self_mana_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
       .eq('guild_id', 'wolfpack')
       .order('updated_at', { ascending: false }),
     admin.from('characters')
@@ -481,6 +482,7 @@ export default async function RaidHubPage() {
       // own-self HP from character_live_state fills in when this raider runs
       // Mimic themselves and their group has no other broadcaster yet.
       hpPct: rr.hp_pct ?? live?.self_hp_pct ?? null,
+      manaPct: live?.self_mana_pct ?? null,   // self-reported via their own Mimic (casters only)
       buffCount: live?.buff_count ?? buffsForRow.length,
       byCategory,
       categoryEntries,
@@ -522,6 +524,7 @@ export default async function RaidHubPage() {
       zone: r.zone_name,
       updatedAt: r.updated_at,
       hpPct: r.self_hp_pct ?? null,
+      manaPct: r.self_mana_pct ?? null,
       buffCount: r.buff_count ?? (r.buffs?.length ?? 0),
       byCategory,
       categoryEntries,
