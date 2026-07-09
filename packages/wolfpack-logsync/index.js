@@ -5935,8 +5935,11 @@ function _maybeUploadRaidRoster(sample) {
         // gauge-slot cross-ref (which only covers the uploader's own ~5-person
         // group). See docs/zeal-pipe-protocol.md.
         let hpPct = null;
+        let hpCur = null, hpMax = null;
         if (m.hp_current != null && m.hp_max != null && Number(m.hp_max) > 0) {
-          hpPct = Math.max(0, Math.min(100, Math.round((Number(m.hp_current) / Number(m.hp_max)) * 100)));
+          hpCur = Math.max(0, Math.trunc(Number(m.hp_current)));
+          hpMax = Math.trunc(Number(m.hp_max));
+          hpPct = Math.max(0, Math.min(100, Math.round((hpCur / hpMax) * 100)));
         } else {
           const hp = liveHpByName.get(String(m.name).toLowerCase());
           if (typeof hp === 'number') hpPct = Math.max(0, Math.min(100, Math.round(hp)));
@@ -5948,6 +5951,10 @@ function _maybeUploadRaidRoster(sample) {
           level:  m.level != null ? String(m.level) : null,
           rank:   m.rank  != null ? String(m.rank)  : null,
           hp_pct: hpPct,
+          // Exact values only when /pipeverbose fed them; the bot stores them so
+          // the Tank/Target overlays can show real numbers cross-client.
+          hp_current: hpCur,
+          hp_max:     hpMax,
         };
       });
     if (compact.length === 0) return;
@@ -6831,6 +6838,25 @@ function _resolveHpForName(nameLower, active, st) {
   if (live && live.state && typeof live.state.self_hp_pct === 'number') return live.state.self_hp_pct;
   return null;
 }
+// EXACT cur/max HP for a name, when available — {cur, max} or null. Only three
+// sources carry raw numbers (gauges are per-mille only): the viewer's own Zeal
+// labels 17/18 (self), another watched box on this machine, or the bot's relay
+// (which now backfills cur/max from a /pipeverbose groupmate's raid_roster row).
+function _resolveHpValuesForName(nameLower, active, st) {
+  const ok = (o) => o && typeof o.self_hp_cur === 'number' && typeof o.self_hp_max === 'number' && o.self_hp_max > 0;
+  if (active && nameLower === String(active).toLowerCase() && ok(st)) {
+    return { cur: st.self_hp_cur, max: st.self_hp_max };
+  }
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const zst = _zealState[ch];
+    if (!zst || (now - (zst.updatedAt || 0)) > 60_000) continue;
+    if (String(ch).toLowerCase() === nameLower && ok(zst)) return { cur: zst.self_hp_cur, max: zst.self_hp_max };
+  }
+  const live = _mtLiveStateByName.get(nameLower);
+  if (live && ok(live.state)) return { cur: live.state.self_hp_cur, max: live.state.self_hp_max };
+  return null;
+}
 // Resolve a named character's current buff list, mirroring _resolveHpForName's
 // waterfall: local Zeal list when it's the viewer's own active character
 // (full fidelity — ticks, everything), else their own uploaded live-state
@@ -7040,9 +7066,12 @@ function _serializeTankState() {
     // ramp in green instead" — that's the cue healers should be ready to land
     // the next heal the moment DA drops).
     const rampBuffs = _resolveBuffsForName(r.target, active, buffsOut).buffs;
+    const rVals = _resolveHpValuesForName(rLower, active, st);
     rampage = {
       target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
       hp_pct: _resolveHpForName(rLower, active, st),
+      hp_cur: rVals ? rVals.cur : null,
+      hp_max: rVals ? rVals.max : null,
       da: _findDA(rampBuffs, 5),
     };
   }
@@ -7095,11 +7124,12 @@ function _serializeTankState() {
       if (cat && cat.ds) mtDsSources.push({ name: b.name, per_hit: cat.ds });
     }
     mtDsSources.sort((a, b) => b.per_hit - a.per_hit);
-    // Raw HP numbers — ONLY when the MT is the local character (their own
-    // Zeal client is the only one that reports real cur/max HP; cross-client
-    // MTs give us a % and nothing more). Uilnayar 2026-07-05.
-    const mtHpCur = isSelf && typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null;
-    const mtHpMax = isSelf && typeof st.self_hp_max === 'number' ? st.self_hp_max : null;
+    // Raw cur/max HP. Self is always exact (Zeal labels 17/18); cross-client we
+    // now ALSO get real numbers when a /pipeverbose groupmate fed them through
+    // raid_roster → the character-live-state relay (else just a %, as before).
+    const mtVals = _resolveHpValuesForName(mtLower, active, st);
+    const mtHpCur = mtVals ? mtVals.cur : null;
+    const mtHpMax = mtVals ? mtVals.max : null;
     mt = {
       name:    mtName,
       is_self: isSelf,
@@ -7160,13 +7190,19 @@ function _serializeTankState() {
     }
   }
 
+  // Exact cur/max for the target IF it's a raider we already have cross-client
+  // numbers for (no extra fetch — mobs are never in raid_roster, so this stays
+  // null and the overlay shows a plain gauge %).
+  const targetVals = targetName ? _resolveHpValuesForName(String(targetName).toLowerCase(), active, st) : null;
   return {
     character: active,
     hp_pct:    typeof st.self_hp_pct === 'number' ? st.self_hp_pct : null,
     hp_cur:    typeof st.self_hp_cur === 'number' ? st.self_hp_cur : null,
     hp_max:    typeof st.self_hp_max === 'number' ? st.self_hp_max : null,
     target:    { name: targetName, hp_pct: targetHpPct, source: targetSource,
-                 local_name: localTargetName, local_hp_pct: localTargetHpPct },
+                 local_name: localTargetName, local_hp_pct: localTargetHpPct,
+                 hp_cur: targetVals ? targetVals.cur : null,
+                 hp_max: targetVals ? targetVals.max : null },
     buffs:     buffsOut,
     // Main-Tank focus block — null out of combat. When present the overlay
     // renders the MT's HP/buffs/DS instead of the local character's.
