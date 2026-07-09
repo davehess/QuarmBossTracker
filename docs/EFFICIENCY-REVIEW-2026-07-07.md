@@ -156,7 +156,9 @@ Verified in-code + against prod sizes. ✅ = shipped, ⏳ = still open.
   real page — its force-dynamic is justified, drop from this list.
 - ⏳ Mimic: unify the 3 tasklist spawners; lazy overlay renderer creation
   (10 Chromium processes eager at boot regardless of config).
-- ⏳ Disk reclaim: buff_casts (120MB held / 67k rows) + who_observations
-  (100MB / 73k rows) + threat_snapshots hold dead-tuple space from their
-  purges — one-off `VACUUM FULL` per table in an off-raid window returns it
-  (plain autovacuum reuses but never shrinks the files).
+- ✅ Disk reclaim (done 2026-07-09, off-raid window): one-off `VACUUM FULL`
+  on the three purge-bloated tables returned ~367MB —
+  encounter_threat_snapshots 352→161MB, buff_casts 120→26MB,
+  who_observations 100→18MB. Total DB now 570MB. Not a recurring job: the
+  retention sweeps now delete small daily increments that plain autovacuum
+  recycles in place.
