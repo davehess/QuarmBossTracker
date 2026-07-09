@@ -6953,16 +6953,29 @@ async function _handleAgentCharacterLiveState(req, res) {
   // runs Mimic — the group-gauge HP already lands in raid_roster, it just
   // wasn't wired into this per-name relay. Same 90s freshness gate as above.
   // No agent change needed: the agent reads state.self_hp_pct in _resolveHpForName.
-  if (!state || typeof state.self_hp_pct !== 'number') {
+  // Borrow/enrich HP from a groupmate's raid_roster upload. Two cases:
+  //   1. No self-reported HP (non-Mimic MT) → borrow the % outright.
+  //   2. Self-reported % but no exact numbers → attach cur/max when a
+  //      /pipeverbose groupmate supplied them.
+  // So run whenever we lack either a live % or exact cur/max.
+  if (!state || typeof state.self_hp_pct !== 'number' || typeof state.self_hp_cur !== 'number') {
     const rr = await supabase.select('raid_roster',
       `guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(name)}` +
-      `&hp_pct=not.is.null&select=name,hp_pct,captured_at&order=captured_at.desc&limit=1`).catch(() => []);
+      `&hp_pct=not.is.null&select=name,hp_pct,hp_current,hp_max,captured_at&order=captured_at.desc&limit=1`).catch(() => []);
     const rrRow = Array.isArray(rr) && rr[0];
     if (rrRow && rrRow.captured_at && typeof rrRow.hp_pct === 'number' &&
         (Date.now() - Date.parse(rrRow.captured_at)) < 90_000) {
       if (!state) state = { character: rrRow.name || name, zone_name: null, self_hp_pct: null, buffs: [], updated_at: rrRow.captured_at };
-      state.self_hp_pct = Math.max(0, Math.min(100, Math.round(rrRow.hp_pct)));
-      state.hp_source = 'raid_roster';   // cross-client — a groupmate's Zeal gauge
+      // Don't clobber a fresher self-reported % — only fill it when absent.
+      if (typeof state.self_hp_pct !== 'number') {
+        state.self_hp_pct = Math.max(0, Math.min(100, Math.round(rrRow.hp_pct)));
+        state.hp_source = 'raid_roster';   // cross-client — a groupmate's Zeal gauge
+      }
+      // Exact cur/max let the Tank/Target overlays show real numbers, not %.
+      if (Number.isFinite(rrRow.hp_current) && Number.isFinite(rrRow.hp_max) && rrRow.hp_max > 0) {
+        state.self_hp_cur = Math.max(0, Math.trunc(rrRow.hp_current));
+        state.self_hp_max = Math.trunc(rrRow.hp_max);
+      }
     }
   }
   const payload = JSON.stringify({ state });
@@ -9112,6 +9125,11 @@ async function _handleAgentRaidRoster(req, res) {
     // Mimic raider into a guild-wide HP view (each group's HP comes from the
     // Mimic-running raider in THAT group).
     const hp  = Number.parseFloat(m?.hp_pct);
+    // Exact HP (cur/max) rides along only when a groupmate ran /pipeverbose;
+    // otherwise these are null and only the gauge hp_pct is available.
+    const hpc = Number.parseInt(m?.hp_current, 10);
+    const hpm = Number.parseInt(m?.hp_max, 10);
+    const hasExact = Number.isFinite(hpc) && Number.isFinite(hpm) && hpm > 0;
     rows.push({
       guild_id:               guildId,
       name,
@@ -9120,6 +9138,8 @@ async function _handleAgentRaidRoster(req, res) {
       level:                  Number.isFinite(lvl) ? lvl : null,
       rank:                   m?.rank ? String(m.rank).slice(0, 20) : null,
       hp_pct:                 Number.isFinite(hp) ? Math.max(0, Math.min(100, hp)) : null,
+      hp_current:             hasExact ? Math.max(0, hpc) : null,
+      hp_max:                 hasExact ? hpm : null,
       captured_at:            nowIso,
       uploaded_by_discord_id: identity.discord_id,
     });
