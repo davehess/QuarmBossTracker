@@ -6,7 +6,7 @@ import AuthBadge from '@/components/AuthBadge';
 import TimezonePicker from '@/components/TimezonePicker';
 import LocalDashboardLink from '@/components/LocalDashboardLink';
 import GlobalSearch from '@/components/GlobalSearch';
-import { supabaseServer } from '@/lib/supabase-server';
+import { getSessionUser } from '@/lib/session';
 import { isOfficer } from '@/lib/officer';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://wolfpack.quest';
@@ -32,8 +32,10 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Officer check runs server-side per request so the Admin nav link only
   // appears for officers. Non-officers never see the link in the source.
-  // Signed-in users see "Me" — anonymous visitors don't.
-  const { data: { user } } = await supabaseServer().auth.getUser();
+  // Signed-in users see "Me" — anonymous visitors don't. Both lookups are
+  // React cache()'d, so pages sharing this request dedupe instead of
+  // re-hitting Supabase (lib/session.ts + lib/officer.ts).
+  const user = await getSessionUser();
   const showAdmin = user ? await isOfficer(user.id) : false;
   const showMe    = !!user;
 

@@ -51,28 +51,30 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   // ("76 shown · 1,000 loaded · 8,738 in catalog" → are these 76 in the
   // 1k or the 8.7k? — they were in the 1k). Loop with .range() now until
   // we drain.
-  const PAGE = 1000;
-  const HARD_CAP = 20_000;  // safety stop; we'll log if we ever hit it
-  const allRows: DirRow[] = [];
-  for (let from = 0; from < HARD_CAP; from += PAGE) {
-    // Order by the UNIQUE character_key, not last_seen. last_seen has heavy
-    // ties (everyone /who'd in the same batch shares a timestamp; many rows
-    // are months-stale at the same bucket), and PostgREST .range() pagination
-    // over a non-unique sort is non-deterministic — the same row can land on
-    // two adjacent pages while another is skipped. That's why Nosfearatu
-    // showed up 8× in the directory (Uilnayar 2026-06-22): one row in the
-    // view, re-fetched across page boundaries. character_key is the view's
-    // unique group key, so ordering by it guarantees each row appears on
-    // exactly one page. The client table re-sorts by last_seen for display.
-    const { data: page, error } = await admin
-      .from('who_directory')
-      .select('*')
-      .order('character_key', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) break;
-    if (!page || page.length === 0) break;
-    allRows.push(...(page as DirRow[]));
-    if (page.length < PAGE) break;  // last page
+  // One round trip via who_directory_json() (jsonb_agg — a single value, so
+  // the PostgREST max-rows cap doesn't apply; migration 20260709060000). The
+  // old ~9 sequential .range() pages made page load pay ~9 RTTs. Ordering by
+  // the unique character_key is preserved inside the RPC (see the Nosfearatu
+  // duplicate-row bug, 2026-06-22); the range-loop remains only as a fallback
+  // if the RPC is ever missing.
+  let allRows: DirRow[] = [];
+  const { data: agg, error: rpcError } = await admin.rpc('who_directory_json');
+  if (!rpcError && Array.isArray(agg)) {
+    allRows = agg as DirRow[];
+  } else {
+    const PAGE = 1000;
+    const HARD_CAP = 20_000;  // safety stop
+    for (let from = 0; from < HARD_CAP; from += PAGE) {
+      const { data: page, error } = await admin
+        .from('who_directory')
+        .select('*')
+        .order('character_key', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) break;
+      if (!page || page.length === 0) break;
+      allRows.push(...(page as DirRow[]));
+      if (page.length < PAGE) break;  // last page
+    }
   }
   // Defensive dedup by character_key — belt-and-suspenders against any future
   // pagination drift so a duplicate can never reach the table again.

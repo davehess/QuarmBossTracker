@@ -6,20 +6,35 @@
 // refreshed in auth/callback at sign-in time — so a freshly-promoted
 // officer who signs out and back in gets access immediately.
 
-import { createClient } from '@supabase/supabase-js';
+import { cache } from 'react';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 function _officerNames() {
   return (process.env.OFFICER_ROLE_NAMES || 'Officer,Pack Leader')
     .split(',').map(s => s.trim()).filter(Boolean);
 }
 
-export async function isOfficer(userId: string | null | undefined): Promise<boolean> {
-  if (!userId) return false;
+// Module-level singleton — the old code built a fresh client (and connection
+// state) on EVERY isOfficer call (efficiency review 2026-07-07, MEDIUM).
+let _adminClient: SupabaseClient | null = null;
+function _admin(): SupabaseClient | null {
+  if (_adminClient) return _adminClient;
   const SR = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!SR || !URL) return false;
+  if (!SR || !URL) return null;
+  _adminClient = createClient(URL, SR, { auth: { persistSession: false } });
+  return _adminClient;
+}
+
+// cache() = React per-request memo across the whole server-component tree:
+// the root layout AND any page/component checking the same userId in one
+// navigation share a single wolfpack_members query, with zero call-site
+// changes.
+export const isOfficer = cache(async (userId: string | null | undefined): Promise<boolean> => {
+  if (!userId) return false;
+  const admin = _admin();
+  if (!admin) return false;
   try {
-    const admin = createClient(URL, SR, { auth: { persistSession: false } });
     const { data } = await admin
       .from('wolfpack_members')
       .select('role_names')
@@ -32,4 +47,4 @@ export async function isOfficer(userId: string | null | undefined): Promise<bool
   } catch {
     return false;
   }
-}
+});

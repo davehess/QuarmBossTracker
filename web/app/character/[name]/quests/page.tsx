@@ -70,7 +70,7 @@ type InventoryRow = {
 async function load(decoded: string) {
   const sb = supabaseAdmin();
   const [
-    charRes, questsRes, itemsRes, invRes, keysRes, prefsRes,
+    charRes, questsRes, itemsRes, keysRes, prefsRes,
   ] = await Promise.all([
     sb.from('characters')
       .select('name, class, race, main_name, discord_id, show_inventory_publicly')
@@ -84,12 +84,6 @@ async function load(decoded: string) {
     sb.from('quest_required_item')
       .select('id, quest_id, item_id, item_name, quantity, optional, notes, display_order')
       .order('display_order', { ascending: true }),
-    // The character's inventory plus everyone in the same family
-    // (family = same main_name) so we can hint "X has this on Y."
-    sb.from('character_inventory')
-      .select('character_name, slot_label, item_id, item_name, quantity')
-      .eq('guild_id', 'wolfpack')
-      .limit(10000),
     // Keyring (Key of Veeshan, Trakanon Idol, etc.) — quests complete when you
     // hold the reward, in inventory OR on the keyring.
     sb.from('character_keys')
@@ -115,6 +109,20 @@ async function load(decoded: string) {
     .eq('guild_id', 'wolfpack')
     .or(`name.eq.${main},main_name.eq.${main}`);
   const familyNames = new Set(((familyRows ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
+
+  // Inventory scoped to the FAMILY (all the render ever used) — this fetched
+  // the ENTIRE guild's character_inventory and filtered in JS, which was both
+  // wasteful and wrong past 10k guild rows (silent truncation could drop the
+  // family's own rows; efficiency review 2026-07-07). ilike-equality per name
+  // keeps the match case-insensitive like the old JS filter.
+  const familyList = ((familyRows ?? []) as { name: string }[]).map(r => r.name);
+  if (familyList.length === 0) familyList.push(char.name);
+  const invRes = await sb
+    .from('character_inventory')
+    .select('character_name, slot_label, item_id, item_name, quantity')
+    .eq('guild_id', 'wolfpack')
+    .or(familyList.map(n => `character_name.ilike.${n}`).join(','))
+    .limit(10000);
 
   const quests = (questsRes.data ?? []) as Quest[];
   const questItems = (itemsRes.data ?? []) as QuestItem[];
