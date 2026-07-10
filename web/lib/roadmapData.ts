@@ -43,6 +43,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'roster-family-attendance',
+    title: 'Roster shows real attendance, per person',
+    version: 'Web 1.0.197',
+    date: '2026-07-10',
+    headline: 'The roster now counts a PERSON’s raid attendance across all their characters — plus an Alt Nights view.',
+    features: [
+      { name: 'Attendance out of possible', blurb: 'Each roster row is a person: the percentage is raids attended on ANY of their characters out of all possible ticks, with the tick count right beside it. Someone who splits time across three characters finally shows their true 100% instead of three fragments.' },
+      { name: 'Alts fold under the main', blurb: 'Alts under 50% of a person’s usage tuck into an expandable “+N alts” line under the main — open it to see each alt’s ticks and usage share. An alt the person mostly plays stays visible.' },
+      { name: 'Alt Nights view', blurb: 'A toggle recomputes the whole page over just the alt-night raids (Alt Extravaganza / Alt Bonanza / VT + Alt Fun), so you can see who shows up for alt nights specifically.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'aa-faction-accuracy',
     title: 'AA lists cleaned up + faction page tells the truth',
     version: 'Web 1.0.196 · Bot 3.0.157',
